@@ -24,6 +24,9 @@ timing-critical input work and must satisfy
 - Preserve logical `NoteId` across immutable object versions.
 - Reuse unchanged event-object references; allocate new objects only for added or modified content.
 - Index notes as pitch → bar → bar membership lists of `NoteRef`s and events as bar → `EventRef` lists. The event list is an indexed view of existing event-stream order, not a second ordering authority. Unchanged pitch/bar membership remains shared; only dirty membership and the minimum directory path to it are newly constructed.
+- A logical NoteOn/NoteOff pair is identified by its shared `NoteId`;
+  `EventId` is retained for non-note event objects only. Note-event
+  replacement/removal uses the settled pair `NoteId`.
 - Separate semantic commit boundaries from candidate construction: construct a
   complete candidate in bounded resumable units where required, then atomically
   publish it at the existing boundary.
@@ -39,7 +42,9 @@ timing-critical input work and must satisfy
 - No maintained LCR owner, new scheduler, or new interval-path owner.
 - No change to horizon size, projection math, cursor, ledger, or MIDI deadline behavior.
 - No raw pointer persistence.
-- No decision here on exact storage layout, optional indexes, or object-pool implementation.
+- Snapshot node allocation is selected: 32 KB bump slabs owned by `Loop`
+  (`allocateSnapshotShared`). Unchanged membership remains pointer-shared.
+  This is not a general `ExternalMemoryFirstAllocator` arena.
 - `LoopSnapshot` replaces authoritative effective content. Everything else retains its ownership until its migration gate.
 - No content-sized candidate construction may run as one indivisible operation
   from `handleMidiInput()`, clock dispatch, or a track-tick path.
@@ -119,6 +124,33 @@ lifetime, undo, and persistence semantics.
 
 Snapshot references are loop-scoped handles (`NoteRef` / `EventRef`), not persisted addresses. Editing a note creates a new immutable version with the same logical `NoteId`; older snapshots retain their original version.
 
+`NoteId` is the logical identity. The immutable object reached through a
+`NoteRef` is the version. A geometry-only mutation copies the prior immutable
+note value, changes only the settled geometry fields, and emits a
+`SnapshotChangeKind::Replace` with the same `NoteId`. A new capture note emits
+`Add` with a newly allocated `NoteId`; hiding or deleting a note emits
+`Remove`. The selected snapshot is the latest-version view for every logical
+`NoteId`. Older immutable versions remain reachable only through retained
+snapshot roots such as undo/redo or the session anchor.
+
+`LoopSnapshot::loopLengthTicks()` is the sole loop-boundary authority.
+`LoopSnapshotNote` stores identity, pitch, velocity, start, and end.
+Wrap detection, canonical spans, bar membership, and construction cursors
+receive that root length at the call site. Note duration is derived from
+`startTick`/`endTick` for a linear note, and from those ticks plus the
+root boundary for a wrap. Notes SHALL NOT store an independent loop length.
+Session-exit may replace only that unpublished root length when applied
+live-record ticks already fit the sealed length; a non-fit still destroys
+the pending tree.
+
+`SnapshotNoteChange` is transient construction input only. It is never an
+authoritative representation of loop content and is not retained as a second
+effective-state model.
+
+No numeric per-note version is required for this contract. `NoteRef` identity
+and the selected snapshot identity provide object-version and consumer-freshness
+semantics respectively. `playbackRevision` is not a per-note version.
+
 **Alternative:** raw pointers. Rejected because addresses are not persistent identity and make reclamation implicit.
 
 ### Logical indexes: pitch → bar → NoteRef, and bar → EventRef
@@ -188,14 +220,19 @@ logical model does **not** by itself make candidate construction bounded.
 **Logical sharing invariant.** Only dirty pitch/bar membership nodes and the
 minimum directory path required to reach them MAY be newly allocated.
 Unchanged pitch/bar membership remains shared with the parent snapshot.
+Candidate construction is copy-on-write from the selected snapshot. Unchanged
+note objects and unchanged membership structures remain shared; the selected
+or historical snapshot is never mutated.
 
 **Physical directory representation was not selected by Phase 0.** Phase 1
 measurement selected a sparse fixed-capacity paged directory experiment for
 the native model. Path-copy is rejected as the *semantic overlap model*; it
-is not rejected as a possible directory implementation. Page capacity,
-allocator behavior, serialization, reclamation, and the maximum indivisible
-construction step remain measured/runtime-gated properties. “Dirty bars” does
-not automatically solve directory sharing.
+is not rejected as a possible directory implementation. Snapshot nodes pack
+into 32 KB bump slabs owned by `Loop` (`allocateSnapshotShared`); a new slab
+is one `extmem_malloc` (native: one 32 KB `malloc`). Page capacity,
+serialization, reclamation, and the maximum indivisible construction step
+remain measured/runtime-gated properties. “Dirty bars” does not automatically
+solve directory sharing.
 
 Steps that identify and rewrite membership have **semantic locality** bounded
 by the affected pitch and dirty bars. Their execution cost remains dependent
@@ -290,6 +327,29 @@ parity or fallback sources until the individual consumer migration gate passes.
 Rejected because it would couple immutable content publication to consumer
 lifecycles and create a new cross-consumer owner.
 
+### Overdub wrap source uses the selected snapshot
+
+At the settled overdub-wrap boundary,
+`Track::commitOverdubWrapAtSessionStart()` supplies the committed pass and
+companion geometry mutation to the existing `Loop` snapshot publication owner.
+The owner constructs a complete provisional `O:` successor from the selected
+snapshot, freezes it, and publishes it atomically. The next overdub source
+query reads pitch/bar `NoteRef` memberships from that complete snapshot,
+deduplicates by `NoteId`, and derives the current geometry from those
+immutable references.
+
+The source query does not rebuild a complete pass-derived note list and does
+not treat `overdubSourceViewNotes_`, `overdubSourceSpanCacheNotes_`,
+`visualCache`, or maintained `LoopContentResolution` state as a normal
+effective-state authority. Those structures may remain temporarily as
+consumer-owned representations, parity or rollback sources until their
+individual migration gates pass.
+
+If the provisional successor is incomplete, over budget, or fails admission,
+the previous complete snapshot remains selected and no partial note set is
+visible. A complete successor is required before the next consumer observes
+the changed geometry.
+
 ### Construction applies existing semantic mutations
 
 At an existing commit boundary, the existing semantic owner supplies a settled
@@ -311,6 +371,11 @@ If the work is larger than one admissible runtime unit, construction uses
 persistent progress and yields between bounded units; it does not block until a
 complete candidate is available. The candidate is frozen and published atomically
 only after it is complete.
+
+`LoopSnapshotConstruction` executes through the existing bounded/resumable
+maintenance mechanism and its existing owner boundary
+(`Loop::stepPendingSnapshotPublish` through the Ring B idle cursor). This
+change does not introduce a new scheduler or runtime budget owner.
 
 Identify/apply/construct have semantic locality bounded by the affected pitch
 and dirty bars. Their execution cost remains dependent on intersecting
@@ -345,6 +410,10 @@ overrun or allocation failure leaves the active and historical snapshots
 unchanged, publishes no partial candidate, and follows the phase's explicit
 retry, defer, or rejection policy without silently losing the settled
 mutation.
+
+A candidate snapshot is never selected while construction is incomplete.
+Selection occurs atomically only after construction reaches the frozen complete
+state.
 
 ### Provisional session snapshots versus global undo snapshots
 
@@ -518,10 +587,19 @@ horizon ownership.
 2. Measure and select the physical pitch/bar directory representation before Phase 2 firmware; the logical indexes are already selected.
 3. Implement immutable objects, stable handles, shared reference storage, and invariant-protecting native checks with current consumers unchanged.
 4. Define and verify candidate construction bounds, progress, and overrun behavior before runtime publication.
-5. Adapt capture and NOTE_EDIT commit boundaries while retaining compatibility pass records; publication may occur only after a complete candidate is ready.
-6. Migrate playback and other consumers independently, using snapshot identity and existing verification gates.
+5. Adapt capture and NOTE_EDIT commit boundaries so settled overdub wraps
+   produce complete provisional `O:` snapshots and session exit produces the
+   single global transition; compatibility pass records remain only for
+   parity, rollback, and storage migration.
+6. Migrate overdub source resolution, playback, display, NOTE_EDIT, analysis,
+   validation, persistence, undo, redo, clear-slot restore, and load to
+   selected snapshot content. Use snapshot identity for freshness while each
+   existing consumer owner retains its derived representation and bounded
+   build policy.
 7. Migrate undo/load/persistence after physical format approval.
-8. Remove replay/materialized compatibility paths only after all caller-specific gates pass.
+8. Remove replay/materialized compatibility paths only after all
+   caller-specific snapshot migration gates pass. Do not optimize
+   compatibility paths as an intermediate effective-state solution.
 
 Rollback keeps the prior representation active and discards any failed candidate. Existing storage readers remain until the new reader and migration are proven.
 
@@ -705,14 +783,91 @@ Parked until selected:
 - `4b.3` post-overdub-stop PLAYING `usbdisp` / `load_frame` / `late_on`
 - `4b.4` OVERDUBBING `DisplayResolveLiveCapture` (58 ms on `004934`)
 
+## Implementation amendment — 2026-08-27
+
+This amendment activates only capture-publication tasks `3.5` and `3.6`.
+Direct consumer migration, persistence, and snapshot-identity undo remain
+later phases.
+
+### Bounded wrap publication
+
+`Track::commitOverdubWrapAtSessionStart()` remains the wrap-sequencing owner.
+After capture pairing and overlap resolution settle, capture/pairing state
+assigns `NoteId` incrementally to each logical NoteOn/NoteOff pair before pass
+promotion. Pass promotion does not scan capture content for pair identity.
+`EventId` remains the identity for non-note events only.
+The existing compatibility `OverdubPass` and companion `EditPass` records
+remain available during this slice, but they are not the snapshot mutation
+source.
+
+The existing semantic owners provide a transient per-wrap mutation journal.
+The journal contains new-note additions, same-`NoteId` geometry replacements,
+hidden-note removals, and the paired event replacements/removals required by
+the effective event index. It has structural caps for change count,
+affected-bar count, membership-entry count, and bytes. Oversized work is
+represented as ordered bounded fragments belonging to the same wrap
+transaction.
+
+`Loop` queues those fragments without constructing a candidate on the
+`TrackManager::updateAllTracks()` interval path. Each fragment records the
+exact parent snapshot identity. The existing Ring B cursor consumes fragments
+in order and applies each to the latest complete unpublished candidate. A
+fragment is not visible until its candidate is complete.
+
+### Construction representation and progress
+
+The sparse paged directory experiment is a prerequisite measurement and
+selection gate for runtime publication. Production construction must use
+fixed-capacity immutable membership pages, not a vector whose copy or removal
+cost grows with the complete membership list.
+
+Construction initialization and each per-change begin operation must initialize
+persistent range/cursor state without enumerating every bar intersected by a
+changed note. A later construction unit advances a bounded bar cursor over the
+note's linear tail/head ranges. Membership-page copying, insertion, removal,
+and ordering are likewise divided into bounded fragments. No local timer
+between steps qualifies as the bound.
+
+The construction owner must retain progress and the mutation journal when a
+fragment cannot fit or exceeds its guard. It retries from the exact parent
+identity or explicitly blocks same-slot successor admission according to the
+phase policy. It must not clear committed snapshot work or silently discard
+the settled mutation.
+
+### Publication policy and compatibility boundary
+
+For this activated phase, the post-root restriction from `DEC-045` is
+superseded: ordered successor construction may step during
+`PLAYING`/`OVERDUBBING` after the first root exists. The previous complete
+root remains selected until the complete successor is frozen and published.
+The existing compatibility source may continue serving consumers until their
+individual migration gates pass.
+
+The event index is effective content in this slice. A Hide removes the paired
+NoteOn/NoteOff event references by `NoteId`. A geometry replacement creates new
+immutable note event objects while preserving `NoteId` and canonical order.
+Non-note event objects retain their logical `EventId`. Pair `NoteId`s and
+non-note `EventId`s are runtime-only here; persistence and reboot
+reconstruction belong to the later storage phase. The global overdub undo entry
+remains pass-based while construction is pending; snapshot-identity
+attachment belongs to the later undo phase.
+
+“Provisional `O:` snapshot” means a private, unselected candidate. The
+previous complete root remains the active selected root until the successor is
+complete, frozen, and atomically published.
+
+### Verification gate
+
+The native parity surface is the existing snapshot/take-survival tests,
+extended for repeated same-`NoteId` updates, wrap NoteOn/NoteOff replacement,
+Hide, equal-tick ordering, and non-note events. The device gate must measure
+construction-attributable MIDI gap, maintenance time per slice, and total
+construction wall time. It passes only when MIDI gap and deadline lateness
+remain within the measured `T_RT_reserve` contract and an overrun produces
+the documented retry result.
+
 ## Open Questions
 
-- Which physical directory representation implements the selected pitch → bar
-  indexes with shared unchanged membership?
 - What exact storage version/layout and compatibility migration are required?
 - Which optional indexes are justified without becoming a second authority?
-- What execution-bound class, unit cap, progress state, and overrun policy
-  will each named candidate-construction operation use on each runtime path?
-- Which existing owner holds an incomplete candidate and its continuation, and
-  how is a stale candidate discarded if the active snapshot changes?
 - Which phase and work identity authorize each consumer migration?

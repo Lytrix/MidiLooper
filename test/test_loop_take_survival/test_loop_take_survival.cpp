@@ -329,7 +329,7 @@ void test_record_wrap_note_publishes_one_reference() {
   TEST_ASSERT_EQUAL(1u, tail->count);
   TEST_ASSERT_EQUAL(1u, head->count);
   TEST_ASSERT_EQUAL_PTR(tail->references[0].get(), head->references[0].get());
-  TEST_ASSERT_TRUE(tail->references[0]->isWrap());
+  TEST_ASSERT_TRUE(tail->references[0]->isWrap(snapshot->loopLengthTicks()));
 }
 
 void test_overdub_wrap_does_not_publish_global_snapshot() {
@@ -964,6 +964,88 @@ void test_wrap_journal_drain_keeps_first_record_while_session_exit_pending() {
   TEST_ASSERT_EQUAL(1, countNoteOns(after, 64));
 }
 
+void applyLiveRecordCompletedTicks(Loop& loop, uint32_t completedTicks) {
+  size_t steps = 0;
+  while (loop.liveRecordAppliedCompletedTicks() < completedTicks && steps < 64) {
+    const uint32_t before = loop.liveRecordAppliedCompletedTicks();
+    loop.stepPendingSnapshotPublish(1, true, 0, completedTicks);
+    drainInFlightSnapshotPublish(loop);
+    TEST_ASSERT_TRUE(loop.liveRecordAppliedCompletedTicks() > before);
+    ++steps;
+  }
+  TEST_ASSERT_EQUAL(completedTicks, loop.liveRecordAppliedCompletedTicks());
+}
+
+void test_session_exit_handoff_when_live_record_notes_fit_sealed_length() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kSealedLength = Config::TICKS_PER_BAR * 12;
+  constexpr uint32_t kProvisionalLength =
+      kSealedLength + 16u * Config::TICKS_PER_BAR;
+  loop.loopLengthTicks = kSealedLength;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(9000, 1, 64, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(9048, 1, 64, 0)));
+  applyLiveRecordCompletedTicks(loop, kSealedLength);
+  TEST_ASSERT_EQUAL(kProvisionalLength, loop.pendingSnapshotCandidateLengthTicks());
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 9048));
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_EQUAL(kSealedLength, loop.loopLengthTicks);
+  loop.stepPendingSnapshotPublish(1, true);
+  if (loop.hasPendingSnapshotPublish()) {
+    TEST_ASSERT_EQUAL(kSealedLength, loop.pendingSnapshotCandidateLengthTicks());
+    TEST_ASSERT_EQUAL(kSealedLength, loop.liveRecordAppliedCompletedTicks());
+    TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+    drainPendingSnapshotPublish(loop);
+  }
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(kSealedLength, loop.publishedSnapshot()->loopLengthTicks());
+  SessionMidiEventVec snapshotEvents;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(snapshotEvents, 0, kSealedLength));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 64));
+}
+
+void test_session_exit_discards_when_applied_ticks_exceed_sealed_length() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kAppliedLength = Config::TICKS_PER_BAR * 2;
+  constexpr uint32_t kSealedLength = Config::TICKS_PER_BAR;
+  loop.loopLengthTicks = kAppliedLength;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(
+      loop.appendCaptureEvent(MidiEvent::NoteOn(kSealedLength + 100, 1, 64, 100)));
+  TEST_ASSERT_TRUE(
+      loop.appendCaptureEvent(MidiEvent::NoteOff(kSealedLength + 200, 1, 64, 0)));
+  applyLiveRecordCompletedTicks(loop, kAppliedLength);
+  TEST_ASSERT_TRUE(loop.pendingSnapshotCandidateLengthTicks() > kSealedLength);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, kAppliedLength));
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_EQUAL(kAppliedLength, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
+  TEST_ASSERT_FALSE(loop.passes.recordPass.committedChunkIds.empty());
+  TEST_ASSERT_TRUE(loop.pendingSnapshotQueuedPassCount() > 0);
+
+  loop.loopLengthTicks = kSealedLength;
+  loop.stepPendingSnapshotPublish(1, true);
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_TRUE(loop.pendingSnapshotCandidateLengthTicks() <= kSealedLength);
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+}
+
 void test_session_exit_pass_starts_as_journal_capped_fragments() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1062,6 +1144,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
+  RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
+  RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);
   RUN_TEST(test_session_exit_pass_starts_as_journal_capped_fragments);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();

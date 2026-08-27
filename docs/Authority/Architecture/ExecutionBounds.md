@@ -101,12 +101,27 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 18 | `processHitlSerialCommands` | capture builds only | none | **Unbounded** |
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
-| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One persistent-cursor bar plus copy of at most `kSnapshotMembershipMaxPages` (8) pages of `kSnapshotMembershipPageCapacity` (16) references | **Structurally bounded** |
-| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap queues bounded journal fragments; idle steps one construction unit during PLAYING/OVERDUBBING after the first root (`DEC-047`). Session-exit still queues at stop | Journal caps: 32 changes, 32 affected bars, 64 membership entries, 4096 bytes. Failure retains the fragment and previous selected snapshot | **Structurally bounded** |
+| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One admitted step applies at most one persistent-cursor bar and copies at most 8 membership pages of 16 refs. It does not rebuild a snapshot, enumerate a pass, or publish. An incomplete step leaves the candidate unpublished and resumable. | **Structurally bounded** |
+| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap and session-exit queue at their commit/stop owners; idle publishes from `stepPendingSnapshotPublish` | Queue only journal-capped fragments with exact parent identity. One idle turn admits at most one fragment start or one row-21 step. `storePublishedSnapshot` runs only after every queued wrap fragment, session-exit pass, and companion change is complete. Failure keeps the previous published root and does not publish a prefix. | **Structurally bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
 
 ### Snapshot candidate construction (`LoopSnapshotConstruction::step` and session-exit publish)
+
+**Row 21 goal:** Advance one in-flight candidate by one bounded construction
+unit and then return. The unit is one persistent-cursor bar and at most
+eight membership pages of sixteen references. The step may copy or sort
+that page and move the cursor. It must not walk the whole snapshot, rebuild
+a pass, or call `storePublishedSnapshot`.
+
+**Row 22 goal:** Separate queue from publish. Wrap and session-exit only
+enqueue bounded work (journal fragments with exact parent identity, or a
+session-exit pass list) at stop / wrap commit. Idle then admits at most one
+of: start the next journal-capped pass-change fragment, or one row-21
+step. Publication is atomic and only when wrap journals, queued
+session-exit passes, construction, and companion changes are all complete.
+A failed or incomplete candidate is never selected; the previous published
+root stays authoritative.
 
 Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
@@ -135,13 +150,13 @@ Selected structural caps:
 | Journal membership entries | `kSnapshotWrapJournalMaxMembershipEntries` = 64 |
 | Journal bytes | `kSnapshotWrapJournalMaxBytes` = 4096 |
 
-| Property | `LoopSnapshotConstruction::step` | Wrap / session-exit publish |
+| Property | Row 21 goal (`step`) | Row 22 goal (queue / idle publish) |
 |----------|---------------|----------------|
-| **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: bounded journal fragments with exact parent identity. Idle: one journal-capped pass-change fragment or one construction unit |
-| **Maximum indivisible step** | Select/update one fixed-capacity membership page (≤ 16 references), or copy/sort one page, and advance the persistent bar/membership cursor. No upfront full-span enumeration or pass reconstruction | Start at most one journal-capped pass-change fragment (`kSnapshotWrapJournalMaxChanges` = 32). Atomic `storePublishedSnapshot` only after the last wrap fragment and every queued session-exit pass fragment are complete |
-| **Progress** | Persistent tail/head bar cursor, journal-fragment cursor, `complete()`, `failed()` | Pending ordered fragments, pass-change cursor, and exact parent identity; previous published root remains selected until complete `freeze()` succeeds |
-| **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root and idle stores it |
-| **Overrun / failure** | `failed_`; `freeze()` returns null; retain the journal fragment for retry | Discard only the incomplete candidate; keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay as committed |
+| **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: journal-capped fragments with exact parent identity. Idle: one fragment start or one row-21 step |
+| **Maximum indivisible step** | Select/update or copy/sort one membership page (≤ 16 refs) and advance the cursor. No full-span walk, pass reconstruction, or publish | Start at most one journal-capped fragment (32 changes). Session-exit length mismatch first clones one snapshot header when applied live-record ticks fit the sealed length. Non-fit discard remains a content-sized destructor |
+| **Progress** | Persistent bar / membership cursor, `complete()`, `failed()` | Ordered fragments and pass-change cursor; previous published root stays selected until `freeze()` succeeds |
+| **Completion** | All admitted changes applied and `failed()` is false | Idle stores a complete root only after wrap journals, session-exit passes, construction, and companions are done |
+| **Overrun / failure** | `failed_`; `freeze()` returns null; retain the fragment and resume | Keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay committed |
 
 `T_RT_reserve` remains the 3.6 device gate for construction-attributable MIDI
 gap and deadline lateness. These structural caps admit the 3.5 firmware path;
@@ -149,10 +164,12 @@ they do not close that device measurement. Capture-serial `snapshot_idle` now
 emits child durations for `startNextPendingConstruction`, nested
 `startNextPassChangeFragment`, `LoopSnapshotConstruction::step`,
 `finishPendingConstruction`, and `storePublishedSnapshot`, plus a `probe_us`
-overhead sample. Rows 21 and 22 stay **structurally bounded** until that
-attribution shows whether the 79 ms class sits outside the classified unit or
-the classification is wrong. Do not reclassify from the parent `snapshot_idle`
-span alone.
+overhead sample. Session-exit length mismatch first clones one snapshot
+header when applied live-record ticks fit the sealed length; non-fit
+discard remains a content-sized destructor. Rows 21 and 22 stay
+**structurally bounded** until that attribution shows whether the 79 ms
+class sits outside the classified unit or the classification is wrong. Do
+not reclassify from the parent `snapshot_idle` span alone.
 
 A local timer is not the bound. Measured first-record idle `step(1)` vs
 `MI`/`MO` note gaps: [`233308`](../../captures/session_20260825_233308.log)

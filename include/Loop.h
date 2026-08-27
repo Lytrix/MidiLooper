@@ -370,6 +370,7 @@ struct Loop {
   uint8_t pendingSnapshotWrapFragmentCount() const;
   uint32_t pendingSnapshotWrapParentRevision() const;
   bool pendingSnapshotSessionExitQueued() const;
+  uint32_t pendingSnapshotCandidateLengthTicks() const;
   /// Last idle-step child durations. Capture-serial only; 0 in normal builds.
   uint32_t lastSnapshotIdleStartUs() const;
   uint32_t lastSnapshotIdlePassChangeUs() const;

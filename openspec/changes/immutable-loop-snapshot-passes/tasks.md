@@ -103,6 +103,10 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     leftover as `discardPendingIfLoopLengthChanged` (`discard=15262` on
     the 20.984 ms record-stop idle). Exclusive leftover after that probe
     is ≤ 39 µs. Publication closed at `root=0x70431844` / `root_rev=8`.
+    Session-exit length handoff device PASS
+    [`003015`](../../../captures/session_20260828_003015.log):
+    record-stop PLAYING `discard=47` (was `15262`); first root stayed
+    `root=0x0` until `pending=0` / `root=0x703248cc` / `root_rev=1`.
     `T_RT_reserve` is not frozen.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 

@@ -63,9 +63,11 @@ wrap journals, and companion changes are complete.
   is demonstrated negligible or explicitly accounted for; normal firmware must
   compile out the probes.
 - Reconcile those measurements with `ExecutionBounds.md` rows 21 and 22. The
-  existing structural classification conflicts with the 79 ms
-  `snapshot_idle` observation; resolve whether the cost is outside the classified
-  unit or the classification is incorrect before changing construction code.
+  old 79 ms `snapshot_idle` observation is not the current representative
+  class; `225659` attributes the 20.984 ms record-stop parent to discard and
+  leaves the 20.016 ms session-exit start internally unresolved. Keep the
+  rows as target goals, not verified implementation guarantees, until those
+  work units satisfy their declared caps.
 - Define the numeric `T_RT_reserve` measurement procedure and acceptance
   thresholds, including its measurement origin and deadline. `T_RT_reserve`
   means the measured runtime interval remaining for deferred maintenance after
@@ -210,17 +212,17 @@ proxy stays an operating observation only.
 |---|---|
 | **Origin** | Start of the admitted Snapshot idle turn (`snapshot_idle` work-window start `t − us`). |
 | **Deadline** | Next timing-critical `handleMidiInput()` entry. |
-| **Observed interval** | The `DIAG,midi_gap` sample whose window contains that work window. `midi_gap` is the interval since the previous `handleMidiInput()` exit, not an owner duration. |
+| **Observed interval** | A per-turn correlation from the Snapshot idle start to the next timing-critical `handleMidiInput()` entry. The existing `DIAG,midi_gap` line is a five-second maximum since the previous input exit and cannot serve as this per-turn value. |
 | **Deadline lateness** | `DIAG,late_clk` / `DIAG,late_on` / `DIAG,late_off` in the same window, from `notePlaybackServiceEnter`. |
 | **Clock reference** | Nearest `#CAP,BPM` before the idle line: `T_clock_us = 1_000_000 × 60 / (BPM × 24)`. Use it only to name the scheduling period, not as the reserve. |
-| **Per-turn reserve** | Time from idle-turn start until the next `handleMidiInput()` deadline. When Snapshot is the first deferred owner in the gap, that remaining time is the gap still available at admission, not the full observed `midi_gap`. |
+| **Per-turn reserve** | Candidate definition: time from idle-turn start until the next timing-critical `handleMidiInput()` entry. This is an observation until the deadline, acceptance ceiling, and overrun policy are explicitly defined; it is not the full observed `midi_gap`. |
 | **Child attribution** | Exclusive children are `start_us`, `step_us`, `finish_us`, and `publish_us`. `pass_change_us` is nested inside `start_us`. `probe_us` is measurement overhead for one timestamp pair; five child timers cost about `5 × probe_us`. |
-| **Acceptance after freeze** | The largest exclusive child, construction-attributable `midi_gap`, and construction-attributable deadline lateness all stay within the measured reserve. An overrun yields and retries without publishing an incomplete candidate. |
+| **Acceptance after freeze** | Not defined yet. It must specify an enforceable ceiling, the relation between the observed interval and admission, and the overrun action. An overrun must yield and retry without publishing an incomplete candidate. |
 
-Do not freeze a numeric reserve until the instrumented recapture attributes the
-79 ms class. Rows 21 and 22 stay structurally classified until that attribution
-shows whether the cost is outside the classified unit or the classification is
-wrong.
+Do not freeze a numeric reserve until the per-turn correlation and acceptance
+policy are valid. The old 79 ms parent span is not a reserve. Rows 21 and 22
+stay target goals rather than verified implementation guarantees until their
+actual work units satisfy the declared caps.
 
 ## Stage 1 status
 
@@ -384,6 +386,19 @@ owner.
   `discard=15262` (`discardPendingIfLoopLengthChanged`), `start=5704`
   (`pass_change=2810` nested), `enqueue=5`, exclusive leftover **13 µs**.
   This is the 224842 leftover class.
+- That 15.262 ms is the two `reset()` calls, not the length check. The
+  last RECORDING idle (30.101 s) still has `exit=0` / `inflight=1`, so
+  discard is a no-op. After seal, `loopLengthTicks` is 9216 and the
+  unpublished / in-flight objects still have the provisional live-record
+  length, so `unpublishedCandidate.reset()` and `construction.reset()`
+  run in one turn. Those are the last owners of the live-record
+  `LoopSnapshot` graph and `LoopSnapshotConstruction` (`candidate_`,
+  `parent_`, mutable span/event roots, apply state, change set). Each
+  node is a slab `shared_ptr`; last-ref drop calls
+  `snapshotSlabDeallocate` (`.flashmem`, `noinline`) and frees a 32 KB
+  slab when `liveCount` hits 0. Last `snapshot_alloc` before discard:
+  1906 nodes / 256084 bytes / 9 slabs (cumulative; counters do not
+  decrement). `start=5704` is the rebuild after that destroy.
 - Exclusive leftover after `enqueue`/`discard` is ≤ 39 µs on every paired
   row. `enqueue` max is 14 µs. `emit` max is 52 µs (after the parent
   `us` stamp). `probe` is 0 or 1 µs.
@@ -405,6 +420,321 @@ owner.
   19.996 ms, `discard` 15.262 ms, `step` 5.992 ms. Do not change
   construction bounds until those named units are reconciled with
   `ExecutionBounds.md` rows 21–22.
+
+## Proposed solution — session-exit length retarget (implemented 2026-08-28)
+
+**Problem:** On session-exit the unpublished live-record tree and the
+sealed `Loop::loopLengthTicks` differ. `discardPendingIfLoopLengthChanged`
+then `reset()`s the last owners of that graph. [`225659`](../../captures/session_20260827_225659.log)
+measured that destroy as `discard=15262` on the first PLAYING idle after
+record stop. The notes already fit in the sealed length (ticks 0–9048
+inside 9216). The mismatch is the provisional parent length from
+`liveRecordNewParentLength`, not notes crossing the sealed end.
+
+**Not this problem:** Overdub wrap journals. Those require a parent that
+already has the correct length and only mutate notes open at an unchanged
+loop boundary. Wrap and membership walks now read
+`LoopSnapshot::loopLengthTicks_`. The journal cap is 32 changes.
+
+**Not this slice:** Removing the +16 extra bars in
+`liveRecordNewParentLength`. That room is the [`121754`](../../captures/session_20260826_121754.log)
+/`DEC-045` fix so live RECORDING can append completed bars without
+creating a new empty parent and replaying the settled prefix. Dropping it
+without a sliced live-record length-grow reopens that rebuild (2611
+RECORDING `snapshot_idle` steps, 17.7 s CPU) or stalls append when the
+parent is too short.
+
+**Model invariant (shipped):** `LoopSnapshot::loopLengthTicks_` is the
+sole loop-boundary authority. `LoopSnapshotNote` stores identity, pitch,
+velocity, start, and end only. Wrap detection, canonical spans, bar
+cursors, and affected-bar estimates receive the snapshot root length at
+the call site. Note duration is `startTick`/`endTick` for a linear note
+and those ticks plus the root boundary for a wrap.
+
+**Implemented direction**
+
+- Owner stays `Loop::stepPendingSnapshotPublish` /
+  `LoopSnapshotConstruction`. No new manager, scheduler, or wrap-journal
+  path.
+- `discardPendingIfLoopLengthChanged` first fit-checks
+  `appliedLiveRecordCompletedTicks` against the sealed length and, when
+  the applied range already fits, replaces only the unpublished /
+  in-flight root length through `LoopSnapshot::withLoopLengthTicks`.
+- `discardPendingIfLoopLengthChanged` still destroys the pending tree
+  when the applied range does not fit or header allocation fails.
+
+Keep +16 live-record room. A later, separate slice may replace it with
+sliced live-record length-grow when the parent fills.
+
+**Transition / bound**
+
+- Session-exit now continues the unpublished candidate when the applied
+  live-record range fits the sealed length. Architecture checkpoint
+  question 2 is yes and was approved for this slice.
+- The admitted unit is one header clone plus a cursor compare. A
+  note-walk retarget remains unbounded and is not used.
+- Non-fit still destroys the pending tree.
+
+**Gates**
+
+- Native fixtures:
+  `test_session_exit_handoff_when_live_record_notes_fit_sealed_length`
+  (provisional parent vs sealed 9216; notes fit) and
+  `test_session_exit_discards_when_applied_ticks_exceed_sealed_length`.
+- Device recapture of the same class: `discard` near 0 on that idle;
+  candidate stays `root=0x0` until `pending=0`; no `121754`-style
+  RECORDING prefix rebuild.
+- Device recapture [`003015`](../../captures/session_20260828_003015.log)
+  **closes** that discard gate: first PLAYING idle after record stop is
+  `discard=47` (was `15262` on [`225659`](../../captures/session_20260827_225659.log)).
+  `root=0x0` until `pending=0` / `root=0x703248cc` / `root_rev=1`.
+  RECORDING used 2669 idles / 234 ms CPU, not a prefix rebuild.
+- Do not freeze `T_RT_reserve` on this slice alone.
+
+## Stage 2 remaining work — falsification review
+
+Measurement of the named children and publication correctness are closed.
+The following conclusions were tested against the code and
+[`225659`](../../captures/session_20260827_225659.log). Stages 3 and 4 stay
+out of scope.
+
+| Item | Finding | Status |
+|---|---|---|
+| Session-exit length retarget | The 15.262 ms discard is closed on [`003015`](../../captures/session_20260828_003015.log): first PLAYING idle after record stop is `discard=47`. Snapshot-root length is the sole note-boundary authority. Session-exit clones one header when applied live-record ticks fit the sealed length; non-fit still destroys the tree. | Device recapture closed |
+| `startNextPassChangeFragment` | The 20.016 ms start is real. The caller-specific record/overdub pass invariant permits pitch-scoped identity lookup; its inner owner and remaining pitch-local cost are still unmeasured. | Proposed solution below; no implementation |
+| `LoopSnapshotConstruction::step` | The 5.992 ms observation does not justify a rewrite by itself. | No firmware change justified yet |
+| `T_RT_reserve` | Per-turn measurement remains necessary; freezing the minimum observed reserve is not a valid guarantee. | Contract remains open |
+| ExecutionBounds rows 21–22 | Intended goals remain valid, but the current implementation does not fully enforce them. | Update only with matching firmware |
+
+Do not check off OpenSpec `3.5` / `3.6` until the reserve contract and
+device gate are closed.
+
+## Proposed solution — caller-scoped pitch lookup (not implemented)
+
+**Problem:** On [`225659`](../../captures/session_20260827_225659.log) at
+125.868 s, STOPPED session-exit idle is **20.016 ms** with
+`start=19996` and `pass_change=19968`. That is
+`startNextPassChangeFragment` inside `startNextPendingConstruction`, not
+`step`. Row 22 already caps the fragment at 32 changes. The 20 ms is the
+start call as one admitted unit.
+
+**What that start does:** `appendNextPassChangeFragment` refills a
+journal-capped batch (`CommittedEventRange::appendWindowBudgeted`), then
+for each event calls `eventAlreadyInSnapshot` (one bar) and
+`LoopSnapshot::findNote`. On a miss, `findNote` searches the hinted
+pitch and then **every other pitch's bar pages and memberships**.
+`appendNextPassChangeFragment` always passes the event pitch. A new
+pass note is a miss at that pitch, so the 128-pitch walk runs for each
+new note in the fragment. The parent at that idle already had
+`snapshot_alloc` 6416 nodes / 31 slabs. Then
+`LoopSnapshotConstruction` copies the parent header (`shared_ptr`
+roots only).
+
+**Not this problem:** `LoopSnapshotConstruction::step` (0 on that row).
+Overdub wrap journals (same 32-change cap, different parent-length
+contract). Discard / +16 live-record room.
+
+**Caller-specific identity invariant**
+
+The cross-pitch fallback remains required by generic
+`LoopSnapshot::findNote`, but it is not required by
+`appendNextPassChangeFragment` when processing committed record/overdub
+passes:
+
+1. `committedChunksForPass` returns only the committed record pass or an
+   overdub pass. Note-edit rows are handled separately by
+   `tryPublishNoteEditSnapshot` and `appendEditRowChange`.
+2. Recording and overdubbing create incoming NoteOns through
+   `appendCaptureEventWithResult`, which allocates a fresh `NoteId`.
+   Their NoteOffs inherit the identity from the matching same-channel,
+   same-pitch NoteOn.
+3. Note-edit pitch changes intentionally preserve the selected
+   `NoteId` while changing its pitch. That path therefore retains the
+   generic cross-pitch lookup and is outside this pass-fragment change.
+
+The applicable invariant is:
+
+> A committed record/overdub pass event reaching
+> `appendNextPassChangeFragment` cannot refer to a parent note at a
+> different pitch.
+
+The improved overdub ledger and incoming `[startTick, endTick)` span
+support the same-pitch participant contract. The pass-specific proof
+also depends on the capture-pass `NoteId` lifecycle and on keeping
+note-edit replay outside this caller.
+
+**Proposed lookup change**
+
+Keep `LoopSnapshot::findNote` unchanged for note-edit and other generic
+callers. Add or reuse a `LoopSnapshot` extension that searches only the
+event's pitch, and use it only from `appendNextPassChangeFragment`.
+The existing `eventAlreadyInSnapshot` check remains unchanged; only the
+parent-note identity test becomes caller-scoped.
+
+This preserves the current publication transitions and the 32-change
+journal cap. It removes the unrelated-pitch walk without changing
+same-pitch identity semantics. It does not yet establish a complete
+microsecond bound: a full scan of all bar memberships within one pitch
+remains content-dependent and must be measured.
+
+**Inner attribution**
+
+Add capture-gated inner timings on the existing child telemetry for the
+same STOPPED session-exit class:
+
+- `refill` — `refillPassChangeBatch`;
+- `event_scan` — `eventAlreadyInSnapshot`;
+- `note_lookup` — the current or pitch-scoped `findNote` operation;
+- `change_build` — open-note tracking and change-vector construction;
+- `construct` — `LoopSnapshotConstruction` creation.
+
+Keep current lookup semantics and the 32-change cap during this
+measurement. The lookup change follows only after the invariant and the
+limiting inner cost are covered by the gates below.
+
+<!-- Historical proposal superseded by the caller-scoped invariant proposal; retained for audit:
+1. Confirm with capture-gated inner timings on the existing child line
+   (`refill`, `find`, `ctor`) on one recapture of the same STOPPED
+   session-exit class. Do not change construction until that recapture
+   names the inner 20 ms.
+2. If `find` owns it: add a pitch-scoped lookup used by
+   `appendNextPassChangeFragment` (and the live-record
+   `parent->findNote(note.noteId, note.note)` append path) that does
+   **not** walk other pitches on a miss. `NoteId` is loop-scoped.
+   Keep the current 128-pitch fallback only for callers that pass the
+   default `pitchHint=0`.
+3. If `refill` owns it: persist `appendWindowBudgeted` so one idle
+   turn fills at most one existing window-budget slice, not an
+   unbounded chunk walk to satisfy 32 events.
+4. If `ctor` owns it: stop treating construction create as part of the
+   same admitted start unit.
+
+Owner stays `Loop` / `LoopSnapshot`. No new manager.
+
+**Transition / bound**
+
+- Pitch-scoped lookup does not change publication transitions.
+- Splitting refill or ctor out of start **does** change the pass-change
+  start transition; architecture checkpoint question 2 is yes for that
+  split only.
+- Do not lower the 32-change journal cap until the inner owner is named.
+
+**Gates (when implemented)**
+
+- Native fixture: the caller-scoped lookup does not visit other
+  pitches; a note-edit lookup still finds a note stored at another
+  pitch.
+- Native fixture: record/overdub pass identities satisfy the stated
+  parent-pitch invariant; note-edit pitch changes remain covered by the
+  generic lookup.
+- Device recapture of the 125.868 s class: `pass_change` drops with the
+  named inner fix; completeness still `root=0x0` until `pending=0`. -->
+
+Owner stays `Loop` / `LoopSnapshot`. No new manager.
+
+**Remaining gate**
+
+- Device recapture of the 125.868 s class with inner attribution;
+  completeness must remain `root=0x0` until `pending=0`.
+- Only after the caller-specific identity invariant and the limiting
+  inner owner are covered should the pitch-scoped lookup be implemented.
+
+## No justified `LoopSnapshotConstruction::step` fix
+
+**Problem:** [`225659`](../../captures/session_20260827_225659.log)
+`step` max is **5.992 ms** (`start=0` class at 109.704 s). Row 21
+already caps one persistent-cursor bar and at most 8 membership pages.
+That classification is a work cap, not a µs cap. The observation does
+not by itself falsify the row-21 work cap or justify a rewrite.
+
+**Finding**
+
+Keep the construction code unchanged until a valid reserve contract
+exists. If that contract proves the indivisible step too large, open a
+separate bounded-step design; do not assume that splitting
+`begin()` from `applySoonestBar` is the fix.
+
+**Not this slice:** Membership-page redesign. Journal-cap changes.
+
+**Remaining gate**
+
+- Compare the 5.992 ms step against a valid per-turn reserve contract.
+- Native one-bar / one-page progress coverage remains applicable; add
+  coverage only if the construction unit changes.
+
+## `T_RT_reserve` measurement — freeze rule rejected
+
+**Problem:** Stage 2 cannot close the three contracts (admission within
+reserve, admitted unit bounded, overrun yields and resumes) without a
+numeric reserve. The 60% of `T_clock` value (12.5 ms at BPM 120) is an
+operating proxy, not the contract. [`225659`](../../captures/session_20260827_225659.log)
+has no per-idle remaining-interval field. `midi_gap` is a 5 s max since
+the previous `handleMidiInput()` **exit**, not the reserve.
+
+**Proposed measurement**
+
+- Origin: `snapshotIdleStartUs` already taken in
+  `Track::processDeferredIdleMaintenance` before
+  `stepPendingSnapshotPublish`.
+- Deadline: next `RuntimeTimingTelemetry::noteMidiInputEnter`.
+- Add capture-gated `reserve_us` on the existing
+  `DIAG,snapshot_idle,child` line: `deadline − snapshotIdleStartUs`.
+  When the next enter has not been seen yet, omit the field or emit 0
+  and pair on the following `midi_input` / enter sample. Do not invent
+  a second telemetry owner.
+- Recapture the [`225659`](../../captures/session_20260827_225659.log)
+  class (record, overdub, STOPPED hold through `pending=0`).
+
+**Falsification of the freeze rule**
+
+Freezing the minimum observed reserve as a timing guarantee is rejected.
+An observed minimum is not an enforced deadline or an overrun policy.
+The measurement remains necessary, but the acceptance ceiling and
+overrun behavior must be defined before a reserve can be frozen.
+
+Before adding or freezing `reserve_us`, define how the next
+`handleMidiInput()` correlation is recorded after the idle line has
+already been emitted. Keep the existing cursor-yield, unpublished
+candidate, and previous-root behavior while that contract is open.
+Do not freeze from the 12.5 ms proxy or use the old 79 ms parent span as
+the reserve.
+
+**Not this slice:** Changing discard, start, or `step` bounds. The
+measurement contract must be valid before any of those decisions.
+
+## ExecutionBounds rows 21–22 — goals versus implementation
+
+The inventory states the **intended goals**, but the current
+implementation does not fully enforce them. Do not reclassify from the
+parent `snapshot_idle` span or from documentation alone.
+
+**Row 21 goal:** One admitted `LoopSnapshotConstruction::step` applies
+at most one persistent-cursor bar and copies at most eight membership
+pages of sixteen references. It does not rebuild a snapshot, enumerate a
+pass, destroy a tree, or publish. An incomplete step leaves the
+candidate unpublished and resumable.
+
+**Row 22 goal:** Wrap and session-exit only **queue** journal-capped
+fragments (exact parent identity) at stop / wrap commit. One idle turn
+admits at most one fragment start **or** one row-21 step.
+`storePublishedSnapshot` runs only when wrap journals, session-exit
+passes, construction, and companions are complete. Failure keeps the
+previous published root and never publishes a prefix.
+
+**Confirmed gaps**
+
+- `discardPendingIfLoopLengthChanged` first clones one snapshot header
+  when applied live-record ticks fit the sealed length. Non-fit discard
+  remains a content-sized destructor. It is not a row-21 step and not a
+  journal-capped fragment start.
+- `startNextPassChangeFragment` is the row-22 fragment-start unit, but
+  its lookup work is not bounded by the journal change cap.
+- `step` at 5.992 ms is the row-21 unit. Compare it to a valid
+  `T_RT_reserve` contract before considering any split of `begin` /
+  `applySoonestBar`.
+
+Keep the goals as the target contract. Update Class / Bound only with
+firmware that enforces the corresponding goal.
 
 ## Pre-implementation review — Stage 2 leftover probes
 
@@ -428,3 +758,47 @@ owner.
 
 ### Proceed?
 - YES — implemented 2026-08-27.
+
+## Pre-implementation review — Stage 2 session-exit length handoff
+
+### Ready
+- `discardPendingIfLoopLengthChanged` already runs at the start of
+  `stepPendingSnapshotPublish`.
+- Snapshot-root length is the sole note-boundary authority.
+- `appliedLiveRecordCompletedTicks` is the persistent fit cursor.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Fit check | Applied live-record ticks `> 0` and `<=` sealed length; reject grow |
+| Handoff | One `LoopSnapshot` header sharing span/event roots |
+| Non-fit | Existing `reset()` discard |
+| +16 live-record room | Unchanged |
+
+### Open before coding
+1. Device recapture after upload — not a firmware blocker.
+
+### Proceed?
+- YES — implemented 2026-08-28.
+
+## Stage 2 recapture — [`003015`](../../captures/session_20260828_003015.log)
+
+- Session-exit length handoff **closed**. 11085 parent rows, 11085
+  complete child rows, 0 truncated.
+- Record stop seals `loopLengthTicks=6144`. First PLAYING idle at
+  28.734 s is **3.182 ms**: `discard=47`, `start=3118`
+  (`pass_change=3084` nested), leftover **16 µs**. This is the 225659
+  leftover class with the destructor removed.
+- Post-record `discard` max is **47 µs**. No `discard >= 100`.
+- Completeness held for the first root: `root=0x0` until 30.207 s
+  (`pending=0`, `root=0x703248cc`, `root_rev=1`, `queued=0`,
+  `construction=0`, `journals=0`). No earlier nonzero root.
+- RECORDING used 2669 idles / **234 ms** CPU, `us_max=7.934 ms`. That
+  is not the [`121754`](../../captures/session_20260826_121754.log)
+  prefix rebuild (2611 idles / 17.7 s CPU).
+- Later successor construction keeps the published root selected
+  (`root_rev=1` then `7`). Final `pending=0` at 81.096 s publishes
+  `root=0x703ae154` / `root_rev=7`. `PLAYING -> STOPPED` at 97.204 s
+  has no later `snapshot_idle` in this file.
+- Named maxima still open: `start`/`pass_change` **12.405 / 12.357 ms**,
+  `step` 4.391 ms. `T_RT_reserve` is not frozen.
