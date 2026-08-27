@@ -63,8 +63,14 @@ after stop, the candidate stayed private, and publication occurred only at
 Stage 2 child timing is in tree on `snapshot_idle`
 (`start_us`, `pass_change_us`, `step_us`, `finish_us`, `publish_us`,
 `probe_us`). Capture-serial RAM1 locals **6976**; native **1489/1489**.
-Construction bounds stay unchanged until the instrumented recapture
-attributes the 79 ms class and freezes `T_RT_reserve`.
+Capture [`222401`](../../captures/session_20260827_222401.log) attributes
+the 10–12 ms first-record and 5–8 ms STOPPED session-exit slices to
+`startNextPendingConstruction`. Parent max is 16.252 ms. Child fields after
+`start_us` were truncated at `kMaxCaptureTextBytes` 192. A second
+`DIAG,snapshot_idle,child` line now carries the six child durations.
+Publication stayed private until `pending=0` / `root=0x7039436c` /
+`root_rev=7`. Construction bounds stay unchanged until an untruncated
+recapture names the leftover and freezes `T_RT_reserve`.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

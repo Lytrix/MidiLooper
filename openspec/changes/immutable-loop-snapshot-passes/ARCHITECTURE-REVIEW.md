@@ -402,5 +402,13 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
 - [x] `DIAG,snapshot_idle` is Tier-A.
 - [x] Capture-serial build passes with RAM1 locals **6976**.
 - [x] Full native suite passes: **1489/1489** tests.
-- [ ] Device recapture attributes the 79 ms class and freezes `T_RT_reserve`
-      before any construction-bound change.
+- [x] Device recapture [`222401`](../../../captures/session_20260827_222401.log):
+      `start_us` owns the 10–12 ms first-record and 5–8 ms STOPPED
+      session-exit slices; parent max 16.252 ms; candidate stayed
+      `root=0x0` until `pending=0` / `root=0x7039436c` / `root_rev=7`.
+- [ ] Child fields after `start_us` were truncated at 191 bytes on
+      [`222401`](../../../captures/session_20260827_222401.log). A second
+      `DIAG,snapshot_idle,child` line now carries `start` / `pass_change` /
+      `step` / `finish` / `publish` / `probe`. Capture-serial RAM1 locals
+      **6976**; native **1490/1490**. Recapture before any construction-bound
+      change or `T_RT_reserve` freeze.

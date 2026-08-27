@@ -273,5 +273,64 @@ wrong.
 - Host gates: `teensy41-capture-serial` RAM1 locals **6976**; native
   **1489/1489**.
 - Construction, publication, and admission owners are unchanged.
-- Device recapture is required to attribute the 79 ms class and freeze
-  `T_RT_reserve`. Do not change construction bounds until that attribution.
+- Child durations now emit on a second `DIAG,snapshot_idle,child` line so
+  the 191-byte capture ring no longer clips them. Host gates: RAM1 locals
+  **6976**; native **1490/1490**.
+
+## Stage 2 recapture — [`222401`](../../captures/session_20260827_222401.log)
+
+- Child fields after `start_us` never appear. Every `snapshot_idle` line is
+  191 bytes; `DebugSessionCapture` `kMaxCaptureTextBytes` is 192. `probe_us`
+  overhead is not measurable from this file.
+- 13551 `snapshot_idle` rows. Parent max is **16.252 ms**, not the 79 ms
+  class.
+- Start-attributed slices (`start_us` ≈ parent `us`): first-record live
+  starts at 12.691 / 10.294 / 10.676 / 9.956 / 9.829 / 9.355 / 9.169 ms;
+  STOPPED session-exit starts at 8.254 / 6.634 / 5.774 / 5.751 / 5.574 /
+  5.457 / 5.029 ms. Those costs are `startNextPendingConstruction`, outside
+  the classified `LoopSnapshotConstruction::step` unit.
+- Record-stop PLAYING idle at 107.662 s is **16.252 ms** with
+  `start_us=7070` and **9.182 ms leftover**. `maximumChanges=1` starts then
+  returns, so the leftover is not `step` / `finish` / `publish`. Other child
+  fields were truncated; the leftover owner is uninstrumented work inside
+  `stepPendingSnapshotPublish` plus the post-return `snapshot_idle` emit.
+- Slices of 2.7–4.3 ms with `start_us=0` are not start. Truncation prevents
+  splitting `step` / `finish` / leftover.
+- Completeness held: `root=0x0` until the final STOPPED idle at +38.487 s
+  (`pending=0`, `root=0x7039436c`, `root_rev=7`, `queued=0`,
+  `construction=0`, `journals=0`). No earlier nonzero root.
+- Stage 1 hold: `PLAYING -> STOPPED` at 144.012 s; first STOPPED
+  `snapshot_idle` at +0.056 s (`pending=1`, `queued=3`, `root=0x0`).
+- After record start, construction-window `midi_gap` max is 101.216 ms
+  beside the 12.691 ms first-record start. STOPPED `midi_gap` 57.128 ms
+  sits beside a 62 µs idle, not a construction child. `late_clk=0`;
+  `late_on` max 1.292 ms after stop.
+- `T_RT_reserve` is not frozen. At BPM 120, `T_clock` is 20.833 ms; several
+  start children exceed the 12.5 ms 60% proxy. Do not change construction
+  bounds until a recapture with untruncated children names the 9.182 ms
+  leftover and the `start_us=0` 2.7–4.3 ms class.
+
+Next measurement slice: keep the same child timers and fit the
+`snapshot_idle` payload inside 191 bytes, or emit a second short child
+line. Do not add a new telemetry owner.
+
+## Pre-implementation review — Stage 2 child line budget
+
+### Ready
+- `appendSnapshotIdleCaptureLine()` already owns parent and child emit.
+- `kMaxCaptureTextBytes` is 192 (191 payload). [`222401`](../../captures/session_20260827_222401.log)
+  clipped every parent line at `start_us`.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Fit method | Parent line keeps the pre-child fields. Children move to a second `DIAG,snapshot_idle,child` line from the same function. |
+| Pairing | Both lines share the same `#CAP` micros. |
+| New owner | No. Same tag prefix stays Tier-A. |
+| Construction | Unchanged. |
+
+### Open before coding
+1. Device recapture after upload.
+
+### Proceed?
+- YES — implementing the second child line.

@@ -92,8 +92,11 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     [`221054`](../../../captures/session_20260827_221054.log) closed Stage 1.
     Stage 2 child timing is now on `snapshot_idle` (`start_us`,
     `pass_change_us`, `step_us`, `finish_us`, `publish_us`, `probe_us`).
-    Device recapture must attribute the 79 ms class before any
-    construction-bound change; `T_RT_reserve` is not frozen yet.
+    Device recapture [`222401`](../../../captures/session_20260827_222401.log)
+    attributes the 10–12 ms first-record and 5–8 ms STOPPED session-exit
+    slices to `start_us`. Parent max is 16.252 ms. Child fields now emit on
+    a second `DIAG,snapshot_idle,child` line so the 191-byte capture budget
+    no longer clips them; `T_RT_reserve` is not frozen.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers
