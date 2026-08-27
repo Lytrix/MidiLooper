@@ -95,8 +95,15 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     Device recapture [`222401`](../../../captures/session_20260827_222401.log)
     attributes the 10–12 ms first-record and 5–8 ms STOPPED session-exit
     slices to `start_us`. Parent max is 16.252 ms. Child fields now emit on
-    a second `DIAG,snapshot_idle,child` line so the 191-byte capture budget
-    no longer clips them; `T_RT_reserve` is not frozen.
+    a second `DIAG,snapshot_idle,child` line. Recapture
+    [`224842`](../../../captures/session_20260827_224842.log) closes that
+    budget and names `start` / `pass_change` / `step`. Record-stop leftover
+    is 7.558 ms outside those children. Recapture
+    [`225659`](../../../captures/session_20260827_225659.log) names that
+    leftover as `discardPendingIfLoopLengthChanged` (`discard=15262` on
+    the 20.984 ms record-stop idle). Exclusive leftover after that probe
+    is ≤ 39 µs. Publication closed at `root=0x70431844` / `root_rev=8`.
+    `T_RT_reserve` is not frozen.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers

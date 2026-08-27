@@ -100,13 +100,14 @@ void test_timing_telemetry_lines_are_tier_a() {
       "journals=0,fragment=0/0,parent_rev=0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,child,start=79000,pass_change=1200,"
-      "step=80,finish=40,publish=0,probe=1"));
+      "step=80,finish=40,publish=0,probe=1,enqueue=0,discard=0,emit=40"));
 }
 
 void test_snapshot_idle_lines_fit_capture_text_budget() {
   // DebugSessionCapture kMaxCaptureTextBytes is 192; payload is 191 + NUL.
-  // Parent uses observed-class maxima plus 10-digit micros. Child uses uint32
-  // maxima and must still fit. Teensy %p is 0x + 8 hex digits.
+  // Parent uses observed-class maxima plus 10-digit micros. Child uses 6-digit
+  // durations (above observed leftover) so nine fields still fit. Teensy %p
+  // is 0x + 8 hex digits.
   constexpr size_t kMaxCaptureTextPayload = 191;
   char parent[256];
   char child[256];
@@ -120,9 +121,9 @@ void test_snapshot_idle_lines_fit_capture_text_budget() {
   const int childLen = snprintf(
       child, sizeof(child),
       "#CAP,%lu,DIAG,snapshot_idle,child,start=%lu,pass_change=%lu,step=%lu,"
-      "finish=%lu,publish=%lu,probe=%lu",
-      4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul,
-      4294967295ul, 4294967295ul);
+      "finish=%lu,publish=%lu,probe=%lu,enqueue=%lu,discard=%lu,emit=%lu",
+      4294967295ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul,
+      999999ul, 999999ul, 999999ul);
   TEST_ASSERT_GREATER_THAN(0, parentLen);
   TEST_ASSERT_GREATER_THAN(0, childLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), parentLen);

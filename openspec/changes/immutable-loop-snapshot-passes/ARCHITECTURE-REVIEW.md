@@ -410,5 +410,18 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       [`222401`](../../../captures/session_20260827_222401.log). A second
       `DIAG,snapshot_idle,child` line now carries `start` / `pass_change` /
       `step` / `finish` / `publish` / `probe`. Capture-serial RAM1 locals
-      **6976**; native **1490/1490**. Recapture before any construction-bound
-      change or `T_RT_reserve` freeze.
+      **6976**; native **1490/1490**.
+- [x] Device recapture [`224842`](../../../captures/session_20260827_224842.log)
+      closed the child-line budget (12789/12789 complete child rows) and
+      named `start` / `pass_change` / `step`. Record-stop leftover is
+      7.558 ms outside those children; the file ended before publication.
+- [x] Leftover probes (`enqueue`, `discard`, `emit`) are on the existing
+      child line. Recapture [`225659`](../../../captures/session_20260827_225659.log)
+      names the record-stop leftover as
+      `discardPendingIfLoopLengthChanged` (`discard=15262`). Exclusive
+      leftover after that probe is ≤ 39 µs. Publication closed at
+      `pending=0` / `root=0x70431844` / `root_rev=8`.
+- [ ] Reconcile named costs (`discard` 15.262 ms, session-exit
+      `start`/`pass_change` 19.996 ms, `step` 5.992 ms) with
+      `ExecutionBounds.md` rows 21–22 and freeze `T_RT_reserve` before
+      any construction-bound change.

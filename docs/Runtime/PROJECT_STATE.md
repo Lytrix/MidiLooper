@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-27 (Stage 2 snapshot child timing in tree)
+Last updated: 2026-08-27 (Stage 2 leftover named on 225659)
 
 ---
 
@@ -61,16 +61,15 @@ queued passes, construction progress, and companion changes before
 after stop, the candidate stayed private, and publication occurred only at
 `pending=0` / `root=0x70400ac8` / `root_rev=10`.
 Stage 2 child timing is in tree on `snapshot_idle`
-(`start_us`, `pass_change_us`, `step_us`, `finish_us`, `publish_us`,
-`probe_us`). Capture-serial RAM1 locals **6976**; native **1489/1489**.
-Capture [`222401`](../../captures/session_20260827_222401.log) attributes
-the 10–12 ms first-record and 5–8 ms STOPPED session-exit slices to
-`startNextPendingConstruction`. Parent max is 16.252 ms. Child fields after
-`start_us` were truncated at `kMaxCaptureTextBytes` 192. A second
-`DIAG,snapshot_idle,child` line now carries the six child durations.
-Publication stayed private until `pending=0` / `root=0x7039436c` /
-`root_rev=7`. Construction bounds stay unchanged until an untruncated
-recapture names the leftover and freezes `T_RT_reserve`.
+(`start`, `pass_change`, `step`, `finish`, `publish`, `probe`, `enqueue`,
+`discard`, `emit`). Capture-serial RAM1 locals **6976**; native **1490/1490**.
+Capture [`225659`](../../captures/session_20260827_225659.log) names the
+224842 record-stop leftover as `discardPendingIfLoopLengthChanged`
+(`discard=15262` on the 20.984 ms PLAYING idle). Exclusive leftover after
+that probe is ≤ 39 µs. STOPPED session-exit `start`/`pass_change` reaches
+19.996 ms. Publication closed at `pending=0` / `root=0x70431844` /
+`root_rev=8`. Construction bounds stay unchanged until `T_RT_reserve` is
+frozen.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

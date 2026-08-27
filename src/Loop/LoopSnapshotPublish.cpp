@@ -21,6 +21,9 @@ struct SnapshotIdleChildTimes {
   uint32_t finishUs = 0;
   uint32_t publishUs = 0;
   uint32_t probeUs = 0;
+  uint32_t enqueueUs = 0;
+  uint32_t discardUs = 0;
+  uint32_t emitUs = 0;
 };
 
 static SnapshotIdleChildTimes s_lastSnapshotIdleChildren;
@@ -1189,6 +1192,38 @@ LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleProbeUs() const {
 #endif
 }
 
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEnqueueUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.enqueueUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleDiscardUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.discardUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEmitUs() const {
+#if defined(SESSION_CAPTURE)
+  return s_lastSnapshotIdleChildren.emitUs;
+#else
+  return 0;
+#endif
+}
+
+LOOP_COLD_MEM void Loop::addSnapshotIdleEmitUs(uint32_t durationUs) {
+#if defined(SESSION_CAPTURE)
+  s_lastSnapshotIdleChildren.emitUs += durationUs;
+#else
+  (void)durationUs;
+#endif
+}
+
 LOOP_COLD_MEM uint32_t Loop::liveRecordAppliedCompletedTicks() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedLiveRecordCompletedTicks
                                     : 0;
@@ -1296,8 +1331,16 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   }
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
-  discardPendingIfLoopLengthChanged(box, loopLengthTicks);
+  {
+#if defined(SESSION_CAPTURE)
+    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.discardUs);
+#endif
+    discardPendingIfLoopLengthChanged(box, loopLengthTicks);
+  }
   if (allowStartConstruction) {
+#if defined(SESSION_CAPTURE)
+    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.enqueueUs);
+#endif
     enqueueLiveOverdubPasses();
   }
 

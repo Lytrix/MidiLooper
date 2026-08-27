@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-27 (Stage 2 snapshot child timing in tree)
+Last updated: 2026-08-27 (Stage 2 leftover named on 225659)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -99,24 +99,20 @@ pending publication instead of the visual idle cursor. Device recapture
 first STOPPED `snapshot_idle` at +0.070 s, candidate stayed `root=0x0` until
 +77.765 s, then `pending=0` published `root=0x70400ac8` / `root_rev=10`.
 
-**Immediate Stage 2 child timing**
+**Immediate Stage 2 leftover named**
 ([`snapshot_publication_timing_bugfix.md`](../Plans/snapshot_publication_timing_bugfix.md)):
-`snapshot_idle` now emits `start_us`, `pass_change_us`, `step_us`,
-`finish_us`, `publish_us`, and `probe_us`. `pass_change_us` is nested inside
-`start_us`. `probe_us` is one empty `micros()` pair. `DIAG,snapshot_idle` is
-Tier-A. Capture-serial RAM1 locals **6976**; native **1489/1489**.
-Construction code is unchanged. Device recapture
-[`222401`](../../captures/session_20260827_222401.log) shows the 10–12 ms
-first-record and 5–8 ms STOPPED session-exit costs in `start_us`. Parent
-max is 16.252 ms (`start_us=7070`, 9.182 ms leftover). Every
-`snapshot_idle` line is truncated at 191 bytes, so `pass_change_us` /
-`step_us` / `finish_us` / `publish_us` / `probe_us` never appear. Candidate
-stayed `root=0x0` until +38.487 s, then `pending=0` published
-`root=0x7039436c` / `root_rev=7`. Child timers now emit a second
-`DIAG,snapshot_idle,child` line (`start`, `pass_change`, `step`,
-`finish`, `publish`, `probe`) so the 191-byte capture budget no longer
-clips them. Parent `snapshot_idle` fields are unchanged. Capture-serial
-RAM1 locals **6976**; native **1490/1490**. Do not change construction
+Device recapture [`225659`](../../captures/session_20260827_225659.log)
+closes the 224842 leftover: record-stop PLAYING idle at 30.164 s is
+**20.984 ms** with `discard=15262` (`discardPendingIfLoopLengthChanged`),
+`start=5704`, `enqueue=5`, exclusive leftover **13 µs**. Exclusive leftover
+after `enqueue`/`discard` is ≤ 39 µs on every paired row. `enqueue` max is
+14 µs. `emit` max is 52 µs and sits after the parent `us` stamp.
+STOPPED session-exit `start`/`pass_change` reaches **19.996 / 19.968 ms**.
+`step` max is 5.992 ms. Completeness held (`root=0x0` until the final
+`pending=0` row). Publication closed at 183.121 s:
+`root=0x70431844` / `root_rev=8` / `finish=671` / `publish=10`.
+First STOPPED idle +0.066 s. Child-line budget held (31701/31701 complete
+child rows). `T_RT_reserve` is not frozen. Do not change construction
 bounds. Do not check off OpenSpec `3.5`/`3.6`.
 
 Direct consumer migration, persistence, and snapshot-identity undo remain
