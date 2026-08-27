@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-27 (wrap publication waits for session-exit work)
+Last updated: 2026-08-27 (Stage 1 STOPPED first-paint snapshot admission)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -74,6 +74,18 @@ remained, so playback selected an incomplete snapshot and dropped the first
 record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
+
+**Immediate Stage 1**
+([`snapshot_publication_timing_bugfix.md`](../Plans/snapshot_publication_timing_bugfix.md)):
+`MidiServiceDrain::allowSnapshotIdleStep()` now admits pending session-exit,
+in-flight, or wrap-journal Snapshot work in `STOPPED` even when
+`visualCacheNeedsFirstPaint` is true. `STOPPED` ends active MIDI ownership;
+it does not mean pending snapshot work is complete. Native policy fixture
+`test_stopped_pending_snapshot_wins_over_first_paint` covers that
+combination. `main.cpp::runDeferredIdleMaintenance()` is unchanged. Device
+recapture and the HITL publication gate remain open. Construction reserve
+(`T_RT_reserve`) stays Stage 2.
+
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:
 [`DEC-047`](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication).

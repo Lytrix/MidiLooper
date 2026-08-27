@@ -69,7 +69,10 @@ inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
 /// an in-flight candidate unless a wrap journal is pending (`DEC-047`). After a
 /// published root exists, PLAYING / OVERDUBBING may step pending bounded
 /// successors, including wrap-journal and session-exit pass work.
-/// Empty dirty visualCache still wins on STOPPED / STOPPED_RECORDING (`231632`).
+/// Empty dirty visualCache still wins on STOPPED / STOPPED_RECORDING (`231632`)
+/// when no snapshot work is pending. Pending session-exit, in-flight, or
+/// wrap-journal work wins over that first-paint predicate: STOPPED ends
+/// active MIDI ownership; it does not mean pending snapshot work is complete.
 inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverdubbing,
                                   bool havePublishedSnapshot, bool hasInFlightConstruction,
                                   bool visualCacheNeedsFirstPaint,
@@ -85,7 +88,7 @@ inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverd
     return true;
   }
   if (visualCacheNeedsFirstPaint) {
-    return false;
+    return hasInFlightConstruction || hasSuccessorJournalWork || hasPendingSnapshotWork;
   }
   return true;
 }

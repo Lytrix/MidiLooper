@@ -359,3 +359,17 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
 - [ ] Device recapture must confirm first-record playback after wrap-journal
       drain on [`204136`](../../../captures/session_20260827_204136.log)-class
       content.
+
+### Stage 1 STOPPED first-paint admission — 2026-08-27
+
+- [x] Architecture gate posted: owner remains
+      `MidiServiceDrain::allowSnapshotIdleStep`; no ownership, transition, or
+      execution-bound change.
+- [x] Pending session-exit, in-flight, or wrap-journal Snapshot work now wins
+      over `visualCacheNeedsFirstPaint` in `STOPPED`.
+- [x] Native fixture `test_stopped_pending_snapshot_wins_over_first_paint`
+      covers the stopped / first-paint / pending-work combination.
+- [x] Capture-serial build passes with RAM1 locals **7008**.
+- [x] Full native suite passes: **1487/1487** tests.
+- [ ] Device recapture and the HITL publication gate remain open.
+- [ ] Do not check off tasks `3.5`/`3.6` on this Stage 1 policy slice.

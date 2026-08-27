@@ -98,6 +98,19 @@ void test_first_record_snapshot_idle_matches_overdub_playing_start() {
       false, false, false, true, false, false));
 }
 
+void test_stopped_pending_snapshot_wins_over_first_paint() {
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, false, false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, false, false, true, false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, true, false, true, false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, false, true, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, false, false, false, true, true, false));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_around_idle_only_when_post_overdub_playing_drain);
@@ -107,5 +120,6 @@ int main() {
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
+  RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);
   return UNITY_END();
 }
