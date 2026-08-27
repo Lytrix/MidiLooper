@@ -66,17 +66,20 @@ inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
 
 /// First-record uses the overdub live-enqueue setup: start on RECORDING after
 /// the playhead has left bar 1, and start on PLAYING. OVERDUBBING only advances
-/// an in-flight candidate (`allowStart` is false there). After a published root
-/// exists, PLAYING / OVERDUBBING / RECORDING do not step successors (DEC-045).
+/// an in-flight candidate unless a wrap journal is pending (`DEC-047`). After a
+/// published root exists, PLAYING / OVERDUBBING may step pending bounded
+/// successors, including wrap-journal and session-exit pass work.
 /// Empty dirty visualCache still wins on STOPPED / STOPPED_RECORDING (`231632`).
 inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverdubbing,
                                   bool havePublishedSnapshot, bool hasInFlightConstruction,
-                                  bool visualCacheNeedsFirstPaint) {
+                                  bool visualCacheNeedsFirstPaint,
+                                  bool hasSuccessorJournalWork = false,
+                                  bool hasPendingSnapshotWork = false) {
   if (havePublishedSnapshot && (isRecording || isPlaying || isOverdubbing)) {
-    return false;
+    return hasInFlightConstruction || hasSuccessorJournalWork || hasPendingSnapshotWork;
   }
   if (isOverdubbing) {
-    return hasInFlightConstruction;
+    return hasInFlightConstruction || hasSuccessorJournalWork || hasPendingSnapshotWork;
   }
   if (isRecording || isPlaying) {
     return true;

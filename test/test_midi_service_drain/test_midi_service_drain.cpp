@@ -72,16 +72,24 @@ void test_first_record_snapshot_idle_matches_overdub_playing_start() {
       false, true, false, false, false, false));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
       false, true, false, false, true, false));
-  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
       false, true, false, true, true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, true, false, true, false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, true, false, true, false, false, false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, true, false, true, false, false, true));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
       true, false, false, true, false, false));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
       false, false, true, false, false, false));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
       false, false, true, false, true, false));
-  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
       false, false, true, true, true, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
+      false, false, true, true, false, false, true));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleStep(
       false, false, false, false, false, false));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(

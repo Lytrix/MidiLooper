@@ -1,11 +1,16 @@
 # Architecture review — immutable-loop-snapshot-passes
 
-**Decision:** Approved for design/specification phase; firmware gated
+**Decision:** Approved for Phase 3 tasks `3.5`/`3.6` design/specification;
+firmware gated
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../../../docs/Plans/loop_pass_snapshot_effective_state_refinement.md)
 **Reassessment:** [`ARCHITECTURE-REASSESSMENT.md`](ARCHITECTURE-REASSESSMENT.md)
 **North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → membership lists of `NoteRef`s and bar → membership lists of `EventRef`s. Its logical content is completely determined by its own reference root. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
 
-This change is design-only until a phase is approved and named in `docs/Runtime/CURRENT_WORK.md`. Phase 2 firmware is not authorized until formal approval, the later preflight gates, and an `ExecutionBounds.md` row for dirty-bar construction. The logical indexes are selected; the physical directory is not.
+The change remains design-only outside the activated Phase 3 tasks `3.5`/`3.6`.
+Firmware for that slice is not authorized until its phase gate, fixed-capacity
+directory measurement, enforced construction bounds, and device gates pass.
+The logical indexes are selected; the fixed-capacity physical directory is a
+Phase 3 admission prerequisite.
 
 ## Formal triggers
 
@@ -95,8 +100,9 @@ later implementation phase.
 
 Phase 1 is selected in `CURRENT_WORK.md`. Its native locality checkpoint
 selects a sparse fixed-capacity paged directory as the physical implementation
-experiment; page capacity, allocator behavior, peak temporary memory, and
-reclamation remain measured parameters. Native candidate construction may
+experiment; snapshot nodes use 32 KB bump slabs owned by `Loop`. Page
+capacity, peak temporary memory, and reclamation remain measured parameters.
+Native candidate construction may
 freeze, validate, and retain a candidate identity, but it must not make that
 candidate active or wire publication into runtime paths.
 `LoopPasses::materializeToEventVector()` remains an independent parity oracle
@@ -130,6 +136,38 @@ Blocked until the formal reassessment is approved and the architectural construc
 | **Behavior-preserving?** | YES until compatibility fallback retirement |
 | **Reuse decision** | YES — no new manager or adapter |
 | **Phase scope** | Playback, stateless LCR queries, display/analysis callers, existing native and HITL gates |
+
+The direct-consumer phase includes overdub source resolution. Its normal source
+is the selected complete snapshot's pitch/bar `NoteRef` index, not
+`overdubSourceViewNotes_`, `overdubSourceSpanCacheNotes_`, `visualCache`, or
+maintained pass replay. Those structures may remain as consumer-owned
+representations or parity/rollback sources only until their migration gates
+pass.
+
+### Phase 3 wrap-publication sub-gate (tasks 3.5–3.6)
+
+| Question | Required |
+|---|---|
+| **Owner module** | `Loop` publishes and selects the complete provisional `O:` snapshot; existing capture/pairing and overlap owners supply the bounded settled mutation journal |
+| **Primary invariant** | After a settled wrap, the selected snapshot contains only the latest immutable reference for each effective `NoteId`; geometry updates preserve `NoteId` and update only affected memberships |
+| **Ownership change?** | NO new owner — extend `Loop`; direct overdub-source migration remains a later task |
+| **State transition change?** | YES — settled wraps publish provisional `O:` snapshot identities, while overdub stop records one global pass-based undo transition |
+| **Execution-bound change?** | YES — fixed-capacity membership pages, persistent bar cursors, and bounded mutation-journal fragments are required through the existing Ring B maintenance cursor; incomplete candidates remain invisible |
+| **Behavior-preserving?** | YES for overlap, pairing, wrap geometry, and emitted musical content; publication policy and future source freshness change |
+| **Reuse decision** | YES — extend existing `Loop` publication and existing capture/pairing owners; do not create a source-cache authority or new manager |
+| **Phase scope** | Tasks `3.5`/`3.6` only: wrap journal/publication, pair-`NoteId` and non-note `EventId` handling, fixed-capacity construction, retry/retention, native parity, firmware-size, `T_RT_reserve`, and required HITL gates. Direct consumer migration, persistence, and snapshot-identity undo are later phases |
+
+The first implementation slice ends before consumer migration. Its device gate
+must report the maximum MIDI gap attributable to snapshot construction,
+maintenance time per slice, and total construction wall time. Total wall time
+alone is not a sufficient performance result. An overrun or failed admission
+retains the previous complete selected snapshot.
+
+For this sub-gate, the post-root successor restriction in `DEC-045` is
+superseded. Ordered bounded successor construction may step during
+`PLAYING`/`OVERDUBBING` after the first root exists. This applies only to tasks
+`3.5`/`3.6` and requires the replacement `DEC-047` decision record, the
+activated `CURRENT_WORK.md` scope, and the updated execution-bound inventory.
 
 ### Phase 4 — Undo, load, and persistence
 
@@ -255,3 +293,40 @@ are not authorized by this slice.
 
 Task 4.4 is not checked off. NOTE_EDIT, overdub analysis, and validation
 callers are not authorized by this slice. Task 4.3 stays skipped.
+
+### Phase 3 implementation review (3.5–3.6 wrap publication)
+
+- [ ] Phase architecture gate and `DEC-047` supersession are recorded.
+- [ ] `CURRENT_WORK.md` names tasks `3.5`/`3.6` as the active slice.
+- [ ] Fixed-capacity membership representation is selected and measured.
+- [ ] Mutation count, affected-bar, membership-entry, and journal-byte caps
+      are enforced structurally.
+- [ ] Capture/pairing assigns `NoteId` to each logical NoteOn/NoteOff pair
+      before pass promotion without a promotion-time content scan; `EventId`
+      remains for non-note events only.
+- [ ] Persistent bar-cursor progress replaces upfront changed-span
+      enumeration; construction does not copy an unbounded membership list.
+- [ ] Ordered fragments retain exact parent identity and survive retry;
+      incomplete candidates are never selected.
+- [ ] Hide and geometry replacement update paired event references by
+      `NoteId` while preserving pair identity and canonical order; non-note
+      events retain `EventId`.
+- [ ] Global overdub undo remains pass-based while construction is pending.
+- [ ] Native snapshot/take-survival parity fixtures pass.
+- [ ] Capture-serial build passes with RAM1 locals at least 4000.
+- [ ] The measured `T_RT_reserve` MIDI-gap/deadline-lateness device gate
+      passes with the documented retry behavior.
+
+### Admission starvation implementation review — 2026-08-27
+
+- [x] The existing `MidiServiceDrain` admission owner now recognizes pending
+      session-exit snapshot work after wrap-journal fragments reach zero.
+- [x] The existing STOPPED idle gate admits the Snapshot owner when pending
+      publication exists, even if the transport clock remains running.
+- [x] Construction remains one bounded `LoopSnapshotConstruction::step(1)`
+      unit per admitted idle turn; no USB-host ownership or interval-path
+      owner was added.
+- [x] Capture-serial build passes with RAM1 locals **7008**.
+- [x] Full native suite passes: **1484/1484** tests.
+- [ ] Device recapture must show the queued session-exit pass completing with
+      `pending=0`, then measure the remaining `T_RT_reserve` gate.

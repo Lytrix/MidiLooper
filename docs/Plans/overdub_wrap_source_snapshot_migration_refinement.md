@@ -1,0 +1,281 @@
+# Overdub Wrap Source Snapshot Migration Refinement
+
+**Status:** 3.5 firmware in progress on `feature/overdub-wrap-snapshot-publication`; 3.6 verification open. Snapshot admission starvation fix is in tree; device recapture remains open.
+
+**OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
+
+**Related residual:** OpenSpec `4b.3` remains a separate post-stop timing-attribution item. This plan does not close it.
+
+## Goal
+
+Move overdub-wrap effective-note handling toward the immutable `LoopSnapshot`
+end state. Do not optimize compatibility caches or extend compatibility replay
+as a normal source.
+
+The target is a complete immutable snapshot for every effective-state
+consumer:
+
+```text
+settled overdub wrap
+    → existing Loop semantic mutation
+    → SnapshotNoteChange records
+    → bounded LoopSnapshotConstruction
+    → complete provisional O: snapshot
+    → all consumers read selected snapshot content
+```
+
+## Identity and version contract
+
+- `NoteId` is the stable logical identity of a note.
+- `LoopSnapshotNoteRef` identifies one immutable version of that logical note.
+- `SnapshotNoteChange` is transient construction input only. It is never an
+  authoritative representation of loop content and is not retained as a
+  second effective-state model.
+- A Shorten, Move, or Length update creates a new immutable note object with
+  the same `NoteId` and changed geometry only for this migration slice.
+- A Hide operation removes the note reference from the successor snapshot.
+- A new captured note receives a new `NoteId`.
+- The selected snapshot contains only the latest reference for each effective
+  `NoteId`; older snapshot roots retain older versions for undo/redo.
+- Candidate construction is copy-on-write from the selected snapshot.
+  Unchanged note objects and unchanged membership structures remain shared.
+- No numeric per-note version field is introduced unless a later design
+  decision proves that reference identity and snapshot identity are
+  insufficient.
+
+## Owners
+
+- `Track::commitOverdubWrapAtSessionStart` owns wrap sequencing.
+- `Loop` owns snapshot allocation, candidate construction, publication,
+  selection, and lifetime.
+- Existing capture finalization, pairing, overlap, and NOTE_EDIT geometry
+  owners supply settled mutations.
+- Existing playback, display, NOTE_EDIT, analysis, validation, persistence,
+  undo, redo, clear-slot, and load owners retain their derived representation
+  and runtime policies.
+- Compatibility pass replay and materialized data remain only as parity or
+  rollback sources until each consumer migration gate passes.
+
+## Implementation contract — 2026-08-27
+
+The active implementation slice is limited to OpenSpec tasks `3.5` and `3.6`.
+Stages 6–8 are follow-on work and are not activated by this refinement.
+
+- This slice supersedes the post-root successor-idle restriction in `DEC-045`.
+  The supersession requires a new decision-log entry, an updated
+  `CURRENT_WORK.md` phase, and a replacement device gate. The existing
+  `4b.2c` evidence remains historical evidence for the prior policy.
+- Capture/pairing state assigns `NoteId` incrementally to each logical
+  NoteOn/NoteOff pair before pass promotion. Pass promotion must not scan the
+  capture content to assign pair identities. `EventId` remains the identity
+  for non-note events only.
+- Existing semantic owners provide an explicit, transient per-wrap mutation
+  journal. The journal carries new notes, geometry replacements, hidden-note
+  removals, and affected event replacements/removals. It is not an effective
+  state authority.
+- The journal has structural caps for change count, affected-bar count,
+  membership-entry count, and bytes. A wrap is split into ordered bounded
+  fragments when required. A fragment cannot publish a partial snapshot.
+- Pending fragments retain their exact parent snapshot identity. Multiple wraps
+  are applied in order to the latest complete unpublished candidate. A failed
+  fragment remains queued for retry; it is never silently discarded.
+- Candidate construction uses fixed-capacity immutable membership pages and a
+  persistent bar cursor. `begin()` must not enumerate all bars up front, and a
+  construction unit must not copy, scan, or sort an unbounded membership list.
+- The event index is effective content for this slice. Hide removes the paired
+  NoteOn/NoteOff event references by `NoteId`; geometry changes replace their
+  immutable note event objects while preserving `NoteId` and canonical order.
+  Non-note event objects retain their logical `EventId`.
+- Pair `NoteId`s and non-note `EventId`s are runtime-only in this slice.
+  Compatibility pass storage remains unchanged; reboot identity
+  persistence/reconstruction belongs to the later storage phase.
+- The global overdub undo entry remains pass-based while construction is
+  pending. Snapshot-identity attachment belongs to the later undo migration.
+- The device gate closes only against a measured `T_RT_reserve` contract:
+  construction-attributable MIDI gap and deadline lateness must remain within
+  that reserve, with an explicit overrun/retry result.
+
+### Admission starvation finding — 2026-08-27
+
+Capture [`194515`](../../captures/session_20260827_194515.log) showed the
+18 wrap fragments drain and publish a new root, but `queued=1,exit=1`
+remained for more than 28 seconds. The existing active-phase admission only
+recognized an in-flight construction or wrap journal, so it stopped calling
+`Loop::stepPendingSnapshotPublish` after `journals=0`. The stopped-track
+maintenance gate also returned while the transport clock remained running.
+The fix extends those existing admission gates to recognize all pending
+snapshot work while retaining `stepPendingSnapshotPublish(1)`. Native and
+capture-serial build gates pass; device recapture must verify a final
+`pending=0` row.
+
+## Work stages
+
+1. **Measure the existing wrap phases**
+   - Attribute capture finalization, companion sealing, snapshot change
+     creation, candidate construction, and consumer refresh separately.
+   - Keep probes capture-gated and disabled in normal builds.
+
+2. **Snapshot correctness**
+   - Map Shorten to `Replace` with the same `NoteId`.
+   - Map Hide to `Remove`.
+   - Map new overdub notes to `Add` with new identities.
+   - Carry the settled pair `NoteId` from capture/pairing state; emit event
+     replacements/removals for note geometry changes. Assign `EventId` only to
+     non-note event objects.
+   - Verify dirty bars include both old and new geometry, including wrap
+     tail/head membership.
+   - Verify `SnapshotNoteChange` is transient input and never a content
+     authority.
+   - Verify copy-on-write sharing, self-contained roots, latest-reference
+     selection, and older-snapshot stability.
+
+3. **Bounded candidate construction**
+   - Extend the existing `LoopSnapshotConstruction` progress path with
+     persistent bar-cursor progress; do not populate all dirty bars in
+     `begin()`.
+   - Replace vector-backed unbounded membership updates with fixed-capacity
+     immutable membership pages and bounded page fragments.
+   - Consume the bounded per-wrap mutation journal rather than reconstructing
+     complete pass content in `startNextPendingConstruction`.
+   - Execute it through the existing bounded/resumable maintenance mechanism
+     (`Loop::stepPendingSnapshotPublish` through the Ring B idle cursor).
+   - Do not introduce a new scheduler, runtime budget owner, or source-cache
+     authority.
+   - Construct candidates copy-on-write from the selected snapshot; never
+     mutate the selected or historical root.
+   - Define journal caps, membership-page capacity, maximum indivisible step,
+     persistent progress, completion state, overrun guard, and retry policy in
+     `ExecutionBounds.md`.
+
+4. **Publish and retain the previous snapshot**
+   - Extend the existing `Loop` publication path from
+     `Track::commitOverdubWrapAtSessionStart`; the wrap path only queues the
+     bounded journal and does not construct a candidate.
+   - Allow ordered successor construction during `PLAYING`/`OVERDUBBING`
+     under the superseding phase policy after the first root exists.
+   - A candidate is never selected while construction is incomplete.
+   - Select only after construction reaches the frozen complete state, and
+     publish that selection atomically.
+   - Keep the previous complete snapshot selected while construction is
+     pending or fails, and retain the failed journal for retry. “Provisional”
+     means private and unselected until completion.
+   - Keep wrap revisions provisional `O:` state; create one global
+     `OverdubPassAdded` undo transition at overdub stop.
+   - Keep that pending undo transition pass-based in this slice; do not attach
+     snapshot identities until the later undo migration.
+
+5. **Parity and MIDI-interruption gate**
+   - Compare the complete published candidate against the materialization
+     oracle without making the oracle the runtime source.
+   - Measure maximum MIDI gap attributable to snapshot construction,
+     maintenance time per slice, and total construction wall time.
+   - Measure and freeze `T_RT_reserve` before firmware publication. Pass only
+     when construction-attributable MIDI gap and deadline lateness remain
+     within that reserve; total wall time alone is not sufficient.
+   - Extend the existing snapshot/take-survival native tests with repeated
+     same-`NoteId` updates, wrap NoteOn/NoteOff replacement, Hide, equal-tick
+     ordering, and non-note events.
+   - Run native, firmware-size, and capture-serial device verification before
+     beginning consumer migration.
+   - Device `snapshot_idle` must report wrap-journal state separately from
+     pass-id `queued`/`applied`/`construction`: `journals` (remaining
+     fragments), `fragment=i/n` (front fragment), and `parent_rev` (published
+     revision when the front journal parent is the selected root; `0` when
+     the parent is an unpublished candidate). Capture
+     [`173826`](../../captures/session_20260827_173826.log) cannot close this
+     gate because those fields were absent and `root_rev` stayed `1`.
+
+The first implementation slice ends after Stage 5. It proves snapshot
+correctness, bounded construction, atomic publication/retention, parity, and
+MIDI interruption behavior on device. It does not migrate overdub source
+resolution, display, NOTE_EDIT, analysis, validation, persistence, playback,
+or undo/load. Stages 6–8 begin only after that gate.
+
+6. **Migrate overdub source resolution**
+   - Overdub source resolution reads pitch/bar `NoteRef` memberships,
+     deduplicates by `NoteId`, and derives geometry from the selected immutable
+     references.
+
+7. **Migrate all remaining consumers**
+   - Display, NOTE_EDIT, analysis, validation, playback, persistence,
+     undo/redo, clear-slot restore, and load use snapshot content and
+     snapshot identity while retaining their existing representation owners
+     and bounded policies.
+   - Consumer-owned `DisplayNote` and playback caches use snapshot identity as
+     their source freshness key.
+   - `LoopSnapshot` does not own consumer windows, projected intervals,
+     playback cursor/order, ledgers, or derived caches.
+   - Select bounded canonical spans before `IntervalProjection`.
+
+8. **Retire compatibility dependencies**
+   - Remove normal consumer dependence on maintained LCR, pass replay, and
+     full materialization only after all individual migration gates pass.
+   - Do not remove compatibility sources before parity and rollback gates pass.
+
+## Required verification
+
+- Snapshot self-containment: queries do not walk parent snapshots.
+- Same-`NoteId` geometry replacement creates a new immutable reference.
+- The pair `NoteId` is carried from settled capture/pairing state and is not
+  assigned by a promotion-time scan. `EventId` is retained for non-note event
+  objects only.
+- Hide removes paired note event references by `NoteId`; geometry changes
+  replace immutable note event objects while preserving `NoteId` and canonical
+  order.
+- Unchanged references and membership lists remain shared.
+- Older snapshots retain their original geometry.
+- Wrap tail/head lists deduplicate one logical `NoteId`.
+- The selected snapshot never exposes stale or duplicate note versions.
+- Failed or over-budget construction leaves the previous snapshot active and
+  retains the bounded journal for retry.
+- Multiple pending wraps apply ordered bounded fragments against exact parent
+  identities without exposing an incomplete candidate.
+- Construction performs no upfront full-span bar enumeration or unbounded
+  membership-vector copy.
+- Before consumer migration, the snapshot candidate matches the existing
+  materialization oracle for note identity, geometry, wrap membership, hidden
+  notes, pair-`NoteId` event membership, event ordering, and non-note
+  `EventId`s.
+- The first implementation slice ends after this parity gate and does not
+  migrate playback, display, NOTE_EDIT, analysis, validation, persistence, or
+  undo/load.
+- The device gate records maximum MIDI gap attributable to snapshot
+  construction, maintenance time per slice, and total construction wall time.
+- All later consumers match the materialization oracle while using the
+  snapshot as the normal source.
+- Pair `NoteId`s and non-note `EventId`s are runtime-only in this slice;
+  persistence and reboot reconstruction are later-phase requirements.
+- The global overdub undo entry remains pass-based while snapshot construction
+  is pending.
+- Run `pio run -e teensy41-capture-serial` first and require RAM1 locals of at
+  least 4000, then run `pio test -e native`.
+- Run the existing capture-serial HITL baseline after native and firmware
+  gates pass.
+
+## Architecture gate
+
+- **Owner:** `Loop` snapshot publication; existing semantic owners supply
+  mutations; existing consumers retain derived-state ownership.
+- **Primary invariant:** the selected complete snapshot contains only the
+  latest immutable reference for each effective `NoteId`.
+- **Ownership change:** NO new owner; this slice extends `Loop` publication
+  and existing capture/pairing owners. Normal consumer authority migration is
+  later.
+- **State transition change:** YES, because settled overdub wraps publish
+  provisional `O:` snapshot identities.
+- **Execution-bound change:** YES, because fixed-capacity membership pages,
+  persistent bar cursors, and bounded mutation-journal fragments are required
+  through the existing Ring B maintenance cursor; no new scheduler or runtime
+  budget owner is introduced.
+- **Behavior-preserving:** YES for musical semantics and consumer output;
+  snapshot freshness and source ownership intentionally change.
+- **Reuse:** YES — extend existing `Loop` publication and existing consumer
+  owners; do not create a compatibility cache authority or new manager.
+- **Phase authority:** `DEC-047` supersedes the post-root successor
+  restriction in `DEC-045` only for this `3.5`/`3.6` slice.
+- **Scope:** OpenSpec `3.5`/`3.6` capture publication, bounded mutation
+  journal, fixed-capacity membership construction, event identity/parity,
+  firmware-size, and HITL verification. Direct-consumer migration and
+  snapshot-identity undo/load remain later phases. No unrelated post-stop
+  `4b.3` fix.
+
