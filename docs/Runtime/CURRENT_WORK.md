@@ -82,9 +82,20 @@ in-flight, or wrap-journal Snapshot work in `STOPPED` even when
 `visualCacheNeedsFirstPaint` is true. `STOPPED` ends active MIDI ownership;
 it does not mean pending snapshot work is complete. Native policy fixture
 `test_stopped_pending_snapshot_wins_over_first_paint` covers that
-combination. `main.cpp::runDeferredIdleMaintenance()` is unchanged. Device
-recapture and the HITL publication gate remain open. Construction reserve
-(`T_RT_reserve`) stays Stage 2.
+combination. Device
+recapture [`214832`](../../captures/session_20260827_214832.log) does **not**
+close Stage 1: wrap journals drained with `queued=4` and `root=0x0`, then
+STOPPED first-paint `VCACHE` ran and no `STOPPED` `snapshot_idle` appeared.
+[`215420`](../../captures/session_20260827_215420.log) also holds completeness
+(`root=0x0`) and also has zero `STOPPED` `snapshot_idle` across a 16 s hold;
+that hold is not first-paint (`VCACHE` `slice_clean` `notes=166` `dirty=0`
+before stop, no post-stop `VCACHE`).
+[`215845`](../../captures/session_20260827_215845.log) repeats that on a
+120 s STOPPED hold: last PLAYING idle still `pending=1` `queued=3`
+`journals=2`, then persist/`idle_maint` only, no `STOPPED` `snapshot_idle`.
+STOPPED Snapshot admission now scans every slot and selects a track with
+pending publication instead of the visual idle cursor. Device recapture is
+required. Construction reserve (`T_RT_reserve`) stays Stage 2.
 
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:

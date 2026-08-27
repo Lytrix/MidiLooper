@@ -344,31 +344,43 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   }
   bool anyRealtimeTrackActive = false;
   bool anyPendingSnapshotPublish = false;
-  for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
+  bool pendingSnapshotByTrack[Config::NUM_TRACKS] = {};
+  const uint8_t scannedTrackCount = trackManager.getTrackCount();
+  for (uint8_t i = 0; i < scannedTrackCount; ++i) {
     const Track& t = trackManager.getTrack(i);
     if (t.isPlaying() || t.isRecording() || t.isOverdubbing() || t.isStoppedRecording()) {
       anyRealtimeTrackActive = true;
     }
-    if (t.loopsAllocated() && t.getActiveLoop().hasPendingSnapshotPublish()) {
-      anyPendingSnapshotPublish = true;
+    const bool pendingSnapshot = t.hasPendingSnapshotPublishOnAnySlot();
+    if (i < Config::NUM_TRACKS) {
+      pendingSnapshotByTrack[i] = pendingSnapshot;
     }
+    anyPendingSnapshotPublish = anyPendingSnapshotPublish || pendingSnapshot;
   }
   const bool allTracksStopped = !anyRealtimeTrackActive;
-  const bool deferStoppedIdleForClock = allTracksStopped && clockManager.isClockRunning();
-  if (deferStoppedIdleForClock &&
+  if (allTracksStopped && clockManager.isClockRunning() &&
       deferredOwner != MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend &&
       !(deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
-        anyPendingSnapshotPublish)) {
+        MidiServiceDrain::allowStoppedClockSnapshotStep(true, true,
+                                                       anyPendingSnapshotPublish))) {
     return;
   }
   if (allTracksStopped) {
-    const uint8_t trackCount = trackManager.getTrackCount();
+    const uint8_t trackCount = scannedTrackCount;
     if (trackCount == 0) {
       return;
     }
     static uint8_t sStoppedIdleTrackCursor = 0;
     if (sStoppedIdleTrackCursor >= trackCount) {
       sStoppedIdleTrackCursor = 0;
+    }
+    if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
+      const uint8_t trackIndex = MidiServiceDrain::selectStoppedSnapshotTrack(
+          sStoppedIdleTrackCursor, trackCount, pendingSnapshotByTrack);
+      trackManager.getTrack(trackIndex)
+          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+      sStoppedIdleTrackCursor = static_cast<uint8_t>((trackIndex + 1) % trackCount);
+      return;
     }
     if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend) {
       for (uint8_t offset = 0; offset < trackCount; ++offset) {

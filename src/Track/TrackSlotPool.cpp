@@ -75,6 +75,32 @@ bool Track::hasDataInSlot(uint8_t slotIndex) const {
   return loopForSlot(slotIndex).hasData();
 }
 
+TRACK_COLD_MEM bool Track::hasPendingSnapshotPublishOnAnySlot() const {
+  if (!loopsAllocated()) {
+    return false;
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (getLoop(s).hasPendingSnapshotPublish()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM Loop& Track::loopWithPendingSnapshotPublish() {
+  Loop& active = getActiveLoop();
+  if (active.hasPendingSnapshotPublish()) {
+    return active;
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    Loop& slotLoop = getLoop(s);
+    if (slotLoop.hasPendingSnapshotPublish()) {
+      return slotLoop;
+    }
+  }
+  return active;
+}
+
 TRACK_COLD_MEM bool Track::hasAnySlotData() const {
   for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
     if (hasDataInSlot(s)) {

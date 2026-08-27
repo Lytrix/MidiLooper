@@ -308,6 +308,8 @@ public:
   /// Active loop (used for playback, recording, display)
   Loop& getActiveLoop() { return getLoop(activeLoopIndex); }
   const Loop& getActiveLoop() const { return getLoop(activeLoopIndex); }
+  bool hasPendingSnapshotPublishOnAnySlot() const;
+  Loop& loopWithPendingSnapshotPublish();
 
   // ==========================================
   // OPTIMIZATION: Cached Note Access
