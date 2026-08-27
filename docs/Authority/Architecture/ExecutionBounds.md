@@ -88,7 +88,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 5 | `Loop::advanceFallbackGatherSession` traversal | `LoopVisualCache.cpp` | 96 / 192 / 768 events | **Structurally bounded** |
 | 6 | Fallback gather sort | `sortSessionEventsByTick` | none | **Unbounded** |
 | 7 | Fallback gather edit projection | `applyNoteEditPassSequence` | none | **Unbounded** |
-| 8 | `NoteUtils::reconstructDisplayNotes` in slice | `rebuildVisualCacheIdleSlice` | none | **Unbounded** |
+| 8 | `NoteUtils::reconstructDisplayNotes` in slice | `rebuildVisualCacheIdleSlice` | none | **Unbounded** — residual **4b.1b** owned by [`playback_window_build_owner_boundary_refinement.md`](../../Plans/playback_window_build_owner_boundary_refinement.md) § *4b.1b*; Ring B/RC2 closed without bounding this row |
 | 9 | `Loop::appendOverdubPassWrapPairedNotes` | `LoopVisualCache.cpp` | none | **Unbounded** |
 | 10 | `removeDisplayNotesOverlappingBars` | `rebuildVisualCacheIdleSlice` | none | **Unbounded** |
 | 11 | `Loop::materializeEditViewFromPasses` | STOPPED idle | none | **Unbounded** |
@@ -101,8 +101,8 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 18 | `processHitlSerialCommands` | capture builds only | none | **Unbounded** |
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
-| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and idle `Loop::stepPendingSnapshotPublish(1)` | one dirty bar of the in-flight note or event change, soonest playhead arrival first | **Empirically bounded** |
-| 22 | `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Record and overdub stop queue only; idle steps one `LoopSnapshotConstruction::step` unit (no published root: RECORDING/PLAYING may start from live capture or queued passes; OVERDUBBING in-flight only; after a root exists: STOPPED / STOPPED_RECORDING only); NOTE_EDIT/`tryPublish` drain to completion | Queue is O(1) pass-id copy. Idle applies one `LoopSnapshotConstruction::step`. Sync drain still `step` then atomic `freeze` | **Empirically bounded** |
+| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One persistent-cursor bar plus copy of at most `kSnapshotMembershipMaxPages` (8) pages of `kSnapshotMembershipPageCapacity` (16) references | **Structurally bounded** |
+| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap queues bounded journal fragments; idle steps one construction unit during PLAYING/OVERDUBBING after the first root (`DEC-047`). Session-exit still queues at stop | Journal caps: 32 changes, 32 affected bars, 64 membership entries, 4096 bytes. Failure retains the fragment and previous selected snapshot | **Structurally bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
 
@@ -111,29 +111,39 @@ Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (ro
 Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
 stop (`queueSessionExitSnapshot`) and construct from
-`Track::processDeferredIdleMaintenance`. An idle turn that applies one
-snapshot unit does not also run a visual-cache slice. First-record
-construction uses the overdub live-enqueue setup (`DEC-045` 4b.2): RECORDING
-may start from `capture.store` after the playhead has left bar 1, and PLAYING
-starts construction. While OVERDUBBING, idle only applies
-`LoopSnapshotConstruction::step` to an already started construction.
-After a published root exists, PLAYING and OVERDUBBING do not apply
-`LoopSnapshotConstruction::step`. PLAYING visual slices
-also stay off unless the visual cache is empty. PLAYING / STOPPED_RECORDING
-give an empty dirty visual cache the idle turn before
-`LoopSnapshotConstruction::step` when no root exists yet. Starting the next
-pass change-set stays on PLAYING / STOPPED_RECORDING / STOPPED. Wrap-ahead
-enqueue and `startNextPendingConstruction` stay off the OVERDUBBING idle
-turn. It is **not** admitted to `handleMidiInput()`, clock dispatch,
-track-tick, or `CommitReason::OverdubWrap` (wrap only records a pass id).
+`Track::processDeferredIdleMaintenance`. Phase 3 wrap publication queues
+bounded journal fragments from `Track::commitOverdubWrapAtSessionStart` and
+steps them during PLAYING/OVERDUBBING after the first root (`DEC-047`). An idle
+turn that applies one snapshot unit does not also run a visual-cache slice.
+First-record construction uses the overdub live-enqueue setup (`DEC-045` 4b.2):
+RECORDING may start from `capture.store` after the playhead has left bar 1.
+Wrap-ahead admission consumes only bounded journal fragments and never starts
+pass reconstruction. Construction remains **not** admitted to
+`handleMidiInput()`, clock dispatch, track-tick, or the
+`CommitReason::OverdubWrap` call stack; the wrap path queues the fragment only.
 
-| Property | `LoopSnapshotConstruction::step` | Session-exit publish |
+Selected structural caps:
+
+| Cap | Value |
+|-----|-------|
+| Membership page capacity | `kSnapshotMembershipPageCapacity` = 16 |
+| Membership pages per bar | `kSnapshotMembershipMaxPages` = 8 |
+| Journal changes | `kSnapshotWrapJournalMaxChanges` = 32 |
+| Journal affected bars | `kSnapshotWrapJournalMaxAffectedBars` = 32 |
+| Journal membership entries | `kSnapshotWrapJournalMaxMembershipEntries` = 64 |
+| Journal bytes | `kSnapshotWrapJournalMaxBytes` = 4096 |
+
+| Property | `LoopSnapshotConstruction::step` | Wrap / session-exit publish |
 |----------|---------------|----------------|
-| **Unit cap** | One dirty bar of the current `SnapshotNoteChange` or `SnapshotEventChange` | Queue: copy pass ids. Idle: one `LoopSnapshotConstruction::step`. Sync drain: remaining units then one store |
-| **Maximum indivisible step** | Copy-on-write that bar's dirty page and membership list. Remaining bars of the same change wait for later idle turns, ordered by soonest playhead arrival. Starting a pass still reconstructs that pass's committed events into a change set on the idle/drain owner | Atomic `storePublishedSnapshot` only after the candidate is complete |
-| **Progress** | `nextChangeIndex_`, `complete()`, `failed()` | Pending box queued/applied pass ids; previous published root remains selected until session-exit `freeze()` succeeds |
-| **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root and idle/drain stores it |
-| **Overrun / failure** | `failed_`; `freeze()` returns null | Discard the candidate; keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay as committed |
+| **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: bounded journal fragments with exact parent identity. Idle: one journal-capped pass-change fragment or one construction unit |
+| **Maximum indivisible step** | Select/update one fixed-capacity membership page (≤ 16 references), or copy/sort one page, and advance the persistent bar/membership cursor. No upfront full-span enumeration or pass reconstruction | Start at most one journal-capped pass-change fragment (`kSnapshotWrapJournalMaxChanges` = 32). Atomic `storePublishedSnapshot` only after the last wrap fragment and every queued session-exit pass fragment are complete |
+| **Progress** | Persistent tail/head bar cursor, journal-fragment cursor, `complete()`, `failed()` | Pending ordered fragments, pass-change cursor, and exact parent identity; previous published root remains selected until complete `freeze()` succeeds |
+| **Completion** | All changes applied and `failed()` is false | `freeze()` returns a non-null complete root and idle stores it |
+| **Overrun / failure** | `failed_`; `freeze()` returns null; retain the journal fragment for retry | Discard only the incomplete candidate; keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay as committed |
+
+`T_RT_reserve` remains the 3.6 device gate for construction-attributable MIDI
+gap and deadline lateness. These structural caps admit the 3.5 firmware path;
+they do not close that device measurement.
 
 A local timer is not the bound. Measured first-record idle `step(1)` vs
 `MI`/`MO` note gaps: [`233308`](../../captures/session_20260825_233308.log)

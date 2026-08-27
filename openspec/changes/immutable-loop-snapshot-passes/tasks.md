@@ -63,6 +63,19 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     not admitted in PLAYING, and the stopped-track gate blocked it while the
     transport clock remained running. Existing admission gates now recognize
     pending snapshot work while retaining `stepPendingSnapshotPublish(1)`.
+  - Capture [`200115`](../../../captures/session_20260827_200115.log) exposed
+    a 63.667 ms session-exit construction slice. Existing apply state now
+    persists membership-copy, mutation, append, and event-sort progress so one
+    admitted unit handles at most one 16-reference membership page. The
+    capture-serial build remains at **7008** RAM1 locals; device
+    `T_RT_reserve` verification remains open.
+  - Capture [`202635`](../../../captures/session_20260827_202635.log) confirms
+    the 18-fragment journal drain and eventual `pending=0`, but still records
+    79.169 ms and 74.453 ms `snapshot_idle` slices from whole-pass session-exit
+    start. Existing journal caps now also bound that start through a persistent
+    `CommittedEventRange` cursor; one admitted unit begins at most one
+    journal-capped pass-change fragment. Device `T_RT_reserve` recapture
+    remains open.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers

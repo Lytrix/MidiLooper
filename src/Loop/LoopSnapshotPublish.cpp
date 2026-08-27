@@ -3,6 +3,7 @@
 
 #include "Loop.h"
 
+#include "CommittedEventRange.h"
 #include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
@@ -226,45 +227,17 @@ bool eventAlreadyInSnapshot(const LoopSnapshot& snapshot, const MidiEvent& event
   if (!membership) {
     return false;
   }
-  for (const auto& ref : membership->references) {
-    if (ref && midiEventMatchesSnapshot(ref->value, event)) {
-      return true;
-    }
+  bool found = false;
+  forEachSnapshotMembershipReference(
+      membership.get(), [&found, &event](const LoopSnapshotEventRef& ref) {
+        if (!found && ref && midiEventMatchesSnapshot(ref->value, event)) {
+          found = true;
+        }
+      });
+  if (found) {
+    return true;
   }
   return false;
-}
-
-LOOP_COLD_MEM void appendCommittedPassChanges(const Loop& loop, const LoopSnapshot& parent,
-                                              PassId passId, EventId& nextEventId,
-                                              uint32_t& nextCanonicalOrder,
-                                              LoopSnapshotChangeSet& changes) {
-  bool isOverdubPass = false;
-  const CommittedChunkIdList* chunks = committedChunksForPass(loop, passId, isOverdubPass);
-  if (chunks == nullptr) {
-    return;
-  }
-  MidiEventVec events;
-  LoopEventStore::appendChunkRefEvents(*chunks, events);
-  const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
-      events, loop.loopLengthTicks, false, true, isOverdubPass);
-  NoteUtils::DisplayNoteVec freshNotes;
-  freshNotes.reserve(notes.size());
-  for (const NoteUtils::DisplayNote& note : notes) {
-    if (note.noteId != kInvalidNoteId && parent.findNote(note.noteId, note.note)) {
-      continue;
-    }
-    freshNotes.push_back(note);
-  }
-  appendMergedPassNotes(freshNotes, loop.loopId, loop.loopLengthTicks, changes);
-  MidiEventVec freshEvents;
-  freshEvents.reserve(events.size());
-  for (const MidiEvent& event : events) {
-    if (!eventAlreadyInSnapshot(parent, event)) {
-      freshEvents.push_back(event);
-    }
-  }
-  appendPassEvents(freshEvents, loop.loopId, loop.loopLengthTicks, nextEventId, nextCanonicalOrder,
-                   changes);
 }
 
 bool passIdInList(const std::vector<PassId>& passIds, PassId passId) {
@@ -283,7 +256,208 @@ bool isCommittedOverdubPass(const Loop& loop, PassId passId) {
 
 bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
   return box.constructionPassId == passId || passIdInList(box.queuedPassIds, passId) ||
-         passIdInList(box.appliedPassIds, passId);
+         passIdInList(box.appliedPassIds, passId) || passIdInList(box.journaledPassIds, passId) ||
+         (box.passChangeProgress.active && box.passChangeProgress.passId == passId);
+}
+
+uint32_t estimateNoteAffectedBars(const LoopSnapshotNote& note) {
+  if (note.loopLengthTicks == 0) {
+    return 0;
+  }
+  if (note.isWrap()) {
+    const uint32_t tailBars =
+        note.startTick < note.loopLengthTicks
+            ? ((note.loopLengthTicks - 1 - note.startTick) / Config::TICKS_PER_BAR) + 1
+            : 0;
+    const uint32_t headBars =
+        note.endTick == 0 ? 0 : ((note.endTick - 1) / Config::TICKS_PER_BAR) + 1;
+    return tailBars + headBars;
+  }
+  if (note.endTick <= note.startTick) {
+    return 0;
+  }
+  return ((note.endTick - 1) / Config::TICKS_PER_BAR) -
+         (note.startTick / Config::TICKS_PER_BAR) + 1;
+}
+
+size_t journalChangeCount(const LoopSnapshotChangeSet& changes) {
+  return changes.notes.size() + changes.events.size();
+}
+
+size_t journalByteSize(const LoopSnapshotChangeSet& changes) {
+  return changes.notes.size() * sizeof(SnapshotNoteChange) +
+         changes.events.size() * sizeof(SnapshotEventChange);
+}
+
+bool journalWouldExceedCaps(const LoopSnapshotChangeSet& changes, uint32_t affectedBars,
+                            uint32_t addedBars, size_t addedChanges) {
+  return journalChangeCount(changes) + addedChanges > kSnapshotWrapJournalMaxChanges ||
+         affectedBars + addedBars > kSnapshotWrapJournalMaxAffectedBars ||
+         journalByteSize(changes) + addedChanges * sizeof(SnapshotNoteChange) >
+             kSnapshotWrapJournalMaxBytes;
+}
+
+LoopSnapshotEventRef findPairedNoteEvent(const LoopSnapshot& snapshot, NoteId noteId,
+                                         uint32_t tick, bool wantNoteOn) {
+  if (noteId == kInvalidNoteId || snapshot.loopLengthTicks() == 0 ||
+      tick >= snapshot.loopLengthTicks()) {
+    return {};
+  }
+  const auto membership = snapshot.eventMembership(tick / Config::TICKS_PER_BAR);
+  LoopSnapshotEventRef found;
+  forEachSnapshotMembershipReference(
+      membership.get(),
+      [&found, noteId, wantNoteOn](const LoopSnapshotEventRef& reference) {
+        if (found || !reference) {
+          return;
+        }
+        if (reference->value.noteId != noteId) {
+          return;
+        }
+        if (wantNoteOn ? reference->value.isNoteOn() : reference->value.isNoteOff()) {
+          found = reference;
+        }
+      });
+  return found;
+}
+
+void appendPairedNoteEventChanges(const LoopSnapshot& parent, const PendingNoteChange& change,
+                                  LoopId loopId, uint32_t loopLengthTicks, EventId& nextEventId,
+                                  uint32_t& nextCanonicalOrder, LoopSnapshotChangeSet& changes) {
+  if (change.noteId == kInvalidNoteId || loopLengthTicks == 0) {
+    return;
+  }
+  const bool isHide = change.kind == PendingNoteChangeKind::Hide;
+  const bool isReplace = change.kind == PendingNoteChangeKind::Shorten;
+  const LoopSnapshotNoteRef previousNote = parent.findNote(change.noteId, change.pitch);
+  const uint32_t previousStart = previousNote ? previousNote->startTick : change.startTick;
+  const uint32_t previousEnd = previousNote ? previousNote->endTick : change.endTick;
+
+  auto makeNoteEvent = [loopId, &nextEventId, &nextCanonicalOrder](
+                           uint32_t tick, uint8_t channel, uint8_t pitch, uint8_t velocity,
+                           NoteId noteId, bool noteOn) {
+    SnapshotEventChange eventChange{};
+    eventChange.next.loopId = loopId;
+    eventChange.next.eventId = nextEventId++;
+    eventChange.next.canonicalOrder = nextCanonicalOrder++;
+    eventChange.next.value =
+        noteOn ? MidiEvent::NoteOn(tick, channel, pitch, velocity)
+               : MidiEvent::NoteOff(tick, channel, pitch, 0);
+    eventChange.next.value.noteId = noteId;
+    return eventChange;
+  };
+
+  if (isHide || isReplace) {
+    if (const auto previousOn =
+            findPairedNoteEvent(parent, change.noteId, previousStart, true)) {
+      SnapshotEventChange eventChange{};
+      eventChange.kind = SnapshotChangeKind::Remove;
+      eventChange.previous = previousOn;
+      changes.events.push_back(eventChange);
+    }
+    const uint32_t previousOffTick =
+        previousEnd < loopLengthTicks ? previousEnd : loopLengthTicks - 1;
+    if (const auto previousOff =
+            findPairedNoteEvent(parent, change.noteId, previousOffTick, false)) {
+      SnapshotEventChange eventChange{};
+      eventChange.kind = SnapshotChangeKind::Remove;
+      eventChange.previous = previousOff;
+      changes.events.push_back(eventChange);
+    }
+  }
+  if (!isHide) {
+    SnapshotEventChange onChange =
+        makeNoteEvent(change.startTick, change.channel, change.pitch, change.velocity,
+                      change.noteId, true);
+    onChange.kind = SnapshotChangeKind::Add;
+    changes.events.push_back(onChange);
+    const uint32_t offTick =
+        change.endTick < loopLengthTicks ? change.endTick : loopLengthTicks - 1;
+    SnapshotEventChange offChange =
+        makeNoteEvent(offTick, change.channel, change.pitch, 0, change.noteId, false);
+    offChange.kind = SnapshotChangeKind::Add;
+    changes.events.push_back(offChange);
+  }
+}
+
+void appendPendingNoteChange(const LoopSnapshot& parent, const PendingNoteChange& change,
+                             LoopId loopId, uint32_t loopLengthTicks, EventId& nextEventId,
+                             uint32_t& nextCanonicalOrder, LoopSnapshotChangeSet& changes) {
+  if (change.noteId == kInvalidNoteId) {
+    return;
+  }
+  SnapshotNoteChange noteChange{};
+  noteChange.next.loopId = loopId;
+  noteChange.next.noteId = change.noteId;
+  noteChange.next.pitch = change.pitch;
+  noteChange.next.velocity = change.velocity;
+  noteChange.next.startTick = change.startTick;
+  noteChange.next.endTick = change.endTick;
+  noteChange.next.loopLengthTicks = loopLengthTicks;
+  if (change.kind == PendingNoteChangeKind::Add) {
+    noteChange.kind = SnapshotChangeKind::Add;
+  } else if (change.kind == PendingNoteChangeKind::Hide) {
+    const LoopSnapshotNoteRef previous = parent.findNote(change.noteId, change.pitch);
+    if (!previous) {
+      return;
+    }
+    noteChange.kind = SnapshotChangeKind::Remove;
+    noteChange.previous = previous;
+  } else {
+    const LoopSnapshotNoteRef previous = parent.findNote(change.noteId, change.pitch);
+    if (!previous) {
+      return;
+    }
+    noteChange.kind = SnapshotChangeKind::Replace;
+    noteChange.previous = previous;
+    noteChange.next = *previous;
+    noteChange.next.loopId = loopId;
+    noteChange.next.loopLengthTicks = loopLengthTicks;
+    noteChange.next.startTick = change.startTick;
+    noteChange.next.endTick = change.endTick;
+    noteChange.next.velocity = change.velocity == 0 ? previous->velocity : change.velocity;
+  }
+  changes.notes.push_back(noteChange);
+  appendPairedNoteEventChanges(parent, change, loopId, loopLengthTicks, nextEventId,
+                               nextCanonicalOrder, changes);
+}
+
+void appendWrapNonNoteEvents(const Loop& loop, const LoopSnapshot& parent, PassId passId,
+                             EventId& nextEventId, uint32_t& nextCanonicalOrder,
+                             LoopSnapshotChangeSet& changes) {
+  bool isOverdubPass = false;
+  const CommittedChunkIdList* chunks = committedChunksForPass(loop, passId, isOverdubPass);
+  if (chunks == nullptr) {
+    return;
+  }
+  MidiEventVec events;
+  LoopEventStore::appendChunkRefEvents(*chunks, events);
+  for (const MidiEvent& event : events) {
+    if (event.isNoteOn() || event.isNoteOff() || eventAlreadyInSnapshot(parent, event)) {
+      continue;
+    }
+    SnapshotEventChange change{};
+    change.kind = SnapshotChangeKind::Add;
+    change.next.loopId = loop.loopId;
+    change.next.eventId = nextEventId++;
+    change.next.canonicalOrder = nextCanonicalOrder++;
+    change.next.value = event;
+    changes.events.push_back(change);
+  }
+}
+
+void flushWrapJournalFragment(std::vector<SnapshotWrapJournalFragment>& fragments,
+                              ImmutableLoopSnapshotRef parent, PassId wrapPassId,
+                              LoopSnapshotChangeSet& current) {
+  if (current.notes.empty() && current.events.empty()) {
+    return;
+  }
+  SnapshotWrapJournalFragment fragment;
+  fragment.parent = std::move(parent);
+  fragment.changes = std::move(current);
+  fragment.wrapPassId = wrapPassId;
+  fragments.push_back(std::move(fragment));
+  current = {};
 }
 
 uint32_t liveRecordCompletedOrOneBar(uint32_t liveRecordCompletedTicks) {
@@ -312,9 +486,210 @@ void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t 
   box.unpublishedCandidate.reset();
   box.construction.reset();
   box.constructionPassId = kInvalidPassId;
+  box.passChangeProgress.reset();
   box.appliedLiveRecordEventCount = 0;
   box.appliedLiveRecordCompletedTicks = 0;
   box.applyingCompanions = false;
+}
+
+PendingPassChangeProgress::OpenNote* findOpenPassNote(PendingPassChangeProgress& progress,
+                                                      NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return nullptr;
+  }
+  for (uint8_t i = 0; i < progress.openNoteCount; ++i) {
+    if (progress.openNotes[i].noteId == noteId) {
+      return &progress.openNotes[i];
+    }
+  }
+  return nullptr;
+}
+
+PendingPassChangeProgress::OpenNote* addOpenPassNote(PendingPassChangeProgress& progress,
+                                                     NoteId noteId) {
+  if (noteId == kInvalidNoteId ||
+      progress.openNoteCount >= kSnapshotWrapJournalMaxChanges) {
+    return nullptr;
+  }
+  PendingPassChangeProgress::OpenNote& open = progress.openNotes[progress.openNoteCount++];
+  open = PendingPassChangeProgress::OpenNote{};
+  open.noteId = noteId;
+  return &open;
+}
+
+void removeOpenPassNote(PendingPassChangeProgress& progress,
+                        const PendingPassChangeProgress::OpenNote* open) {
+  if (open == nullptr || progress.openNoteCount == 0) {
+    return;
+  }
+  const size_t index = static_cast<size_t>(open - progress.openNotes.data());
+  if (index >= progress.openNoteCount) {
+    return;
+  }
+  for (size_t i = index + 1; i < progress.openNoteCount; ++i) {
+    progress.openNotes[i - 1] = progress.openNotes[i];
+  }
+  --progress.openNoteCount;
+  progress.openNotes[progress.openNoteCount] = {};
+}
+
+void updateOpenPassNoteFromEvent(PendingPassChangeProgress::OpenNote& open,
+                                 const MidiEvent& event) {
+  if (event.isNoteOn()) {
+    open.hasStart = true;
+    open.startTick = event.tick;
+    open.pitch = event.data.noteData.note;
+    open.velocity = event.data.noteData.velocity;
+    return;
+  }
+  if (event.isNoteOff()) {
+    open.hasEnd = true;
+    open.endTick = event.tick;
+    if (!open.hasStart) {
+      open.pitch = event.data.noteData.note;
+    }
+  }
+}
+
+bool appendOpenNoteChange(const PendingPassChangeProgress::OpenNote& open, LoopId loopId,
+                          uint32_t loopLengthTicks, LoopSnapshotChangeSet& changes) {
+  if (!open.hasStart || !open.hasEnd || open.noteId == kInvalidNoteId) {
+    return false;
+  }
+  SnapshotNoteChange change{};
+  change.kind = SnapshotChangeKind::Add;
+  change.next.loopId = loopId;
+  change.next.noteId = open.noteId;
+  change.next.pitch = open.pitch;
+  change.next.velocity = open.velocity;
+  change.next.startTick = open.startTick;
+  change.next.endTick = open.endTick;
+  change.next.loopLengthTicks = loopLengthTicks;
+  changes.notes.push_back(change);
+  return true;
+}
+
+LOOP_COLD_MEM void refillPassChangeBatch(const Loop& loop, PendingPassChangeProgress& progress) {
+  if (!progress.batchExhausted()) {
+    return;
+  }
+  progress.batch.clear();
+  progress.batchIndex = 0;
+  if (progress.cursor.complete) {
+    return;
+  }
+  bool isOverdubPass = false;
+  const CommittedChunkIdList* chunks =
+      committedChunksForPass(loop, progress.passId, isOverdubPass);
+  if (chunks == nullptr) {
+    progress.cursor.complete = true;
+    return;
+  }
+  const CommittedChunkIdList* lists[] = {chunks};
+  CommittedEventRange::appendWindowBudgeted(lists, 1, loop.loopLengthTicks, 0,
+                                            loop.loopLengthTicks,
+                                            kSnapshotWrapJournalMaxChanges, progress.cursor,
+                                            progress.batch);
+}
+
+LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnapshot& parent,
+                                                PendingPassChangeProgress& progress,
+                                                LoopSnapshotChangeSet& changes,
+                                                uint32_t& affectedBars,
+                                                uint32_t& membershipEntries) {
+  refillPassChangeBatch(loop, progress);
+  while (!progress.batchExhausted()) {
+    const MidiEvent& event = progress.batch[progress.batchIndex];
+    const bool addEvent = !eventAlreadyInSnapshot(parent, event);
+    const bool isNoteEvent = event.isNoteOn() || event.isNoteOff();
+    PendingPassChangeProgress::OpenNote prospective{};
+    PendingPassChangeProgress::OpenNote* existing = nullptr;
+    bool trackNote = false;
+    if (isNoteEvent && event.noteId != kInvalidNoteId &&
+        !parent.findNote(event.noteId, event.data.noteData.note)) {
+      existing = findOpenPassNote(progress, event.noteId);
+      if (existing != nullptr) {
+        prospective = *existing;
+      } else {
+        prospective.noteId = event.noteId;
+      }
+      updateOpenPassNoteFromEvent(prospective, event);
+      trackNote = true;
+    }
+    const bool emitNote = trackNote && prospective.hasStart && prospective.hasEnd;
+    const size_t addedChanges = (addEvent ? 1 : 0) + (emitNote ? 1 : 0);
+    uint32_t addedBars = 0;
+    if (emitNote) {
+      LoopSnapshotNote note{};
+      note.startTick = prospective.startTick;
+      note.endTick = prospective.endTick;
+      note.loopLengthTicks = loop.loopLengthTicks;
+      addedBars = estimateNoteAffectedBars(note);
+    }
+    if (addedChanges == 0) {
+      ++progress.batchIndex;
+      continue;
+    }
+    if ((!changes.notes.empty() || !changes.events.empty()) &&
+        (journalWouldExceedCaps(changes, affectedBars, addedBars, addedChanges) ||
+         membershipEntries + addedBars > kSnapshotWrapJournalMaxMembershipEntries)) {
+      break;
+    }
+    if (addEvent) {
+      SnapshotEventChange eventChange{};
+      eventChange.kind = SnapshotChangeKind::Add;
+      eventChange.next.loopId = loop.loopId;
+      eventChange.next.eventId = progress.nextEventId++;
+      eventChange.next.canonicalOrder = progress.nextCanonicalOrder++;
+      eventChange.next.value = event;
+      changes.events.push_back(eventChange);
+    }
+    if (emitNote) {
+      appendOpenNoteChange(prospective, loop.loopId, loop.loopLengthTicks, changes);
+      if (existing != nullptr) {
+        removeOpenPassNote(progress, existing);
+      }
+      affectedBars += addedBars;
+      membershipEntries += addedBars;
+    } else if (trackNote) {
+      if (existing != nullptr) {
+        *existing = prospective;
+      } else {
+        PendingPassChangeProgress::OpenNote* stored =
+            addOpenPassNote(progress, prospective.noteId);
+        if (stored == nullptr) {
+          break;
+        }
+        *stored = prospective;
+      }
+    }
+    ++progress.batchIndex;
+  }
+  return true;
+}
+
+LOOP_COLD_MEM bool startNextPassChangeFragment(Loop& loop, PendingSnapshotPublishBox& box,
+                                               const ImmutableLoopSnapshotRef& parent) {
+  PendingPassChangeProgress& progress = box.passChangeProgress;
+  LoopSnapshotChangeSet changes;
+  uint32_t affectedBars = 0;
+  uint32_t membershipEntries = 0;
+  if (!appendNextPassChangeFragment(loop, *parent, progress, changes, affectedBars,
+                                    membershipEntries)) {
+    return false;
+  }
+  if (changes.notes.empty() && changes.events.empty()) {
+    if (progress.complete()) {
+      box.appliedPassIds.push_back(progress.passId);
+      box.constructionPassId = kInvalidPassId;
+      progress.reset();
+    }
+    return progress.active || !box.queuedPassIds.empty();
+  }
+  box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+  box.constructionPassId = progress.passId;
+  box.applyingCompanions = false;
+  return true;
 }
 
 LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
@@ -369,27 +744,52 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
 
 LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPublishBox& box,
                                                 uint32_t liveRecordCompletedTicks) {
+  if (!box.queuedWrapJournals.empty()) {
+    const SnapshotWrapJournalFragment& fragment = box.queuedWrapJournals.front();
+    ImmutableLoopSnapshotRef parent = box.unpublishedCandidate
+                                          ? box.unpublishedCandidate
+                                          : fragment.parent;
+    if (!parent) {
+      parent = resolvePendingParent(loop, box, liveRecordCompletedTicks);
+    }
+    if (!parent) {
+      return false;
+    }
+    box.construction = std::make_unique<LoopSnapshotConstruction>(parent, fragment.changes);
+    box.constructionPassId = fragment.wrapPassId;
+    box.wrapJournalInFlight = true;
+    box.applyingCompanions = false;
+    return true;
+  }
+
   const ImmutableLoopSnapshotRef parent =
       resolvePendingParent(loop, box, liveRecordCompletedTicks);
   if (!parent) {
     return false;
   }
 
-  while (!box.queuedPassIds.empty()) {
+  if (box.passChangeProgress.active) {
+    return startNextPassChangeFragment(loop, box, parent);
+  }
+
+  if (!box.queuedPassIds.empty()) {
     const PassId passId = box.queuedPassIds.front();
     box.queuedPassIds.erase(box.queuedPassIds.begin());
-    LoopSnapshotChangeSet changes;
-    EventId nextEventId = parent->nextEventId();
-    uint32_t nextCanonicalOrder = parent->nextEventId();
-    appendCommittedPassChanges(loop, *parent, passId, nextEventId, nextCanonicalOrder, changes);
-    if (changes.notes.empty() && changes.events.empty()) {
+    bool isOverdubPass = false;
+    const CommittedChunkIdList* chunks = committedChunksForPass(loop, passId, isOverdubPass);
+    if (chunks == nullptr || chunks->empty()) {
       box.appliedPassIds.push_back(passId);
-      continue;
+      return !box.queuedPassIds.empty() || box.sessionExitQueued;
     }
-    box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
+    box.passChangeProgress.reset();
+    box.passChangeProgress.active = true;
+    box.passChangeProgress.passId = passId;
+    box.passChangeProgress.nextEventId = parent->nextEventId();
+    box.passChangeProgress.nextCanonicalOrder = parent->nextEventId();
+    CommittedEventRange::resetWindowTraversalCursor(box.passChangeProgress.cursor);
     box.constructionPassId = passId;
     box.applyingCompanions = false;
-    return true;
+    return startNextPassChangeFragment(loop, box, parent);
   }
 
   if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
@@ -472,16 +872,118 @@ LOOP_COLD_MEM bool finishPendingConstruction(PendingSnapshotPublishBox& box) {
     return false;
   }
   box.unpublishedCandidate = std::move(frozen);
-  if (box.constructionPassId != kInvalidPassId) {
-    box.appliedPassIds.push_back(box.constructionPassId);
+  if (box.wrapJournalInFlight && !box.queuedWrapJournals.empty()) {
+    box.queuedWrapJournals.erase(box.queuedWrapJournals.begin());
   }
+  const PassId finishedPassId = box.constructionPassId;
   box.construction.reset();
-  box.constructionPassId = kInvalidPassId;
+  box.wrapJournalInFlight = false;
   box.applyingCompanions = false;
+  if (box.passChangeProgress.active) {
+    if (box.passChangeProgress.complete()) {
+      if (finishedPassId != kInvalidPassId) {
+        box.appliedPassIds.push_back(finishedPassId);
+      }
+      box.passChangeProgress.reset();
+      box.constructionPassId = kInvalidPassId;
+    }
+    return true;
+  }
+  if (finishedPassId != kInvalidPassId) {
+    box.appliedPassIds.push_back(finishedPassId);
+  }
+  box.constructionPassId = kInvalidPassId;
   return true;
 }
 
 }  // namespace
+
+LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
+  if (wrapPassId == kInvalidPassId || loopLengthTicks == 0) {
+    return false;
+  }
+  ImmutableLoopSnapshotRef parent = publishedSnapshot();
+  if (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->unpublishedCandidate) {
+    parent = pendingSnapshotPublishBox_->unpublishedCandidate;
+  }
+  if (!parent) {
+    return false;
+  }
+
+  if (!pendingSnapshotPublishBox_) {
+    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  }
+  PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  if (passAlreadyTracked(box, wrapPassId)) {
+    return !box.queuedWrapJournals.empty();
+  }
+
+  LoopSnapshotChangeSet current;
+  uint32_t affectedBars = 0;
+  uint32_t membershipEntries = 0;
+  EventId nextEventId = parent->nextEventId();
+  uint32_t nextCanonicalOrder = parent->nextEventId();
+  std::vector<SnapshotWrapJournalFragment> fragments;
+
+  auto flushCurrent = [&]() {
+    flushWrapJournalFragment(fragments, parent, wrapPassId, current);
+    affectedBars = 0;
+    membershipEntries = 0;
+  };
+
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    LoopSnapshotChangeSet incoming;
+    appendPendingNoteChange(*parent, change, loopId, loopLengthTicks, nextEventId,
+                            nextCanonicalOrder, incoming);
+    if (incoming.notes.empty() && incoming.events.empty()) {
+      continue;
+    }
+    uint32_t addedBars = 0;
+    for (const SnapshotNoteChange& noteChange : incoming.notes) {
+      if (noteChange.previous) {
+        addedBars += estimateNoteAffectedBars(*noteChange.previous);
+      }
+      if (noteChange.kind != SnapshotChangeKind::Remove) {
+        addedBars += estimateNoteAffectedBars(noteChange.next);
+      }
+    }
+    const size_t addedChanges = journalChangeCount(incoming);
+    const uint32_t addedEntries = addedBars;
+    if (!current.notes.empty() || !current.events.empty()) {
+      if (journalWouldExceedCaps(current, affectedBars, addedBars, addedChanges) ||
+          membershipEntries + addedEntries > kSnapshotWrapJournalMaxMembershipEntries) {
+        flushCurrent();
+      }
+    }
+    current.notes.insert(current.notes.end(), incoming.notes.begin(), incoming.notes.end());
+    current.events.insert(current.events.end(), incoming.events.begin(), incoming.events.end());
+    affectedBars += addedBars;
+    membershipEntries += addedEntries;
+  }
+
+  LoopSnapshotChangeSet nonNote;
+  appendWrapNonNoteEvents(*this, *parent, wrapPassId, nextEventId, nextCanonicalOrder, nonNote);
+  if (!nonNote.events.empty()) {
+    if (!current.notes.empty() || !current.events.empty()) {
+      if (journalWouldExceedCaps(current, affectedBars, 0, journalChangeCount(nonNote))) {
+        flushCurrent();
+      }
+    }
+    current.events.insert(current.events.end(), nonNote.events.begin(), nonNote.events.end());
+  }
+  flushCurrent();
+
+  if (fragments.empty()) {
+    return false;
+  }
+  for (size_t index = 0; index < fragments.size(); ++index) {
+    fragments[index].fragmentIndex = static_cast<uint8_t>(index);
+    fragments[index].fragmentCount = static_cast<uint8_t>(fragments.size());
+    box.queuedWrapJournals.push_back(std::move(fragments[index]));
+  }
+  box.journaledPassIds.push_back(wrapPassId);
+  return true;
+}
 
 LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
   if (!pendingSnapshotPublishBox_ || !hasOverdubSession() ||
@@ -511,7 +1013,8 @@ LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
 LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
   if (pendingSnapshotPublishBox_) {
     const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
-    if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued) {
+    if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued ||
+        !box.queuedWrapJournals.empty() || box.passChangeProgress.active) {
       return true;
     }
   }
@@ -544,6 +1047,11 @@ LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->construction;
 }
 
+LOOP_COLD_MEM bool Loop::hasPendingWrapJournal() const {
+  return pendingSnapshotPublishBox_ &&
+         !pendingSnapshotPublishBox_->queuedWrapJournals.empty();
+}
+
 LOOP_COLD_MEM size_t Loop::pendingSnapshotQueuedPassCount() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->queuedPassIds.size() : 0;
 }
@@ -555,6 +1063,41 @@ LOOP_COLD_MEM size_t Loop::pendingSnapshotAppliedPassCount() const {
 LOOP_COLD_MEM PassId Loop::pendingSnapshotConstructionPassId() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->constructionPassId
                                     : kInvalidPassId;
+}
+
+LOOP_COLD_MEM size_t Loop::pendingSnapshotWrapJournalCount() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->queuedWrapJournals.size()
+                                    : 0;
+}
+
+static LOOP_COLD_MEM const SnapshotWrapJournalFragment* pendingWrapJournalFront(
+    const PendingSnapshotPublishBox* box) {
+  if (box == nullptr || box->queuedWrapJournals.empty()) {
+    return nullptr;
+  }
+  return &box->queuedWrapJournals.front();
+}
+
+LOOP_COLD_MEM uint8_t Loop::pendingSnapshotWrapFragmentIndex() const {
+  const SnapshotWrapJournalFragment* fragment =
+      pendingWrapJournalFront(pendingSnapshotPublishBox_.get());
+  return fragment != nullptr ? fragment->fragmentIndex : 0;
+}
+
+LOOP_COLD_MEM uint8_t Loop::pendingSnapshotWrapFragmentCount() const {
+  const SnapshotWrapJournalFragment* fragment =
+      pendingWrapJournalFront(pendingSnapshotPublishBox_.get());
+  return fragment != nullptr ? fragment->fragmentCount : 0;
+}
+
+LOOP_COLD_MEM uint32_t Loop::pendingSnapshotWrapParentRevision() const {
+  const SnapshotWrapJournalFragment* fragment =
+      pendingWrapJournalFront(pendingSnapshotPublishBox_.get());
+  if (fragment == nullptr || !fragment->parent || !publishedSnapshotBox_ ||
+      fragment->parent != publishedSnapshotBox_->snapshot) {
+    return 0;
+  }
+  return publishedSnapshotBox_->revision;
 }
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
@@ -687,8 +1230,12 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     const size_t before = box.construction->completedUnitCount();
     box.construction->step(remaining, playheadPhaseTick);
     if (box.construction->failed()) {
-      clearPendingSnapshotPublish();
-      return false;
+      box.construction.reset();
+      if (!box.passChangeProgress.active) {
+        box.constructionPassId = kInvalidPassId;
+      }
+      box.wrapJournalInFlight = false;
+      return hasPendingSnapshotPublish();
     }
     const size_t after = box.construction->completedUnitCount();
     if (after <= before) {
@@ -698,13 +1245,30 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     if (!box.construction->complete()) {
       break;
     }
+    const bool wrapping = box.wrapJournalInFlight;
+    const uint8_t fragmentIndex =
+        wrapping && !box.queuedWrapJournals.empty()
+            ? box.queuedWrapJournals.front().fragmentIndex
+            : 0;
+    const uint8_t fragmentCount =
+        wrapping && !box.queuedWrapJournals.empty()
+            ? box.queuedWrapJournals.front().fragmentCount
+            : 1;
     if (!finishPendingConstruction(box)) {
-      clearPendingSnapshotPublish();
-      return false;
+      box.construction.reset();
+      if (!box.passChangeProgress.active) {
+        box.constructionPassId = kInvalidPassId;
+      }
+      box.wrapJournalInFlight = false;
+      return hasPendingSnapshotPublish();
+    }
+    if (wrapping && fragmentIndex + 1 == fragmentCount && box.unpublishedCandidate) {
+      storePublishedSnapshot(box.unpublishedCandidate);
     }
   }
 
   if (box.sessionExitQueued && !box.construction && box.queuedPassIds.empty() &&
+      box.queuedWrapJournals.empty() && !box.passChangeProgress.active &&
       box.companionsApplied) {
     if (!box.unpublishedCandidate) {
       clearPendingSnapshotPublish();
