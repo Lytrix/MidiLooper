@@ -130,8 +130,10 @@ Caller-scoped pitch lookup device PASS
 [`005527`](../../captures/session_20260828_005527.log): `note_lookup`
 max **857 µs** (was 18293 on
 [`004119`](../../captures/session_20260828_004119.log)); `pass_change`
-max **3.219 ms**. Completeness held (`root=0x0`); the file ends still
-`pending=1`. Same-pitch scan and refill remain. No `step` rewrite is
+max **3.219 ms**. Tail
+[`005819`](../../captures/session_20260828_005819.log) publishes
+`pending=0` / `root=0x70413fec` / `root_rev=10`. Same-pitch scan and
+refill remain. No `step` rewrite is
 justified yet. Host gates: capture-serial RAM1 locals **6944**; native
 **1495/1495**.
 Per-turn reserve measurement remains necessary, but freezing the minimum
