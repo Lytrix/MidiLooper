@@ -343,17 +343,22 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     return;
   }
   bool anyRealtimeTrackActive = false;
+  bool anyPendingSnapshotPublish = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
     if (t.isPlaying() || t.isRecording() || t.isOverdubbing() || t.isStoppedRecording()) {
       anyRealtimeTrackActive = true;
-      break;
+    }
+    if (t.loopsAllocated() && t.getActiveLoop().hasPendingSnapshotPublish()) {
+      anyPendingSnapshotPublish = true;
     }
   }
   const bool allTracksStopped = !anyRealtimeTrackActive;
   const bool deferStoppedIdleForClock = allTracksStopped && clockManager.isClockRunning();
   if (deferStoppedIdleForClock &&
-      deferredOwner != MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend) {
+      deferredOwner != MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend &&
+      !(deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
+        anyPendingSnapshotPublish)) {
     return;
   }
   if (allTracksStopped) {

@@ -2,22 +2,25 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-26 (4b.2c telemetry boundary verified)
+Last updated: 2026-08-27 (task 3.6 snapshot admission starvation fix)
 
 ---
 
 ## Current branch
 
+**`feature/overdub-wrap-snapshot-publication`** — 3.5 wrap-journal publication
+forked from `feature/immutable-loop-snapshot-passes`. Parent:
 **`feature/immutable-loop-snapshot-passes`** — forked from
 `546169f66658b87c54e6166b79eba74628aa3d1e` for the immutable loop snapshot
 architecture proposal. The maintained-LCR continuation from
 `feature/overdub-stop-lag-stage-c` is not pursued on this branch. See
 [`CURRENT_WORK.md`](CURRENT_WORK.md). Record and overdub `LoopSnapshot`
-publication queue at stop and step from idle (`DEC-045`). OVERDUBBING idle
-advances an in-flight construction only. Playback reads a stale published
-window plus unpublished session passes. OVERDUBBING idle does not run visual
-reconstruct. After the first published root exists, PLAYING and OVERDUBBING
-do not step successor snapshot construction. NOTE_EDIT close stays synchronous.
+publication queue at stop and step from idle (`DEC-045`) in the current
+firmware. Task `3.5` now queues bounded wrap journals and steps them during
+PLAYING/OVERDUBBING after the first root (`DEC-047`). Playback still reads a
+stale published window plus unpublished session passes until consumer
+migration. OVERDUBBING idle does not run visual reconstruct. NOTE_EDIT close
+stays synchronous.
 Device PASS [`233308`](../../captures/session_20260825_233308.log): no
 `snapshot_idle` after first publish until STOPPED; PLAY4 BPM 119.966–120.049.
 Capture-only `snapshot_idle` telemetry exposed the root/queue boundary, and
@@ -26,6 +29,24 @@ that the PLAYING/OVERDUBBING rows before root publication were one in-flight
 record construction with no queued successor passes. The final `pending=0`
 row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
 4b.2c is closed without amending `DEC-045`.
+The activated next slice is OpenSpec tasks `3.5`/`3.6`, recorded in
+`DEC-047`: bounded overdub-wrap mutation journals, fixed-capacity immutable
+membership pages, persistent bar cursors, incremental pair-`NoteId` assignment,
+effective event-index updates, retry retention, and the measured
+`T_RT_reserve` device gate. This phase supersedes `DEC-045` only for ordered
+successor construction during `PLAYING`/`OVERDUBBING` after the first root;
+direct consumer migration, persistence, and snapshot-identity undo remain
+later. Firmware edits are not yet authorized until the phase gate and
+execution-bound admission pass.
+Latest `teensy41-capture-serial` build restored RAM1 locals to **7008**
+without USB-host ownership changes, so task `3.6` recapture is unblocked.
+The follow-up admission fix allows queued session-exit snapshot work after
+wrap-journal drain and permits the bounded Snapshot owner while tracks are
+stopped but the transport clock remains running. Focused native coverage
+passes; full native and device recapture remain open.
+For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
+capture-only per-track `track_update` maxima and over-budget counts alongside
+the aggregate `tracks` timing; device recapture is required.
 Display paint fallback and visual-cache fill read published snapshot events
 when a root exists; compatibility gather remains the no-snapshot fallback.
 A nonempty dirty visual-cache prefix does not authorize the paint window
@@ -315,7 +336,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; Phase 3 tasks 4.1–4.2 selected (playback reads published snapshot with compatibility fallback); 4.3–4.6 not selected |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; Phase 3 tasks 4.1–4.2 selected; snapshot nodes pack into 32 KB slabs (`DEC-048`); 4.3–4.6 not selected |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

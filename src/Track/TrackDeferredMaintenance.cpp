@@ -65,6 +65,31 @@ void logContentResolutionDeviceGateIncomplete(const char* reason) {
   }
 }
 
+TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
+    Loop& snapshotLoop, uint32_t snapshotIdleStartUs) {
+  const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
+  char snapshotLine[320];
+  snprintf(snapshotLine, sizeof(snapshotLine),
+           "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
+           "playback_rev=%lu,queued=%lu,applied=%lu,construction=%lu,exit=%u,inflight=%u,"
+           "journals=%lu,fragment=%u/%u,parent_rev=%lu",
+           static_cast<unsigned long>(micros()),
+           static_cast<unsigned long>(micros() - snapshotIdleStartUs),
+           snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u, publishedSnapshot.get(),
+           static_cast<unsigned long>(snapshotLoop.publishedSnapshotRevision()),
+           static_cast<unsigned long>(snapshotLoop.playbackRevision),
+           static_cast<unsigned long>(snapshotLoop.pendingSnapshotQueuedPassCount()),
+           static_cast<unsigned long>(snapshotLoop.pendingSnapshotAppliedPassCount()),
+           static_cast<unsigned long>(snapshotLoop.pendingSnapshotConstructionPassId()),
+           snapshotLoop.pendingSnapshotSessionExitQueued() ? 1u : 0u,
+           snapshotLoop.hasInFlightSnapshotConstruction() ? 1u : 0u,
+           static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapJournalCount()),
+           snapshotLoop.pendingSnapshotWrapFragmentIndex(),
+           snapshotLoop.pendingSnapshotWrapFragmentCount(),
+           static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapParentRevision()));
+  DebugSessionCapture::appendCaptureTextLine(snapshotLine);
+}
+
 TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
                                              const NoteUtils::DisplayNote& b) {
   return a.noteId == b.noteId && a.note == b.note && a.startTick == b.startTick &&
@@ -751,11 +776,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   }
   const bool liveRecordPastFirstBar = MidiServiceDrain::allowLiveRecordSnapshotStart(
       isRecording(), recordElapsedTicks, Config::TICKS_PER_BAR);
-  const bool snapshotIdleAllowed =
-      MidiServiceDrain::allowSnapshotIdleStep(
-          isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
-          snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint) &&
-      (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction());
+  const bool hasWrapJournal = snapshotLoop.hasPendingWrapJournal();
   const uint32_t liveRecordCompletedTicks = MidiServiceDrain::liveRecordCompletedTicks(
       recordElapsedTicks, Config::TICKS_PER_BAR);
   const bool snapshotPending =
@@ -763,6 +784,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       (isRecording() && !havePublishedSnapshot &&
        liveRecordCompletedTicks > snapshotLoop.liveRecordAppliedCompletedTicks() &&
        snapshotLoop.liveRecordCanApplyCompletedTicks(liveRecordCompletedTicks));
+  const bool snapshotIdleAllowed =
+      MidiServiceDrain::allowSnapshotIdleStep(
+          isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
+          snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint,
+          hasWrapJournal, snapshotPending) &&
+      (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() ||
+       hasWrapJournal);
   const bool snapshotEligible = snapshotPending && snapshotIdleAllowed;
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
       snapshotEligible) {
@@ -775,25 +803,10 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
             : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
                               snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
     snapshotLoop.stepPendingSnapshotPublish(
-        1, !isOverdubbing() && liveRecordPastFirstBar, playheadPhaseTick,
+        1, (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
         liveRecordCompletedTicks);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
-    char snapshotLine[256];
-    snprintf(snapshotLine, sizeof(snapshotLine),
-             "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
-             "playback_rev=%lu,queued=%lu,applied=%lu,construction=%lu,exit=%u,inflight=%u",
-             static_cast<unsigned long>(micros()),
-             static_cast<unsigned long>(micros() - snapshotIdleStartUs),
-             snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u, publishedSnapshot.get(),
-             static_cast<unsigned long>(snapshotLoop.publishedSnapshotRevision()),
-             static_cast<unsigned long>(snapshotLoop.playbackRevision),
-             static_cast<unsigned long>(snapshotLoop.pendingSnapshotQueuedPassCount()),
-             static_cast<unsigned long>(snapshotLoop.pendingSnapshotAppliedPassCount()),
-             static_cast<unsigned long>(snapshotLoop.pendingSnapshotConstructionPassId()),
-             snapshotLoop.pendingSnapshotSessionExitQueued() ? 1u : 0u,
-             snapshotLoop.hasInFlightSnapshotConstruction() ? 1u : 0u);
-    DebugSessionCapture::appendCaptureTextLine(snapshotLine);
+    appendSnapshotIdleCaptureLine(snapshotLoop, snapshotIdleStartUs);
 #endif
   }
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).

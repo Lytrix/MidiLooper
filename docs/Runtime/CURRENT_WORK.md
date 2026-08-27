@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-26 (4b.1/4b.2/4b.2c closed under Ring B)
+Last updated: 2026-08-27 (task 3.6 snapshot admission starvation fix)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -22,8 +22,47 @@ record construction (`construction=1`, `queued=0`, `applied=0`, `exit=1`,
 publishes `root=0x7030ad1c` with `root_rev=1`/`playback_rev=1`. No later
 PLAYING/OVERDUBBING `snapshot_idle` occurs. The apparent violation was the
 first-root construction interval, not stacked successor overdub passes.
-`DEC-045` remains unchanged. **4b.3** remains open; exclude `T0/S6` when
-scoring post-stop gaps.
+`DEC-045` remains the historical baseline; `DEC-047` supersedes its post-root
+successor restriction only for the activated `3.5`/`3.6` slice. **4b.3**
+remains open; exclude `T0/S6` when
+scoring post-stop gaps. A capture-only `track_update` profiler now reports
+per-track maxima and over-budget counts from `TrackManager::updateAllTracks`;
+attribution from [`000834`](../../captures/session_20260827_000834.log):
+PLAYING/OVERDUBBING `tracks`/`usbclk` peak is **11.3 ms** (T4 11114 µs,
+T6 6520 µs); post-stop `usbdisp` **116.7 ms** is `usbtrans` 116729 µs,
+not `updateAllTracks`. RAM1 locals **4640**.
+
+**Snapshot slab packing (`DEC-048`):** `allocateSnapshotShared` bump-allocates
+into 32 KB slabs owned by `Loop`. One mutable span root and one event root
+are reused per `LoopSnapshotConstruction`. Slab deny fails construction.
+Native fixture `test_snapshot_one_bar_node_count_and_unchanged_membership_share`
+covers one-bar node counts and successor membership sharing. Native
+**1484/1484**. `teensy41-capture-serial` RAM1 locals **5920**.
+
+**Active OpenSpec slice:** task `3.5` firmware is in tree on
+`feature/overdub-wrap-snapshot-publication`. Settled wraps queue bounded
+mutation-journal fragments; `LoopSnapshotConstruction` uses persistent bar
+cursors and fixed-capacity membership pages (16 refs × 8 pages). NoteOff
+pairing copies the NoteOn `NoteId` before promotion. PLAYING/OVERDUBBING may
+step wrap journals after the first root. Failed fragments are retained.
+Task `3.6` remains open: native parity extensions plus the measured
+`T_RT_reserve` device gate. Capture
+[`173826`](../../captures/session_20260827_173826.log) showed successor
+construction after the first wrap (`construction=2`, `root_rev=1`) but
+`queued`/`applied` are pass-id fields and cannot tell wrap-journal fragments
+from pass reconstruction. `snapshot_idle` now also emits `journals`,
+`fragment=i/n`, and `parent_rev` (published revision when the front journal
+parent is the selected root; `0` when the parent is an unpublished
+candidate). RAM1 admission is restored without USB-host ownership changes:
+`teensy41-capture-serial` now reports RAM1 locals **7008** (variables 91296,
+code 420652, padding 5332). The follow-up admission fix now allows queued
+session-exit snapshot work after the wrap journals drain, and allows the
+bounded Snapshot owner to run when tracks are stopped but the transport clock
+is still running. Focused native admission coverage passes; full native and
+device recapture remain open.
+Direct consumer migration, persistence, and snapshot-identity undo remain
+later phases. Decision:
+[`DEC-047`](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication).
 
 **Separate capture finding:** [`214703`](../../captures/session_20260826_214703.log)
 confirmed `CLN,overdub,wrap_synth,3` after `finalizePendingNotes` reported no
@@ -485,7 +524,8 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
-**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are complete; overdub publish is idle-stepped (`DEC-045`). Phase 3 playback snapshot reads (4.1–4.2) are complete. Phase 3 display snapshot reads (4.4 display only) are in tree; 4.4 remainder is not selected.
+**Active wrap slice:** [`overdub_wrap_source_snapshot_migration_refinement.md`](../Plans/overdub_wrap_source_snapshot_migration_refinement.md) — OpenSpec tasks `3.5`/`3.6` only.
+**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are complete; overdub publish is idle-stepped (`DEC-045`). Phase 3 playback snapshot reads (4.1–4.2) are complete. Phase 3 display snapshot reads (4.4 display only) are in tree; 4.4 remainder is not selected. Tasks `3.5`/`3.6` are now the activated wrap-publication slice under `DEC-047`; direct consumer migration remains later.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on
