@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-27 (Stage 1 STOPPED first-paint snapshot admission)
+Last updated: 2026-08-27 (Stage 1 STOPPED snapshot admission closed)
 
 ---
 
@@ -56,8 +56,10 @@ unit builds at most one bounded pass-change fragment. Capture
 when wrap journals drained while session-exit passes were still queued;
 playback then dropped the first record pass. Wrap completion now waits for
 queued passes, construction progress, and companion changes before
-`storePublishedSnapshot`. Stage 1 now admits pending STOPPED Snapshot work
-over the visual first-paint predicate; device recapture remains open.
+`storePublishedSnapshot`. Stage 1 STOPPED admission is closed on
+[`221054`](../../captures/session_20260827_221054.log): Snapshot idle ran
+after stop, the candidate stayed private, and publication occurred only at
+`pending=0` / `root=0x70400ac8` / `root_rev=10`.
 `T_RT_reserve` remains Stage 2.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
