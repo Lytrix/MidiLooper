@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-27 (Stage 1 STOPPED first-paint snapshot admission)
+Last updated: 2026-08-27 (Stage 1 STOPPED snapshot admission closed)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -94,8 +94,12 @@ before stop, no post-stop `VCACHE`).
 120 s STOPPED hold: last PLAYING idle still `pending=1` `queued=3`
 `journals=2`, then persist/`idle_maint` only, no `STOPPED` `snapshot_idle`.
 STOPPED Snapshot admission now scans every slot and selects a track with
-pending publication instead of the visual idle cursor. Device recapture is
-required. Construction reserve (`T_RT_reserve`) stays Stage 2.
+pending publication instead of the visual idle cursor. Device recapture
+[`221054`](../../captures/session_20260827_221054.log) **closes Stage 1**:
+first STOPPED `snapshot_idle` at +0.070 s, candidate stayed `root=0x0` until
++77.765 s, then `pending=0` published `root=0x70400ac8` / `root_rev=10`.
+Do not start Stage 2 until asked. Construction reserve (`T_RT_reserve`)
+stays Stage 2. Do not check off OpenSpec `3.5`/`3.6`.
 
 Direct consumer migration, persistence, and snapshot-identity undo remain
 later phases. Decision:

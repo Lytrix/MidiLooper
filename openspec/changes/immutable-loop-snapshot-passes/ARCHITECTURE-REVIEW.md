@@ -371,7 +371,9 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       covers the stopped / first-paint / pending-work combination.
 - [x] Capture-serial build passes with RAM1 locals **7008**.
 - [x] Full native suite passes: **1487/1487** tests.
-- [ ] Device recapture and the HITL publication gate remain open.
+- [x] Device recapture [`221054`](../../../captures/session_20260827_221054.log)
+      closed Stage 1 publication ordering after the later pending-track
+      selection slice.
 - [ ] Do not check off tasks `3.5`/`3.6` on this Stage 1 policy slice.
 
 ### Stage 1 STOPPED pending-track selection — 2026-08-27
@@ -384,4 +386,7 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       publication instead of `sStoppedIdleTrackCursor`.
 - [x] Capture-serial build passes with RAM1 locals **7008**.
 - [x] Full native suite passes: **1489/1489** tests.
-- [ ] Device recapture remains open.
+- [x] Device recapture [`221054`](../../../captures/session_20260827_221054.log):
+      first STOPPED `snapshot_idle` at +0.070 s; candidate stayed `root=0x0`
+      until +77.765 s; then `pending=0` published `root=0x70400ac8` /
+      `root_rev=10`.

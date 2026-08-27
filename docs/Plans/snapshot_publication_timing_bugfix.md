@@ -210,3 +210,12 @@ must not hide the construction execution cost.
   STOPPED miss. `runDeferredIdleMaintenance` only scanned `getActiveLoop()`
   and then serviced `sStoppedIdleTrackCursor`. STOPPED Snapshot turns now
   scan every slot and select a track that still has pending publication.
+- Device recapture [`221054`](../../captures/session_20260827_221054.log):
+  **Stage 1 closed**. `PLAYING -> STOPPED` at 195.648 s. First STOPPED
+  `snapshot_idle` at +0.070 s (`pending=1`, `queued=3`, `journals=8`,
+  `root=0x0`). Construction continued through the hold: journals drained at
+  +18.054 s, then queued passes applied at +55.350 s and +70.683 s. The
+  candidate stayed private (`root=0x0`) until +77.765 s, when one idle
+  published `pending=0`, `root=0x70400ac8`, `root_rev=10`, `playback_rev=10`,
+  `queued=0`, `construction=0`, `journals=0`. No earlier nonzero root. No
+  post-stop undo/redo. MIDI timing remains observation only.
