@@ -1432,6 +1432,86 @@ void test_incremental_overdub_seal_applies_companion_shorten() {
   TEST_ASSERT_EQUAL_UINT32(119u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
 }
 
+void test_overdub_stop_reanchor_preserves_merged_then_admits_seal() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr NoteId kSourceId = 1;
+  constexpr NoteId kStopNoteId = 11;
+  seedLongSourceNote(loop, kSourceId, 48, 200, 60, kLoopLenTicks);
+  PlaybackMergedMidiEvents merged;
+  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  merged.builtFromRevision = loop.playbackRevision;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = loop.loopLengthTicks;
+  const size_t representationSize = merged.mergedEvents.size();
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kSourceId));
+  const uint32_t priorRevision = loop.playbackRevision;
+
+  loop.openOverdubSession(0);
+  loop.establishOverdubSourceView(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(96, 1, 64, 90, kStopNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(128, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 96));
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+
+  // KEEP-only reanchor: traversal state moves; the merged representation stays R.
+  loop.nextEventIndex = 0;
+  loop.lastTickInLoop = 96;
+  TEST_ASSERT_EQUAL_UINT32(representationSize, merged.mergedEvents.size());
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kSourceId));
+  TEST_ASSERT_EQUAL_UINT32(0u, countNoteOnWithId(merged.mergedEvents, kStopNoteId));
+  TEST_ASSERT_EQUAL_UINT32(priorRevision, merged.builtFromRevision);
+
+  TEST_ASSERT_TRUE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kSourceId));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kStopNoteId));
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, merged.builtFromRevision);
+}
+
+void test_overdub_stop_shaped_receipt_admits_without_duplication() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr NoteId kSourceId = 1;
+  constexpr NoteId kStopNoteId = 12;
+  seedLongSourceNote(loop, kSourceId, 50, 200, 60, kLoopLenTicks);
+  PlaybackMergedMidiEvents merged;
+  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  merged.builtFromRevision = loop.playbackRevision;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = loop.loopLengthTicks;
+  const uint32_t priorRevision = loop.playbackRevision;
+
+  loop.openOverdubSession(0);
+  loop.establishOverdubSourceView(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, kStopNoteId,
+                                                                   overlapIds({kSourceId})));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(120, 1, 60, 90, kStopNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(160, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 0));
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, companionIds.size());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+
+  TEST_ASSERT_TRUE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kSourceId));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kStopNoteId));
+  TEST_ASSERT_EQUAL_UINT32(119u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
+
+  SessionMidiEventVec rebuilt;
+  loop.gatherCommittedEventsForDerivedView(rebuilt);
+  TEST_ASSERT_EQUAL_UINT32(countNoteOnWithId(rebuilt, kSourceId),
+                           countNoteOnWithId(merged.mergedEvents, kSourceId));
+  TEST_ASSERT_EQUAL_UINT32(countNoteOnWithId(rebuilt, kStopNoteId),
+                           countNoteOnWithId(merged.mergedEvents, kStopNoteId));
+}
+
 void test_incremental_overdub_seal_provenance_miss_falls_back() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2556,6 +2636,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_rebuild);
   RUN_TEST(test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather);
   RUN_TEST(test_incremental_overdub_seal_applies_companion_shorten);
+  RUN_TEST(test_overdub_stop_reanchor_preserves_merged_then_admits_seal);
+  RUN_TEST(test_overdub_stop_shaped_receipt_admits_without_duplication);
   RUN_TEST(test_incremental_overdub_seal_provenance_miss_falls_back);
   RUN_TEST(test_wrap_pass_events_at_loop_head_occupy_without_merged_rebuild);
   RUN_TEST(test_wrap_pass_on_at_96_occupies_after_s_interval);

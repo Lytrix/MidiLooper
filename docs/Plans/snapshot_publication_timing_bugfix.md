@@ -908,3 +908,19 @@ firmware that enforces the corresponding goal.
   is not a prefix rebuild. The 7.480 ms parent is a live-record `start`
   with `pass_change=0`.
 - `step` max is 5.835 ms. `T_RT_reserve` is not frozen.
+
+## Stage 3 — Fixed-ratio Snapshot admission throughput
+
+Earlier stages of this plan covered per-admission **cost**.
+[`overdub_stop_incremental_admission_bugfix.md`](overdub_stop_incremental_admission_bugfix.md)
+Stage 3 (`DEC-049`) changes admission **frequency** only:
+
+- Per-unit bound stays `stepPendingSnapshotPublish(1, …)`.
+- `nextDeferredIdleOwner` stays `(owner + 1) % 5`.
+- While a publication backlog is present, `selectDeferredIdleOwner` inserts
+  one extra Snapshot turn after each complete 5-owner cycle. Snapshot is 2
+  of every 6 turns; every other owner is 1 of 6.
+- The `DEC-047` OVERDUBBING construction-start rule is unchanged.
+
+Device recapture for this throughput change lives on the overdub-stop
+incremental-admission plan. Do not freeze `T_RT_reserve`.

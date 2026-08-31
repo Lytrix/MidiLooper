@@ -35,6 +35,7 @@ enum class PlaybackRebuildPath : uint8_t {
   CompatibilityPasses,
   NoteEditPreview,
   IncrementalOverdubSeal,
+  StaleRootOverlay,
 };
 
 /**

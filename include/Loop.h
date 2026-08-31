@@ -357,13 +357,24 @@ struct Loop {
   const void* publishedSnapshotIdentity() const;
   /// Revision captured when the published root was stored. Zero when no root exists.
   uint32_t publishedSnapshotRevision() const;
+  /// Branch actually taken by `tryGatherPublishedSnapshotEventsInWindow`.
+  /// `None` = no published root (caller may run compatibility gather).
+  /// `Snapshot` = current-root membership. `Overlay` = stale-root overlay.
+  enum class SnapshotWindowGatherPath : uint8_t {
+    None = 0,
+    Snapshot = 1,
+    Overlay = 2,
+  };
+
   /// Fill `out` from published snapshot event membership in
   /// `[windowStart, windowStart + windowLength)`. A stale published root still
   /// supplies that window; unpublished session / pending-publish passes and
   /// their companions overlay on top. Returns false only when no published
-  /// snapshot exists so the caller can use compatibility gather.
+  /// snapshot exists so the caller can use compatibility gather. `pathOut`
+  /// receives the branch actually taken (`None` / `Snapshot` / `Overlay`).
   bool tryGatherPublishedSnapshotEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                                uint32_t windowLength) const;
+                                                uint32_t windowLength,
+                                                SnapshotWindowGatherPath* pathOut = nullptr) const;
   /// Snapshot window plus live `capture.store` events in the same window.
   /// Returns false only when no published snapshot exists.
   bool tryGatherPublishedSnapshotEventsInWindowWithCapture(SessionMidiEventVec& out,

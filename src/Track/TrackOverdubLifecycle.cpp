@@ -188,7 +188,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   silenceTrackMidiOutput();
   playbackRuntime.clearAllLedgers();
   pendingNotes.clear();
-  resetPlaybackState(currentTick);
+  reanchorPlaybackCycle(currentTick);
   setState(TRACK_PLAYING);
   logOverdubStopStage(loop, stopStartUs, "set_state", micros() - stateStartUs,
                       DebugSessionCapture::kUnsampledHeapBytes,

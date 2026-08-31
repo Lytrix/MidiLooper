@@ -35,14 +35,22 @@
 #include "Utils/RuntimeTimingTelemetry.h"
 #include <cstdio>
 
-static MidiServiceDrain::DeferredIdleOwner sDeferredIdleOwner =
-    MidiServiceDrain::DeferredIdleOwner::Snapshot;
+static MidiServiceDrain::DeferredIdleOwnerCursor sDeferredIdleOwnerCursor{};
+
+FLASHMEM __attribute__((noinline)) static bool anySnapshotPublicationBacklog() {
+  const uint8_t trackCount = trackManager.getTrackCount();
+  for (uint8_t i = 0; i < trackCount; ++i) {
+    if (trackManager.getTrack(i).hasSnapshotPublicationBacklogOnAnySlot()) {
+      return true;
+    }
+  }
+  return false;
+}
 
 FLASHMEM __attribute__((noinline)) static MidiServiceDrain::DeferredIdleOwner
 takeDeferredIdleOwnerTurn() {
-  const MidiServiceDrain::DeferredIdleOwner owner = sDeferredIdleOwner;
-  sDeferredIdleOwner = MidiServiceDrain::nextDeferredIdleOwner(owner);
-  return owner;
+  return MidiServiceDrain::selectDeferredIdleOwner(sDeferredIdleOwnerCursor,
+                                                   anySnapshotPublicationBacklog());
 }
 
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
