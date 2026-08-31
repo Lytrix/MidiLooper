@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1f STOPPED paint current fill)
+Last updated: 2026-08-31 (visual cache #41 Stage 1g wrap dirty span)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -115,9 +115,17 @@ must not be the first shorten).
 `resolveDisplayNotesCommitted` last-resort discards Overlay and falls
 through to `gatherCommittedEvents`. Playback Overlay and
 `rebuildDisplayNotesInWindow` unchanged. Native **1519/1519**. RAM1
-locals **6944**. Device gate is
-[`213448`](../../captures/session_20260831_213448.log): first STOPPED
-`DISP` frame == visualCache; wrap 3 / play must not be the first shorten.
+locals **6944**. Device FAIL
+[`220337`](../../captures/session_20260831_220337.log): first 8-bar
+STOPPED `DISP` **276 / 344** (no `paint_src`); wrap/stop
+`stale_range` is `dcnt=8` on an 8-bar loop; PLAYING Snapshot idle then
+**334 / 334**. Third stop `OverlayRejected` then **80 / 91**. Play is
+still the first match.
+**Stage 1g — wrap dirty span:**
+[`display_visual_cache_wrap_dirty_span_bugfix.md`](../Plans/display_visual_cache_wrap_dirty_span_bugfix.md).
+`markTickSpanDirty` marks wrap-held (`endTick < startTick`) On/Off bars
+only. Linear pass spans stay inclusive. Native **1521/1521**. RAM1
+locals **6944**. Device recapture required.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
