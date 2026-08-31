@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 1k/1l proposed; full DNTE dump)
+Last updated: 2026-08-31 (visual cache #41 Stage 1k recapture 232910)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -163,19 +163,25 @@ Native **1525/1525**. RAM1 locals **6944**. Device FAIL
 `endTick = currentTick` (`225243` D#2 ON@624 → stop phase 704). Unmatched
 `N@2928` / `F@0` → `loopLength` is a later reconstruct RC.
 Native **1526/1526**. RAM1 locals **6944**.
-Device [`230400`](../../captures/session_20260831_230400.log): wrap first
-paint still drops (`105→66`); `DNTE` capped at 32; `WRAP=0` because
-`SEVT` 552 > 512. Idle verification now slices all reconstruct `DNTE`,
-all `WRAP` pairs, and the first STOPPED painted frame (`DIAG,dnte,src,frame`).
-RAM1 locals **6848**.
-**Stage 1k — wrap compose hold (proposed):**
+Device [`231953`](../../captures/session_20260831_231953.log) dump gate
+PASS: `DIAG,dnte,src,reconstruct,count,221`, `src,frame,count,160`,
+`WRAP` 144, `SEVT` 707. First STOPPED **160 / 148** matches the frame
+dump. Stop `COORD` storage **1168**; frame dump has no note ending at
+1168 (1j playhead freeze not on that frame).
+**Stage 1k — wrap compose hold:**
 [`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md).
-Keep last composed `liveDisplayNotes` across wrap `playbackRevision`
-while cache is dirty. Do not implement until this dump recapture.
+Native **1527/1527**. RAM1 locals **6848**.
+Device [`232910`](../../captures/session_20260831_232910.log): wraps 2–8
+first `DISP` ≥ last-before-wrap. Wrap 1 `104/63` → `92/89` after
+`append_resume` notes 89: grow used committed prefix **63**, not compose
+**104**. Next frame `104/101`. Grow must compare to the composed hold.
 **Stage 1l — Off@0 leftover tail pair (proposed):**
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md).
-Pair leftover `F@0` with leftover tail Ons before `finishCanonicalSpansOpenNotes`.
-**1b** still open: `39@240` at 144 and 336 plus sequential 256.
+Reconstruct leftover-to-end: `39@2960` **112**, `39@2736` **336**,
+`59@3008` **64**. Leftover `N@3008` ×3 + `F@0` ×3 on 59.
+**1b** still open: reconstruct has 33 same-start multi-length stacks
+(39 `@48` 144+368, 45/51 `@144` 8+160, 45/51 `@1136` 32+320). Frame
+dump has 6, including 45/51 `@1136` 0+320.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.

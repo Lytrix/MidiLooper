@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 1k/1l proposed; full DNTE dump)
+Last updated: 2026-08-31 (visual cache #41 Stage 1k recapture 232910)
 
 ---
 
@@ -134,10 +134,10 @@ holds dirty cache
 Stage 1j (native **1526/1526**, RAM1 **6944**): playhead tails are
 paint-only
 ([`display_visual_cache_stop_handoff_playhead_tail_bugfix.md`](../Plans/display_visual_cache_stop_handoff_playhead_tail_bugfix.md)).
-Device [`230400`](../../captures/session_20260831_230400.log): wrap first
-paint `105→66`; `DNTE` 32-line cap; `WRAP=0` at 552 events. Full sliced
-`DNTE` / `WRAP` / first-STOPPED frame dump is in tree. RAM1 locals **6848**.
-Stage 1k / 1l proposed
+Device [`232910`](../../captures/session_20260831_232910.log): 1k wraps
+2–8 hold; wrap 1 `104→92` after idle `append_resume` 89. Dump
+`reconstruct` 327 / `frame` 412. First STOPPED **412 / 208**.
+1l / 1b still open.
 ([`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md),
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md)).
 Stage 2 is unblocked and not started.

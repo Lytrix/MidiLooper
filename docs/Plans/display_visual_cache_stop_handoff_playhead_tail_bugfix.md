@@ -60,7 +60,7 @@ STOPPED RC5a handoff does not freeze playhead-extended ends
 Native (`test_display_window_utils`): `capturePlayheadTailsArePaintOnly` is true. Full suite **1526/1526**. RAM1 locals **6944**.
 
 Device ([`225243`](../../captures/session_20260831_225243.log) shape): first STOPPED handoff must not show the held D#2 ending at stop phase **704** unless storage reconstruct later seals that Off.
-[`230400`](../../captures/session_20260831_230400.log) first STOPPED **138 / 173** has no first-frame per-note dump (reconstruct `DNTE` capped at 32; `WRAP=0` at 552 events). Recapture after the sliced reconstruct / `WRAP` / first-STOPPED frame dump.
+[`231953`](../../captures/session_20260831_231953.log): last OVERDUBBING **151 / 148**, first STOPPED **160 / 148**. Frame dump `count,160` matches that frame. Stop `COORD` storage **1168**. Frame dump has no note ending at 1168. Reconstruct has stop-close `45@1136` / `51@1136` length **32**. Frame has those starts at length **320** (and length **0**), not 32. Playhead tails are not frozen on the handoff frame.
 
 ## Explicitly out of scope
 
