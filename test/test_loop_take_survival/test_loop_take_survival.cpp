@@ -462,7 +462,11 @@ void test_playback_gather_reads_published_snapshot_with_fallback() {
   loop.loopLengthTicks = 3072;
 
   SessionMidiEventVec emptySnapshot;
-  TEST_ASSERT_FALSE(loop.tryGatherPublishedSnapshotEventsInWindow(emptySnapshot, 0, 3072));
+  Loop::SnapshotWindowGatherPath emptyPath = Loop::SnapshotWindowGatherPath::Snapshot;
+  TEST_ASSERT_FALSE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(emptySnapshot, 0, 3072, &emptyPath));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::None),
+                    static_cast<int>(emptyPath));
   TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
 
   loop.beginCapture(CapturePhase::Record);
@@ -529,14 +533,21 @@ void test_stale_published_snapshot_gathers_window_without_full_compatibility() {
   recordLinearNote(loop, 100, 200, 60);
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
   SessionMidiEventVec fromSnapshot;
-  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(fromSnapshot, 0, 3072));
+  Loop::SnapshotWindowGatherPath currentPath = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(fromSnapshot, 0, 3072, &currentPath));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Snapshot),
+                    static_cast<int>(currentPath));
   TEST_ASSERT_EQUAL(2u, fromSnapshot.size());
 
   ++loop.playbackRevision;
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_NULL(loop.publishedSnapshotIdentity());
   SessionMidiEventVec stale;
-  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(stale, 0, 3072));
+  Loop::SnapshotWindowGatherPath stalePath = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(stale, 0, 3072, &stalePath));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Overlay),
+                    static_cast<int>(stalePath));
   sortEventsForCompare(stale);
   sortEventsForCompare(fromSnapshot);
   assertGatheredEventsMatch(stale, fromSnapshot);

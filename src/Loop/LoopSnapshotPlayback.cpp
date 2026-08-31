@@ -123,14 +123,21 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
 }  // namespace
 
 LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
-    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength) const {
+    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength,
+    SnapshotWindowGatherPath* pathOut) const {
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
   if (!snapshot) {
+    if (pathOut != nullptr) {
+      *pathOut = SnapshotWindowGatherPath::None;
+    }
     return false;
   }
 
   gatherPublishedSnapshotMembership(*snapshot, out, windowStart, windowLength);
   if (publishedSnapshotIsCurrent()) {
+    if (pathOut != nullptr) {
+      *pathOut = SnapshotWindowGatherPath::Snapshot;
+    }
     return true;
   }
 
@@ -208,6 +215,9 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
   }
   if (!unpublishedCompanions.empty()) {
     applyNoteEditPassSequence(out, unpublishedCompanions, loopLengthTicks);
+  }
+  if (pathOut != nullptr) {
+    *pathOut = SnapshotWindowGatherPath::Overlay;
   }
   return true;
 }

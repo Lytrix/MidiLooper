@@ -38,6 +38,83 @@ void test_deferred_idle_owner_rotates_unconditionally() {
   }
 }
 
+void test_select_deferred_idle_owner_absent_matches_five_owner_cycle() {
+  MidiServiceDrain::DeferredIdleOwnerCursor cursor;
+  const MidiServiceDrain::DeferredIdleOwner expected[] = {
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::VisualCache,
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
+      MidiServiceDrain::DeferredIdleOwner::Persistence,
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::VisualCache,
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
+      MidiServiceDrain::DeferredIdleOwner::Persistence,
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+  };
+  for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
+    TEST_ASSERT_EQUAL(static_cast<int>(next),
+                      static_cast<int>(MidiServiceDrain::selectDeferredIdleOwner(cursor, false)));
+  }
+}
+
+void test_select_deferred_idle_owner_backlog_snapshot_two_of_six() {
+  MidiServiceDrain::DeferredIdleOwnerCursor cursor;
+  const MidiServiceDrain::DeferredIdleOwner expected[] = {
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::VisualCache,
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
+      MidiServiceDrain::DeferredIdleOwner::Persistence,
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::VisualCache,
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
+      MidiServiceDrain::DeferredIdleOwner::Persistence,
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+  };
+  uint8_t snapshotTurns = 0;
+  uint8_t visualCacheTurns = 0;
+  uint8_t wrapAppendTurns = 0;
+  uint8_t persistenceTurns = 0;
+  uint8_t loadTurns = 0;
+  for (uint8_t i = 0; i < 12; ++i) {
+    const MidiServiceDrain::DeferredIdleOwner selected =
+        MidiServiceDrain::selectDeferredIdleOwner(cursor, true);
+    TEST_ASSERT_EQUAL(static_cast<int>(expected[i]), static_cast<int>(selected));
+    switch (selected) {
+      case MidiServiceDrain::DeferredIdleOwner::Snapshot:
+        ++snapshotTurns;
+        break;
+      case MidiServiceDrain::DeferredIdleOwner::VisualCache:
+        ++visualCacheTurns;
+        break;
+      case MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend:
+        ++wrapAppendTurns;
+        break;
+      case MidiServiceDrain::DeferredIdleOwner::Persistence:
+        ++persistenceTurns;
+        break;
+      case MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay:
+        ++loadTurns;
+        break;
+    }
+    if ((i + 1) % 6 == 0) {
+      TEST_ASSERT_EQUAL_UINT8(2, snapshotTurns);
+      TEST_ASSERT_EQUAL_UINT8(1, visualCacheTurns);
+      TEST_ASSERT_EQUAL_UINT8(1, wrapAppendTurns);
+      TEST_ASSERT_EQUAL_UINT8(1, persistenceTurns);
+      TEST_ASSERT_EQUAL_UINT8(1, loadTurns);
+      snapshotTurns = 0;
+      visualCacheTurns = 0;
+      wrapAppendTurns = 0;
+      persistenceTurns = 0;
+      loadTurns = 0;
+    }
+  }
+}
+
 void test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredIdleOwner(
       MidiServiceDrain::DeferredIdleOwner::Snapshot, true));
@@ -133,6 +210,8 @@ int main() {
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_around_load_frame_only_when_post_overdub_playing_drain);
   RUN_TEST(test_deferred_idle_owner_rotates_unconditionally);
+  RUN_TEST(test_select_deferred_idle_owner_absent_matches_five_owner_cycle);
+  RUN_TEST(test_select_deferred_idle_owner_backlog_snapshot_two_of_six);
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);

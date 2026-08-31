@@ -172,6 +172,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 #endif
   DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   const void* usedSnapshotIdentity = nullptr;
+  Loop::SnapshotWindowGatherPath gatherPath = Loop::SnapshotWindowGatherPath::None;
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.mergedMidiEvents.mergedEvents.assign(preview.begin(), preview.end());
@@ -186,7 +187,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       winStart = loop.loopLengthTicks > winLen ? loop.loopLengthTicks - winLen : 0;
     }
     if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents,
-                                                      winStart, winLen)) {
+                                                      winStart, winLen, &gatherPath)) {
       usedSnapshotIdentity = snapshotIdentity;
     } else {
       loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
@@ -195,7 +196,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
   } else {
     if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, 0,
-                                                      loop.loopLengthTicks)) {
+                                                      loop.loopLengthTicks, &gatherPath)) {
       usedSnapshotIdentity = snapshotIdentity;
     } else {
       loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
@@ -215,9 +216,12 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       runtime.mergedMidiEvents.windowLengthTicks, windowRevision,
       playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop),
       noteEditPreview ? RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview
-                      : (usedSnapshotIdentity != nullptr
+                      : (gatherPath == Loop::SnapshotWindowGatherPath::Snapshot
                              ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
-                             : RuntimeTimingTelemetry::PlaybackRebuildPath::CompatibilityPasses));
+                             : (gatherPath == Loop::SnapshotWindowGatherPath::Overlay
+                                    ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
+                                    : RuntimeTimingTelemetry::PlaybackRebuildPath::
+                                          CompatibilityPasses)));
   mergedMidiEventsBuildInProgress = false;
   return true;
 }
@@ -301,6 +305,20 @@ PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
   return PlaybackEventStream{&loop, capturePlaybackStreamSize, nullptr,
                              capturePlaybackStreamEventAt, capturePlaybackStreamPhase};
 }
+void Track::reanchorPlaybackCycle(uint32_t currentTick) {
+  Loop& loop = getActiveLoop();
+  loop.nextEventIndex = 0;
+  if (loop.loopLengthTicks == 0) {
+    loop.lastTickInLoop = 0;
+    projectionCycleStartTick = static_cast<int32_t>(currentTick);
+    return;
+  }
+  const uint32_t phase =
+      tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
+  projectionCycleStartTick = static_cast<int32_t>(currentTick) - static_cast<int32_t>(phase);
+  loop.lastTickInLoop = phase;
+}
+
 void Track::resetPlaybackState(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   loop.nextEventIndex = 0;

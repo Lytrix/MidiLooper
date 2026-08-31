@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-048](#dec-048--snapshot-nodes-pack-into-32-kb-slabs) | 2026-08-27 | Immutable snapshot nodes pack into 32 KB PSRAM bump slabs owned by `Loop` | Accepted |
+| [DEC-049](#dec-049--overdub-stop-admits-the-seal-and-accelerates-snapshot-publication) | 2026-08-31 | Overdub stop preserves the merged stream for incremental seal admission; Snapshot idle uses a fixed 2-of-6 ratio while a publication backlog is present | Accepted |
 | [DEC-047](#dec-047--bounded-overdub-wrap-snapshot-publication) | 2026-08-27 | Bounded overdub-wrap snapshot publication through mutation journals and fixed-capacity membership pages | Accepted — Phase 3 tasks 3.5–3.6 |
 | [DEC-046](#dec-046--round-robin-admission-over-playback-relevant-destinations-representation-coverage-is-a-prerequisite) | 2026-08-26 | Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite; `RECORDING` included; G1 consumes RC4's post-resolution cost | Accepted — architecture direction; firmware Slices 1–4 not authorized |
 | [DEC-045](#dec-045-overdub-snapshot-publish-is-idle-stepped) | 2026-08-25 | Overdub `LoopSnapshot` publication queues at stop and steps from idle | Accepted |
@@ -63,7 +63,46 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-049 -->
+<!-- Append new entries below (newest first). Next ID: DEC-050 -->
+
+## DEC-049 — Overdub stop admits the seal and accelerates snapshot publication
+
+**Date:** 2026-08-31
+
+**Status:** Accepted
+
+**Scope:** `feature/overdub-wrap-snapshot-publication`
+
+**Authority:** [`overdub_stop_incremental_admission_bugfix.md`](Plans/overdub_stop_incremental_admission_bugfix.md),
+[`DEC-047`](#dec-047--bounded-overdub-wrap-snapshot-publication).
+
+**Amends:** `DEC-047` audible-admission consequence only. Publication owner
+remains `Loop::stepPendingSnapshotPublish`. The `DEC-047` OVERDUBBING
+construction-start rule is unchanged.
+
+**Decision:**
+
+1. Stopping overdubbing (`Track::stopOverdubbing`) reanchors playback
+   traversal and does not invalidate a still-valid full-loop merged
+   representation solely because overdubbing ended.
+2. The next `playCommittedLoopMidi` may incrementally admit the one-shot
+   overdub-seal receipt into that preserved stream. Any mismatch keeps the
+   existing full-gather fallback.
+3. `playback_build` labels the branch actually taken: `snapshot` (current
+   root membership), `overlay` (stale-root overlay), or `compatibility`
+   only when `gatherCommittedEventsForDerivedView` runs.
+4. While a publication backlog is present (published root revision lags
+   `playbackRevision` and `hasPendingSnapshotPublish()`), deferred idle
+   admits Snapshot on 2 of every 6 turns. Every other deferred owner still
+   receives 1 of 6. The per-unit bound stays `stepPendingSnapshotPublish(1)`.
+5. The ratio does not depend on backlog size, pass count, loop length,
+   publication cost, queue depth, or elapsed CPU.
+
+**Consequences:** Audible playback after an eligible overdub stop no longer
+requires compatibility gather until idle finishes the successor root.
+Stale-root overlay remains available for ineligible rebuilds and shrinks
+as the published root catches `playbackRevision`.
+
 
 ## DEC-048 — Snapshot nodes pack into 32 KB slabs
 

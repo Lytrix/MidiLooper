@@ -174,6 +174,8 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
       return PSTR("note_edit");
     case PlaybackRebuildPath::IncrementalOverdubSeal:
       return PSTR("incremental");
+    case PlaybackRebuildPath::StaleRootOverlay:
+      return PSTR("overlay");
   }
   return PSTR("unknown");
 #else
@@ -186,6 +188,8 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
       return "note_edit";
     case PlaybackRebuildPath::IncrementalOverdubSeal:
       return "incremental";
+    case PlaybackRebuildPath::StaleRootOverlay:
+      return "overlay";
   }
   return "unknown";
 #endif

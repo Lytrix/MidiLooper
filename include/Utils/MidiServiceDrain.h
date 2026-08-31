@@ -26,6 +26,37 @@ inline DeferredIdleOwner nextDeferredIdleOwner(DeferredIdleOwner owner) {
   return static_cast<DeferredIdleOwner>(next % kDeferredIdleOwnerCount);
 }
 
+/// 5-owner cursor plus the after-cycle extra Snapshot slot used while a
+/// publication backlog is present. Caller-owned; no content-size input.
+struct DeferredIdleOwnerCursor {
+  DeferredIdleOwner owner = DeferredIdleOwner::Snapshot;
+  bool extraSnapshotPending = false;
+};
+
+/// Ordinary 5-owner identity, or the extra Snapshot after a completed cycle
+/// when `snapshotBacklogPending` is true. Boolean backlog-present only.
+inline DeferredIdleOwner selectDeferredIdleOwner(DeferredIdleOwnerCursor& cursor,
+                                                 bool snapshotBacklogPending) {
+  if (cursor.extraSnapshotPending) {
+    cursor.extraSnapshotPending = false;
+    if (snapshotBacklogPending) {
+      return DeferredIdleOwner::Snapshot;
+    }
+  }
+  const DeferredIdleOwner selected = cursor.owner;
+  cursor.owner = nextDeferredIdleOwner(cursor.owner);
+  cursor.extraSnapshotPending =
+      snapshotBacklogPending && selected == DeferredIdleOwner::LoadAndDisplay;
+  return selected;
+}
+
+inline DeferredIdleOwner selectDeferredIdleOwner(DeferredIdleOwner owner,
+                                                 bool snapshotBacklogPending) {
+  DeferredIdleOwnerCursor cursor;
+  cursor.owner = owner;
+  return selectDeferredIdleOwner(cursor, snapshotBacklogPending);
+}
+
 inline bool deferredIdleOwnerDependsOnVisualCacheWrap(
     DeferredIdleOwner owner) {
   return owner == DeferredIdleOwner::VisualCache ||

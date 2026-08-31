@@ -98,6 +98,9 @@ public:
   void resetPlaybackState(uint32_t currentTick);
   /// Reset per-slot playback indices so enabling/unmuting starts at the right phase.
   void resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick);
+  /// Reanchor playback traversal to the current cycle. Does not invalidate a
+  /// still-valid full-loop merged representation.
+  void reanchorPlaybackCycle(uint32_t currentTick);
   
   // Recording control
   void startRecording(uint32_t startLoopTick);
@@ -309,6 +312,9 @@ public:
   Loop& getActiveLoop() { return getLoop(activeLoopIndex); }
   const Loop& getActiveLoop() const { return getLoop(activeLoopIndex); }
   bool hasPendingSnapshotPublishOnAnySlot() const;
+  /// True when any slot has pending publication and the published root lags
+  /// `playbackRevision`. Boolean backlog-present only; not a size or cost.
+  bool hasSnapshotPublicationBacklogOnAnySlot() const;
   Loop& loopWithPendingSnapshotPublish();
 
   // ==========================================
