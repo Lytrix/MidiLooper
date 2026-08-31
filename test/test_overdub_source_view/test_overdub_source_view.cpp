@@ -2284,6 +2284,161 @@ void test_idle_slice_unprepared_keeps_wrap_held() {
   LoopContentResolution::deviceGateReset();
 }
 
+void drainPendingSnapshotPublish(Loop& loop) {
+  size_t steps = 0;
+  while (loop.hasPendingSnapshotPublish() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+}
+
+void recordAndPublishNote(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pitch) {
+  loop.loopLengthTicks = kLoopLen;
+  loop.loopId = 1;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, pitch, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, offTick));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
+uint32_t countNotesAtPitchStart(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                                uint32_t startTick) {
+  uint32_t count = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+uint32_t noteEndAtPitchStart(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                             uint32_t startTick) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick) {
+      return note.endTick;
+    }
+  }
+  return UINT32_MAX;
+}
+
+void test_idle_slice_current_snapshot_is_accepted() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  recordAndPublishNote(loop, 192, 256, 39);
+  loop.markDisplayCachesStale();
+  loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false);
+  TEST_ASSERT_FALSE(loop.lastVisualCacheIdleOverlayRejected());
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::Snapshot),
+                    static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  TEST_ASSERT_EQUAL(256u, noteEndAtPitchStart(loop.visualCache.notes, 39, 192));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  loop.loopId = 1;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(192, 1, 39, 100, 1)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(256, 1, 39, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 256));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.rebuildVisualCacheFromPasses();
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(192, 1, 39, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(448, 1, 39, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 1;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 1));
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+
+  Loop::SnapshotWindowGatherPath overlayPath = Loop::SnapshotWindowGatherPath::None;
+  SessionMidiEventVec overlayFlat;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(overlayFlat, 0, kLoopLen,
+                                                                &overlayPath));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Overlay),
+                    static_cast<int>(overlayPath));
+  const NoteUtils::DisplayNoteVec overlayNotes =
+      NoteUtils::reconstructDisplayNotes(overlayFlat, loop.loopLengthTicks, false, false);
+
+  SessionMidiEventVec committed;
+  loop.gatherCommittedEventsInWindow(committed, 0, kLoopLen, true);
+  const NoteUtils::DisplayNoteVec oracle =
+      NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
+  TEST_ASSERT_TRUE(countNotesAtPitchStart(overlayNotes, 39, 192) !=
+                   countNotesAtPitchStart(oracle, 39, 192));
+
+  loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 192);
+  TEST_ASSERT_TRUE(loop.lastVisualCacheIdleOverlayRejected());
+  const Loop::VisualCacheIdleGatherSource source = loop.lastVisualCacheIdleGatherSource();
+  TEST_ASSERT_TRUE(source == Loop::VisualCacheIdleGatherSource::Fallback ||
+                   source == Loop::VisualCacheIdleGatherSource::Prepared);
+  TEST_ASSERT_EQUAL(countNotesAtPitchStart(oracle, 39, 192),
+                    countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  TEST_ASSERT_EQUAL(noteEndAtPitchStart(oracle, 39, 192),
+                    noteEndAtPitchStart(loop.visualCache.notes, 39, 192));
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_without_snapshot_uses_fallback() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedRecordNote(loop, 192, 256, 39);
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  loop.markDisplayCachesStale();
+  loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false);
+  TEST_ASSERT_FALSE(loop.lastVisualCacheIdleOverlayRejected());
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::Fallback),
+                    static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  TEST_ASSERT_EQUAL(256u, noteEndAtPitchStart(loop.visualCache.notes, 39, 192));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_idle_slice_incomplete_fallback_budget_keeps_dirty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedDenseWindowNotes(loop, 8, kLoopLen);
+  loop.markDisplayCachesStale();
+  const bool dirtyBefore = loop.visualCacheDirty;
+  TEST_ASSERT_TRUE(dirtyBefore);
+  loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 1);
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::None),
+                    static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_FALSE(loop.visualCache.dirtyBars.empty());
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_idle_slice_keeps_untouched_next_bar_note() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3156,6 +3311,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_prepared_matches_lcr_without_append_wrap_held);
   RUN_TEST(test_idle_slice_unprepared_interior_keeps_mid_loop_overdub);
   RUN_TEST(test_idle_slice_unprepared_keeps_wrap_held);
+  RUN_TEST(test_idle_slice_current_snapshot_is_accepted);
+  RUN_TEST(test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback);
+  RUN_TEST(test_idle_slice_without_snapshot_uses_fallback);
+  RUN_TEST(test_idle_slice_incomplete_fallback_budget_keeps_dirty);
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
   return UNITY_END();
 }
