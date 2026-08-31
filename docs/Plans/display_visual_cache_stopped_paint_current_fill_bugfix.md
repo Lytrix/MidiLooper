@@ -1,6 +1,6 @@
 # Display visual-cache STOPPED paint current fill
 
-**Status:** Implemented — native **1519/1519**; RAM1 locals **6944**; device recapture required  
+**Status:** Implemented — native **1519/1519**; RAM1 locals **6944**. Device FAIL [`220337`](../../captures/session_20260831_220337.log)  
 **Date:** 2026-08-31  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1f  
@@ -87,7 +87,14 @@ Do not assign a dirty `visualCache` as a shortcut (RC5b / RC5a: dirty cache is n
 
 Native (`test_overdub_source_view`): reuse the 1e stale-root fixture. Overlay reconstruct (pairing off) ≠ `gatherCommittedEvents` reconstruct (pairing off). Discard Overlay; `gatherCommittedEvents`; reconstruct pairing off matches the committed oracle.
 
-Device ([`213448`](../../captures/session_20260831_213448.log) shape): same 8-bar overdub, three wraps, stop. First STOPPED `DISP` frame == visualCache. Wrap 3 / play must not be the first shorten. Do not use DNTE 256 as the paint oracle.
+Device FAIL [`220337`](../../captures/session_20260831_220337.log) (8-bar first overdub):
+
+- Wrap 1/2 and stop: `stale_range` is always `first=0,last=7,total=8,dsz=8,dcnt=8`. Idle then `slice_clean` of the whole loop (`127→206`, `206→276`).
+- Last OVERDUBBING `DISP` `276 / 269`. First STOPPED `DISP` **276 / 344**. No `paint_src` on that stop. No `idle_src` during ~38 s STOPPED.
+- PLAYING idle `Snapshot` `root_rev=7` / `playback_rev=7` → `slice_clean` **334** → `DISP` **334 / 334**. Play is still the first shorten/match.
+- Third overdub stop (2-bar): `paint_src,OverlayRejected` then `DISP` **80 / 91**. 1f reject ran; frame still ≠ cache.
+
+Do not use DNTE 256 as the paint oracle.
 
 ## Explicitly out of scope
 

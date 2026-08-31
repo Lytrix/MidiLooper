@@ -778,8 +778,10 @@ LOOP_COLD_MEM void markTickSpanDirty(VisualCache& cache, uint32_t startTick, uin
     }
   };
   if (endTick < startTick) {
-    markInclusive(startBar, totalBars - 1);
-    markInclusive(0, endBar);
+    // Wrap-held: only the On bar and Off bar. Inclusive startBar…last plus 0…endBar
+    // dirties interior bars the wrap did not change (On in bar 0 fills the loop).
+    markInclusive(startBar, startBar);
+    markInclusive(endBar, endBar);
     return;
   }
   markInclusive(startBar, endBar);

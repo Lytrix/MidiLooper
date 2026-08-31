@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1f STOPPED paint current fill)
+Last updated: 2026-08-31 (visual cache #41 Stage 1g wrap dirty span)
 
 ---
 
@@ -117,7 +117,10 @@ Native **1518/1518**. RAM1 locals **6944**. Device recapture required.
 Stage 1f (in tree): last-resort STOPPED paint rejects Overlay
 ([`display_visual_cache_stopped_paint_current_fill_bugfix.md`](../Plans/display_visual_cache_stopped_paint_current_fill_bugfix.md)).
 Device gate [`213448`](../../captures/session_20260831_213448.log): first
-STOPPED `DISP` must equal visualCache. Stage 2 is unblocked and not started.
+STOPPED `DISP` must equal visualCache. Stage 1g (in tree): wrap-held
+spans dirty On/Off bars only
+([`display_visual_cache_wrap_dirty_span_bugfix.md`](../Plans/display_visual_cache_wrap_dirty_span_bugfix.md)).
+Stage 2 is unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed

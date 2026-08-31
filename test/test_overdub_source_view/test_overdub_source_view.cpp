@@ -540,6 +540,72 @@ void test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span() {
   TEST_ASSERT_EQUAL(16u, countVisualDirtyBars(loop.visualCache.dirtyBars));
 }
 
+void test_wrap_held_span_does_not_dirty_unchanged_interior_bars() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore record;
+  const uint32_t midOn = Config::TICKS_PER_BAR * 3 + 10;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, midOn, 1, 62, 100, 2));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(midOn + 40, 1, 62, 0)));
+  loop.seedRecordPassFromStore(record);
+  loop.rebuildVisualCacheFromPasses();
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(192, 1, 72, 90, 10)));
+  MidiEvent wrapOff = MidiEvent::NoteOff(16, 1, 72, 0);
+  wrapOff.noteId = 10;
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(wrapOff));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(8u, loop.visualCache.dirtyBars.size());
+  TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[0]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[1]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[3]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
+  TEST_ASSERT_EQUAL(1u, countVisualDirtyBars(loop.visualCache.dirtyBars));
+}
+
+void test_wrap_held_on_last_bar_dirties_endpoints_only() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore record;
+  const uint32_t midOn = Config::TICKS_PER_BAR * 3 + 10;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, midOn, 1, 62, 100, 2));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(midOn + 40, 1, 62, 0)));
+  loop.seedRecordPassFromStore(record);
+  loop.rebuildVisualCacheFromPasses();
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+
+  const uint32_t wrapOn = kLoopLen - 40;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(wrapOn, 1, 72, 90, 10)));
+  MidiEvent wrapOff = MidiEvent::NoteOff(80, 1, 72, 0);
+  wrapOff.noteId = 10;
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(wrapOff));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(8u, loop.visualCache.dirtyBars.size());
+  TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[0]);
+  TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[7]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[1]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[3]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[6]);
+  TEST_ASSERT_EQUAL(2u, countVisualDirtyBars(loop.visualCache.dirtyBars));
+}
+
 void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3309,6 +3375,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
   RUN_TEST(test_idle_empty_dirty_bars_keeps_notes_without_marking_all);
   RUN_TEST(test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span);
+  RUN_TEST(test_wrap_held_span_does_not_dirty_unchanged_interior_bars);
+  RUN_TEST(test_wrap_held_on_last_bar_dirties_endpoints_only);
   RUN_TEST(test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail);
   RUN_TEST(test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache);
   RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
