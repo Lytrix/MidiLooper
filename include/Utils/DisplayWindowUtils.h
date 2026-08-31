@@ -94,6 +94,18 @@ inline bool preserveComposedNotesOnOverdubWrapInvalidate() {
     return true;
 }
 
+/// Wrap first paint (`231953` 109→65): revision bump rebuild must keep the last
+/// composed vector (committed + just-sealed capture). 1i `resize(committedCount)`
+/// is the pre-wrap record prefix only. Idle grow still assigns when cache passes
+/// that hold. Policy: `preserveComposedNotesOnOverdubWrapInvalidate`.
+inline bool shouldHoldComposedNotesOnOverdubWrapRevision(bool wrapRevisionChanged,
+                                                        bool visualCacheDirty,
+                                                        bool composedNotesNonempty,
+                                                        bool visualCacheGrewPastHold) {
+    return preserveComposedNotesOnOverdubWrapInvalidate() && wrapRevisionChanged &&
+           visualCacheDirty && composedNotesNonempty && !visualCacheGrewPastHold;
+}
+
 /// Clean visualCache may authorize committed display; dirty/stale cache must not (RC5b).
 inline bool committedDisplayVisualCacheAuthoritative(bool visualCacheDirty,
                                                      bool visualCacheNonempty) {

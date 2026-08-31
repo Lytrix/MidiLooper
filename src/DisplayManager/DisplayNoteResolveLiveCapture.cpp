@@ -306,26 +306,6 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         // Follow exit or wrap invalidate snapshot-gathers once
         // (session_20260826_001907). Source-view is consume ownership and must
         // not replace a nonempty committed layer.
-        if (havePaintWindow &&
-            visualCacheCoversFollowWindow(loop, paintWindowStart, paintWindowLength,
-                                          liveLoopLength)) {
-            uint32_t gatherStart = 0;
-            uint32_t gatherLength = 0;
-            DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
-            filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart, paintWindowLength,
-                                      liveLoopLength, liveDisplayNotes, gatherStart, gatherLength);
-            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-            liveWindowGatherValid_ = true;
-            liveWindowGatherStart_ = gatherStart;
-            liveWindowGatherLength_ = gatherLength;
-            liveWindowGatherLoopLength_ = liveLoopLength;
-            liveDisplayCommittedFromWindowGather_ = false;
-            liveCommittedLayerHeldForDirtyCache_ = false;
-            liveOverdubSourceViewNoteCount_ =
-                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            return;
-        }
         const bool visualCacheGrewPastHold =
             DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
                 loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_);
@@ -350,6 +330,43 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                 liveWindowGatherValid_ = false;
             }
+            liveDisplayCommittedFromWindowGather_ = false;
+            liveCommittedLayerHeldForDirtyCache_ = false;
+            liveOverdubSourceViewNoteCount_ =
+                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        const bool wrapRevisionChanged = liveMergePlaybackRevision_ != UINT32_MAX &&
+                                         liveMergePlaybackRevision_ != loop.playbackRevision;
+        if (DisplayWindowUtils::shouldHoldComposedNotesOnOverdubWrapRevision(
+                wrapRevisionChanged, loop.visualCacheDirty, !liveDisplayNotes.empty(),
+                visualCacheGrewPastHold)) {
+            // 231953: wrap first paint 109→65 when resize(committedCount) kept only
+            // the pre-wrap record prefix. Sealed capture is not in visualCache (1d).
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            liveDisplayCacheCaptureNoteCount_ = 0;
+            liveDisplayCacheCaptureChangeCount_ = 0;
+            liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
+            liveCommittedLayerHeldForDirtyCache_ = true;
+            liveOverdubSourceViewNoteCount_ =
+                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
+        if (havePaintWindow &&
+            visualCacheCoversFollowWindow(loop, paintWindowStart, paintWindowLength,
+                                          liveLoopLength)) {
+            uint32_t gatherStart = 0;
+            uint32_t gatherLength = 0;
+            DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+            filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart, paintWindowLength,
+                                      liveLoopLength, liveDisplayNotes, gatherStart, gatherLength);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            liveWindowGatherValid_ = true;
+            liveWindowGatherStart_ = gatherStart;
+            liveWindowGatherLength_ = gatherLength;
+            liveWindowGatherLoopLength_ = liveLoopLength;
             liveDisplayCommittedFromWindowGather_ = false;
             liveCommittedLayerHeldForDirtyCache_ = false;
             liveOverdubSourceViewNoteCount_ =

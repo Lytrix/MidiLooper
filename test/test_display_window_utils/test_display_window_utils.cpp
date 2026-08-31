@@ -155,6 +155,20 @@ void test_preserve_composed_notes_on_overdub_wrap_invalidate() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::preserveComposedNotesOnOverdubWrapInvalidate());
 }
 
+void test_should_hold_composed_notes_on_overdub_wrap_revision() {
+  // 231953 wrap 1: 109→65 when resize(committedCount) dropped sealed capture.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHoldComposedNotesOnOverdubWrapRevision(
+      true, true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldComposedNotesOnOverdubWrapRevision(
+      false, true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldComposedNotesOnOverdubWrapRevision(
+      true, false, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldComposedNotesOnOverdubWrapRevision(
+      true, true, false, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldComposedNotesOnOverdubWrapRevision(
+      true, true, true, true));
+}
+
 void test_committed_display_visual_cache_authoritative() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(false, true));
   // Dirty + notes present: paint must consume stale/handoff, not ensureVisualCacheBuilt.
@@ -575,6 +589,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_capture_playhead_tails_are_paint_only);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
+  RUN_TEST(test_should_hold_composed_notes_on_overdub_wrap_revision);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
   RUN_TEST(test_prefer_incremental_committed_display_includes_stopped);
   RUN_TEST(test_clamp_non_wrap_display_note_bar_ticks_frontier_overflow);
