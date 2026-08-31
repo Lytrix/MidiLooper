@@ -291,18 +291,18 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | Type | Geometry | Resolver consequence |
 |---|---|---|
 | `CompleteCover` | `targetStart >= causingStart && targetEnd <= causingEnd` | Hide |
-| `OverlapNoteOn` | Inclusive overlap and `targetStart >= causingStart` (not fully contained) | Hide |
+| `OverlapNoteOn` | Inclusive overlap and `targetStart >= causingStart` (not fully contained) | NOTE_EDIT Hide. Overdub NoteOff Shorten to causing exclusive end − 1 |
 | `OverlapNoteOff` | Target starts before causing and `targetEnd >= causingStart` (includes start-abut) | Shorten to `computeShortenedEndTick` |
 | `BoundaryTouch` | No inclusive overlap; edges share a tick | Leave baseline (no upsert) |
 
-`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff` and Hides only when geometry is not visible. Occupy On and playback cross upsert paint-only Hides (`pendingPaintHides_`) so the occupied committed row drops on the currentTick frame; wrap/stop do **not** seal those as Delete (`005757`). NoteOff resolve replaces the paint Hide with Shorten/Hide. Live capture tails stay on the frame and grow to currentTick until NoteOff.
+`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff`, Shortens `OverlapNoteOn` to the occupy exclusive end − 1 (Length companion), and Hides only `CompleteCover` or an inverted / min-length remnant. Occupy On and playback cross upsert paint-only Hides (`pendingPaintHides_`) so the occupied committed row drops on the currentTick frame; wrap/stop do **not** seal those as Delete (`005757`). NoteOff resolve replaces the paint Hide with Shorten (OverlapNoteOn / OverlapNoteOff) or Hide (CompleteCover). Live capture tails stay on the frame and grow to currentTick until NoteOff.
 
 ### 4. What is stored after resolve?
 
 | Kind | When | Payload | Persistence |
 |---|---|---|---|
-| Shorten | Visible and start/end differ from baseline | New start/end (end = Off tick) | Sealed Length EditPass |
-| Hide | `visible == false` | Baseline start/end kept on the row | Sealed Delete EditPass |
+| Shorten | `OverlapNoteOff` visible shorten, or overdub `OverlapNoteOn` occupy shorter | New start/end (end = Off tick or occupy exclusive end − 1) | Sealed Length EditPass |
+| Hide | `CompleteCover`, or inverted / min-length remnant | Baseline start/end kept on the row | Sealed Delete EditPass |
 | Add | Always, closed B | B's `[startTick, endTick)` | **Not sealed.** Capture pass already holds B. Overlay only |
 
 ### 5. What commits the storage Off tick into passes?
