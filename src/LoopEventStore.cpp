@@ -71,9 +71,16 @@ void extmem_free(void* ptr);
 #endif
 
 EventChunk* LoopEventStore::pool_ = nullptr;
+#if defined(__IMXRT1062__)
+DMAMEM bool LoopEventStore::poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
+DMAMEM ChunkLifecycleState LoopEventStore::poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT] =
+    {};
+DMAMEM uint16_t LoopEventStore::poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
+#else
 bool LoopEventStore::poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 ChunkLifecycleState LoopEventStore::poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 uint16_t LoopEventStore::poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
+#endif
 bool LoopEventStore::poolReady_ = false;
 uint8_t LoopEventStore::sdLoadStagingDepth_ = 0;
 uint8_t LoopEventStore::ephemeralSealDepth_ = 0;

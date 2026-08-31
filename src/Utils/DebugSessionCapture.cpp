@@ -18,6 +18,9 @@
 #if defined(__IMXRT1062__)
 extern "C" void* extmem_malloc(size_t size);
 extern "C" void extmem_free(void* ptr);
+#define SC_FMT(literal) PSTR(literal)
+#else
+#define SC_FMT(literal) literal
 #endif
 
 namespace DebugSessionCapture {
@@ -471,6 +474,13 @@ SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_
                 (unsigned long)maxUs, (unsigned long)overCount);
 }
 
+SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
+                                          uint32_t overCount) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,track_update,%u,%lu,%lu\r\n"),
+                (unsigned long)micros(), static_cast<unsigned>(trackIndex),
+                (unsigned long)maxUs, (unsigned long)overCount);
+}
+
 SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond) {
   emitCapPrintf("#CAP,%lu,DIAG,clockrate,%lu\r\n", (unsigned long)micros(),
                 (unsigned long)pulsesPerSecond);
@@ -489,6 +499,11 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                 (unsigned long)windowStartTick, (unsigned long)windowLengthTicks,
                 (unsigned long)revision, static_cast<unsigned>(trackIndex),
                 static_cast<unsigned>(slotIndex), static_cast<unsigned long>(rebuildCount));
+}
+
+SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
+  emitCapPrintf("#CAP,%lu,DIAG,playback_order,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)durationUs, (unsigned long)eventCount);
 }
 
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
@@ -517,6 +532,13 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
   emitCapPrintf("#CAP,%lu,ODUB,stage,%s,%lu,%lu,%lu,%s\r\n", (unsigned long)micros(), stage,
                 (unsigned long)durationUs, (unsigned long)heapBefore, (unsigned long)heapAfter,
                 outcome);
+}
+
+SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
+                                 uint32_t srcAppendUs) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,wrap,total=%lu,seal=%lu,pass_apply=%lu,src_append=%lu\r\n"),
+                (unsigned long)micros(), (unsigned long)totalUs, (unsigned long)sealUs,
+                (unsigned long)passApplyUs, (unsigned long)srcAppendUs);
 }
 
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,

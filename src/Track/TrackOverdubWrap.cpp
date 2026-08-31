@@ -4,10 +4,7 @@
 #include "TrackInternal.h"
 
 #include "ClockManager.h"
-#include "DisplayManager.h"
 #include "Logger.h"
-#include "LoopContentResolution.h"
-#include "Utils/DisplayWindowUtils.h"
 #include "Utils/TrackMem.h"
 
 bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
@@ -40,36 +37,21 @@ TRACK_COLD_MEM bool Track::commitOverdubWrapAtSessionStart() {
     return false;
   }
   const uint32_t sealedAtTick = loop.playheadPhaseTick;
+  const uint32_t priorPlaybackRevision = loop.playbackRevision;
   const CommitResult result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
   const bool wrapped = result == CommitResult::Committed;
   if (wrapped) {
     const PassId passId = loop.lastCommittedPassId();
+    loop.queueOverdubWrapSnapshotJournal(passId);
     EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
-    for (const OverdubPass& pass : loop.passes.overdubPasses) {
-      if (pass.id == passId) {
-        LoopContentResolution::publishPreparedOverdubPass(pass, loop.playbackRevision,
-                                                          loop.loopLengthTicks,
-                                                          loop.passes.editPasses, companionIds);
-        break;
-      }
-    }
-    loop.rebuildOverdubSourceView(loop.playheadPhaseTick);
     loop.pushOverdubSessionPass(passId, companionIds);
-    loop.markAffectedDisplayCacheRanges(passId, companionIds);
-    invalidateCaches();
+    loop.recordLastOverdubSeal(passId, companionIds, priorPlaybackRevision);
   }
   loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
   for (const MidiEvent& evt : heldOns) {
     loop.appendCaptureEvent(evt);
   }
   loop.noteOverdubWrapCommitted();
-  if (wrapped) {
-    // RC-W1: reset live compose bookkeeping so the next OVERDUBBING frame rebuilds
-    // the committed prefix from overdubSourceViewNotes. Keep the composed notes —
-    // a stop before that frame must still have a holdable frame (`011829`).
-    displayManager.invalidateLiveDisplayCache(
-        DisplayWindowUtils::preserveComposedNotesOnOverdubWrapInvalidate());
-  }
   logger.logTrackEvent("Overdub wrap committed", clockManager.getCurrentTick());
   return wrapped;
 }

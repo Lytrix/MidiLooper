@@ -6,6 +6,7 @@
 **Contract:** [`runtime_scheduling_admission_model_architecture.md`](runtime_scheduling_admission_model_architecture.md)  
 **Investigation log:** [`archive/refinements/runtime_scheduling_timing_envelope_investigation.md`](archive/refinements/runtime_scheduling_timing_envelope_investigation.md)  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)
+**GitHub Work:** [owner-boundary follow-up](https://github.com/users/Lytrix/projects/1) draft; playback-window cluster [#38](https://github.com/Lytrix/MidiLooper/issues/38)
 
 This is the **sole actionable roadmap** for runtime scheduling work. Historical S1–S8 labels and the Cursor export `runtime_timing_envelope_8db96333.plan.md` are superseded.
 

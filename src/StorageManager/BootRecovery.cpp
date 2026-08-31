@@ -73,7 +73,7 @@ void discardIncompleteCurrentWorkspaceTempFilesOnSd() {
     }
 }
 
-void discardIncompleteRevisionTempFilesOnSd() {
+STORAGE_PERSIST_MEM void discardIncompleteRevisionTempFilesOnSd() {
     if (!SD.exists(SetRevisionCatalog::kSetsRoot)) {
         return;
     }

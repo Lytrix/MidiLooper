@@ -882,7 +882,23 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     const bool allowVisualMaintenanceSlice =
         (!postOverdubDrainWindow || overdubDrainOwnerTrack) &&
         !constrainedFallbackCooldownActive;
-    if (allowVisualMaintenanceSlice && loop.hasCommittedPasses() && loop.visualCacheDirty) {
+    if (allowVisualMaintenanceSlice && isOverdubbing() && !loop.overdubSourceSpanCacheReady()) {
+      PassId lastWrapPassId = kInvalidPassId;
+      EditPassIdList lastWrapCompanionIds;
+      if (loop.collectLastOverdubSessionPass(lastWrapPassId, lastWrapCompanionIds)) {
+        for (const OverdubPass& pass : loop.passes.overdubPasses) {
+          if (pass.id == lastWrapPassId) {
+            LoopContentResolution::publishPreparedOverdubPass(
+                pass, loop.playbackRevision, loop.loopLengthTicks, loop.passes.editPasses,
+                lastWrapCompanionIds);
+            break;
+          }
+        }
+      }
+      const uint32_t refreshTick =
+          loop.lastTickInLoop != UINT32_MAX ? loop.lastTickInLoop : loop.playheadPhaseTick;
+      loop.rebuildOverdubSourceView(refreshTick, "idle");
+    } else if (allowVisualMaintenanceSlice && loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;
       if (deferredSavePending) {
         barsPerSlice = 2;

@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-048](#dec-048--snapshot-nodes-pack-into-32-kb-slabs) | 2026-08-27 | Immutable snapshot nodes pack into 32 KB PSRAM bump slabs owned by `Loop` | Accepted |
+| [DEC-047](#dec-047--bounded-overdub-wrap-snapshot-publication) | 2026-08-27 | Bounded overdub-wrap snapshot publication through mutation journals and fixed-capacity membership pages | Accepted — Phase 3 tasks 3.5–3.6 |
 | [DEC-046](#dec-046--round-robin-admission-over-playback-relevant-destinations-representation-coverage-is-a-prerequisite) | 2026-08-26 | Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite; `RECORDING` included; G1 consumes RC4's post-resolution cost | Accepted — architecture direction; firmware Slices 1–4 not authorized |
 | [DEC-045](#dec-045-overdub-snapshot-publish-is-idle-stepped) | 2026-08-25 | Overdub `LoopSnapshot` publication queues at stop and steps from idle | Accepted |
 | [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) | 2026-08-25 | Immutable loop snapshots replace maintained LCR as the effective-state direction on the feature branch | Accepted — design phase; amended for LoopPass vs LoopSnapshot, persistent reference root, provisional/global snapshots, and latest-saved reboot |
@@ -61,7 +63,97 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-047 -->
+<!-- Append new entries below (newest first). Next ID: DEC-049 -->
+
+## DEC-048 — Snapshot nodes pack into 32 KB slabs
+
+**Date:** 2026-08-27
+
+**Status:** Accepted
+
+**Scope:** `feature/immutable-loop-snapshot-passes`
+
+**Authority:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
+[`INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md`](Guides/INTERNAL_HEAP_AND_EXTERNAL_MEMORY.md).
+
+**Decision:**
+
+1. `Loop` owns immutable snapshot object allocation. `allocateSnapshotShared`
+   bump-allocates into 32 KB slabs (`kSnapshotSlabBytes`).
+2. A slab is one `extmem_malloc` on device. Native builds use one 32 KB
+   `malloc` because PSRAM is unavailable. Do not spray per-node `malloc`s
+   when a slab is denied.
+3. Each slab holds a live-object count and is freed when the count reaches 0.
+   Copy-on-write sharing stays pointer-based; unchanged membership may live
+   on an older slab.
+4. One mutable `SnapshotSpanRoot` and one mutable `SnapshotEventRoot` are
+   reused for the life of a `LoopSnapshotConstruction`.
+5. If a new slab cannot be allocated, construction `failed_` stays as today:
+   discard the candidate and keep the previous published snapshot.
+6. This is not a general arena under `ExternalMemoryFirstAllocator`. Directory
+   `pages` vectors and publish scratch stay on their existing allocators.
+
+**Consequences:** smalloc block count for snapshot nodes grows with payload
+slabs, not with note count × node type. Capture-serial emits
+`DIAG,snapshot_alloc,nodes,bytes,slabs` on `freeze()`.
+
+## DEC-047 — Bounded overdub-wrap snapshot publication
+
+**Date:** 2026-08-27
+
+**Status:** Accepted — Phase 3 tasks `3.5`–`3.6`; production firmware remains
+gated by the phase architecture and device verification gates.
+
+**Scope:** `feature/immutable-loop-snapshot-passes`
+
+**Authority:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/),
+[`overdub_wrap_source_snapshot_migration_refinement.md`](Plans/overdub_wrap_source_snapshot_migration_refinement.md),
+and [`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md).
+
+**Supersedes:** `DEC-045` only for the activated Phase 3 wrap-publication
+slice. `DEC-045` remains historical evidence for the prior stop-queued,
+post-root successor policy outside this slice.
+
+**Decision:**
+
+1. A settled overdub wrap queues an explicit transient mutation journal through
+   `Loop`; `Track::commitOverdubWrapAtSessionStart` does not construct or
+   publish a snapshot synchronously.
+2. Capture/pairing state assigns paired NoteOn/NoteOff event identities before
+   pass promotion. Promotion does not scan capture content for event identity.
+   These identities are runtime-only until the later persistence phase.
+3. The journal has structural caps for changes, affected bars, membership
+   entries, and bytes. Oversized wraps are represented as ordered bounded
+   fragments. Fragments retain the exact parent identity and never publish an
+   incomplete candidate.
+4. Snapshot construction uses fixed-capacity immutable membership pages and
+   persistent bar-cursor progress. It does not enumerate all changed bars in
+   `begin()` or copy an unbounded membership vector in one unit.
+5. Ordered successor construction may step during `PLAYING` and `OVERDUBBING`
+   after the first root exists under this phase’s replacement policy. The old
+   complete root remains selected until a complete successor is frozen and
+   published.
+6. A failed or over-budget fragment remains queued for retry. It is not
+   discarded, and the settled compatibility mutation is not silently lost.
+7. The event index is effective content for note mutations: Hide removes paired
+   note events, while geometry replacement creates new immutable event objects
+   with the same logical `EventId` and canonical order.
+8. The global overdub undo entry remains pass-based while construction is
+   pending. Snapshot-identity undo attachment belongs to the later undo phase.
+9. The device gate uses the measured `T_RT_reserve` contract for construction-
+   attributable MIDI gap and deadline lateness. Total construction wall time
+   alone is insufficient.
+
+**Consequences:** OpenSpec tasks `3.5` and `3.6` require updates to the phase
+gate, runtime scope, construction inventory, and parity fixtures before
+implementation. Direct consumer migration, persistence, and snapshot-identity
+undo remain later tasks.
+
+**Amendment (2026-08-27):** “Paired event identity” in items 2 and 7 means
+the stable `NoteId` shared by a logical NoteOn/NoteOff pair. Note-event
+replacement and removal are keyed by that `NoteId`. `EventId` remains only for
+non-note event objects. A provisional `O:` snapshot is private and unselected;
+the prior complete root remains active until atomic publication.
 
 ## DEC-046 — Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite
 

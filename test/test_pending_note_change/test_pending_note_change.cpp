@@ -116,6 +116,31 @@ void seedLongSourceNote(Loop& loop, NoteId id, uint32_t onTick, uint32_t offTick
   loop.nextNoteId_ = id + 1;
 }
 
+uint32_t countNoteOnWithId(const SessionMidiEventVec& events, NoteId id) {
+  uint32_t count = 0;
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == id) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+uint32_t noteOffTickForId(const SessionMidiEventVec& events, NoteId id, uint8_t pitch) {
+  uint32_t onTick = UINT32_MAX;
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == id) {
+      onTick = evt.tick;
+      continue;
+    }
+    if (onTick != UINT32_MAX && evt.isNoteOff() && evt.data.noteData.note == pitch &&
+        evt.tick >= onTick) {
+      return evt.tick;
+    }
+  }
+  return UINT32_MAX;
+}
+
 OverlapNoteIdSet overlapIds(std::initializer_list<NoteId> ids) {
   OverlapNoteIdSet out;
   for (NoteId id : ids) {
@@ -1221,6 +1246,240 @@ void test_wrap_pass_events_at_s_occupy_without_merged_rebuild() {
   TEST_ASSERT_TRUE(occupyIds.contains(kWrapNoteId));
 }
 
+void test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_rebuild() {
+  // Wrap tick: incremental source-view append + lastCommittedPassId ledger apply.
+  // Does not call ensurePlaybackMergedMidiEventsBuilt or rebuildOverdubSourceView.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 416;
+  constexpr uint32_t kPrev = 408;
+  constexpr uint32_t kOff = 480;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kSourceId = 1;
+  constexpr NoteId kWrapNoteId = 9;
+  seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
+  loop.openOverdubSession(kS);
+  loop.establishOverdubSourceView(kS);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.overdubSourceViewNotes(), kSourceId));
+  TEST_ASSERT_NULL(findDisplayNoteById(loop.overdubSourceViewNotes(), kWrapNoteId));
+
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOff, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  loop.appendLastCommittedOverdubPassToSourceView();
+
+  uint32_t wrapNoteCount = 0;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == kWrapNoteId) {
+      ++wrapNoteCount;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, wrapNoteCount);
+  const NoteUtils::DisplayNote* wrapNote =
+      findDisplayNoteById(loop.overdubSourceViewNotes(), kWrapNoteId);
+  TEST_ASSERT_NOT_NULL(wrapNote);
+  TEST_ASSERT_EQUAL_UINT8(kPitch, wrapNote->note);
+  TEST_ASSERT_EQUAL_UINT32(kS, wrapNote->startTick);
+
+  const PassId wrapId = loop.lastCommittedPassId();
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id == wrapId) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(wrapPass);
+
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  TEST_ASSERT_FALSE(passEvents.empty());
+
+  struct DirectPlaybackStreamCtx {
+    SessionMidiEventVec events;
+  };
+  DirectPlaybackStreamCtx streamCtx;
+  streamCtx.events = passEvents;
+
+  auto streamSize = [](const void* ctx) -> size_t {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events.size();
+  };
+  auto streamEventAt = [](const void* ctx, uint16_t cursor) -> const MidiEvent& {
+    return static_cast<const DirectPlaybackStreamCtx*>(ctx)->events[cursor];
+  };
+  auto streamPhase = [](const MidiEvent& evt, const ProjectionContext&) -> uint32_t {
+    return evt.tick;
+  };
+  auto applyLedger = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    static_cast<ActiveNoteLedger*>(ctx)->applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, streamSize, nullptr, streamEventAt, streamPhase};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = kLoopLenTicks;
+  uint16_t cursor = 0;
+  ActiveNoteLedger wrapLedger;
+  PlaybackTickFrame wrapFrame{&playbackContext, kS, kPrev, false};
+  PlaybackCursorAdvanceState wrapAdvance{&cursor, nullptr};
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed,
+                    advancePlaybackCursor(wrapAdvance, wrapFrame, PlaybackEmitPolicy::LayeredSlot,
+                                          stream, applyLedger, &wrapLedger, 0, nullptr, nullptr, 1));
+  TEST_ASSERT_EQUAL_UINT32(kWrapNoteId, wrapLedger.noteId(1, kPitch));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(kPitch, 1, wrapLedger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(occupyIds.contains(kWrapNoteId));
+
+  OverlapNoteIdSet holdIds;
+  loop.collectOverdubSourceHoldParticipantIds(kS, kPitch, holdIds);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(holdIds.size()));
+  TEST_ASSERT_TRUE(holdIds.contains(kWrapNoteId));
+
+  loop.rebuildOverdubSourceView(kS);
+  wrapNoteCount = 0;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == kWrapNoteId) {
+      ++wrapNoteCount;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, wrapNoteCount);
+}
+
+void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr uint32_t kS = 416;
+  constexpr uint32_t kAfterS = 480;
+  constexpr uint8_t kPitch = 60;
+  constexpr NoteId kSourceId = 1;
+  constexpr NoteId kWrapNoteId = 9;
+  seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
+  PlaybackMergedMidiEvents merged;
+  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  merged.builtFromRevision = loop.playbackRevision;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = loop.loopLengthTicks;
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kSourceId));
+  TEST_ASSERT_EQUAL_UINT32(0u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+  const uint32_t priorRevision = loop.playbackRevision;
+
+  loop.openOverdubSession(kS);
+  loop.establishOverdubSourceView(kS);
+  loop.beginCapture(CapturePhase::Overdub, kS);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(kS, 1, kPitch, 90, kWrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kAfterS, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, kS));
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+  TEST_ASSERT_TRUE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_EQUAL_UINT32(0u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+
+  TEST_ASSERT_TRUE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_FALSE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, merged.builtFromRevision);
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+  bool foundAfterS = false;
+  for (const MidiEvent& evt : merged.mergedEvents) {
+    if (evt.isNoteOff() && evt.data.noteData.note == kPitch && evt.tick == kAfterS) {
+      foundAfterS = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE(foundAfterS);
+
+  SessionMidiEventVec rebuilt;
+  loop.gatherCommittedEventsForDerivedView(rebuilt);
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(rebuilt, kWrapNoteId));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+}
+
+void test_incremental_overdub_seal_applies_companion_shorten() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr NoteId kSourceId = 1;
+  constexpr NoteId kOverdubId = 10;
+  seedLongSourceNote(loop, kSourceId, 50, 200, 60, kLoopLenTicks);
+  PlaybackMergedMidiEvents merged;
+  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  merged.builtFromRevision = loop.playbackRevision;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = loop.loopLengthTicks;
+  TEST_ASSERT_EQUAL_UINT32(200u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
+  const uint32_t priorRevision = loop.playbackRevision;
+
+  loop.openOverdubSession(0);
+  loop.establishOverdubSourceView(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 120, 160, kOverdubId,
+                                                                   overlapIds({kSourceId})));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(120, 1, 60, 90, kOverdubId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(160, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 0));
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, companionIds.size());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+
+  TEST_ASSERT_TRUE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kOverdubId));
+  TEST_ASSERT_EQUAL_UINT32(119u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
+}
+
+void test_incremental_overdub_seal_provenance_miss_falls_back() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLenTicks = Config::TICKS_PER_BAR;
+  constexpr NoteId kSourceId = 1;
+  constexpr NoteId kWrapNoteId = 9;
+  seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
+  PlaybackMergedMidiEvents merged;
+  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  merged.builtFromRevision = loop.playbackRevision;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = loop.loopLengthTicks;
+  const uint32_t priorRevision = loop.playbackRevision;
+  const uint32_t builtRevision = merged.builtFromRevision;
+
+  loop.openOverdubSession(96);
+  loop.beginCapture(CapturePhase::Overdub, 96);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(96, 1, 60, 90, kWrapNoteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(128, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 96));
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+
+  TEST_ASSERT_FALSE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_EQUAL_UINT32(builtRevision, merged.builtFromRevision);
+  TEST_ASSERT_EQUAL_UINT32(0u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision + 1u);
+  TEST_ASSERT_TRUE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_FALSE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_FALSE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_EQUAL_UINT32(builtRevision, merged.builtFromRevision);
+
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId() + 99u, companionIds, priorRevision);
+  TEST_ASSERT_TRUE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_FALSE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_FALSE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_EQUAL_UINT32(builtRevision, merged.builtFromRevision);
+  TEST_ASSERT_EQUAL_UINT32(0u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+
+  EditPassIdList missingCompanion;
+  missingCompanion.push_back(static_cast<EditPassId>(9999));
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), missingCompanion, priorRevision);
+  TEST_ASSERT_FALSE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_FALSE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_EQUAL_UINT32(0u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
+}
+
 void test_wrap_pass_events_at_loop_head_occupy_without_merged_rebuild() {
   // session_20260818_185831 wrap 1: wrap-committed 60 On@0 Off@8, reanchor at 696,
   // then atLoopStart (760, 0]. OverdubWrap keeps the 8-tick pair (Q16 is stop-only).
@@ -2294,6 +2553,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_note_on_occupy_empty_when_ledger_inactive);
   RUN_TEST(test_wrap_committed_note_at_s_occupies_ledger_same_tick);
   RUN_TEST(test_wrap_pass_events_at_s_occupy_without_merged_rebuild);
+  RUN_TEST(test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_rebuild);
+  RUN_TEST(test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather);
+  RUN_TEST(test_incremental_overdub_seal_applies_companion_shorten);
+  RUN_TEST(test_incremental_overdub_seal_provenance_miss_falls_back);
   RUN_TEST(test_wrap_pass_events_at_loop_head_occupy_without_merged_rebuild);
   RUN_TEST(test_wrap_pass_on_at_96_occupies_after_s_interval);
   RUN_TEST(test_wrap_pass_spanning_on_at_0_occupies_at_96);

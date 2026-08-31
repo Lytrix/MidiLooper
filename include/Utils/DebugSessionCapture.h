@@ -102,6 +102,9 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);
+/** Wrap-tick children only: DIAG,wrap,total=<us>,seal=<us>,pass_apply=<us>,src_append=<us>. */
+SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
+                                 uint32_t srcAppendUs);
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value);
 SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t heapFreeBytes,
                                           uint16_t chunksFree, uint16_t persistQueueDepth);
@@ -115,6 +118,9 @@ SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 /** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. */
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
+/** Per-track S0 timing telemetry: DIAG,track_update,<track>,<maxUs>,<overCount> (Tier-A). */
+SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
+                                          uint32_t overCount);
 /** S0 timing telemetry: DIAG,clockrate,<pulsesPerSecond> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
 /** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick> (Tier-A). */
@@ -123,6 +129,8 @@ SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessU
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
                                  uint8_t slotIndex, uint32_t rebuildCount, const char* path);
+/** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
+SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);
@@ -225,6 +233,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::overdubStartStage(stage, durationUs, heapBefore, heapAfter, outcome)
+#define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs) \
+  DebugSessionCapture::overdubWrapTick(totalUs, sealUs, passApplyUs, srcAppendUs)
+#define SC_PLAYBACK_ORDER(durationUs, eventCount) \
+  DebugSessionCapture::playbackOrder(durationUs, eventCount)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
                                            DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
@@ -324,6 +336,8 @@ inline void restartCaptureBootGrace() {}
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs) ((void)0)
+#define SC_PLAYBACK_ORDER(durationUs, eventCount) ((void)0)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) ((void)0)

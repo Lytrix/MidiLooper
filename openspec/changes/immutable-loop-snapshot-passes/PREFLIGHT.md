@@ -156,8 +156,9 @@ entries and the dirty membership entries while retaining the remaining pages
 by reference. This selects a sparse fixed-capacity paged directory as the
 Phase 1 physical implementation experiment. Page capacity remains a measured
 parameter, and this native result does not establish Teensy memory safety.
-Successor peak temporary memory, allocator behavior, and reclamation remain
-required measurements before the implementation is accepted.
+Successor peak temporary memory and reclamation remain required measurements
+before the implementation is accepted. Snapshot node allocation is 32 KB bump
+slabs owned by `Loop` (`DEC-048`).
 
 ### Phase 1 implementation result
 
@@ -248,10 +249,43 @@ path. `Loop::queueSessionExitSnapshot` copies pass ids; idle
 First-record uses the overdub live-enqueue setup: RECORDING may start from
 `capture.store` after the playhead has left bar 1, and PLAYING starts
 construction (`allowStartConstruction` true). During OVERDUBBING, idle only advances an
-in-flight candidate. After a root exists, PLAYING and OVERDUBBING do not
+in-flight candidate. Under DEC-045 outside the activated Phase 3
+wrap-publication slice, after a root exists, PLAYING and OVERDUBBING do not
 step successor construction. One idle unit is one dirty bar, ordered by
 soonest playhead arrival. NOTE_EDIT close remains a synchronous
-drain. Failure still discards the candidate. See `DEC-045`.
+drain. Failure discards the candidate. See `DEC-045`; the Phase 3 amendment
+below replaces this successor and failure policy for tasks `3.5`/`3.6`.
+
+## Amendment — Phase 3 wrap publication (2026-08-27)
+
+The activated implementation scope is OpenSpec tasks `3.5` and `3.6` only.
+Direct consumer migration, persistence, and snapshot-identity undo remain
+later phases.
+
+This phase supersedes `DEC-045` only for ordered successor construction after
+the first published root: bounded overdub-wrap journal fragments may step
+during `PLAYING` and `OVERDUBBING`. The wrap path queues work only; it does not
+construct or publish a candidate on the interval path.
+
+The phase requires:
+
+- incremental `NoteId` assignment for each logical NoteOn/NoteOff pair from
+  capture/pairing state before pass promotion; `EventId` remains for non-note
+  events only;
+- a transient bounded mutation journal with structural caps for changes,
+  affected bars, membership entries, and bytes;
+- ordered bounded fragments with exact parent identity and retry retention;
+- fixed-capacity immutable membership pages and persistent bar-cursor progress;
+- no upfront changed-span enumeration, unbounded membership-vector copy, or
+  pass-reconstruction setup in one construction unit;
+- effective event-index replacements/removals for note geometry changes and
+  hides keyed by pair `NoteId`, with non-note `EventId`s runtime-only in this
+  phase; and
+- a device pass based on measured `T_RT_reserve` for construction-attributable
+  MIDI gap and deadline lateness.
+
+The global overdub undo entry remains pass-based while construction is
+pending. Snapshot-identity attachment belongs to the later undo phase.
 
 ### Amendment (2026-08-25) — stale snapshot window plus unpublished overlay
 
@@ -334,12 +368,13 @@ implicitly authorized by this preflight.
 
 | Source | Conflicts with architecture or intent? |
 |---|---|
-| OpenSpec / tasks | NO after DEC-044 reassessment alignment; physical directory and runtime bounds remain explicitly open |
-| Proposed new class/helper | NO; no new class/helper is authorized by Phase 0 |
+| OpenSpec / tasks | NO after DEC-047 amendment; fixed-capacity directory measurement and enforced runtime bounds are Phase 3 admission gates |
+| Proposed new class/helper | NO; the slice extends existing `Loop` and semantic owners without a new manager or source authority |
 
 ## Context summary
 
-- Active change: `immutable-loop-snapshot-passes`, Phase 0 only.
+- Active change: `immutable-loop-snapshot-passes`, Phase 3 tasks `3.5`/`3.6`
+  wrap publication only.
 - Approved logical model: pitch → 768-tick bar → `NoteRef` membership lists;
   bar → `EventRef` membership lists in existing event-stream order.
 - `LoopSnapshot` is self-contained; parent-snapshot traversal is forbidden.
@@ -348,6 +383,8 @@ implicitly authorized by this preflight.
 - Existing semantic owners determine overlap, pairing, NOTE_EDIT geometry, and
   runtime playback state.
 - `StorageManager` remains the sole persistence/migration owner.
-- Physical directory, optional indexes, storage layout, and construction bounds
-  remain later decisions.
+- Fixed-capacity physical directory selection, journal caps, persistent
+  construction cursors, retry policy, and `T_RT_reserve` are Phase 3 admission
+  requirements. Optional indexes, storage layout, and persistence remain later
+  decisions.
 - No firmware or native test run is required for this documentation stage.

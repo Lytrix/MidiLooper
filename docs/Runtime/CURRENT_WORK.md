@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-28 (session-exit length handoff device PASS)
+Last updated: 2026-08-31 (Rank 6 incremental merged-stream admission)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -74,6 +74,33 @@ remained, so playback selected an incomplete snapshot and dropped the first
 record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
+
+**Immediate slice — Rank 6 incremental merged-stream admission**
+([`playback_merged_compatibility_rebuild_clock_interval_bugfix.md`](../Plans/playback_merged_compatibility_rebuild_clock_interval_bugfix.md)):
+After a proven single overdub seal, `ensurePlaybackMergedMidiEventsBuilt`
+admits `lastCommittedPassId()` plus that seal’s companions into the existing
+full-loop merged stream. Do not infer from revision `+1` alone: companion
+seal bumps `playbackRevision` a second time. Full gather remains the
+fallback. `playCommittedLoopMidi` keeps the existing stream on a
+revision-only stale so incremental admission has a representation to extend.
+Device proof: next `playCommittedLoopMidi` after the seal must show
+`playback_build,incremental` and no full-loop `playback_build,compatibility`.
+`rebuildPlaybackOrder` stays on that tick and emits `playback_order`.
+Native **1499/1499**. RAM1 locals **6944**. Capture
+[`141836`](../../captures/session_20260831_141836.log) is an 18-bar T4
+loop and does not close the gate: incremental is ineligible and every
+post-seal T4 `playback_build` is the kept 2-bar window gather. Recapture
+on a loop ≤ 16 bars. Do not freeze `T_RT_reserve`. Do not check off
+OpenSpec `3.5`/`3.6`.
+
+**Shipped — wrap-tick derived rebuild**
+([`overdub_wrap_derived_rebuild_clock_interval_bugfix.md`](../Plans/overdub_wrap_derived_rebuild_clock_interval_bugfix.md)):
+Device recapture [`135510`](../../captures/session_20260831_135510.log):
+wrap child line `total=41851,seal=36025,pass_apply=676,src_append=5150`;
+`track_update[4]=41902` in that window (not the [`005527`](../../captures/session_20260828_005527.log)
+77.618 ms class); no `why=wrap`; Rank 6 gather `playback_build` 7547 µs at
+`57711324` is the next-tick owner this slice removes. Native **1496/1496**.
+RAM1 locals **6944**.
 
 **Immediate Stage 1**
 ([`snapshot_publication_timing_bugfix.md`](../Plans/snapshot_publication_timing_bugfix.md)):

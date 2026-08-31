@@ -18,12 +18,12 @@
 namespace CurrentWorkspaceStorage {
 
 inline constexpr const char* kCurrentRoot = PersistenceLayout::kCurrentRoot;
-constexpr char kWorkspaceMetaPath[] = "/MidiLooper/current/workspace.bin";
-constexpr char kWorkspaceMetaTempPath[] = "/MidiLooper/current/workspace.bin.tmp";
-constexpr char kTransportPath[] = "/MidiLooper/current/transport.bin";
-constexpr char kGlobalPath[] = "/MidiLooper/current/global.bin";
-constexpr char kSlotsDir[] = "/MidiLooper/current/slots";
-constexpr char kUndoDir[] = "/MidiLooper/current/undo";
+inline constexpr const char* kWorkspaceMetaPath = "/MidiLooper/current/workspace.bin";
+inline constexpr const char* kWorkspaceMetaTempPath = "/MidiLooper/current/workspace.bin.tmp";
+inline constexpr const char* kTransportPath = "/MidiLooper/current/transport.bin";
+inline constexpr const char* kGlobalPath = "/MidiLooper/current/global.bin";
+inline constexpr const char* kSlotsDir = "/MidiLooper/current/slots";
+inline constexpr const char* kUndoDir = "/MidiLooper/current/undo";
 inline constexpr const char* kCurrentTempDir = PersistenceLayout::kCurrentTempDir;
 
 constexpr size_t kSlotSummaryCount = Config::MAX_LOOPS_PER_TRACK;

@@ -19,16 +19,17 @@ constexpr uint32_t kSaveFileToken = 0x45564153UL;  // "SAVE"
 /// Legacy flat SavedSet folders (brownfield) under sets/archive until 3.6.
 inline constexpr const char* kSetsRoot = PersistenceLayout::kSetsRoot;
 inline constexpr const char* kSetsArchiveDir = PersistenceLayout::kSetsArchiveDir;
-constexpr char kSetIndexPath[] = "/MidiLooper/sets/index.bin";
-constexpr char kSetIndexTempPath[] = "/MidiLooper/sets/index.bin.tmp";
+inline constexpr const char* kSetIndexPath = "/MidiLooper/sets/index.bin";
+inline constexpr const char* kSetIndexTempPath = "/MidiLooper/sets/index.bin.tmp";
 
 /// Mutable workspace root — NOT inside sets/.
 inline constexpr const char* kCurrentSetDir = PersistenceLayout::kCurrentRoot;
-constexpr char kCurrentSlotsDir[] = "/MidiLooper/current/slots";
+inline constexpr const char* kCurrentSlotsDir = "/MidiLooper/current/slots";
 
 /// Interim deferred-FSM runtime bundle (transport+tracks+undo) until transport.bin/global.bin split.
-constexpr char kCurrentRuntimeBundlePath[] = "/MidiLooper/current/temp/runtime.bundle.bin";
-constexpr char kCurrentRuntimeBundleTempPath[] =
+inline constexpr const char* kCurrentRuntimeBundlePath =
+    "/MidiLooper/current/temp/runtime.bundle.bin";
+inline constexpr const char* kCurrentRuntimeBundleTempPath =
     "/MidiLooper/current/temp/runtime.bundle.bin.tmp";
 
 /// Legacy alias — SD path is `runtime.bundle.bin` under `current/temp/` (not `set.bin`).
@@ -36,11 +37,11 @@ inline constexpr const char* kCurrentMetaPath = kCurrentRuntimeBundlePath;
 inline constexpr const char* kCurrentMetaTempPath = kCurrentRuntimeBundleTempPath;
 
 inline constexpr const char* kCheckpointsDir = PersistenceLayout::kCheckpointsDir;
-constexpr char kLegacyMonolithPath[] = "/midilooper_state.raw";
+inline constexpr const char* kLegacyMonolithPath = "/midilooper_state.raw";
 
 /// Per-Set metadata filename (flat SavedSet folders and `sets/S####/`).
-constexpr char kSetBinFileName[] = "set.bin";
-constexpr char kSetBinTempFileName[] = "set.bin.tmp";
+inline constexpr const char* kSetBinFileName = "set.bin";
+inline constexpr const char* kSetBinTempFileName = "set.bin.tmp";
 
 constexpr size_t kMetaPayloadOffset = CurrentWorkspaceStorage::kEpochFileHeaderByteSize;
 constexpr size_t kLastActiveUnixOffset = kMetaPayloadOffset + sizeof(uint32_t);

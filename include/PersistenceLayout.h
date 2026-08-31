@@ -6,25 +6,25 @@
 namespace PersistenceLayout {
 
 /// SD root for all MidiLooper persistence (lowercase folder names on disk).
-constexpr char kRoot[] = "/MidiLooper";
+inline constexpr const char* kRoot = "/MidiLooper";
 
 /// Mutable runtime workspace — separate lifecycle from sets/.
-constexpr char kCurrentRoot[] = "/MidiLooper/current";
-constexpr char kCurrentTempDir[] = "/MidiLooper/current/temp";
+inline constexpr const char* kCurrentRoot = "/MidiLooper/current";
+inline constexpr const char* kCurrentTempDir = "/MidiLooper/current/temp";
 
 /// Immutable revision history — no mutable Current state inside sets/.
-constexpr char kSetsRoot[] = "/MidiLooper/sets";
-constexpr char kSetsArchiveDir[] = "/MidiLooper/sets/archive";
+inline constexpr const char* kSetsRoot = "/MidiLooper/sets";
+inline constexpr const char* kSetsArchiveDir = "/MidiLooper/sets/archive";
 
 /// Recovery checkpoints and boot diagnostics — not inside current/ or sets/.
-constexpr char kRecoveryRoot[] = "/MidiLooper/recovery";
-constexpr char kCheckpointsDir[] = "/MidiLooper/recovery/checkpoints";
+inline constexpr const char* kRecoveryRoot = "/MidiLooper/recovery";
+inline constexpr const char* kCheckpointsDir = "/MidiLooper/recovery/checkpoints";
 
 /// Revision snapshot files: revisions/v####.bin (extension only; prefix is v####).
-constexpr char kRevisionFileExtension[] = ".bin";
-constexpr char kRevisionTempSuffix[] = ".tmp";
+inline constexpr const char* kRevisionFileExtension = ".bin";
+inline constexpr const char* kRevisionTempSuffix = ".tmp";
 
 /// Human-editable system config (JSON); runtime records use .bin fixed layouts.
-constexpr char kSettingsPath[] = "/MidiLooper/system/settings.json";
+inline constexpr const char* kSettingsPath = "/MidiLooper/system/settings.json";
 
 }  // namespace PersistenceLayout

@@ -90,17 +90,19 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
     if (!membership) {
       continue;
     }
-    for (const auto& reference : membership->references) {
-      if (!reference) {
-        continue;
-      }
-      const uint32_t tick = reference->value.tick;
-      if (tick < windowStart || tick >= windowEnd) {
-        continue;
-      }
-      collected.push_back(
-          {reference->canonicalOrder, reference->eventId, reference->value});
-    }
+    forEachSnapshotMembershipReference(
+        membership.get(),
+        [&collected, windowStart, windowEnd](const LoopSnapshotEventRef& reference) {
+          if (!reference) {
+            return;
+          }
+          const uint32_t tick = reference->value.tick;
+          if (tick < windowStart || tick >= windowEnd) {
+            return;
+          }
+          collected.push_back(
+              {reference->canonicalOrder, reference->eventId, reference->value});
+        });
   }
 
   std::sort(collected.begin(), collected.end(),

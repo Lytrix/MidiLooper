@@ -34,6 +34,7 @@ enum class PlaybackRebuildPath : uint8_t {
   PublishedSnapshot,
   CompatibilityPasses,
   NoteEditPreview,
+  IncrementalOverdubSeal,
 };
 
 /**
@@ -120,6 +121,9 @@ void noteClockDispatch(uint32_t durationUs);
 
 /** Record duration of TrackManager::updateAllTracks (accumulate only; ISR-safe). */
 void noteTracksUpdate(uint32_t durationUs);
+
+/** Record duration of one TrackManager::updateAllTracks track iteration. */
+void noteTrackUpdate(uint8_t trackIndex, uint32_t durationUs);
 
 /** S0b: USB-device read loop + dispatchMidiBatch. */
 void noteUsbDeviceDrain(uint32_t durationUs);
@@ -272,6 +276,8 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) RuntimeTimingTelemetry::noteMidiInputExit(nowUs)
 #define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) RuntimeTimingTelemetry::noteClockDispatch(durationUs)
 #define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) RuntimeTimingTelemetry::noteTracksUpdate(durationUs)
+#define RUNTIME_TIMING_NOTE_TRACK_UPDATE(trackIndex, durationUs) \
+  RuntimeTimingTelemetry::noteTrackUpdate(trackIndex, durationUs)
 #define RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(durationUs) RuntimeTimingTelemetry::noteUsbDeviceDrain(durationUs)
 #define RUNTIME_TIMING_NOTE_DIN_DRAIN(durationUs) RuntimeTimingTelemetry::noteDinDrain(durationUs)
 #define RUNTIME_TIMING_NOTE_USB_HOST_TASK(durationUs) RuntimeTimingTelemetry::noteUsbHostTask(durationUs)
@@ -320,6 +326,7 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_MIDI_INPUT_EXIT(nowUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_TRACK_UPDATE(trackIndex, durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_DIN_DRAIN(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_USB_HOST_TASK(durationUs) ((void)0)

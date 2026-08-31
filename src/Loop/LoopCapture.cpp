@@ -16,6 +16,7 @@
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/NoteUtils.h"
+#include "EditApply.h"
 #include "PlaybackMergedMidiEvents.h"
 
 #include <algorithm>
@@ -518,6 +519,159 @@ void Loop::resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& window
       DisplayWindowUtils::resolveCenteredWindowStart(centerPhaseTick, windowLength, loopLen);
 }
 
+LOOP_COLD_MEM void Loop::recordLastOverdubSeal(PassId passId, const EditPassIdList& companionIds,
+                                               uint32_t priorPlaybackRevision) {
+  if (passId == kInvalidPassId) {
+    clearLastOverdubSeal();
+    return;
+  }
+  hasLastOverdubSeal_ = true;
+  lastOverdubSealPassId_ = passId;
+  lastOverdubSealPriorRevision_ = priorPlaybackRevision;
+  lastOverdubSealPlaybackRevision_ = playbackRevision;
+  lastOverdubSealCompanionIds_ = companionIds;
+}
+
+LOOP_COLD_MEM void Loop::clearLastOverdubSeal() {
+  hasLastOverdubSeal_ = false;
+  lastOverdubSealPassId_ = kInvalidPassId;
+  lastOverdubSealPriorRevision_ = 0;
+  lastOverdubSealPlaybackRevision_ = 0;
+  lastOverdubSealCompanionIds_.clear();
+}
+
+namespace {
+
+bool mergedStreamHasNoteOnId(const SessionMidiEventVec& events, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool mergedStreamContainsEvent(const SessionMidiEventVec& events, const MidiEvent& candidate) {
+  for (const MidiEvent& existing : events) {
+    if (candidate.noteId != kInvalidNoteId) {
+      if (existing.noteId == candidate.noteId && existing.isNoteOn() == candidate.isNoteOn() &&
+          existing.isNoteOff() == candidate.isNoteOff()) {
+        return true;
+      }
+      continue;
+    }
+    if (existing.tick == candidate.tick && existing.type == candidate.type &&
+        existing.channel == candidate.channel && existing.isNoteOn() == candidate.isNoteOn() &&
+        existing.isNoteOff() == candidate.isNoteOff()) {
+      if (candidate.isNoteOn() || candidate.isNoteOff()) {
+        if (existing.data.noteData.note == candidate.data.noteData.note) {
+          return true;
+        }
+      } else {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedMidiEvents& merged) {
+  if (!hasLastOverdubSeal_) {
+    return false;
+  }
+  const bool geometryOk = !merged.empty() &&
+                          isFullLoopMergedPlaybackWindow(merged, loopLengthTicks) &&
+                          merged.builtFromRevision == lastOverdubSealPriorRevision_ &&
+                          lastOverdubSealPlaybackRevision_ == playbackRevision &&
+                          lastOverdubSealPassId_ == lastCommittedPassId_ &&
+                          lastOverdubSealPassId_ != kInvalidPassId;
+  if (!geometryOk) {
+    clearLastOverdubSeal();
+    return false;
+  }
+  const OverdubPass* sealPass = nullptr;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.id == lastOverdubSealPassId_) {
+      sealPass = &pass;
+      break;
+    }
+  }
+  if (sealPass == nullptr || sealPass->state != CapturePassState::Active) {
+    clearLastOverdubSeal();
+    return false;
+  }
+  EditPassVec companionRows;
+  companionRows.reserve(lastOverdubSealCompanionIds_.size());
+  for (const EditPassId companionId : lastOverdubSealCompanionIds_) {
+    const EditPass* row = nullptr;
+    for (const EditPass& editPass : passes.editPasses) {
+      if (editPass.id == companionId) {
+        row = &editPass;
+        break;
+      }
+    }
+    if (row == nullptr || row->state != EditPassState::Active) {
+      clearLastOverdubSeal();
+      return false;
+    }
+    companionRows.push_back(*row);
+  }
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(sealPass->committedChunkIds, passEvents);
+  for (const EditPass& row : companionRows) {
+    if (row.actionType != EditActionType::Delete && row.actionType != EditActionType::Update) {
+      continue;
+    }
+    if (!mergedStreamHasNoteOnId(merged.mergedEvents, row.targetNoteId) &&
+        !mergedStreamHasNoteOnId(passEvents, row.targetNoteId)) {
+      clearLastOverdubSeal();
+      return false;
+    }
+  }
+  for (const MidiEvent& evt : passEvents) {
+    if (!mergedStreamContainsEvent(merged.mergedEvents, evt)) {
+      merged.mergedEvents.push_back(evt);
+    }
+  }
+  if (!companionRows.empty()) {
+    applyNoteEditPassSequence(merged.mergedEvents, companionRows, loopLengthTicks);
+  }
+  merged.builtFromRevision = playbackRevision;
+  merged.builtFromSnapshotIdentity = nullptr;
+  clearLastOverdubSeal();
+  return true;
+}
+
+LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
+  if (!overdubSourceViewEstablished_ || lastCommittedPassId_ == kInvalidPassId ||
+      loopLengthTicks == 0) {
+    return;
+  }
+  const OverdubPass* wrapPass = nullptr;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.id == lastCommittedPassId_) {
+      wrapPass = &pass;
+      break;
+    }
+  }
+  if (wrapPass == nullptr || wrapPass->committedChunkIds.empty()) {
+    return;
+  }
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrapPass->committedChunkIds, passEvents);
+  if (passEvents.empty()) {
+    return;
+  }
+  const NoteUtils::DisplayNoteVec passNotes =
+      NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
+  mergeDisplayNotesIntoOverdubSourceView(passNotes);
+}
+
 LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoOverdubSourceView(
     const NoteUtils::DisplayNoteVec& candidates) {
   for (const NoteUtils::DisplayNote& candidate : candidates) {
@@ -983,8 +1137,22 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
     result.reason = CaptureAppendDenyReason::Duplicate;
     return result;
   }
+  MidiEvent toAppend = evt;
+  if (toAppend.isNoteOn() && toAppend.noteId == kInvalidNoteId) {
+    toAppend.noteId = allocateNoteId();
+  } else if (toAppend.isNoteOff() && toAppend.noteId == kInvalidNoteId) {
+    for (size_t i = capture.store.size(); i > 0; --i) {
+      const MidiEvent& prior = capture.store.at(i - 1);
+      if (!prior.isNoteOn() || prior.channel != toAppend.channel ||
+          prior.data.noteData.note != toAppend.data.noteData.note) {
+        continue;
+      }
+      toAppend.noteId = prior.noteId;
+      break;
+    }
+  }
   LoopEventStoreAppendDeny storeDeny = LoopEventStoreAppendDeny::None;
-  if (!capture.store.append(evt, &storeDeny)) {
+  if (!capture.store.append(toAppend, &storeDeny)) {
     result.reason =
         storeDeny == LoopEventStoreAppendDeny::PoolExhausted
             ? CaptureAppendDenyReason::PoolAlloc
@@ -1327,7 +1495,9 @@ LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason 
 #if defined(SESSION_CAPTURE)
   const uint32_t assignIdsStartUs = traceMicros();
 #endif
-  assignMissingNoteIdsInStore(capture.store);
+  if (reason != CommitReason::OverdubWrap) {
+    assignMissingNoteIdsInStore(capture.store);
+  }
 #if defined(SESSION_CAPTURE)
   emitOverdubSealTraceStage(sealTrace, "seal_assign_note_ids", traceMicros() - assignIdsStartUs,
                             "ok");

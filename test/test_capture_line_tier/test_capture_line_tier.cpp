@@ -93,6 +93,10 @@ void test_timing_telemetry_lines_are_tier_a() {
       CaptureLineTier::isTierALine(
           "#CAP,6701480,DIAG,playback_build,compatibility,12345,0,384,9,3,1,2"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701480,DIAG,playback_build,incremental,0,0,8448,4,4,0,1"));
+  TEST_ASSERT_TRUE(
+      CaptureLineTier::isTierALine("#CAP,57711324,DIAG,playback_order,2100,512"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,6701481,DIAG,snapshot_alloc,nodes=163,bytes=22000,slabs=1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"

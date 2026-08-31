@@ -15,6 +15,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "PlaybackMergedMidiEvents.h"
 
@@ -151,6 +152,19 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       return false;
     }
   }
+
+  if (!noteEditPreview && !longLoop &&
+      loop.tryAdmitLastOverdubSealIntoMergedEvents(runtime.mergedMidiEvents)) {
+    loop.playbackOrderDirty = true;
+#if defined(SESSION_CAPTURE)
+    DebugSessionCapture::playbackRebuild(
+        0, runtime.mergedMidiEvents.windowStartTick, runtime.mergedMidiEvents.windowLengthTicks,
+        windowRevision, playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop), 1,
+        "incremental");
+#endif
+    return false;
+  }
+  loop.clearLastOverdubSeal();
 
   mergedMidiEventsBuildInProgress = true;
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
