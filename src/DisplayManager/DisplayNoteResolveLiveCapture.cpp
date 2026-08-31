@@ -373,6 +373,13 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
+        if (DisplayWindowUtils::shouldHoldDirtyOverdubLayerBeforeWindowGather(
+                loop.visualCacheDirty, canHoldCommittedLayer, visualCacheGrewPastHold)) {
+            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            liveCommittedLayerHeldForDirtyCache_ = true;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
         if (havePaintWindow && loop.publishedSnapshot() &&
             (liveDisplayNotes.empty() || !paintWindowInsideGather)) {
             // A failed visual-cache coverage check must use the bounded published

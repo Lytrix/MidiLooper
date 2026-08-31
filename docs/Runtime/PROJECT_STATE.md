@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1h held-note wrap pair)
+Last updated: 2026-08-31 (visual cache #41 Stage 1i wrap/stop first paint)
 
 ---
 
@@ -126,8 +126,12 @@ inconclusive on a 4-bar all-bar overdub; wrap 3 idle did not fill; STOPPED
 Device [`222349`](../../captures/session_20260831_222349.log): wrap first
 `DISP` drops then `slice_clean` restores; first STOPPED **159 / 31** then
 `OverlayRejected` **159 / 166**; B3 held across stop; no per-note dump.
-Stage 1h (in tree): `Off@0` does not linear-steal a mid-loop On
+Stage 1h shipped `4238b422`: `Off@0` does not linear-steal a mid-loop On
 ([`display_visual_cache_held_note_wrap_pair_bugfix.md`](../Plans/display_visual_cache_held_note_wrap_pair_bugfix.md)).
+Stage 1i (native **1525/1525**, RAM1 **6944**): wrap/stop first paint
+holds dirty cache
+([`display_visual_cache_wrap_stop_first_paint_bugfix.md`](../Plans/display_visual_cache_wrap_stop_first_paint_bugfix.md)).
+Device recapture required.
 Stage 2 is unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
