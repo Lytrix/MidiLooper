@@ -499,8 +499,9 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindowWithCapture(SessionMidiEve
 #undef LOOP_EMIT_CAPTURE_TAIL
 
 LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindowWithCapture(
-    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength) const {
-  if (!tryGatherPublishedSnapshotEventsInWindow(out, windowStart, windowLength)) {
+    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength,
+    SnapshotWindowGatherPath* pathOut) const {
+  if (!tryGatherPublishedSnapshotEventsInWindow(out, windowStart, windowLength, pathOut)) {
     return false;
   }
   mergeCaptureStoreIntoWindowedEvents(*this, out, windowStart, windowLength);

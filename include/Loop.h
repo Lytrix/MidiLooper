@@ -396,10 +396,11 @@ struct Loop {
                                                 uint32_t windowLength,
                                                 SnapshotWindowGatherPath* pathOut = nullptr) const;
   /// Snapshot window plus live `capture.store` events in the same window.
-  /// Returns false only when no published snapshot exists.
-  bool tryGatherPublishedSnapshotEventsInWindowWithCapture(SessionMidiEventVec& out,
-                                                           uint32_t windowStart,
-                                                           uint32_t windowLength) const;
+  /// Returns false only when no published snapshot exists. `pathOut` is the
+  /// underlying snapshot-window branch (`None` / `Snapshot` / `Overlay`).
+  bool tryGatherPublishedSnapshotEventsInWindowWithCapture(
+      SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength,
+      SnapshotWindowGatherPath* pathOut = nullptr) const;
   /// Record/overdub session-exit only. Wraps stay provisional. Overdub requires a parent.
   /// Completes construction in this call. Stop/idle paths use `queue` + `step`.
   bool tryPublishSessionExitSnapshot(CommitReason reason,

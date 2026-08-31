@@ -13,6 +13,7 @@
 #include "Utils/SlotFocusDisplay.h"
 #include <Arduino.h>
 #include <algorithm>
+#include <cstdio>
 
 #if defined(__IMXRT1062__)
 #define DISP_COLD_MEM FLASHMEM
@@ -20,6 +21,12 @@
 #else
 #define DISP_COLD_MEM
 #define DISP_CAPTURE_MEM
+#endif
+
+#if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+#define DISP_PAINT_DIAG_FMT(literal) PSTR(literal)
+#else
+#define DISP_PAINT_DIAG_FMT(literal) literal
 #endif
 
 using namespace DisplayManagerInternal;
@@ -191,12 +198,17 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayFullRebuild);
         liveDisplayEventBuffer.clear();
-        const bool usedSnapshot =
+        Loop::SnapshotWindowGatherPath snapshotPath = Loop::SnapshotWindowGatherPath::None;
+        bool usedSnapshot =
             loop.captureActive()
                 ? mutLoop.tryGatherPublishedSnapshotEventsInWindowWithCapture(
-                      liveDisplayEventBuffer, 0, loopLength)
+                      liveDisplayEventBuffer, 0, loopLength, &snapshotPath)
                 : mutLoop.tryGatherPublishedSnapshotEventsInWindow(liveDisplayEventBuffer, 0,
-                                                                   loopLength);
+                                                                   loopLength, &snapshotPath);
+        if (snapshotPath == Loop::SnapshotWindowGatherPath::Overlay) {
+            liveDisplayEventBuffer.clear();
+            usedSnapshot = false;
+        }
         if (!usedSnapshot) {
             if (loop.captureActive()) {
                 mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
@@ -204,6 +216,23 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 mutLoop.gatherCommittedEvents(liveDisplayEventBuffer);
             }
         }
+#if defined(SESSION_CAPTURE)
+        {
+            const char* source = usedSnapshot ? "Snapshot" : "Fallback";
+            const char* path =
+                snapshotPath == Loop::SnapshotWindowGatherPath::Overlay ? "OverlayRejected"
+                                                                        : source;
+            char line[192];
+            snprintf(
+                line, sizeof(line),
+                DISP_PAINT_DIAG_FMT(
+                    "#CAP,%lu,DISP,paint_src,%s,src,%s,root_rev,%lu,playback_rev,%lu"),
+                static_cast<unsigned long>(micros()), path, source,
+                static_cast<unsigned long>(loop.publishedSnapshotRevision()),
+                static_cast<unsigned long>(loop.playbackRevision));
+            DebugSessionCapture::appendCaptureTextLine(line);
+        }
+#endif
         liveMergePlaybackRevision_ = loop.playbackRevision;
         liveMergeCaptureRevision_ = loop.captureDisplayRevision;
         DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
