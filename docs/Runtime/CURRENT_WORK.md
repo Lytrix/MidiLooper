@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (overdub-stop incremental admission)
+Last updated: 2026-08-31 (live-record snapshot start journal-capped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,7 +75,18 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Immediate slice — overdub-stop incremental admission (`DEC-049`)**
+**Immediate slice — live-record snapshot start bound**
+([`live_record_snapshot_start_bounded_fragment_bugfix.md`](../Plans/live_record_snapshot_start_bounded_fragment_bugfix.md)):
+RECORDING `startNextPendingConstruction` walks `capture.store` from
+`appliedLiveRecordEventIndex` through `tick < includeUntil` and emits one
+journal-capped fragment via `appendNextPassChangeFragment`. No full-store
+`copyEventsTo` / reconstruct. `openNotes` persist across fragments and bars.
+Row-22 admission stays one start XOR one step. Native take-survival live-record
+fixtures pass. Native **1507/1507**. RAM1 locals **6944**. Device non-growth
+capture is required before calling the RC closed. Do not freeze
+`T_RT_reserve`. Do not raise N.
+
+**Shipped — overdub-stop incremental admission (`DEC-049`)**
 ([`overdub_stop_incremental_admission_bugfix.md`](../Plans/overdub_stop_incremental_admission_bugfix.md)):
 `stopOverdubbing` reanchors traversal and keeps a still-valid full-loop
 merged stream. The next `playCommittedLoopMidi` may admit the Rank-6 seal
@@ -86,8 +97,35 @@ Device [`152513`](../../captures/session_20260831_152513.log): T4 16-bar
 Stage 2 PASS. Device [`153113`](../../captures/session_20260831_153113.log):
 T4 11-bar Stage 3 drain PASS — 16.197 s after the last stop,
 `pending=0` / `root=0x703fadf0` / `root_rev=7` / `playback_rev=7` /
-`publish=9`, then `playback_build,snapshot`. Do not freeze `T_RT_reserve`.
-Do not check off OpenSpec `3.5`/`3.6`.
+`publish=9`, then `playback_build,snapshot`. Device test: Snapshot idle
+passes `stepPendingSnapshotPublish(2)`
+(`MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn`). Recapture
+[`161532`](../../captures/session_20260831_161532.log): T4 16-bar, last
+stop `incremental` `rev=8`, then 1.824 s / one `BAR` to
+`pending=0` / `root_rev=8` / `playback_rev=8`. That drain already had
+`root_rev=1`; it is not the empty-root 16.197 s class of
+[`153113`](../../captures/session_20260831_153113.log). `start+step`
+same-turn count is 61; parent max **13.350 ms** (`start=12891` +
+`step=423`); 7 parents ≥ 8.82 ms. Drain-window parent max **4.371 ms**.
+Device test now: `stepPendingSnapshotPublish(2)` and
+`kSnapshotMembershipMaxPages = 16`. Recapture
+[`165637`](../../captures/session_20260831_165637.log) (N=2, 16 pages):
+T4 16-bar, last stop `incremental` `rev=9`, then **1.885 s** to
+`pending=0` / `root_rev=9` / `playback_rev=9` with `root_rev=1` already
+present. `start+step` = 58; parent max **12.138 ms**; 3 parents ≥ 8.82 ms.
+Drain parent max **4.413 ms**. Compare
+[`153113`](../../captures/session_20260831_153113.log) (N=1, 8 pages),
+[`161532`](../../captures/session_20260831_161532.log) (N=2, 8 pages),
+and [`164448`](../../captures/session_20260831_164448.log) (N=1, 16 pages).
+`164448` + tail [`165027`](../../captures/session_20260831_165027.log):
+T4 is 16 bars / 12288 ticks from full-loop `incremental`. `start+step` = 0.
+Last stop `rev=13` @ 559.185 s; publish @ 608.693 s (**49.508 s**)
+`pending=0` / `root=0x70498e30` / `root_rev=13` / `playback_rev=13` /
+`publish=8`. `165027` has a 40.114 s gap with no `snapshot_idle` between
+`journals=13` `fragment=9/18` and `journals=0` `applied=3`. Drain parent
+max 4.330 ms in `164448`; tail parents ≤ 0.493 ms. 4 live-record parents
+≥ 8.82 ms (start only, max 10.887 ms). ExecutionBounds still documents 8.
+Do not freeze `T_RT_reserve`. Do not check off OpenSpec `3.5`/`3.6`.
 
 **Shipped — wrap-tick derived rebuild**
 ([`overdub_wrap_derived_rebuild_clock_interval_bugfix.md`](../Plans/overdub_wrap_derived_rebuild_clock_interval_bugfix.md)):

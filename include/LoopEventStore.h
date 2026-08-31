@@ -178,6 +178,11 @@ class LoopEventStore {
   template <typename AssignNoteIdFn>
   void assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId);
 
+  /// Assign missing note ids from `beginIndex` while `tick < includeUntil`.
+  template <typename AssignNoteIdFn>
+  void assignMissingNoteIdsToNoteOnsInTickWindow(size_t beginIndex, uint32_t includeUntil,
+                                                 AssignNoteIdFn assignNoteId);
+
   using NoteIdSupplier = NoteId (*)(void* ctx);
   /// In-place fill on a chunk-id list. Chunk ids unchanged. Cold path (NOTE_EDIT open).
   static void assignMissingNoteIdsToNoteOnsInChunkIds(const uint16_t* chunkIds, size_t count,
@@ -224,6 +229,28 @@ void LoopEventStore::assignMissingNoteIdsToNoteOns(AssignNoteIdFn assignNoteId) 
     EventChunk& ec = chunk(id);
     for (uint16_t i = 0; i < ec.used; ++i) {
       MidiEvent& evt = ec.events[i];
+      if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
+        evt.noteId = assignNoteId();
+      }
+    }
+  }
+}
+
+template <typename AssignNoteIdFn>
+void LoopEventStore::assignMissingNoteIdsToNoteOnsInTickWindow(size_t beginIndex,
+                                                               uint32_t includeUntil,
+                                                               AssignNoteIdFn assignNoteId) {
+  size_t index = 0;
+  for (uint16_t id : chunkIds_) {
+    EventChunk& ec = chunk(id);
+    for (uint16_t i = 0; i < ec.used; ++i, ++index) {
+      if (index < beginIndex) {
+        continue;
+      }
+      MidiEvent& evt = ec.events[i];
+      if (evt.tick >= includeUntil) {
+        return;
+      }
       if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
         evt.noteId = assignNoteId();
       }

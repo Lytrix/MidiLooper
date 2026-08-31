@@ -217,6 +217,12 @@ void Loop::assignMissingNoteIdsInStore(LoopEventStore& store) {
   store.assignMissingNoteIdsToNoteOns([this]() { return allocateNoteId(); });
 }
 
+void Loop::assignMissingNoteIdsInStoreWindow(LoopEventStore& store, size_t beginIndex,
+                                             uint32_t includeUntil) {
+  store.assignMissingNoteIdsToNoteOnsInTickWindow(beginIndex, includeUntil,
+                                                  [this]() { return allocateNoteId(); });
+}
+
 namespace {
 
 struct AssignCommittedPassNoteIdCtx {

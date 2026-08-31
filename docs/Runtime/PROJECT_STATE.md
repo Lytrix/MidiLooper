@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (overdub-stop incremental admission)
+Last updated: 2026-08-31 (live-record snapshot start journal-capped)
 
 ---
 
@@ -89,7 +89,11 @@ same incremental admission can run after stop, and admits Snapshot on 2
 of every 6 deferred turns while a publication backlog is present. Device
 Stage 2 PASS [`152513`](../../captures/session_20260831_152513.log);
 Stage 3 drain PASS [`153113`](../../captures/session_20260831_153113.log)
-(`root_rev=7` meets `playback_rev=7`). Do not freeze `T_RT_reserve`.
+(`root_rev=7` meets `playback_rev=7`). Live-record snapshot start now
+walks `capture.store` from a persisted index and emits one journal-capped
+fragment; historical store copy/scan is removed
+([`live_record_snapshot_start_bounded_fragment_bugfix.md`](../Plans/live_record_snapshot_start_bounded_fragment_bugfix.md)).
+Device non-growth capture remains open. Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed
 `T_RT_reserve` is rejected as a guarantee. Construction bounds stay

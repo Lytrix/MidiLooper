@@ -117,11 +117,14 @@ a pass, or call `storePublishedSnapshot`.
 **Row 22 goal:** Separate queue from publish. Wrap and session-exit only
 enqueue bounded work (journal fragments with exact parent identity, or a
 session-exit pass list) at stop / wrap commit. Idle then admits at most one
-of: start the next journal-capped pass-change fragment, or one row-21
-step. Publication is atomic and only when wrap journals, queued
-session-exit passes, construction, and companion changes are all complete.
-A failed or incomplete candidate is never selected; the previous published
-root stays authoritative.
+of: start the next journal-capped fragment, or one row-21 step. Live-record
+start walks `capture.store` from the persisted store index through
+`tick < includeUntil` and emits at most one journal-capped changeset (32
+changes). It does not copy or scan the historical store. Admission
+cardinality is unchanged. Publication is atomic and only when wrap journals,
+queued session-exit passes, construction, and companion changes are all
+complete. A failed or incomplete candidate is never selected; the previous
+published root stays authoritative.
 
 Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
@@ -153,7 +156,7 @@ Selected structural caps:
 | Property | Row 21 goal (`step`) | Row 22 goal (queue / idle publish) |
 |----------|---------------|----------------|
 | **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: journal-capped fragments with exact parent identity. Idle: one fragment start or one row-21 step |
-| **Maximum indivisible step** | Select/update or copy/sort one membership page (≤ 16 refs) and advance the cursor. No full-span walk, pass reconstruction, or publish | Start at most one journal-capped fragment (32 changes). Session-exit length mismatch first clones one snapshot header when applied live-record ticks fit the sealed length. Non-fit discard remains a content-sized destructor |
+| **Maximum indivisible step** | Select/update or copy/sort one membership page (≤ 16 refs) and advance the cursor. No full-span walk, pass reconstruction, or publish | Start at most one journal-capped fragment (32 changes). Live-record start consumes only unconsumed `capture.store` events from the persisted index. Session-exit length mismatch first clones one snapshot header when applied live-record ticks fit the sealed length. Non-fit discard remains a content-sized destructor |
 | **Progress** | Persistent bar / membership cursor, `complete()`, `failed()` | Ordered fragments and pass-change cursor; previous published root stays selected until `freeze()` succeeds |
 | **Completion** | All admitted changes applied and `failed()` is false | Idle stores a complete root only after wrap journals, session-exit passes, construction, and companions are done |
 | **Overrun / failure** | `failed_`; `freeze()` returns null; retain the fragment and resume | Keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay committed |
