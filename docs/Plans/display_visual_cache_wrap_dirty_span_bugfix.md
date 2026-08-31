@@ -1,6 +1,6 @@
 # Display visual-cache wrap dirty span
 
-**Status:** Implemented — native **1521/1521**; RAM1 locals **6944**; device recapture required  
+**Status:** Implemented — native **1521/1521**; RAM1 locals **6944**; device recapture [`221925`](../../captures/session_20260831_221925.log) — wrap `dcnt` inconclusive (linear pass hit every bar); first two wraps filled; wrap 3 idle did not `slice_clean`; STOPPED lengthen/hide is not a 1g dirty-span fail  
 **Date:** 2026-08-31  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1g  
@@ -67,6 +67,8 @@ Native (`test_overdub_source_view`):
 - Wrap-held On in last bar / Off in bar 0 dirties those two bars only.
 
 Device ([`220337`](../../captures/session_20260831_220337.log) shape): wrap `stale_range` `dcnt` is the wrap-edge (and any linear pass bars), not automatically `total`. Idle must not `slice_clean` the whole loop from one wrap-held pair.
+
+Recapture [`221925`](../../captures/session_20260831_221925.log) (4-bar loop, `len=3072`): every wrap `stale_range` is `dcnt=4==total`. That matches linear 39/45/51 hits in every bar, not wrap-held interior fill. Wrap 1 `slice_clean` `63→102`. Wrap 2 `slice_clean` `102→124`. Wrap 3: `idle_src,OverlayRejected` / `src,None` until stop; no `slice_clean`; cache `124` then `128`. First STOPPED `DISP` **128 / 137** (no `paint_src`). Stop `overlap_hold` `hide=8` `add=8`. Stop `DNTE` stacks `39@48` and `39@432` at lengths **144 and 256**. `SEVT` sequential pairs for 39/45/51 include **256** next to **144/160**. `WRAP` dump (ticks 1680–3024) shows 45/51 length **304** and 39 length **192**. MIDI **47 (B2)** is absent. 1g does not own hide or wrap-pair length.
 
 ## Explicitly out of scope
 

@@ -574,10 +574,36 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                     }
                 }
                 if (pairIndex < 0 && !stack.empty()) {
-                    pairIndex = static_cast<int>(stack.size()) - 1;
+                    const ActiveCanonicalNote& candidate = stack.back();
+                    if (noteOffTick < candidate.startTick && candidate.startTick >= tailStart &&
+                        isPreferredWrapTailForHeadOffInSpanBuild(candidate.startTick, noteOffTick,
+                                                                 midiEvents, pitch, evt.channel,
+                                                                 loopLength)) {
+                        pairIndex = static_cast<int>(stack.size()) - 1;
+                    }
                 }
             }
             if (pairIndex < 0) {
+                uint32_t wrappedOnTick = 0;
+                uint8_t wrappedVelocity = 0;
+                if (tryPairWrappedTailOn(midiEvents, noteOffTick, pitch, evt.channel, loopLength,
+                                         wrappedOnTick, wrappedVelocity, overdubPassWrapPairing) &&
+                    wrappedTailOnTicks.count({pitch, wrappedOnTick}) == 0) {
+                    const NoteId wrapId =
+                        noteIdAtOnTick(midiEvents, evt.channel, pitch, wrappedOnTick);
+                    pushCanonicalSpan(spans, wrapId, pitch, wrappedVelocity,
+                                      static_cast<int32_t>(wrappedOnTick),
+                                      exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
+                                      true);
+                    wrappedTailOnTicks.insert({pitch, wrappedOnTick});
+                    ActiveCanonicalNoteVec& remaining = activeNoteStacks[pitch];
+                    for (size_t i = 0; i < remaining.size(); ++i) {
+                        if (remaining[i].startTick == wrappedOnTick) {
+                            remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(i));
+                            break;
+                        }
+                    }
+                }
                 continue;
             }
 

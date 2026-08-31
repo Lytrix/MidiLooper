@@ -1,6 +1,6 @@
 # Display visual-cache STOPPED paint current fill
 
-**Status:** Implemented — native **1519/1519**; RAM1 locals **6944**. Device FAIL [`220337`](../../captures/session_20260831_220337.log)  
+**Status:** Implemented — native **1519/1519**; RAM1 locals **6944**. Device FAIL [`220337`](../../captures/session_20260831_220337.log), [`222349`](../../captures/session_20260831_222349.log)  
 **Date:** 2026-08-31  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1f  

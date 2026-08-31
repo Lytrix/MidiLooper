@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1g wrap dirty span)
+Last updated: 2026-08-31 (visual cache #41 Stage 1h held-note wrap pair)
 
 ---
 
@@ -120,6 +120,14 @@ Device gate [`213448`](../../captures/session_20260831_213448.log): first
 STOPPED `DISP` must equal visualCache. Stage 1g (in tree): wrap-held
 spans dirty On/Off bars only
 ([`display_visual_cache_wrap_dirty_span_bugfix.md`](../Plans/display_visual_cache_wrap_dirty_span_bugfix.md)).
+Device [`221925`](../../captures/session_20260831_221925.log): wrap `dcnt`
+inconclusive on a 4-bar all-bar overdub; wrap 3 idle did not fill; STOPPED
+**128 / 137** with `DNTE` 39 **144+256**.
+Device [`222349`](../../captures/session_20260831_222349.log): wrap first
+`DISP` drops then `slice_clean` restores; first STOPPED **159 / 31** then
+`OverlayRejected` **159 / 166**; B3 held across stop; no per-note dump.
+Stage 1h (in tree): `Off@0` does not linear-steal a mid-loop On
+([`display_visual_cache_held_note_wrap_pair_bugfix.md`](../Plans/display_visual_cache_held_note_wrap_pair_bugfix.md)).
 Stage 2 is unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
