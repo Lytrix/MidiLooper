@@ -372,6 +372,19 @@ struct Loop {
     Snapshot = 1,
     Overlay = 2,
   };
+  /// Source that last wrote, or last refused to write, an idle visual-cache slice.
+  /// `None` = no accepted fill (including incomplete budget). Overlay is never
+  /// an accepted source; `lastVisualCacheIdleOverlayRejected()` is the reject.
+  enum class VisualCacheIdleGatherSource : uint8_t {
+    None = 0,
+    Snapshot = 1,
+    Prepared = 2,
+    Fallback = 3,
+  };
+  VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource() const {
+    return lastVisualCacheIdleGatherSource_;
+  }
+  bool lastVisualCacheIdleOverlayRejected() const { return lastVisualCacheIdleOverlayRejected_; }
 
   /// Fill `out` from published snapshot event membership in
   /// `[windowStart, windowStart + windowLength)`. A stale published root still
@@ -594,6 +607,8 @@ struct Loop {
   CommittedEventRange::WindowTraversalCursor fallbackGatherSessionCursor_{};
   SessionMidiEventVec fallbackGatherSessionEvents_;
   bool fallbackGatherSessionTraversalComplete_ = false;
+  VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
+  bool lastVisualCacheIdleOverlayRejected_ = false;
   /// Non-owning. Null means the identity filter is inactive. Points at
   /// `LoopPlaybackRuntime::mergedMidiEvents` after a full-loop rebuild.
   const PlaybackMergedMidiEvents* committedPlaybackMergedForIdentity_ = nullptr;
@@ -617,6 +632,7 @@ struct Loop {
                                     SessionMidiEventVec& out);
   /// RC-E attribution: cached note coverage vs loop bars at a rebuild or staleness boundary.
   void emitVisualCacheState(const char* phase, int32_t gatheredEvents) const;
+  void emitVisualCacheIdleGatherPath() const;
 
   std::unique_ptr<PlaybackOrderVec> playbackOrder_;
   std::unique_ptr<NoteUtils::CachedNoteList> noteCache_;

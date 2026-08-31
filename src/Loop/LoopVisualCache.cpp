@@ -217,6 +217,33 @@ LOOP_COLD_MEM void Loop::emitVisualCacheState(const char* phase, int32_t gathere
 #endif
 }
 
+LOOP_COLD_MEM void Loop::emitVisualCacheIdleGatherPath() const {
+#if defined(SESSION_CAPTURE)
+  const char* source = "None";
+  switch (lastVisualCacheIdleGatherSource_) {
+    case VisualCacheIdleGatherSource::Snapshot:
+      source = "Snapshot";
+      break;
+    case VisualCacheIdleGatherSource::Prepared:
+      source = "Prepared";
+      break;
+    case VisualCacheIdleGatherSource::Fallback:
+      source = "Fallback";
+      break;
+    case VisualCacheIdleGatherSource::None:
+      break;
+  }
+  const char* path = lastVisualCacheIdleOverlayRejected_ ? "OverlayRejected" : source;
+  char line[192];
+  snprintf(line, sizeof(line),
+           LOOP_VCACHE_DIAG_FMT("#CAP,%lu,VCACHE,idle_src,%s,src,%s,root_rev,%lu,playback_rev,%lu"),
+           static_cast<unsigned long>(micros()), path, source,
+           static_cast<unsigned long>(publishedSnapshotRevision()),
+           static_cast<unsigned long>(playbackRevision));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#endif
+}
+
 LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
   adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
                                Config::TICKS_PER_BAR);
@@ -292,8 +319,17 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #if defined(SESSION_CAPTURE)
   const uint32_t gatherStartUs = micros();
 #endif
-  const bool usedSnapshot =
-      tryGatherPublishedSnapshotEventsInWindow(flat, windowStart, windowLength);
+  SnapshotWindowGatherPath snapshotPath = SnapshotWindowGatherPath::None;
+  bool usedSnapshot =
+      tryGatherPublishedSnapshotEventsInWindow(flat, windowStart, windowLength, &snapshotPath);
+  lastVisualCacheIdleOverlayRejected_ = false;
+  if (snapshotPath == SnapshotWindowGatherPath::Overlay) {
+    // Playback Overlay is not current committed content. Discard the vector only —
+    // tryGather is const and does not advance fallbackGatherSession.
+    flat.clear();
+    usedSnapshot = false;
+    lastVisualCacheIdleOverlayRejected_ = true;
+  }
   bool usedPrepared = false;
   if (!usedSnapshot) {
     usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
@@ -313,6 +349,16 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
           fallbackGatherEventBudget, windowStart, windowLength, includeActiveEditRows, flat);
     }
   }
+  if (usedSnapshot) {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Snapshot;
+  } else if (usedPrepared) {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Prepared;
+  } else if (fallbackGatherComplete) {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Fallback;
+  } else {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
+  }
+  emitVisualCacheIdleGatherPath();
 #if defined(SESSION_CAPTURE)
   if (usedSnapshot || !usedPrepared) {
     RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(0, gatherStartUs);

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1d no wrap-tick visual merge)
+Last updated: 2026-08-31 (visual cache #41 Stage 1e idle-slice current fill)
 
 ---
 
@@ -108,9 +108,12 @@ stays on the paint frame (`183,111` → `184,180`; second wrap `249,246`).
 Stage 1b device FAIL [`204132`](../../captures/session_20260831_204132.log):
 STOPPED DNTE is short; NOTE_EDIT open rebuild then 291 notes / `presence=0`.
 Stage 1c device FAIL [`205138`](../../captures/session_20260831_205138.log)
-wrap 2 `205→271` then slice `260`. Stage 1d (in tree): wrap-tick does not
-merge the sealed pass into `visualCache`. Native **1514/1514**. RAM1 locals
-**6944**. Device recapture required. Stage 2
+wrap 2 `205→271` then slice `260`. Stage 1d shipped `d35d64a7`. Device FAIL
+[`205917`](../../captures/session_20260831_205917.log): idle Overlay fill
+left longs after wrap 2. Stage 1e (in tree): idle rejects Overlay and
+fills from current committed
+([`display_visual_cache_idle_slice_current_fill_bugfix.md`](../Plans/display_visual_cache_idle_slice_current_fill_bugfix.md)).
+Native **1518/1518**. RAM1 locals **6944**. Device recapture required. Stage 2
 is unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.

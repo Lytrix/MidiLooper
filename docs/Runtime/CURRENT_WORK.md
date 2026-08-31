@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1d no wrap-tick visual merge)
+Last updated: 2026-08-31 (visual cache #41 Stage 1e idle-slice current fill)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -98,12 +98,18 @@ is short (`192/16`, `336/112`). NOTE_EDIT open
 `rebuildVisualCacheFromPasses` then `VCACHE,full` 291 notes and focus
 `presence=0`. Visual-cache wrap append is wrap-held heads/tails only.
 Source view keeps full wrap pairing.
-**Stage 1d — no wrap-tick visual merge:** [`205138`](../../captures/session_20260831_205138.log)
-wrap 2 `VCACHE` `205→271` then `slice_clean` `260`. Isolated wrap-pass
-reconstruct omits record Offs and lengthens body notes until STOPPED idle.
-`appendLastCommittedOverdubPassToSourceView` no longer merges that pass
-into `visualCache`. Idle slice is the fill. Native **1514/1514**. RAM1
-locals **6944**. Device recapture required.
+**Stage 1d — no wrap-tick visual merge:** shipped `d35d64a7`. Device FAIL
+[`205917`](../../captures/session_20260831_205917.log): wrap 2 idle
+`slice_clean` `dsz=0` while longs stay in `visualCache` (`DISP`
+`243,243`). Overlay fill is not current committed.
+**Stage 1e — idle-slice current fill:**
+[`display_visual_cache_idle_slice_current_fill_bugfix.md`](../Plans/display_visual_cache_idle_slice_current_fill_bugfix.md).
+`rebuildVisualCacheIdleSlice` discards Overlay (`flat` only; no fallback
+reset) and fills from prepared LCR or budgeted
+`gatherCommittedEventsInWindow`. Playback Overlay contract unchanged.
+Native **1518/1518**. RAM1 locals **6944**. Device recapture required
+(`205917` shape: wrap 2 first neighborhood must match committed; wrap 3
+must not be the first shorten).
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.

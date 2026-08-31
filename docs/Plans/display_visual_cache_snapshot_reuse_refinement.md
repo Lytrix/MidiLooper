@@ -1,6 +1,6 @@
 # Display visual-cache snapshot reuse
 
-**Status:** Stage 1 device PASS [`202745`](../../captures/session_20260831_202745.log). Stage 1c device FAIL [`205138`](../../captures/session_20260831_205138.log). Stage 1d no wrap-tick visual merge in tree. Stage 2 unblocked, not started. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
+**Status:** Stage 1 device PASS [`202745`](../../captures/session_20260831_202745.log). Stage 1d wrap-tick visual merge closed (`d35d64a7`). Stage 1e idle-slice current fill in tree ([`display_visual_cache_idle_slice_current_fill_bugfix.md`](display_visual_cache_idle_slice_current_fill_bugfix.md)). Stage 2 unblocked, not started. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
 **Date:** 2026-08-31  
 **Kind:** refinement (Stage 1 is a wrap-stale bugfix; Stage 2 is 4b.1b snapshot fill)  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) — one work item, two stages. Work: [Work](https://github.com/users/Lytrix/projects/1)  
@@ -20,7 +20,8 @@
 | **1 — wrap-stale** | After wrap commit (and the following `beginCapture(Overdub)`), `visualCache.notes` stay. `dirtyBars` is the affected bar set, never empty-then-all while notes exist. After wrap + `appendLastCommittedOverdubPassToSourceView`, `overdubSourceSpanCacheReady()` is true so idle does not `from=passes`. Sealed wrap-pass notes merge into `visualCache`; overdub paint assigns the grown cache instead of the pre-wrap hold. | Device PASS [`202745`](../../captures/session_20260831_202745.log). Three wraps; no wrap `dsz=0` while `notes>0`; only `lcr,src` is `why=open,from=visual`. First wrap `DISP` `183,111` → next frame `184,180`. Second wrap first paint `249,246` (not a hold of 180). |
 | **1b — wrap-pair length** | Visual-cache merge of a sealed wrap pass uses merged reconstruct (wrap pairing off). `appendOverdubPassWrapPairedNotes` does not add a longer sibling of an existing pitch+start. Wrap-held heads/tails still append. NOTE_EDIT reconstruct already used wrap pairing off; that paint must not be the only path that drops the extras. | Device FAIL [`204132`](../../captures/session_20260831_204132.log): second wrap occupy already has `192–592`; STOPPED DNTE is short (`192/16`, `336/112`); NOTE_EDIT open `rebuildVisualCacheFromPasses` then shows 291 notes and `presence=0`. |
 | **1c — wrap-held display** | Visual-cache wrap append (`appendOverdubPassDisplayNotes`) keeps wrap-held heads/tails only. Interior wrap-paired body notes do not enter `visualCache`, including NOTE_EDIT open rebuild. Source view keeps full wrap pairing. | Device FAIL [`205138`](../../captures/session_20260831_205138.log): wrap 2 cache `205→271` then slice `260`. Isolated wrap-pass merge still lengthens until STOPPED. |
-| **1d — no wrap-tick visual merge** | `appendLastCommittedOverdubPassToSourceView` does not merge the sealed pass into `visualCache`. Idle slice is the fill. Wrap-tick note count stays at the pre-wrap list. | In tree. Device recapture required. |
+| **1d — no wrap-tick visual merge** | `appendLastCommittedOverdubPassToSourceView` does not merge the sealed pass into `visualCache`. Idle slice is the fill. Wrap-tick note count stays at the pre-wrap list. | Shipped `d35d64a7`. Device FAIL [`205917`](../../captures/session_20260831_205917.log): idle Overlay fill left longs in cache after wrap 2. |
+| **1e — idle-slice current fill** | Idle accepts current-root Snapshot only. Overlay is discarded; fill continues to prepared LCR or budgeted `gatherCommittedEventsInWindow`. Overlay never clears dirty bars. First eligible neighborhood is current committed content. | Native **1518/1518**. RAM1 locals **6944**. Device recapture required. Sibling: [`display_visual_cache_idle_slice_current_fill_bugfix.md`](display_visual_cache_idle_slice_current_fill_bugfix.md). |
 | **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | Unblocked. Not started. This is former 4b.1b. |
 
 Stage 2 first would copy snapshot notes, then wrap would wipe them again.
@@ -67,7 +68,8 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 2. Span-cache restamp (`0f675b85`) + wrap paint hold (`f11b982d`). Device PASS [`202745`](../../captures/session_20260831_202745.log).
 3. Stage 1b wrap-pair length — device FAIL [`204132`](../../captures/session_20260831_204132.log).
 4. Stage 1c wrap-held display — device FAIL [`205138`](../../captures/session_20260831_205138.log).
-5. Stage 1d no wrap-tick visual merge — in tree. Do not start Stage 2 until CURRENT_WORK says so. Do not check off OpenSpec `3.5` / `3.6`.
+5. Stage 1d no wrap-tick visual merge — shipped `d35d64a7`. Device FAIL [`205917`](../../captures/session_20260831_205917.log).
+6. Stage 1e idle-slice current fill — in tree. Do not start Stage 2 until CURRENT_WORK says so. Do not check off OpenSpec `3.5` / `3.6`.
 
 ## Pre-implementation review
 
@@ -88,6 +90,7 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 | Wrap paint hold | Merge sealed pass into `visualCache`; assign grown cache over the pre-wrap hold |
 | Wrap-pair length | Visual-cache merge uses wrap pairing off; wrap-pair append skips existing pitch+start |
 | Wrap-held display | `appendOverdubPassDisplayNotes` is wrap-held only; source view keeps full wrap pairing |
+| Idle Overlay | Playback Overlay stays valid; visual-cache idle discards it and fills from current committed |
 | Stage 2 | Not this session |
 
 ### Open before coding
