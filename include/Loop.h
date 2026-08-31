@@ -246,7 +246,8 @@ struct Loop {
   /// `why` is CAP `open` / `wrap` / `undo` / `redo` / `idle`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// Append display notes from `lastCommittedPassId()` chunks into the existing
-  /// source view. Walks only that pass. Skips NoteIds already present.
+  /// source view and restamp the span cache to the current `playbackRevision`.
+  /// Walks only that pass. Skips NoteIds already present.
   void appendLastCommittedOverdubPassToSourceView();
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
   /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.

@@ -180,7 +180,7 @@ TickInterval bars 8–24
 
 ## Incremental build
 
-`VisualCache.dirtyBars` is the seed for **bar-granular** idle rebuild. That path is shipped. Overdub wrap publish (`commitCapturePass(OverdubWrap)` and `Track::commitOverdubWrapAtSessionStart`) calls `markAffectedDisplayCacheRanges` so the dirty set is the wrap-pass (and companion) span. After `slice_clean`, empty `dirtyBars` plus nonempty notes is not an all-bars dirty set: `markPassDerivedStale` does not emit `dsz=0`, and idle does not call `markAllVisualCacheBarsDirty`.
+`VisualCache.dirtyBars` is the seed for **bar-granular** idle rebuild. That path is shipped. Overdub wrap publish (`commitCapturePass(OverdubWrap)` and `Track::commitOverdubWrapAtSessionStart`) calls `markAffectedDisplayCacheRanges` so the dirty set is the wrap-pass (and companion) span. After `slice_clean`, empty `dirtyBars` plus nonempty notes is not an all-bars dirty set: `markPassDerivedStale` does not emit `dsz=0`, and idle does not call `markAllVisualCacheBarsDirty`. `appendLastCommittedOverdubPassToSourceView` restamps `overdubSourceSpanCache` to the current `playbackRevision` so OVERDUBBING idle does not `rebuildOverdubSourceView("idle")` `from=passes` after wrap.
 
 `Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain. Empty `dirtyBars` with notes still in cache is `slice_nodirty`, not a full-loop dirty expand.
 
