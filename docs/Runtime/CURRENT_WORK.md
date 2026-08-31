@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1g wrap dirty span)
+Last updated: 2026-08-31 (visual cache #41 Stage 1h held-note wrap pair)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -125,7 +125,27 @@ still the first match.
 [`display_visual_cache_wrap_dirty_span_bugfix.md`](../Plans/display_visual_cache_wrap_dirty_span_bugfix.md).
 `markTickSpanDirty` marks wrap-held (`endTick < startTick`) On/Off bars
 only. Linear pass spans stay inclusive. Native **1521/1521**. RAM1
-locals **6944**. Device recapture required.
+locals **6944**. Device [`221925`](../../captures/session_20260831_221925.log):
+4-bar loop, wrap `dcnt=4` from linear 39/45/51 in every bar (not a
+wrap-interior fail). Wrap 1 `slice_clean` `63→102`, wrap 2 `102→124`.
+Wrap 3 idle `OverlayRejected`/`src,None` — no `slice_clean`. First
+STOPPED `DISP` **128 / 137** (no `paint_src`). Stop `overlap_hold`
+`hide=8`. `DNTE` stacks `39@48` and `39@432` at **144 and 256**. MIDI 47
+(B2) is absent. 1g does not own hide or wrap-pair length.
+Recapture [`222349`](../../captures/session_20260831_222349.log) (same 4-bar
+loop, later overdub): B3 is the only pitch held across stop (`MI` ON
+`325318691`, seal `325433453`, OFF `325506187`); `CLN,wrap_synth,0`.
+Each wrap first `DISP` drops (`102→67`, `119→101`, `135→121`, `157→136`,
+`162→150`) then `slice_clean` restores. First slot0 STOPPED `DISP`
+**159 / 31**; `paint_src,OverlayRejected` then **159 / 166**. No `DNTE` /
+`SEVT` / `WRAP` dump in this file — length-to-loop-end is not in the log.
+**Stage 1h — held-note wrap pair:**
+[`display_visual_cache_held_note_wrap_pair_bugfix.md`](../Plans/display_visual_cache_held_note_wrap_pair_bugfix.md).
+`appendCanonicalSpansFromMidiRange` stack fallback assigns `Off@0` only
+when the last On is wrap-held (`startTick >= tailStart` and
+`isPreferredWrapTailForHeadOffInSpanBuild`). Mid-loop B3 `1856` keeps
+`F@1912` / `F@1920`. `finalizePendingNotes` still closes at playhead.
+Native **1523/1523**. RAM1 locals **6944**.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.

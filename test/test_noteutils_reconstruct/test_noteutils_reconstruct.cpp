@@ -237,6 +237,64 @@ void test_reconstruct_wrap_with_synthetic_loop_end_before_head_off() {
     assert_has_note(notes, 48, 0, 55, 90);
 }
 
+void test_reconstruct_b3_linear_off_not_stolen_by_off_at_zero() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t pitch = 59;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOff(0, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOn(1856, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOff(1912, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOff(1920, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOn(3008, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOff(0, 4, pitch, 0));
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, true);
+    bool found1856ToLoopEnd = false;
+    bool found1856Linear = false;
+    bool found3008Tail = false;
+    for (const auto& n : notes) {
+        if (n.note != pitch) {
+            continue;
+        }
+        if (n.startTick == 1856u && n.endTick == loopLength - 1) {
+            found1856ToLoopEnd = true;
+        }
+        if (n.startTick == 1856u && (n.endTick == 1912u || n.endTick == 1920u)) {
+            found1856Linear = true;
+        }
+        if (n.startTick == 3008u && n.endTick == loopLength - 1) {
+            found3008Tail = true;
+        }
+    }
+    TEST_ASSERT_FALSE(found1856ToLoopEnd);
+    TEST_ASSERT_TRUE(found1856Linear);
+    TEST_ASSERT_TRUE(found3008Tail);
+}
+
+void test_reconstruct_b3_off_at_zero_after_mid_loop_on_keeps_linear_off() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t pitch = 59;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(1856, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOn(3008, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOff(0, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOff(1912, 4, pitch, 0));
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, true);
+    bool found1856ToLoopEnd = false;
+    bool found1856Linear = false;
+    for (const auto& n : notes) {
+        if (n.note == pitch && n.startTick == 1856u && n.endTick == loopLength - 1) {
+            found1856ToLoopEnd = true;
+        }
+        if (n.note == pitch && n.startTick == 1856u && n.endTick == 1912u) {
+            found1856Linear = true;
+        }
+    }
+    TEST_ASSERT_FALSE(found1856ToLoopEnd);
+    TEST_ASSERT_TRUE(found1856Linear);
+}
+
 void test_reconstruct_merged_pairing_blocks_completed_body_on() {
     constexpr uint32_t loopLength = 3072;
     MidiEventVec ev;
@@ -485,6 +543,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_note_off_at_wrap_zero_is_boundary_end);
     RUN_TEST(test_is_wrap_held_open_note_accepts_head_off_at_zero);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
+    RUN_TEST(test_reconstruct_b3_linear_off_not_stolen_by_off_at_zero);
+    RUN_TEST(test_reconstruct_b3_off_at_zero_after_mid_loop_on_keeps_linear_off);
     RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
     RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
