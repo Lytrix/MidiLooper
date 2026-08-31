@@ -608,6 +608,21 @@ void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
     TEST_ASSERT_EQUAL(linearNote.endTick, endTick);
   }
   TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 39, kLoopLen - 40));
+  const uint32_t tailStart = NoteUtils::wrapTailStartTick(loop.loopLengthTicks);
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note != 39) {
+      continue;
+    }
+    bool inLinear = false;
+    for (const NoteUtils::DisplayNote& linearNote : linearPassNotes) {
+      if (linearNote.note == 39 && linearNote.startTick == note.startTick) {
+        inLinear = true;
+        break;
+      }
+    }
+    const bool wrapHeld = note.startTick == 0 || note.startTick >= tailStart;
+    TEST_ASSERT_TRUE(inLinear || wrapHeld);
+  }
 }
 
 void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
