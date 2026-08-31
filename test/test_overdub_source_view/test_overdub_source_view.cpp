@@ -2405,6 +2405,66 @@ void test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_paint_last_resort_stale_overlay_uses_committed_gather() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  loop.loopId = 1;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(192, 1, 39, 100, 1)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(256, 1, 39, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 256));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.rebuildVisualCacheFromPasses();
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(192, 1, 39, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(448, 1, 39, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 1;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 1));
+
+  Loop::SnapshotWindowGatherPath overlayPath = Loop::SnapshotWindowGatherPath::None;
+  SessionMidiEventVec overlayFlat;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(overlayFlat, 0, kLoopLen,
+                                                                &overlayPath));
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::SnapshotWindowGatherPath::Overlay),
+                    static_cast<int>(overlayPath));
+  const NoteUtils::DisplayNoteVec overlayNotes =
+      NoteUtils::reconstructDisplayNotes(overlayFlat, loop.loopLengthTicks, false, false);
+
+  SessionMidiEventVec committed;
+  loop.gatherCommittedEvents(committed);
+  const NoteUtils::DisplayNoteVec oracle =
+      NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
+  TEST_ASSERT_TRUE(countNotesAtPitchStart(overlayNotes, 39, 192) !=
+                   countNotesAtPitchStart(oracle, 39, 192));
+
+  overlayFlat.clear();
+  SessionMidiEventVec paintFlat;
+  loop.gatherCommittedEvents(paintFlat);
+  const NoteUtils::DisplayNoteVec paintNotes =
+      NoteUtils::reconstructDisplayNotes(paintFlat, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_EQUAL(countNotesAtPitchStart(oracle, 39, 192),
+                    countNotesAtPitchStart(paintNotes, 39, 192));
+  TEST_ASSERT_EQUAL(noteEndAtPitchStart(oracle, 39, 192), noteEndAtPitchStart(paintNotes, 39, 192));
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(paintNotes, 39, 192));
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_idle_slice_without_snapshot_uses_fallback() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3313,6 +3373,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_unprepared_keeps_wrap_held);
   RUN_TEST(test_idle_slice_current_snapshot_is_accepted);
   RUN_TEST(test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback);
+  RUN_TEST(test_paint_last_resort_stale_overlay_uses_committed_gather);
   RUN_TEST(test_idle_slice_without_snapshot_uses_fallback);
   RUN_TEST(test_idle_slice_incomplete_fallback_budget_keeps_dirty);
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);

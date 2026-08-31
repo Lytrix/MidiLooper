@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1e idle-slice current fill)
+Last updated: 2026-08-31 (visual cache #41 Stage 1f STOPPED paint current fill)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -110,6 +110,14 @@ reset) and fills from prepared LCR or budgeted
 Native **1518/1518**. RAM1 locals **6944**. Device recapture required
 (`205917` shape: wrap 2 first neighborhood must match committed; wrap 3
 must not be the first shorten).
+**Stage 1f — STOPPED paint current fill:**
+[`display_visual_cache_stopped_paint_current_fill_bugfix.md`](../Plans/display_visual_cache_stopped_paint_current_fill_bugfix.md).
+`resolveDisplayNotesCommitted` last-resort discards Overlay and falls
+through to `gatherCommittedEvents`. Playback Overlay and
+`rebuildDisplayNotesInWindow` unchanged. Native **1519/1519**. RAM1
+locals **6944**. Device gate is
+[`213448`](../../captures/session_20260831_213448.log): first STOPPED
+`DISP` frame == visualCache; wrap 3 / play must not be the first shorten.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
