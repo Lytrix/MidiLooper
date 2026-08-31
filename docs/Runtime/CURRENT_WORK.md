@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (live-record snapshot start journal-capped)
+Last updated: 2026-08-31 (live-record skip parent note lookup)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,7 +75,16 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Immediate slice — live-record snapshot start bound**
+**Shipped — live-record skip parent note lookup**
+([`live_record_snapshot_start_skip_parent_note_lookup_bugfix.md`](../Plans/live_record_snapshot_start_skip_parent_note_lookup_bugfix.md)):
+`fromCaptureStore` fragments do not call `findNoteAtPitch`. `openNotes` is
+the sole pairing mechanism; the parent is not an identity source. Session-exit
+keeps the lookup. Device [`192422`](../../captures/session_20260831_192422.log):
+32 live-record starts, `note_lookup=0`; after-first `start` 167–233 µs.
+The [`190654`](../../captures/session_20260831_190654.log) lookup-driven
+`start` growth (375→1007 µs) is gone.
+
+**Shipped — live-record snapshot start bound**
 ([`live_record_snapshot_start_bounded_fragment_bugfix.md`](../Plans/live_record_snapshot_start_bounded_fragment_bugfix.md)):
 RECORDING `startNextPendingConstruction` walks `capture.store` from
 `appliedLiveRecordEventIndex` through `tick < includeUntil` and emits one

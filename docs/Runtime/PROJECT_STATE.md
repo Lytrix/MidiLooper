@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (live-record snapshot start journal-capped)
+Last updated: 2026-08-31 (live-record skip parent note lookup)
 
 ---
 
@@ -89,11 +89,16 @@ same incremental admission can run after stop, and admits Snapshot on 2
 of every 6 deferred turns while a publication backlog is present. Device
 Stage 2 PASS [`152513`](../../captures/session_20260831_152513.log);
 Stage 3 drain PASS [`153113`](../../captures/session_20260831_153113.log)
-(`root_rev=7` meets `playback_rev=7`). Live-record snapshot start now
-walks `capture.store` from a persisted index and emits one journal-capped
-fragment; historical store copy/scan is removed
+(`root_rev=7` meets `playback_rev=7`). Live-record snapshot start walks
+`capture.store` from a persisted index
 ([`live_record_snapshot_start_bounded_fragment_bugfix.md`](../Plans/live_record_snapshot_start_bounded_fragment_bugfix.md)).
-Device non-growth capture remains open. Do not freeze `T_RT_reserve`.
+Device [`190654`](../../captures/session_20260831_190654.log) closed the
+copy/scan class; remaining `start` growth was `note_lookup`. That path now
+skips `findNoteAtPitch` (`openNotes` only)
+([`live_record_snapshot_start_skip_parent_note_lookup_bugfix.md`](../Plans/live_record_snapshot_start_skip_parent_note_lookup_bugfix.md)).
+Device [`192422`](../../captures/session_20260831_192422.log) closed the
+lookup class: `note_lookup=0` on all 32 live-record starts; after-first
+`start` 167–233 µs. Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed
 `T_RT_reserve` is rejected as a guarantee. Construction bounds stay
