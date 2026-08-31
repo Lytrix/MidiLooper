@@ -420,12 +420,26 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 #endif
 
+  const bool fullLoopSlice = (startBar == 0 && endBar + 1 >= totalBars);
+  if (fullLoopSlice && DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(
+                           visualCache.notes.size(), sliceNotes.size())) {
+    for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+      visualCache.dirtyBars[bar] = 0;
+    }
+    visualCacheDirty = false;
+    visualCache.dirtyBars.clear();
+    ++visualCache.revision;
+    emitVisualCacheState("slice_keep", -1);
+    return;
+  }
+
   removeDisplayNotesOverlappingBars(visualCache.notes, startBar, endBar, loopLengthTicks);
   for (const NoteUtils::DisplayNote& note : sliceNotes) {
     const uint32_t endTick = note.endTick >= note.startTick ? note.endTick : note.startTick;
     const uint32_t noteStartBar = visualBarForTick(note.startTick, Config::TICKS_PER_BAR);
     const uint32_t noteEndBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
-    if (noteStartBar <= endBar && noteEndBar >= startBar) {
+    if (noteStartBar <= endBar && noteEndBar >= startBar &&
+        !displayNotePitchStartPresent(visualCache.notes, note)) {
       visualCache.notes.push_back(note);
     }
   }

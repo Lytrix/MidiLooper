@@ -44,6 +44,16 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
 
     const uint8_t trackIndex = resolveTrackIndex(track);
     if (displaySlot != livePlaybackDisplaySlot_ || trackIndex != livePlaybackDisplayTrack_) {
+        // `000013`: other tracks STOPPED first and cleared compose 141. Adopt onto
+        // the outgoing loop before dropping the vector.
+        if (livePlaybackDisplayTrack_ != 255 && livePlaybackDisplaySlot_ != 255 &&
+            livePlaybackDisplayTrack_ < trackManager.getTrackCount() &&
+            livePlaybackDisplaySlot_ < Config::MAX_LOOPS_PER_TRACK &&
+            !liveDisplayNotes.empty()) {
+            Loop& previousLoop = trackManager.getTrack(livePlaybackDisplayTrack_)
+                                     .getLoop(livePlaybackDisplaySlot_);
+            adoptComposedDisplayNotesIfAuthoritative(previousLoop);
+        }
         // Slot or track context changed — drop cached notes (never paint another loop's notes).
         liveDisplayNotes.clear();
         liveDisplayEventBuffer.clear();

@@ -144,6 +144,7 @@ public:
     void drawBracket(uint32_t selectedTick, uint32_t lengthLoop, int pianoRollY1);
 
 private:
+    void adoptComposedDisplayNotesIfAuthoritative(Loop& loop);
     void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                          const DisplayNoteVec& frameNotes);
 

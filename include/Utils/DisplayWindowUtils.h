@@ -202,9 +202,44 @@ inline bool shouldHoldDirtyVisualCacheUntilIdle(bool visualCacheDirty, bool visu
 
 /// After wrap, idle or wrap-append can grow `visualCache` past the held PLAYING
 /// layer (`201556`: visual=206, frame stayed 134). Do not hold that smaller layer.
+/// Held size is the composed frame, not the pre-wrap committed prefix
+/// (`232910` wrap 1: cache 89 > prefix 63 assigned cache and dropped compose 104).
+inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCount,
+                                                       size_t heldCommittedNoteCount,
+                                                       size_t composedNoteCount) {
+  const size_t hold = composedNoteCount > heldCommittedNoteCount ? composedNoteCount
+                                                                 : heldCommittedNoteCount;
+  return visualCacheNoteCount > hold;
+}
+
 inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCount,
                                                        size_t heldCommittedNoteCount) {
-  return visualCacheNoteCount > heldCommittedNoteCount;
+  return shouldAssignGrownVisualCacheOverOverdubHold(visualCacheNoteCount, heldCommittedNoteCount,
+                                                     heldCommittedNoteCount);
+}
+
+/// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
+/// RC5a refresh. A short-loop composed frame that is larger than `visualCache`
+/// must be adopted onto that loop. Do not replace a long-loop cache with a
+/// 16-bar window (`185931` 2403→496).
+inline bool shouldAdoptComposedNotesOverVisualCache(size_t composedNoteCount,
+                                                    size_t visualCacheNoteCount,
+                                                    uint32_t loopBars) {
+  if (composedNoteCount == 0) {
+    return false;
+  }
+  if (visualCacheNoteCount == 0) {
+    return true;
+  }
+  return loopBars > 0 && loopBars <= kMaxDetailedWindowBars &&
+         composedNoteCount > visualCacheNoteCount;
+}
+
+/// Full-loop idle must not replace a larger cache with a smaller slice
+/// (`000013` Prepared 95→80; `234233` compose 325 then slice 176).
+inline bool shouldKeepVisualCacheOverSmallerFullLoopSlice(size_t visualCacheNoteCount,
+                                                          size_t sliceNoteCount) {
+  return visualCacheNoteCount > 0 && sliceNoteCount < visualCacheNoteCount;
 }
 
 /// Overdub committed layer must switch from window gather to full visualCache when idle
