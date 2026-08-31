@@ -1757,7 +1757,7 @@ void test_wrap_rebuild_with_hide_companion_drops_record_from_source_view() {
   LoopContentResolution::deviceGateReset();
 }
 
-// Lane D1/D2: multi-wrap membership — untouched survives, hidden absent, shortened keeps geometry.
+// Lane D1/D2: multi-wrap membership — untouched survives, hidden absent, crossed earlier note shortened.
 void test_multi_wrap_source_view_membership_three_classes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();

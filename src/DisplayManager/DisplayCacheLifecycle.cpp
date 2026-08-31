@@ -108,7 +108,8 @@ void DisplayManager::adoptComposedDisplayNotesIfAuthoritative(Loop& loop) {
     if (Config::TICKS_PER_BAR > 0 && loop.loopLengthTicks > 0) {
         loopBars = (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
     }
-    loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes);
+    loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes,
+                                               liveDisplayCacheCommittedNoteCount_);
     DisplayWindowUtils::keepShortestEndAtPitchStart(liveDisplayNotes);
     DisplayWindowUtils::keepShortestEndAtPitchStart(loop.visualCache.notes);
     if (!DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(

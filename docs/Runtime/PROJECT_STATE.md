@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-01 (occupy same-start shorter hides longer)
+Last updated: 2026-09-01 (wrap seal must not Delete occupy paint Hide)
 
 ---
 

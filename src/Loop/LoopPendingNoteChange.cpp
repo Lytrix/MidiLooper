@@ -95,6 +95,18 @@ LOOP_COLD_MEM bool insertSortedUniquePendingNoteId(std::vector<NoteId>& ids, Not
   return true;
 }
 
+void erasePaintHideForNoteId(PendingNoteChangeVec& paintHides, NoteId noteId) {
+  if (noteId == kInvalidNoteId || paintHides.empty()) {
+    return;
+  }
+  paintHides.erase(std::remove_if(paintHides.begin(), paintHides.end(),
+                                  [noteId](const PendingNoteChange& change) {
+                                    return change.kind == PendingNoteChangeKind::Hide &&
+                                           change.noteId == noteId;
+                                  }),
+                   paintHides.end());
+}
+
 void upsertSourceTransform(PendingNoteChangeVec& pending, const PendingNoteChange& change) {
   if (change.kind != PendingNoteChangeKind::Shorten && change.kind != PendingNoteChangeKind::Hide) {
     pending.push_back(change);
@@ -138,8 +150,23 @@ LOOP_COLD_MEM const PendingNoteChange* findSourceTransformByNoteIdSorted(
   return &(*it);
 }
 
+LOOP_COLD_MEM bool hideMatchesDisplayNote(const NoteUtils::DisplayNote& note,
+                                          const PendingNoteChange& hide, uint32_t loopLength) {
+  if (hide.noteId != kInvalidNoteId && note.noteId == hide.noteId) {
+    return true;
+  }
+  if (note.note != hide.pitch || loopLength == 0) {
+    return false;
+  }
+  return existingNoteOverlapsIncomingHold(note.startTick, note.endTick, hide.startTick,
+                                          hide.endTick, loopLength);
+}
+
 LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
-                                                     const PendingNoteChangeVec& pending) {
+                                                     const PendingNoteChangeVec& pending,
+                                                     uint32_t loopLength,
+                                                     bool matchHideByOverlap,
+                                                     size_t liveCaptureBegin) {
   PendingNoteChangeVec transforms;
   for (const PendingNoteChange& change : pending) {
     if ((change.kind == PendingNoteChangeKind::Shorten ||
@@ -155,9 +182,23 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
 
   NoteUtils::DisplayNoteVec updated;
   updated.reserve(notes.size());
-  for (const NoteUtils::DisplayNote& note : notes) {
+  for (size_t i = 0; i < notes.size(); ++i) {
+    const NoteUtils::DisplayNote& note = notes[i];
+    if (i >= liveCaptureBegin) {
+      updated.push_back(note);
+      continue;
+    }
     const PendingNoteChange* transform =
         findSourceTransformByNoteIdSorted(transforms, note.noteId);
+    if (transform == nullptr && matchHideByOverlap && loopLength != 0) {
+      for (const PendingNoteChange& candidate : transforms) {
+        if (candidate.kind == PendingNoteChangeKind::Hide &&
+            hideMatchesDisplayNote(note, candidate, loopLength)) {
+          transform = &candidate;
+          break;
+        }
+      }
+    }
     if (transform == nullptr) {
       updated.push_back(note);
       continue;
@@ -365,12 +406,14 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
         transform.startTick = sourceBaseline.startTick;
         transform.endTick = sourceBaseline.endTick;
         upsertSourceTransform(pendingNoteChanges_, transform);
+        erasePaintHideForNoteId(pendingPaintHides_, group.targetNoteId);
         continue;
       }
       if (geometry.startTick != sourceBaseline.startTick ||
           geometry.endTick != sourceBaseline.endTick) {
         transform.kind = PendingNoteChangeKind::Shorten;
         upsertSourceTransform(pendingNoteChanges_, transform);
+        erasePaintHideForNoteId(pendingPaintHides_, group.targetNoteId);
       }
     }
   }
@@ -641,6 +684,48 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   return true;
 }
 
+LOOP_COLD_MEM void Loop::upsertPendingHidesForOccupiedNoteIds(
+    uint8_t channel, uint8_t pitch, uint8_t velocity, const OverlapNoteIdSet& overlapNoteIds) {
+  if (!overdubSourceViewEstablished_ || !OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
+    return;
+  }
+  NoteUtils::DisplayNoteVec selected;
+  OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
+                                            nullptr);
+  for (const NoteUtils::DisplayNote& note : selected) {
+    PendingNoteChange transform{};
+    transform.kind = PendingNoteChangeKind::Hide;
+    transform.noteId = note.noteId;
+    transform.channel = channel;
+    transform.pitch = note.note;
+    transform.velocity = note.velocity;
+    (void)pitch;
+    (void)velocity;
+    transform.startTick = note.startTick;
+    transform.endTick = note.endTick;
+    upsertSourceTransform(pendingPaintHides_, transform);
+  }
+#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
+  overlapHoldTotals_.add = 0;
+  overlapHoldTotals_.shorten = 0;
+  overlapHoldTotals_.hide = 0;
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind == PendingNoteChangeKind::Add) {
+      ++overlapHoldTotals_.add;
+    } else if (change.kind == PendingNoteChangeKind::Shorten) {
+      ++overlapHoldTotals_.shorten;
+    } else if (change.kind == PendingNoteChangeKind::Hide) {
+      ++overlapHoldTotals_.hide;
+    }
+  }
+  for (const PendingNoteChange& change : pendingPaintHides_) {
+    if (change.kind == PendingNoteChangeKind::Hide) {
+      ++overlapHoldTotals_.hide;
+    }
+  }
+#endif
+}
+
 LOOP_COLD_MEM __attribute__((noinline)) void Loop::emitOverlapHoldTotals() const {
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   const OverlapHoldTotals& totals = overlapHoldTotals_;
@@ -654,6 +739,9 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
   if (!overdubSourceViewEstablished_) {
     return;
   }
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0
+                               ? overdubSourceViewLoopLengthTicks_
+                               : loopLengthTicks;
   NoteUtils::DisplayNoteVec added;
   added.reserve(pendingNoteChanges_.size());
   for (const PendingNoteChange& change : pendingNoteChanges_) {
@@ -683,14 +771,21 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
       }
     }
   }
-  applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, pendingNoteChanges_);
+  applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, pendingNoteChanges_, loopLen, false,
+                                    static_cast<size_t>(-1));
   if (overdubSourceSpanCacheValid_) {
-    applyPendingHideAndShortenToNotes(overdubSourceSpanCacheNotes_, pendingNoteChanges_);
+    applyPendingHideAndShortenToNotes(overdubSourceSpanCacheNotes_, pendingNoteChanges_, loopLen,
+                                      false, static_cast<size_t>(-1));
   }
 }
 
-LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
-  applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_);
+LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
+    NoteUtils::DisplayNoteVec& notes, size_t liveCaptureBegin) const {
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0
+                               ? overdubSourceViewLoopLengthTicks_
+                               : loopLengthTicks;
+  applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin);
+  applyPendingHideAndShortenToNotes(notes, pendingPaintHides_, loopLen, true, liveCaptureBegin);
 }
 
 LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
@@ -787,6 +882,6 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
       overdubSourceSpanCacheLoopLengthTicks_ == loopLengthTicks) {
     overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
   }
-  clearPendingNoteChanges();
+  pendingNoteChanges_.clear();
   return sealedIds;
 }

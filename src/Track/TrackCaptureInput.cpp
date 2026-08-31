@@ -202,6 +202,8 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   }
   loop.collectOverdubNoteOnParticipantIds(pending.note, midiChannel, runtime->ledger,
                                           pending.overlapNoteIds);
+  loop.upsertPendingHidesForOccupiedNoteIds(pending.channel, pending.note, pending.velocity,
+                                            pending.overlapNoteIds);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   OverlapNoteIdSet sourceViewIds;
   loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, sourceViewIds);
@@ -273,6 +275,10 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackN
       continue;
     }
     (void)pending.overlapNoteIds.insert(noteId);
+    OverlapNoteIdSet crossed;
+    (void)crossed.insert(noteId);
+    getActiveLoop().upsertPendingHidesForOccupiedNoteIds(pending.channel, pending.note,
+                                                         pending.velocity, crossed);
   }
 }
 
