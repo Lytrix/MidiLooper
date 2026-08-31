@@ -1,6 +1,6 @@
 # Display visual-cache snapshot reuse
 
-**Status:** Stage 1 wrap-stale + span-cache restamp in tree; wrap paint hold FAIL [`201556`](../../captures/session_20260831_201556.log). Stage 2 parked. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
+**Status:** Stage 1 device PASS [`202745`](../../captures/session_20260831_202745.log). Stage 2 unblocked, not started. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
 **Date:** 2026-08-31  
 **Kind:** refinement (Stage 1 is a wrap-stale bugfix; Stage 2 is 4b.1b snapshot fill)  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) — one work item, two stages. Work: [Work](https://github.com/users/Lytrix/projects/1)  
@@ -17,8 +17,8 @@
 
 | Stage | Invariant | Status |
 |---|---|---|
-| **1 — wrap-stale** | After wrap commit (and the following `beginCapture(Overdub)`), `visualCache.notes` stay. `dirtyBars` is the affected bar set, never empty-then-all while notes exist. After wrap + `appendLastCommittedOverdubPassToSourceView`, `overdubSourceSpanCacheReady()` is true so idle does not `from=passes`. Sealed wrap-pass notes merge into `visualCache`; overdub paint assigns the grown cache instead of the pre-wrap hold. | Wrap-stale + restamp native **1512/1512**, RAM1 locals **6944**. Device [`200434`](../../captures/session_20260831_200434.log): no `dsz=0` while notes exist. [`201556`](../../captures/session_20260831_201556.log): no wrap `from=passes`; DISP `205→133` then `visual=206` / `frame=134` for the rest of the loop. Paint-hold follow-up native **1513/1513**, RAM1 locals **6944**; device recapture required. |
-| **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | Parked until Stage 1 device PASS. This is former 4b.1b. |
+| **1 — wrap-stale** | After wrap commit (and the following `beginCapture(Overdub)`), `visualCache.notes` stay. `dirtyBars` is the affected bar set, never empty-then-all while notes exist. After wrap + `appendLastCommittedOverdubPassToSourceView`, `overdubSourceSpanCacheReady()` is true so idle does not `from=passes`. Sealed wrap-pass notes merge into `visualCache`; overdub paint assigns the grown cache instead of the pre-wrap hold. | Device PASS [`202745`](../../captures/session_20260831_202745.log). Three wraps; no wrap `dsz=0` while `notes>0`; only `lcr,src` is `why=open,from=visual`. First wrap `DISP` `183,111` → next frame `184,180`. Second wrap first paint `249,246` (not a hold of 180). |
+| **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | Unblocked. Not started. This is former 4b.1b. |
 
 Stage 2 first would copy snapshot notes, then wrap would wipe them again.
 
@@ -45,7 +45,7 @@ Overdub **button** start already must not `markDisplayCachesStale` (DEC-036 3b).
 
 Native: wrap a clean 16-bar cache; note count holds; `dirtyBars` is the wrap-pass span. After wrap-pair restamp fail, append makes `overdubSourceSpanCacheReady()` true and keeps the record note. Record-stop `markDisplayCachesStale` unchanged.
 
-Device: no wrap `VCACHE,stale` with `dsz=0` while `notes>0`; no `lcr,src,why=idle,from=passes` on that wrap. Second gate is firmware-in-tree; recapture required.
+Device PASS [`202745`](../../captures/session_20260831_202745.log): no wrap `VCACHE,stale` with `dsz=0` while `notes>0`; no wrap `lcr,src,why=idle,from=passes`; first overdub pass stays on the paint frame after wrap.
 
 ---
 
@@ -60,8 +60,8 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 ## Sequence
 
 1. Stage 1 wrap-stale firmware + native + RAM1 + commit — done (`46f3b1bf`).
-2. Span-cache restamp follow-up + native + RAM1 + commit. Device recapture. Only then Stage 2.
-3. Stage 2 stays parked until Stage 1 device PASS (both gates). Do not check off OpenSpec `3.5` / `3.6`.
+2. Span-cache restamp (`0f675b85`) + wrap paint hold (`f11b982d`). Device PASS [`202745`](../../captures/session_20260831_202745.log).
+3. Stage 2 is unblocked. Do not start it until CURRENT_WORK says so. Do not check off OpenSpec `3.5` / `3.6`.
 
 ## Pre-implementation review
 

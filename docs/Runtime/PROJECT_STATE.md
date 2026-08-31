@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 wrap paint hold in tree)
+Last updated: 2026-08-31 (visual cache #41 Stage 1 device PASS)
 
 ---
 
@@ -100,14 +100,12 @@ Device [`192422`](../../captures/session_20260831_192422.log) closed the
 lookup class: `note_lookup=0` on all 32 live-record starts; after-first
 `start` 167–233 µs. Remaining `idle_maint` spikes are display VisualCache
 (wrap-stale + `from=passes`). [#41](https://github.com/Lytrix/MidiLooper/issues/41)
-Stage 1 wrap-stale device FAIL
-[`200434`](../../captures/session_20260831_200434.log)
+Stage 1 device PASS
+[`202745`](../../captures/session_20260831_202745.log)
 ([`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md)):
-`dsz=0` while notes exist is gone. [`201556`](../../captures/session_20260831_201556.log)
-has no wrap `from=passes`; remaining clause is wrap paint holding the
-record-only layer (`visual=206`, `frame=134`). Wrap-pass merge into
-`visualCache` plus grown-cache assign is in tree; device recapture required.
-Stage 2 waits for Stage 1 device PASS.
+no wrap `dsz=0` while notes exist; no wrap `from=passes`; first overdub pass
+stays on the paint frame (`183,111` → `184,180`; second wrap `249,246`).
+Stage 2 is unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed

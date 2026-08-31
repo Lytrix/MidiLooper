@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 wrap paint hold in tree)
+Last updated: 2026-08-31 (visual cache #41 Stage 1 device PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -78,16 +78,14 @@ recapture remains open.
 **Now — visual cache wrap-stale (Stage 1)**
 ([#41](https://github.com/Lytrix/MidiLooper/issues/41),
 [`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md)):
-wrap-stale marks and span-cache restamp are in tree. Device
-[`201556`](../../captures/session_20260831_201556.log): no wrap
-`from=passes`; first overdub pass leaves the paint frame (`205→133`, then
-`visual=206` / `frame=134`). Cause: wrap hold keeps the record-only committed
-layer; idle fills `visualCache` but paint does not assign the grown cache.
-`appendLastCommittedOverdubPassToSourceView` now also merges wrap-pass notes
-into `visualCache.notes` by geometry. Paint assigns when
-`shouldAssignGrownVisualCacheOverOverdubHold`. Native **1513/1513**. RAM1
-locals **6944**. Device recapture required.
-Stage 2 stays parked. Do not start all-track idle fan-out,
+Stage 1 device PASS
+[`202745`](../../captures/session_20260831_202745.log). Three wraps on a
+7-bar loop (`live=5376`). No wrap `VCACHE,stale` with `dsz=0` while
+`notes>0`. Only `lcr,src` is `why=open,from=visual` at overdub start. First
+wrap `DISP` `183,111` → next frame `184,180`. Second wrap first paint
+`249,246` (not a hold of 180). Contrast [`201556`](../../captures/session_20260831_201556.log)
+`visual=206` / `frame=134`. Stage 2 is unblocked and not started. Do not
+start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
 
 **Shipped — live-record skip parent note lookup**
