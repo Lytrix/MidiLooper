@@ -188,9 +188,14 @@ OverlapNoteOff accumulate is Shorten / Length again. NOTE_EDIT
 **NoteOff OverlapNoteOn (`010926` RC1):**
 [`overdub_wrap_occupy_noteoff_shorten_not_delete_bugfix.md`](../Plans/overdub_wrap_occupy_noteoff_shorten_not_delete_bugfix.md).
 `accumulatePendingNoteChangesFromSourceNotes` Shortens OverlapNoteOn to
-occupy exclusive end − 1. CompleteCover still Hides / Deletes. Native
-pending + source-view focused suites pass. RC2 (norowid paint + visual-cache
-overlay) is next.
+occupy exclusive end − 1. CompleteCover still Hides / Deletes.
+**norowid paint + wrap cache overlay (`010926` RC2):**
+`upsertPendingHidesForOccupiedNoteIds` falls back to present-at-hold
+source-view rows when ledger ids have no source-view row. Idle slice,
+`adopt_partial`, wrap append, and grown-cache assign apply pending paint
+so wrap first `DISP` does not restore occupied rows. Focused native
+pending **72/72**. Native **1539/1539**. RAM1 locals **6848**. Device
+recapture required (`010926` shape).
 **Stage 1m — stop compose adopt (`000013`):**
 [`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
 Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt

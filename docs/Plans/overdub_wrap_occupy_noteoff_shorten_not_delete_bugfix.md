@@ -1,6 +1,6 @@
 # Overdub wrap — NoteOff OverlapNoteOn must Shorten, not Delete
 
-**Status:** RC1 implemented — focused native pending **71/71**, source-view **83/83**. RC2 open.  
+**Status:** RC1 + RC2 implemented. Native **1539/1539**. RAM1 locals **6848**. Device recapture required.  
 **Date:** 2026-09-01  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41)  
@@ -23,7 +23,7 @@ NoteOff accumulate OverlapNoteOn → Hide → wrap seals Delete
 CompleteCover still Hide / Delete
     ← unchanged
 norowid paint + visual-cache paint overlay
-    ← RC2
+    ← RC2: hold-participant fallback + cache paint
 ```
 
 ## Problem

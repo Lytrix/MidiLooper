@@ -13,6 +13,7 @@
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
+#define LOOP_PENDING_NOTE_CHANGE_PROVIDES_DISPLAY_APPLY
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/NoteEditCurrentState.cpp"
@@ -564,7 +565,7 @@ void test_upsert_occupied_hides_before_note_off() {
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
@@ -581,7 +582,7 @@ void test_pending_hide_applies_when_display_note_id_differs() {
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
 
   NoteUtils::DisplayNoteVec paint;
   NoteUtils::DisplayNote row{};
@@ -601,7 +602,7 @@ void test_pending_hide_keeps_live_capture_tail() {
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
 
   NoteUtils::DisplayNoteVec paint;
   NoteUtils::DisplayNote committed{};
@@ -625,13 +626,29 @@ void test_pending_hide_keeps_live_capture_tail() {
   TEST_ASSERT_EQUAL_UINT32(48u, paint[0].endTick);
 }
 
+void test_upsert_occupied_hides_norowid_falls_back_to_hold_participants() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 73, 0, 576, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({77}), 0);
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* hide = findTransform(loop.pendingPaintHides(), 73);
+  TEST_ASSERT_NOT_NULL(hide);
+  TEST_ASSERT_EQUAL_UINT32(0u, hide->startTick);
+  TEST_ASSERT_EQUAL_UINT32(576u, hide->endTick);
+}
+
 void test_occupy_paint_hide_is_not_sealed_as_delete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
 
   const EditPassIdList sealed = loop.sealPendingNoteChangesToEditPasses();
   TEST_ASSERT_EQUAL(0u, sealed.size());
@@ -2760,6 +2777,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_upsert_occupied_hides_before_note_off);
   RUN_TEST(test_pending_hide_applies_when_display_note_id_differs);
   RUN_TEST(test_pending_hide_keeps_live_capture_tail);
+  RUN_TEST(test_upsert_occupied_hides_norowid_falls_back_to_hold_participants);
   RUN_TEST(test_occupy_paint_hide_is_not_sealed_as_delete);
   RUN_TEST(test_pending_shorten_applies_to_display_notes);
   RUN_TEST(test_wrap_keeps_source_view_inner_shortens_prior_add);

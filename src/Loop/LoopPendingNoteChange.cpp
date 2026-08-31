@@ -713,13 +713,27 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
 }
 
 LOOP_COLD_MEM void Loop::upsertPendingHidesForOccupiedNoteIds(
-    uint8_t channel, uint8_t pitch, uint8_t velocity, const OverlapNoteIdSet& overlapNoteIds) {
-  if (!overdubSourceViewEstablished_ || !OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
+    uint8_t channel, uint8_t pitch, uint8_t velocity, const OverlapNoteIdSet& overlapNoteIds,
+    uint32_t holdPhaseTick) {
+  if (!overdubSourceViewEstablished_) {
     return;
   }
   NoteUtils::DisplayNoteVec selected;
-  OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
-                                            nullptr);
+  if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
+    OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
+                                              nullptr);
+  }
+  if (selected.size() < overlapNoteIds.size()) {
+    OverlapNoteIdSet geometricIds;
+    collectOverdubSourceHoldParticipantIds(holdPhaseTick, pitch, geometricIds);
+    if (OverlapCandidateLookup::shouldLookupSpans(geometricIds)) {
+      OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, geometricIds, selected,
+                                                nullptr);
+    }
+  }
+  if (selected.empty()) {
+    return;
+  }
   for (const NoteUtils::DisplayNote& note : selected) {
     PendingNoteChange transform{};
     transform.kind = PendingNoteChangeKind::Hide;
