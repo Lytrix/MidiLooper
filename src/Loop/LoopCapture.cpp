@@ -653,6 +653,29 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
   return true;
 }
 
+namespace {
+
+void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
+                               const NoteUtils::DisplayNoteVec& candidates) {
+  for (const NoteUtils::DisplayNote& candidate : candidates) {
+    if (candidate.noteId == kInvalidNoteId) {
+      continue;
+    }
+    bool found = false;
+    for (const NoteUtils::DisplayNote& existing : dest) {
+      if (existing.noteId == candidate.noteId) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      dest.push_back(candidate);
+    }
+  }
+}
+
+}  // namespace
+
 LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   if (!overdubSourceViewEstablished_ || lastCommittedPassId_ == kInvalidPassId ||
       loopLengthTicks == 0) {
@@ -676,25 +699,22 @@ LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   const NoteUtils::DisplayNoteVec passNotes =
       NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
   mergeDisplayNotesIntoOverdubSourceView(passNotes);
+  // Wrap restamp can clear readiness (wrap-pair / missing id) while leaving notes.
+  // Idle then rebuildOverdubSourceView("idle") from=passes (200434). Merge the
+  // same wrap-pass notes into the existing span cache and restamp so ready()
+  // holds. O(pass) only — not a full-loop reconstruct.
+  if (overdubSourceSpanCacheValid_ || !overdubSourceSpanCacheNotes_.empty()) {
+    mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, passNotes);
+    overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
+    overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+    overdubSourceSpanCacheValid_ = true;
+    overdubSourceSpanCacheFullLoop_ = true;
+  }
 }
 
 LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoOverdubSourceView(
     const NoteUtils::DisplayNoteVec& candidates) {
-  for (const NoteUtils::DisplayNote& candidate : candidates) {
-    if (candidate.noteId == kInvalidNoteId) {
-      continue;
-    }
-    bool found = false;
-    for (const NoteUtils::DisplayNote& existing : overdubSourceViewNotes_) {
-      if (existing.noteId == candidate.noteId) {
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      overdubSourceViewNotes_.push_back(candidate);
-    }
-  }
+  mergeDisplayNotesByNoteId(overdubSourceViewNotes_, candidates);
 }
 
 LOOP_COLD_MEM __attribute__((noinline)) bool Loop::committedPlaybackNoteOnIdentityValid(

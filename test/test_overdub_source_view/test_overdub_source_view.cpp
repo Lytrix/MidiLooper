@@ -519,11 +519,37 @@ void test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span() {
   TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
   TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[15]);
 
+  loop.appendLastCommittedOverdubPassToSourceView();
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+
   loop.markDisplayCachesStale();
   TEST_ASSERT_TRUE(loop.visualCacheDirty);
   TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
   TEST_ASSERT_EQUAL(16u, loop.visualCache.dirtyBars.size());
   TEST_ASSERT_EQUAL(16u, countVisualDirtyBars(loop.visualCache.dirtyBars));
+}
+
+void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.rebuildVisualCacheFromPasses();
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+
+  const uint32_t wrapOn = kLoopLen - 40;
+  const uint32_t wrapOff = 80;
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(wrapOn, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(wrapOff, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
+
+  loop.appendLastCommittedOverdubPassToSourceView();
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 }
 
 void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
@@ -2987,6 +3013,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
   RUN_TEST(test_idle_empty_dirty_bars_keeps_notes_without_marking_all);
   RUN_TEST(test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span);
+  RUN_TEST(test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail);
   RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
   RUN_TEST(test_short_loop_idle_slice_cleans_without_full_rebuild);
   RUN_TEST(test_note_edit_idle_paint_consumes_stale_visual_cache);

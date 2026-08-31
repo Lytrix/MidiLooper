@@ -83,7 +83,7 @@ not wrap (reconstruction):
 
 **Later `playCommittedLoopMidi`:** existing revision-triggered gather. That is Rank 6, not wrap. Do not attribute it to the wrap-tick bound.
 
-**Idle:** `Track::processDeferredIdleMaintenance` VisualCache turn while OVERDUBBING when `!overdubSourceSpanCacheReady()` → `rebuildOverdubSourceView` + `publishPreparedOverdubPass`.
+**Idle:** `Track::processDeferredIdleMaintenance` VisualCache turn while OVERDUBBING when `!overdubSourceSpanCacheReady()` → `rebuildOverdubSourceView` + `publishPreparedOverdubPass`. Wrap `appendLastCommittedOverdubPassToSourceView` restamps the existing span cache so that idle rebuild is not taken after a wrap that left span-cache notes.
 
 ---
 
