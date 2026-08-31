@@ -164,6 +164,8 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
     }
     case CommitResult::Committed: {
       const PassId undoPassId = loop.lastCommittedPassId();
+      const uint32_t overdubSealPriorRevision =
+          loop.playbackRevision > 0 ? loop.playbackRevision - 1 : 0;
       if (overdubStop) {
 #if defined(SESSION_CAPTURE)
         const uint32_t finalizeLoopStartUs = micros();
@@ -199,6 +201,9 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
         TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
                                             true);
         loop.queueSessionExitSnapshot(reason, companionIds);
+        if (overdubStop) {
+          loop.recordLastOverdubSeal(undoPassId, companionIds, overdubSealPriorRevision);
+        }
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_push_overdub_undo",
                                           micros() - pushUndoStartUs, "ok");

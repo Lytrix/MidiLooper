@@ -1,13 +1,14 @@
 # Edit projection unit cost — note reconstruction per length-update row
 
-**Status:** **Investigation authorized. Firmware fix NOT authorized.** The fix is a separate change
-and must not be folded into Ring A / RC1
+**Status:** **Investigation closed for G1. Firmware fix NOT authorized.** The fix is a separate
+change and must not be folded into Ring A / RC1
 ([`Multi-Stage-Bugfix-Workflow`](../../.cursor/rules/Multi-Stage-Bugfix-Workflow.mdc)).
 
 **Kind:** investigation
 
 **Parent:** [`playback_window_round_robin_admission_refinement.md`](playback_window_round_robin_admission_refinement.md)
 § *Consequence — RC4 is a separate root cause*
+**GitHub:** [#40](https://github.com/Lytrix/MidiLooper/issues/40). Parent [#38](https://github.com/Lytrix/MidiLooper/issues/38). Work: [Work](https://github.com/users/Lytrix/projects/1)
 
 **Root cause id:** RC4 (RC1 = admission multiplicity, RC3 = snapshot convergence, RC4 = unit cost)
 
@@ -15,6 +16,37 @@ and must not be folded into Ring A / RC1
 `teensy41-capture-serial-investigation-diag`
 
 **Bound authority:** [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md) rows 2 and 7
+
+---
+
+## Conclusions (2026-08-26)
+
+1. **The 367 ms RC4 stall is `T0/S6` compatibility replay only.** `162522` pairs every repeated
+   `lists=18` / `rows=217` / `lgth=8` gather to `T0/S6`. `202654` tags that destination
+   `path=compatibility` (maximum 325.541 ms). Loaded restore does not publish a `LoopSnapshot`, so
+   that slot keeps running `gatherCommittedEventsInWindow` → `applyNoteEditPassSequence`.
+2. **Ignore `T0/S6` for snapshot-path sizing and for further lengthen-branch forensics.** Question 5
+   is closed on that scope. The eight `lgth` rows are companion replay on the loaded slot, not a
+   published-snapshot defect. Publish-on-restore for loaded slots remains a separate change.
+3. **A published root removes this cost.** `202654` `T4/S0` `path=snapshot`: eight samples,
+   305–358 µs. That is the RC4 candidate resolution for destinations that already have a published
+   root.
+4. **G1 is satisfied from that snapshot representative**, not from 367 ms. Parent plan:
+   `representativeRebuildWall` = 358 µs, `prefetchTicks` = 272, `H_fwd` = 768. Ring A firmware is
+   still not authorized.
+5. **Selecting another T0 slot does make the playback rebuild cheap.**
+   [`205447`](../../captures/session_20260826_205447.log) (mid-run file; slot-select button not
+   logged) switches T0 from S6 to S5 at 384.641 s:
+   - before: `T0/S6` `path=compatibility` 21.170–31.856 ms (9 samples; uncontended S6 band)
+   - switch: `T0/S5` `path=compatibility` **334 µs**, `winStart=0`, `winLen=3072`
+   - after: `T0/S6` leaves the `playback_build` stream; display follows `DISP,5,PLAYING`
+   - remaining rebuilds stay compatibility (`T4/S0` 11.0–19.8 ms, `T6/S0` 10.6–12.0 ms); this
+     file has no `path=snapshot` samples
+6. **The slot switch itself is not cheap.** The same `205447` timestamp reports
+   `midi_gap=377455`, `idle_maint=377124`, `load_frame=94442`, `late_on=1352983`,
+   `late_off=1353365`. The 377 ms gap is idle/visual work after `VCACHE,stale_all`, not the
+   334 µs S5 rebuild. [`202654`](../../captures/session_20260826_202654.log) never left T0/S6
+   (boot `enabledMask=0x40`; all 55 T0 samples are slot 6).
 
 ---
 
@@ -93,8 +125,9 @@ recording in [`172802`](../../captures/session_20260826_172802.log). The failure
 added interval-path formatting/capture emission, not evidence that published-snapshot gathering is
 slow.
 
-Continue **Ring B / RC2** independently. Do not size **G1** or implement **Ring A** from the current
-data. The next RC4 measurement must:
+Continue **Ring B / RC2** independently. **G1 is now sized** from the snapshot-path representative
+(see Conclusions). Do not implement **Ring A** from the compatibility stall. The RC4 measurement
+requirements were:
 
 1. keep `snprintf` and capture-ring writes out of `gatherPublishedSnapshotMembership` and the
    playback/clock interval path;
@@ -355,38 +388,43 @@ How to read `cer_recon`:
    change, not an `applyNoteEditPassSequence` optimization.
    Capture [`202654`](../../captures/session_20260826_202654.log) confirms the split:
    74 compatibility samples remain, while 8 `T4/S0` samples use `snapshot`.
+   [`205447`](../../captures/session_20260826_205447.log) then shows that leaving `T0/S6` for
+   `T0/S5` drops the T0 rebuild to 334 µs and removes S6 from the playback-build stream. That
+   destination change does not publish a snapshot (`path` stays `compatibility`).
 4. ~~**Is 367 ms representative or pathological?**~~ **Answered by `160244`: pathological.** It is the
    contended cost of a destination whose uncontended cost is 30–100 ms.
-5. **Why are there lengthen rows among replayed overdub companions at all?** All 217 Active rows are
-   companions (`comp=217`). A Shorten companion replayed against events that already reflect it
-   should take the `noop` or `shorten` branch, yet 8 rows per gather take **lengthen**. Whether that
-   is correct replay semantics or a replay-idempotency defect is unresolved, and it matters: if those
-   8 rows should not be lengthening, RC4's fix may be a correctness fix rather than a performance
-   one.
+5. ~~**Why are there lengthen rows among replayed overdub companions at all?**~~
+   **Closed — T0/S6 compatibility only; ignore for snapshot-path work.**
+   `162522` pairs every repeated `lgth=8` / `nlen=18` / `comp=217` gather to **`T0/S6`**.
+   `202654` then tags that destination `path=compatibility`. Loaded restore does not publish a
+   `LoopSnapshot` (question 3), so `T0/S6` still replays raw committed events through
+   `applyNoteEditPassSequence`. The eight lengthen rows are that compatibility replay, not a
+   published-snapshot defect. Snapshot destinations in the same capture (`T4/S0`) stay
+   sub-millisecond and do not emit this `cer_edit` shape. Do not spend further RC4 investigation
+   on `T0/S6` lengthen-branch forensics. Publish-on-restore for loaded slots remains a separate
+   change.
 
 
 ## Sequencing (agreed)
 
 1. ~~**Slice 1 measurement closure**~~ **Closed by `161834` and `162522`:** destination attribution
    maps the compatibility-gather signatures to `T0/S6`.
-2. **This investigation** — question 3 is answered from code (loaded restore does not publish).
-   Question 1 is closed by `165024` + `171159`: spill, nested clock, IntervalTimer ISR
-   wall time, and internal-heap `filt` are not the inflation. The remaining measured
-   cost is PSRAM-first `span`/`proj`. The attempted direct snapshot timing probe
-   was removed after `172305` rebooted at record start; `172802` confirms stable
-   operation after removal. Question 5 remains open.
-3. **Measure RC4's candidate resolution** before choosing Ring A's final prefetch lead.
-4. **Size G1** in the parent plan from the resulting representative rebuild cost — **not** from
-   today's 367 ms.
-5. **Ring B / RC2** proceed independently; they do not depend on RC4.
-6. **Ring A** after G1 is actually sized.
+2. ~~**This investigation**~~ **Closed.** Questions 1–5 are answered. Question 5 is scoped to
+   `T0/S6` compatibility and is ignored for snapshot-path work.
+3. ~~**Measure RC4's candidate resolution**~~ **Closed by `202654`:** `T4/S0` `path=snapshot`
+   maximum 358 µs versus `T0/S6` `path=compatibility` maximum 325.541 ms.
+4. ~~**Size G1**~~ **Satisfied in the parent plan.** `representativeRebuildWall` = 358 µs;
+   `prefetchTicks` = 272; horizon stays playhead-centred (`H_fwd` = 768). `T0/S6` is excluded.
+   Ring A firmware is still not authorized.
+5. ~~**Ring B / RC2**~~ proceeded independently; they do not depend on RC4.
+6. **Ring A** after G1 — **firmware still not authorized.**
 
-**Do not** lock the prefetch lead around 367 ms. If RC4 resolution brings a rebuild to tens of
-milliseconds, the required lead changes by an order of magnitude and the envelope table in the parent
-plan becomes comfortable at every eligible count.
+**Do not** lock the prefetch lead around 367 ms. G1 used 358 µs. The parent envelope is comfortable
+at every eligible count under that representative.
 
 ## Not in scope
 
-Micro-optimization of `applyNoteEditPassSequence` before question 1 is closed and a candidate
-resolution is chosen; changes to `CommittedEventRange` windowed traversal (measured at 23 ms, not
-the problem); the 2-bar content window; Ring A or Ring B admission; RC3 snapshot convergence.
+Micro-optimization of `applyNoteEditPassSequence`; changes to `CommittedEventRange` windowed
+traversal (measured at 23 ms, not the problem); the 2-bar content window; Ring A firmware;
+further `T0/S6` lengthen-branch forensics; publish-on-restore; the `205447` slot-switch
+`idle_maint` 377 ms stall (separate from RC4 unit cost). RC3 snapshot convergence.

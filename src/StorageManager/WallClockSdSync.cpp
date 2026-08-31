@@ -150,7 +150,7 @@ void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice) {
     stepWallClockFromSdCatalogSyncAnon(maxSetsPerSlice);
 }
 
-void syncWallClockFromSdTimestampsQuickForBootLoad() {
+STORAGE_PERSIST_MEM void syncWallClockFromSdTimestampsQuickForBootLoad() {
     syncWallClockFromSdTimestampsQuick();
 }
 

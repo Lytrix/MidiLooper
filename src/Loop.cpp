@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "Loop.h"
+#include "Utils/LoopMem.h"
 
 void Loop::reclaimUnreferencedDisabledPasses(const SlotPassReferences& refs) {
   reclaimUnreferencedDisabledCapturePasses(refs);
@@ -26,7 +27,7 @@ NoteId Loop::allocateNoteId() {
   return nextNoteId_++;
 }
 
-void Loop::resetPassTimeline() {
+LOOP_COLD_MEM void Loop::resetPassTimeline() {
   discardPendingCapturePass();
   if (passes.hasRecordPass()) {
     LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
@@ -44,6 +45,7 @@ void Loop::resetPassTimeline() {
   nextOverdubSessionIndex_ = 1;
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   lastCommittedPassId_ = kInvalidPassId;
+  clearLastOverdubSeal();
   clearPublishedSnapshot();
   playbackRevision = 0;
   editStateDirty_ = false;

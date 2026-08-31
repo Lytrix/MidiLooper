@@ -173,6 +173,27 @@ LOOP_COLD_MEM void Loop::pushOverdubSessionPass(PassId passId, EditPassIdList co
   overdubSessionCursor_ = overdubSessionPassIds_.size();
 }
 
+LOOP_COLD_MEM bool Loop::collectLastOverdubSessionPass(PassId& passId,
+                                                      EditPassIdList& companionIds) const {
+  passId = kInvalidPassId;
+  companionIds.clear();
+  if (overdubSessionCursor_ == 0 || overdubSessionPassIds_.empty()) {
+    return false;
+  }
+  const size_t index = overdubSessionCursor_ - 1;
+  if (index >= overdubSessionPassIds_.size()) {
+    return false;
+  }
+  passId = overdubSessionPassIds_[index];
+  if (passId == kInvalidPassId) {
+    return false;
+  }
+  if (index < overdubSessionCompanionIds_.size()) {
+    companionIds = overdubSessionCompanionIds_[index];
+  }
+  return true;
+}
+
 LOOP_COLD_MEM void Loop::collectOverdubSessionUndoPasses(PassIdList& passIds,
                                                         EditPassIdList& companionIds) const {
   passIds.clear();
@@ -243,6 +264,7 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
     return false;
   }
   if (overdubSessionCursor_ > 0) {
+    clearLastOverdubSeal();
     --overdubSessionCursor_;
     const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
     disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
@@ -270,6 +292,7 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
     return false;
   }
   if (overdubSessionCursor_ < overdubSessionPassIds_.size()) {
+    clearLastOverdubSeal();
     const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
     enableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
     const bool ok = setCapturePassState(passId, CapturePassState::Active);

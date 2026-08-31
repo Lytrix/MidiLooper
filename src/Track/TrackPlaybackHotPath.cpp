@@ -12,6 +12,7 @@
 #include "MidiConfig.h"
 #include "MidiHandler.h"
 #include "TickPhase.h"
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/RuntimeTimingTelemetry.h"
@@ -129,6 +130,9 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
     PlaybackTickFrame& frame, ProjectionContext& playbackContext, MergedPlaybackStreamCtx& mergedCtx,
     PlaybackCursorAdvanceState& mergedAdvance, PlaybackEmitPolicy mergedPolicy,
     PlaybackJamFilterCtx& jamCtx, uint8_t midiChannel) {
+  (void)runtime;
+  (void)currentTick;
+  (void)playbackContext;
   loop.armOverdubWrapAfterLeavingStart(frame.tickInLoop);
   bool mergedIntervalApplied = false;
   if (loop.shouldCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
@@ -138,30 +142,33 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
                                 playbackCursorAdvanceApplyLedger);
     mergedIntervalApplied = true;
   }
+#if defined(SESSION_CAPTURE)
+  uint32_t wrapSealUs = 0;
+  const uint32_t wrapSealStartUs = micros();
+#endif
   if (track.maybeCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
-    // Commit first. Reconcile only after the new full-loop merged stream exists,
-    // and before wrap-pass playback writes more legitimate ledger state.
-    const bool rebuilt =
-        ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
-    playbackContext = makePlaybackContext(track, loop, currentTick);
-    frame.playbackContext = &playbackContext;
-    if (rebuilt &&
-        isFullLoopMergedPlaybackWindow(runtime.mergedMidiEvents, loop.loopLengthTicks)) {
-      runtime.ledger.eraseOpenNotesMissingFromCommittedNoteOns(
-          runtime.mergedMidiEvents.mergedEvents.data(),
-          runtime.mergedMidiEvents.mergedEvents.size());
-    }
-    if (rebuilt) {
-      loop.replaceCommittedPlaybackNoteOnIdentities(runtime.mergedMidiEvents);
-    }
+#if defined(SESSION_CAPTURE)
+    wrapSealUs = micros() - wrapSealStartUs;
+    const uint32_t wrapPassApplyStartUs = micros();
+#endif
     applyCommittedOverdubPassPlaybackInterval(track, loop, slotIndex, frame, jamCtx);
-    if (!runtime.mergedMidiEvents.mergedEvents.empty()) {
-      ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, playbackContext);
-      loop.lastTickInLoop = frame.tickInLoop;
-      reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(),
-                            playbackContext);
-    }
+#if defined(SESSION_CAPTURE)
+    const uint32_t wrapPassApplyUs = micros() - wrapPassApplyStartUs;
+    const uint32_t wrapSrcAppendStartUs = micros();
+#endif
+    loop.appendLastCommittedOverdubPassToSourceView();
+#if defined(SESSION_CAPTURE)
+    const uint32_t wrapSrcAppendUs = micros() - wrapSrcAppendStartUs;
+    SC_ODUB_WRAP_TICK(wrapSealUs + wrapPassApplyUs + wrapSrcAppendUs, wrapSealUs, wrapPassApplyUs,
+                      wrapSrcAppendUs);
+#endif
   }
+#if defined(SESSION_CAPTURE)
+  else {
+    (void)wrapSealStartUs;
+    (void)wrapSealUs;
+  }
+#endif
   return mergedIntervalApplied;
 }
 
@@ -188,7 +195,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   LoopPlaybackRuntime& runtime = playbackRuntime.slot(slotIndex);
 
   if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
-    runtime.reset(true);
+    if (runtime.cachedTrackGeneration != playbackGeneration) {
+      runtime.reset(true);
+    }
     loop.nextEventIndex = 0;
     if (isActive) {
       loop.captureNextEventIndex = 0;
@@ -208,7 +217,14 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 
   ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
   if (loop.playbackOrderDirty) {
+#if defined(SESSION_CAPTURE)
+    const uint32_t playbackOrderStartUs = micros();
+#endif
     ::rebuildPlaybackOrder(loop, mergedEvents, playbackContext);
+#if defined(SESSION_CAPTURE)
+    SC_PLAYBACK_ORDER(micros() - playbackOrderStartUs,
+                      static_cast<uint32_t>(mergedEvents.size()));
+#endif
     reanchorPlaybackIndex(loop, mergedEvents, loop.getPlaybackOrder(), playbackContext);
   }
 

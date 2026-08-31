@@ -134,7 +134,9 @@ Do not make occupy catch-up run when `occupyPhase <= lastTick`. That would be oc
 
 `shouldApply` is false when `Loop::shouldCommitOverdubWrap(lastTickInLoop, occupyPhase)`.
 
-**The wrap commit interval is excluded from USB catch-up because those events are expected to enter the ledger through the normal clock/wrap path** (`catchUpOverdubWrapPlaybackLedger` → `playbackCursorAdvanceSend`), **preventing two writers from independently establishing ledger state for the same committed interval.**
+**The wrap commit interval is excluded from USB catch-up because those events are expected to enter the ledger through the normal clock/wrap path** (`catchUpOverdubWrapPlaybackLedger` → old-stream `(prev, S]` then `applyCommittedOverdubPassPlaybackInterval` on newly sealed pass chunks), **preventing two writers from independently establishing ledger state for the same committed interval.**
+
+The wrap clock tick does **not** call `ensurePlaybackMergedMidiEventsBuilt`, `rebuildPlaybackOrder`, `rebuildOverdubSourceView`, span-cache reconstruct, or `publishPreparedOverdubPass`. Occupy `a=` on that tick reads the existing source view after `appendLastCommittedOverdubPassToSourceView`. A later `playCommittedLoopMidi` incrementally admits a proven single overdub seal into the existing full-loop merged stream (`tryAdmitLastOverdubSealIntoMergedEvents`). Full-loop `playback_build,compatibility` remains the fallback when that receipt is missing or incomplete. Idle VisualCache while OVERDUBBING rebuilds the source view only when `!overdubSourceSpanCacheReady()`.
 
 Do not remove this exclusion merely because the wrap ticks also lie in `(lastTick, occupy]`. Do not move wrap ledger ownership onto USB occupy or onto the source-view handoff.
 
@@ -220,6 +222,7 @@ The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lc
 | Present-at-hold covering | `displayNotePresentAtHold` on source-view notes |
 | Whether a NoteOn is still live capture (uncommitted) | `extractOpenCaptureNoteOns` — open B never reaches this ledger |
 | Pairing Off to On in storage | `reconstructDisplayNotes` |
+| Source-view membership after wrap | `appendLastCommittedOverdubPassToSourceView` | Newly sealed pass notes only; skip NoteIds already present. Full `rebuildOverdubSourceView` is idle / later, not the wrap tick |
 | Source-view membership after rebuild | `rebuildOverdubSourceView` / `retainValidOverdubSourceViewIdentities` | Identity filter runs only on revision-fresh full-loop merged stream |
 | Whether open ledger identities should equal source-view covering identities | It must not be forced. Mismatch is a diagnostic, not a coupling license |
 

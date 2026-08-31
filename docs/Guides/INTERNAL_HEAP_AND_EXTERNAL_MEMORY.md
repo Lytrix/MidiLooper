@@ -51,6 +51,7 @@ Route new buffers here when they scale with loop length, edit closure, or undo d
 | `MemoryPool::globalMidiEventPool` | pool + `used[]` | `init()` in `setup()` after PSRAM ready |
 | UIP | `buildCanonicalSpansFromMidi` temps, `IntervalProjection` batch vectors | Per reconstruct / per project |
 | `NoteUtils` | span rebuild temps in `buildCanonicalSpansFromMidi` | Same allocator as UIP |
+| `Loop` snapshot nodes | 32 KB bump slabs (`kSnapshotSlabBytes`) | `allocateSnapshotShared` only. One `extmem_malloc` per slab; live-object count frees the slab. Construction `failed_` if a new slab is denied. Not a general `ExternalMemoryFirstAllocator` arena. |
 
 ### Batch loops — one buffer per batch, never one per item
 
@@ -134,6 +135,7 @@ Binary diagnostic records complement `[Memory]` prose lines. They use the same `
 | Tag | When | Fields |
 |-----|------|--------|
 | `DIAG` | Main-loop flush | `formatVer`, `eventId`, context snapshot, optional heap snapshot, `payload` |
+| `DIAG,snapshot_alloc` | `LoopSnapshotConstruction::freeze()` | `nodes`, `bytes`, `slabs` for `allocateSnapshotShared` (capture-serial) |
 | `DIAGCHK` | Boot after hard fault | Same layout; last record from `DiagLastRecordSlot` |
 
 ```bash

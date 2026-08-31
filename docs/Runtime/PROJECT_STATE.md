@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-28 (caller-scoped pitch lookup device PASS)
+Last updated: 2026-08-31 (Rank 6 incremental merged-stream admission)
 
 ---
 
@@ -78,6 +78,14 @@ names the 21 ms session-exit as `note_lookup` (86.9% of
 `pass_change=21050`). Caller-scoped pitch lookup device PASS
 [`005527`](../../captures/session_20260828_005527.log): `note_lookup`
 max 857 µs, `pass_change` max 3.219 ms.
+Wrap-tick derived reconstruction is removed from the wrap clock interval
+([`overdub_wrap_derived_rebuild_clock_interval_bugfix.md`](../Plans/overdub_wrap_derived_rebuild_clock_interval_bugfix.md)).
+Musical wrap stays on the clock. Rank 6 next-tick full-loop compatibility
+gather is replaced by incremental overdub-seal admission when the one-shot
+receipt proves completeness
+([`playback_merged_compatibility_rebuild_clock_interval_bugfix.md`](../Plans/playback_merged_compatibility_rebuild_clock_interval_bugfix.md)).
+Device recapture is open. Do not freeze `T_RT_reserve`. Do not check off
+OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed
 `T_RT_reserve` is rejected as a guarantee. Construction bounds stay
 unchanged.

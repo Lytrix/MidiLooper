@@ -10,6 +10,13 @@
 #include "TrackUndo.h"
 #include <string>
 
+#if defined(__IMXRT1062__)
+#include <Arduino.h>
+#define MIDI_BUTTON_CONFIG_COLD_MEM FLASHMEM
+#else
+#define MIDI_BUTTON_CONFIG_COLD_MEM
+#endif
+
 namespace MidiButtonConfig {
 
 // Static member definitions
@@ -117,7 +124,7 @@ void Config::addUndoRedoButton(uint8_t note, uint8_t channel) {
     addButton(config);
 }
 
-void Config::loadConfiguration() {
+MIDI_BUTTON_CONFIG_COLD_MEM void Config::loadConfiguration() {
     clearConfigs();
     
     // === PRESERVE EXISTING 3-BUTTON BEHAVIOR ===

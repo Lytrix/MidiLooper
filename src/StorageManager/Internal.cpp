@@ -24,19 +24,19 @@ bool quarantineLegacyMonolithAfterSave = false;
 CurrentSetStorage::AnchorFields currentSetAnchorFields{};
 // Incremental loop writes by default; migration/recovery paths set true explicitly.
 bool forceCurrentSetFullLoopWrite = false;
-std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
+STORAGE_PERSIST_DATA std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     currentSetLoopSlotDirty{};
 uint32_t currentSetLastActiveUnix = 0;
-char currentSetLoadedFromFolder[16] = {};
+STORAGE_PERSIST_DATA char currentSetLoadedFromFolder[16] = {};
 uint32_t currentWorkspaceEpoch = 0;
 uint32_t lastCommittedWorkspaceEpoch = 0;
 uint16_t workspaceDerivedFromSetId = 0;
 uint16_t workspaceDerivedFromRevisionId = 0;
 uint16_t workspaceLastCommittedRevisionId = 0;
-char autoSaveBeforeLoadFolderPending[16] = {};
+STORAGE_PERSIST_DATA char autoSaveBeforeLoadFolderPending[16] = {};
 bool autoSaveBeforeLoadFolderPendingValid = false;
-char restoredSetBundlePath_[80] = {};
-std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
+STORAGE_PERSIST_DATA char restoredSetBundlePath_[80] = {};
+STORAGE_PERSIST_DATA std::array<uint32_t, Config::NUM_TRACKS> undoStackFileOffsets_{};
 uint8_t undoHydrateTrackIndex_ = 0;
 bool undoSnapshotsPending_ = false;
 

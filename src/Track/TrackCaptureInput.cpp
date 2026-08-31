@@ -370,7 +370,16 @@ bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t 
   if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks) {
     tickRelative = loop.loopLengthTicks - 1;
   }
-  const MidiEvent newEvt = MidiEvent::NoteOff(tickRelative, channel, note, 0);
+  MidiEvent newEvt = MidiEvent::NoteOff(tickRelative, channel, note, 0);
+  const LoopEventStore& capture = loop.capture.store;
+  for (size_t i = capture.size(); i > 0; --i) {
+    const MidiEvent& prior = capture.at(i - 1);
+    if (!prior.isNoteOn() || prior.channel != channel || prior.data.noteData.note != note) {
+      continue;
+    }
+    newEvt.noteId = prior.noteId;
+    break;
+  }
   const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
   if (!appendResult.accepted) {
     return false;
@@ -505,19 +514,22 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 
     if (!eventAdded) return;
 
-    if (type == midi::NoteOff && isOverdubbing() && loop.loopLengthTicks > 0) {
+    if (type == midi::NoteOff) {
       const LoopEventStore& capture = loop.capture.store;
       for (size_t i = capture.size(); i > 0; --i) {
         const MidiEvent& prior = capture.at(i - 1);
         if (!prior.isNoteOn() || prior.channel != channel || prior.data.noteData.note != data1) {
           continue;
         }
-        const bool wrappedHeadOff =
-            tickRelative < prior.tick &&
-            pendingNotes.find({data1, channel}) != pendingNotes.end();
-        if (tickRelative <= prior.tick && !wrappedHeadOff) {
-          tickRelative = prior.tick + 1;
-          newEvt.tick = tickRelative;
+        newEvt.noteId = prior.noteId;
+        if (isOverdubbing() && loop.loopLengthTicks > 0) {
+          const bool wrappedHeadOff =
+              tickRelative < prior.tick &&
+              pendingNotes.find({data1, channel}) != pendingNotes.end();
+          if (tickRelative <= prior.tick && !wrappedHeadOff) {
+            tickRelative = prior.tick + 1;
+            newEvt.tick = tickRelative;
+          }
         }
         break;
       }

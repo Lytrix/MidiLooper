@@ -1,6 +1,8 @@
 # Wrap-tick ledger catch-up from committed pass
 
-**Status:** Native **PASS** 1346/1346. HITL **PASS** [`185831`](../../captures/session_20260818_185831.log) wrap-S occupy 71 @ 704 `n=1`. Remaining `n=0` at storage 0 is **outside** this invariant — [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md).  
+**Status:** Native **PASS** 1346/1346. HITL **PASS** [`185831`](../../captures/session_20260818_185831.log) wrap-S occupy 71 @ 704 `n=1`. Remaining `n=0` at storage 0 is **outside** this invariant — [`overdub_loop_head_playback_ledger_bugfix.md`](overdub_loop_head_playback_ledger_bugfix.md).
+
+**Wrap-tick derived rebuild (2026-08-31):** full merged gather, playback-order rebuild, `rebuildOverdubSourceView`, span-cache reconstruct, and LCR publish leave the wrap clock tick. See [`overdub_wrap_derived_rebuild_clock_interval_bugfix.md`](overdub_wrap_derived_rebuild_clock_interval_bugfix.md). Musical wrap, incremental wrap-pass apply, and incremental source-view append stay on the clock. Reanchor at S is `lastTickInLoop = S` on the wrap tick so a later Rank 6 gather reconstructs as of S.  
 **Date:** 2026-08-18  
 **Kind:** bugfix  
 **Parent:** [`overdub_present_at_tick_jit_enhancement.md`](overdub_present_at_tick_jit_enhancement.md)  

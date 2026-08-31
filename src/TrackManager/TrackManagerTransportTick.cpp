@@ -108,6 +108,9 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
   handlePendingRecordStart(currentTick);
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
+#if RUNTIME_TIMING_ENABLED
+    const uint32_t trackStartUs = micros();
+#endif
     // Commit multi-hold selection (enabled set + start at next 16th).
     if (pendingMultiSlotCommit[i] &&
         currentTick != pendingMultiSlotQueuedAtTick[i] &&
@@ -118,6 +121,9 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
           pendingSlotEnabled[i][s] = false;
         }
+#if RUNTIME_TIMING_ENABLED
+        RUNTIME_TIMING_NOTE_TRACK_UPDATE(i, micros() - trackStartUs);
+#endif
         continue;
       }
 
@@ -265,6 +271,9 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
             s, playTick, PlaybackMidiOutput::shouldSend(audible, slotMuted[i][s]));
       }
     }
+#if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_NOTE_TRACK_UPDATE(i, micros() - trackStartUs);
+#endif
   }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_TRACKS_UPDATE(micros() - tracksStartUs);

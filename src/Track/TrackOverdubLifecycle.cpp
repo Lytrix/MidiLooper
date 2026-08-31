@@ -149,7 +149,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
 }
 
 
-void Track::stopOverdubbing() {
+TRACK_COLD_MEM void Track::stopOverdubbing() {
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
 #if defined(SESSION_CAPTURE)
@@ -266,7 +266,7 @@ TRACK_COLD_MEM void Track::noteLoopPrefixMeasureAfterUndo() {
   }
 }
 
-void Track::stopOverdubbingToStopped() {
+TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
   overdubStopDebtProbeArmed_ = false;
   const uint32_t currentTick = clockManager.getCurrentTick();

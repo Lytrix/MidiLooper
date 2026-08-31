@@ -13,8 +13,8 @@
 namespace SetRevisionCatalog {
 
 inline constexpr const char* kSetsRoot = PersistenceLayout::kSetsRoot;
-constexpr char kSetIndexPath[] = "/MidiLooper/sets/index.bin";
-constexpr char kSetIndexTempPath[] = "/MidiLooper/sets/index.bin.tmp";
+inline constexpr const char* kSetIndexPath = "/MidiLooper/sets/index.bin";
+inline constexpr const char* kSetIndexTempPath = "/MidiLooper/sets/index.bin.tmp";
 inline constexpr const char* kRevisionFileExtension = PersistenceLayout::kRevisionFileExtension;
 inline constexpr const char* kRevisionTempSuffix = PersistenceLayout::kRevisionTempSuffix;
 

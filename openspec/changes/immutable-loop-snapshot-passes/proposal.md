@@ -10,11 +10,18 @@ The current loop model derives effective musical state by replaying capture pass
 - Keep `StorageManager` as the sole persistence and migration owner; large-loop save/load work uses its existing deferred units and does not synchronously rebuild or serialize the complete loop on timing-critical paths.
 - Keep capture finalization, overlap, note pairing, and NOTE_EDIT geometry semantics in their existing owners.
 - Make undo, redo, and clear-slot restore select existing snapshot identities rather than replay history.
-- Migrate playback, display, NOTE_EDIT, analysis, persistence, and load consumers in separately gated stages.
+- Migrate overdub source resolution, playback, display, NOTE_EDIT, analysis,
+  validation, persistence, undo, redo, clear-slot restore, and load in
+  separately gated stages. Every normal consumer reads the selected immutable
+  snapshot; derived caches retain ownership but do not become effective-state
+  authorities.
 - Keep derived representation ownership, revision, invalidation, and build policy with the existing owners defined by [`DerivedViews.md`](../../docs/Authority/Architecture/DerivedViews.md).
 - Keep persistence and compatibility migration with `StorageManager` as defined by [`Storage.md`](../../docs/Authority/Architecture/Storage.md), using deferred bounded units for large loops.
 - Preserve the four-layer boundary in [`RuntimeArchitecture.md`](../../docs/Authority/Architecture/RuntimeArchitecture.md): authoritative snapshot content, derived representations, interval projection, and runtime requests remain separate owners and contracts.
-- **BREAKING**: historical replay and maintained LCR state become compatibility-only and are retired after caller migration gates pass.
+- **BREAKING**: historical replay and maintained LCR state become
+  compatibility-only verification/rollback sources and are retired after all
+  caller migration gates pass. This change does not optimize compatibility
+  paths as an intermediate effective-state solution.
 - **BREAKING**: a future storage version is required for immutable objects and snapshot structure; its physical layout is a separate design.
 
 ## Specification hierarchy
@@ -58,9 +65,10 @@ The architectural idea is small. Later sections keep integration and migration c
 ## Impact
 
 - Affects `Loop` / `LoopPasses`, playback preparation, `TrackUndo`, `StorageManager`, NOTE_EDIT and display consumers, and `LoopContentResolution`.
-- Phase 0 remains architecture and specification only. The logical indexes are selected and the formal reassessment is approved. Firmware is not authorized until the remaining Phase 0 gates and an `ExecutionBounds.md` row for dirty-bar construction pass. The physical directory representation remains a Phase 1 / measurement decision.
+- Implementation plan: [`overdub_wrap_source_snapshot_migration_refinement.md`](../../../docs/Plans/overdub_wrap_source_snapshot_migration_refinement.md).
+- Phase 0 remains architecture and specification only. The logical indexes are selected and the formal reassessment is approved. The activated implementation slice is Phase 3 tasks `3.5`/`3.6`: bounded overdub-wrap mutation-journal publication, runtime pair `NoteId` / non-note `EventId` handling, fixed-capacity membership construction, parity, and device gates. Firmware remains gated by the phase review and `ExecutionBounds.md` admission. Direct consumer migration, persistence, and snapshot-identity undo remain later phases.
 - Verification for later phases is limited to existing gates plus invariant-protecting checks: old snapshot unchanged, new snapshot complete, unchanged objects shared, changed objects replaced, selection identity, and declared construction bounds. This change does not add a new test architecture.
-- Open decisions: physical pitch/bar directory representation, reclamation implementation, storage layout/version and migration, optional disposable indexes, bounded consumer span access, candidate construction bounds, long-span projection candidate limits, and per-phase overrun behavior.
+- Open decisions: measured page capacity and reclamation implementation, storage layout/version and migration, optional disposable indexes, bounded consumer span access, long-span projection candidate limits, and later-phase overrun behavior. The Phase 3 construction policy is fixed by bounded mutation journals, fixed-capacity membership pages, persistent bar cursors, exact parent identity, and retry retention.
 - No change is authorized here to horizon size, projection math, cursor or ledger semantics, capture finalization, overlap ownership, NOTE_EDIT geometry ownership, or interval reservation.
 - Any runtime candidate construction must first be classified against
   [`ExecutionBounds.md`](../../docs/Authority/Architecture/ExecutionBounds.md):

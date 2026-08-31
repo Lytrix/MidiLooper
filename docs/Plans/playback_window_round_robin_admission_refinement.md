@@ -1175,6 +1175,28 @@ construction=0,exit=0,inflight=0`; no later PLAYING or OVERDUBBING
 the single first-root construction interval, not stacked overdub
 construction. `DEC-045` remains unchanged.
 
+### First resolve timing report — 2026-08-26
+
+The first report correlates the cumulative
+`DisplayResolveLiveCaptureTime` summary with the nearest recorded stop
+`phase`/`playbackTick` anchor. The resolve timing is accumulated across the
+capture; it is not the duration of a single call at that tick.
+
+- [`214703`](../../captures/session_20260826_214703.log): tick `256`;
+  total `41.587 ms`, 499 resolves, average `83.3 µs`, maximum `2.618 ms`.
+- [`220551`](../../captures/session_20260826_220551.log): tick `5368`;
+  total `30.751 ms`, 422 resolves, average `72.9 µs`, maximum `1.643 ms`.
+- [`220915`](../../captures/session_20260826_220915.log): tick `8`;
+  total `11.169 ms`, 244 resolves, average `45.8 µs`, maximum `92 µs`.
+- [`232633`](../../captures/session_20260826_232633.log): tick `320`;
+  total `14.631 ms`, 277 resolves, average `52.8 µs`, maximum `110 µs`.
+  Its `COORD` marker also reports `storage=320`, `proj=320`, and
+  `display=320`.
+
+The current capture data does not record `currentTick` for each individual
+resolve call. Per-call tick attribution requires additional
+`SESSION_CAPTURE`-gated instrumentation.
+
 ### Pass separation versus diagnostic aggregation
 
 The implementation does separate committed overdub passes:
@@ -1225,6 +1247,47 @@ published/playback revisions, and `PendingSnapshotPublishBox` state
 `SESSION_CAPTURE`-gated and does not alter construction or scheduling
 behavior. Capture `232633` verified the boundary, so no policy amendment or
 additional pass aggregation change is required for 4b.2c.
+
+## 4b.3 profiler instrumentation
+
+**Status:** Instrumented 2026-08-26; device recapture required.
+
+`TrackManager::updateAllTracks` now records one maximum and over-budget count
+for each configured track iteration in the existing five-second runtime timing
+window. The capture-only marker is:
+
+```text
+#CAP,<micros>,DIAG,track_update,<track>,<maxUs>,<overCount>
+```
+
+The measurement covers the existing per-track body, including playback and
+enabled-slot work. The aggregate `tracks` marker remains unchanged, so the
+per-track rows can be compared directly with the approximately 98 ms
+`usbclk`/`tracks` stall without changing the clock dispatch or track order.
+Measurement calls compile out when runtime timing is disabled. Per-track
+accumulators live in DMAMEM and the capture format string is `PSTR`, so
+`teensy41-capture-serial` stays at RAM1 locals **4640**.
+
+Device capture [`000834`](../../captures/session_20260827_000834.log)
+emits the `track_update` rows. Record 13.2–22.3 s, overdub 23.4–32.7 s
+and 33.7–42.5 s, stop at 46.6 s. `ODUB,stop,display` is 4.762 ms /
+4.705 ms.
+
+| Window s | `tracks` µs | Dominant `track_update` | `usbclk` µs | `usbdisp` µs |
+|---|---:|---|---:|---:|
+| 20.889 | 5032 | T6 4950 | 5049 | 5260 |
+| 25.889 | 6581 | T6 5450 (over 3); T4 3706 | 6596 | 7610 |
+| 30.889 | 7100 | T6 5959 (over 2) | 7116 | 7117 |
+| 35.889 | 7449 | T4 7289 (over 1); T6 6046 (over 3) | 7472 | 7595 |
+| 40.889 | 7385 | T6 6240 (over 2); T4 4035 | 7401 | 7809 |
+| 45.889 | 11284 | T4 11114 (over 3); T6 6520 (over 3) | 11305 | 11305 |
+| 50.890 STOPPED | 2145 | T4 2029 | 2161 | **116743** (`usbtrans` 116729) |
+
+`playback_build` maxima in the same run: T6/S0 `compatibility` 5953 µs
+(21 rebuilds) and T4/S0 `compatibility` 7981 µs (3 rebuilds). T0–T3 and
+T5/T7 stay under 50 µs after the first live window. The 11.3 ms
+`usbclk`/`tracks` peak is T4. The 116.7 ms post-stop `usbdisp` is
+`usbtrans`, not `updateAllTracks`.
 
 ## Future RC — overdub overlap target semantics
 

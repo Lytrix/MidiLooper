@@ -100,6 +100,11 @@ struct Loop {
   uint8_t nextOverdubSessionIndex_ = 1;
   uint8_t currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   PassId lastCommittedPassId_ = kInvalidPassId;
+  bool hasLastOverdubSeal_ = false;
+  PassId lastOverdubSealPassId_ = kInvalidPassId;
+  uint32_t lastOverdubSealPriorRevision_ = 0;
+  uint32_t lastOverdubSealPlaybackRevision_ = 0;
+  EditPassIdList lastOverdubSealCompanionIds_;
 
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
@@ -216,6 +221,8 @@ struct Loop {
   void pushOverdubSessionPass(PassId passId, EditPassIdList companionIds);
   /// Sealed wraps still on the session cursor (not the undone redo tail).
   void collectOverdubSessionUndoPasses(PassIdList& passIds, EditPassIdList& companionIds) const;
+  /// Last sealed session layer still on the cursor. False when the cursor is empty.
+  bool collectLastOverdubSessionPass(PassId& passId, EditPassIdList& companionIds) const;
   void dropOverdubSessionRedoTail();
   bool undoOverdubSession();
   bool redoOverdubSession();
@@ -236,8 +243,11 @@ struct Loop {
   /// Rebuild source notes from prepared `NoteSpan`s when ready, else window MIDI
   /// source notes from the span cache (`overdubSourceSpanCacheNotes_`) using the
   /// source window filter. Not visual cache.
-  /// `why` is CAP `open` / `wrap` / `undo` / `redo`.
+  /// `why` is CAP `open` / `wrap` / `undo` / `redo` / `idle`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
+  /// Append display notes from `lastCommittedPassId()` chunks into the existing
+  /// source view. Walks only that pass. Skips NoteIds already present.
+  void appendLastCommittedOverdubPassToSourceView();
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
   /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.
   /// Skips noteIds already present. Optional `newlyMergedPitchNotes` receives
@@ -277,6 +287,7 @@ struct Loop {
   /// whose NoteOn is absent are dropped from the source-view copy only.
   void replaceCommittedPlaybackNoteOnIdentities(const PlaybackMergedMidiEvents& merged);
   void clearCommittedPlaybackNoteOnIdentities();
+  bool overdubSourceSpanCacheReady() const;
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
   void pushPendingNoteChangeForTest(PendingNoteChange change);
@@ -305,7 +316,8 @@ struct Loop {
   EditPassIdList sealPendingNoteChangesToEditPasses(
       bool updateOverdubSourceView = true);
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
-  /// uses `rebuildOverdubSourceView` instead. Does not clear pending.
+  /// uses `appendLastCommittedOverdubPassToSourceView`. Full rebuild is idle /
+  /// later, not the wrap clock tick. Does not clear pending.
   void applyPendingNoteChangesToOverdubSourceView();
   /// Paint overlay: apply pending Hide/Shorten onto a display-note list. Not Add
   /// (live capture already has those). Does not mutate the source view or visual cache.
@@ -324,6 +336,19 @@ struct Loop {
   bool setCapturePassState(PassId id, CapturePassState state);
   void resetPassTimeline();
   PassId lastCommittedPassId() const { return lastCommittedPassId_; }
+  /// One-shot overdub-seal receipt for the next incremental merged-stream admission.
+  /// `priorPlaybackRevision` is `playbackRevision` before `commitCapturePass`.
+  /// Consumed by `tryAdmitLastOverdubSealIntoMergedEvents` or discarded on full gather.
+  void recordLastOverdubSeal(PassId passId, const EditPassIdList& companionIds,
+                             uint32_t priorPlaybackRevision);
+  void clearLastOverdubSeal();
+  /// Admit `recordLastOverdubSeal` into an existing full-loop merged stream. Returns
+  /// true only when the receipt, pass, companions, and geometry are all proven.
+  /// Consumes or discards the receipt. Does not gather committed passes.
+  bool tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedMidiEvents& merged);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  bool hasLastOverdubSealForTest() const { return hasLastOverdubSeal_; }
+#endif
   ImmutableLoopSnapshotRef publishedSnapshot() const;
   /// True when the published root was stored at the current `playbackRevision`.
   bool publishedSnapshotIsCurrent() const;
@@ -514,7 +539,6 @@ struct Loop {
   void rebuildEffectiveEventStore() const;
   const char* rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart = 0,
                                              uint32_t requestedWindowLength = 0);
-  bool overdubSourceSpanCacheReady() const;
   uint32_t overdubSourceWindowLengthTicks() const;
   void resolveOverdubSourceWindow(uint32_t centerPhaseTick, uint32_t& windowStart,
                                   uint32_t& windowLength) const;

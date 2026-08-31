@@ -50,6 +50,31 @@ User-visible symptoms share one root cause: **bad linear storage in the capture 
 
 ---
 
+## Evidence update — 2026-08-26
+
+The stop-time synthetic-note-off mechanism was reproduced in
+[`captures/session_20260826_214703.log`](captures/session_20260826_214703.log).
+At overdub stop, `finalizePendingNotes` reported `pending=0` and
+`capture_offs=0`; immediately afterward the seal path reported
+`CLN,overdub,wrap_synth,3`. The three synthetic offs therefore came from
+`LoopStopFinalize::finalizeWrapWindowOnStore`, not from the stop helper or
+`silenceTrackMidiOutput`.
+
+Stored verification contained both an existing head off such as `F@112` and
+a synthetic `F@6143` for the same note. The captured loop length was 6144
+ticks, so `6143` is `loopLengthTicks - 1`. This gives the confirmed failure
+shape: an unresolved tail note receives a loop-end synthetic termination
+even though its head termination is already present, producing duplicate
+boundary terminations and disrupting the preceding/stopping bars.
+
+This capture proves where the duplicate off is inserted. It does not yet
+prove why the tail remains unresolved at seal. The next ownership check is
+the handoff between `commitOverdubWrapAtSessionStart`, carried open
+`NoteOn`s, and the seal-time pending-note inventory. Do not repair this in
+playback; the existing target remains one capture stop/seal closure owner.
+
+---
+
 ## Runtime invariants (document before coding)
 
 These are architectural rules, not implementation details. Add to [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) and [`docs/Authority/Architecture/Playback.md`](docs/Authority/Architecture/Playback.md) in the docs phase.

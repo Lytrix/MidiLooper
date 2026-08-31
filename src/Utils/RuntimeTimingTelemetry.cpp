@@ -3,6 +3,7 @@
 
 #include "Utils/RuntimeTimingTelemetry.h"
 
+#include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
 
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
@@ -55,6 +56,29 @@ uint32_t latenessAfterDeadline(uint32_t nowUs, uint32_t dueUs, uint32_t periodUs
     return 0;
   }
   return nowUs - deadlineUs;
+}
+
+#if defined(__IMXRT1062__)
+DMAMEM Accumulator trackUpdates[Config::NUM_TRACKS];
+#else
+Accumulator trackUpdates[Config::NUM_TRACKS];
+#endif
+
+RT_FLASHMEM_FN void resetTrackUpdates() {
+  for (Accumulator& trackUpdate : trackUpdates) {
+    trackUpdate = Accumulator{};
+  }
+}
+
+RT_FLASHMEM_FN Accumulator& trackUpdateAt(uint8_t trackIndex) {
+#if defined(__IMXRT1062__)
+  static bool initialized = false;
+  if (!initialized) {
+    resetTrackUpdates();
+    initialized = true;
+  }
+#endif
+  return trackUpdates[trackIndex];
 }
 
 struct State {
@@ -148,6 +172,8 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
       return PSTR("compatibility");
     case PlaybackRebuildPath::NoteEditPreview:
       return PSTR("note_edit");
+    case PlaybackRebuildPath::IncrementalOverdubSeal:
+      return PSTR("incremental");
   }
   return PSTR("unknown");
 #else
@@ -158,6 +184,8 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
       return "compatibility";
     case PlaybackRebuildPath::NoteEditPreview:
       return "note_edit";
+    case PlaybackRebuildPath::IncrementalOverdubSeal:
+      return "incremental";
   }
   return "unknown";
 #endif
@@ -168,6 +196,7 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.midiInput = Accumulator{};
   s.clk = Accumulator{};
   s.tracks = Accumulator{};
+  resetTrackUpdates();
   s.usbdev = Accumulator{};
   s.din = Accumulator{};
   s.hosttask = Accumulator{};
@@ -199,6 +228,11 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("midi_input", s.midiInput.maxUs, s.midiInput.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("clk", s.clk.maxUs, s.clk.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("tracks", s.tracks.maxUs, s.tracks.overCount);
+  for (uint8_t trackIndex = 0; trackIndex < Config::NUM_TRACKS; ++trackIndex) {
+    const Accumulator& trackUpdate = trackUpdateAt(trackIndex);
+    DebugSessionCapture::runtimeTimingTrackUpdate(
+        trackIndex, trackUpdate.maxUs, trackUpdate.overCount);
+  }
   DebugSessionCapture::runtimeTimingTelemetry("usbdev", s.usbdev.maxUs, s.usbdev.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("din", s.din.maxUs, s.din.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("hosttask", s.hosttask.maxUs, s.hosttask.overCount);
@@ -241,6 +275,7 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
 void resetForTest() {
   State& s = state();
   s = State{};
+  resetTrackUpdates();
 }
 
 void noteMidiInputEnter(uint32_t nowUs) {
@@ -270,6 +305,12 @@ void noteClockDispatch(uint32_t durationUs) {
 
 void noteTracksUpdate(uint32_t durationUs) {
   recordSample(state().tracks, durationUs);
+}
+
+RT_FLASHMEM_FN void noteTrackUpdate(uint8_t trackIndex, uint32_t durationUs) {
+  if (trackIndex < Config::NUM_TRACKS) {
+    recordSample(trackUpdateAt(trackIndex), durationUs);
+  }
 }
 
 void noteUsbDeviceDrain(uint32_t durationUs) {

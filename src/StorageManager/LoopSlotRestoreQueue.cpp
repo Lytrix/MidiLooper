@@ -27,12 +27,13 @@ struct PendingLoopSlotRestoreQueue {
     uint16_t count = 0;
 };
 
-PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
+STORAGE_PERSIST_DATA PendingLoopSlotRestoreQueue pendingLoopSlotRestores_{};
 
 /// After a completed restore attempt (success or empty/fail), do not re-enqueue.
-bool loopSlotRestoreAttempted_[Config::NUM_TRACKS][Config::MAX_LOOPS_PER_TRACK]{};
+STORAGE_PERSIST_DATA bool loopSlotRestoreAttempted_[Config::NUM_TRACKS]
+                                                    [Config::MAX_LOOPS_PER_TRACK]{};
 
-std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
+STORAGE_PERSIST_DATA std::array<std::array<bool, Config::MAX_LOOPS_PER_TRACK>, Config::NUM_TRACKS>
     loopSlotPayloadOnSdInRam_{};
 
 // Incremental boot background-fill admission state.
