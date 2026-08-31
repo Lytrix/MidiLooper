@@ -303,8 +303,11 @@ struct Loop {
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
   void clearPendingNoteChanges();
-  bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
+  bool hasPendingNoteChanges() const {
+    return !pendingNoteChanges_.empty() || !pendingPaintHides_.empty();
+  }
   const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
+  const PendingNoteChangeVec& pendingPaintHides() const { return pendingPaintHides_; }
   /// Resolve incoming note against hold-candidate ids, then geometry.
   /// Wrap-head off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold.
   /// Empty `overlapNoteIds` skips id lookup and uses source-view geometric completion.
@@ -314,12 +317,17 @@ struct Loop {
                                                    uint32_t startTick, uint32_t endTick,
                                                    NoteId incomingNoteId,
                                                    const OverlapNoteIdSet& overlapNoteIds);
+  /// Occupy On / playback cross: paint-only Hide of each occupied source-view row.
+  /// Not sealed as a Delete companion. Incoming length does not matter.
+  void upsertPendingHidesForOccupiedNoteIds(uint8_t channel, uint8_t pitch, uint8_t velocity,
+                                            const OverlapNoteIdSet& overlapNoteIds);
   /// Pair one linear incoming `[S, E)` against an explicit source-note list (Shorten/Hide only).
   void accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
                                                    uint8_t channel, uint8_t pitch, uint8_t velocity,
                                                    uint32_t startTick, uint32_t endTick,
                                                    NoteId incomingNoteId);
-  /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish). Clears pending.
+  /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish).
+  /// Clears sealable pending. Paint-only occupy Hides stay until NoteOff resolve or discard.
   EditPassIdList sealPendingNoteChangesToEditPasses(
       bool updateOverdubSourceView = true);
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
@@ -327,8 +335,12 @@ struct Loop {
   /// later, not the wrap clock tick. Does not clear pending.
   void applyPendingNoteChangesToOverdubSourceView();
   /// Paint overlay: apply pending Hide/Shorten onto a display-note list. Not Add
-  /// (live capture already has those). Does not mutate the source view or visual cache.
-  void applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
+  /// (live capture already has those). Hide matches `noteId` or same-pitch overlapping
+  /// span on the committed prefix only — notes at `liveCaptureBegin` and after are
+  /// playhead tails and must keep growing to currentTick. Does not mutate source view.
+  void applyPendingNoteChangesToDisplayNotes(
+      NoteUtils::DisplayNoteVec& notes,
+      size_t liveCaptureBegin = static_cast<size_t>(-1)) const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
   /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
   void emitOverlapHoldTotals() const;
@@ -614,6 +626,7 @@ struct Loop {
   /// `LoopPlaybackRuntime::mergedMidiEvents` after a full-loop rebuild.
   const PlaybackMergedMidiEvents* committedPlaybackMergedForIdentity_ = nullptr;
   PendingNoteChangeVec pendingNoteChanges_;
+  PendingNoteChangeVec pendingPaintHides_;
   OverlapHoldTotals overlapHoldTotals_;
   bool overdubWrapArmed_ = false;
   bool overdubWrapSuppressNext_ = false;

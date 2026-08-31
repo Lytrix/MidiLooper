@@ -806,7 +806,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
         }
         if (havePendingPaint) {
-            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_);
+            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_,
+                                                       committedDisplayEnd);
         }
         paintedNotes = &liveDisplayPendingPaintNotes_;
     }

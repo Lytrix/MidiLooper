@@ -295,7 +295,7 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | `OverlapNoteOff` | Target starts before causing and `targetEnd >= causingStart` (includes start-abut) | Shorten to `computeShortenedEndTick` |
 | `BoundaryTouch` | No inclusive overlap; edges share a tick | Leave baseline (no upsert) |
 
-`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`.
+`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff` and Hides only when geometry is not visible. Occupy On and playback cross upsert paint-only Hides (`pendingPaintHides_`) so the occupied committed row drops on the currentTick frame; wrap/stop do **not** seal those as Delete (`005757`). NoteOff resolve replaces the paint Hide with Shorten/Hide. Live capture tails stay on the frame and grow to currentTick until NoteOff.
 
 ### 4. What is stored after resolve?
 

@@ -524,6 +524,90 @@ void test_pending_hide_applies_to_display_notes_not_source_view() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 64));
 }
 
+void test_upsert_occupied_hides_before_note_off() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 576, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* hide = findTransform(loop.pendingPaintHides(), 1);
+  TEST_ASSERT_NOT_NULL(hide);
+  TEST_ASSERT_EQUAL_UINT32(0u, hide->startTick);
+  TEST_ASSERT_EQUAL_UINT32(576u, hide->endTick);
+}
+
+void test_pending_hide_applies_when_display_note_id_differs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 576, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+
+  NoteUtils::DisplayNoteVec paint;
+  NoteUtils::DisplayNote row{};
+  row.noteId = 73;
+  row.note = 60;
+  row.velocity = 100;
+  row.startTick = 0;
+  row.endTick = 576;
+  paint.push_back(row);
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_TRUE(paint.empty());
+}
+
+void test_pending_hide_keeps_live_capture_tail() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 576, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+
+  NoteUtils::DisplayNoteVec paint;
+  NoteUtils::DisplayNote committed{};
+  committed.noteId = 73;
+  committed.note = 60;
+  committed.velocity = 100;
+  committed.startTick = 0;
+  committed.endTick = 576;
+  paint.push_back(committed);
+  NoteUtils::DisplayNote tail{};
+  tail.noteId = kInvalidNoteId;
+  tail.note = 60;
+  tail.velocity = 90;
+  tail.startTick = 0;
+  tail.endTick = 48;
+  paint.push_back(tail);
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 1);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL_UINT8(60, paint[0].note);
+  TEST_ASSERT_EQUAL_UINT32(0u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(48u, paint[0].endTick);
+}
+
+void test_occupy_paint_hide_is_not_sealed_as_delete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 576, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}));
+
+  const EditPassIdList sealed = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(0u, sealed.size());
+  TEST_ASSERT_EQUAL(0u, loop.passes.editPasses.size());
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 0));
+}
+
 void test_pending_shorten_applies_to_display_notes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -576,6 +660,7 @@ void test_wrap_keeps_source_view_inner_shortens_prior_add() {
                                                                    overlapIds({10})));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), 10);
   TEST_ASSERT_NOT_NULL(shorten);
   TEST_ASSERT_EQUAL_UINT32(64u, shorten->startTick);
@@ -743,6 +828,7 @@ void test_pending_survives_wraps_and_accumulates() {
                                                                    overlapIds({})));
   TEST_ASSERT_EQUAL(2, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_EQUAL_UINT32(2, loop.overlapHoldTotals().noteOffs);
@@ -968,6 +1054,7 @@ void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
                     static_cast<int>(loop.passes.editPasses[0].propertyType));
   TEST_ASSERT_EQUAL_UINT32(1u, loop.passes.editPasses[0].targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(50u, loop.passes.editPasses[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(119u, loop.passes.editPasses[0].endTick);
   TEST_ASSERT_EQUAL_UINT8(kOverdubCompanionEditPassIndex, loop.passes.editPasses[0].editPassIndex);
 
@@ -1446,6 +1533,7 @@ void test_incremental_overdub_seal_applies_companion_shorten() {
 
   TEST_ASSERT_TRUE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
   TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kOverdubId));
+  TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kSourceId));
   TEST_ASSERT_EQUAL_UINT32(119u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
 }
 
@@ -2629,6 +2717,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_same_start_shorter_hides_longer);
   RUN_TEST(test_pending_hide_same_start_longer);
   RUN_TEST(test_pending_hide_applies_to_display_notes_not_source_view);
+  RUN_TEST(test_upsert_occupied_hides_before_note_off);
+  RUN_TEST(test_pending_hide_applies_when_display_note_id_differs);
+  RUN_TEST(test_pending_hide_keeps_live_capture_tail);
+  RUN_TEST(test_occupy_paint_hide_is_not_sealed_as_delete);
   RUN_TEST(test_pending_shorten_applies_to_display_notes);
   RUN_TEST(test_wrap_keeps_source_view_inner_shortens_prior_add);
   RUN_TEST(test_wrap_keeps_source_view_same_start_longer_hides_prior_add);

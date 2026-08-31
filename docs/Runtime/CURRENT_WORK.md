@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (occupy same-start shorter hides longer)
+Last updated: 2026-09-01 (wrap seal must not Delete occupy paint Hide)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -175,11 +175,16 @@ Grow compares cache to `max(committedCount, composed liveDisplayNotes)`.
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md).
 Leftover tail-window On + leftover `F@0` wrap-splits to `L-1` (not
 `tryPairWrappedTailOn`). Mid-loop linear pairs stay linear (1h).
-**Stage 1b / occupy same-start hide:**
+**Stage 1b / occupy hide on hold (`003616`):**
+[`overdub_occupy_hide_on_hold_current_tick_bugfix.md`](../Plans/overdub_occupy_hide_on_hold_current_tick_bugfix.md).
+Occupy On / playback cross upserts a **paint-only** Hide
+(`pendingPaintHides_`) so the earlier note drops on the currentTick frame.
+**Wrap-seal RC (`005757`):**
+[`overdub_wrap_seal_occupy_hide_deletes_shorten_bugfix.md`](../Plans/overdub_wrap_seal_occupy_hide_deletes_shorten_bugfix.md).
+`commitOverdubWrapAtSessionStart` must not seal occupy Hide as Delete.
+OverlapNoteOff accumulate is Shorten / Length again. NOTE_EDIT
+`OverlapNoteOff` stays Shorten. Parent unique-key revert:
 [`overdub_occupy_same_start_shorter_hides_longer_bugfix.md`](../Plans/overdub_occupy_same_start_shorter_hides_longer_bugfix.md).
-Reconstruct unique-key is pitch+start+end again so source view keeps both
-noteIds. Incoming shorter Hides the longer earlier note. Display adopt/idle
-uses `keepShortestEndAtPitchStart` only (`002145` `norow` 75/76).
 **Stage 1m — stop compose adopt (`000013`):**
 [`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
 Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt
@@ -190,7 +195,7 @@ smaller slice (`slice_keep`, Prepared 95→80). Occupy `hide=2` is not this
 slice. Device recapture: first STOPPED on the overdub loop ≥ last
 OVERDUBBING compose; later PLAYING must not fall to 80; cache must not
 freeze at 95 while compose grows.
-Native **1533/1533**. RAM1 locals **6848**. Occupy hide is in tree
+Native **1537/1537**. RAM1 locals **6848**. Occupy hide is in tree
 (source-view reconstruct keeps both `noteId`s; adopt/idle keep the shortest
 display end). Device recapture required for [`002145`](../../captures/session_20260901_002145.log)
 `norow` 75/76 and pitch-63 frame 96+288.
