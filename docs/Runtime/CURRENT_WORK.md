@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1i wrap/stop first paint)
+Last updated: 2026-08-31 (visual cache #41 Stage 1j stop handoff playhead tail)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -154,6 +154,13 @@ mismatch). Last-resort Overlay reject stays for empty cache.
 Native **1525/1525**. RAM1 locals **6944**. Device recapture required.
 [`225243`](../../captures/session_20260831_225243.log) first STOPPED
 **147 / 198** kept RC5a handoff (same slot); this hold did not run.
+**Stage 1j — stop handoff playhead tail:**
+[`display_visual_cache_stop_handoff_playhead_tail_bugfix.md`](../Plans/display_visual_cache_stop_handoff_playhead_tail_bugfix.md).
+`applyCapturePlayheadTails` writes `liveDisplayPendingPaintNotes_` only.
+`liveDisplayNotes` stays at capture-preview lengths so RC5a does not freeze
+`endTick = currentTick` (`225243` D#2 ON@624 → stop phase 704). Unmatched
+`N@2928` / `F@0` → `loopLength` is a later reconstruct RC.
+Native **1526/1526**. RAM1 locals **6944**. Device recapture required.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.

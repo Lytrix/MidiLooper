@@ -20,6 +20,8 @@ appendCanonicalSpansFromMidiRange Off@0 vs linear Off
 rebuildOverdubCommittedDisplayLayer gather-before-hold
 resolveDisplayNotesCommitted last-resort after slot clear
     ← this slice
+applyCapturePlayheadTails onto liveDisplayNotes
+    ← Stage 1j
 Idle Overlay reject / 1f Overlay reject / Stage 2
     ← unchanged
 ```

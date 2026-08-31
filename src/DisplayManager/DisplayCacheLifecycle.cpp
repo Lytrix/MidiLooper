@@ -104,7 +104,8 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
                                                      uint32_t storagePhaseTickInLoop) {
     // RC5a: overdub stop must not use record-stop clamp. Composed frame is
     // committed display + capturePreview; stripping the suffix causes the record-only flash.
-    // Drop temporary playhead-tail rows only, then promote the capture suffix into the
+    // Drop temporary playhead-tail rows only (in-place currentTick ends never land on
+    // liveDisplayNotes — paint-only tails). Then promote the capture suffix into the
     // committed-prefix bookkeeping so PLAYING resolve treats the frame as committed.
     // RC5c: adopt that composed DisplayNote vector into visualCache — no gather/reconstruct.
     const size_t preserveCount = DisplayWindowUtils::preservedOverdubStopDisplayNoteCount(

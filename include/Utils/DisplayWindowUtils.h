@@ -78,6 +78,13 @@ inline bool preferPreservedOverdubStopHandoff(bool incrementalCommittedDisplay,
     return incrementalCommittedDisplay && preservedHandoffAuthority && visualCacheDirty;
 }
 
+/// `225243`: playhead tails (`endTick = currentTick`) are paint-only. RC5a
+/// STOPPED handoff reads `liveDisplayNotes`. In-place tails freeze those ends
+/// (D#2 ON@624 → stop phase 704). Compose base stays at capture-preview lengths.
+inline bool capturePlayheadTailsArePaintOnly() {
+    return true;
+}
+
 /// RC-W1 wrap resets live compose bookkeeping so the next OVERDUBBING frame
 /// rebuilds the committed prefix. It must not drop the composed DisplayNote
 /// vector — a stop before that frame has nothing to hold

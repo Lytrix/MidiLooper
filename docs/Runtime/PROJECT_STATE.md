@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1i wrap/stop first paint)
+Last updated: 2026-08-31 (visual cache #41 Stage 1j stop handoff playhead tail)
 
 ---
 
@@ -131,7 +131,11 @@ Stage 1h shipped `4238b422`: `Off@0` does not linear-steal a mid-loop On
 Stage 1i (native **1525/1525**, RAM1 **6944**): wrap/stop first paint
 holds dirty cache
 ([`display_visual_cache_wrap_stop_first_paint_bugfix.md`](../Plans/display_visual_cache_wrap_stop_first_paint_bugfix.md)).
-Device recapture required.
+Stage 1j (native **1526/1526**, RAM1 **6944**): playhead tails are
+paint-only
+([`display_visual_cache_stop_handoff_playhead_tail_bugfix.md`](../Plans/display_visual_cache_stop_handoff_playhead_tail_bugfix.md)).
+Device recapture required (`225243` first STOPPED **147 / 198** froze
+D#2 `624→704`).
 Stage 2 is unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
