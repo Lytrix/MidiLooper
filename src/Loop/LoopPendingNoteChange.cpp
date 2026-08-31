@@ -402,9 +402,37 @@ LOOP_COLD_MEM void Loop::accumulatePendingNoteChangesFromSourceNotes(
       transform.endTick = geometry.endTick;
 
       if (!geometry.visible) {
-        transform.kind = PendingNoteChangeKind::Hide;
-        transform.startTick = sourceBaseline.startTick;
-        transform.endTick = sourceBaseline.endTick;
+        bool completeCover = false;
+        bool overlapNoteOn = false;
+        uint32_t occupyEndInclusive = sourceBaseline.endTick;
+        for (const EditSessionInteraction& interaction : group.incoming) {
+          if (interaction.type == InteractionType::CompleteCover) {
+            completeCover = true;
+            break;
+          }
+          if (interaction.type == InteractionType::OverlapNoteOn) {
+            overlapNoteOn = true;
+            if (interaction.causingSpan.endTick > 0) {
+              const uint32_t candidate = interaction.causingSpan.endTick - 1;
+              if (candidate < occupyEndInclusive) {
+                occupyEndInclusive = candidate;
+              }
+            }
+          }
+        }
+        const bool occupyShortenFits =
+            !completeCover && overlapNoteOn && occupyEndInclusive > sourceBaseline.startTick &&
+            !(noteMinLengthRemoveEnabled &&
+              (occupyEndInclusive - sourceBaseline.startTick) < noteMinLengthTicks);
+        if (occupyShortenFits) {
+          transform.kind = PendingNoteChangeKind::Shorten;
+          transform.startTick = sourceBaseline.startTick;
+          transform.endTick = occupyEndInclusive;
+        } else {
+          transform.kind = PendingNoteChangeKind::Hide;
+          transform.startTick = sourceBaseline.startTick;
+          transform.endTick = sourceBaseline.endTick;
+        }
         upsertSourceTransform(pendingNoteChanges_, transform);
         erasePaintHideForNoteId(pendingPaintHides_, group.targetNoteId);
         continue;

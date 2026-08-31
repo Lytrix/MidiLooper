@@ -1789,8 +1789,13 @@ void test_multi_wrap_source_view_membership_three_classes() {
 
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
-  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
-  TEST_ASSERT_TRUE(editPassesHideTarget(loop, 1));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_FALSE(editPassesHideTarget(loop, 1));
+  const NoteUtils::DisplayNote* wrap1Remnant =
+      findDisplayNoteById(loop.overdubSourceViewNotes(), 1);
+  TEST_ASSERT_NOT_NULL(wrap1Remnant);
+  TEST_ASSERT_EQUAL_UINT32(64u, wrap1Remnant->startTick);
+  TEST_ASSERT_EQUAL_UINT32(239u, wrap1Remnant->endTick);
 
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(150, 1, 61, 90, 11)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 61, 0)));
@@ -1806,7 +1811,7 @@ void test_multi_wrap_source_view_membership_three_classes() {
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 10));
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 11));
-  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 1));
 
   occupy.clear();
   loop.collectOverdubSourceHoldParticipantIds(230, kPitchHide, occupy);
@@ -1832,7 +1837,12 @@ void test_multi_wrap_source_view_membership_three_classes() {
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 2));
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 11));
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 12));
-  TEST_ASSERT_FALSE(sourceViewHasNoteId(loop, 1));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 1));
+  const NoteUtils::DisplayNote* wrap3Remnant =
+      findDisplayNoteById(loop.overdubSourceViewNotes(), 1);
+  TEST_ASSERT_NOT_NULL(wrap3Remnant);
+  TEST_ASSERT_EQUAL_UINT32(64u, wrap3Remnant->startTick);
+  TEST_ASSERT_EQUAL_UINT32(223u, wrap3Remnant->endTick);
   const NoteUtils::DisplayNote* shortened =
       findDisplayNoteById(loop.overdubSourceViewNotes(), 10);
   TEST_ASSERT_NOT_NULL(shortened);

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (wrap seal must not Delete occupy paint Hide)
+Last updated: 2026-09-01 (wrap NoteOff OverlapNoteOn seals Length)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -185,6 +185,12 @@ Occupy On / playback cross upserts a **paint-only** Hide
 OverlapNoteOff accumulate is Shorten / Length again. NOTE_EDIT
 `OverlapNoteOff` stays Shorten. Parent unique-key revert:
 [`overdub_occupy_same_start_shorter_hides_longer_bugfix.md`](../Plans/overdub_occupy_same_start_shorter_hides_longer_bugfix.md).
+**NoteOff OverlapNoteOn (`010926` RC1):**
+[`overdub_wrap_occupy_noteoff_shorten_not_delete_bugfix.md`](../Plans/overdub_wrap_occupy_noteoff_shorten_not_delete_bugfix.md).
+`accumulatePendingNoteChangesFromSourceNotes` Shortens OverlapNoteOn to
+occupy exclusive end − 1. CompleteCover still Hides / Deletes. Native
+pending + source-view focused suites pass. RC2 (norowid paint + visual-cache
+overlay) is next.
 **Stage 1m — stop compose adopt (`000013`):**
 [`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
 Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt
