@@ -415,6 +415,9 @@ private:
   uint8_t deferredStoredVerificationPhase = 0;
   size_t deferredStoredVerificationCursor = 0;
   SessionMidiEventVec deferredStoredVerificationEvents;
+#if defined(SESSION_CAPTURE)
+  NoteUtils::DisplayNoteVec deferredStoredVerificationNotes;
+#endif
   bool deferredFullMidiValidate = false;
   uint32_t deferredValidateQueuedAtMs = 0;
   uint32_t playbackGeneration = 0;

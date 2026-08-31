@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1j stop handoff playhead tail)
+Last updated: 2026-08-31 (visual cache #41 1k/1l proposed; full DNTE dump)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -151,16 +151,31 @@ Native **1523/1523**. RAM1 locals **6944**.
 Dirty overdub layer holds before snapshot window gather. STOPPED assigns
 dirty nonempty `visualCache` when the composed handoff is gone (slot
 mismatch). Last-resort Overlay reject stays for empty cache.
-Native **1525/1525**. RAM1 locals **6944**. Device recapture required.
+Native **1525/1525**. RAM1 locals **6944**. Device FAIL
+[`230400`](../../captures/session_20260831_230400.log): wrap 1 `105→66`
+(cache 63). Hold is committed-prefix only; sealed capture is gone. Next: 1k.
 [`225243`](../../captures/session_20260831_225243.log) first STOPPED
-**147 / 198** kept RC5a handoff (same slot); this hold did not run.
+**147 / 198** kept RC5a handoff (same slot); the STOPPED hold did not run.
 **Stage 1j — stop handoff playhead tail:**
 [`display_visual_cache_stop_handoff_playhead_tail_bugfix.md`](../Plans/display_visual_cache_stop_handoff_playhead_tail_bugfix.md).
 `applyCapturePlayheadTails` writes `liveDisplayPendingPaintNotes_` only.
 `liveDisplayNotes` stays at capture-preview lengths so RC5a does not freeze
 `endTick = currentTick` (`225243` D#2 ON@624 → stop phase 704). Unmatched
 `N@2928` / `F@0` → `loopLength` is a later reconstruct RC.
-Native **1526/1526**. RAM1 locals **6944**. Device recapture required.
+Native **1526/1526**. RAM1 locals **6944**.
+Device [`230400`](../../captures/session_20260831_230400.log): wrap first
+paint still drops (`105→66`); `DNTE` capped at 32; `WRAP=0` because
+`SEVT` 552 > 512. Idle verification now slices all reconstruct `DNTE`,
+all `WRAP` pairs, and the first STOPPED painted frame (`DIAG,dnte,src,frame`).
+RAM1 locals **6848**.
+**Stage 1k — wrap compose hold (proposed):**
+[`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md).
+Keep last composed `liveDisplayNotes` across wrap `playbackRevision`
+while cache is dirty. Do not implement until this dump recapture.
+**Stage 1l — Off@0 leftover tail pair (proposed):**
+[`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md).
+Pair leftover `F@0` with leftover tail Ons before `finishCanonicalSpansOpenNotes`.
+**1b** still open: `39@240` at 144 and 336 plus sequential 256.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.

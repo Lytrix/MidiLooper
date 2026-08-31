@@ -13,6 +13,7 @@
 #include "Utils/SlotFocusDisplay.h"
 #include <Arduino.h>
 #include <algorithm>
+#include <cstdio>
 
 #if defined(__IMXRT1062__)
 #define DISP_COLD_MEM FLASHMEM
@@ -82,6 +83,11 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNotes.size();
     const uint32_t boundedThreshold =
         DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+#if defined(SESSION_CAPTURE)
+    if (track.isStopped()) {
+        queueStoppedFrameNoteDump(frameNotes, loop.loopLengthTicks, loop.loopStartTick);
+    }
+#endif
     if (!track.isJamming() && loopLen > boundedThreshold && displaySlot < kDisplaySlotCount) {
         const uint8_t windowBars =
             std::min<uint8_t>(detailedWindowBars_[displaySlot],
@@ -150,3 +156,56 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
     lastSourceEventCount = sourceEventCount;
     emitDisplayCaptureSnapshot(track, displaySlot, currentTick, frameNotes);
 }
+
+#if defined(SESSION_CAPTURE)
+DISP_CAPTURE_MEM void DisplayManager::queueStoppedFrameNoteDump(const DisplayNoteVec& frameNotes,
+                                                                uint32_t loopLength,
+                                                                uint32_t loopStartTick) {
+    if (!stoppedFrameNoteDumpArmed_ || frameNotes.empty()) {
+        return;
+    }
+    stoppedFrameNoteDumpArmed_ = false;
+    stoppedFrameNoteDump_ = frameNotes;
+    stoppedFrameNoteDumpCursor_ = 0;
+    stoppedFrameNoteDumpLoopLength_ = loopLength;
+    stoppedFrameNoteDumpLoopStart_ = loopStartTick;
+    stoppedFrameNoteDumpHeaderEmitted_ = false;
+}
+
+DISP_CAPTURE_MEM size_t DisplayManager::emitStoppedFrameNoteDump(size_t maxLines) {
+    if (stoppedFrameNoteDump_.empty()) {
+        return 0;
+    }
+    if (!stoppedFrameNoteDumpHeaderEmitted_) {
+        char header[128];
+        snprintf(header, sizeof(header),
+                 "#CAP,%lu,DIAG,dnte,src,frame,count,%u",
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned>(stoppedFrameNoteDump_.size()));
+        DebugSessionCapture::appendCaptureTextLine(header);
+        stoppedFrameNoteDumpHeaderEmitted_ = true;
+    }
+    size_t emitted = 0;
+    while (stoppedFrameNoteDumpCursor_ < stoppedFrameNoteDump_.size() && emitted < maxLines) {
+        const DisplayNote& note = stoppedFrameNoteDump_[stoppedFrameNoteDumpCursor_];
+        const uint32_t displayStart = IntervalProjection::noteRelativeTick(
+            note.startTick, stoppedFrameNoteDumpLoopStart_, stoppedFrameNoteDumpLoopLength_);
+        uint32_t length = 0;
+        if (stoppedFrameNoteDumpLoopLength_ > 0 && note.endTick >= note.startTick) {
+            const uint32_t endExclusive =
+                (note.endTick == stoppedFrameNoteDumpLoopLength_ - 1) ? stoppedFrameNoteDumpLoopLength_
+                                                                      : note.endTick;
+            length = endExclusive > note.startTick ? (endExclusive - note.startTick) : 0;
+        }
+        SC_DNTE(note.note, note.startTick, displayStart, length,
+                static_cast<int>(stoppedFrameNoteDumpCursor_));
+        ++stoppedFrameNoteDumpCursor_;
+        ++emitted;
+    }
+    if (stoppedFrameNoteDumpCursor_ >= stoppedFrameNoteDump_.size()) {
+        stoppedFrameNoteDump_.clear();
+        stoppedFrameNoteDumpCursor_ = 0;
+    }
+    return emitted;
+}
+#endif
