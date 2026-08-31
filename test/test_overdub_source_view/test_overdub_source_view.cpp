@@ -521,9 +521,16 @@ void test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span() {
 
   loop.appendLastCommittedOverdubPassToSourceView();
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
-  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
-  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
       loop.visualCache.notes.size(), notesBefore));
+  loop.appendOverdubPassDisplayNotes(loop.visualCache.notes);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  loop.rebuildVisualCacheIdleSlice(4, 2, UINT32_MAX, false);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
 
   loop.markDisplayCachesStale();
   TEST_ASSERT_TRUE(loop.visualCacheDirty);
@@ -554,7 +561,7 @@ void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
   loop.appendLastCommittedOverdubPassToSourceView();
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
-  TEST_ASSERT_GREATER_THAN(1u, loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(1u, loop.visualCache.notes.size());
 }
 
 void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
@@ -572,13 +579,14 @@ void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kLoopLen - 40, 1, 39, 90)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(80, 1, 39, 0)));
   TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
-  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
-  TEST_ASSERT_NOT_NULL(wrap);
-  SessionMidiEventVec passEvents;
-  LoopEventStore::appendChunkRefEvents(wrap->committedChunkIds, passEvents);
-  const NoteUtils::DisplayNoteVec linearPassNotes =
-      NoteUtils::reconstructDisplayNotes(passEvents, loop.loopLengthTicks, false, false, false);
+  const size_t notesAtWrap = loop.visualCache.notes.size();
   loop.appendLastCommittedOverdubPassToSourceView();
+  TEST_ASSERT_EQUAL(notesAtWrap, loop.visualCache.notes.size());
+  loop.rebuildVisualCacheFromPasses();
+  SessionMidiEventVec flat;
+  loop.gatherCommittedEvents(flat);
+  const NoteUtils::DisplayNoteVec linearPassNotes =
+      NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false, false);
 
   NoteUtils::DisplayNoteVec longerSiblings;
   for (const NoteUtils::DisplayNote& linearNote : linearPassNotes) {

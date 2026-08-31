@@ -247,11 +247,10 @@ struct Loop {
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// Append display notes from `lastCommittedPassId()` chunks into the existing
   /// source view and restamp the span cache to the current `playbackRevision`.
-  /// Also merges the same pass's merged-reconstruct notes (no wrap pairing)
-  /// into `visualCache.notes` by pitch+start so wrap paint can assign the grown
-  /// cache without a longer sibling of an existing body note. Walks only that
-  /// pass. Source-view merge skips NoteIds already present. Wrap-held
-  /// heads/tails stay on wrap-edge append.
+  /// Does not merge that pass into `visualCache` (205138 wrap-2 205→271).
+  /// Walks only that pass. Source-view merge skips NoteIds already present.
+  /// Wrap-held heads/tails stay on wrap-edge display append. Idle slice is
+  /// the visualCache fill for new wrap body notes.
   void appendLastCommittedOverdubPassToSourceView();
   /// Append candidates missing from `visualCache.notes` by pitch+start. Does not
   /// replace an existing end and does not clear dirty bars.
