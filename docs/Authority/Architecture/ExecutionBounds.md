@@ -88,7 +88,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 5 | `Loop::advanceFallbackGatherSession` traversal | `LoopVisualCache.cpp` | 96 / 192 / 768 events | **Structurally bounded** |
 | 6 | Fallback gather sort | `sortSessionEventsByTick` | none | **Unbounded** |
 | 7 | Fallback gather edit projection | `applyNoteEditPassSequence` | none | **Unbounded** |
-| 8 | `NoteUtils::reconstructDisplayNotes` in slice | `rebuildVisualCacheIdleSlice` | none | **Unbounded** — residual **4b.1b** owned by [`playback_window_build_owner_boundary_refinement.md`](../../Plans/playback_window_build_owner_boundary_refinement.md) § *4b.1b*; Ring B/RC2 closed without bounding this row |
+| 8 | `NoteUtils::reconstructDisplayNotes` in slice | `rebuildVisualCacheIdleSlice` | none | **Unbounded** — residual **4b.1b** is Stage 2 of [#41](https://github.com/Lytrix/MidiLooper/issues/41) / [`display_visual_cache_snapshot_reuse_refinement.md`](../../Plans/display_visual_cache_snapshot_reuse_refinement.md); inventory note remains in [`playback_window_build_owner_boundary_refinement.md`](../../Plans/playback_window_build_owner_boundary_refinement.md) § *4b.1b*; Ring B/RC2 closed without bounding this row |
 | 9 | `Loop::appendOverdubPassWrapPairedNotes` | `LoopVisualCache.cpp` | none | **Unbounded** |
 | 10 | `removeDisplayNotesOverlappingBars` | `rebuildVisualCacheIdleSlice` | none | **Unbounded** |
 | 11 | `Loop::materializeEditViewFromPasses` | STOPPED idle | none | **Unbounded** |

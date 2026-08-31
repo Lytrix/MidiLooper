@@ -1444,6 +1444,9 @@ LOOP_COLD_MEM CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t
             DebugSessionCapture::kUnsampledHeapBytes, "ok");
 
   notifyCommittedContentChanged();
+  if (reason == CommitReason::OverdubWrap) {
+    markAffectedDisplayCacheRanges(lastCommittedPassId_, EditPassIdList{});
+  }
   return CommitResult::Committed;
 }
 

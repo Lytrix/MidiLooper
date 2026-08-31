@@ -63,6 +63,16 @@ bool hasDisplayNote(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint3
   return false;
 }
 
+uint32_t countVisualDirtyBars(const VisualBarVec& dirtyBars) {
+  uint32_t count = 0;
+  for (uint8_t flag : dirtyBars) {
+    if (flag != 0) {
+      ++count;
+    }
+  }
+  return count;
+}
+
 const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
                                                   NoteId noteId) {
   for (const NoteUtils::DisplayNote& note : notes) {
@@ -435,6 +445,85 @@ void test_overdub_enter_rebuilds_source_view_not_visual_cache() {
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 72, 80));
+}
+
+void test_idle_empty_dirty_bars_keeps_notes_without_marking_all() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kSixteenBars = Config::TICKS_PER_BAR * 16;
+  loop.loopLengthTicks = kSixteenBars;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  const uint32_t bar7On = Config::TICKS_PER_BAR * 7 + 10;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, bar7On, 1, 62, 100, 2));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(bar7On + 40, 1, 62, 0)));
+  loop.seedRecordPassFromStore(store);
+  TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = true;
+  const size_t notesBefore = loop.visualCache.notes.size();
+
+  loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false);
+
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 62, bar7On));
+  TEST_ASSERT_TRUE(loop.visualCache.dirtyBars.empty());
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+}
+
+void test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kSixteenBars = Config::TICKS_PER_BAR * 16;
+  loop.loopLengthTicks = kSixteenBars;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 10, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(58, 1, 60, 0)));
+  const uint32_t bar7On = Config::TICKS_PER_BAR * 7 + 10;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, bar7On, 1, 62, 100, 2));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(bar7On + 40, 1, 62, 0)));
+  const uint32_t bar15On = Config::TICKS_PER_BAR * 15 + 10;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, bar15On, 1, 64, 100, 3));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(bar15On + 40, 1, 64, 0)));
+  loop.seedRecordPassFromStore(record);
+  loop.rebuildVisualCacheFromPasses();
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+  const size_t notesBefore = loop.visualCache.notes.size();
+  TEST_ASSERT_EQUAL(3u, notesBefore);
+
+  const uint32_t wrapOn = Config::TICKS_PER_BAR * 2 + 10;
+  const uint32_t wrapOff = wrapOn + 40;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(wrapOn, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(wrapOff, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  loop.beginCapture(CapturePhase::Overdub, 0);
+
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 62, bar7On));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 64, bar15On));
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(16u, loop.visualCache.dirtyBars.size());
+  const uint32_t wrapDirty = countVisualDirtyBars(loop.visualCache.dirtyBars);
+  TEST_ASSERT_GREATER_THAN(0u, wrapDirty);
+  TEST_ASSERT_LESS_THAN(16u, wrapDirty);
+  TEST_ASSERT_EQUAL(1, loop.visualCache.dirtyBars[2]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[0]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[7]);
+  TEST_ASSERT_EQUAL(0, loop.visualCache.dirtyBars[15]);
+
+  loop.markDisplayCachesStale();
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(16u, loop.visualCache.dirtyBars.size());
+  TEST_ASSERT_EQUAL(16u, countVisualDirtyBars(loop.visualCache.dirtyBars));
 }
 
 void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
@@ -2896,6 +2985,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_start_establishes_source_view);
   RUN_TEST(test_overdub_enter_rebuilds_source_view_not_visual_cache);
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);
+  RUN_TEST(test_idle_empty_dirty_bars_keeps_notes_without_marking_all);
+  RUN_TEST(test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span);
   RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
   RUN_TEST(test_short_loop_idle_slice_cleans_without_full_rebuild);
   RUN_TEST(test_note_edit_idle_paint_consumes_stale_visual_cache);
