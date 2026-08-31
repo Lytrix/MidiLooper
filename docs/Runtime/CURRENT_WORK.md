@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1 device PASS)
+Last updated: 2026-08-31 (visual cache #41 Stage 1b wrap-pair length)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -84,8 +84,16 @@ Stage 1 device PASS
 `notes>0`. Only `lcr,src` is `why=open,from=visual` at overdub start. First
 wrap `DISP` `183,111` → next frame `184,180`. Second wrap first paint
 `249,246` (not a hold of 180). Contrast [`201556`](../../captures/session_20260831_201556.log)
-`visual=206` / `frame=134`. Stage 2 is unblocked and not started. Do not
-start all-track idle fan-out,
+`visual=206` / `frame=134`.
+**Stage 1b — wrap-pair length:** [`202745`](../../captures/session_20260831_202745.log)
+`DNTE` after `OVERDUBBING → STOPPED` shows the same chords at three
+lengths (39/45/51 @ 240 as 208, 256, and 304). NOTE_EDIT paint reconstructs
+with wrap pairing off and drops the extras. Visual-cache merge of a sealed
+wrap pass now uses merged reconstruct; `appendOverdubPassWrapPairedNotes`
+skips a longer sibling of an existing pitch+start. Device recapture is
+required before calling 1b closed. Native **1514/1514**. RAM1 locals **6944**.
+Stage 2 is unblocked and not started. Do
+not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
 
 **Shipped — live-record skip parent note lookup**

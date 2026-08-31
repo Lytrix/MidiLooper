@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1 device PASS)
+Last updated: 2026-08-31 (visual cache #41 Stage 1b wrap-pair length)
 
 ---
 
@@ -105,7 +105,10 @@ Stage 1 device PASS
 ([`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md)):
 no wrap `dsz=0` while notes exist; no wrap `from=passes`; first overdub pass
 stays on the paint frame (`183,111` → `184,180`; second wrap `249,246`).
-Stage 2 is unblocked and not started.
+Stage 1b (in tree): wrap-pass visual-cache merge is merged-reconstruct;
+wrap-pair append does not lengthen an existing pitch+start (`202745` DNTE
+39/45/51 at 208, 256, and 304). Device recapture required. Stage 2 is
+unblocked and not started.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed

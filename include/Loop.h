@@ -247,12 +247,14 @@ struct Loop {
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// Append display notes from `lastCommittedPassId()` chunks into the existing
   /// source view and restamp the span cache to the current `playbackRevision`.
-  /// Also merges those notes into `visualCache.notes` by geometry so wrap paint
-  /// can assign the grown cache. Walks only that pass. Source-view merge skips
-  /// NoteIds already present.
+  /// Also merges the same pass's merged-reconstruct notes (no wrap pairing)
+  /// into `visualCache.notes` by pitch+start so wrap paint can assign the grown
+  /// cache without a longer sibling of an existing body note. Walks only that
+  /// pass. Source-view merge skips NoteIds already present. Wrap-held
+  /// heads/tails stay on wrap-edge append.
   void appendLastCommittedOverdubPassToSourceView();
-  /// Append candidates missing from `visualCache.notes` by pitch+span. Does not
-  /// clear dirty bars.
+  /// Append candidates missing from `visualCache.notes` by pitch+start. Does not
+  /// replace an existing end and does not clear dirty bars.
   void mergeDisplayNotesIntoVisualCache(const NoteUtils::DisplayNoteVec& candidates);
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
   /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.
@@ -450,7 +452,8 @@ struct Loop {
   void rebuildVisualCacheFromPasses();
   /// Reconstruct each active overdub pass with `overdubPassWrapPairing` and
   /// append notes that merged record+overdub reconstruct omitted (015618).
-  /// One pass at a time. Used by source-view rebuild and visual-cache fill.
+  /// Skip a candidate when pitch+start is already present so wrap pairing
+  /// cannot lengthen a body note (202745). One pass at a time.
   void appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes) const;
   /// Visual-cache entry: wrap-paired overdub notes that merged reconstruct omitted.
   void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;

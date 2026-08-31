@@ -557,6 +557,59 @@ void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
   TEST_ASSERT_GREATER_THAN(1u, loop.visualCache.notes.size());
 }
 
+void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.rebuildVisualCacheFromPasses();
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(192, 1, 39, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(240, 1, 39, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(448, 1, 39, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(496, 1, 39, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kLoopLen - 40, 1, 39, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(80, 1, 39, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  const OverdubPass* wrap = findOverdubPass(loop, loop.lastCommittedPassId());
+  TEST_ASSERT_NOT_NULL(wrap);
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(wrap->committedChunkIds, passEvents);
+  const NoteUtils::DisplayNoteVec linearPassNotes =
+      NoteUtils::reconstructDisplayNotes(passEvents, loop.loopLengthTicks, false, false, false);
+  loop.appendLastCommittedOverdubPassToSourceView();
+
+  NoteUtils::DisplayNoteVec longerSiblings;
+  for (const NoteUtils::DisplayNote& linearNote : linearPassNotes) {
+    if (linearNote.note == 39 && linearNote.startTick == 240u) {
+      NoteUtils::DisplayNote longer = linearNote;
+      longer.endTick = linearNote.endTick + 48;
+      longerSiblings.push_back(longer);
+    }
+  }
+  TEST_ASSERT_EQUAL(1u, longerSiblings.size());
+  loop.mergeDisplayNotesIntoVisualCache(longerSiblings);
+  loop.appendOverdubPassDisplayNotes(loop.visualCache.notes);
+
+  for (const NoteUtils::DisplayNote& linearNote : linearPassNotes) {
+    if (linearNote.note != 39) {
+      continue;
+    }
+    uint32_t count = 0;
+    uint32_t endTick = 0;
+    for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+      if (note.note == 39 && note.startTick == linearNote.startTick) {
+        ++count;
+        endTick = note.endTick;
+      }
+    }
+    TEST_ASSERT_EQUAL(1u, count);
+    TEST_ASSERT_EQUAL(linearNote.endTick, endTick);
+  }
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 39, kLoopLen - 40));
+}
+
 void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3019,6 +3072,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_empty_dirty_bars_keeps_notes_without_marking_all);
   RUN_TEST(test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span);
   RUN_TEST(test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail);
+  RUN_TEST(test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache);
   RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
   RUN_TEST(test_short_loop_idle_slice_cleans_without_full_rebuild);
   RUN_TEST(test_note_edit_idle_paint_consumes_stale_visual_cache);
