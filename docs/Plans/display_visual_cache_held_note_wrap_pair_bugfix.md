@@ -20,7 +20,7 @@ markTickSpanDirty wrap-held On/Off bars only
 appendCanonicalSpansFromMidiRange Off@0 vs linear Off
     ← this slice
 rebuildOverdubCommittedDisplayLayer / STOPPED last-resort
-    ← Stage B (1i)
+    ← Stage B (1i) native **1525/1525**
 ```
 
 ---

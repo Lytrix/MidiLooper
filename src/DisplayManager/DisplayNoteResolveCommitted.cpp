@@ -117,6 +117,17 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             }
             return liveDisplayNotes;
         }
+        if (DisplayWindowUtils::shouldHoldDirtyVisualCacheUntilIdle(
+                loop.visualCacheDirty, !loop.visualCache.notes.empty(), incrementalCommittedDisplay,
+                preservedHandoffAuthority)) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            livePlaybackDisplaySlot_ = displaySlot;
+            livePlaybackDisplayTrack_ = trackIndex;
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            return liveDisplayNotes;
+        }
         // Window filter is allowed from a non-empty visualCache even while globally dirty, so
         // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes
         // on short loops. Do not snapshot-gather here when a composed live frame exists

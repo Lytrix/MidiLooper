@@ -163,6 +163,24 @@ inline bool shouldHoldOverdubCommittedHandoff(bool canHoldCommittedLayer, bool h
   return liveWindowGatherValid && paintWindowInsideGather;
 }
 
+/// Wrap first paint (`222349` 102→67): dirty cache + held layer must not
+/// snapshot-gather when the paint window left the last gather. Idle slice fills.
+inline bool shouldHoldDirtyOverdubLayerBeforeWindowGather(bool visualCacheDirty,
+                                                         bool canHoldCommittedLayer,
+                                                         bool visualCacheGrewPastHold) {
+  return visualCacheDirty && canHoldCommittedLayer && !visualCacheGrewPastHold;
+}
+
+/// STOPPED first paint (`222349` 159/31): after slot mismatch clears the
+/// composed handoff, a dirty nonempty cache is hold-until-idle — not last-resort
+/// gather. Dirty cache is not clean authority (RC5b).
+inline bool shouldHoldDirtyVisualCacheUntilIdle(bool visualCacheDirty, bool visualCacheNonempty,
+                                               bool incrementalCommittedDisplay,
+                                               bool preservedHandoffAuthority) {
+  return visualCacheDirty && visualCacheNonempty && incrementalCommittedDisplay &&
+         !preservedHandoffAuthority;
+}
+
 /// After wrap, idle or wrap-append can grow `visualCache` past the held PLAYING
 /// layer (`201556`: visual=206, frame stayed 134). Do not hold that smaller layer.
 inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCount,

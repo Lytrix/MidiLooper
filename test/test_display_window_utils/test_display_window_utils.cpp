@@ -238,6 +238,29 @@ void test_should_hold_overdub_committed_handoff_requires_gather_coverage() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(false, true, true, true));
 }
 
+void test_should_hold_dirty_overdub_layer_before_window_gather() {
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldHoldDirtyOverdubLayerBeforeWindowGather(true, true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyOverdubLayerBeforeWindowGather(false, true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyOverdubLayerBeforeWindowGather(true, false, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyOverdubLayerBeforeWindowGather(true, true, true));
+}
+
+void test_should_hold_dirty_visual_cache_until_idle() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHoldDirtyVisualCacheUntilIdle(true, true, true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyVisualCacheUntilIdle(true, true, true, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyVisualCacheUntilIdle(false, true, true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyVisualCacheUntilIdle(true, false, true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldHoldDirtyVisualCacheUntilIdle(true, true, false, false));
+}
+
 void test_should_assign_grown_visual_cache_over_overdub_hold() {
   // 201556: visualCache 206 vs held 126 after wrap. Equal or smaller stays a hold.
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(206u, 126u));
@@ -553,6 +576,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_filter_display_notes_to_window_clamps_frontier_equals_length);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
   RUN_TEST(test_should_hold_overdub_committed_handoff_requires_gather_coverage);
+  RUN_TEST(test_should_hold_dirty_overdub_layer_before_window_gather);
+  RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
