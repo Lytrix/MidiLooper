@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1c wrap-held display)
+Last updated: 2026-08-31 (visual cache #41 Stage 1d no wrap-tick visual merge)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -97,9 +97,14 @@ second wrap occupy already has `39@192–592` and `39@336–592`. STOPPED DNTE
 is short (`192/16`, `336/112`). NOTE_EDIT open
 `rebuildVisualCacheFromPasses` then `VCACHE,full` 291 notes and focus
 `presence=0`. Visual-cache wrap append is wrap-held heads/tails only.
-Source view keeps full wrap pairing. Native **1514/1514**. RAM1 locals
-**6944**. Device recapture required. Stage 2 is
-unblocked and not started. Do
+Source view keeps full wrap pairing.
+**Stage 1d — no wrap-tick visual merge:** [`205138`](../../captures/session_20260831_205138.log)
+wrap 2 `VCACHE` `205→271` then `slice_clean` `260`. Isolated wrap-pass
+reconstruct omits record Offs and lengthens body notes until STOPPED idle.
+`appendLastCommittedOverdubPassToSourceView` no longer merges that pass
+into `visualCache`. Idle slice is the fill. Native **1514/1514**. RAM1
+locals **6944**. Device recapture required.
+Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
 
