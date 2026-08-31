@@ -508,6 +508,7 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
 
     const bool logDetails = shouldLogReconstructDetails(verboseLog, midiEvents.size());
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+    uint8_t offZeroPaired[128] = {};
 
     for (uint32_t eventIndex = beginEvent; eventIndex < endEventExclusive; ++eventIndex) {
         const MidiEvent& evt = midiEvents[eventIndex];
@@ -555,6 +556,9 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                                       exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
                                       true);
                     wrappedTailOnTicks.insert({pitch, wrappedOnTick});
+                    if (noteOffTick == 0 && pitch < 128) {
+                        ++offZeroPaired[pitch];
+                    }
                     continue;
                 }
                 continue;
@@ -596,6 +600,9 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                                       exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
                                       true);
                     wrappedTailOnTicks.insert({pitch, wrappedOnTick});
+                    if (noteOffTick == 0 && pitch < 128) {
+                        ++offZeroPaired[pitch];
+                    }
                     ActiveCanonicalNoteVec& remaining = activeNoteStacks[pitch];
                     for (size_t i = 0; i < remaining.size(); ++i) {
                         if (remaining[i].startTick == wrappedOnTick) {
@@ -629,6 +636,9 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                                       static_cast<int32_t>(note.startTick),
                                       exclusiveEndForLoopOff(loopLength - 1));
                     stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
+                    if (pitch < 128) {
+                        ++offZeroPaired[pitch];
+                    }
                     continue;
                 }
                 pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
@@ -645,6 +655,37 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
             pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
                               static_cast<int32_t>(note.startTick), exclusiveEnd);
             stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
+        }
+    }
+
+    // Leftover F@0 + leftover tail-window On (230400 N@2928). tryPairWrappedTailOn
+    // rejects when later mid-loop Ons exist. Use the same Off@0 tail split as above
+    // so finishCanonicalSpansOpenNotes does not extend those Ons to loopLength.
+    uint8_t offZeroTotal[128] = {};
+    for (uint32_t eventIndex = beginEvent; eventIndex < endEventExclusive; ++eventIndex) {
+        const MidiEvent& evt = midiEvents[eventIndex];
+        if (evt.isNoteOff() && evt.tick == 0 && evt.data.noteData.note < 128) {
+            ++offZeroTotal[evt.data.noteData.note];
+        }
+    }
+    for (auto& [pitch, stack] : activeNoteStacks) {
+        if (pitch >= 128 || stack.empty()) {
+            continue;
+        }
+        uint8_t remaining = offZeroTotal[pitch] > offZeroPaired[pitch]
+                                ? static_cast<uint8_t>(offZeroTotal[pitch] - offZeroPaired[pitch])
+                                : 0;
+        for (int stackIndex = static_cast<int>(stack.size()) - 1;
+             stackIndex >= 0 && remaining > 0; --stackIndex) {
+            const ActiveCanonicalNote& note = stack[static_cast<size_t>(stackIndex)];
+            if (note.startTick < tailStart) {
+                continue;
+            }
+            pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
+                              static_cast<int32_t>(note.startTick),
+                              exclusiveEndForLoopOff(loopLength - 1));
+            stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(stackIndex));
+            --remaining;
         }
     }
 }
@@ -709,8 +750,7 @@ NOTE_EDIT_MEM NoteVector dedupeProjectedDisplayNoteVec(const NoteUtils::DisplayN
     size_t uniqueCount = 0;
     for (size_t i = 0; i < ranked.size(); ++i) {
         if (uniqueCount == 0 || ranked[i].note != ranked[uniqueCount - 1].note ||
-            ranked[i].startTick != ranked[uniqueCount - 1].startTick ||
-            ranked[i].endTick != ranked[uniqueCount - 1].endTick) {
+            ranked[i].startTick != ranked[uniqueCount - 1].startTick) {
             ranked[uniqueCount++] = ranked[i];
         }
     }

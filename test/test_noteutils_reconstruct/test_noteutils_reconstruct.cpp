@@ -271,6 +271,65 @@ void test_reconstruct_b3_linear_off_not_stolen_by_off_at_zero() {
     TEST_ASSERT_TRUE(found3008Tail);
 }
 
+void test_reconstruct_same_pitch_start_keeps_shortest_end() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t pitch = 39;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(48, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOn(48, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOff(192, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOff(416, 4, pitch, 0));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength);
+    TEST_ASSERT_EQUAL(1u, notes.size());
+    assert_has_note(notes, pitch, 48, 192, 100);
+    for (const auto& n : notes) {
+        TEST_ASSERT_FALSE(n.note == pitch && n.startTick == 48u && n.endTick == 416u);
+    }
+}
+
+void test_reconstruct_leftover_off_zero_pairs_tail_on_not_open_to_loop_end() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t pitch = 39;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOff(0, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOn(48, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOff(192, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOn(2928, 4, pitch, 100));
+
+    const NoteUtils::DisplayNoteVec committed =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false);
+    TEST_ASSERT_EQUAL(2u, committed.size());
+    bool committedLinear = false;
+    bool committedTail = false;
+    bool committedHead = false;
+    for (const auto& n : committed) {
+        if (n.note != pitch) {
+            continue;
+        }
+        if (n.startTick == 48u && n.endTick == 192u) {
+            committedLinear = true;
+        }
+        if (n.startTick == 2928u && n.endTick == loopLength - 1) {
+            committedTail = true;
+        }
+        if (n.startTick == 0u) {
+            committedHead = true;
+        }
+    }
+    TEST_ASSERT_TRUE(committedLinear);
+    TEST_ASSERT_TRUE(committedTail);
+    TEST_ASSERT_FALSE(committedHead);
+
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength);
+    TEST_ASSERT_EQUAL(2u, notes.size());
+    assert_has_note(notes, pitch, 48, 192, 100);
+    assert_has_note(notes, pitch, 2928, loopLength - 1, 100);
+    for (const auto& n : notes) {
+        TEST_ASSERT_FALSE(n.note == pitch && n.startTick == 0u);
+        TEST_ASSERT_FALSE(n.note == pitch && n.startTick == 2928u && n.endTick == loopLength);
+    }
+}
+
 void test_reconstruct_b3_off_at_zero_after_mid_loop_on_keeps_linear_off() {
     constexpr uint32_t loopLength = 3072;
     constexpr uint8_t pitch = 59;
@@ -544,6 +603,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_is_wrap_held_open_note_accepts_head_off_at_zero);
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
     RUN_TEST(test_reconstruct_b3_linear_off_not_stolen_by_off_at_zero);
+    RUN_TEST(test_reconstruct_leftover_off_zero_pairs_tail_on_not_open_to_loop_end);
+    RUN_TEST(test_reconstruct_same_pitch_start_keeps_shortest_end);
     RUN_TEST(test_reconstruct_b3_off_at_zero_after_mid_loop_on_keeps_linear_off);
     RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
     RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);

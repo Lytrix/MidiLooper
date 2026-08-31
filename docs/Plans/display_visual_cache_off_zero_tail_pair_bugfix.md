@@ -1,6 +1,6 @@
 # Display visual-cache Off@0 leftover tail pair
 
-**Status:** Proposed — not implemented  
+**Status:** Implemented — native **1531/1531**, RAM1 locals **6848**. Device recapture required.  
 **Date:** 2026-08-31  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1l  
@@ -29,7 +29,7 @@ same-start 144/256/336 stack
 
 ## Problem
 
-[`230400`](../../captures/session_20260831_230400.log) sequential `SEVT` leaves unmatched `N@2928` (D#2 ×3, A2/D#3) and unmatched `F@0` (D#2 ×2). Reconstruct `finishCanonicalSpansOpenNotes` draws an unmatched On to `loopLength`. 2928 is in the tail window (`>= tailStart` on a 3072 loop). 1h already stops `Off@0` from linear-stealing a mid-loop On. The leftover tail Ons never take the remaining `F@0` via `tryPairWrappedTailOn` before `finishCanonicalSpansOpenNotes`.
+[`230400`](../../captures/session_20260831_230400.log) sequential `SEVT` leaves unmatched `N@2928` (D#2 ×3, A2/D#3) and unmatched `F@0` (D#2 ×2). Reconstruct `finishCanonicalSpansOpenNotes` draws an unmatched On to `loopLength`. 2928 is in the tail window (`>= tailStart` on a 3072 loop). 1h already stops `Off@0` from linear-stealing a mid-loop On. `tryPairWrappedTailOn` rejects leftover tail Ons when mid-loop Ons exist.
 
 `B3 3008→3071` with `wrap_synth=1` is a short tail close at `L-1`. That is not this RC.
 
@@ -37,7 +37,7 @@ same-start 144/256/336 stack
 
 ```
 leftover F@0 + leftover On with startTick >= tailStart
-    → wrap-split tail (tryPairWrappedTailOn)
+    → Off@0 wrap-split tail (start → exclusiveEndForLoopOff(L-1))
     → not start→loopLength via finishCanonicalSpansOpenNotes
 mid-loop On + linear Off stays linear (1h)
 ```
@@ -49,17 +49,17 @@ mid-loop On + linear Off stays linear (1h)
 | Ownership change? | NO |
 | State transition change? | NO |
 | Unbounded interval owner? | NO — same reconstruct walk |
-| Reuse | YES — extend `appendCanonicalSpansFromMidiRange` leftover Off@0 path; call existing `tryPairWrappedTailOn` before `finishCanonicalSpansOpenNotes` |
+| Reuse | YES — extend `appendCanonicalSpansFromMidiRange` after the event walk; same Off@0 tail split as the stack wrap-split (`exclusiveEndForLoopOff(loopLength - 1)`). Do not call `tryPairWrappedTailOn` for leftover. |
 
-## Proposed implementation
+## Implementation
 
-- After the linear stack pass, leftover `Off@0` events call `tryPairWrappedTailOn` for leftover stack Ons with `startTick >= tailStart`.
-- Remove those Ons from the stack so `finishCanonicalSpansOpenNotes` does not extend them to `loopLength`.
-- Do not change `isWrappedLoopNotePair` or `openTailCloseTick`.
+- Count `offZeroPaired[pitch]` whenever the walk creates a span from `noteOffTick == 0`.
+- After the walk, `offZeroTotal` from Off@0 events. Leftover stack Ons with `startTick >= wrapTailStartTick` get the Off@0 wrap-split while remaining > 0.
+- Mid-loop leftover Ons stay for `finishCanonicalSpansOpenNotes` (1h).
 
-Native fixture from [`230400`](../../captures/session_20260831_230400.log): `N@2928` + `F@0` on a 3072 loop must not emit `2928→3072`.
+Native: `test_reconstruct_leftover_off_zero_pairs_tail_on_not_open_to_loop_end` — `F@0` + mid-loop `N@48`/`F@192` + leftover `N@2928`. `finishOpenNotes=false` still emits `2928→L-1` and `48→192`, no head at 0.
 
-Device [`231953`](../../captures/session_20260831_231953.log): leftover `N@3008` ×3 + `F@0` ×3 on 59; leftover `N@2736`/`N@2960` on 39. Reconstruct paints `59@3008` length **64** (end 3072), `39@2736` **336**, `39@2960` **112**. First-STOPPED frame dump has `59@3008` **64** and the short 39 lengths only (`2736/144`, `2960/32`) — not the leftover-to-`loopLength` siblings.
+Device [`231953`](../../captures/session_20260831_231953.log): leftover `N@3008` ×3 + `F@0` ×3 on 59; leftover `N@2736`/`N@2960` on 39. Reconstruct painted `59@3008` length **64** (end 3072). Recapture must not emit leftover-to-`loopLength`.
 
 ## Explicitly out of scope
 
