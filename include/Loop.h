@@ -473,7 +473,8 @@ struct Loop {
                                         size_t retainedEndTickCount = 0);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
-  /// 6B: dirty only bars touched by `committedPassId` and companion edit rows. No whole-loop reconstruct.
+  /// Dirty only bars touched by `committedPassId` and companion edit rows. Used by overdub stop
+  /// and overdub wrap publish. No whole-loop reconstruct.
   void markAffectedDisplayCacheRanges(PassId committedPassId, const EditPassIdList& companionIds);
   /// RC-E: adopt overdub-stop composed frame as a partial visual cache (window fresh, rest dirty).
   void adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes);

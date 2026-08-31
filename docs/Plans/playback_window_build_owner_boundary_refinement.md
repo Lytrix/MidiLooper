@@ -1,9 +1,9 @@
 # Playback window build — Owner-Boundary Gate (ExecutionBounds)
 
-**Status:** **Slice 0 shipped.** **Slice 1A native PASS; device measure gate FAIL** ([`213537`](../../captures/session_20260826_213537.log)). FAIL path: [`playback_window_prepare_algorithm_decomposition_investigation.md`](playback_window_prepare_algorithm_decomposition_investigation.md). Slices 1B–5 are not authorized. Residual **4b.1b** (visual-cache idle reconstruct) is owned here and **parked**; Ring B / RC2 is closed without it.
+**Status:** **Slice 0 shipped.** **Slice 1A native PASS; device measure gate FAIL** ([`213537`](../../captures/session_20260826_213537.log)). FAIL path: [`playback_window_prepare_algorithm_decomposition_investigation.md`](playback_window_prepare_algorithm_decomposition_investigation.md). Slices 1B–5 are not authorized. Residual **4b.1b** is Stage 2 of [#41](https://github.com/Lytrix/MidiLooper/issues/41) ([`display_visual_cache_snapshot_reuse_refinement.md`](display_visual_cache_snapshot_reuse_refinement.md)); this file keeps the inventory pointer. Ring B / RC2 is closed without it.
 **Kind:** refinement under the runtime scheduling Owner-Boundary Gate
 **Parent roadmap:** [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) (O–T–R–C–A–P)
-**GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38) parent; [#41](https://github.com/Lytrix/MidiLooper/issues/41) 4b.1b. Work project: [Work](https://github.com/users/Lytrix/projects/1)
+**GitHub:** [#38](https://github.com/Lytrix/MidiLooper/issues/38) parent; [#41](https://github.com/Lytrix/MidiLooper/issues/41) display visual-cache stages (4b.1b is Stage 2). Work project: [Work](https://github.com/users/Lytrix/projects/1)
 **Bound authority:** [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md) + [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property)
 **Derived-view direction:** absorbs [`loop_content_resolution_span_consume_refinement.md`](loop_content_resolution_span_consume_refinement.md)
 **Baseline evidence:** [`session_20260822_174758.log`](../../captures/session_20260822_174758.log) on `feature/overdub-stop-lag-stage-c`
@@ -242,9 +242,11 @@ Raising event grain or adding a timer **does not** make these slices resumable. 
 
 ### 4b.1b — visual-cache idle reconstruct (moved from Ring B / RC2)
 
-**Status:** **Open, parked.** This is now the owning record. Ring B / RC2 is closed
-without this gate. Inventory: [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md)
-row 8. **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41).
+**Status:** **Open, parked.** Owning work item is now [#41](https://github.com/Lytrix/MidiLooper/issues/41)
+with stages in [`display_visual_cache_snapshot_reuse_refinement.md`](display_visual_cache_snapshot_reuse_refinement.md).
+4b.1b is **Stage 2** of that item. Stage 1 (wrap-stale dirtyBars) must pass first.
+Ring B / RC2 is closed without this gate. Inventory: [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md)
+row 8.
 
 Ring B bounded `Loop::advanceFallbackGatherSession` and exposed the next
 execution-bound violation: the completed gather is followed by one indivisible

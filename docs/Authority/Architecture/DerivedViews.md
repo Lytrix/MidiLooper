@@ -180,9 +180,9 @@ TickInterval bars 8–24
 
 ## Incremental build
 
-`VisualCache.dirtyBars` is the seed for **bar-granular** idle rebuild. That path is shipped.
+`VisualCache.dirtyBars` is the seed for **bar-granular** idle rebuild. That path is shipped. Overdub wrap publish (`commitCapturePass(OverdubWrap)` and `Track::commitOverdubWrapAtSessionStart`) calls `markAffectedDisplayCacheRanges` so the dirty set is the wrap-pass (and companion) span. After `slice_clean`, empty `dirtyBars` plus nonempty notes is not an all-bars dirty set: `markPassDerivedStale` does not emit `dsz=0`, and idle does not call `markAllVisualCacheBarsDirty`.
 
-`Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain.
+`Loop::rebuildVisualCacheIdleSlice` finds the next dirty bar, rebuilds up to 2–4 consecutive dirty bars (plus one-bar gather pad), splices those notes into `visualCache.notes`, and clears those flags. `slice_clean` when none remain. Empty `dirtyBars` with notes still in cache is `slice_nodirty`, not a full-loop dirty expand.
 
 STOPPED idle uses a budgeted fallback gather (`192` events) and `allowOverdubWrapAppend=false`. Wrap-pair fill runs later via `applyDeferredVisualCacheWrapAppend`. PLAYING already used that pair. STOPPED track/slot switch calls `markDisplayCachesStale()` and keeps `visualCache.notes`; `invalidateDisplayCaches()` (wipe) stays on PLAYING preview only. First paint filters the kept list.
 

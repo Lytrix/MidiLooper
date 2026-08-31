@@ -227,6 +227,12 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCache.dirtyBars.clear();
     return;
   }
+  if (visualCache.dirtyBars.empty() && !visualCache.notes.empty()) {
+    // Stale without a dirty set: keep notes. Empty dirtyBars is not "all bars".
+    visualCacheDirty = false;
+    emitVisualCacheState("slice_nodirty", -1);
+    return;
+  }
   if (visualCache.dirtyBars.size() < totalBars) {
     markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   }

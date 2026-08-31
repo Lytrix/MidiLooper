@@ -46,6 +46,7 @@ TRACK_COLD_MEM bool Track::commitOverdubWrapAtSessionStart() {
     EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
     loop.pushOverdubSessionPass(passId, companionIds);
     loop.recordLastOverdubSeal(passId, companionIds, priorPlaybackRevision);
+    loop.markAffectedDisplayCacheRanges(passId, companionIds);
   }
   loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
   for (const MidiEvent& evt : heldOns) {

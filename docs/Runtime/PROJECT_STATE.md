@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-08-31 (live-record skip parent note lookup)
+Last updated: 2026-08-31 (visual cache #41 Stage 1 in tree)
 
 ---
 
@@ -98,7 +98,12 @@ skips `findNoteAtPitch` (`openNotes` only)
 ([`live_record_snapshot_start_skip_parent_note_lookup_bugfix.md`](../Plans/live_record_snapshot_start_skip_parent_note_lookup_bugfix.md)).
 Device [`192422`](../../captures/session_20260831_192422.log) closed the
 lookup class: `note_lookup=0` on all 32 live-record starts; after-first
-`start` 167–233 µs. Do not freeze `T_RT_reserve`.
+`start` 167–233 µs. Remaining `idle_maint` spikes are display VisualCache
+(wrap-stale + `from=passes`). [#41](https://github.com/Lytrix/MidiLooper/issues/41)
+Stage 1 (wrap-stale) is in tree
+([`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md));
+Stage 2 waits for Stage 1 device PASS.
+Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed
 `T_RT_reserve` is rejected as a guarantee. Construction bounds stay
