@@ -575,6 +575,15 @@ LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec
   appendOverdubPassWrapPairedNotes(notes);
 }
 
+LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
+    const NoteUtils::DisplayNoteVec& candidates) {
+  for (const NoteUtils::DisplayNote& candidate : candidates) {
+    if (!displayNoteGeometryPresent(visualCache.notes, candidate)) {
+      visualCache.notes.push_back(candidate);
+    }
+  }
+}
+
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
   SessionMidiEventVec flat;

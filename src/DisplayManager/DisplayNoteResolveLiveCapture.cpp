@@ -326,6 +326,37 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
+        const bool visualCacheGrewPastHold =
+            DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
+                loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_);
+        if (visualCacheGrewPastHold && !loop.visualCache.notes.empty()) {
+            // 201556: wrap left visualCache at 126 then idle/append grew it to 206 while
+            // the held layer stayed 126. Assign the grown cache; do not hold.
+            if (havePaintWindow) {
+                uint32_t gatherStart = 0;
+                uint32_t gatherLength = 0;
+                DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
+                filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart,
+                                          paintWindowLength, liveLoopLength, liveDisplayNotes,
+                                          gatherStart, gatherLength);
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = true;
+                liveWindowGatherStart_ = gatherStart;
+                liveWindowGatherLength_ = gatherLength;
+                liveWindowGatherLoopLength_ = liveLoopLength;
+            } else {
+                DIAG_COUNTER_INC(DisplayCommittedFullAssign);
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                liveWindowGatherValid_ = false;
+            }
+            liveDisplayCommittedFromWindowGather_ = false;
+            liveCommittedLayerHeldForDirtyCache_ = false;
+            liveOverdubSourceViewNoteCount_ =
+                loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            return;
+        }
         const bool canHoldCommittedLayer =
             liveDisplayCacheCommittedNoteCount_ > 0 &&
             liveDisplayCacheCommittedNoteCount_ <= liveDisplayNotes.size();
@@ -368,7 +399,7 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
-        if (canHoldCommittedLayer) {
+        if (canHoldCommittedLayer && !visualCacheGrewPastHold) {
             liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
             liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
@@ -618,9 +649,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     // Idle finished recovering the cache while the committed layer was held — rebuild once now
     // that the clean branch is affordable.
     const bool committedLayerCleanCacheReady =
-        track.isOverdubbing() && !loop.hasOverdubSourceView() &&
-        liveCommittedLayerHeldForDirtyCache_ && !loop.visualCacheDirty &&
+        track.isOverdubbing() && liveCommittedLayerHeldForDirtyCache_ && !loop.visualCacheDirty &&
         !loop.visualCache.notes.empty();
+    const bool committedLayerVisualCacheGrew =
+        track.isOverdubbing() &&
+        DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
+            loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_);
 
     const bool committedLayerPromoteToFullVisualCache =
         track.isOverdubbing() && !loop.hasOverdubSourceView() &&
@@ -631,6 +665,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const bool committedLayerChanged =
         cacheCold || contextChanged || loopLengthChanged || committedWindowStale ||
         committedLayerPromoteToFullVisualCache || committedLayerCleanCacheReady ||
+        committedLayerVisualCacheGrew ||
         (track.isOverdubbing() && liveMergePlaybackRevision_ != loop.playbackRevision) ||
         (track.isOverdubbing() && loop.hasOverdubSourceView() &&
          liveOverdubSourceViewNoteCount_ != loop.overdubSourceViewNotes().size());

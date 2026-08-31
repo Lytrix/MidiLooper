@@ -238,6 +238,13 @@ void test_should_hold_overdub_committed_handoff_requires_gather_coverage() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(false, true, true, true));
 }
 
+void test_should_assign_grown_visual_cache_over_overdub_hold() {
+  // 201556: visualCache 206 vs held 126 after wrap. Equal or smaller stays a hold.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(206u, 126u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(126u, 126u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(0u, 126u));
+}
+
 void test_overdub_committed_promote_to_full_visual_cache() {
   TEST_ASSERT_TRUE(
       DisplayWindowUtils::shouldPromoteOverdubCommittedToFullVisualCache(true, false, true, true));
@@ -546,6 +553,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_filter_display_notes_to_window_clamps_frontier_equals_length);
   RUN_TEST(test_overdub_committed_window_cache_rejects_zero_committed_count);
   RUN_TEST(test_should_hold_overdub_committed_handoff_requires_gather_coverage);
+  RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_uses_clean_neighborhood);

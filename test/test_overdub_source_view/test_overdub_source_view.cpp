@@ -521,10 +521,14 @@ void test_overdub_wrap_keeps_clean_cache_notes_and_marks_wrap_span() {
 
   loop.appendLastCommittedOverdubPassToSourceView();
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
+      loop.visualCache.notes.size(), notesBefore));
 
   loop.markDisplayCachesStale();
   TEST_ASSERT_TRUE(loop.visualCacheDirty);
-  TEST_ASSERT_EQUAL(notesBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 10));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 72, wrapOn));
   TEST_ASSERT_EQUAL(16u, loop.visualCache.dirtyBars.size());
   TEST_ASSERT_EQUAL(16u, countVisualDirtyBars(loop.visualCache.dirtyBars));
 }
@@ -550,6 +554,7 @@ void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
   loop.appendLastCommittedOverdubPassToSourceView();
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+  TEST_ASSERT_GREATER_THAN(1u, loop.visualCache.notes.size());
 }
 
 void test_short_loop_stale_keeps_notes_for_overdub_stop_handoff() {
