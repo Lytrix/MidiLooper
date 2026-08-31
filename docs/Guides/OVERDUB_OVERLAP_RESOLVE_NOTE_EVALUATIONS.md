@@ -315,7 +315,7 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | Length **shorten** (`newEnd < refEnd`) | `shortenNoteEndById` | Moves that note's Off tick. No sibling exclusive-end scan |
 | Length **lengthen** (`newEnd > refEnd`) | `applyChangeLengthById` | Own `newStart - 1` shorten + contained deletes. Audit only if it can overwrite this path's committed exclusive end |
 
-The lengthen branch's sibling candidates come from `reconstructNotesForPitch`, which reconstructs **only the edited note's pitch**. That is the same candidate set as a full-loop reconstruct followed by the branch's `note.note != onEvt` filter, because reconstruction is pitch-local throughout: pairing keys on `activeNoteStacks[pitch]`, `projectDisplayNotes` is span-local, and dedupe keys on `(note, startTick, endTick)`. Do not widen it back to a full reconstruct — the discarded pitches also made the call superlinear, since an unpaired Off sends `tryPairWrappedTailOn` back over the whole event vector.
+The lengthen branch's sibling candidates come from `reconstructNotesForPitch`, which reconstructs **only the edited note's pitch**. That is the same candidate set as a full-loop reconstruct followed by the branch's `note.note != onEvt` filter, because reconstruction is pitch-local throughout: pairing keys on `activeNoteStacks[pitch]`, `projectDisplayNotes` is span-local, and dedupe keys on `(note, startTick, endTick)` so same-start different ends keep both `noteId`s for occupy Hide. Display adopt/idle then keep the shortest end. Do not widen reconstruct to a full-loop walk — the discarded pitches also made the call superlinear, since an unpaired Off sends `tryPairWrappedTailOn` back over the whole event vector.
 
 ---
 

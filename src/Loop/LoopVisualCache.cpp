@@ -420,6 +420,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 #endif
 
+  DisplayWindowUtils::keepShortestEndAtPitchStart(sliceNotes);
+  DisplayWindowUtils::keepShortestEndAtPitchStart(visualCache.notes);
   const bool fullLoopSlice = (startBar == 0 && endBar + 1 >= totalBars);
   if (fullLoopSlice && DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(
                            visualCache.notes.size(), sliceNotes.size())) {
@@ -443,6 +445,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
       visualCache.notes.push_back(note);
     }
   }
+  DisplayWindowUtils::keepShortestEndAtPitchStart(visualCache.notes);
 
   for (uint32_t bar = startBar; bar <= endBar; ++bar) {
     visualCache.dirtyBars[bar] = 0;

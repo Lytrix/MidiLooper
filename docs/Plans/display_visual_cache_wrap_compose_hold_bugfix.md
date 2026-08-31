@@ -1,6 +1,6 @@
 # Display visual-cache wrap compose hold
 
-**Status:** Implemented — grow compares to composed hold. Native **1531/1531**, RAM1 locals **6848**. Device wrap 1 recapture required after [`232910`](../../captures/session_20260831_232910.log)  
+**Status:** Implemented — grow compares to composed hold. Native **1531/1531**, RAM1 locals **6848**. Device PASS [`002145`](../../captures/session_20260901_002145.log) (wrap 1 `71→72` / `94→95`).  
 **Date:** 2026-08-31  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1k  

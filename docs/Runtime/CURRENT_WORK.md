@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (visual cache #41 stop compose adopt + idle keep)
+Last updated: 2026-09-01 (occupy same-start shorter hides longer)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -175,10 +175,11 @@ Grow compares cache to `max(committedCount, composed liveDisplayNotes)`.
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md).
 Leftover tail-window On + leftover `F@0` wrap-splits to `L-1` (not
 `tryPairWrappedTailOn`). Mid-loop linear pairs stay linear (1h).
-**Stage 1b — same-start shortest end:**
-[`display_visual_cache_same_start_shortest_end_bugfix.md`](../Plans/display_visual_cache_same_start_shortest_end_bugfix.md).
-`dedupeProjectedDisplayNoteVec` unique-keys pitch+start; idle splice skips
-an existing pitch+start.
+**Stage 1b / occupy same-start hide:**
+[`overdub_occupy_same_start_shorter_hides_longer_bugfix.md`](../Plans/overdub_occupy_same_start_shorter_hides_longer_bugfix.md).
+Reconstruct unique-key is pitch+start+end again so source view keeps both
+noteIds. Incoming shorter Hides the longer earlier note. Display adopt/idle
+uses `keepShortestEndAtPitchStart` only (`002145` `norow` 75/76).
 **Stage 1m — stop compose adopt (`000013`):**
 [`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
 Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt
@@ -189,7 +190,15 @@ smaller slice (`slice_keep`, Prepared 95→80). Occupy `hide=2` is not this
 slice. Device recapture: first STOPPED on the overdub loop ≥ last
 OVERDUBBING compose; later PLAYING must not fall to 80; cache must not
 freeze at 95 while compose grows.
-Native **1531/1531**. RAM1 locals **6848**.
+Native **1533/1533**. RAM1 locals **6848**. Occupy hide is in tree
+(source-view reconstruct keeps both `noteId`s; adopt/idle keep the shortest
+display end). Device recapture required for [`002145`](../../captures/session_20260901_002145.log)
+`norow` 75/76 and pitch-63 frame 96+288.
+Device [`002145`](../../captures/session_20260901_002145.log) (4-bar `len=3072`):
+**1k PASS** — every wrap first OVERDUBBING `frame` ≥ last-before (odub1 wrap 1 `71→72`; odub2 wrap 1 `94→95`).
+**1m PASS** — odub1 last `88/80` → `adopt_partial` **88** → first STOPPED **88/88**. Odub2 last `145/144` → `adopt_partial` **145** → first PLAYING **145/145**. Cache tracks compose (`88→94→103→113→120→128→136→144`). Settled STOPPED **145**, not 80. Global stop still paints other slot-0 loops (`32`, `42`, `50688/1429`) then returns to **145**.
+**1b** reconstruct **PASS** (0 same-start stacks, count 73). Frame dump **FAIL** on that firmware: pitch **63** at `0/384/768/1152/1536/1920/2304/2688` still has lengths **96 and 288** (frame 88).
+**1l not in this log** — no `SEVT` `F@0`.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.

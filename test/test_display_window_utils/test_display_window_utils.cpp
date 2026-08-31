@@ -306,6 +306,44 @@ void test_should_adopt_composed_notes_over_visual_cache() {
       DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(0u, 95u, 4u));
 }
 
+void test_keep_shortest_end_at_pitch_start() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote shorter{};
+  shorter.note = 63;
+  shorter.startTick = 768;
+  shorter.endTick = 864;
+  NoteUtils::DisplayNote longer{};
+  longer.note = 63;
+  longer.startTick = 768;
+  longer.endTick = 1056;
+  NoteUtils::DisplayNote other{};
+  other.note = 63;
+  other.startTick = 1152;
+  other.endTick = 1248;
+  notes.push_back(longer);
+  notes.push_back(shorter);
+  notes.push_back(other);
+  DisplayWindowUtils::keepShortestEndAtPitchStart(notes);
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  bool keptShort = false;
+  bool keptLong = false;
+  bool keptOther = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.startTick == 768 && note.endTick == 864) {
+      keptShort = true;
+    }
+    if (note.startTick == 768 && note.endTick == 1056) {
+      keptLong = true;
+    }
+    if (note.startTick == 1152) {
+      keptOther = true;
+    }
+  }
+  TEST_ASSERT_TRUE(keptShort);
+  TEST_ASSERT_FALSE(keptLong);
+  TEST_ASSERT_TRUE(keptOther);
+}
+
 void test_should_keep_visual_cache_over_smaller_full_loop_slice() {
   TEST_ASSERT_TRUE(
       DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(95u, 80u));
@@ -629,6 +667,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
+  RUN_TEST(test_keep_shortest_end_at_pitch_start);
   RUN_TEST(test_should_keep_visual_cache_over_smaller_full_loop_slice);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
