@@ -97,11 +97,10 @@ void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
   cache.dirtyBars.assign(totalBars, 1);
 }
 
-bool displayNoteGeometryPresent(const NoteUtils::DisplayNoteVec& notes,
-                                const NoteUtils::DisplayNote& candidate) {
+bool displayNotePitchStartPresent(const NoteUtils::DisplayNoteVec& notes,
+                                  const NoteUtils::DisplayNote& candidate) {
   for (const NoteUtils::DisplayNote& note : notes) {
-    if (note.note == candidate.note && note.startTick == candidate.startTick &&
-        note.endTick == candidate.endTick) {
+    if (note.note == candidate.note && note.startTick == candidate.startTick) {
       return true;
     }
   }
@@ -564,7 +563,9 @@ LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNote
     const NoteUtils::DisplayNoteVec overdubNotes = NoteUtils::reconstructDisplayNotes(
         overdubEvents, loopLengthTicks, false, false, true);
     for (const NoteUtils::DisplayNote& note : overdubNotes) {
-      if (!displayNoteGeometryPresent(notes, note)) {
+      // Same pitch+start already has the merged-reconstruct end. Do not add a
+      // wrap-paired longer sibling (202745: 39/45/51 at 208, 256, and 304).
+      if (!displayNotePitchStartPresent(notes, note)) {
         notes.push_back(note);
       }
     }
@@ -578,7 +579,7 @@ LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec
 LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
     const NoteUtils::DisplayNoteVec& candidates) {
   for (const NoteUtils::DisplayNote& candidate : candidates) {
-    if (!displayNoteGeometryPresent(visualCache.notes, candidate)) {
+    if (!displayNotePitchStartPresent(visualCache.notes, candidate)) {
       visualCache.notes.push_back(candidate);
     }
   }

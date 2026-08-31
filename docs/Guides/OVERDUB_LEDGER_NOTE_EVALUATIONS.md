@@ -222,7 +222,7 @@ The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lc
 | Present-at-hold covering | `displayNotePresentAtHold` on source-view notes |
 | Whether a NoteOn is still live capture (uncommitted) | `extractOpenCaptureNoteOns` — open B never reaches this ledger |
 | Pairing Off to On in storage | `reconstructDisplayNotes` |
-| Source-view membership after wrap | `appendLastCommittedOverdubPassToSourceView` | Newly sealed pass notes only; skip NoteIds already present. Same pass notes also merge into `visualCache.notes` by geometry so wrap paint can assign the grown cache. Span cache restamps to `playbackRevision` so OVERDUBBING idle does not `rebuildOverdubSourceView("idle")` `from=passes`. Full rebuild is idle / later only when the span cache is not ready |
+| Source-view membership after wrap | `appendLastCommittedOverdubPassToSourceView` | Newly sealed pass notes only; skip NoteIds already present. Visual-cache merge uses the same pass reconstructed **without** wrap pairing (merged-reconstruct ends). Wrap-held heads/tails stay on wrap-edge `appendOverdubPassWrapPairedNotes`, which skips a candidate when pitch+start is already present. Span cache restamps to `playbackRevision` so OVERDUBBING idle does not `rebuildOverdubSourceView("idle")` `from=passes`. Full rebuild is idle / later only when the span cache is not ready |
 | Source-view membership after rebuild | `rebuildOverdubSourceView` / `retainValidOverdubSourceViewIdentities` | Identity filter runs only on revision-fresh full-loop merged stream |
 | Whether open ledger identities should equal source-view covering identities | It must not be forced. Mismatch is a diagnostic, not a coupling license |
 

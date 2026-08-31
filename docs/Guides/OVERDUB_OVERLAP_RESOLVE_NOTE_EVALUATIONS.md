@@ -236,7 +236,7 @@ When `tryResolvePreparedWindow` misses (`from=win`, pin `prep=0`), gather consum
 2. per layer: `applyActiveEdits` → `applyNoteEditPassSequence` (Length/Delete on **that layer only**)
 3. `mergeSortedMidiVectors` — **tick-only**; equal tick keeps the earlier pass first. This is not `resolvedEventLess`
 4. `reconstructDisplayNotes` (`overdubPassWrapPairing` false) — walks **vector order**; does not call `sortMidiEventsChronologically`
-5. `appendOverdubPassWrapPairedNotes` (per-pass reconstruct with wrap pairing; geometry match, not `noteId`)
+5. `appendOverdubPassWrapPairedNotes` (per-pass reconstruct with wrap pairing; skip when pitch+start is already present, not `noteId`)
 
 `uniqueIdentifiedResolvedEvents` is TickIndex / `from=prep` only. Untagged Offs are never unique-dropped on `from=win`.
 

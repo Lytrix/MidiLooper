@@ -1,6 +1,6 @@
 # Display visual-cache snapshot reuse
 
-**Status:** Stage 1 device PASS [`202745`](../../captures/session_20260831_202745.log). Stage 2 unblocked, not started. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
+**Status:** Stage 1 device PASS [`202745`](../../captures/session_20260831_202745.log). Stage 1b wrap-pair length in tree (device recapture required). Stage 2 unblocked, not started. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
 **Date:** 2026-08-31  
 **Kind:** refinement (Stage 1 is a wrap-stale bugfix; Stage 2 is 4b.1b snapshot fill)  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) — one work item, two stages. Work: [Work](https://github.com/users/Lytrix/projects/1)  
@@ -18,6 +18,7 @@
 | Stage | Invariant | Status |
 |---|---|---|
 | **1 — wrap-stale** | After wrap commit (and the following `beginCapture(Overdub)`), `visualCache.notes` stay. `dirtyBars` is the affected bar set, never empty-then-all while notes exist. After wrap + `appendLastCommittedOverdubPassToSourceView`, `overdubSourceSpanCacheReady()` is true so idle does not `from=passes`. Sealed wrap-pass notes merge into `visualCache`; overdub paint assigns the grown cache instead of the pre-wrap hold. | Device PASS [`202745`](../../captures/session_20260831_202745.log). Three wraps; no wrap `dsz=0` while `notes>0`; only `lcr,src` is `why=open,from=visual`. First wrap `DISP` `183,111` → next frame `184,180`. Second wrap first paint `249,246` (not a hold of 180). |
+| **1b — wrap-pair length** | Visual-cache merge of a sealed wrap pass uses merged reconstruct (wrap pairing off). `appendOverdubPassWrapPairedNotes` does not add a longer sibling of an existing pitch+start. Wrap-held heads/tails still append. NOTE_EDIT reconstruct already used wrap pairing off; that paint must not be the only path that drops the extras. | In tree. Native fixture `test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache`. Device recapture required. |
 | **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | Unblocked. Not started. This is former 4b.1b. |
 
 Stage 2 first would copy snapshot notes, then wrap would wipe them again.
@@ -41,7 +42,8 @@ Overdub **button** start already must not `markDisplayCachesStale` (DEC-036 3b).
 - Idle: empty `dirtyBars` + nonempty notes must not mean `markAllVisualCacheBarsDirty`.
 - Do not `visualCache.notes.clear()` / `invalidateDisplayCaches` on wrap or overdub start.
 - `appendLastCommittedOverdubPassToSourceView` merges the wrap-pass notes into `overdubSourceSpanCacheNotes_` and restamps `valid` / `playbackRevision` / `fullLoop`. O(pass) only — not a full-loop span-cache reconstruct on the wrap tick.
-- Same pass notes merge into `visualCache.notes` by geometry. Overdub paint assigns a grown cache (`shouldAssignGrownVisualCacheOverOverdubHold`) instead of holding the pre-wrap record-only layer.
+- Same pass notes merge into `visualCache.notes` by merged-reconstruct geometry (wrap pairing off). Overdub paint assigns a grown cache (`shouldAssignGrownVisualCacheOverOverdubHold`) instead of holding the pre-wrap record-only layer.
+- `appendOverdubPassWrapPairedNotes` skips a candidate when pitch+start is already present, so wrap-edge idle cannot add a longer sibling of a body note (`202745` DNTE 39/45/51 at 208, 256, and 304).
 
 Native: wrap a clean 16-bar cache; note count holds; `dirtyBars` is the wrap-pass span. After wrap-pair restamp fail, append makes `overdubSourceSpanCacheReady()` true and keeps the record note. Record-stop `markDisplayCachesStale` unchanged.
 
@@ -61,7 +63,7 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 
 1. Stage 1 wrap-stale firmware + native + RAM1 + commit — done (`46f3b1bf`).
 2. Span-cache restamp (`0f675b85`) + wrap paint hold (`f11b982d`). Device PASS [`202745`](../../captures/session_20260831_202745.log).
-3. Stage 2 is unblocked. Do not start it until CURRENT_WORK says so. Do not check off OpenSpec `3.5` / `3.6`.
+3. Stage 1b wrap-pair length — in tree. Do not start Stage 2 until CURRENT_WORK says so. Do not check off OpenSpec `3.5` / `3.6`.
 
 ## Pre-implementation review
 
@@ -80,6 +82,7 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 | Record-stop | `markDisplayCachesStale` unchanged |
 | Wrap idle `from=passes` | Restamp existing span cache in `appendLastCommittedOverdubPassToSourceView`; do not reconstruct on the wrap tick |
 | Wrap paint hold | Merge sealed pass into `visualCache`; assign grown cache over the pre-wrap hold |
+| Wrap-pair length | Visual-cache merge uses wrap pairing off; wrap-pair append skips existing pitch+start |
 | Stage 2 | Not this session |
 
 ### Open before coding

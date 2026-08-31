@@ -699,7 +699,13 @@ LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   const NoteUtils::DisplayNoteVec passNotes =
       NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
   mergeDisplayNotesIntoOverdubSourceView(passNotes);
-  mergeDisplayNotesIntoVisualCache(passNotes);
+  // VisualCache is merged-reconstruct. Wrap pairing on this pass lengthens same-pitch
+  // body notes (202745 DNTE 39/45/51 at 208, 256, and 304). NOTE_EDIT drops those
+  // extras because it reconstructs with overdubPassWrapPairing=false. Wrap-held
+  // heads/tails stay on wrap-edge appendOverdubPassWrapPairedNotes.
+  const NoteUtils::DisplayNoteVec visualPassNotes =
+      NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, false);
+  mergeDisplayNotesIntoVisualCache(visualPassNotes);
   // Wrap restamp can clear readiness (wrap-pair / missing id) while leaving notes.
   // Idle then rebuildOverdubSourceView("idle") from=passes (200434). Merge the
   // same wrap-pass notes into the existing span cache and restamp so ready()
