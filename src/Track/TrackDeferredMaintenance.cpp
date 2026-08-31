@@ -24,6 +24,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/TrackMem.h"
 #include "VisualCache.h"
+#include "DisplayManager.h"
 
 #include <cstdio>
 
@@ -351,9 +352,9 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
 
 namespace {
 
-// Wrap-pair verification is quadratic, so it only runs on loops small enough to afford it.
-constexpr size_t kMaxWrapPairVerifyEvents = 512;
-constexpr size_t kMaxDisplayNoteVerifyLines = 32;
+// Wrap-pair verification walks one NoteOn per idle event and scans Offs for that pitch.
+// Do not skip the dump when the flatten is larger than this — `230400` had 552 SEVT and
+// emitted WRAP=0. Bound work per slice instead.
 
 #if defined(SESSION_CAPTURE)
 // One stored-MIDI verification dump per boot — enough for a single HITL/evidence capture, then
@@ -369,6 +370,7 @@ enum StoredVerificationPhase : uint8_t {
   kStoredVerificationNotes = 0,
   kStoredVerificationWrapPairs = 1,
   kStoredVerificationDisplayNotes = 2,
+  kStoredVerificationFrameNotes = 3,
 };
 
 }  // namespace
@@ -552,6 +554,9 @@ TRACK_COLD_MEM void Track::resetDeferredStoredMidiVerification() {
   deferredStoredVerificationPhase = kStoredVerificationNotes;
   deferredStoredVerificationCursor = 0;
   deferredStoredVerificationEvents.clear();
+#if defined(SESSION_CAPTURE)
+  deferredStoredVerificationNotes.clear();
+#endif
 }
 
 TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
@@ -623,53 +628,84 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
     if (deferredStoredVerificationCursor < flat.size()) {
       return;
     }
+    deferredStoredVerificationCursor = 0;
     deferredStoredVerificationPhase = kStoredVerificationWrapPairs;
     return;
   }
 
   if (deferredStoredVerificationPhase == kStoredVerificationWrapPairs) {
-    if (flat.size() <= kMaxWrapPairVerifyEvents) {
-      for (size_t i = 0; i < flat.size(); ++i) {
-        const MidiEvent& on = flat[i];
-        if (!on.isNoteOn()) {
+    size_t emitted = 0;
+    while (deferredStoredVerificationCursor < flat.size() && emitted < maxEventsPerSlice) {
+      const MidiEvent& on = flat[deferredStoredVerificationCursor++];
+      if (!on.isNoteOn()) {
+        continue;
+      }
+      ++emitted;
+      for (const MidiEvent& off : flat) {
+        if (!off.isNoteOff() || off.channel != on.channel ||
+            off.data.noteData.note != on.data.noteData.note) {
           continue;
         }
-        for (const MidiEvent& off : flat) {
-          if (!off.isNoteOff() || off.channel != on.channel ||
-              off.data.noteData.note != on.data.noteData.note) {
-            continue;
-          }
-          if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
-            SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
-            break;
-          }
+        if (NoteUtils::isWrappedLoopNotePair(on.tick, off.tick, loop.loopLengthTicks)) {
+          SC_STORED_WRAP_PAIR(on.tick, off.tick, on.channel, on.data.noteData.note);
+          break;
         }
       }
     }
+    if (deferredStoredVerificationCursor < flat.size()) {
+      return;
+    }
+    deferredStoredVerificationCursor = 0;
     deferredStoredVerificationPhase = kStoredVerificationDisplayNotes;
     return;
   }
 
-  const auto reconstructed = NoteUtils::reconstructNotes(flat, loop.loopLengthTicks, false);
-  size_t reconLogged = 0;
-  for (const NoteUtils::DisplayNote& note : reconstructed) {
-    const uint32_t displayStart = IntervalProjection::noteRelativeTick(
-        note.startTick, loop.loopStartTick, loop.loopLengthTicks);
-    // DisplayNote.endTick is a display boundary tick; when a note ends at loop wrap its tail
-    // segment ends at loopLength-1, but its exclusive end is loopLength.
-    uint32_t length = 0;
-    if (loop.loopLengthTicks > 0 && note.endTick >= note.startTick) {
-      const uint32_t endExclusive =
-          (note.endTick == loop.loopLengthTicks - 1) ? loop.loopLengthTicks : note.endTick;
-      length = endExclusive > note.startTick ? (endExclusive - note.startTick) : 0;
+  if (deferredStoredVerificationPhase == kStoredVerificationDisplayNotes) {
+    if (deferredStoredVerificationNotes.empty() && deferredStoredVerificationCursor == 0) {
+      deferredStoredVerificationNotes =
+          NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false);
+      char header[128];
+      snprintf(header, sizeof(header),
+               "#CAP,%lu,DIAG,dnte,src,reconstruct,count,%u",
+               static_cast<unsigned long>(micros()),
+               static_cast<unsigned>(deferredStoredVerificationNotes.size()));
+      DebugSessionCapture::appendCaptureTextLine(header);
     }
-    SC_DNTE(note.note, note.startTick, displayStart, length, static_cast<int>(reconLogged));
-    ++reconLogged;
-    if (reconLogged >= kMaxDisplayNoteVerifyLines) {
-      break;
+    size_t emitted = 0;
+    while (deferredStoredVerificationCursor < deferredStoredVerificationNotes.size() &&
+           emitted < maxEventsPerSlice) {
+      const NoteUtils::DisplayNote& note =
+          deferredStoredVerificationNotes[deferredStoredVerificationCursor];
+      const uint32_t displayStart = IntervalProjection::noteRelativeTick(
+          note.startTick, loop.loopStartTick, loop.loopLengthTicks);
+      // DisplayNote.endTick is a display boundary tick; when a note ends at loop wrap its tail
+      // segment ends at loopLength-1, but its exclusive end is loopLength.
+      uint32_t length = 0;
+      if (loop.loopLengthTicks > 0 && note.endTick >= note.startTick) {
+        const uint32_t endExclusive =
+            (note.endTick == loop.loopLengthTicks - 1) ? loop.loopLengthTicks : note.endTick;
+        length = endExclusive > note.startTick ? (endExclusive - note.startTick) : 0;
+      }
+      SC_DNTE(note.note, note.startTick, displayStart, length,
+              static_cast<int>(deferredStoredVerificationCursor));
+      ++deferredStoredVerificationCursor;
+      ++emitted;
     }
+    if (deferredStoredVerificationCursor < deferredStoredVerificationNotes.size()) {
+      return;
+    }
+    deferredStoredVerificationNotes.clear();
+    deferredStoredVerificationCursor = 0;
+    deferredStoredVerificationPhase = kStoredVerificationFrameNotes;
+    return;
   }
-  resetDeferredStoredMidiVerification();
+
+  if (deferredStoredVerificationPhase == kStoredVerificationFrameNotes) {
+    if (displayManager.emitStoppedFrameNoteDump(maxEventsPerSlice) > 0) {
+      return;
+    }
+    resetDeferredStoredMidiVerification();
+  }
 #endif  // SESSION_CAPTURE
 }
 
@@ -833,7 +869,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
             : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
                               snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
     snapshotLoop.stepPendingSnapshotPublish(
-        1, (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
+        MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+        (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
         liveRecordCompletedTicks);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     appendSnapshotIdleCaptureLine(snapshotLoop, snapshotIdleStartUs);

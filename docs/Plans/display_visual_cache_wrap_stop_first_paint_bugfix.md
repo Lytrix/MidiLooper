@@ -60,7 +60,7 @@ STOPPED first selected-slot DISP → dirty nonempty visualCache or last handoff,
 
 Native (`test_display_window_utils`): both hold predicates. Full suite **1525/1525**. RAM1 locals **6944**.
 
-Device ([`222349`](../../captures/session_20260831_222349.log) shape): wrap first frame ≥ last-before-wrap. First selected-slot STOPPED `visual` ≈ `frame` (not `159/31`). Recapture required — [`225243`](../../captures/session_20260831_225243.log) first STOPPED **147 / 198** kept RC5a handoff (same slot), so this hold did not run.
+Device FAIL [`230400`](../../captures/session_20260831_230400.log): wrap 1 `105→66` (cache 63). 1i holds `committedCount` only; sealed capture is not in that prefix. Next: 1k. [`225243`](../../captures/session_20260831_225243.log) first STOPPED **147 / 198** kept RC5a handoff (same slot), so the STOPPED hold did not run.
 
 ## Explicitly out of scope
 

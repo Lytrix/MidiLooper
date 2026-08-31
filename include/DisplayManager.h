@@ -116,6 +116,13 @@ public:
     void refreshViewportAfterOverdubStop(Track& track, uint8_t displaySlot,
                                          uint32_t storagePhaseTickInLoop);
 
+#if defined(SESSION_CAPTURE)
+    /// One-shot first STOPPED painted frame for idle `DNTE` (`230400` had reconstruct only).
+    void queueStoppedFrameNoteDump(const DisplayNoteVec& frameNotes, uint32_t loopLength,
+                                   uint32_t loopStartTick);
+    size_t emitStoppedFrameNoteDump(size_t maxLines);
+#endif
+
     // Margin for piano roll, info area and note info
     static constexpr int TRACK_MARGIN = 22; 
     // Display buffer size
@@ -245,6 +252,15 @@ private:
     bool liveCommittedLayerHeldForDirtyCache_ = false;
     /// RC12: invalidate committed layer when overdub source-view note count changes (JIT merge).
     size_t liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
+
+#if defined(SESSION_CAPTURE)
+    DisplayNoteVec stoppedFrameNoteDump_;
+    size_t stoppedFrameNoteDumpCursor_ = 0;
+    uint32_t stoppedFrameNoteDumpLoopLength_ = 0;
+    uint32_t stoppedFrameNoteDumpLoopStart_ = 0;
+    bool stoppedFrameNoteDumpArmed_ = true;
+    bool stoppedFrameNoteDumpHeaderEmitted_ = false;
+#endif
 
     /// RC-G: bounded overview density for capture states with no usable `visualCache`.
     /// One byte per loop bar; bit N set when a preview note in that bar falls in pitch band N
