@@ -688,7 +688,7 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
     }
     const bool isNoteEvent = event.isNoteOn() || event.isNoteOff();
     bool parentHasNote = false;
-    if (isNoteEvent && event.noteId != kInvalidNoteId) {
+    if (isNoteEvent && event.noteId != kInvalidNoteId && !progress.fromCaptureStore) {
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.noteLookupUs);
 #endif
