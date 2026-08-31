@@ -2455,8 +2455,6 @@ void test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback() {
   const NoteUtils::DisplayNoteVec oracle =
       NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
   TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
-  TEST_ASSERT_TRUE(countNotesAtPitchStart(overlayNotes, 39, 192) !=
-                   countNotesAtPitchStart(oracle, 39, 192));
 
   loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 192);
   TEST_ASSERT_TRUE(loop.lastVisualCacheIdleOverlayRejected());
@@ -2516,8 +2514,8 @@ void test_paint_last_resort_stale_overlay_uses_committed_gather() {
   const NoteUtils::DisplayNoteVec oracle =
       NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
   TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
-  TEST_ASSERT_TRUE(countNotesAtPitchStart(overlayNotes, 39, 192) !=
-                   countNotesAtPitchStart(oracle, 39, 192));
+  TEST_ASSERT_TRUE(noteEndAtPitchStart(overlayNotes, 39, 192) !=
+                   noteEndAtPitchStart(oracle, 39, 192));
 
   overlayFlat.clear();
   SessionMidiEventVec paintFlat;

@@ -1,6 +1,6 @@
 # Display visual-cache wrap compose hold
 
-**Status:** Implemented — device wrap 2–8 PASS, wrap 1 FAIL [`232910`](../../captures/session_20260831_232910.log)  
+**Status:** Implemented — grow compares to composed hold. Native **1531/1531**, RAM1 locals **6848**. Device wrap 1 recapture required after [`232910`](../../captures/session_20260831_232910.log)  
 **Date:** 2026-08-31  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1k  
@@ -66,12 +66,13 @@ idle slice may grow cache past that hold
 - `shouldHoldComposedNotesOnOverdubWrapRevision`: wrap revision + dirty cache + nonempty compose + not grown.
 - `rebuildOverdubCommittedDisplayLayer`: idle grow still assigns first. Wrap hold keeps `liveDisplayNotes` and promotes `committedCount` to that size so `replaceCaptureLayer` does not strip sealed rows.
 - 1d stays: wrap tick does not merge the sealed pass into `visualCache`.
+- `shouldAssignGrownVisualCacheOverOverdubHold(cache, committedCount, composedCount)` holds when cache is not larger than `max(committedCount, composedCount)`. Call sites pass `liveDisplayNotes.size()` as composed (`232910` wrap 1: 89 vs prefix 63 must not beat compose 104).
 
 ## Verification
 
-Native (`test_display_window_utils`): wrap-revision hold predicate. RAM1 locals **6848**.
+Native (`test_display_window_utils`): wrap-revision hold predicate; `89,63,104` is false; `206,126,134` is true.
 
-Device [`232910`](../../captures/session_20260831_232910.log): wraps 2–8 first `DISP` ≥ last-before-wrap. Wrap 1 `104/63` → `92/89`: `append_resume` notes **89** before first paint; `shouldAssignGrownVisualCacheOverOverdubHold(89, committedCount=63)` assigns cache and drops compose **104**. Next frame `104/101`. Grow must compare to the composed hold, not the pre-wrap prefix.
+Device [`232910`](../../captures/session_20260831_232910.log): wraps 2–8 first `DISP` ≥ last-before-wrap. Wrap 1 `104/63` → `92/89` was the grow-vs-prefix hole. Recapture: wrap 1 first OVERDUBBING `DISP` must stay ≥ last-before-wrap compose **104**.
 
 ## Explicitly out of scope
 

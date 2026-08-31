@@ -100,6 +100,21 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
         storagePhaseTickInLoop, windowLength, loopLength);
 }
 
+void DisplayManager::adoptComposedDisplayNotesIfAuthoritative(Loop& loop) {
+    if (liveDisplayNotes.empty()) {
+        return;
+    }
+    uint32_t loopBars = 0;
+    if (Config::TICKS_PER_BAR > 0 && loop.loopLengthTicks > 0) {
+        loopBars = (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+    }
+    if (!DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(
+            liveDisplayNotes.size(), loop.visualCache.notes.size(), loopBars)) {
+        return;
+    }
+    loop.adoptComposedDisplayNotesFromViewport(liveDisplayNotes);
+}
+
 void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displaySlot,
                                                      uint32_t storagePhaseTickInLoop) {
     // RC5a: overdub stop must not use record-stop clamp. Composed frame is
@@ -128,20 +143,16 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     // stop is MIDI-sensitive. Idle rebuildVisualCacheIdleSlice fills dirty bars.
     // Keep the loop-wide list when present (020910/021959 stale paint was
     // adopt_partial, not this keep). Empty cache may adopt the composed frame.
-    if (!loop.visualCache.notes.empty()) {
-        // 6B: keep the loop-wide cache. Affected bars are already marked at commit.
-        // adopt_partial would replace notes with the viewport and dirty the rest
-        // (session_20260815_185931: 2403 → 496 notes, 117 bars dirty).
+    if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
+        // 6B: a larger long-loop cache stays. Short-loop compose that is larger
+        // than cache is adopted (`000013` 141>95). Empty cache still adopts (RC5c).
+        adoptComposedDisplayNotesIfAuthoritative(loop);
         liveWindowVisualCacheRevision_ = loop.visualCache.revision;
-    } else if (!liveDisplayNotes.empty()) {
+    } else if (!loop.visualCache.notes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
-        // RC5c: adopt composed display notes without claiming the whole loop is built.
-        // RC-E: clearing dirtyBars and visualCacheDirty here left only the 16-bar window in
-        // cache and blocked idle backfill (session_20260812_162230).
-        loop.adoptComposedDisplayNotesFromViewport(liveDisplayNotes);
         liveWindowVisualCacheRevision_ = loop.visualCache.revision;
     } else {
         livePlaybackDisplaySlot_ = 255;

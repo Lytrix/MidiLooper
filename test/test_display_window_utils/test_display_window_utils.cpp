@@ -285,6 +285,34 @@ void test_should_assign_grown_visual_cache_over_overdub_hold() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(206u, 126u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(126u, 126u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(0u, 126u));
+  // 232910 wrap 1: cache 89 > prefix 63 must not beat compose 104.
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(89u, 63u, 104u));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(206u, 126u, 134u));
+}
+
+void test_should_adopt_composed_notes_over_visual_cache() {
+  // 000013: 4-bar compose 141 > cache 95 must adopt. Long-loop window must not.
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(141u, 95u, 4u));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(141u, 0u, 64u));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(496u, 2403u, 64u));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(95u, 95u, 4u));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(0u, 95u, 4u));
+}
+
+void test_should_keep_visual_cache_over_smaller_full_loop_slice() {
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(95u, 80u));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(95u, 141u));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(0u, 80u));
 }
 
 void test_overdub_committed_promote_to_full_visual_cache() {
@@ -600,6 +628,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_hold_dirty_overdub_layer_before_window_gather);
   RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
+  RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
+  RUN_TEST(test_should_keep_visual_cache_over_smaller_full_loop_slice);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
   RUN_TEST(test_visual_cache_covers_window_uses_clean_neighborhood);

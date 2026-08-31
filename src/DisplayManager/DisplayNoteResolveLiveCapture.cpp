@@ -308,7 +308,8 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         // not replace a nonempty committed layer.
         const bool visualCacheGrewPastHold =
             DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
-                loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_);
+                loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_,
+                liveDisplayNotes.size());
         if (visualCacheGrewPastHold && !loop.visualCache.notes.empty()) {
             // 201556: wrap left visualCache at 126 then idle/append grew it to 206 while
             // the held layer stayed 126. Assign the grown cache; do not hold.
@@ -352,6 +353,7 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             liveOverdubSourceViewNoteCount_ =
                 loop.hasOverdubSourceView() ? loop.overdubSourceViewNotes().size() : 0;
             liveMergePlaybackRevision_ = loop.playbackRevision;
+            adoptComposedDisplayNotesIfAuthoritative(mutLoop);
             return;
         }
         if (havePaintWindow &&
@@ -678,7 +680,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const bool committedLayerVisualCacheGrew =
         track.isOverdubbing() &&
         DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(
-            loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_);
+            loop.visualCache.notes.size(), liveDisplayCacheCommittedNoteCount_,
+            liveDisplayNotes.size());
 
     const bool committedLayerPromoteToFullVisualCache =
         track.isOverdubbing() && !loop.hasOverdubSourceView() &&

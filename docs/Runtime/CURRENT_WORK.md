@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1k recapture 232910)
+Last updated: 2026-09-01 (visual cache #41 stop compose adopt + idle keep)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -170,18 +170,26 @@ dump. Stop `COORD` storage **1168**; frame dump has no note ending at
 1168 (1j playhead freeze not on that frame).
 **Stage 1k — wrap compose hold:**
 [`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md).
-Native **1527/1527**. RAM1 locals **6848**.
-Device [`232910`](../../captures/session_20260831_232910.log): wraps 2–8
-first `DISP` ≥ last-before-wrap. Wrap 1 `104/63` → `92/89` after
-`append_resume` notes 89: grow used committed prefix **63**, not compose
-**104**. Next frame `104/101`. Grow must compare to the composed hold.
-**Stage 1l — Off@0 leftover tail pair (proposed):**
+Grow compares cache to `max(committedCount, composed liveDisplayNotes)`.
+**Stage 1l — Off@0 leftover tail pair:**
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md).
-Reconstruct leftover-to-end: `39@2960` **112**, `39@2736` **336**,
-`59@3008` **64**. Leftover `N@3008` ×3 + `F@0` ×3 on 59.
-**1b** still open: reconstruct has 33 same-start multi-length stacks
-(39 `@48` 144+368, 45/51 `@144` 8+160, 45/51 `@1136` 32+320). Frame
-dump has 6, including 45/51 `@1136` 0+320.
+Leftover tail-window On + leftover `F@0` wrap-splits to `L-1` (not
+`tryPairWrappedTailOn`). Mid-loop linear pairs stay linear (1h).
+**Stage 1b — same-start shortest end:**
+[`display_visual_cache_same_start_shortest_end_bugfix.md`](../Plans/display_visual_cache_same_start_shortest_end_bugfix.md).
+`dedupeProjectedDisplayNoteVec` unique-keys pitch+start; idle splice skips
+an existing pitch+start.
+**Stage 1m — stop compose adopt (`000013`):**
+[`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
+Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt
+compose onto the outgoing loop when it is larger than that loop's
+`visualCache` on a short loop. Wrap-hold adopts so cache tracks compose
+(wraps 8–11). Full-loop idle must not replace a larger cache with a
+smaller slice (`slice_keep`, Prepared 95→80). Occupy `hide=2` is not this
+slice. Device recapture: first STOPPED on the overdub loop ≥ last
+OVERDUBBING compose; later PLAYING must not fall to 80; cache must not
+freeze at 95 while compose grows.
+Native **1531/1531**. RAM1 locals **6848**.
 Stage 2 is unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
