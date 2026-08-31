@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1b wrap-pair length)
+Last updated: 2026-08-31 (visual cache #41 Stage 1c wrap-held display)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -92,7 +92,14 @@ with wrap pairing off and drops the extras. Visual-cache merge of a sealed
 wrap pass now uses merged reconstruct; `appendOverdubPassWrapPairedNotes`
 skips a longer sibling of an existing pitch+start. Device recapture is
 required before calling 1b closed. Native **1514/1514**. RAM1 locals **6944**.
-Stage 2 is unblocked and not started. Do
+**Stage 1c — wrap-held display:** [`204132`](../../captures/session_20260831_204132.log)
+second wrap occupy already has `39@192–592` and `39@336–592`. STOPPED DNTE
+is short (`192/16`, `336/112`). NOTE_EDIT open
+`rebuildVisualCacheFromPasses` then `VCACHE,full` 291 notes and focus
+`presence=0`. Visual-cache wrap append is wrap-held heads/tails only.
+Source view keeps full wrap pairing. Native **1514/1514**. RAM1 locals
+**6944**. Device recapture required. Stage 2 is
+unblocked and not started. Do
 not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
 

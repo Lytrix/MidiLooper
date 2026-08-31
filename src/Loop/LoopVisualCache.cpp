@@ -107,6 +107,18 @@ bool displayNotePitchStartPresent(const NoteUtils::DisplayNoteVec& notes,
   return false;
 }
 
+bool isWrapHeldDisplayNote(const NoteUtils::DisplayNote& note, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return false;
+  }
+  const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+  if (note.startTick >= tailStart) {
+    return true;
+  }
+  const uint32_t wrapWindow = loopLength - tailStart;
+  return note.startTick == 0 && note.endTick <= wrapWindow;
+}
+
 uint32_t findNextDirtyBar(const VisualBarVec& dirtyBars, uint32_t priorityBar,
                           uint32_t maxBarDistanceFromPriority) {
   if (dirtyBars.empty()) {
@@ -336,7 +348,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #endif
   if (appendOverdub) {
     if (allowOverdubWrapAppend) {
-      appendOverdubPassWrapPairedNotes(sliceNotes);
+      appendOverdubPassDisplayNotes(sliceNotes);
       deferredVisualCacheWrapAppendPending_ = false;
     } else {
       deferredVisualCacheWrapAppendPending_ = true;
@@ -402,7 +414,7 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
 #if defined(SESSION_CAPTURE)
   const uint32_t appendStartUs = micros();
 #endif
-  appendOverdubPassWrapPairedNotes(visualCache.notes);
+  appendOverdubPassDisplayNotes(visualCache.notes);
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
 #endif
@@ -541,7 +553,8 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
   return true;
 }
 
-LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes) const {
+LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes,
+                                                          bool wrapHeldOnly) const {
   if (loopLengthTicks == 0) {
     return;
   }
@@ -563,17 +576,21 @@ LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNote
     const NoteUtils::DisplayNoteVec overdubNotes = NoteUtils::reconstructDisplayNotes(
         overdubEvents, loopLengthTicks, false, false, true);
     for (const NoteUtils::DisplayNote& note : overdubNotes) {
-      // Same pitch+start already has the merged-reconstruct end. Do not add a
-      // wrap-paired longer sibling (202745: 39/45/51 at 208, 256, and 304).
-      if (!displayNotePitchStartPresent(notes, note)) {
-        notes.push_back(note);
+      // Same pitch+start already has the merged-reconstruct end. Visual-cache
+      // callers also drop interior body notes (204132: 192–592 beside 192–16).
+      if (displayNotePitchStartPresent(notes, note)) {
+        continue;
       }
+      if (wrapHeldOnly && !isWrapHeldDisplayNote(note, loopLengthTicks)) {
+        continue;
+      }
+      notes.push_back(note);
     }
   }
 }
 
 LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const {
-  appendOverdubPassWrapPairedNotes(notes);
+  appendOverdubPassWrapPairedNotes(notes, true);
 }
 
 LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
@@ -594,7 +611,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   materializedEventCount_ = flat.size();
   NoteUtils::DisplayNoteVec rebuiltNotes =
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
-  appendOverdubPassWrapPairedNotes(rebuiltNotes);
+  appendOverdubPassDisplayNotes(rebuiltNotes);
   resetFallbackGatherSession();
   deferredVisualCacheWrapAppendPending_ = false;
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());

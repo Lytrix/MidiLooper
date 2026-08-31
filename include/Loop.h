@@ -452,10 +452,13 @@ struct Loop {
   void rebuildVisualCacheFromPasses();
   /// Reconstruct each active overdub pass with `overdubPassWrapPairing` and
   /// append notes that merged record+overdub reconstruct omitted (015618).
-  /// Skip a candidate when pitch+start is already present so wrap pairing
-  /// cannot lengthen a body note (202745). One pass at a time.
-  void appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes) const;
-  /// Visual-cache entry: wrap-paired overdub notes that merged reconstruct omitted.
+  /// Skip a candidate when pitch+start is already present. `wrapHeldOnly`
+  /// keeps wrap-held heads/tails and drops interior body notes (204132).
+  /// Source view uses `wrapHeldOnly=false`. One pass at a time.
+  void appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes,
+                                        bool wrapHeldOnly = false) const;
+  /// Visual-cache entry: wrap-held heads/tails only. Interior wrap-paired
+  /// body notes stay off the piano-roll list (204132 / NOTE_EDIT open).
   void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
