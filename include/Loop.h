@@ -425,6 +425,11 @@ struct Loop {
   void addSnapshotIdleEmitUs(uint32_t durationUs);
   /// Exclusive end tick of first-record live construction already applied.
   uint32_t liveRecordAppliedCompletedTicks() const;
+  /// First unconsumed capture.store index for live-record snapshot publication.
+  size_t liveRecordAppliedEventIndex() const;
+  uint8_t liveRecordOpenNoteCount() const;
+  ImmutableLoopSnapshotRef unpublishedSnapshot() const;
+  const LoopSnapshotChangeSet* pendingSnapshotConstructionChanges() const;
   /// True when a live-record parent exists with tick room, or none exists yet.
   bool liveRecordCanApplyCompletedTicks(uint32_t completedTicks) const;
   /// Settled NOTE_EDIT close batch. In-session durable checkpoints stay provisional.
@@ -528,6 +533,8 @@ struct Loop {
   void assignMissingNoteIds(SessionMidiEventVec& events);
   void assignMissingNoteIds(MidiEventVec& events);
   void assignMissingNoteIdsInStore(LoopEventStore& store);
+  void assignMissingNoteIdsInStoreWindow(LoopEventStore& store, size_t beginIndex,
+                                         uint32_t includeUntil);
   /// Fill kInvalidNoteId on active record/overdub committed chunks. Same allocateNoteId
   /// as InStore. In-place; chunk ids unchanged so playback refs stay valid.
   void assignMissingNoteIdsInCommittedCapturePasses();

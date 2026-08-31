@@ -223,6 +223,7 @@ class LoopSnapshotConstruction {
   size_t totalChangeCount() const { return changes_.notes.size() + changes_.events.size(); }
 
   const LoopSnapshot& candidate() const { return candidate_; }
+  const LoopSnapshotChangeSet& changes() const { return changes_; }
   void handoffLoopLengthTicks(uint32_t loopLengthTicks);
   std::shared_ptr<const LoopSnapshot> freeze() const;
 

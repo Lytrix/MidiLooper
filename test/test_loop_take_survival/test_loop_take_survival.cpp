@@ -777,6 +777,139 @@ void test_live_record_does_not_rebuild_when_parent_has_no_room() {
   TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
 }
 
+void test_live_record_second_bar_start_changes_are_bar_two_only() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(2u, loop.liveRecordAppliedEventIndex());
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(Config::TICKS_PER_BAR + 100, 1, 64, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(Config::TICKS_PER_BAR + 200, 1, 64, 0)));
+  TEST_ASSERT_TRUE(
+      loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR * 2));
+  const LoopSnapshotChangeSet* changes = loop.pendingSnapshotConstructionChanges();
+  TEST_ASSERT_NOT_NULL(changes);
+  TEST_ASSERT_TRUE(!changes->events.empty());
+  for (const SnapshotEventChange& change : changes->events) {
+    TEST_ASSERT_TRUE(change.next.value.tick >= Config::TICKS_PER_BAR);
+    TEST_ASSERT_TRUE(change.next.value.tick < Config::TICKS_PER_BAR * 2);
+  }
+  for (const SnapshotNoteChange& change : changes->notes) {
+    TEST_ASSERT_TRUE(change.next.startTick >= Config::TICKS_PER_BAR);
+    TEST_ASSERT_TRUE(change.next.startTick < Config::TICKS_PER_BAR * 2);
+  }
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR * 2, loop.liveRecordAppliedCompletedTicks());
+}
+
+void test_live_record_held_note_pairs_on_next_bar_off() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(1u, loop.liveRecordOpenNoteCount());
+  TEST_ASSERT_NOT_NULL(loop.unpublishedSnapshot().get());
+  TEST_ASSERT_NULL(loop.unpublishedSnapshot()->noteMembership(60, 0).get());
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(Config::TICKS_PER_BAR + 200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(
+      loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR * 2));
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordOpenNoteCount());
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR * 2, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(1u, loop.unpublishedSnapshot()->noteMembership(60, 0)->count);
+}
+
+void test_live_record_dense_bar_keeps_cursor_inside_bar() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  constexpr size_t kPairs = 20;
+  for (size_t i = 0; i < kPairs; ++i) {
+    const uint32_t onTick = 10 + static_cast<uint32_t>(i) * 20;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(onTick, 1, static_cast<uint8_t>(40 + i), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(onTick + 10, 1, static_cast<uint8_t>(40 + i), 0)));
+  }
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
+  const size_t afterFirst = loop.liveRecordAppliedEventIndex();
+  TEST_ASSERT_TRUE(afterFirst > 0);
+  TEST_ASSERT_TRUE(afterFirst < kPairs * 2);
+  const LoopSnapshotChangeSet* changes = loop.pendingSnapshotConstructionChanges();
+  TEST_ASSERT_NOT_NULL(changes);
+  for (const SnapshotEventChange& change : changes->events) {
+    TEST_ASSERT_TRUE(change.next.value.tick < Config::TICKS_PER_BAR);
+  }
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(afterFirst, loop.liveRecordAppliedEventIndex());
+
+  size_t steps = 0;
+  while (loop.liveRecordAppliedCompletedTicks() < Config::TICKS_PER_BAR && steps < 16) {
+    TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+    drainInFlightSnapshotPublish(loop);
+    ++steps;
+  }
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(kPairs * 2, loop.liveRecordAppliedEventIndex());
+}
+
+void test_live_record_equal_boundary_event_waits_for_next_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+      MidiEvent::NoteOn(Config::TICKS_PER_BAR, 1, 64, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+      MidiEvent::NoteOff(Config::TICKS_PER_BAR + 100, 1, 64, 0)));
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(2u, loop.liveRecordAppliedEventIndex());
+  TEST_ASSERT_EQUAL(1u, loop.unpublishedSnapshot()->noteMembership(60, 0)->count);
+  TEST_ASSERT_NULL(loop.unpublishedSnapshot()->noteMembership(64, 1).get());
+
+  TEST_ASSERT_TRUE(
+      loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR * 2));
+  const LoopSnapshotChangeSet* changes = loop.pendingSnapshotConstructionChanges();
+  TEST_ASSERT_NOT_NULL(changes);
+  bool sawBoundaryOn = false;
+  for (const SnapshotEventChange& change : changes->events) {
+    TEST_ASSERT_TRUE(change.next.value.tick >= Config::TICKS_PER_BAR);
+    if (change.next.value.tick == Config::TICKS_PER_BAR && change.next.value.isNoteOn()) {
+      sawBoundaryOn = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sawBoundaryOn);
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR * 2, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(1u, loop.unpublishedSnapshot()->noteMembership(64, 1)->count);
+}
+
 void test_live_record_starts_snapshot_before_session_exit() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1151,6 +1284,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_does_not_start_in_progress_bar);
   RUN_TEST(test_live_record_continues_next_completed_bar);
   RUN_TEST(test_live_record_does_not_rebuild_when_parent_has_no_room);
+  RUN_TEST(test_live_record_second_bar_start_changes_are_bar_two_only);
+  RUN_TEST(test_live_record_held_note_pairs_on_next_bar_off);
+  RUN_TEST(test_live_record_dense_bar_keeps_cursor_inside_bar);
+  RUN_TEST(test_live_record_equal_boundary_event_waits_for_next_window);
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);

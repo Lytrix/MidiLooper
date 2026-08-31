@@ -31,12 +31,33 @@ struct PendingPassChangeProgress {
   std::array<OpenNote, kSnapshotWrapJournalMaxChanges> openNotes{};
   uint8_t openNoteCount = 0;
   bool active = false;
+  bool fromCaptureStore = false;
+  bool storeWindowComplete = false;
+  size_t nextStoreIndex = 0;
+  uint32_t includeUntil = 0;
 
   void reset() { *this = PendingPassChangeProgress{}; }
 
   bool batchExhausted() const { return batchIndex >= batch.size(); }
 
-  bool complete() const { return cursor.complete && batchExhausted(); }
+  bool captureWindowConsumed() const {
+    return fromCaptureStore && storeWindowComplete && batchExhausted();
+  }
+
+  size_t consumedStoreIndex() const {
+    if (!fromCaptureStore) {
+      return nextStoreIndex;
+    }
+    const size_t remaining = batchExhausted() ? 0 : (batch.size() - batchIndex);
+    return nextStoreIndex - remaining;
+  }
+
+  bool complete() const {
+    if (fromCaptureStore) {
+      return captureWindowConsumed() && openNoteCount == 0;
+    }
+    return cursor.complete && batchExhausted();
+  }
 };
 
 struct PublishedSnapshotBox {
@@ -57,8 +78,18 @@ struct PendingSnapshotPublishBox {
   std::vector<SnapshotWrapJournalFragment> queuedWrapJournals;
   PendingPassChangeProgress passChangeProgress;
   PassId constructionPassId = kInvalidPassId;
-  size_t appliedLiveRecordEventCount = 0;
+  size_t appliedLiveRecordEventIndex = 0;
   uint32_t appliedLiveRecordCompletedTicks = 0;
   std::unique_ptr<LoopSnapshotConstruction> construction;
   ImmutableLoopSnapshotRef unpublishedCandidate;
+
+  void persistLiveRecordCursor() {
+    if (!passChangeProgress.fromCaptureStore) {
+      return;
+    }
+    appliedLiveRecordEventIndex = passChangeProgress.consumedStoreIndex();
+    if (passChangeProgress.captureWindowConsumed()) {
+      appliedLiveRecordCompletedTicks = passChangeProgress.includeUntil;
+    }
+  }
 };
