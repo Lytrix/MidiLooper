@@ -13,6 +13,7 @@
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
+#define LOOP_PENDING_NOTE_CHANGE_PROVIDES_DISPLAY_APPLY
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
 #include "../../src/EditManager/NoteEditCurrentState.cpp"

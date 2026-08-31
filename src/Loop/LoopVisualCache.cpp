@@ -244,9 +244,17 @@ LOOP_COLD_MEM void Loop::emitVisualCacheIdleGatherPath() const {
 #endif
 }
 
+LOOP_COLD_MEM void Loop::applyPendingNoteChangesToVisualCacheNotes() {
+  if (!hasOverdubSession() || !hasPendingNoteChanges() || visualCache.notes.empty()) {
+    return;
+  }
+  applyPendingNoteChangesToDisplayNotes(visualCache.notes, visualCache.notes.size());
+}
+
 LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
   adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
                                Config::TICKS_PER_BAR);
+  applyPendingNoteChangesToVisualCacheNotes();
   emitVisualCacheState("adopt_partial", -1);
 }
 
@@ -431,6 +439,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
     ++visualCache.revision;
+    applyPendingNoteChangesToVisualCacheNotes();
     emitVisualCacheState("slice_keep", -1);
     return;
   }
@@ -446,6 +455,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     }
   }
   DisplayWindowUtils::keepShortestEndAtPitchStart(visualCache.notes);
+  applyPendingNoteChangesToVisualCacheNotes();
 
   for (uint32_t bar = startBar; bar <= endBar; ++bar) {
     visualCache.dirtyBars[bar] = 0;
@@ -481,6 +491,7 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
 #endif
+  applyPendingNoteChangesToVisualCacheNotes();
   deferredVisualCacheWrapAppendPending_ = false;
   ++visualCache.revision;
   emitVisualCacheState("append_resume", -1);

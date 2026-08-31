@@ -331,6 +331,8 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
                 liveWindowGatherValid_ = false;
             }
+            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes, liveDisplayNotes.size());
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveDisplayCommittedFromWindowGather_ = false;
             liveCommittedLayerHeldForDirtyCache_ = false;
             liveOverdubSourceViewNoteCount_ =
@@ -364,6 +366,7 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             DIAG_COUNTER_INC(DisplayCommittedWindowFilter);
             filterNotesToFollowWindow(loop.visualCache.notes, paintWindowStart, paintWindowLength,
                                       liveLoopLength, liveDisplayNotes, gatherStart, gatherLength);
+            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes, liveDisplayNotes.size());
             liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveWindowGatherValid_ = true;
             liveWindowGatherStart_ = gatherStart;

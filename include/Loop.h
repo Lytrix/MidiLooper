@@ -319,8 +319,14 @@ struct Loop {
                                                    const OverlapNoteIdSet& overlapNoteIds);
   /// Occupy On / playback cross: paint-only Hide of each occupied source-view row.
   /// Not sealed as a Delete companion. Incoming length does not matter.
+  /// When occupy ids have no source-view row, fall back to present-at-hold
+  /// participants at `holdPhaseTick` (`010926` norowid).
   void upsertPendingHidesForOccupiedNoteIds(uint8_t channel, uint8_t pitch, uint8_t velocity,
-                                            const OverlapNoteIdSet& overlapNoteIds);
+                                            const OverlapNoteIdSet& overlapNoteIds,
+                                            uint32_t holdPhaseTick);
+  /// Apply pending Shorten/Hide and paint Hide onto `visualCache.notes`.
+  /// Used after idle slice / wrap append so wrap first paint is not raw committed.
+  void applyPendingNoteChangesToVisualCacheNotes();
   /// Pair one linear incoming `[S, E)` against an explicit source-note list (Shorten/Hide only).
   void accumulatePendingNoteChangesFromSourceNotes(const NoteUtils::DisplayNoteVec& sourceNotes,
                                                    uint8_t channel, uint8_t pitch, uint8_t velocity,

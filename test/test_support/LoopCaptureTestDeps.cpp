@@ -25,3 +25,11 @@ bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED
 #include "../../src/Loop/LoopOverdubSession.cpp"
 #include "../../src/LoopContentResolution.cpp"
 #include "../../src/Loop/LoopVisualCache.cpp"
+
+#if defined(PIO_UNIT_TEST_NATIVE) && !defined(LOOP_PENDING_NOTE_CHANGE_PROVIDES_DISPLAY_APPLY)
+void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& notes,
+                                                 size_t liveCaptureBegin) const {
+  (void)notes;
+  (void)liveCaptureBegin;
+}
+#endif
