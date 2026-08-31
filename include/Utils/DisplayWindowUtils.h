@@ -242,6 +242,40 @@ inline bool shouldKeepVisualCacheOverSmallerFullLoopSlice(size_t visualCacheNote
   return visualCacheNoteCount > 0 && sliceNoteCount < visualCacheNoteCount;
 }
 
+/// Display-only: one row per pitch+start, shortest exclusive end. Reconstruct
+/// keeps every noteId so occupy can Hide a longer same-start sibling (`002145`
+/// norow 75/76). Wrap-held (`endTick < startTick`) rows are left untouched.
+inline void keepShortestEndAtPitchStart(NoteUtils::DisplayNoteVec& notes) {
+  if (notes.size() < 2) {
+    return;
+  }
+  NoteUtils::DisplayNoteVec kept;
+  kept.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i) {
+    const NoteUtils::DisplayNote& note = notes[i];
+    if (note.endTick < note.startTick) {
+      kept.push_back(note);
+      continue;
+    }
+    bool dominated = false;
+    for (size_t j = 0; j < notes.size(); ++j) {
+      const NoteUtils::DisplayNote& other = notes[j];
+      if (other.note != note.note || other.startTick != note.startTick ||
+          other.endTick < other.startTick) {
+        continue;
+      }
+      if (other.endTick < note.endTick || (other.endTick == note.endTick && j < i)) {
+        dominated = true;
+        break;
+      }
+    }
+    if (!dominated) {
+      kept.push_back(note);
+    }
+  }
+  notes.swap(kept);
+}
+
 /// Overdub committed layer must switch from window gather to full visualCache when idle
 /// slices finish — otherwise wrap/auto-follow keeps painting a stale ~18-bar gather until stop.
 inline bool shouldPromoteOverdubCommittedToFullVisualCache(bool overdubbing, bool visualCacheDirty,

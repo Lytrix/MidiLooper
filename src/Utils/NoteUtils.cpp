@@ -750,7 +750,8 @@ NOTE_EDIT_MEM NoteVector dedupeProjectedDisplayNoteVec(const NoteUtils::DisplayN
     size_t uniqueCount = 0;
     for (size_t i = 0; i < ranked.size(); ++i) {
         if (uniqueCount == 0 || ranked[i].note != ranked[uniqueCount - 1].note ||
-            ranked[i].startTick != ranked[uniqueCount - 1].startTick) {
+            ranked[i].startTick != ranked[uniqueCount - 1].startTick ||
+            ranked[i].endTick != ranked[uniqueCount - 1].endTick) {
             ranked[uniqueCount++] = ranked[i];
         }
     }

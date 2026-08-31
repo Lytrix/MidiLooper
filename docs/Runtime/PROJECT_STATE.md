@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-01 (visual cache #41 1k/1l/1b/1m stop compose adopt)
+Last updated: 2026-09-01 (occupy same-start shorter hides longer)
 
 ---
 
@@ -137,7 +137,12 @@ paint-only
 Device [`232910`](../../captures/session_20260831_232910.log): 1k wraps
 2–8 hold; wrap 1 `104→92` after idle `append_resume` 89 is the grow-vs-prefix
 hole (fix: compare to composed hold). Dump `reconstruct` 327 / `frame` 412.
-First STOPPED **412 / 208**. 1l / 1b still open.
+First STOPPED **412 / 208**. 1k/1m device PASS [`002145`](../../captures/session_20260901_002145.log).
+Occupy same-start hide is in tree
+([`overdub_occupy_same_start_shorter_hides_longer_bugfix.md`](../Plans/overdub_occupy_same_start_shorter_hides_longer_bugfix.md)):
+reconstruct keeps both `noteId`s; display adopt/idle keep the shortest end.
+Native **1533/1533**. RAM1 locals **6848**. Device recapture required
+(`002145` `norow` 75/76; pitch 63 frame 96+288). 1l not in that log.
 ([`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md),
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md)).
 Stage 2 is unblocked and not started.

@@ -474,6 +474,23 @@ void test_pending_shorten_ignores_recorded_channel() {
   TEST_ASSERT_EQUAL_UINT32(119u, shorten->endTick);
 }
 
+void test_pending_hide_same_start_shorter_hides_longer() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 64, 288, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 160, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), 1));
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Hide),
+                    static_cast<int>(findTransform(loop.pendingNoteChanges(), 1)->kind));
+}
+
 void test_pending_hide_same_start_longer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2609,6 +2626,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_long_source_on_overlap);
   RUN_TEST(test_pending_shorten_ignores_recorded_channel);
   RUN_TEST(test_pending_hide_when_covered);
+  RUN_TEST(test_pending_hide_same_start_shorter_hides_longer);
   RUN_TEST(test_pending_hide_same_start_longer);
   RUN_TEST(test_pending_hide_applies_to_display_notes_not_source_view);
   RUN_TEST(test_pending_shorten_applies_to_display_notes);

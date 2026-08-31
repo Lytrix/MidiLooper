@@ -1,6 +1,6 @@
 # Display visual-cache same-start shortest end
 
-**Status:** Implemented — native **1531/1531**, RAM1 locals **6848**. Device recapture required.  
+**Status:** Reconstruct unique-key reverted 2026-09-01 — occupy needs both noteIds (`002145` norow). Display keep-shortest is `keepShortestEndAtPitchStart` on adopt/idle only. See [`overdub_occupy_same_start_shorter_hides_longer_bugfix.md`](overdub_occupy_same_start_shorter_hides_longer_bugfix.md).  
 **Date:** 2026-09-01  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1b (same-start stacks)  

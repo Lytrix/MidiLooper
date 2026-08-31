@@ -1,6 +1,6 @@
 # Display visual-cache stop compose adopt
 
-**Status:** Implemented — native **1531/1531**, RAM1 locals **6848**. Device recapture required.  
+**Status:** Implemented — native **1531/1531**, RAM1 locals **6848**. Device PASS [`002145`](../../captures/session_20260901_002145.log) (`88/80→88/88`, `145/144→145/145`).  
 **Date:** 2026-09-01  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1m  

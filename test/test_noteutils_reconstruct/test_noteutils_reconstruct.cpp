@@ -271,7 +271,7 @@ void test_reconstruct_b3_linear_off_not_stolen_by_off_at_zero() {
     TEST_ASSERT_TRUE(found3008Tail);
 }
 
-void test_reconstruct_same_pitch_start_keeps_shortest_end() {
+void test_reconstruct_same_pitch_start_keeps_both_ends() {
     constexpr uint32_t loopLength = 3072;
     constexpr uint8_t pitch = 39;
     MidiEventVec ev;
@@ -280,11 +280,9 @@ void test_reconstruct_same_pitch_start_keeps_shortest_end() {
     ev.push_back(MidiEvent::NoteOff(192, 4, pitch, 0));
     ev.push_back(MidiEvent::NoteOff(416, 4, pitch, 0));
     auto notes = NoteUtils::reconstructNotes(ev, loopLength);
-    TEST_ASSERT_EQUAL(1u, notes.size());
+    TEST_ASSERT_EQUAL(2u, notes.size());
     assert_has_note(notes, pitch, 48, 192, 100);
-    for (const auto& n : notes) {
-        TEST_ASSERT_FALSE(n.note == pitch && n.startTick == 48u && n.endTick == 416u);
-    }
+    assert_has_note(notes, pitch, 48, 416, 100);
 }
 
 void test_reconstruct_leftover_off_zero_pairs_tail_on_not_open_to_loop_end() {
@@ -604,7 +602,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_wrap_with_synthetic_loop_end_before_head_off);
     RUN_TEST(test_reconstruct_b3_linear_off_not_stolen_by_off_at_zero);
     RUN_TEST(test_reconstruct_leftover_off_zero_pairs_tail_on_not_open_to_loop_end);
-    RUN_TEST(test_reconstruct_same_pitch_start_keeps_shortest_end);
+    RUN_TEST(test_reconstruct_same_pitch_start_keeps_both_ends);
     RUN_TEST(test_reconstruct_b3_off_at_zero_after_mid_loop_on_keeps_linear_off);
     RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
     RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);
