@@ -747,11 +747,14 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     livePlaybackDisplaySlot_ = displaySlot;
     livePlaybackDisplayTrack_ = resolveTrackIndex(track);
     const size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
+    const bool applyLiveCaptureTails =
+        !reuseLastValidFrame && (track.isRecording() || track.isOverdubbing()) &&
+        !budgetExceeded();
+    const bool haveOpenPlayheadTails =
+        applyLiveCaptureTails && !loop.capturePreview.openNoteIndices.empty();
+    const bool havePendingPaint = track.isOverdubbing() && loop.hasPendingNoteChanges();
 
-    if (!reuseLastValidFrame && (track.isRecording() || track.isOverdubbing()) &&
-        !budgetExceeded()) {
-        const uint32_t tailsStartUs = micros();
-        const uint32_t playheadCloseTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
+    if (applyLiveCaptureTails) {
         for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {
             if (previewNoteIndex >= loop.capturePreview.notes.size()) {
                 continue;
@@ -762,7 +765,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                     loop.capturePreview.notes[previewNoteIndex];
             }
         }
-        if (!loop.capturePreview.openNoteIndices.empty()) {
+    }
+
+    const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
+    if (haveOpenPlayheadTails || havePendingPaint) {
+        liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        if (haveOpenPlayheadTails) {
+            const uint32_t tailsStartUs = micros();
+            const uint32_t playheadCloseTick =
+                resolvePlayheadInLoop(track, displaySlot, currentTick);
             // Growing RECORD has no sealed loop wrap. Overdub session wrap jumps
             // playhead to S; a held tail ON then extends to loop end until NoteOff
             // (012925 note 30). Linear playhead close only — no wrap tail or head.
@@ -770,16 +781,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                 !track.isOverdubbing() &&
                 !(track.isRecording() && !track.isPlaying());
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
-                                      committedDisplayEnd, liveDisplayNotes,
+                                      committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
+            DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
         }
-        DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
-    }
-
-    const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
-    if (track.isOverdubbing() && loop.hasPendingNoteChanges()) {
-        liveDisplayPendingPaintNotes_ = liveDisplayNotes;
-        loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_);
+        if (havePendingPaint) {
+            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_);
+        }
         paintedNotes = &liveDisplayPendingPaintNotes_;
     }
 
