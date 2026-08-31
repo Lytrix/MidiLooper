@@ -247,8 +247,13 @@ struct Loop {
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// Append display notes from `lastCommittedPassId()` chunks into the existing
   /// source view and restamp the span cache to the current `playbackRevision`.
-  /// Walks only that pass. Skips NoteIds already present.
+  /// Also merges those notes into `visualCache.notes` by geometry so wrap paint
+  /// can assign the grown cache. Walks only that pass. Source-view merge skips
+  /// NoteIds already present.
   void appendLastCommittedOverdubPassToSourceView();
+  /// Append candidates missing from `visualCache.notes` by pitch+span. Does not
+  /// clear dirty bars.
+  void mergeDisplayNotesIntoVisualCache(const NoteUtils::DisplayNoteVec& candidates);
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
   /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.
   /// Skips noteIds already present. Optional `newlyMergedPitchNotes` receives

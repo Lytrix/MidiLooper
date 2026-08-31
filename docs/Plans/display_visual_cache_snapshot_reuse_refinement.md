@@ -1,6 +1,6 @@
 # Display visual-cache snapshot reuse
 
-**Status:** Stage 1 wrap-stale in tree; span-cache restamp follow-up in tree; device recapture required. Stage 2 parked. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
+**Status:** Stage 1 wrap-stale + span-cache restamp in tree; wrap paint hold FAIL [`201556`](../../captures/session_20260831_201556.log). Stage 2 parked. GitHub [#41](https://github.com/Lytrix/MidiLooper/issues/41).  
 **Date:** 2026-08-31  
 **Kind:** refinement (Stage 1 is a wrap-stale bugfix; Stage 2 is 4b.1b snapshot fill)  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) — one work item, two stages. Work: [Work](https://github.com/users/Lytrix/projects/1)  
@@ -17,7 +17,7 @@
 
 | Stage | Invariant | Status |
 |---|---|---|
-| **1 — wrap-stale** | After wrap commit (and the following `beginCapture(Overdub)`), `visualCache.notes` stay. `dirtyBars` is the affected bar set, never empty-then-all while notes exist. After wrap + `appendLastCommittedOverdubPassToSourceView`, `overdubSourceSpanCacheReady()` is true so idle does not `from=passes`. | Wrap-stale native **1511/1511**, RAM1 locals **6944**. Device [`200434`](../../captures/session_20260831_200434.log): wrap `stale_range` `notes=127` `dsz=8` (dsz=0-while-notes **holds**); idle `from=passes` at `85977810` is the remaining clause. Span-cache restamp follow-up native **1512/1512**, RAM1 locals **6944**; device recapture required. |
+| **1 — wrap-stale** | After wrap commit (and the following `beginCapture(Overdub)`), `visualCache.notes` stay. `dirtyBars` is the affected bar set, never empty-then-all while notes exist. After wrap + `appendLastCommittedOverdubPassToSourceView`, `overdubSourceSpanCacheReady()` is true so idle does not `from=passes`. Sealed wrap-pass notes merge into `visualCache`; overdub paint assigns the grown cache instead of the pre-wrap hold. | Wrap-stale + restamp native **1512/1512**, RAM1 locals **6944**. Device [`200434`](../../captures/session_20260831_200434.log): no `dsz=0` while notes exist. [`201556`](../../captures/session_20260831_201556.log): no wrap `from=passes`; DISP `205→133` then `visual=206` / `frame=134` for the rest of the loop. Paint-hold follow-up native **1513/1513**, RAM1 locals **6944**; device recapture required. |
 | **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | Parked until Stage 1 device PASS. This is former 4b.1b. |
 
 Stage 2 first would copy snapshot notes, then wrap would wipe them again.
@@ -41,6 +41,7 @@ Overdub **button** start already must not `markDisplayCachesStale` (DEC-036 3b).
 - Idle: empty `dirtyBars` + nonempty notes must not mean `markAllVisualCacheBarsDirty`.
 - Do not `visualCache.notes.clear()` / `invalidateDisplayCaches` on wrap or overdub start.
 - `appendLastCommittedOverdubPassToSourceView` merges the wrap-pass notes into `overdubSourceSpanCacheNotes_` and restamps `valid` / `playbackRevision` / `fullLoop`. O(pass) only — not a full-loop span-cache reconstruct on the wrap tick.
+- Same pass notes merge into `visualCache.notes` by geometry. Overdub paint assigns a grown cache (`shouldAssignGrownVisualCacheOverOverdubHold`) instead of holding the pre-wrap record-only layer.
 
 Native: wrap a clean 16-bar cache; note count holds; `dirtyBars` is the wrap-pass span. After wrap-pair restamp fail, append makes `overdubSourceSpanCacheReady()` true and keeps the record note. Record-stop `markDisplayCachesStale` unchanged.
 
@@ -78,6 +79,7 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 | Empty dirty set | Do not emit `dsz=0`; idle does not `markAllVisualCacheBarsDirty` |
 | Record-stop | `markDisplayCachesStale` unchanged |
 | Wrap idle `from=passes` | Restamp existing span cache in `appendLastCommittedOverdubPassToSourceView`; do not reconstruct on the wrap tick |
+| Wrap paint hold | Merge sealed pass into `visualCache`; assign grown cache over the pre-wrap hold |
 | Stage 2 | Not this session |
 
 ### Open before coding

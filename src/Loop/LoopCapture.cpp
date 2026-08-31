@@ -699,6 +699,7 @@ LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   const NoteUtils::DisplayNoteVec passNotes =
       NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
   mergeDisplayNotesIntoOverdubSourceView(passNotes);
+  mergeDisplayNotesIntoVisualCache(passNotes);
   // Wrap restamp can clear readiness (wrap-pair / missing id) while leaving notes.
   // Idle then rebuildOverdubSourceView("idle") from=passes (200434). Merge the
   // same wrap-pass notes into the existing span cache and restamp so ready()

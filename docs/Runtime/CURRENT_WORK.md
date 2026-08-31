@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-08-31 (visual cache #41 Stage 1 span-cache restamp in tree)
+Last updated: 2026-08-31 (visual cache #41 wrap paint hold in tree)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -78,17 +78,16 @@ recapture remains open.
 **Now — visual cache wrap-stale (Stage 1)**
 ([#41](https://github.com/Lytrix/MidiLooper/issues/41),
 [`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md)):
-wrap-stale marks are in tree. Remaining device FAIL
-[`200434`](../../captures/session_20260831_200434.log) is wrap idle
-`lcr,src,why=idle,from=passes` at `85977810`: wrap restamp leaves notes but
-clears `overdubSourceSpanCacheReady()`, then idle
-`rebuildOverdubSourceView("idle")`. `appendLastCommittedOverdubPassToSourceView`
-now merges wrap-pass notes into the existing span cache and restamps
-`playbackRevision` (O(pass); not a full-loop reconstruct on the wrap tick).
-Native **1512/1512**
-(`test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail`). RAM1
-locals **6944**. Device recapture required. Stage 2 stays parked. Do not
-start all-track idle fan-out,
+wrap-stale marks and span-cache restamp are in tree. Device
+[`201556`](../../captures/session_20260831_201556.log): no wrap
+`from=passes`; first overdub pass leaves the paint frame (`205→133`, then
+`visual=206` / `frame=134`). Cause: wrap hold keeps the record-only committed
+layer; idle fills `visualCache` but paint does not assign the grown cache.
+`appendLastCommittedOverdubPassToSourceView` now also merges wrap-pass notes
+into `visualCache.notes` by geometry. Paint assigns when
+`shouldAssignGrownVisualCacheOverOverdubHold`. Native **1513/1513**. RAM1
+locals **6944**. Device recapture required.
+Stage 2 stays parked. Do not start all-track idle fan-out,
 `T4 track_update`, N / pages knobs, or OpenSpec `3.5` / `3.6` checkoff.
 
 **Shipped — live-record skip parent note lookup**

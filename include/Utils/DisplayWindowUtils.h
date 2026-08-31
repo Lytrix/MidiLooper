@@ -163,6 +163,13 @@ inline bool shouldHoldOverdubCommittedHandoff(bool canHoldCommittedLayer, bool h
   return liveWindowGatherValid && paintWindowInsideGather;
 }
 
+/// After wrap, idle or wrap-append can grow `visualCache` past the held PLAYING
+/// layer (`201556`: visual=206, frame stayed 134). Do not hold that smaller layer.
+inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCount,
+                                                       size_t heldCommittedNoteCount) {
+  return visualCacheNoteCount > heldCommittedNoteCount;
+}
+
 /// Overdub committed layer must switch from window gather to full visualCache when idle
 /// slices finish — otherwise wrap/auto-follow keeps painting a stale ~18-bar gather until stop.
 inline bool shouldPromoteOverdubCommittedToFullVisualCache(bool overdubbing, bool visualCacheDirty,
