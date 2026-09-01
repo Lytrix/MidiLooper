@@ -206,6 +206,16 @@ private:
                                              uint32_t paintWindowStart, uint32_t paintWindowLength);
     const DisplayNoteVec& resolveDisplayNotesCommitted(const Track& track, uint8_t displaySlot,
                                                          uint32_t currentTick);
+    /// Per-bar Snapshot / VisualCache / Capture gather, then pending transforms
+    /// and draw-only playhead tails. Replaces live/committed compose for paint.
+    const DisplayNoteVec& resolveDisplayNotesByDrawSource(const Track& track, uint8_t displaySlot,
+                                                          uint32_t currentTick,
+                                                          uint8_t pitchLow = 0,
+                                                          uint8_t pitchHigh = 127);
+#if defined(SESSION_CAPTURE)
+    void logDrawSourceComposeDifferential(const Track& track, uint8_t displaySlot,
+                                          uint32_t currentTick, const DisplayNoteVec& drawnNotes);
+#endif
     /// Match `drawPianoRoll` detailed-window geometry (auto-follow + clamp).
     bool syncDetailedPaintWindow(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                  uint32_t loopLength, uint32_t& outWindowStart,

@@ -5,6 +5,7 @@
 #include "DisplayManagerInternal.h"
 
 #include "Globals.h"
+#include "LoopSnapshot.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
@@ -150,4 +151,165 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     liveWindowVisualCacheRevision_ = UINT32_MAX;
     DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
     return liveDisplayNotes;
+}
+
+namespace {
+
+NoteUtils::DisplayNote displayNoteFromSnapshotNote(const LoopSnapshotNote& note) {
+    NoteUtils::DisplayNote out{};
+    out.noteId = note.noteId;
+    out.note = note.pitch;
+    out.velocity = note.velocity;
+    out.startTick = note.startTick;
+    out.endTick = note.endTick;
+    return out;
+}
+
+void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out, const NoteUtils::DisplayNote& note) {
+    if (note.noteId != kInvalidNoteId) {
+        for (const auto& existing : out) {
+            if (existing.noteId == note.noteId) {
+                return;
+            }
+        }
+    }
+    out.push_back(note);
+}
+
+bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
+                              uint32_t loopLength) {
+    const uint32_t barStart = bar * Config::TICKS_PER_BAR;
+    return DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, barStart,
+                                                    Config::TICKS_PER_BAR, loopLength);
+}
+
+bool barIsLiveCapture(const Loop& loop, uint32_t bar, uint32_t playheadBar, uint32_t loopLength) {
+    if (!loop.captureActive()) {
+        return false;
+    }
+    if (bar == playheadBar) {
+        return true;
+    }
+    const VisualBarVec& dirtyBars = loop.capturePreview.dirtyBars;
+    if (bar < dirtyBars.size() && dirtyBars[bar] != 0) {
+        return true;
+    }
+    for (const NoteUtils::DisplayNote& note : loop.capturePreview.notes) {
+        if (previewNoteIntersectsBar(note, bar, loopLength)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8_t pitchLow,
+                               uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
+    const uint8_t lastPitch =
+        pitchHigh < kLoopSnapshotPitchCount ? pitchHigh
+                                            : static_cast<uint8_t>(kLoopSnapshotPitchCount - 1);
+    for (uint16_t pitch = pitchLow; pitch <= lastPitch; ++pitch) {
+        const auto membership = snapshot.noteMembership(static_cast<uint8_t>(pitch), bar);
+        forEachSnapshotMembershipReference(
+            membership.get(), [&out](const LoopSnapshotNoteRef& reference) {
+                if (!reference) {
+                    return;
+                }
+                appendDisplayNoteUniqueById(out, displayNoteFromSnapshotNote(*reference));
+            });
+    }
+}
+
+void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_t bar,
+                                uint32_t loopLength, NoteUtils::DisplayNoteVec& out) {
+    for (const NoteUtils::DisplayNote& note : source) {
+        if (previewNoteIntersectsBar(note, bar, loopLength)) {
+            appendDisplayNoteUniqueById(out, note);
+        }
+    }
+}
+
+}  // namespace
+
+DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDrawSource(
+    const Track& track, uint8_t displaySlot, uint32_t currentTick, uint8_t pitchLow,
+    uint8_t pitchHigh) {
+    const Loop& loop = track.getLoop(displaySlot);
+    const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
+    liveDisplayNotes.clear();
+    if (loopLength == 0) {
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
+        return liveDisplayNotes;
+    }
+
+    uint32_t windowStart = 0;
+    uint32_t windowLength = loopLength;
+    uint8_t windowBars = 0;
+    syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart, windowLength,
+                            windowBars);
+    if (windowLength == 0) {
+        windowStart = 0;
+        windowLength = loopLength;
+    }
+
+    const uint32_t playheadTick = resolvePlayheadInLoop(track, displaySlot, currentTick);
+    const uint32_t playheadBar =
+        Config::TICKS_PER_BAR > 0 ? playheadTick / Config::TICKS_PER_BAR : 0;
+    const uint32_t firstBar =
+        Config::TICKS_PER_BAR > 0 ? windowStart / Config::TICKS_PER_BAR : 0;
+    const uint32_t lastTick = windowStart + windowLength > 0 ? windowStart + windowLength - 1 : 0;
+    const uint32_t lastBar = Config::TICKS_PER_BAR > 0 ? lastTick / Config::TICKS_PER_BAR : 0;
+    const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
+    const ImmutableLoopSnapshotRef snapshot = snapshotCurrent ? loop.publishedSnapshot() : nullptr;
+    const bool captureActive = loop.captureActive();
+    const uint8_t resolvedPitchLow = pitchLow;
+    const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+
+    const uint32_t gatherStartUs = micros();
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        if (snapshotCurrent && snapshot) {
+            appendSnapshotNotesForBar(*snapshot, bar, resolvedPitchLow, resolvedPitchHigh,
+                                      liveDisplayNotes);
+        } else {
+            appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, liveDisplayNotes);
+        }
+    }
+    const size_t committedDisplayEnd = liveDisplayNotes.size();
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        const bool liveBar = barIsLiveCapture(loop, bar, playheadBar, loopLength);
+        const DisplayWindowUtils::DrawSourcePath path = DisplayWindowUtils::selectDrawSourceForBar(
+            captureActive, liveBar, snapshotCurrent);
+        if (path == DisplayWindowUtils::DrawSourcePath::Capture) {
+            appendNotesIntersectingBar(loop.capturePreview.notes, bar, loopLength, liveDisplayNotes);
+        }
+    }
+    DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
+
+    if (loop.hasPendingNoteChanges()) {
+        loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes, committedDisplayEnd);
+    }
+
+    const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
+        track.isRecording(), track.isOverdubbing(), false, false,
+        !loop.capturePreview.openNoteIndices.empty());
+    const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
+    if (applyLiveCaptureTails) {
+        liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        const uint32_t playheadCloseTick =
+            resolvePlayheadInLoop(track, displaySlot, currentTick);
+        const bool allowWrapContinuation =
+            !track.isOverdubbing() && !(track.isRecording() && !track.isPlaying());
+        applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
+                                  committedDisplayEnd, liveDisplayPendingPaintNotes_,
+                                  allowWrapContinuation);
+        paintedNotes = &liveDisplayPendingPaintNotes_;
+    }
+
+    liveDisplayCacheCommittedNoteCount_ = committedDisplayEnd;
+    liveDisplayCacheBaseNoteCount_ = paintedNotes->size();
+    livePlaybackDisplaySlot_ = displaySlot;
+    livePlaybackDisplayTrack_ = resolveTrackIndex(track);
+    liveMergePlaybackRevision_ = loop.playbackRevision;
+    liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+    return *paintedNotes;
 }
