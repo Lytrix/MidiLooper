@@ -859,6 +859,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     MidiServiceDrain::DeferredIdleOwner deferredOwner) {
   updateGrowingRecordLoopLength(clockManager.getCurrentTick());
   Loop& activeLoop = getActiveLoop();
+  // Free the seal-handoff rows once a committed tier carries them. Paint reads the coverage
+  // predicate itself, so this only reclaims the vector and never gates correctness.
+  activeLoop.releaseSealedCapturePreviewIfCovered();
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend) {
     if (activeLoop.hasDeferredVisualCacheWrapAppend()) {
       activeLoop.applyDeferredVisualCacheWrapAppend();

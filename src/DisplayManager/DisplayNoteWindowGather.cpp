@@ -274,6 +274,21 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, liveDisplayNotes);
         }
     }
+    // Seal handoff (150650): between the seal and the moment the selected committed
+    // representation carries the pass, these rows are the only place the sealed geometry exists.
+    // They are committed content, so they join the committed prefix and pending note changes
+    // still apply to them.
+    if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
+        for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+            for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+                if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
+                    continue;
+                }
+                DisplayWindowUtils::upsertDisplayNoteAtPitchStart(liveDisplayNotes, sealedRow);
+                break;
+            }
+        }
+    }
     const size_t committedDisplayEnd = liveDisplayNotes.size();
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         const bool liveBar = barIsLiveCapture(loop, bar, playheadBar, loopLength);

@@ -54,6 +54,9 @@ LOOP_COLD_MEM void Loop::resetPassTimeline() {
   editStateDirty_ = false;
   visualCache.clear();
   capturePreview.clear();
+  // playbackRevision restarts at 0 here, so a retained sealed revision could never be proven
+  // covered again and would paint content these passes no longer hold.
+  clearSealedCapturePreview();
   pendingVisualDelta.clear();
   visualCacheDirty = true;
   passesMaterializedStore_.mutStore().clear();

@@ -93,6 +93,11 @@ struct Loop {
   VisualCache visualCache;
   bool deferredVisualCacheWrapAppendPending_ = false;
   CapturePreview capturePreview;
+  /// Seal handoff: capture rows kept alive past `capturePreview.clear()` until the committed
+  /// representation the painter selects proves it covers `sealedCapturePreviewRevision_`. Copied
+  /// once per seal and never rebuilt per frame. `Loop` owns these; display only consumes them.
+  NoteUtils::DisplayNoteVec sealedCapturePreviewNotes_;
+  uint32_t sealedCapturePreviewRevision_ = 0;
   VisualCacheDelta pendingVisualDelta;
   bool visualCacheDirty = true;
   size_t materializedEventCount_ = 0;
@@ -374,6 +379,9 @@ struct Loop {
   bool tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedMidiEvents& merged);
 #if defined(PIO_UNIT_TEST_NATIVE)
   bool hasLastOverdubSealForTest() const { return hasLastOverdubSeal_; }
+  void storePublishedSnapshotForTest(ImmutableLoopSnapshotRef snapshot, uint32_t revision) {
+    storePublishedSnapshot(std::move(snapshot), revision);
+  }
 #endif
   ImmutableLoopSnapshotRef publishedSnapshot() const;
   /// True when the published root was stored at the current `playbackRevision`.
@@ -383,6 +391,31 @@ struct Loop {
   const void* publishedSnapshotIdentity() const;
   /// Revision captured when the published root was stored. Zero when no root exists.
   uint32_t publishedSnapshotRevision() const;
+
+  /// Seal handoff (`150650`). Between the seal and the moment a committed tier carries the
+  /// sealed pass, neither Snapshot nor VisualCache can paint it, so the frame would fall back
+  /// to the previous pass. These rows cover that seam.
+  ///
+  /// Retention is a lifetime refinement of the existing Capture draw tier, not a new tier:
+  /// `Loop` owns the rows, display only consumes them, and `VisualCache` merely reports
+  /// coverage.
+  const NoteUtils::DisplayNoteVec& sealedCapturePreviewNotes() const {
+    return sealedCapturePreviewNotes_;
+  }
+  bool hasSealedCapturePreview() const { return !sealedCapturePreviewNotes_.empty(); }
+  /// Copies the live preview rows once, before the seal clears them.
+  void retainCapturePreviewAtSeal();
+  /// True when the committed representation `resolveDisplayNotesByDrawSource` would select
+  /// covers the sealed revision. Evaluated against the *selected* representation, never as a
+  /// disjunction over both tiers: a current Snapshot is proof because that same predicate makes
+  /// the painter ignore the cache loop-wide, and a stale Snapshot means the cache is what
+  /// paints, so only `visualCache.builtFromRevision` can prove coverage.
+  bool sealedCapturePreviewIsCovered() const;
+  /// Drops the retained rows once `sealedCapturePreviewIsCovered()` holds. Paint reads the
+  /// predicate directly, so a late release cannot show stale rows.
+  void releaseSealedCapturePreviewIfCovered();
+  /// Unconditional drop for paths that invalidate the content the rows describe.
+  void clearSealedCapturePreview();
   /// Branch actually taken by `tryGatherPublishedSnapshotEventsInWindow`.
   /// `None` = no published root (caller may run compatibility gather).
   /// `Snapshot` = current-root membership. `Overlay` = stale-root overlay.

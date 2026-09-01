@@ -75,11 +75,16 @@ inline bool visualCacheCoversWindow(bool visualCacheDirty, const VisualBarVec& d
 
 struct VisualCache {
   uint32_t revision = 0;
+  /// Loop `playbackRevision` this cache is fully built from. Every stamp must establish that
+  /// the resulting notes include the committed representation for that revision. Overlay-rejected
+  /// fallback and `slice_keep` of a smaller gather do not establish coverage (`153517` RC1).
+  uint32_t builtFromRevision = 0;
   DisplayNoteVec notes;
   VisualBarVec dirtyBars;
 
   void clear() {
     revision = 0;
+    builtFromRevision = 0;
     notes.clear();
     dirtyBars.clear();
   }

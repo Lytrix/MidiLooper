@@ -1189,6 +1189,175 @@ void test_unstamped_wrap_journal_leaves_snapshot_unselected() {
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
 }
 
+/// 150650 ordering: the sealed pass reached neither committed tier when the frame was painted,
+/// so the frame fell back to the previous pass. Retained rows must survive the seal and only be
+/// released once the representation the painter selects proves coverage.
+void test_seal_retains_capture_rows_until_snapshot_covers_revision() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  recordLinearNote(loop, 0, 40, 64);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(624, 1, 64, 0)));
+  const uint32_t priorRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 624));
+  const PassId wrapPassId = loop.lastCommittedPassId();
+
+  // Frame: neither tier carries the seal yet, so the rows must still be available.
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+  TEST_ASSERT_EQUAL(1u, loop.sealedCapturePreviewNotes().size());
+  TEST_ASSERT_EQUAL(624u, loop.sealedCapturePreviewNotes()[0].endTick);
+
+  // Repeated frames during the seam must not re-copy or re-derive the retained vector.
+  const NoteUtils::DisplayNote* retainedData = loop.sealedCapturePreviewNotes().data();
+  for (int frame = 0; frame < 4; ++frame) {
+    TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+    loop.releaseSealedCapturePreviewIfCovered();
+  }
+  TEST_ASSERT_EQUAL_PTR(retainedData, loop.sealedCapturePreviewNotes().data());
+  TEST_ASSERT_EQUAL(1u, loop.sealedCapturePreviewNotes().size());
+
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 21;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 64;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 0;
+  wrapAdd.endTick = 624;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(wrapPassId));
+  loop.pushOverdubSessionPass(wrapPassId, {});
+  loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
+  loop.beginCapture(CapturePhase::Overdub);
+  // The wrap beginCapture clears capturePreview; retention must outlive it.
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  // A current snapshot is proof on its own: the painter reads snapshot membership for every
+  // committed bar, so the still-dirty cache cannot contribute a stale row.
+  TEST_ASSERT_TRUE(loop.sealedCapturePreviewIsCovered());
+  loop.releaseSealedCapturePreviewIfCovered();
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+}
+
+/// With a stale snapshot the cache is what paints, so only `visualCache.builtFromRevision` can
+/// release. A cache one revision behind must keep the retained rows alive.
+void test_stale_snapshot_release_requires_visual_cache_coverage() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  recordLinearNote(loop, 0, 40, 64);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(1392, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 1392));
+  const uint32_t sealedRevision = loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+
+  // Cache clean but one revision behind — this is the 150650 frame.
+  loop.visualCacheDirty = false;
+  loop.visualCache.builtFromRevision = sealedRevision - 1;
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+  loop.releaseSealedCapturePreviewIfCovered();
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+
+  // A cache at the sealed revision but still dirty cannot prove loop-wide coverage.
+  loop.visualCache.builtFromRevision = sealedRevision;
+  loop.visualCacheDirty = true;
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  loop.visualCacheDirty = false;
+  TEST_ASSERT_TRUE(loop.sealedCapturePreviewIsCovered());
+  loop.releaseSealedCapturePreviewIfCovered();
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+}
+
+/// 153517 RC1: OverlayRejected fallback must not stamp builtFromRevision to playback 10
+/// while the published snapshot is still 8. Retention stays alive.
+void test_overlay_rejected_slice_does_not_claim_playback_coverage() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 0, 40, 64);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef recordSnapshot = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(recordSnapshot));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2784, 1, 64, 0)));
+  // commitPendingCapturePass increments then retains, so 9 → sealed revision 10.
+  loop.playbackRevision = 9;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 2784));
+  loop.storePublishedSnapshotForTest(recordSnapshot, 8);
+
+  TEST_ASSERT_EQUAL_UINT32(8u, loop.publishedSnapshotRevision());
+  TEST_ASSERT_EQUAL_UINT32(10u, loop.playbackRevision);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+
+  loop.visualCache.builtFromRevision = 8;
+  loop.visualCacheDirty = true;
+  loop.visualCache.dirtyBars.clear();
+  loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 0);
+
+  TEST_ASSERT_TRUE(loop.lastVisualCacheIdleOverlayRejected());
+  TEST_ASSERT_NOT_EQUAL(10u, loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL_UINT32(8u, loop.visualCache.builtFromRevision);
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+  loop.releaseSealedCapturePreviewIfCovered();
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+}
+
+/// Open holds keep sounding into the next pass and the live Capture tier still paints them.
+void test_seal_retention_excludes_open_capture_holds() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  recordLinearNote(loop, 0, 40, 64);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(624, 1, 64, 0)));
+  // Still held at the seal: no NoteOff, so this hold continues into the next pass.
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(480, 1, 67, 90)));
+  TEST_ASSERT_FALSE(loop.capturePreview.openNoteIndices.empty());
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 624));
+
+  TEST_ASSERT_EQUAL(1u, loop.sealedCapturePreviewNotes().size());
+  TEST_ASSERT_EQUAL(64u, loop.sealedCapturePreviewNotes()[0].note);
+}
+
 void test_wrap_journal_drain_keeps_first_record_while_session_exit_pending() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1438,6 +1607,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
   RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
   RUN_TEST(test_unstamped_wrap_journal_leaves_snapshot_unselected);
+  RUN_TEST(test_seal_retains_capture_rows_until_snapshot_covers_revision);
+  RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
+  RUN_TEST(test_seal_retention_excludes_open_capture_holds);
+  RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);

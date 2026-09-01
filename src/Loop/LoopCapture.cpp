@@ -1116,6 +1116,51 @@ void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
 }
 
+LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {
+  sealedCapturePreviewNotes_.clear();
+  sealedCapturePreviewRevision_ = playbackRevision;
+  if (capturePreview.notes.empty()) {
+    return;
+  }
+  for (size_t index = 0; index < capturePreview.notes.size(); ++index) {
+    // Open holds keep sounding into the next pass and the live Capture tier still paints them.
+    // Retaining one would double-paint the same note beside its fresh capture row.
+    const bool open = std::find(capturePreview.openNoteIndices.begin(),
+                                capturePreview.openNoteIndices.end(),
+                                static_cast<uint32_t>(index)) !=
+                      capturePreview.openNoteIndices.end();
+    if (open) {
+      continue;
+    }
+    sealedCapturePreviewNotes_.push_back(capturePreview.notes[index]);
+  }
+}
+
+LOOP_COLD_MEM bool Loop::sealedCapturePreviewIsCovered() const {
+  if (sealedCapturePreviewNotes_.empty()) {
+    return true;
+  }
+  if (publishedSnapshotIsCurrent()) {
+    // Snapshot is current, which is also what makes the painter read snapshot membership for
+    // every committed bar, so the cache cannot contribute a stale row in the same frame.
+    return publishedSnapshotRevision() >= sealedCapturePreviewRevision_;
+  }
+  // Snapshot is stale, so the cache is the representation that paints.
+  return !visualCacheDirty && visualCache.builtFromRevision >= sealedCapturePreviewRevision_;
+}
+
+LOOP_COLD_MEM void Loop::releaseSealedCapturePreviewIfCovered() {
+  if (sealedCapturePreviewNotes_.empty() || !sealedCapturePreviewIsCovered()) {
+    return;
+  }
+  clearSealedCapturePreview();
+}
+
+LOOP_COLD_MEM void Loop::clearSealedCapturePreview() {
+  sealedCapturePreviewNotes_.clear();
+  sealedCapturePreviewRevision_ = 0;
+}
+
 void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   discardPendingCapturePass();
   capture.phase = phase;
@@ -1777,6 +1822,10 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
 #if defined(SESSION_CAPTURE)
   const uint32_t clearCaptureStartUs = traceMicros();
 #endif
+  // Seal handoff (150650): the sealed pass reaches Snapshot ~150-220ms later and VisualCache on
+  // its next idle slice, so clearing the preview here would leave the frame on the previous pass
+  // until then. Keep the rows until a committed tier proves coverage.
+  retainCapturePreviewAtSeal();
   capture.store.clear();
   capture.phase = CapturePhase::None;
   captureNextEventIndex = 0;

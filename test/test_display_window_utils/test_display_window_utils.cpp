@@ -355,6 +355,103 @@ void test_keep_shortest_end_at_pitch_start() {
   TEST_ASSERT_TRUE(keptOther);
 }
 
+void test_upsert_display_note_at_pitch_start_replaces_stale_committed_row() {
+  // 150650: committed tier still holds the previous pass at s0 len40 / s768 len48 while the
+  // sealed pass is 624 long at both starts.
+  NoteUtils::DisplayNoteVec committed;
+  NoteUtils::DisplayNote stalePhaseZero{};
+  stalePhaseZero.noteId = 11;
+  stalePhaseZero.note = 64;
+  stalePhaseZero.startTick = 0;
+  stalePhaseZero.endTick = 40;
+  NoteUtils::DisplayNote otherPitch{};
+  otherPitch.noteId = 12;
+  otherPitch.note = 69;
+  otherPitch.startTick = 96;
+  otherPitch.endTick = 240;
+  NoteUtils::DisplayNote staleSecondBar{};
+  staleSecondBar.noteId = 13;
+  staleSecondBar.note = 64;
+  staleSecondBar.startTick = 768;
+  staleSecondBar.endTick = 816;
+  committed.push_back(stalePhaseZero);
+  committed.push_back(otherPitch);
+  committed.push_back(staleSecondBar);
+
+  NoteUtils::DisplayNote sealedPhaseZero{};
+  sealedPhaseZero.noteId = 21;
+  sealedPhaseZero.note = 64;
+  sealedPhaseZero.startTick = 0;
+  sealedPhaseZero.endTick = 624;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStart(committed, sealedPhaseZero);
+  NoteUtils::DisplayNote sealedSecondBar{};
+  sealedSecondBar.noteId = 22;
+  sealedSecondBar.note = 64;
+  sealedSecondBar.startTick = 768;
+  sealedSecondBar.endTick = 1392;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStart(committed, sealedSecondBar);
+
+  // Replaced in place: no duplicate rows, unrelated pitch untouched, order preserved.
+  TEST_ASSERT_EQUAL(3u, committed.size());
+  TEST_ASSERT_EQUAL(64u, committed[0].note);
+  TEST_ASSERT_EQUAL(0u, committed[0].startTick);
+  TEST_ASSERT_EQUAL(624u, committed[0].endTick);
+  TEST_ASSERT_EQUAL(21u, committed[0].noteId);
+  TEST_ASSERT_EQUAL(69u, committed[1].note);
+  TEST_ASSERT_EQUAL(240u, committed[1].endTick);
+  TEST_ASSERT_EQUAL(64u, committed[2].note);
+  TEST_ASSERT_EQUAL(768u, committed[2].startTick);
+  TEST_ASSERT_EQUAL(1392u, committed[2].endTick);
+}
+
+void test_upsert_display_note_at_pitch_start_appends_when_no_match() {
+  NoteUtils::DisplayNoteVec committed;
+  NoteUtils::DisplayNote samePitchOtherStart{};
+  samePitchOtherStart.note = 64;
+  samePitchOtherStart.startTick = 384;
+  samePitchOtherStart.endTick = 576;
+  committed.push_back(samePitchOtherStart);
+
+  // Same pitch, different start: a companion-shortened row must not be overridden.
+  NoteUtils::DisplayNote sealed{};
+  sealed.note = 64;
+  sealed.startTick = 0;
+  sealed.endTick = 624;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStart(committed, sealed);
+  TEST_ASSERT_EQUAL(2u, committed.size());
+  TEST_ASSERT_EQUAL(384u, committed[0].startTick);
+  TEST_ASSERT_EQUAL(576u, committed[0].endTick);
+  TEST_ASSERT_EQUAL(0u, committed[1].startTick);
+
+  // Same start, different pitch: appended.
+  NoteUtils::DisplayNote otherPitch{};
+  otherPitch.note = 67;
+  otherPitch.startTick = 384;
+  otherPitch.endTick = 400;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStart(committed, otherPitch);
+  TEST_ASSERT_EQUAL(3u, committed.size());
+  TEST_ASSERT_EQUAL(67u, committed[2].note);
+}
+
+void test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces() {
+  NoteUtils::DisplayNoteVec committed;
+  NoteUtils::DisplayNote closedRow{};
+  closedRow.note = 64;
+  closedRow.startTick = 1440;
+  closedRow.endTick = 1500;
+  committed.push_back(closedRow);
+
+  // An open wrap-held hold must not clobber the closed committed row at that pitch+start.
+  NoteUtils::DisplayNote wrapHeld{};
+  wrapHeld.note = 64;
+  wrapHeld.startTick = 1440;
+  wrapHeld.endTick = 96;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStart(committed, wrapHeld);
+  TEST_ASSERT_EQUAL(2u, committed.size());
+  TEST_ASSERT_EQUAL(1500u, committed[0].endTick);
+  TEST_ASSERT_EQUAL(96u, committed[1].endTick);
+}
+
 void test_clamp_display_note_resize_never_grows() {
   TEST_ASSERT_EQUAL(3u, DisplayWindowUtils::clampDisplayNoteResizeCount(3u, 5u));
   TEST_ASSERT_EQUAL(2u, DisplayWindowUtils::clampDisplayNoteResizeCount(3u, 2u));
@@ -714,6 +811,21 @@ void test_select_draw_source_for_bar_snapshot_when_current() {
       static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, false, true)));
 }
 
+void test_visual_cache_gather_covers_playback_revision_rejects_overlay() {
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+      true, false, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+      true, false, true, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+      false, true, false, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+      false, false, true, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+      false, false, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+      false, false, false, false));
+}
+
 void test_select_draw_source_for_bar_visual_cache_fallback() {
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
@@ -790,7 +902,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overview_band_for_note_covers_full_midi_range);
   RUN_TEST(test_select_draw_source_for_bar_live_capture_wins);
   RUN_TEST(test_select_draw_source_for_bar_snapshot_when_current);
+  RUN_TEST(test_visual_cache_gather_covers_playback_revision_rejects_overlay);
   RUN_TEST(test_select_draw_source_for_bar_visual_cache_fallback);
+  RUN_TEST(test_upsert_display_note_at_pitch_start_replaces_stale_committed_row);
+  RUN_TEST(test_upsert_display_note_at_pitch_start_appends_when_no_match);
+  RUN_TEST(test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces);
   RUN_TEST(test_paint_window_inside_gather_tolerates_margin_slide);
   RUN_TEST(test_format_loop_length_bars_info_strip);
   return UNITY_END();
