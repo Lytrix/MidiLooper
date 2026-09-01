@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (capture-serial volume gates + undo/redo log labels)
+Last updated: 2026-09-01 (display-frame Stage 1 host shipped; device recapture open)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -22,6 +22,10 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 (RC5b keep-larger) or OD1-stop `stale_range` visual shrink. **4b.3** and
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
+
+**Now — display frame Stage 1 host shipped ([`220427`](../../captures/session_20260901_220427.log)):**
+[`display_frame_phase_split_windowed_paint_refinement.md`](../Plans/display_frame_phase_split_windowed_paint_refinement.md).
+Always-windowed paint path: `syncDetailedPaintWindow` true means use the out-params; false is jam/invalid slot only. Short-loop window covers the loop (same pixels; no overview strip). RAM1 locals **6880**. Stages 2–4 stay closed. Device recapture still open.
 
 **OpenSpec 4b.1 / 4b.2 / 4b.2c:** closed under Ring B round-robin
 ([`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md);

@@ -48,22 +48,19 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
             const Loop& loop = track.getLoop(displaySlot);
             if (loop.hasCommittedPasses() || loop.captureActive()) {
                 Loop& mutLoop = const_cast<Loop&>(loop);
-                if (!shouldAvoidFullVisualRebuild(loop, loopLength)) {
-                    // Slice 4d: do not ensureVisualCacheBuilt. Session type can be
-                    // Note before openNoteEditSession sets active (overdub-stop paint).
-                    // Idle owns rebuild. Consume existing notes (stale or empty).
-                    liveDisplayNotes.assign(loop.visualCache.notes.begin(),
-                                            loop.visualCache.notes.end());
-                } else {
-                    uint32_t windowStart = 0;
-                    uint32_t windowLength = 0;
-                    uint8_t windowBars = 0;
-                    if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength,
-                                                windowStart, windowLength, windowBars)) {
-                        return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot,
-                                                           loopLength, windowStart, windowLength);
-                    }
+                uint32_t windowStart = 0;
+                uint32_t windowLength = 0;
+                uint8_t windowBars = 0;
+                if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength,
+                                            windowStart, windowLength, windowBars)) {
+                    return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot,
+                                                       loopLength, windowStart, windowLength);
                 }
+                // Slice 4d: do not ensureVisualCacheBuilt. Session type can be
+                // Note before openNoteEditSession sets active (overdub-stop paint).
+                // Idle owns rebuild. Consume existing notes (stale or empty).
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(),
+                                        loop.visualCache.notes.end());
             }
         }
         return liveDisplayNotes;
@@ -81,19 +78,16 @@ DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& tr
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
     const size_t bufferEventsExpr =
         (track.isRecording() && !track.isPlaying()) ? loop.capture.store.size() : frameNotes.size();
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
 #if defined(SESSION_CAPTURE)
     if (track.isStopped()) {
         queueStoppedFrameNoteDump(frameNotes, loop.loopLengthTicks, loop.loopStartTick);
     }
 #endif
-    if (!track.isJamming() && loopLen > boundedThreshold && displaySlot < kDisplaySlotCount) {
-        const uint8_t windowBars =
-            std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                              DisplayWindowUtils::kMaxDetailedWindowBars);
-        const uint32_t windowStart = detailedWindowStartTick_[displaySlot];
-        const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
+    uint32_t windowStart = 0;
+    uint32_t windowLength = 0;
+    uint8_t windowBars = 0;
+    if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLen, windowStart,
+                                windowLength, windowBars)) {
         const DisplayNoteVec windowNotes = DisplayWindowUtils::filterDisplayNotesToWindow(
             frameNotes, windowStart, windowLength, loopLen);
         SC_DISP_WINDOW(displaySlot, TrackStateMachine::toString(track.getState()), loopLen,

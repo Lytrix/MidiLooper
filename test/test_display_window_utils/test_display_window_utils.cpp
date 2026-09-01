@@ -854,6 +854,119 @@ void test_paint_window_inside_gather_tolerates_margin_slide() {
       DisplayWindowUtils::paintWindowInsideGather(15u * bar, 16u * bar, gatherStart, gatherLength));
 }
 
+namespace {
+
+bool displayNotesShareIdentity(const NoteUtils::DisplayNote& left,
+                               const NoteUtils::DisplayNote& right) {
+  return left.noteId == right.noteId && left.note == right.note &&
+         left.startTick == right.startTick && left.endTick == right.endTick;
+}
+
+void assertSameDisplayNoteIdentitySet(const NoteUtils::DisplayNoteVec& left,
+                                      const NoteUtils::DisplayNoteVec& right) {
+  TEST_ASSERT_EQUAL(left.size(), right.size());
+  for (const NoteUtils::DisplayNote& note : left) {
+    bool found = false;
+    for (const NoteUtils::DisplayNote& other : right) {
+      if (displayNotesShareIdentity(note, other)) {
+        found = true;
+        break;
+      }
+    }
+    TEST_ASSERT_TRUE(found);
+  }
+}
+
+}  // namespace
+
+void test_resolve_detailed_paint_window_covers_four_bar_loop() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 4u * bar;
+  uint32_t windowStart = 99;
+  uint32_t windowLength = 99;
+  uint8_t windowBars = 99;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::resolveDetailedPaintWindow(
+      loopLength, DisplayWindowUtils::kMaxDetailedWindowBars, 2u * bar, 3u * bar, true, windowStart,
+      windowLength, windowBars));
+  TEST_ASSERT_EQUAL_UINT32(0u, windowStart);
+  TEST_ASSERT_EQUAL_UINT32(loopLength, windowLength);
+  TEST_ASSERT_EQUAL_UINT8(4, windowBars);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::windowCoversLoop(windowLength, loopLength));
+}
+
+void test_resolve_detailed_paint_window_centers_thirty_two_bar_loop() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 32u * bar;
+  const uint32_t playhead = 16u * bar;
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  uint8_t windowBars = 0;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::resolveDetailedPaintWindow(
+      loopLength, DisplayWindowUtils::kMaxDetailedWindowBars, 0, playhead, true, windowStart,
+      windowLength, windowBars));
+  TEST_ASSERT_EQUAL_UINT32(16u * bar, windowLength);
+  TEST_ASSERT_EQUAL_UINT8(16, windowBars);
+  TEST_ASSERT_EQUAL_UINT32(
+      DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength),
+      windowStart);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::windowCoversLoop(windowLength, loopLength));
+}
+
+void test_short_loop_window_inclusion_keeps_full_identity_set() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 4u * bar + 100u;
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({1, 60, 100, bar, bar + 48});
+  notes.push_back({2, 62, 100, loopLength - 50u, 80});
+  notes.push_back({3, 64, 100, 4u * bar + 10u, 4u * bar + 40u});
+
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  uint8_t windowBars = 0;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::resolveDetailedPaintWindow(
+      loopLength, DisplayWindowUtils::kMaxDetailedWindowBars, 0, 2u * bar, true, windowStart,
+      windowLength, windowBars));
+  TEST_ASSERT_EQUAL_UINT32(0u, windowStart);
+  TEST_ASSERT_EQUAL_UINT32(loopLength, windowLength);
+
+  const NoteUtils::DisplayNoteVec filtered =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, windowStart, windowLength,
+                                                             loopLength);
+  assertSameDisplayNoteIdentitySet(notes, filtered);
+}
+
+void test_long_loop_window_inclusion_matches_pre_stage_one_window() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 32u * bar;
+  const uint32_t playhead = 16u * bar;
+  uint32_t windowStart = 0;
+  uint32_t windowLength = 0;
+  uint8_t windowBars = 0;
+  TEST_ASSERT_TRUE(DisplayWindowUtils::resolveDetailedPaintWindow(
+      loopLength, DisplayWindowUtils::kMaxDetailedWindowBars, 0, playhead, true, windowStart,
+      windowLength, windowBars));
+  const uint32_t expectedStart =
+      DisplayWindowUtils::resolveCenteredWindowStart(playhead, 16u * bar, loopLength);
+  TEST_ASSERT_EQUAL_UINT32(expectedStart, windowStart);
+  TEST_ASSERT_EQUAL_UINT32(16u * bar, windowLength);
+
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({10, 60, 100, expectedStart + 24u, expectedStart + 72u});
+  notes.push_back({11, 61, 100, 0, 48});
+  notes.push_back({12, 62, 100, expectedStart + 16u * bar - 12u, expectedStart + 16u * bar + 24u});
+
+  const NoteUtils::DisplayNoteVec filtered =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, windowStart, windowLength,
+                                                             loopLength);
+  const NoteUtils::DisplayNoteVec expected =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, expectedStart, 16u * bar,
+                                                             loopLength);
+  assertSameDisplayNoteIdentitySet(expected, filtered);
+  TEST_ASSERT_EQUAL(2u, filtered.size());
+  TEST_ASSERT_EQUAL_UINT32(10u, filtered[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(12u, filtered[1].noteId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -909,5 +1022,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces);
   RUN_TEST(test_paint_window_inside_gather_tolerates_margin_slide);
   RUN_TEST(test_format_loop_length_bars_info_strip);
+  RUN_TEST(test_resolve_detailed_paint_window_covers_four_bar_loop);
+  RUN_TEST(test_resolve_detailed_paint_window_centers_thirty_two_bar_loop);
+  RUN_TEST(test_short_loop_window_inclusion_keeps_full_identity_set);
+  RUN_TEST(test_long_loop_window_inclusion_matches_pre_stage_one_window);
   return UNITY_END();
 }

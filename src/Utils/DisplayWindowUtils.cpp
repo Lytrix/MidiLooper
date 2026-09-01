@@ -216,6 +216,54 @@ uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength
   return start;
 }
 
+bool resolveDetailedPaintWindow(uint32_t loopLength, uint8_t requestedBars,
+                                uint32_t storedWindowStart, uint32_t playheadTick,
+                                bool autoFollow, uint32_t& outWindowStart,
+                                uint32_t& outWindowLength, uint8_t& outWindowBars) {
+  if (Config::TICKS_PER_BAR == 0) {
+    outWindowStart = 0;
+    outWindowLength = 0;
+    outWindowBars = 0;
+    return false;
+  }
+  uint8_t bars = requestedBars == 0 ? static_cast<uint8_t>(kMaxDetailedWindowBars) : requestedBars;
+  if (bars > kMaxDetailedWindowBars) {
+    bars = static_cast<uint8_t>(kMaxDetailedWindowBars);
+  }
+  if (loopLength == 0) {
+    outWindowStart = 0;
+    outWindowLength = 0;
+    outWindowBars = bars;
+    return true;
+  }
+  uint32_t length = static_cast<uint32_t>(bars) * Config::TICKS_PER_BAR;
+  if (length > loopLength) {
+    length = loopLength;
+  }
+  outWindowLength = length;
+  uint32_t coveredBars = (length + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  if (coveredBars == 0) {
+    coveredBars = 1;
+  }
+  if (coveredBars > kMaxDetailedWindowBars) {
+    coveredBars = kMaxDetailedWindowBars;
+  }
+  outWindowBars = static_cast<uint8_t>(coveredBars);
+  if (windowCoversLoop(length, loopLength)) {
+    outWindowStart = 0;
+    return true;
+  }
+  uint32_t start = storedWindowStart;
+  if (autoFollow) {
+    start = resolveCenteredWindowStart(playheadTick, length, loopLength);
+  }
+  if (start + length > loopLength) {
+    start = loopLength > length ? loopLength - length : 0;
+  }
+  outWindowStart = start;
+  return true;
+}
+
 bool segmentHasNotes(const DisplayNoteVec& notes, uint32_t loopLength,
                      const TickInterval& segment) {
   if (loopLength == 0 || segment.length() <= 0) {

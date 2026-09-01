@@ -593,8 +593,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     uint32_t paintWindowLength = 0;
     uint8_t paintWindowBars = 0;
     const bool havePaintWindow =
-        liveLoopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR &&
-        displaySlot < kDisplaySlotCount &&
         syncDetailedPaintWindow(track, displaySlot, currentTick, liveLoopLength, paintWindowStart,
                                 paintWindowLength, paintWindowBars);
 
@@ -794,7 +792,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const bool haveOpenPlayheadTails = applyLiveCaptureTails;
     const bool havePendingPaint =
         track.isOverdubbing() &&
-        (loop.hasPendingNoteChanges() || loop.sealedCompanionOverlayRequired());
+        (loop.hasPendingNoteChanges() || loop.hasSealedCompanionOverlay());
 
     if (applyLiveCaptureTails) {
         for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {

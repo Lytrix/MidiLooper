@@ -53,6 +53,19 @@ bool segmentHasNotes(const NoteUtils::DisplayNoteVec& notes, uint32_t loopLength
 uint32_t resolveCenteredWindowStart(uint32_t playheadTick, uint32_t windowLength,
                                     uint32_t loopLength);
 
+/// True when the detailed window covers the whole loop (same pixels as a full-loop roll).
+inline bool windowCoversLoop(uint32_t windowLength, uint32_t loopLength) {
+    return loopLength > 0 && windowLength >= loopLength;
+}
+
+/// Compute a detailed paint window. Returns false only when `TICKS_PER_BAR` is 0.
+/// The window may cover the entire loop. Does not classify loop size.
+/// `requestedBars` of 0 uses `kMaxDetailedWindowBars`.
+bool resolveDetailedPaintWindow(uint32_t loopLength, uint8_t requestedBars,
+                                uint32_t storedWindowStart, uint32_t playheadTick,
+                                bool autoFollow, uint32_t& outWindowStart,
+                                uint32_t& outWindowLength, uint8_t& outWindowBars);
+
 /// Post-stop handoff: keep only the committed compose prefix (drop capture suffix / tails).
 inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t committedBaseCount) {
     return committedBaseCount < liveNoteCount ? committedBaseCount : liveNoteCount;
