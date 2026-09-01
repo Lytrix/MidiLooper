@@ -440,10 +440,9 @@ inline void accumulateOverviewBandMask(std::vector<uint8_t>& mask, const Note& n
 }
 
 /// Per-bar draw source. While capture is active every window bar reads committed
-/// Snapshot or VisualCache notes, then unions `capturePreview`. Closed preview
-/// rows supersede at pitch+start (`upsertDisplayNoteAtPitchStart`); open holds
-/// (`endTick == startTick`) append. Snapshot requires loop-global
-/// `publishedSnapshotIsCurrent`.
+/// Snapshot (when a published snapshot exists) or VisualCache notes, then unions
+/// `capturePreview`. Closed preview rows supersede at pitch+start in the suffix
+/// after `committedDisplayEnd`; open holds (`endTick == startTick`) append.
 enum class DrawSourcePath : uint8_t {
     Capture = 0,
     Snapshot = 1,
