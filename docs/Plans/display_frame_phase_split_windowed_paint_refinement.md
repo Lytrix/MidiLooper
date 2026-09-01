@@ -368,6 +368,8 @@ Commit Stage 3 before Stage 4.
 
 **Device evidence [`233642`](../../captures/session_20260901_233642.log):** 4-bar HITL (`3072`), Stage 3 `DFRAME` lines have resolve/draw/transfer. After `ARMED → RECORDING`: every sealed PLAYING/OVERDUBBING/STOPPED `3072` row is `wstart=0` `wbars=4` and `frame==wnotes` (196/196). Overdub frames move (`64→152`, 83 unique). `Overdub undone` ×2 and `Overdub redone` ×2. Transfer is **4495–4497 µs** on every sampled frame (full GRAM). `clockrate` is **47** after the first record-start dump (`13`). `DFRAME` wall p50 **12844 µs** (complete frame + scheduling gaps); phase-sum p50 **5169 µs**; longest phase is transfer **4496 µs**. After the first RECORDING dump (`243593`), `load_frame` is **4667–5384 µs** and no longer equals `DFRAME` wall. `midi_gap` 5 s-max dropped vs Stage 2 [`232353`](../../captures/session_20260901_232353.log) (p50 **14.4 ms** vs **45.2 ms**) but still often sits near the complete-frame span, not the 4.5 ms transfer floor; first PLAYING gap after OD2 is **6930 µs**, a later PLAYING dump is **25771 µs**. 4b.3 stays open. Stage 4 stays closed.
 
+**Follow-up (not Stage 4):** OD2 committed bars in [`233642`](../../captures/session_20260901_233642.log) stayed wrong until stop because VisualCache idle reconstruct ran mid-OVERDUB (`visual` 102→99, stop `adopt_partial` 146). `DISP` frame still moved (`116→159`). DEC-045 amendment restore: `allowVisualCacheReconstructSlice`. Paint handoff while that gate holds: [`overdub_paint_capture_handoff_bugfix.md`](overdub_paint_capture_handoff_bugfix.md) ([`234726`](../../captures/session_20260901_234726.log)).
+
 ---
 
 ## Stage 4 — row 3 yield policy (pin first)

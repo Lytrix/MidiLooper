@@ -806,9 +806,18 @@ void test_select_draw_source_for_bar_snapshot_when_current() {
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::DrawSourcePath::Snapshot),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(false, false, true)));
+}
+
+void test_select_draw_source_for_bar_capture_active_unions_whole_window() {
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourcePath::Snapshot),
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::Capture),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, false, true)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::Capture),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, false, false)));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::capturePreviewNoteIsOpenHold(100, 400));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::capturePreviewNoteIsOpenHold(100, 100));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::capturePreviewNoteIsOpenHold(2304, 96));
 }
 
 void test_visual_cache_gather_covers_playback_revision_rejects_overlay() {
@@ -830,9 +839,6 @@ void test_select_draw_source_for_bar_visual_cache_fallback() {
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(false, false, false)));
-  TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
-      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, false, false)));
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(false, true, false)));
@@ -1258,6 +1264,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overview_band_for_note_covers_full_midi_range);
   RUN_TEST(test_select_draw_source_for_bar_live_capture_wins);
   RUN_TEST(test_select_draw_source_for_bar_snapshot_when_current);
+  RUN_TEST(test_select_draw_source_for_bar_capture_active_unions_whole_window);
   RUN_TEST(test_visual_cache_gather_covers_playback_revision_rejects_overlay);
   RUN_TEST(test_select_draw_source_for_bar_visual_cache_fallback);
   RUN_TEST(test_upsert_display_note_at_pitch_start_replaces_stale_committed_row);
