@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 bool Loop::hasCommittedPasses() const {
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
@@ -660,8 +661,62 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
 
 namespace {
 
-void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
-                               const NoteUtils::DisplayNoteVec& candidates) {
+/// Reconstruct/project emits wrap-held as split head+tail with the same NoteId.
+/// Source-view occupy needs one sounding span (`end < start`) so
+/// `displayNotePresentAtHold` can unwrap. Same-id merge would otherwise keep
+/// only the tail and miss hs=0.
+LOOP_COLD_MEM void collapseSplitHeadTailToWrapHeld(NoteUtils::DisplayNoteVec& notes,
+                                                   uint32_t loopLength) {
+  if (loopLength < 2 || notes.size() < 2) {
+    return;
+  }
+  const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
+  const uint32_t loopEnd = loopLength - 1;
+  std::vector<char> used(notes.size(), 0);
+  NoteUtils::DisplayNoteVec collapsed;
+  collapsed.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (used[i] != 0 || notes[i].noteId == kInvalidNoteId) {
+      continue;
+    }
+    const NoteUtils::DisplayNote& a = notes[i];
+    int partner = -1;
+    for (size_t j = i + 1; j < notes.size(); ++j) {
+      if (used[j] != 0 || notes[j].noteId != a.noteId) {
+        continue;
+      }
+      const NoteUtils::DisplayNote& b = notes[j];
+      const bool aTail = a.startTick >= tailStart && a.endTick == loopEnd;
+      const bool bTail = b.startTick >= tailStart && b.endTick == loopEnd;
+      const bool aHead = a.endTick > a.startTick && a.startTick < tailStart;
+      const bool bHead = b.endTick > b.startTick && b.startTick < tailStart;
+      if ((aTail && bHead) || (bTail && aHead)) {
+        partner = static_cast<int>(j);
+        break;
+      }
+    }
+    if (partner < 0) {
+      continue;
+    }
+    used[i] = 1;
+    used[static_cast<size_t>(partner)] = 1;
+    const NoteUtils::DisplayNote& b = notes[static_cast<size_t>(partner)];
+    const NoteUtils::DisplayNote& tail = (a.startTick >= tailStart) ? a : b;
+    const NoteUtils::DisplayNote& head = (a.startTick >= tailStart) ? b : a;
+    NoteUtils::DisplayNote wrapHeld = tail;
+    wrapHeld.endTick = head.endTick;
+    collapsed.push_back(wrapHeld);
+  }
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (used[i] == 0) {
+      collapsed.push_back(notes[i]);
+    }
+  }
+  notes = std::move(collapsed);
+}
+
+LOOP_COLD_MEM void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
+                                            const NoteUtils::DisplayNoteVec& candidates) {
   for (const NoteUtils::DisplayNote& candidate : candidates) {
     if (candidate.noteId == kInvalidNoteId) {
       continue;
@@ -701,8 +756,9 @@ LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   if (passEvents.empty()) {
     return;
   }
-  const NoteUtils::DisplayNoteVec passNotes =
+  NoteUtils::DisplayNoteVec passNotes =
       NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
+  collapseSplitHeadTailToWrapHeld(passNotes, loopLengthTicks);
   mergeDisplayNotesIntoOverdubSourceView(passNotes);
   // Do not merge this pass's isolated reconstruct into visualCache. Per-pass
   // pairing omits record Offs and lengthens body notes (205138: 205 → 271 at
@@ -983,6 +1039,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
     }
     overdubSourceViewNotes_.push_back(note);
   }
+  collapseSplitHeadTailToWrapHeld(overdubSourceViewNotes_, loopLengthTicks);
 #if defined(PIO_UNIT_TEST_NATIVE)
   copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
 #endif
