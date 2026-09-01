@@ -303,6 +303,21 @@ void test_should_assign_grown_visual_cache_over_overdub_hold() {
       DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(206u, 126u, 134u));
 }
 
+void test_should_gather_published_snapshot_for_draw_source() {
+  // Capture-active: keep snapshot even when visualCache is nonempty (004351).
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, true));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, false));
+  // After stop: nonempty visualCache is paint authority (010217).
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, true));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(false, false, true));
+}
+
 void test_should_adopt_composed_notes_over_visual_cache() {
   // 000013: 4-bar compose 141 > cache 95 must adopt. Long-loop window must not.
   TEST_ASSERT_TRUE(
@@ -1243,6 +1258,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_hold_dirty_overdub_layer_before_window_gather);
   RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
+  RUN_TEST(test_should_gather_published_snapshot_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);
   RUN_TEST(test_clamp_display_note_resize_never_grows);

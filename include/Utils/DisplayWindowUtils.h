@@ -264,6 +264,15 @@ inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCo
                                                      heldCommittedNoteCount);
 }
 
+/// During capture, keep the last published snapshot even when stale (`004351` wrap 2).
+/// After stop, a nonempty `visualCache` (`adopt_partial`) is paint authority so a
+/// successor snapshot cannot replace linear stop closes with wrap-shaped ends (`010217`).
+inline bool shouldGatherPublishedSnapshotForDrawSource(bool hasPublishedSnapshot,
+                                                       bool captureActive,
+                                                       bool visualCacheNonempty) {
+    return hasPublishedSnapshot && (captureActive || !visualCacheNonempty);
+}
+
 /// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
 /// RC5a refresh. A short-loop composed frame that is larger than `visualCache`
 /// must be adopted onto that loop. Do not replace a long-loop cache with a
@@ -441,7 +450,8 @@ inline void accumulateOverviewBandMask(std::vector<uint8_t>& mask, const Note& n
 
 /// Per-bar draw source. While capture is active every window bar reads committed
 /// Snapshot (when a published snapshot exists) or VisualCache notes, then unions
-/// `capturePreview`. Closed preview rows supersede at pitch+start in the suffix
+/// `capturePreview`. After stop, a nonempty VisualCache is preferred over the
+/// successor snapshot. Closed preview rows supersede at pitch+start in the suffix
 /// after `committedDisplayEnd`; open holds (`endTick == startTick`) append.
 enum class DrawSourcePath : uint8_t {
     Capture = 0,

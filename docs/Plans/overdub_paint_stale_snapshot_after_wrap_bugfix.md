@@ -31,9 +31,12 @@ Wrap 2 at 76.701s: `snap=0`, `sealed=45`, `preview=2`, `visual=63`, frame **135â
 ## Invariant
 
 ```
-if publishedSnapshot() exists, gather that snapshot
-visualCache only when no published snapshot exists
+if captureActive and publishedSnapshot() exists, gather that snapshot
+after stop, nonempty visualCache is paint authority
+visualCache only when no published snapshot exists, or after stop when visual is nonempty
 ```
+
+Amended by [`overdub_paint_stop_snapshot_wrap_end_bugfix.md`](overdub_paint_stop_snapshot_wrap_end_bugfix.md) (`010217`). Capture-active stale snapshot still gathers the last published snapshot.
 
 ## Architecture checkpoint
 
