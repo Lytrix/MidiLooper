@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-01 (snapshot-first bar painter Stage B routing)
+Last updated: 2026-09-01 (overdub wrap RC2b / RC4 / RC5; RAM1 locals 6848)
 
 ---
 
