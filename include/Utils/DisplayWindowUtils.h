@@ -439,9 +439,11 @@ inline void accumulateOverviewBandMask(std::vector<uint8_t>& mask, const Note& n
     }
 }
 
-/// Per-bar draw source. Capture is incremental: live bars still read committed
-/// Snapshot or VisualCache notes, then union capturePreview. Snapshot requires
-/// loop-global `publishedSnapshotIsCurrent`.
+/// Per-bar draw source. While capture is active every window bar reads committed
+/// Snapshot or VisualCache notes, then unions `capturePreview`. Closed preview
+/// rows supersede at pitch+start (`upsertDisplayNoteAtPitchStart`); open holds
+/// (`endTick == startTick`) append. Snapshot requires loop-global
+/// `publishedSnapshotIsCurrent`.
 enum class DrawSourcePath : uint8_t {
     Capture = 0,
     Snapshot = 1,
@@ -450,13 +452,20 @@ enum class DrawSourcePath : uint8_t {
 
 inline DrawSourcePath selectDrawSourceForBar(bool captureActive, bool barIsLiveCapture,
                                             bool publishedSnapshotIsCurrent) {
-    if (captureActive && barIsLiveCapture) {
+    (void)barIsLiveCapture;
+    if (captureActive) {
         return DrawSourcePath::Capture;
     }
     if (publishedSnapshotIsCurrent) {
         return DrawSourcePath::Snapshot;
     }
     return DrawSourcePath::VisualCache;
+}
+
+/// Open holds stay a suffix (`110022`). Closed and wrap-held preview rows use
+/// the sealed-handoff supersede.
+inline bool capturePreviewNoteIsOpenHold(uint32_t startTick, uint32_t endTick) {
+    return endTick == startTick;
 }
 
 /// Last successfully resolved draw-source gather. Not a painted framebuffer.

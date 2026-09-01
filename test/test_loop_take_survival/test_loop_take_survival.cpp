@@ -1624,25 +1624,6 @@ bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                                                   Config::TICKS_PER_BAR, loopLength);
 }
 
-bool barIsLiveCapture(const Loop& loop, uint32_t bar, uint32_t playheadBar, uint32_t loopLength) {
-  if (!loop.captureActive()) {
-    return false;
-  }
-  if (bar == playheadBar) {
-    return true;
-  }
-  const VisualBarVec& dirtyBars = loop.capturePreview.dirtyBars;
-  if (bar < dirtyBars.size() && dirtyBars[bar] != 0) {
-    return true;
-  }
-  for (const NoteUtils::DisplayNote& note : loop.capturePreview.notes) {
-    if (previewNoteIntersectsBar(note, bar, loopLength)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8_t pitchLow,
                                uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
   const uint8_t lastPitch =
@@ -1701,14 +1682,27 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
       }
     }
   }
-  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    const bool liveBar = barIsLiveCapture(loop, bar, playheadBar, loopLength);
-    const DisplayWindowUtils::DrawSourcePath path = DisplayWindowUtils::selectDrawSourceForBar(
-        captureActive, liveBar, snapshotCurrent);
-    if (path == DisplayWindowUtils::DrawSourcePath::Capture) {
-      appendNotesIntersectingBar(loop.capturePreview.notes, bar, loopLength, out);
+  if (captureActive) {
+    for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
+      bool intersectsWindow = false;
+      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
+          intersectsWindow = true;
+          break;
+        }
+      }
+      if (!intersectsWindow) {
+        continue;
+      }
+      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
+                                                           previewNote.endTick)) {
+        appendDisplayNoteUniqueById(out, previewNote);
+      } else {
+        DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, previewNote);
+      }
     }
   }
+  (void)playheadBar;
 }
 
 uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
@@ -1946,6 +1940,77 @@ void test_same_pass_snapshot_keeps_closed_bar_four_end() {
 /// while compose keeps `2304→2976`. This pin runs that gather's committed+capture
 /// union on the same same-pass wrap. A must stay linear; no row of that NoteId
 /// may become the bar-1 Off or `loopLength-1`.
+void test_draw_source_upserts_closed_capture_preview_on_already_played_bar() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const size_t visualBefore = loop.visualCache.notes.size();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(400, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(300, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(420, 1, 72, 0)));
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 2, 0, 127, drawn);
+
+  uint32_t pitch60At100 = 0;
+  uint32_t pitch60End = 0;
+  bool found72 = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 60 && note.startTick == 100) {
+      ++pitch60At100;
+      pitch60End = note.endTick;
+    }
+    if (note.note == 72 && note.startTick == 300 && note.endTick == 420) {
+      found72 = true;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, pitch60At100);
+  TEST_ASSERT_EQUAL_UINT32(400u, pitch60End);
+  TEST_ASSERT_TRUE(found72);
+  TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
+}
+
+void test_draw_source_unions_sealed_preview_after_wrap_before_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const size_t visualBefore = loop.visualCache.notes.size();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(900, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 900));
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundSealed = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 64 && note.startTick == 768 && note.endTick == 900) {
+      foundSealed = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundSealed);
+  TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
+}
+
 void test_same_pass_draw_source_keeps_closed_bar_four_end() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2385,6 +2450,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling);
   RUN_TEST(test_same_pass_closed_bar_four_keeps_end_beside_hold_head);
   RUN_TEST(test_same_pass_snapshot_keeps_closed_bar_four_end);
+  RUN_TEST(test_draw_source_upserts_closed_capture_preview_on_already_played_bar);
+  RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);

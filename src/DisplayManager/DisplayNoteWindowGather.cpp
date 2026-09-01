@@ -187,25 +187,6 @@ bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                                                     Config::TICKS_PER_BAR, loopLength);
 }
 
-bool barIsLiveCapture(const Loop& loop, uint32_t bar, uint32_t playheadBar, uint32_t loopLength) {
-    if (!loop.captureActive()) {
-        return false;
-    }
-    if (bar == playheadBar) {
-        return true;
-    }
-    const VisualBarVec& dirtyBars = loop.capturePreview.dirtyBars;
-    if (bar < dirtyBars.size() && dirtyBars[bar] != 0) {
-        return true;
-    }
-    for (const NoteUtils::DisplayNote& note : loop.capturePreview.notes) {
-        if (previewNoteIntersectsBar(note, bar, loopLength)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8_t pitchLow,
                                uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
     const uint8_t lastPitch =
@@ -273,14 +254,27 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
             }
         }
     }
-    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-        const bool liveBar = barIsLiveCapture(loop, bar, playheadBar, loopLength);
-        const DisplayWindowUtils::DrawSourcePath path = DisplayWindowUtils::selectDrawSourceForBar(
-            captureActive, liveBar, snapshotCurrent);
-        if (path == DisplayWindowUtils::DrawSourcePath::Capture) {
-            appendNotesIntersectingBar(loop.capturePreview.notes, bar, loopLength, out);
+    if (captureActive) {
+        for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
+            bool intersectsWindow = false;
+            for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+                if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
+                    intersectsWindow = true;
+                    break;
+                }
+            }
+            if (!intersectsWindow) {
+                continue;
+            }
+            if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
+                                                                 previewNote.endTick)) {
+                appendDisplayNoteUniqueById(out, previewNote);
+            } else {
+                DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, previewNote);
+            }
         }
     }
+    (void)playheadBar;
 }
 
 void applyPendingDrawSourceTransforms(const Loop& loop, NoteUtils::DisplayNoteVec& notes,
