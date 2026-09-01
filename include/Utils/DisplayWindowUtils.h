@@ -459,4 +459,78 @@ inline DrawSourcePath selectDrawSourceForBar(bool captureActive, bool barIsLiveC
     return DrawSourcePath::VisualCache;
 }
 
+/// Last successfully resolved draw-source gather. Not a painted framebuffer.
+enum class DrawSourceReuseKind : uint8_t {
+    Hit = 0,
+    SlideOneBar = 1,
+    Rebuild = 2,
+};
+
+struct DrawSourceGatherKey {
+    uint8_t slot = 255;
+    uint8_t track = 255;
+    uint8_t pitchLow = 0;
+    uint8_t pitchHigh = 127;
+    uint32_t windowStart = 0;
+    uint32_t windowLength = 0;
+    uint32_t playbackRevision = 0xFFFFFFFFu;
+    uint32_t capturePreviewRevision = 0xFFFFFFFFu;
+    uint32_t visualCacheRevision = 0xFFFFFFFFu;
+    uint32_t publishedSnapshotRevision = 0xFFFFFFFFu;
+    uint32_t sealedPreviewRevision = 0;
+    uint32_t pendingChangeGeneration = 0;
+    uint32_t playheadBar = 0xFFFFFFFFu;
+    uint16_t captureDisplayRevision = 0;
+    uint16_t sealedPreviewCount = 0;
+    uint8_t snapshotCurrent = 0;
+    uint8_t sealedCompanionOverlay = 0;
+    uint8_t valid = 0;
+};
+
+inline bool drawSourceGatherContentKeysMatch(const DrawSourceGatherKey& last,
+                                             const DrawSourceGatherKey& current) {
+    return last.slot == current.slot && last.track == current.track &&
+           last.pitchLow == current.pitchLow && last.pitchHigh == current.pitchHigh &&
+           last.windowLength == current.windowLength &&
+           last.playbackRevision == current.playbackRevision &&
+           last.captureDisplayRevision == current.captureDisplayRevision &&
+           last.capturePreviewRevision == current.capturePreviewRevision &&
+           last.visualCacheRevision == current.visualCacheRevision &&
+           last.publishedSnapshotRevision == current.publishedSnapshotRevision &&
+           last.sealedPreviewRevision == current.sealedPreviewRevision &&
+           last.sealedPreviewCount == current.sealedPreviewCount &&
+           last.pendingChangeGeneration == current.pendingChangeGeneration &&
+           last.snapshotCurrent == current.snapshotCurrent &&
+           last.sealedCompanionOverlay == current.sealedCompanionOverlay;
+}
+
+/// Hit when every mutation key and the playhead bar are unchanged. One-bar slide
+/// only when content keys match and `windowStart` moves by exactly one bar.
+inline DrawSourceReuseKind selectDrawSourceReuseKind(const DrawSourceGatherKey& last,
+                                                     const DrawSourceGatherKey& current,
+                                                     uint32_t ticksPerBar) {
+    if (last.valid == 0 || current.valid == 0) {
+        return DrawSourceReuseKind::Rebuild;
+    }
+    if (!drawSourceGatherContentKeysMatch(last, current)) {
+        return DrawSourceReuseKind::Rebuild;
+    }
+    if (last.windowStart == current.windowStart && last.playheadBar == current.playheadBar) {
+        return DrawSourceReuseKind::Hit;
+    }
+    if (last.windowStart == current.windowStart) {
+        return DrawSourceReuseKind::Rebuild;
+    }
+    if (ticksPerBar == 0) {
+        return DrawSourceReuseKind::Rebuild;
+    }
+    const uint32_t delta = last.windowStart > current.windowStart
+                               ? last.windowStart - current.windowStart
+                               : current.windowStart - last.windowStart;
+    if (delta == ticksPerBar) {
+        return DrawSourceReuseKind::SlideOneBar;
+    }
+    return DrawSourceReuseKind::Rebuild;
+}
+
 }  // namespace DisplayWindowUtils

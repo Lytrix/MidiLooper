@@ -295,6 +295,8 @@ private:
     bool liveDisplayCommittedFromWindowGather_ = false;
     /// When window paint was filtered from `visualCache`, matches `visualCache.revision`.
     uint32_t liveWindowVisualCacheRevision_ = UINT32_MAX;
+    /// Last successfully resolved draw-source gather key. `liveDisplayNotes` holds that set.
+    DisplayWindowUtils::DrawSourceGatherKey liveDrawSourceKey_{};
 
     /// RC-F follow-up: committed layer is being held because the visual cache is dirty. Cache
     /// recovery belongs to idle work, so the layer is rebuilt once the cache goes clean again.

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (display-frame Stage 1 host shipped; device recapture open)
+Last updated: 2026-09-01 (display-frame Stage 2 host shipped; device recapture open)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,9 +23,10 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — display frame Stage 1 host shipped ([`220427`](../../captures/session_20260901_220427.log)):**
+**Now — display frame Stage 2 host shipped:**
 [`display_frame_phase_split_windowed_paint_refinement.md`](../Plans/display_frame_phase_split_windowed_paint_refinement.md).
-Always-windowed paint path: `syncDetailedPaintWindow` true means use the out-params; false is jam/invalid slot only. Short-loop window covers the loop (same pixels; no overview strip). RAM1 locals **6880**. Stages 2–4 stay closed. Device recapture still open.
+Stage 1 device PASS [`230114`](../../captures/session_20260901_230114.log) + [`230655`](../../captures/session_20260901_230655.log).
+`resolveDisplayNotesByDrawSource` reuses the last valid set on a gather-key hit and slides one bar only when revisions match. Playhead bar stays in the key; tails stay off it. RAM1 locals **6880**. Stages 3–4 stay closed. Device recapture open.
 
 **OpenSpec 4b.1 / 4b.2 / 4b.2c:** closed under Ring B round-robin
 ([`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md);
