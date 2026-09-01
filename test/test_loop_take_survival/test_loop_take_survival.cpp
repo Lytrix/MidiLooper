@@ -1653,10 +1653,13 @@ void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_
 /// before playhead tails. Host-reachable without Track/DisplayManager.
 void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
                                   uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh,
-                                  NoteUtils::DisplayNoteVec& out) {
+                                  NoteUtils::DisplayNoteVec& out, size_t* committedEnd = nullptr) {
   out.clear();
   const uint32_t loopLength = loop.loopLengthTicks;
   if (loopLength == 0 || firstBar > lastBar) {
+    if (committedEnd != nullptr) {
+      *committedEnd = 0;
+    }
     return;
   }
   const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
@@ -1681,6 +1684,9 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
         break;
       }
     }
+  }
+  if (committedEnd != nullptr) {
+    *committedEnd = out.size();
   }
   if (captureActive) {
     for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
@@ -1976,6 +1982,75 @@ void test_draw_source_upserts_closed_capture_preview_on_already_played_bar() {
   TEST_ASSERT_EQUAL_UINT32(400u, pitch60End);
   TEST_ASSERT_TRUE(found72);
   TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
+}
+
+/// [`001647`] occupy Hide of 77@336→384. Open hold at 336 must grow to playhead 360,
+/// not stay end==start and not keep the record 384.
+void test_draw_source_open_hold_grows_to_playhead_after_occupy_hide() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 336, 384, 77);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto membership = loop.publishedSnapshot()->noteMembership(77, 0);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_TRUE(snapshotMembershipCount(membership.get()) > 0);
+  const NoteId recordId = membership->references[0]->noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, recordId);
+  TEST_ASSERT_EQUAL_UINT32(336u, membership->references[0]->startTick);
+  TEST_ASSERT_EQUAL_UINT32(384u, membership->references[0]->endTick);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(336, 1, 77, 90)));
+  TEST_ASSERT_FALSE(loop.capturePreview.openNoteIndices.empty());
+
+  NoteUtils::DisplayNoteVec drawn;
+  size_t committedEnd = 0;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn, &committedEnd);
+  TEST_ASSERT_TRUE(committedEnd < drawn.size());
+  // This suite stubs Loop::applyPendingNoteChangesToDisplayNotes. Occupy Hide of the
+  // record prefix is applied here the same way the device prefix walk does.
+  NoteUtils::DisplayNoteVec afterHide;
+  afterHide.reserve(drawn.size());
+  size_t hiddenPrefix = 0;
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (i < committedEnd && drawn[i].noteId == recordId) {
+      ++hiddenPrefix;
+      continue;
+    }
+    afterHide.push_back(drawn[i]);
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(hiddenPrefix));
+  committedEnd -= hiddenPrefix;
+  drawn.swap(afterHide);
+  applyCapturePlayheadTails(loop.capturePreview, 3072u, 360u, committedEnd, drawn, false);
+
+  uint32_t holdEnd = 0;
+  uint32_t holdCount = 0;
+  bool recordRemains = false;
+  bool zeroLengthHold = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note != 77 || note.startTick != 336) {
+      continue;
+    }
+    if (note.noteId == recordId && note.endTick == 384) {
+      recordRemains = true;
+    }
+    if (note.endTick == 336) {
+      zeroLengthHold = true;
+    }
+    if (note.endTick == 360) {
+      ++holdCount;
+      holdEnd = note.endTick;
+    }
+  }
+  TEST_ASSERT_FALSE(recordRemains);
+  TEST_ASSERT_FALSE(zeroLengthHold);
+  TEST_ASSERT_EQUAL_UINT32(1u, holdCount);
+  TEST_ASSERT_EQUAL_UINT32(360u, holdEnd);
 }
 
 void test_draw_source_unions_sealed_preview_after_wrap_before_snapshot() {
@@ -2451,6 +2526,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_same_pass_closed_bar_four_keeps_end_beside_hold_head);
   RUN_TEST(test_same_pass_snapshot_keeps_closed_bar_four_end);
   RUN_TEST(test_draw_source_upserts_closed_capture_preview_on_already_played_bar);
+  RUN_TEST(test_draw_source_open_hold_grows_to_playhead_after_occupy_hide);
   RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);

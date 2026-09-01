@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (display-frame Stage 3 phase-split update)
+Last updated: 2026-09-02 (open-hold playhead tail paint)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,9 +23,18 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — display frame Stage 3 host shipped:**
+**Now — open-hold playhead tail ([`001647`](../../captures/session_20260902_001647.log)):**
+`committedDisplayEnd` is snapshot/visual + sealed only. Open holds sit after it so occupy Hide does not apply to them and `applyCapturePlayheadTails` grows them to the playhead. Plan: [`overdub_paint_open_hold_playhead_tail_bugfix.md`](../Plans/overdub_paint_open_hold_playhead_tail_bugfix.md). Reconstruct stays off. Stage 4 stays closed. Light `DRAW_SRC` stays on for the recapture.
+
+**Prior — overdub paint capture handoff ([`234726`](../../captures/session_20260901_234726.log)):**
+Reconstruct stays off. While capture is active, `gatherDrawSourceBars` unions `capturePreview` across the window. Plan: [`overdub_paint_capture_handoff_bugfix.md`](../Plans/overdub_paint_capture_handoff_bugfix.md).
+
+**Prior — OD2 visual reconstruct gated during overdub ([`233642`](../../captures/session_20260901_233642.log)):**
+Stage 3 `load_frame` is one phase, so VisualCache idle fitted during OVERDUBBING. DEC-045 gate is `allowVisualCacheReconstructSlice`. Device [`234726`](../../captures/session_20260901_234726.log) held `visual` **63** until stop `adopt_partial` **95**.
+
+**Prior — display frame Stage 3 host shipped:**
 [`display_frame_phase_split_windowed_paint_refinement.md`](../Plans/display_frame_phase_split_windowed_paint_refinement.md).
-`DisplayManager::update` runs one paint phase per admitted LoadAndDisplay turn. `DISPLAY_UPDATE_INTERVAL` starts a new frame; a pending phase continues without waiting. Transfer is the only OLED-visible phase. RAM1 locals **6880**. Device [`233642`](../../captures/session_20260901_233642.log): `load_frame` **4.7–5.4 ms** after the first RECORDING dump; `DFRAME` wall p50 **12.8 ms**; transfer **4496 µs**. `midi_gap` 5 s-max still often follows the three-turn frame span. Stage 4 stays closed.
+`DisplayManager::update` runs one paint phase per admitted LoadAndDisplay turn. Device [`233642`](../../captures/session_20260901_233642.log): `load_frame` **4.7–5.4 ms**; `DFRAME` wall p50 **12.8 ms**; transfer **4496 µs**.
 
 **OpenSpec 4b.1 / 4b.2 / 4b.2c:** closed under Ring B round-robin
 ([`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md);
@@ -92,14 +101,53 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap RC2b ([`192435`](../../captures/session_20260901_192435.log))**
-RC5b device **PASS**: first **U:** `Overdub undone`, `DISP` 75→63. RC2b
-`draw_src` still rewrites `id 74` compose `2296→2976` to drawn `2296→672`.
-Host tails pin is **red** on `applyCapturePlayheadTails`: closed `A` in the
-capture suffix becomes `2296` when open `C` shares pitch+start. That is not
-the device end `672`. No tails firmware from this pin. Do not patch
-reconstruct, `findOpenPassNote`, or the gather union. RC3 overlay stays
-closed. Plan:
+**Prior — display watches parked after [`204043`](../../captures/session_20260901_204043.log)**
+Not Now implementing. Reopen only if a later capture matches a gate below.
+Closed on `204043` (do not reopen): DEC-051 seal-at-0; stop hide re-admit
+of `63@768→1151`; wrap-held paint from the flatten `WRAP` scanner;
+snapshot-current hide seam; same-start occupy vs reconstruct stacks.
+Parked gates:
+| Watch | Reopen if a future capture shows | Plan |
+|------|----------------------------------|------|
+| RC2b wrap-held rewrite | `draw_src` / frame turns a closed same-`NoteId` into wrap-held (`2296→672`, `2304→2976` / `576` / `1008`) | [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md) |
+| `79@240` dual Off | compose/effective end **272** and drawn/frame end **288** with `SEVT` `F@272` and `F@288` | same + [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) |
+| Stopped-frame miss | `69@3024` (or another pitch+start) in `SEVT` + effective, absent from stopped frame | [`overdub_occupy_same_start_stop_hide_readmit_bugfix.md`](../Plans/overdub_occupy_same_start_stop_hide_readmit_bugfix.md) |
+| Held-note retention | pitch-64 (or equivalent) live hold 40/48 vs MIDI ~624 after seal | [`display_seal_handoff_capture_retention_bugfix.md`](../Plans/display_seal_handoff_capture_retention_bugfix.md) |
+Do not patch reconstruct pairing, `applyCapturePlayheadTails` from the red
+host pin, or `keepShortestEndAtPitchStart` on the draw-source gather unless
+a gate above fires.
+
+**Prior — same-start occupy paint is last overdub + occupy, not a remnant**
+Closed as intended on [`204043`](../../captures/session_20260901_204043.log).
+Reconstruct still stacks every same-start length (occupy needs both
+`noteId`s). Frame/effective follow the last COORD hold, then occupy
+Shorten/Hide: `63@0` last COORD `0→576`, later `336→576` Shortens to
+exclusive end − 1 = **335**; `768→95` is the same rule (`864−1`).
+`1104`/`1536`/`2304`/`69@48` keep the last overdub length (240 / 232 /
+240 / 48), not reconstruct's shorter sibling. Do not reopen to force
+`0→192` or keep-shortest.
+
+**Prior — same-start Hide must not re-admit the record row at overdub stop**
+Device **PASS** [`204043`](../../captures/session_20260901_204043.log):
+frame `63@768` len 95; no post-stop `draw_src`; after snapshot-current
+`DFRAME` stays 81. Host fixtures shipped. Plan:
+[`overdub_occupy_same_start_stop_hide_readmit_bugfix.md`](../Plans/overdub_occupy_same_start_stop_hide_readmit_bugfix.md).
+
+**Prior — DEC-051 overdub wrap seals at loop end ([`193232`](../../captures/session_20260901_193232.log))**
+Stage 1 host clock shipped. Device **PASS**
+[`201956`](../../captures/session_20260901_201956.log) and
+[`204043`](../../captures/session_20260901_204043.log) (wraps at phase 0,
+no `WRAP,2304,96`, no `DNTE 0→3072`, SEVT 125/125 linear pairs).
+Stage 2 stays gated (no `0→L`). Plans:
+[`overdub_wrap_bar4_note_off_session_seal_bugfix.md`](../Plans/overdub_wrap_bar4_note_off_session_seal_bugfix.md),
+[`overdub_wrap_loop_end_commit_refinement.md`](../Plans/overdub_wrap_loop_end_commit_refinement.md).
+
+**Prior — overdub wrap RC2b ([`192435`](../../captures/session_20260901_192435.log))**
+RC5b device **PASS**: first **U:** `Overdub undone`, `DISP` 75→63. Classic
+`2296→672` was not in [`204043`](../../captures/session_20260901_204043.log).
+Host tails pin stays **red** (`2976` → `2296`); no tails firmware from that
+pin. Parked — reopen only on the capture gates in the parked-watches table
+above. RC3 overlay re-admit is closed on `204043`. Plan:
 [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
 
 **Prior — display seal handoff RC1 (`153517` coverage over-claim)**
@@ -142,7 +190,8 @@ the existing Capture tier: `Loop` owns the rows, display only consumes them,
 `VisualCache` only reports coverage, and `DrawSourcePath` is unchanged.
 Plan: [`display_seal_handoff_capture_retention_bugfix.md`](../Plans/display_seal_handoff_capture_retention_bugfix.md).
 Host gates: `teensy41-capture-serial` RAM1 locals **6848**, native **1566/1566**.
-Device recapture open.
+Parked — [`204043`](../../captures/session_20260901_204043.log) has no pitch-64
+holds. Reopen only if a later capture shows the held-note retention gate.
 
 **Prior — overdub wrap snapshot publication (tasks `3.5`/`3.6`)**
 Capture [`134803`](../../captures/session_20260901_134803.log) proved
