@@ -370,7 +370,8 @@ enum StoredVerificationPhase : uint8_t {
   kStoredVerificationNotes = 0,
   kStoredVerificationWrapPairs = 1,
   kStoredVerificationDisplayNotes = 2,
-  kStoredVerificationFrameNotes = 3,
+  kStoredVerificationEffectiveNotes = 3,
+  kStoredVerificationFrameNotes = 4,
 };
 
 }  // namespace
@@ -695,6 +696,51 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
       return;
     }
     deferredStoredVerificationNotes.clear();
+    deferredStoredVerificationCursor = 0;
+    deferredStoredVerificationPhase = kStoredVerificationEffectiveNotes;
+    return;
+  }
+
+  if (deferredStoredVerificationPhase == kStoredVerificationEffectiveNotes) {
+    if (deferredStoredVerificationNotes.empty() && deferredStoredVerificationCursor == 0) {
+      // Raw reconstruct used mergeActiveCapturePasses (no EditPass replay).
+      // Effective dump applies companions via gatherCommittedEvents /
+      // materializeToEventVector so occupancy convergence is observable.
+      deferredStoredVerificationEvents.clear();
+      loop.gatherCommittedEvents(deferredStoredVerificationEvents);
+      deferredStoredVerificationNotes =
+          NoteUtils::reconstructDisplayNotes(deferredStoredVerificationEvents, loop.loopLengthTicks,
+                                             false);
+      char header[128];
+      snprintf(header, sizeof(header),
+               "#CAP,%lu,DIAG,dnte,src,effective,count,%u",
+               static_cast<unsigned long>(micros()),
+               static_cast<unsigned>(deferredStoredVerificationNotes.size()));
+      DebugSessionCapture::appendCaptureTextLine(header);
+    }
+    size_t emitted = 0;
+    while (deferredStoredVerificationCursor < deferredStoredVerificationNotes.size() &&
+           emitted < maxEventsPerSlice) {
+      const NoteUtils::DisplayNote& note =
+          deferredStoredVerificationNotes[deferredStoredVerificationCursor];
+      const uint32_t displayStart = IntervalProjection::noteRelativeTick(
+          note.startTick, loop.loopStartTick, loop.loopLengthTicks);
+      uint32_t length = 0;
+      if (loop.loopLengthTicks > 0 && note.endTick >= note.startTick) {
+        const uint32_t endExclusive =
+            (note.endTick == loop.loopLengthTicks - 1) ? loop.loopLengthTicks : note.endTick;
+        length = endExclusive > note.startTick ? (endExclusive - note.startTick) : 0;
+      }
+      SC_DNTE(note.note, note.startTick, displayStart, length,
+              static_cast<int>(deferredStoredVerificationCursor));
+      ++deferredStoredVerificationCursor;
+      ++emitted;
+    }
+    if (deferredStoredVerificationCursor < deferredStoredVerificationNotes.size()) {
+      return;
+    }
+    deferredStoredVerificationNotes.clear();
+    deferredStoredVerificationEvents.clear();
     deferredStoredVerificationCursor = 0;
     deferredStoredVerificationPhase = kStoredVerificationFrameNotes;
     return;
