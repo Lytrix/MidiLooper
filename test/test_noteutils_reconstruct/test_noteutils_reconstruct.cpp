@@ -389,6 +389,51 @@ void test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body() {
                     100);
 }
 
+/// RC2b (172532): closed 2304→2496 must keep that Off when the sibling 240→432
+/// is in the same reconstruct list, including overdub-pass wrap pairing.
+void test_reconstruct_closed_bar_four_keeps_linear_end_beside_bar_one_sibling() {
+    constexpr uint32_t loopLength = 3072;
+    MidiEventVec ev;
+    MidiEvent onClosed = MidiEvent::NoteOn(2304, 1, 64, 90);
+    onClosed.noteId = 85;
+    MidiEvent offClosed = MidiEvent::NoteOff(2496, 1, 64, 0);
+    offClosed.noteId = 85;
+    MidiEvent onSibling = MidiEvent::NoteOn(240, 1, 64, 90);
+    onSibling.noteId = 88;
+    MidiEvent offSibling = MidiEvent::NoteOff(432, 1, 64, 0);
+    offSibling.noteId = 88;
+    ev.push_back(onClosed);
+    ev.push_back(offClosed);
+    ev.push_back(onSibling);
+    ev.push_back(offSibling);
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+
+    const NoteUtils::DisplayNoteVec merged =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, false);
+    const NoteUtils::DisplayNoteVec wrapPaired =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, true);
+    for (const NoteUtils::DisplayNoteVec& notes : {merged, wrapPaired}) {
+        bool foundClosed = false;
+        bool foundWrapHeld = false;
+        bool foundSibling = false;
+        for (const auto& note : notes) {
+            if (note.noteId == 85 && note.startTick == 2304u && note.endTick == 2496u) {
+                foundClosed = true;
+            }
+            if (note.noteId == 85 && note.startTick == 2304u && note.endTick == 432u) {
+                foundWrapHeld = true;
+            }
+            if (note.noteId == 88 && note.startTick == 240u && note.endTick == 432u) {
+                foundSibling = true;
+            }
+        }
+        TEST_ASSERT_TRUE(foundClosed);
+        TEST_ASSERT_FALSE(foundWrapHeld);
+        TEST_ASSERT_TRUE(foundSibling);
+    }
+}
+
 void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -606,6 +651,7 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_b3_off_at_zero_after_mid_loop_on_keeps_linear_off);
     RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
     RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);
+    RUN_TEST(test_reconstruct_closed_bar_four_keeps_linear_end_beside_bar_one_sibling);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);
