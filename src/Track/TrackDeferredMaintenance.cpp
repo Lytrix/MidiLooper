@@ -66,6 +66,7 @@ void logContentResolutionDeviceGateIncomplete(const char* reason) {
   }
 }
 
+#if SESSION_CAPTURE_SNAPSHOT_IDLE
 TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
     Loop& snapshotLoop, uint32_t snapshotIdleStartUs) {
   const unsigned long nowUs = static_cast<unsigned long>(micros());
@@ -120,6 +121,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleConstructUs()));
   DebugSessionCapture::appendCaptureTextLine(childLine);
 }
+#endif
 
 TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
                                              const NoteUtils::DisplayNote& b) {
@@ -909,7 +911,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   const bool snapshotEligible = snapshotPending && snapshotIdleAllowed;
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
       snapshotEligible) {
-#if defined(SESSION_CAPTURE)
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
     const uint32_t snapshotIdleStartUs = micros();
 #endif
     const uint32_t playheadPhaseTick =
@@ -921,7 +923,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
         MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
         (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
         liveRecordCompletedTicks);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
     appendSnapshotIdleCaptureLine(snapshotLoop, snapshotIdleStartUs);
 #endif
   }

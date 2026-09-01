@@ -74,7 +74,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
 DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
                                                 uint32_t currentTick,
                                                 const DisplayNoteVec& frameNotes) {
-#if defined(SESSION_CAPTURE)
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
     logDrawSourceComposeDifferential(track, displaySlot, currentTick, frameNotes);
 #endif
     const Loop& loop = track.getLoop(displaySlot);
@@ -208,7 +208,9 @@ DISP_CAPTURE_MEM size_t DisplayManager::emitStoppedFrameNoteDump(size_t maxLines
     }
     return emitted;
 }
+#endif
 
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
 DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     const Track& track, uint8_t displaySlot, uint32_t currentTick,
     const DisplayNoteVec& drawnNotes) {
@@ -309,7 +311,9 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         DebugSessionCapture::appendCaptureTextLine(summary);
     }
 }
+#endif
 
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
 DISP_CAPTURE_MEM DisplayManager::ComposeFrameState DisplayManager::captureComposeFrameState() const {
     ComposeFrameState state;
     state.displayNotes.assign(liveDisplayNotes.begin(), liveDisplayNotes.end());

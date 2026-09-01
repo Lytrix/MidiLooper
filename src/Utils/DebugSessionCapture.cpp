@@ -124,6 +124,21 @@ SC_MEM_ATTR bool queueCaptureTextLine(const char* line) {
     return false;
   }
 #endif
+#if !SESSION_CAPTURE_SNAPSHOT_IDLE
+  if (CaptureLineTier::tagStartsWith(line, "DIAG,snapshot_idle,")) {
+    return false;
+  }
+#endif
+#if !SESSION_CAPTURE_BPM
+  if (CaptureLineTier::tagStartsWith(line, "BPM,")) {
+    return false;
+  }
+#endif
+#if !SESSION_CAPTURE_DRAW_SRC
+  if (CaptureLineTier::tagStartsWith(line, "DIAG,draw_src,")) {
+    return false;
+  }
+#endif
   const size_t len = strnlen(line, kMaxCaptureTextBytes - 1);
   if (len == 0) {
     return false;
