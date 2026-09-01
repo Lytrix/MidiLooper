@@ -536,6 +536,7 @@ LOOP_COLD_MEM void Loop::recordLastOverdubSeal(PassId passId, const EditPassIdLi
   lastOverdubSealPriorRevision_ = priorPlaybackRevision;
   lastOverdubSealPlaybackRevision_ = playbackRevision;
   lastOverdubSealCompanionIds_ = companionIds;
+  stampWrapSnapshotJournalRevision(passId, playbackRevision);
 }
 
 LOOP_COLD_MEM void Loop::clearLastOverdubSeal() {

@@ -21,7 +21,7 @@ constexpr EventId kInvalidEventId = 0;
 constexpr uint16_t kLoopSnapshotPitchCount = 128;
 constexpr uint16_t kLoopSnapshotBarsPerPage = 32;
 constexpr uint16_t kSnapshotMembershipPageCapacity = 16;
-constexpr uint16_t kSnapshotMembershipMaxPages = 8;
+constexpr uint16_t kSnapshotMembershipMaxPages = 16;
 constexpr uint32_t kSnapshotSlabBytes = 32 * 1024;
 
 void resetSnapshotAllocCounters();
@@ -157,6 +157,10 @@ struct SnapshotWrapJournalFragment {
   ImmutableLoopSnapshotRef parent;
   LoopSnapshotChangeSet changes;
   PassId wrapPassId = kInvalidPassId;
+  /// `playbackRevision` the completed candidate represents, stamped by
+  /// `Loop::stampWrapSnapshotJournalRevision` once the wrap seal is done. Zero
+  /// means unstamped: the candidate is not selectable until session exit.
+  uint32_t targetRevision = 0;
   uint8_t fragmentIndex = 0;
   uint8_t fragmentCount = 1;
 };

@@ -940,6 +940,15 @@ bool remainingSessionExitPublishWork(const PendingSnapshotPublishBox& box) {
          !box.companionsApplied;
 }
 
+/// A settled wrap carries its companion transforms inside its own journal, so it has
+/// no companion batch of its own to wait for. `companionsApplied` only ever becomes
+/// true on the session-exit path, so reusing the session-exit predicate here left
+/// every wrap candidate unpublished (`134803`: root_rev 1 against playback_rev 11).
+bool remainingWrapPublishWork(const PendingSnapshotPublishBox& box) {
+  return !box.queuedPassIds.empty() || box.passChangeProgress.active ||
+         (box.sessionExitQueued && !box.companionsApplied);
+}
+
 LOOP_COLD_MEM bool finishPendingConstruction(PendingSnapshotPublishBox& box) {
   ImmutableLoopSnapshotRef frozen = box.construction->freeze();
   if (!frozen) {
@@ -1058,6 +1067,18 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
   }
   box.journaledPassIds.push_back(wrapPassId);
   return true;
+}
+
+LOOP_COLD_MEM void Loop::stampWrapSnapshotJournalRevision(PassId wrapPassId,
+                                                          uint32_t targetRevision) {
+  if (!pendingSnapshotPublishBox_ || wrapPassId == kInvalidPassId || targetRevision == 0) {
+    return;
+  }
+  for (SnapshotWrapJournalFragment& fragment : pendingSnapshotPublishBox_->queuedWrapJournals) {
+    if (fragment.wrapPassId == wrapPassId) {
+      fragment.targetRevision = targetRevision;
+    }
+  }
 }
 
 LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
@@ -1520,6 +1541,10 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
         wrapping && !box.queuedWrapJournals.empty()
             ? box.queuedWrapJournals.front().fragmentCount
             : 1;
+    const uint32_t wrapTargetRevision =
+        wrapping && !box.queuedWrapJournals.empty()
+            ? box.queuedWrapJournals.front().targetRevision
+            : 0;
     bool finished = false;
     {
 #if defined(SESSION_CAPTURE)
@@ -1535,12 +1560,12 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       box.wrapJournalInFlight = false;
       return hasPendingSnapshotPublish();
     }
-    if (wrapping && fragmentIndex + 1 == fragmentCount && box.unpublishedCandidate &&
-        !remainingSessionExitPublishWork(box)) {
+    if (wrapping && fragmentIndex + 1 == fragmentCount && wrapTargetRevision != 0 &&
+        box.unpublishedCandidate && !remainingWrapPublishWork(box)) {
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
 #endif
-      storePublishedSnapshot(box.unpublishedCandidate);
+      storePublishedSnapshot(box.unpublishedCandidate, wrapTargetRevision);
     }
   }
 

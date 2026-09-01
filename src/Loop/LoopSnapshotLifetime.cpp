@@ -41,7 +41,8 @@ LOOP_COLD_MEM void Loop::clearPendingSnapshotPublish() {
   pendingSnapshotPublishBox_.reset();
 }
 
-LOOP_COLD_MEM void Loop::storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot) {
+LOOP_COLD_MEM void Loop::storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot,
+                                                uint32_t revision) {
   if (!snapshot) {
     publishedSnapshotBox_.reset();
     return;
@@ -50,5 +51,5 @@ LOOP_COLD_MEM void Loop::storePublishedSnapshot(ImmutableLoopSnapshotRef snapsho
     publishedSnapshotBox_ = std::make_unique<PublishedSnapshotBox>();
   }
   publishedSnapshotBox_->snapshot = std::move(snapshot);
-  publishedSnapshotBox_->revision = playbackRevision;
+  publishedSnapshotBox_->revision = revision != 0 ? revision : playbackRevision;
 }

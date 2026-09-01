@@ -20,6 +20,9 @@ enum class DeferredIdleOwner : uint8_t {
 
 constexpr uint8_t kDeferredIdleOwnerCount = 5;
 
+/// Device test matrix: N=2, pages=16. Revert N to 1 after the recapture.
+constexpr uint8_t kSnapshotIdleConstructionUnitsPerTurn = 2;
+
 inline DeferredIdleOwner nextDeferredIdleOwner(DeferredIdleOwner owner) {
   const uint8_t next =
       static_cast<uint8_t>(owner) + static_cast<uint8_t>(1);

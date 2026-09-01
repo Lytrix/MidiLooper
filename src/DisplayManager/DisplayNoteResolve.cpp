@@ -216,12 +216,25 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         return;
     }
 
+    static uint32_t sLastDiffLogMs = 0;
+    const uint32_t nowMs = millis();
+    if (sLastDiffLogMs != 0 && (nowMs - sLastDiffLogMs) < 250u) {
+        return;
+    }
+    sLastDiffLogMs = nowMs;
+
+    // Compose is no longer the paint owner, so its incremental bookkeeping must survive
+    // this comparison unchanged. Loop-side caches the compose path writes (visualCache
+    // adopt, LCR gather) are not restored — only DisplayManager frame state is.
+    const ComposeFrameState saved = captureComposeFrameState();
     DisplayNoteVec drawnCopy(drawnNotes.begin(), drawnNotes.end());
     const DisplayNoteVec& oldNotes = isLiveRecordingDisplay(track, displaySlot)
                                          ? resolveDisplayNotesLiveCapture(track, displaySlot,
                                                                           currentTick)
                                          : resolveDisplayNotesCommitted(track, displaySlot,
                                                                         currentTick);
+    DisplayNoteVec composedCopy(oldNotes.begin(), oldNotes.end());
+    restoreComposeFrameState(saved);
 
     auto findByNoteId = [](const DisplayNoteVec& notes, NoteId noteId) -> const DisplayNote* {
         if (noteId == kInvalidNoteId) {
@@ -238,21 +251,18 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     uint32_t mismatchCount = 0;
     uint32_t logged = 0;
     constexpr uint32_t kMaxLoggedDiffs = 8;
-    static uint32_t sLastDiffLogMs = 0;
-    const uint32_t nowMs = millis();
-    const bool allowLog = sLastDiffLogMs == 0 || (nowMs - sLastDiffLogMs) >= 250u;
 
     for (const DisplayNote& drawn : drawnCopy) {
         if (drawn.noteId == kInvalidNoteId) {
             continue;
         }
-        const DisplayNote* old = findByNoteId(oldNotes, drawn.noteId);
+        const DisplayNote* old = findByNoteId(composedCopy, drawn.noteId);
         if (old != nullptr && old->note == drawn.note && old->startTick == drawn.startTick &&
             old->endTick == drawn.endTick) {
             continue;
         }
         ++mismatchCount;
-        if (allowLog && logged < kMaxLoggedDiffs) {
+        if (logged < kMaxLoggedDiffs) {
             const uint32_t bar =
                 Config::TICKS_PER_BAR > 0 ? drawn.startTick / Config::TICKS_PER_BAR : 0;
             char line[192];
@@ -270,12 +280,12 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
             ++logged;
         }
     }
-    for (const DisplayNote& old : oldNotes) {
+    for (const DisplayNote& old : composedCopy) {
         if (old.noteId == kInvalidNoteId || findByNoteId(drawnCopy, old.noteId) != nullptr) {
             continue;
         }
         ++mismatchCount;
-        if (allowLog && logged < kMaxLoggedDiffs) {
+        if (logged < kMaxLoggedDiffs) {
             const uint32_t bar =
                 Config::TICKS_PER_BAR > 0 ? old.startTick / Config::TICKS_PER_BAR : 0;
             char line[160];
@@ -289,17 +299,80 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         }
     }
 
-    if (mismatchCount > 0 && allowLog) {
-        sLastDiffLogMs = nowMs;
+    if (mismatchCount > 0) {
         char summary[128];
         snprintf(summary, sizeof(summary),
                  "#CAP,%lu,DIAG,draw_src,diff,count,%u,old,%u,new,%u",
                  static_cast<unsigned long>(micros()), static_cast<unsigned>(mismatchCount),
-                 static_cast<unsigned>(oldNotes.size()),
+                 static_cast<unsigned>(composedCopy.size()),
                  static_cast<unsigned>(drawnCopy.size()));
         DebugSessionCapture::appendCaptureTextLine(summary);
     }
+}
 
-    liveDisplayNotes.assign(drawnCopy.begin(), drawnCopy.end());
+DISP_CAPTURE_MEM DisplayManager::ComposeFrameState DisplayManager::captureComposeFrameState() const {
+    ComposeFrameState state;
+    state.displayNotes.assign(liveDisplayNotes.begin(), liveDisplayNotes.end());
+    state.pendingPaintNotes.assign(liveDisplayPendingPaintNotes_.begin(),
+                                   liveDisplayPendingPaintNotes_.end());
+    state.eventBuffer.assign(liveDisplayEventBuffer.begin(), liveDisplayEventBuffer.end());
+    state.cacheOpenNotes.assign(liveDisplayCacheOpenNotes.begin(), liveDisplayCacheOpenNotes.end());
+    state.cacheEventCount = liveDisplayCacheEventCount;
+    state.committedNoteCount = liveDisplayCacheCommittedNoteCount_;
+    state.paintCommittedEnd = liveDisplayPaintCommittedEnd_;
+    state.captureNoteCount = liveDisplayCacheCaptureNoteCount_;
+    state.captureChangeCount = liveDisplayCacheCaptureChangeCount_;
+    state.baseNoteCount = liveDisplayCacheBaseNoteCount_;
+    state.captureReplacementRevision = liveDisplayCacheCaptureReplacementRevision_;
+    state.capturePreviewRevision = liveDisplayCacheCapturePreviewRevision_;
+    state.cacheCaptureRevision = liveDisplayCacheCaptureRevision;
+    state.cacheLoopLength = liveDisplayCacheLoopLength;
+    state.cacheSlot = liveDisplayCacheSlot;
+    state.cacheTrackState = liveDisplayCacheTrackState;
+    state.mergePlaybackRevision = liveMergePlaybackRevision_;
+    state.mergeCaptureRevision = liveMergeCaptureRevision_;
+    state.playbackDisplaySlot = livePlaybackDisplaySlot_;
+    state.playbackDisplayTrack = livePlaybackDisplayTrack_;
+    state.windowGatherStart = liveWindowGatherStart_;
+    state.windowGatherLength = liveWindowGatherLength_;
+    state.windowGatherLoopLength = liveWindowGatherLoopLength_;
+    state.windowGatherValid = liveWindowGatherValid_;
+    state.committedFromWindowGather = liveDisplayCommittedFromWindowGather_;
+    state.windowVisualCacheRevision = liveWindowVisualCacheRevision_;
+    state.committedLayerHeldForDirtyCache = liveCommittedLayerHeldForDirtyCache_;
+    state.overdubSourceViewNoteCount = liveOverdubSourceViewNoteCount_;
+    return state;
+}
+
+DISP_CAPTURE_MEM void DisplayManager::restoreComposeFrameState(const ComposeFrameState& state) {
+    liveDisplayNotes.assign(state.displayNotes.begin(), state.displayNotes.end());
+    liveDisplayPendingPaintNotes_.assign(state.pendingPaintNotes.begin(),
+                                         state.pendingPaintNotes.end());
+    liveDisplayEventBuffer.assign(state.eventBuffer.begin(), state.eventBuffer.end());
+    liveDisplayCacheOpenNotes.assign(state.cacheOpenNotes.begin(), state.cacheOpenNotes.end());
+    liveDisplayCacheEventCount = state.cacheEventCount;
+    liveDisplayCacheCommittedNoteCount_ = state.committedNoteCount;
+    liveDisplayPaintCommittedEnd_ = state.paintCommittedEnd;
+    liveDisplayCacheCaptureNoteCount_ = state.captureNoteCount;
+    liveDisplayCacheCaptureChangeCount_ = state.captureChangeCount;
+    liveDisplayCacheBaseNoteCount_ = state.baseNoteCount;
+    liveDisplayCacheCaptureReplacementRevision_ = state.captureReplacementRevision;
+    liveDisplayCacheCapturePreviewRevision_ = state.capturePreviewRevision;
+    liveDisplayCacheCaptureRevision = state.cacheCaptureRevision;
+    liveDisplayCacheLoopLength = state.cacheLoopLength;
+    liveDisplayCacheSlot = state.cacheSlot;
+    liveDisplayCacheTrackState = state.cacheTrackState;
+    liveMergePlaybackRevision_ = state.mergePlaybackRevision;
+    liveMergeCaptureRevision_ = state.mergeCaptureRevision;
+    livePlaybackDisplaySlot_ = state.playbackDisplaySlot;
+    livePlaybackDisplayTrack_ = state.playbackDisplayTrack;
+    liveWindowGatherStart_ = state.windowGatherStart;
+    liveWindowGatherLength_ = state.windowGatherLength;
+    liveWindowGatherLoopLength_ = state.windowGatherLoopLength;
+    liveWindowGatherValid_ = state.windowGatherValid;
+    liveDisplayCommittedFromWindowGather_ = state.committedFromWindowGather;
+    liveWindowVisualCacheRevision_ = state.windowVisualCacheRevision;
+    liveCommittedLayerHeldForDirtyCache_ = state.committedLayerHeldForDirtyCache;
+    liveOverdubSourceViewNoteCount_ = state.overdubSourceViewNoteCount;
 }
 #endif
