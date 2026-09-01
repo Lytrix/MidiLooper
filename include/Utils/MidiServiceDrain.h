@@ -84,6 +84,13 @@ inline bool aroundDeferredLoadFrame(bool postOverdubPlayingDrain) {
   return postOverdubPlayingDrain;
 }
 
+/// DEC-045 amendment: OVERDUBBING idle does not reconstruct `visualCache`.
+/// Source-view refresh stays on its own overdub path. Slices resume on
+/// PLAYING / STOPPED_RECORDING.
+inline bool allowVisualCacheReconstructSlice(bool isOverdubbing) {
+  return !isOverdubbing;
+}
+
 inline bool allowDeferredSave(bool postOverdubPlayingDrain, bool deferredSavePending) {
   // During the post-overdub drain window, do not stack pending save work into the same
   // PLAYING turn that is already draining idle maintenance debt.
