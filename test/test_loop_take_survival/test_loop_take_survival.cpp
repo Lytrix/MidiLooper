@@ -1711,6 +1711,126 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
   }
 }
 
+uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return 0;
+  }
+  if (closeTick >= loopLength) {
+    return loopLength - 1;
+  }
+  return closeTick;
+}
+
+bool updateDisplayNoteEndFrom(NoteUtils::DisplayNoteVec& notes, size_t regionStart, uint8_t pitch,
+                              uint32_t startTick, uint32_t endTick) {
+  for (size_t i = regionStart; i < notes.size(); ++i) {
+    if (notes[i].note == pitch && notes[i].startTick == startTick) {
+      notes[i].endTick = endTick;
+      return true;
+    }
+  }
+  return false;
+}
+
+void appendWrapHeldOpenNoteDisplay(NoteUtils::DisplayNoteVec& notes, size_t regionStart,
+                                   const NoteUtils::OpenNoteOn& open, uint32_t tailEnd,
+                                   const NoteUtils::WrapHeadSegment& headSegment) {
+  if (!updateDisplayNoteEndFrom(notes, regionStart, open.note, open.tick, tailEnd)) {
+    NoteUtils::DisplayNote tailSeg;
+    tailSeg.note = open.note;
+    tailSeg.velocity = open.velocity;
+    tailSeg.startTick = open.tick;
+    tailSeg.endTick = tailEnd;
+    notes.push_back(tailSeg);
+  }
+  if (!headSegment.visible) {
+    return;
+  }
+  NoteUtils::DisplayNote headSeg;
+  headSeg.note = open.note;
+  headSeg.velocity = open.velocity;
+  headSeg.startTick = headSegment.startTick;
+  headSeg.endTick = headSegment.endTickInclusive;
+  notes.push_back(headSeg);
+}
+
+NoteUtils::WrapHeadSegment resolveWrapOpenHeadSegment(uint32_t loopLength,
+                                                      const NoteUtils::OpenNoteOn& open,
+                                                      uint32_t closeTick, bool hasCommittedHeadOff,
+                                                      uint32_t headOffTick) {
+  if (hasCommittedHeadOff) {
+    return NoteUtils::resolveWrapHeadSegment(
+        loopLength, headOffTick, NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
+  }
+  if (closeTick < open.tick) {
+    return NoteUtils::resolveWrapHeadSegment(loopLength, closeTick,
+                                             NoteUtils::WrapHeadSegmentContext::LivePlayhead, 768,
+                                             open.tick);
+  }
+  return {};
+}
+
+bool shouldSplitLiveWrapOpenNoteDisplay(const NoteUtils::OpenNoteOn& open, uint32_t loopLength,
+                                        uint32_t closeTick, bool extendHeldNotesToPlayhead,
+                                        bool isWrapHeld) {
+  return isWrapHeld ||
+         NoteUtils::isLiveWrapHeadContinuationDisplay(open.tick, closeTick, loopLength,
+                                                      extendHeldNotesToPlayhead);
+}
+
+/// Same body as `DisplayManagerInternal::applyCapturePlayheadTails`. Overdub paint passes
+/// `allowWrapContinuation=false`.
+void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
+                               uint32_t closeTick, size_t captureRegionStart,
+                               NoteUtils::DisplayNoteVec& notes, bool allowWrapContinuation) {
+  const uint32_t clampedCloseTick = clampOpenNoteCloseTick(closeTick, loopLength);
+  for (const uint32_t previewNoteIndex : preview.openNoteIndices) {
+    if (previewNoteIndex >= preview.notes.size() ||
+        previewNoteIndex >= preview.noteStates.size()) {
+      continue;
+    }
+    const NoteUtils::DisplayNote& previewNote = preview.notes[previewNoteIndex];
+    const CapturePreviewNoteState& state = preview.noteStates[previewNoteIndex];
+    if (!state.open) {
+      continue;
+    }
+    const NoteUtils::OpenNoteOn open{previewNote.note, previewNote.velocity, previewNote.startTick};
+    const bool wrapHeldForSplit = allowWrapContinuation && state.wrapHeld;
+    if (allowWrapContinuation &&
+        shouldSplitLiveWrapOpenNoteDisplay(open, loopLength, clampedCloseTick, true,
+                                           wrapHeldForSplit)) {
+      uint32_t tailEnd = loopLength - 1;
+      if (clampedCloseTick >= open.tick) {
+        tailEnd = std::min(clampedCloseTick, loopLength - 1);
+      }
+      const NoteUtils::WrapHeadSegment head = resolveWrapOpenHeadSegment(
+          loopLength, open, clampedCloseTick, state.hasPreferredHeadOff, state.preferredHeadOffTick);
+      appendWrapHeldOpenNoteDisplay(notes, captureRegionStart, open, tailEnd, head);
+      continue;
+    }
+    uint32_t noteStartTick = open.tick;
+    uint32_t playheadEndTick = std::max(noteStartTick, clampedCloseTick);
+    DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(noteStartTick, playheadEndTick, loopLength);
+    bool updated = false;
+    for (size_t i = captureRegionStart; i < notes.size(); ++i) {
+      if (notes[i].note == open.note && notes[i].startTick == open.tick) {
+        notes[i].startTick = noteStartTick;
+        notes[i].endTick = playheadEndTick;
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) {
+      NoteUtils::DisplayNote liveNote;
+      liveNote.note = open.note;
+      liveNote.velocity = open.velocity;
+      liveNote.startTick = noteStartTick;
+      liveNote.endTick = playheadEndTick;
+      notes.push_back(liveNote);
+    }
+  }
+}
+
 /// RC2b (181116 / 190847): same-pass Off closes A. Wrap-head reconstruction must not
 /// rewrite that NoteId to the bar-1 sibling Off or loopLength-1. Open C may be wrap-held.
 void test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling() {
@@ -1868,6 +1988,55 @@ void test_same_pass_draw_source_keeps_closed_bar_four_end() {
     appendNotesIntersectingBar(loop.visualCache.notes, bar, 3072u, cacheDrawn);
   }
   assertSamePassClosedNoteKeepsLinearEnd(cacheDrawn, idA, 2976u, 576u, 3072u);
+}
+
+/// RC2b (192435): overdub `applyCapturePlayheadTails` (`allowWrapContinuation=false`).
+/// Compose keeps `id 74` `2296→2976`; device drawn is `2296→672`. Host result:
+/// with A in the capture suffix and open C at the same pitch+start, tails rewrite
+/// A to playhead `2296`, not `672`. A must stay `2976`.
+void test_same_pass_playhead_tails_keep_closed_bar_four_end() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kPlayheadTick = 1720;
+  const NoteId idA = 74;
+  const NoteId idB = 76;
+  const NoteId idC = 85;
+  MidiEventVec events;
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(2296, 1, 63, 90, idA));
+  events.push_back(noteOffWithNoteId(2976, 1, 63, idA));
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(0, 1, 63, 90, idB));
+  events.push_back(noteOffWithNoteId(672, 1, 63, idB));
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(2296, 1, 63, 90, idC));
+
+  CapturePreview preview;
+  for (const MidiEvent& evt : events) {
+    applyCaptureEventToPreview(preview, evt, Config::TICKS_PER_BAR, kLoopLength);
+    if (evt.isNoteOn() && !preview.notes.empty()) {
+      preview.notes.back().noteId = evt.noteId;
+    }
+  }
+
+  NoteUtils::DisplayNoteVec drawn;
+  for (const NoteUtils::DisplayNote& note : preview.notes) {
+    drawn.push_back(note);
+  }
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
+      false, true, false, false, !preview.openNoteIndices.empty()));
+  applyCapturePlayheadTails(preview, kLoopLength, kPlayheadTick, 0, drawn, false);
+
+  const NoteUtils::DisplayNote* noteA = findDisplayNoteById(drawn, idA);
+  TEST_ASSERT_NOT_NULL(noteA);
+  TEST_ASSERT_EQUAL_UINT32(2296u, noteA->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2976u, noteA->endTick);
+  TEST_ASSERT_NOT_EQUAL(672u, noteA->endTick);
+  TEST_ASSERT_NOT_EQUAL(kLoopLength - 1u, noteA->endTick);
+  TEST_ASSERT_FALSE(noteA->endTick < noteA->startTick);
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.noteId != idA) {
+      continue;
+    }
+    TEST_ASSERT_EQUAL_UINT32(2296u, note.startTick);
+    TEST_ASSERT_EQUAL_UINT32(2976u, note.endTick);
+  }
 }
 
 /// RC2b (172532): closed 2304→2496 same NoteId must not become wrap-held 2304→432
@@ -2217,6 +2386,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_same_pass_closed_bar_four_keeps_end_beside_hold_head);
   RUN_TEST(test_same_pass_snapshot_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
+  RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
