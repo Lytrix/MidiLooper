@@ -98,6 +98,7 @@ void test_timing_telemetry_lines_are_tier_a() {
       CaptureLineTier::isTierALine("#CAP,57711324,DIAG,playback_order,2100,512"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,6701481,DIAG,snapshot_alloc,nodes=163,bytes=22000,slabs=1"));
+#if SESSION_CAPTURE_SNAPSHOT_IDLE
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"
       "playback_rev=0,queued=3,applied=1,construction=4,exit=1,inflight=1,"
@@ -108,6 +109,18 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,inner,refill=200,event_scan=800,"
       "note_lookup=18000,change_build=400,construct=300"));
+#else
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
+      "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"
+      "playback_rev=0,queued=3,applied=1,construction=4,exit=1,inflight=1,"
+      "journals=0,fragment=0/0,parent_rev=0"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
+      "#CAP,195718000,DIAG,snapshot_idle,child,start=79000,pass_change=1200,"
+      "step=80,finish=40,publish=0,probe=1,enqueue=0,discard=0,emit=40"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
+      "#CAP,195718000,DIAG,snapshot_idle,inner,refill=200,event_scan=800,"
+      "note_lookup=18000,change_build=400,construct=300"));
+#endif
 }
 
 void test_snapshot_idle_lines_fit_capture_text_budget() {

@@ -49,6 +49,42 @@ TRACK_COLD_MEM void dropRedoBranch(GlobalUndoStack& stack) {
     trackManager.reclaimUnreferencedDisabledPasses();
 }
 
+TRACK_COLD_MEM const char* undoneTrackEventName(UndoEntryKind kind) {
+    switch (kind) {
+        case UndoEntryKind::RecordPassAdded:
+            return "Record undone";
+        case UndoEntryKind::OverdubPassAdded:
+            return "Overdub undone";
+        case UndoEntryKind::ClearSlot:
+            return "Clear slot undone";
+        case UndoEntryKind::LoopBoundaryChange:
+            return "Loop boundary undone";
+        case UndoEntryKind::NoteEditPassClosed:
+            return "Note edit undone";
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            return "Control change edit undone";
+    }
+    return "Undo applied";
+}
+
+TRACK_COLD_MEM const char* redoneTrackEventName(UndoEntryKind kind) {
+    switch (kind) {
+        case UndoEntryKind::RecordPassAdded:
+            return "Record redone";
+        case UndoEntryKind::OverdubPassAdded:
+            return "Overdub redone";
+        case UndoEntryKind::ClearSlot:
+            return "Clear slot redone";
+        case UndoEntryKind::LoopBoundaryChange:
+            return "Loop boundary redone";
+        case UndoEntryKind::NoteEditPassClosed:
+            return "Note edit redone";
+        case UndoEntryKind::ControlChangeEditPassClosed:
+            return "Control change edit redone";
+    }
+    return "Redo applied";
+}
+
 TRACK_COLD_MEM void trimUndoStackForMemory(Track& track) {
     if (trimGlobalUndoStackForMemory(track.getGlobalUndoStack()) > 0) {
         trackManager.reclaimUnreferencedDisabledPasses();
@@ -716,10 +752,8 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
                          static_cast<int>(getUndoCount(track)));
             if (entryKind == UndoEntryKind::ClearSlot) {
                 applyClearSlotUndoSideEffects(track, entry, slotIndex);
-                logger.logTrackEvent("Clear slot undone", clockManager.getCurrentTick());
-            } else {
-                logger.logTrackEvent("Overdub undone", clockManager.getCurrentTick());
             }
+            logger.logTrackEvent(undoneTrackEventName(entryKind), clockManager.getCurrentTick());
             const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
             StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
             if (entryKind == UndoEntryKind::ClearSlot) {
@@ -788,10 +822,8 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
                          static_cast<int>(getRedoCount(track)));
             if (entryKind == UndoEntryKind::ClearSlot) {
                 applyClearSlotRedoSideEffects(track, slotIndex);
-                logger.logTrackEvent("Clear slot redone", clockManager.getCurrentTick());
-            } else {
-                logger.logTrackEvent("Overdub redone", clockManager.getCurrentTick());
             }
+            logger.logTrackEvent(redoneTrackEventName(entryKind), clockManager.getCurrentTick());
             const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
             StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
             if (entryKind == UndoEntryKind::ClearSlot) {

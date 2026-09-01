@@ -43,6 +43,18 @@
 #ifndef SESSION_CAPTURE_VCACHE_SLICE
 #define SESSION_CAPTURE_VCACHE_SLICE 0
 #endif
+// High-volume families that stretch USB serial and the clock-path BPM sample
+// (session_20260901_213738: 46k snapshot_idle, 8.5k BPM, 2k draw_src). Off by
+// default; re-enable independently or via teensy41-capture-serial-investigation-diag.
+#ifndef SESSION_CAPTURE_SNAPSHOT_IDLE
+#define SESSION_CAPTURE_SNAPSHOT_IDLE 0
+#endif
+#ifndef SESSION_CAPTURE_BPM
+#define SESSION_CAPTURE_BPM 0
+#endif
+#ifndef SESSION_CAPTURE_DRAW_SRC
+#define SESSION_CAPTURE_DRAW_SRC 0
+#endif
 
 #include "MidiEvent.h"
 
@@ -224,7 +236,11 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
 #define SC_LED_OUT(on, note, vel)          DebugSessionCapture::ledOut(on, note, vel)
 #define SC_GESTURE(ch0, note, pressType)   DebugSessionCapture::gesture(ch0, note, pressType)
 #define SC_STATE(component, from, to)      DebugSessionCapture::stateTransition(component, from, to)
+#if SESSION_CAPTURE_BPM
 #define SC_BPM(raw, smoothed)              DebugSessionCapture::bpm(raw, smoothed)
+#else
+#define SC_BPM(raw, smoothed)              ((void)0)
+#endif
 #define SC_CLOCK_SOURCE(from, to)          DebugSessionCapture::clockSource(from, to)
 #define SC_REC_START(slot, tick)           DebugSessionCapture::recStart(slot, tick)
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) \

@@ -9,6 +9,10 @@
 
 #include <cstring>
 
+#ifndef SESSION_CAPTURE_SNAPSHOT_IDLE
+#define SESSION_CAPTURE_SNAPSHOT_IDLE 0
+#endif
+
 namespace CaptureLineTier {
 
 /**
@@ -70,8 +74,11 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,late_clk,", 14) == 0 || strncmp(tag, "DIAG,late_event,", 16) == 0 ||
          strncmp(tag, "DIAG,playback_build,", 20) == 0 ||
          strncmp(tag, "DIAG,playback_order,", 20) == 0 ||
-         strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0 ||
-         strncmp(tag, "DIAG,snapshot_idle,", 19) == 0;
+         strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0
+#if SESSION_CAPTURE_SNAPSHOT_IDLE
+         || strncmp(tag, "DIAG,snapshot_idle,", 19) == 0
+#endif
+         ;
 }
 
 }  // namespace CaptureLineTier

@@ -2,13 +2,26 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (overdub wrap RC2b tails pin red at playhead 2296; not device 672)
+Last updated: 2026-09-01 (capture-serial volume gates + undo/redo log labels)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
 ---
 
 ## Now implementing
+
+**Capture-serial volume + undo labels ([`213738`](../../captures/session_20260901_213738.log)):**
+`SESSION_CAPTURE_SNAPSHOT_IDLE`, `SESSION_CAPTURE_BPM`, and
+`SESSION_CAPTURE_DRAW_SRC` default **0** on `teensy41-capture-serial`.
+Re-enable independently or via `teensy41-capture-serial-investigation-diag`.
+`DISP` / `DFRAME` / `DIAG,clockrate` / `ODUB,stop,*` / `ST` / `VCACHE` stay on.
+`TrackUndo::undoForLoop` / `redoForLoop` log `Record undone` /
+`Overdub undone` (and the other `UndoEntryKind` names) instead of calling
+every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
+/ `Overdub redone` for `OverdubPassAdded`. Not this slice: undo paint
+(RC5b keep-larger) or OD1-stop `stale_range` visual shrink. **4b.3** and
+**3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
+back on when measuring 3.6.
 
 **OpenSpec 4b.1 / 4b.2 / 4b.2c:** closed under Ring B round-robin
 ([`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md);

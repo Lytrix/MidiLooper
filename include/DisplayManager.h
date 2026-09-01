@@ -212,7 +212,7 @@ private:
                                                           uint32_t currentTick,
                                                           uint8_t pitchLow = 0,
                                                           uint8_t pitchHigh = 127);
-#if defined(SESSION_CAPTURE)
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
     void logDrawSourceComposeDifferential(const Track& track, uint8_t displaySlot,
                                           uint32_t currentTick, const DisplayNoteVec& drawnNotes);
     /// Compose bookkeeping saved around the capture-only differential so running the

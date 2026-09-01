@@ -431,13 +431,16 @@ GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `
 |-----|---------|
 | `teensy41` | Default firmware |
 | `teensy41-capture-serial` | HITL / capture: `SESSION_CAPTURE=1`, `#CAP` serial lines |
-| `teensy41-capture-serial-investigation-diag` | Opt-in high-volume owner diagnostics (`SESSION_CAPTURE_INVESTIGATION_DIAG=1`) |
+| `teensy41-capture-serial-investigation-diag` | Opt-in high-volume owner diagnostics (`SESSION_CAPTURE_INVESTIGATION_DIAG=1`, `SESSION_CAPTURE_SNAPSHOT_IDLE=1`, `SESSION_CAPTURE_BPM=1`, `SESSION_CAPTURE_DRAW_SRC=1`) |
 | `teensy41-capture` | Silent production-style capture build (no session serial) |
 | `teensy41-capture-bypass` | Adds `BYPASS_STOP_UNDO_SAVE=1` — skips undo snapshot push and `saveState` on stop (diagnostic only) |
 
 `teensy41-capture-serial` keeps investigation-heavy `DIAG` families disabled by default
-(`SESSION_CAPTURE_INVESTIGATION_DIAG=0`) to avoid capture-ring/formatting overhead in normal
-validation runs. Enable those lines only in the dedicated investigation target above.
+(`SESSION_CAPTURE_INVESTIGATION_DIAG=0`, `SESSION_CAPTURE_SNAPSHOT_IDLE=0`,
+`SESSION_CAPTURE_BPM=0`, `SESSION_CAPTURE_DRAW_SRC=0`) to avoid capture-ring/formatting
+overhead and clock-path USB stretch in normal validation runs. Enable those lines only
+in the dedicated investigation target above, or by setting an individual flag to `1`.
+`DISP`, `DFRAME`, `DIAG,clockrate`, `ODUB,stop,*`, `ST`, and `VCACHE` stay on.
 
 **Do not** add `MemoryMonitor` or full-loop validation on record/overdub stop hot paths. Idle maintenance, deferred SD save (`processDeferredSaveState`), and `HotPathTelemetry` deferred summary are wired in `main()` — deferred save runs only when **no** track is recording/overdubbing, and can continue during **PLAYING**; deferred full validate runs only when the track is not **PLAYING**, **RECORDING**, or **OVERDUBBING**. **`TrackManager::prewarmPlaybackRuntime()`** runs after early loop allocation and successful **`loadState`** so first playback tick does not allocate runtime.
 
