@@ -35,6 +35,8 @@ struct PendingNote {
   uint32_t startNoteTick;  // tick when note-on occurred
   uint8_t velocity;        // note-on velocity
   OverlapNoteIdSet overlapNoteIds;  // hold-duration candidates; keep after playback off
+  /// Identities resolved at this hold's NoteOn. NoteOff skips them by identity.
+  OverlapNoteIdSet occupancyResolvedNoteIds;
 };
 
 // Hash function for pair (used in unordered_map)

@@ -1113,7 +1113,6 @@ LOOP_COLD_MEM void Loop::prewarmOverdubSourceSpanCache() {
 
 void Loop::clearPendingNoteChanges() {
   pendingNoteChanges_.clear();
-  pendingPaintHides_.clear();
 }
 
 void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {

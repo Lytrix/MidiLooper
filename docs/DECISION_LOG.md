@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-050](#dec-050--occupancy-at-noteon-and-per-bar-draw-routing) | 2026-09-01 | Occupancy resolves at NoteOn into pending effective transforms; draw source is per-bar routing only | Accepted |
 | [DEC-049](#dec-049--overdub-stop-admits-the-seal-and-accelerates-snapshot-publication) | 2026-08-31 | Overdub stop preserves the merged stream for incremental seal admission; Snapshot idle uses a fixed 2-of-6 ratio while a publication backlog is present | Accepted |
 | [DEC-047](#dec-047--bounded-overdub-wrap-snapshot-publication) | 2026-08-27 | Bounded overdub-wrap snapshot publication through mutation journals and fixed-capacity membership pages | Accepted — Phase 3 tasks 3.5–3.6 |
 | [DEC-046](#dec-046--round-robin-admission-over-playback-relevant-destinations-representation-coverage-is-a-prerequisite) | 2026-08-26 | Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite; `RECORDING` included; G1 consumes RC4's post-resolution cost | Accepted — architecture direction; firmware Slices 1–4 not authorized |
@@ -63,7 +64,40 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-050 -->
+<!-- Append new entries below (newest first). Next ID: DEC-051 -->
+
+## DEC-050 — Occupancy at NoteOn and per-bar draw routing
+
+**Date:** 2026-09-01
+
+**Status:** Accepted
+
+**Scope:** `feature/overdub-wrap-snapshot-publication`
+
+**Authority:** snapshot-first bar painter plan (design-session artifact).
+
+**Decision:**
+
+1. Occupancy resolution is an authoritative Loop-state transition initiated at
+   NoteOn. Display drawing consumes the resulting effective state and does not
+   determine musical occupancy semantics.
+2. Draw source selection is per-bar routing only; it does not arbitrate between
+   competing note representations.
+3. Occupancy is represented as a pending effective transform over committed
+   geometry, never as ledger state. All candidates have final `startTick` and
+   `endTick`; the ledger supplies identity only.
+4. Occupancy transforms compose monotonically per identity. No resolution may
+   make a note more audible than a previous resolution left it.
+
+**Consequences:**
+
+- `resolveOccupancyAtNoteOn` writes Shorten/Hide into `pendingNoteChanges_`.
+  `pendingPaintHides_` is removed.
+- `upsertSourceTransform` is monotonically restrictive: Hide absorbs Shorten;
+  Shorten takes `min` end tick; sub-min-length degrades to Hide.
+- NoteOff skips NoteOn-resolved identities and only resolves notes that start
+  strictly inside the incoming hold.
+- Draw path (Stage B) selects Capture / Snapshot / VisualCache per bar.
 
 ## DEC-049 — Overdub stop admits the seal and accelerates snapshot publication
 

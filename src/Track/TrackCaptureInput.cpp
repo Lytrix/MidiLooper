@@ -205,8 +205,10 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   if (pending.overlapNoteIds.size() == 0) {
     loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, pending.overlapNoteIds);
   }
-  loop.upsertPendingHidesForOccupiedNoteIds(pending.channel, pending.note, pending.velocity,
-                                            pending.overlapNoteIds, holdStart);
+  pending.occupancyResolvedNoteIds.clear();
+  loop.resolveOccupancyAtNoteOn(pending.channel, pending.note, pending.velocity,
+                                pending.overlapNoteIds, holdStart,
+                                &pending.occupancyResolvedNoteIds);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   OverlapNoteIdSet sourceViewIds;
   loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, sourceViewIds);
@@ -286,8 +288,8 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackN
                                    : IntervalProjection::tickPhaseInLoop(
                                          pending.startNoteTick, 0,
                                          loop.overdubSourceViewLoopLengthTicks());
-    loop.upsertPendingHidesForOccupiedNoteIds(pending.channel, pending.note, pending.velocity,
-                                              crossed, holdStart);
+    loop.resolveOccupancyAtNoteOn(pending.channel, pending.note, pending.velocity, crossed,
+                                  holdStart, &pending.occupancyResolvedNoteIds);
   }
 }
 
@@ -446,6 +448,9 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
         const OverlapNoteIdSet& overlapNoteIds = (overlapIt != pendingNotes.end())
                                                      ? overlapIt->second.overlapNoteIds
                                                      : kEmptyOverlapNoteIds;
+        const OverlapNoteIdSet* occupancyResolvedNoteIds =
+            (overlapIt != pendingNotes.end()) ? &overlapIt->second.occupancyResolvedNoteIds
+                                              : nullptr;
         const uint8_t velocity =
             (overlapIt != pendingNotes.end()) ? overlapIt->second.velocity : 0;
         const LoopEventStore& capture = loop.capture.store;
@@ -456,7 +461,8 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
             continue;
           }
           (void)loop.accumulatePendingNoteChangesForIncomingNote(
-              channel, note, velocity, prior.tick, phaseTick, prior.noteId, overlapNoteIds);
+              channel, note, velocity, prior.tick, phaseTick, prior.noteId, overlapNoteIds,
+              occupancyResolvedNoteIds);
           break;
         }
       }
@@ -602,9 +608,12 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         const OverlapNoteIdSet& overlapNoteIds = (pendingIt != pendingNotes.end())
                                                      ? pendingIt->second.overlapNoteIds
                                                      : kEmptyOverlapNoteIds;
+        const OverlapNoteIdSet* occupancyResolvedNoteIds =
+            (pendingIt != pendingNotes.end()) ? &pendingIt->second.occupancyResolvedNoteIds
+                                              : nullptr;
         (void)loop.accumulatePendingNoteChangesForIncomingNote(
             channel, data1, prior.data.noteData.velocity, prior.tick, newEvt.tick, prior.noteId,
-            overlapNoteIds);
+            overlapNoteIds, occupancyResolvedNoteIds);
 #if RUNTIME_TIMING_ENABLED
         RUNTIME_TIMING_ADD_NOTE_CHANGE(micros() - noteChangeStartUs);
 #endif
@@ -623,7 +632,8 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
   }
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
-    // Store pending note for later duration fix
+    // Single slot per (note, channel). A second live NoteOn replaces the first;
+    // Stage A occupancy must not add a nested slot here.
     PendingNote pending{note, channel, tick, velocity};
     snapshotOverlapHoldCandidates(pending);
     pendingNotes[{note, channel}] = pending;
