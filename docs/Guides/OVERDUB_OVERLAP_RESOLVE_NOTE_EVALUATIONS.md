@@ -40,26 +40,27 @@ Wrong final geometry is not a license to change candidate lookup.
 
 ---
 
-## Lifecycle (elevate: resolver runs at B's Off)
+## Lifecycle (elevate: occupancy at B's On; NoteOff closes B)
 
 ```
 B On
   → capture store only (already appended)
-  → no A geometry mutation
-  → no Pending Shorten/Hide
-  → not a ledger Entry, not a closed source-view span
+  → resolve occupancy over committed geometry (`resolveOccupancyAtNoteOn`)
+  → `A.startTick < B.startTick` → Shorten A to `B.startTick - 1`
+  → `A.startTick >= B.startTick` → Hide A
+  → identities go on `PendingNote.occupancyResolvedNoteIds`
+  → pending is an effective-state transform, not a paint overlay
 
 B remains open across overdub wrap
   → extractOpenCaptureNoteOns carries the On into the next capture pass
-  → still no resolver run, still no A mutation
+  → occupancy already resolved at On; wrap does not re-resolve those identities
   → live capture continuation is not B's resolved source-view span
-  → missing Off means incoming geometry is not yet closed
-  → do not shorten A because B already has a start tick
 
 B Off  (live, or synthesized stop Off)
   → B is a closed incoming linear span
-  → resolve A against B
-  → Pending Shorten/Hide (A) + Pending Add (B, overlay only)
+  → skip identities already resolved at this hold's NoteOn
+  → resolve only notes that start strictly inside `(B.startTick, B.endTick)`
+  → Pending Add (B, overlay only)
   → pending geometry exists
 
 seal (wrap / stop)
@@ -93,14 +94,16 @@ ConstrainedNoteGeometry
     ↓
 PendingNoteChange     ← session overlay; Add ≠ persistence
     ↓
-display paint overlay (applyPendingNoteChangesToDisplayNotes)
+draw-source gather (Snapshot / VisualCache, plus Capture on live bars)
+    ↓
+applyPendingNoteChangesToDisplayNotes (effective transform, then playhead tails)
     ↓
 sealed EditPass Length/Delete   (Shorten/Hide only)
     ↓
 persistent note event geometry (Off tick via shortenNoteEndById)
 ```
 
-`overdubSourceViewNotes_` is a cache. Source-view covering identities are read from it **without** applying pending. Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView` (that function is used from native tests; wrap path seals then rebuilds). Display paint overlays pending Hide/Shorten onto a paint vector only.
+`overdubSourceViewNotes_` is a cache. Source-view covering identities are read from it **without** applying pending. Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView` (that function is used from native tests; wrap path seals then rebuilds). Display gather is per-bar `DrawSourcePath` routing (`resolveDisplayNotesByDrawSource`); pending Hide/Shorten apply after source selection. The old compose path remains for capture-only differential until that layer is deleted.
 
 **Candidate selection.** `accumulatePendingNoteChangesForIncomingNote` builds `effectiveOverlapNoteIds`: occupy/playback ids plus geometric participants from `overdubSourceViewNotes_` that `existingNoteOverlapsIncomingHold` with each hold segment. Long loops call `ensureOverdubSourceNotesForHold` only when occupy ids lack source-view rows or empty ids need ahead-note materialization; hold hydration now reads `overdubSourceSpanCacheNotes_` (prepared spans when available, else full-loop resolved-note rebuild) and filters by pitch/hold window before merge (`from=cache`). The cache is prewarmed from idle STOPPED maintenance (`Loop::prewarmOverdubSourceSpanCache`) on a later clean-cache turn after `boot_commit`, so first overdub entry does not pay the cold rebuild cost in `why=open`. Do not call it in the same turn as `slice_clean` (`160519`). Without that later call, session-open stamps an empty cache and occupy stays `norow` ([`162928`](../../captures/session_20260821_162928.log)). Device PASS [`165107`](../../captures/session_20260821_165107.log): open `notes` 1319–1394, `idsel>0`. STOPPED idle visual-cache slices use a budgeted gather and defer wrap-append so undo / track-switch do not pay unbounded `idle_append` in the same turn. Candidates come from `appendNotesForIds` only. Plans: [`../Plans/overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md), [`../Plans/overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md).
 
@@ -181,20 +184,21 @@ Do not change the classifier to half-open as a “cleanup.” That is an off-by-
 
 ## Pending overwrite (`upsertSourceTransform`)
 
-Only Shorten/Hide upsert. Last write for that `noteId` **replaces** the previous Shorten/Hide entirely (`existing = change`). Add always `push_back` (never upserts).
+Only Shorten/Hide upsert. One `{Shorten, Hide}` transform per `noteId`. Composition is **monotonically restrictive**: Hide absorbs any subsequent Shorten; Shorten composes as `min(existing.endTick, incoming.endTick)` and never lengthens. A composed Shorten at or below the note start, or below `noteMinLengthTicks` when min-length removal is enabled, degrades to Hide. Add always `push_back` (never upserts).
 
 | Sequence | Result |
 |---|---|
-| Shorten end 168, then Shorten end 120 | **120 wins** |
+| Shorten end 168, then Shorten end 120 | **120 wins** (`min`) |
+| Shorten end 799, then Shorten end 899 | **799 wins** (never lengthens) |
 | Shorten, then Hide | **Hide wins** |
-| Hide, then Shorten | **Shorten wins** (last write; Hide does not stick) |
+| Hide, then Shorten | **Hide stays** (Hide absorbs Shorten) |
 | Shorten, then a later resolve that does not emit Shorten/Hide (BoundaryTouch / unchanged) | **No upsert** — previous transform remains; baseline is not resurrected |
 
 Within **one** `resolveConstrainedGeometry` call: `CompleteCover` / `OverlapNoteOn` Hide beats Shorten; among `OverlapNoteOff`s, **shortest** `computeShortenedEndTick` wins.
 
-Across wrap-split, `accumulatePendingNoteChangesForIncomingNote` makes the two resolver calls in **deterministic chronological segment order**: `[startTick, loopLen)` first, then `[0, endTick)` (`endTick > 0`). Upsert last-write for a wrap-crossing B is therefore the **second** segment’s Shorten/Hide for that `noteId`. The first segment does not remain the pending transform if the second emits one.
+Across wrap-split, `accumulatePendingNoteChangesForIncomingNote` makes the two resolver calls in **deterministic chronological segment order**: `[startTick, loopLen)` first, then `[0, endTick)` (`endTick > 0`). Upsert is most-restrictive-wins: the second segment cannot resurrect audio the first segment already removed.
 
-Across later notes constraining the same A, upsert last-write is the pending invariant: **canonical latest constrained result**. Repeated observations must not resurrect baseline (they don't upsert when unconstrained). They can replace a prior constraint with a different constraint.
+Across later notes constraining the same A, upsert is monotonically restrictive. Repeated observations must not resurrect baseline.
 
 ---
 
@@ -295,7 +299,7 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | `OverlapNoteOff` | Target starts before causing and `targetEnd >= causingStart` (includes start-abut) | Shorten to `computeShortenedEndTick` |
 | `BoundaryTouch` | No inclusive overlap; edges share a tick | Leave baseline (no upsert) |
 
-`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff`, Shortens `OverlapNoteOn` to the occupy exclusive end − 1 (Length companion), and Hides only `CompleteCover` or an inverted / min-length remnant. Occupy On and playback cross upsert paint-only Hides (`pendingPaintHides_`) so the occupied committed row drops on the currentTick frame; wrap/stop do **not** seal those as Delete (`005757`). When occupy ledger ids are empty or have no source-view row (`104129` `n=0` / `010926` `norowid`), upsert falls back to present-at-hold source-view participants. Wrap idle slice / `adopt_partial` / grown-cache assign apply the same paint overlay so wrap first `DISP` does not restore occupied rows. NoteOff resolve replaces the paint Hide with Shorten (OverlapNoteOn / OverlapNoteOff) or Hide (CompleteCover). During overdub, over-budget display resolve still mirrors `capturePreview` so open capture notes paint on NoteOn (`104129`), including after a committed-layer rebuild. Overdub playhead tails apply on every open-note frame, including over-budget reuse (`112806`); they are not gated on `captureLayerChanged`. Live capture tails stay on the frame and grow to currentTick until NoteOff. After wrap/stop adopt hide/dedupe, compose committed/capture/base counts clamp to `liveDisplayNotes.size()`; resize never grows a default MIDI 0 / tick 0 row (`111343`).
+`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff`, Shortens `OverlapNoteOn` to the occupy exclusive end − 1 (Length companion), and Hides only `CompleteCover` or an inverted / min-length remnant. Occupy On (`resolveOccupancyAtNoteOn`) writes authoritative Shorten/Hide into `pendingNoteChanges_`: Shorten when A starts before B, Hide otherwise. Those identities are skipped at NoteOff. When occupy ledger ids are empty or have no source-view row (`104129` `n=0` / `010926` `norowid`), resolve falls back to present-at-hold source-view participants. Wrap idle slice / `adopt_partial` / grown-cache assign apply the same pending effective transforms so wrap first `DISP` does not restore occupied rows. During overdub, over-budget display resolve still mirrors `capturePreview` so open capture notes paint on NoteOn (`104129`), including after a committed-layer rebuild. Overdub playhead tails apply on every open-note frame, including over-budget reuse (`112806`); they are not gated on `captureLayerChanged`. Live capture tails stay on the frame and grow to currentTick until NoteOff. After wrap/stop adopt hide/dedupe, compose committed/capture/base counts clamp to `liveDisplayNotes.size()`; resize never grows a default MIDI 0 / tick 0 row (`111343`).
 
 ### 4. What is stored after resolve?
 

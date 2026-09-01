@@ -41,6 +41,8 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <map>
+#include <utility>
 
 namespace {
 
@@ -558,19 +560,20 @@ void test_pending_hide_applies_to_display_notes_not_source_view() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 64));
 }
 
-void test_upsert_occupied_hides_before_note_off() {
+void test_resolve_occupancy_at_note_on_same_start_hides() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
+  OverlapNoteIdSet resolved;
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 0, &resolved);
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
-  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
-  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
-  const PendingNoteChange* hide = findTransform(loop.pendingPaintHides(), 1);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_TRUE(resolved.contains(1));
+  const PendingNoteChange* hide = findTransform(loop.pendingNoteChanges(), 1);
   TEST_ASSERT_NOT_NULL(hide);
   TEST_ASSERT_EQUAL_UINT32(0u, hide->startTick);
   TEST_ASSERT_EQUAL_UINT32(576u, hide->endTick);
@@ -582,7 +585,7 @@ void test_pending_hide_applies_when_display_note_id_differs() {
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 0);
 
   NoteUtils::DisplayNoteVec paint;
   NoteUtils::DisplayNote row{};
@@ -602,7 +605,7 @@ void test_pending_hide_keeps_live_capture_tail() {
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 0);
 
   NoteUtils::DisplayNoteVec paint;
   NoteUtils::DisplayNote committed{};
@@ -633,10 +636,9 @@ void test_upsert_occupied_hides_empty_ledger_uses_hold_participants() {
   seedLongSourceNote(loop, 73, 912, 1296, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({}), 912);
-  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
-  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
-  const PendingNoteChange* hide = findTransform(loop.pendingPaintHides(), 73);
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({}), 912);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* hide = findTransform(loop.pendingNoteChanges(), 73);
   TEST_ASSERT_NOT_NULL(hide);
   TEST_ASSERT_EQUAL_UINT32(912u, hide->startTick);
   TEST_ASSERT_EQUAL_UINT32(1296u, hide->endTick);
@@ -649,29 +651,315 @@ void test_upsert_occupied_hides_norowid_falls_back_to_hold_participants() {
   seedLongSourceNote(loop, 73, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
 
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({77}), 0);
-  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
-  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
-  const PendingNoteChange* hide = findTransform(loop.pendingPaintHides(), 73);
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({77}), 0);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* hide = findTransform(loop.pendingNoteChanges(), 73);
   TEST_ASSERT_NOT_NULL(hide);
   TEST_ASSERT_EQUAL_UINT32(0u, hide->startTick);
   TEST_ASSERT_EQUAL_UINT32(576u, hide->endTick);
 }
 
-void test_occupy_paint_hide_is_not_sealed_as_delete() {
+void test_occupancy_hide_seals_as_delete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedLongSourceNote(loop, 1, 0, 576, 60);
   loop.beginCapture(CapturePhase::Overdub);
-  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({1}), 0);
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 0);
 
   const EditPassIdList sealed = loop.sealPendingNoteChangesToEditPasses();
-  TEST_ASSERT_EQUAL(0u, sealed.size());
-  TEST_ASSERT_EQUAL(0u, loop.passes.editPasses.size());
-  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
-  TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
-  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 0));
+  TEST_ASSERT_EQUAL(1u, sealed.size());
+  TEST_ASSERT_EQUAL(1u, loop.passes.editPasses.size());
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  const EditPass* row = findEditPassByTarget(loop, 1);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete), static_cast<int>(row->actionType));
+}
+
+uint32_t countDisplayNotesAtPitchStart(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                                       uint32_t startTick) {
+  uint32_t count = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void seedFiveSiblingPitch64At768(Loop& loop) {
+  constexpr uint32_t kFourBars = Config::TICKS_PER_BAR * 4;
+  loop.loopLengthTicks = kFourBars;
+  LoopEventStore store;
+  const uint32_t ends[5] = {1344, 1152, 1056, 960, 864};
+  for (NoteId id = 1; id <= 5; ++id) {
+    TEST_ASSERT_TRUE(storeAppendNoteOn(store, 768, 1, 64, 100, id));
+    TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(ends[id - 1], 1, 64, 0)));
+  }
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 6;
+}
+
+void test_occupancy_five_sibling_convergence() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedFiveSiblingPitch64At768(loop);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  OverlapNoteIdSet resolved;
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1, 2, 3, 4, 5}), 768, &resolved);
+  TEST_ASSERT_EQUAL_UINT32(5u, static_cast<uint32_t>(resolved.size()));
+  TEST_ASSERT_EQUAL(5, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 64, 90, 768, 912, 10,
+                                                                   overlapIds({1, 2, 3, 4, 5}),
+                                                                   &resolved));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(5, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+
+  SessionMidiEventVec firstFlat;
+  loop.gatherCommittedEvents(firstFlat);
+  NoteUtils::DisplayNoteVec firstNotes =
+      NoteUtils::reconstructDisplayNotes(firstFlat, loop.loopLengthTicks, false);
+  loop.applyPendingNoteChangesToDisplayNotes(firstNotes);
+  TEST_ASSERT_EQUAL_UINT32(0u, countDisplayNotesAtPitchStart(firstNotes, 64, 768));
+
+  SessionMidiEventVec repeatFlat;
+  loop.gatherCommittedEvents(repeatFlat);
+  NoteUtils::DisplayNoteVec repeatNotes =
+      NoteUtils::reconstructDisplayNotes(repeatFlat, loop.loopLengthTicks, false);
+  loop.applyPendingNoteChangesToDisplayNotes(repeatNotes);
+  TEST_ASSERT_EQUAL_UINT32(0u, countDisplayNotesAtPitchStart(repeatNotes, 64, 768));
+
+  loop.applyPendingNoteChangesToOverdubSourceView();
+  TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(loop.overdubSourceViewNotes(), 64, 768));
+  const NoteUtils::DisplayNote* added = findDisplayNoteById(loop.overdubSourceViewNotes(), 10);
+  TEST_ASSERT_NOT_NULL(added);
+  TEST_ASSERT_EQUAL_UINT32(768u, added->startTick);
+  TEST_ASSERT_EQUAL_UINT32(912u, added->endTick);
+
+  loop.rebuildOverdubSourceView(768, "test");
+  loop.applyPendingNoteChangesToOverdubSourceView();
+  TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(loop.overdubSourceViewNotes(), 64, 768));
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(768, 1, 64, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(912, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 0));
+  const PassId passId = loop.lastCommittedPassId();
+  const EditPassIdList sealed = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(5u, sealed.size());
+  loop.pushOverdubSessionPass(passId, sealed);
+
+  SessionMidiEventVec sealedFlat;
+  loop.gatherCommittedEvents(sealedFlat);
+  const NoteUtils::DisplayNoteVec sealedNotes =
+      NoteUtils::reconstructDisplayNotes(sealedFlat, loop.loopLengthTicks, false);
+  TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(sealedNotes, 64, 768));
+
+  loop.rebuildOverdubSourceView(768, "test-sealed");
+  TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(loop.overdubSourceViewNotes(), 64, 768));
+}
+
+void test_occupancy_ordering_equivalence() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop first;
+  seedLongSourceNote(first, 1, 0, 576, 60);
+  first.beginCapture(CapturePhase::Overdub);
+  OverlapNoteIdSet resolvedFirst;
+  first.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 192, &resolvedFirst);
+  TEST_ASSERT_TRUE(first.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 192, 288, 10,
+                                                                    overlapIds({1}), &resolvedFirst));
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop second;
+  seedLongSourceNote(second, 1, 0, 576, 60);
+  second.beginCapture(CapturePhase::Overdub);
+  OverlapNoteIdSet resolvedSecond;
+  second.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 192, &resolvedSecond);
+  TEST_ASSERT_TRUE(second.accumulatePendingNoteChangesForIncomingNote(
+      1, 60, 90, 192, 288, 10, overlapIds({1}), &resolvedSecond));
+
+  TEST_ASSERT_EQUAL(countKind(first.pendingNoteChanges(), PendingNoteChangeKind::Add),
+                    countKind(second.pendingNoteChanges(), PendingNoteChangeKind::Add));
+  TEST_ASSERT_EQUAL(countKind(first.pendingNoteChanges(), PendingNoteChangeKind::Shorten),
+                    countKind(second.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(countKind(first.pendingNoteChanges(), PendingNoteChangeKind::Hide),
+                    countKind(second.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* firstA = findTransform(first.pendingNoteChanges(), 1);
+  const PendingNoteChange* secondA = findTransform(second.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(firstA);
+  TEST_ASSERT_NOT_NULL(secondA);
+  TEST_ASSERT_EQUAL(static_cast<int>(firstA->kind), static_cast<int>(secondA->kind));
+  TEST_ASSERT_EQUAL_UINT32(firstA->endTick, secondA->endTick);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten),
+                    static_cast<int>(firstA->kind));
+  TEST_ASSERT_EQUAL_UINT32(191u, firstA->endTick);
+}
+
+void test_occupancy_three_note_nesting() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 2000, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  OverlapNoteIdSet resolvedB;
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 800, &resolvedB);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 800, 1200, 10,
+                                                                   overlapIds({1}), &resolvedB));
+  loop.applyPendingNoteChangesToOverdubSourceView();
+
+  OverlapNoteIdSet resolvedC;
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1, 10}), 900, &resolvedC);
+  const PendingNoteChange* a = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(a);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten), static_cast<int>(a->kind));
+  TEST_ASSERT_EQUAL_UINT32(799u, a->endTick);
+  const PendingNoteChange* b = findTransform(loop.pendingNoteChanges(), 10);
+  TEST_ASSERT_NOT_NULL(b);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten), static_cast<int>(b->kind));
+  TEST_ASSERT_EQUAL_UINT32(899u, b->endTick);
+}
+
+void test_occupancy_composition_hide_absorbs_shorten() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 768, 1920, 64);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1}), 768);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1}), 900);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+}
+
+void test_occupancy_composition_shorten_keeps_earlier_end() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 760, 1920, 64);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1}), 800);
+  const PendingNoteChange* first = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten), static_cast<int>(first->kind));
+  TEST_ASSERT_EQUAL_UINT32(799u, first->endTick);
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1}), 900);
+  const PendingNoteChange* second = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten), static_cast<int>(second->kind));
+  TEST_ASSERT_EQUAL_UINT32(799u, second->endTick);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+}
+
+void test_occupancy_composition_shorten_below_min_length_hides() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 760, 1920, 64);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(noteMinLengthRemoveEnabled);
+  TEST_ASSERT_EQUAL_UINT32(8u, noteMinLengthTicks);
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1}), 764);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+}
+
+void test_occupancy_wrap_split_keeps_most_restrictive() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 4099, 60, 4100);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 4000, 200, 10,
+                                                                   overlapIds({1})));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* transform = findTransform(loop.pendingNoteChanges(), 1);
+  TEST_ASSERT_NOT_NULL(transform);
+  TEST_ASSERT_EQUAL_UINT32(0u, transform->startTick);
+  TEST_ASSERT_EQUAL_UINT32(199u, transform->endTick);
+}
+
+void test_occupancy_add_then_shorten_composes_in_source_view() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 240, 10,
+                                                                   overlapIds({})));
+  loop.applyPendingNoteChangesToOverdubSourceView();
+  OverlapNoteIdSet resolvedC;
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({10}), 160, &resolvedC);
+  loop.applyPendingNoteChangesToOverdubSourceView();
+  const NoteUtils::DisplayNote* composed = findDisplayNoteById(loop.overdubSourceViewNotes(), 10);
+  TEST_ASSERT_NOT_NULL(composed);
+  TEST_ASSERT_EQUAL_UINT32(64u, composed->startTick);
+  TEST_ASSERT_EQUAL_UINT32(159u, composed->endTick);
+}
+
+void test_retrigger_pending_note_slot_replaces_first() {
+  // Pins Track::noteOn single-slot pendingNotes[{note, channel}] replacement.
+  // Stage A must not add a second slot or merge occupancyResolvedNoteIds across retriggers.
+  struct Slot {
+    uint32_t startNoteTick = 0;
+    OverlapNoteIdSet occupancyResolvedNoteIds;
+  };
+  std::map<std::pair<uint8_t, uint8_t>, Slot> pendingNotes;
+  Slot first;
+  first.startNoteTick = 100;
+  first.occupancyResolvedNoteIds = overlapIds({1});
+  pendingNotes[{60, 1}] = first;
+  Slot second;
+  second.startNoteTick = 200;
+  pendingNotes[{60, 1}] = second;
+  TEST_ASSERT_EQUAL(1u, pendingNotes.size());
+  const Slot& replaced = pendingNotes[{60, 1}];
+  TEST_ASSERT_EQUAL_UINT32(200u, replaced.startNoteTick);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(replaced.occupancyResolvedNoteIds.size()));
+}
+
+void test_occupancy_undo_restores_original_geometry() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 64, 1920, 64);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.resolveOccupancyAtNoteOn(1, 64, 90, overlapIds({1}), 768);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(768, 1, 64, 90, 10)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(912, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed, loop.commitCapturePass(CommitReason::OverdubStop, 0));
+  const PassId passId = loop.lastCommittedPassId();
+  const EditPassIdList sealed = loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL(1u, sealed.size());
+  loop.pushOverdubSessionPass(passId, sealed);
+
+  SessionMidiEventVec occupied;
+  loop.gatherCommittedEvents(occupied);
+  const NoteUtils::DisplayNoteVec occupiedNotes =
+      NoteUtils::reconstructDisplayNotes(occupied, loop.loopLengthTicks, false);
+  const NoteUtils::DisplayNote* shortened = findDisplayNoteById(occupiedNotes, 1);
+  TEST_ASSERT_TRUE(shortened == nullptr || shortened->endTick == 767);
+
+  TEST_ASSERT_TRUE(loop.undoOverdubSession());
+  SessionMidiEventVec restored;
+  loop.gatherCommittedEvents(restored);
+  const NoteUtils::DisplayNoteVec restoredNotes =
+      NoteUtils::reconstructDisplayNotes(restored, loop.loopLengthTicks, false);
+  const NoteUtils::DisplayNote* original = findDisplayNoteById(restoredNotes, 1);
+  TEST_ASSERT_NOT_NULL(original);
+  TEST_ASSERT_EQUAL_UINT32(64u, original->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1920u, original->endTick);
 }
 
 void test_pending_shorten_applies_to_display_notes() {
@@ -2790,12 +3078,22 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_shorter_note_off_seals_length_not_delete);
   RUN_TEST(test_pending_hide_same_start_longer);
   RUN_TEST(test_pending_hide_applies_to_display_notes_not_source_view);
-  RUN_TEST(test_upsert_occupied_hides_before_note_off);
+  RUN_TEST(test_resolve_occupancy_at_note_on_same_start_hides);
   RUN_TEST(test_pending_hide_applies_when_display_note_id_differs);
   RUN_TEST(test_pending_hide_keeps_live_capture_tail);
   RUN_TEST(test_upsert_occupied_hides_empty_ledger_uses_hold_participants);
   RUN_TEST(test_upsert_occupied_hides_norowid_falls_back_to_hold_participants);
-  RUN_TEST(test_occupy_paint_hide_is_not_sealed_as_delete);
+  RUN_TEST(test_occupancy_hide_seals_as_delete);
+  RUN_TEST(test_occupancy_five_sibling_convergence);
+  RUN_TEST(test_occupancy_ordering_equivalence);
+  RUN_TEST(test_occupancy_three_note_nesting);
+  RUN_TEST(test_occupancy_composition_hide_absorbs_shorten);
+  RUN_TEST(test_occupancy_composition_shorten_keeps_earlier_end);
+  RUN_TEST(test_occupancy_composition_shorten_below_min_length_hides);
+  RUN_TEST(test_occupancy_wrap_split_keeps_most_restrictive);
+  RUN_TEST(test_occupancy_add_then_shorten_composes_in_source_view);
+  RUN_TEST(test_retrigger_pending_note_slot_replaces_first);
+  RUN_TEST(test_occupancy_undo_restores_original_geometry);
   RUN_TEST(test_pending_shorten_applies_to_display_notes);
   RUN_TEST(test_wrap_keeps_source_view_inner_shortens_prior_add);
   RUN_TEST(test_wrap_keeps_source_view_same_start_longer_hides_prior_add);
