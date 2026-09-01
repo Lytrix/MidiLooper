@@ -887,12 +887,71 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
   }
 }
 
+namespace {
+
+const EditPass* findActiveSealedCompanionRow(const Loop& loop, EditPassId id) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.id == id && row.state == EditPassState::Active) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+void appendSealedCompanionOverlay(const Loop& loop, PendingNoteChangeVec& overlay) {
+  overlay.reserve(loop.lastOverdubSealCompanionIds_.size());
+  for (const EditPassId id : loop.lastOverdubSealCompanionIds_) {
+    const EditPass* row = findActiveSealedCompanionRow(loop, id);
+    if (row == nullptr || row->targetNoteId == kInvalidNoteId) {
+      continue;
+    }
+    PendingNoteChange change{};
+    change.noteId = row->targetNoteId;
+    change.pitch = row->pitch;
+    change.velocity = row->velocity;
+    change.startTick = row->startTick;
+    change.endTick = row->endTick;
+    if (row->actionType == EditActionType::Delete) {
+      change.kind = PendingNoteChangeKind::Hide;
+    } else if (row->actionType == EditActionType::Update &&
+               row->propertyType == EditPropertyType::Length) {
+      change.kind = PendingNoteChangeKind::Shorten;
+    } else {
+      continue;
+    }
+    overlay.push_back(change);
+  }
+}
+
+}  // namespace
+
+LOOP_COLD_MEM bool Loop::sealedCompanionOverlayRequired() const {
+  if (lastOverdubSealCompanionIds_.empty() || lastOverdubSealPlaybackRevision_ == 0) {
+    return false;
+  }
+  const uint32_t selectedRevision = publishedSnapshotIsCurrent()
+                                        ? publishedSnapshotRevision()
+                                        : visualCache.builtFromRevision;
+  return selectedRevision < lastOverdubSealPlaybackRevision_;
+}
+
 LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
     NoteUtils::DisplayNoteVec& notes, size_t liveCaptureBegin) const {
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0
                                ? overdubSourceViewLoopLengthTicks_
                                : loopLengthTicks;
-  applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin);
+  if (!pendingNoteChanges_.empty()) {
+    applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin);
+  }
+  if (!sealedCompanionOverlayRequired()) {
+    return;
+  }
+  PendingNoteChangeVec overlay;
+  appendSealedCompanionOverlay(*this, overlay);
+  if (overlay.empty()) {
+    return;
+  }
+  applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin);
 }
 
 LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(

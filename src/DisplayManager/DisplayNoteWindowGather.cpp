@@ -300,7 +300,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     }
     DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
 
-    if (loop.hasPendingNoteChanges()) {
+    if (loop.hasPendingNoteChanges() || loop.sealedCompanionOverlayRequired()) {
         loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes, committedDisplayEnd);
     }
 

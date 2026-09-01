@@ -164,7 +164,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
 #endif
     return false;
   }
-  loop.clearLastOverdubSeal();
+  loop.clearLastOverdubSealAdmitReceipt();
 
   mergedMidiEventsBuildInProgress = true;
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)

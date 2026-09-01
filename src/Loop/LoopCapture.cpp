@@ -539,10 +539,14 @@ LOOP_COLD_MEM void Loop::recordLastOverdubSeal(PassId passId, const EditPassIdLi
   stampWrapSnapshotJournalRevision(passId, playbackRevision);
 }
 
-LOOP_COLD_MEM void Loop::clearLastOverdubSeal() {
+LOOP_COLD_MEM void Loop::clearLastOverdubSealAdmitReceipt() {
   hasLastOverdubSeal_ = false;
   lastOverdubSealPassId_ = kInvalidPassId;
   lastOverdubSealPriorRevision_ = 0;
+}
+
+LOOP_COLD_MEM void Loop::clearLastOverdubSeal() {
+  clearLastOverdubSealAdmitReceipt();
   lastOverdubSealPlaybackRevision_ = 0;
   lastOverdubSealCompanionIds_.clear();
 }
@@ -598,7 +602,7 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
                           lastOverdubSealPassId_ == lastCommittedPassId_ &&
                           lastOverdubSealPassId_ != kInvalidPassId;
   if (!geometryOk) {
-    clearLastOverdubSeal();
+    clearLastOverdubSealAdmitReceipt();
     return false;
   }
   const OverdubPass* sealPass = nullptr;
@@ -609,7 +613,7 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
     }
   }
   if (sealPass == nullptr || sealPass->state != CapturePassState::Active) {
-    clearLastOverdubSeal();
+    clearLastOverdubSealAdmitReceipt();
     return false;
   }
   EditPassVec companionRows;
@@ -623,7 +627,7 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
       }
     }
     if (row == nullptr || row->state != EditPassState::Active) {
-      clearLastOverdubSeal();
+      clearLastOverdubSealAdmitReceipt();
       return false;
     }
     companionRows.push_back(*row);
@@ -636,7 +640,7 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
     }
     if (!mergedStreamHasNoteOnId(merged.mergedEvents, row.targetNoteId) &&
         !mergedStreamHasNoteOnId(passEvents, row.targetNoteId)) {
-      clearLastOverdubSeal();
+      clearLastOverdubSealAdmitReceipt();
       return false;
     }
   }
@@ -650,7 +654,7 @@ LOOP_COLD_MEM bool Loop::tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedM
   }
   merged.builtFromRevision = playbackRevision;
   merged.builtFromSnapshotIdentity = nullptr;
-  clearLastOverdubSeal();
+  clearLastOverdubSealAdmitReceipt();
   return true;
 }
 
