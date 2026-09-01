@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (wrap NoteOff OverlapNoteOn seals Length)
+Last updated: 2026-09-01 (NoteOn occupy paint + compose no-grow)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -196,6 +196,16 @@ source-view rows when ledger ids have no source-view row. Idle slice,
 so wrap first `DISP` does not restore occupied rows. Focused native
 pending **72/72**. Native **1539/1539**. RAM1 locals **6848**. Device
 recapture required (`010926` shape).
+**NoteOn paint + capture mirror (`104129` / `110022` / `111343`):**
+[`overdub_occupy_on_noteon_paint_immediate_bugfix.md`](../Plans/overdub_occupy_on_noteon_paint_immediate_bugfix.md).
+Geometric present-at-hold fallback when ledger occupy is empty (`n=0`).
+Over-budget overdub resolve still mirrors `capturePreview` and playhead
+tails, including after a committed-layer rebuild. Wrap adopt: paint Hide
+on committed prefix only; same-start dedupe does not drop longer live
+capture over shorter committed sibling. Compose counts clamp to the
+vector after hide/dedupe; `liveDisplayNotes.resize` never grows
+(`111343` `DNTE,0,0,0,0`). Native **1543/1543**. RAM1 locals **6848**.
+Device recapture required.
 **Stage 1m — stop compose adopt (`000013`):**
 [`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
 Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt

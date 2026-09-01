@@ -58,6 +58,25 @@ inline size_t clampPreservedDisplayNoteCount(size_t liveNoteCount, size_t commit
     return committedBaseCount < liveNoteCount ? committedBaseCount : liveNoteCount;
 }
 
+/// Never grow a DisplayNote vector by resize. Default-constructed rows are MIDI 0 /
+/// tick 0 placeholders (`111343` `DNTE,0,0,0,0`). Rebuild from capturePreview instead.
+inline size_t clampDisplayNoteResizeCount(size_t currentSize, size_t requestedCount) {
+    return requestedCount < currentSize ? requestedCount : currentSize;
+}
+
+/// After hide/dedupe shrinks the composed frame, clamp layer counts to the vector.
+/// Capture cannot extend past `noteCount`; base is the vector size.
+inline void syncLiveDisplayComposeCounts(size_t noteCount, size_t& committedCount,
+                                         size_t& captureCount, size_t& baseCount) {
+    if (committedCount > noteCount) {
+        committedCount = noteCount;
+    }
+    if (committedCount + captureCount > noteCount) {
+        captureCount = noteCount - committedCount;
+    }
+    baseCount = noteCount;
+}
+
 /// Overdub-stop handoff (RC5a): drop temporary playhead-tail rows only — never strip the
 /// capture-preview suffix. When compose base bookkeeping is cold (0), keep the full frame.
 inline size_t preservedOverdubStopDisplayNoteCount(size_t liveNoteCount, size_t composeBaseCount) {
@@ -274,6 +293,27 @@ inline void keepShortestEndAtPitchStart(NoteUtils::DisplayNoteVec& notes) {
     }
   }
   notes.swap(kept);
+}
+
+/// Same-start dedupe for the committed prefix only. Live capture suffix rows
+/// (open overdub holds) must not lose to a shorter committed sibling (`110022`).
+inline void keepShortestEndAtPitchStartOnCommittedPrefix(NoteUtils::DisplayNoteVec& notes,
+                                                        size_t committedEnd) {
+  if (notes.size() < 2) {
+    return;
+  }
+  if (committedEnd == 0 || committedEnd >= notes.size()) {
+    keepShortestEndAtPitchStart(notes);
+    return;
+  }
+  NoteUtils::DisplayNoteVec committed(notes.begin(), notes.begin() + committedEnd);
+  keepShortestEndAtPitchStart(committed);
+  NoteUtils::DisplayNoteVec rebuilt;
+  rebuilt.reserve(notes.size());
+  rebuilt.insert(rebuilt.end(), committed.begin(), committed.end());
+  rebuilt.insert(rebuilt.end(), notes.begin() + static_cast<std::ptrdiff_t>(committedEnd),
+                 notes.end());
+  notes.swap(rebuilt);
 }
 
 /// Overdub committed layer must switch from window gather to full visualCache when idle

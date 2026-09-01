@@ -344,6 +344,69 @@ void test_keep_shortest_end_at_pitch_start() {
   TEST_ASSERT_TRUE(keptOther);
 }
 
+void test_clamp_display_note_resize_never_grows() {
+  TEST_ASSERT_EQUAL(3u, DisplayWindowUtils::clampDisplayNoteResizeCount(3u, 5u));
+  TEST_ASSERT_EQUAL(2u, DisplayWindowUtils::clampDisplayNoteResizeCount(3u, 2u));
+  TEST_ASSERT_EQUAL(0u, DisplayWindowUtils::clampDisplayNoteResizeCount(3u, 0u));
+  TEST_ASSERT_EQUAL(0u, DisplayWindowUtils::clampDisplayNoteResizeCount(0u, 4u));
+}
+
+void test_sync_live_display_compose_counts_clamps_stale_layers() {
+  size_t committed = 101u;
+  size_t capture = 0u;
+  size_t base = 101u;
+  DisplayWindowUtils::syncLiveDisplayComposeCounts(91u, committed, capture, base);
+  TEST_ASSERT_EQUAL(91u, committed);
+  TEST_ASSERT_EQUAL(0u, capture);
+  TEST_ASSERT_EQUAL(91u, base);
+
+  committed = 80u;
+  capture = 20u;
+  base = 100u;
+  DisplayWindowUtils::syncLiveDisplayComposeCounts(91u, committed, capture, base);
+  TEST_ASSERT_EQUAL(80u, committed);
+  TEST_ASSERT_EQUAL(11u, capture);
+  TEST_ASSERT_EQUAL(91u, base);
+
+  NoteUtils::DisplayNoteVec notes;
+  for (size_t i = 0; i < 91; ++i) {
+    NoteUtils::DisplayNote note{};
+    note.note = 60;
+    note.startTick = static_cast<uint32_t>(i * 48u);
+    note.endTick = note.startTick + 48u;
+    notes.push_back(note);
+  }
+  notes.resize(DisplayWindowUtils::clampDisplayNoteResizeCount(notes.size(), 101u));
+  TEST_ASSERT_EQUAL(91u, notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_EQUAL_UINT8(60, note.note);
+    TEST_ASSERT_FALSE(note.note == 0 && note.startTick == 0 && note.endTick == 0);
+  }
+}
+
+void test_keep_shortest_end_on_committed_prefix_preserves_capture_suffix() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote shorter{};
+  shorter.note = 60;
+  shorter.startTick = 768;
+  shorter.endTick = 864;
+  NoteUtils::DisplayNote longer{};
+  longer.note = 60;
+  longer.startTick = 768;
+  longer.endTick = 1056;
+  NoteUtils::DisplayNote captureLive{};
+  captureLive.note = 60;
+  captureLive.startTick = 768;
+  captureLive.endTick = 1200;
+  notes.push_back(longer);
+  notes.push_back(shorter);
+  notes.push_back(captureLive);
+  DisplayWindowUtils::keepShortestEndAtPitchStartOnCommittedPrefix(notes, 2u);
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  TEST_ASSERT_EQUAL(864u, notes[0].endTick);
+  TEST_ASSERT_EQUAL(1200u, notes[1].endTick);
+}
+
 void test_should_keep_visual_cache_over_smaller_full_loop_slice() {
   TEST_ASSERT_TRUE(
       DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(95u, 80u));
@@ -668,6 +731,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);
+  RUN_TEST(test_clamp_display_note_resize_never_grows);
+  RUN_TEST(test_sync_live_display_compose_counts_clamps_stale_layers);
+  RUN_TEST(test_keep_shortest_end_on_committed_prefix_preserves_capture_suffix);
   RUN_TEST(test_should_keep_visual_cache_over_smaller_full_loop_slice);
   RUN_TEST(test_overdub_committed_promote_to_full_visual_cache);
   RUN_TEST(test_paint_window_inside_gather_detects_follow_exit);
