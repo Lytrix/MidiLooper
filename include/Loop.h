@@ -682,6 +682,8 @@ struct Loop {
   bool fallbackGatherSessionTraversalComplete_ = false;
   VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
   bool lastVisualCacheIdleOverlayRejected_ = false;
+  /// Set only while `refreshVisualCacheAfterPassStateChange` fills idle slices.
+  bool visualCachePassStateRefreshActive_ = false;
   /// Non-owning. Null means the identity filter is inactive. Points at
   /// `LoopPlaybackRuntime::mergedMidiEvents` after a full-loop rebuild.
   const PlaybackMergedMidiEvents* committedPlaybackMergedForIdentity_ = nullptr;

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (overdub wrap RC2b / RC4 / RC5)
+Last updated: 2026-09-01 (overdub wrap RC5b host shipped; RC2b next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,17 +75,14 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap RC2b / RC4 / RC5 ([`172532`](../../captures/session_20260901_172532.log))**
-RC3 overlay (`b3448759`) stays closed. Plan:
+**Now — overdub wrap RC2b after RC5b ([`181116`](../../captures/session_20260901_181116.log))**
+RC5 GUS kinds **PASS**. RC5b host shipped: pass-state refresh replaces a
+complete smaller Active gather (`slice_keep` no longer retains Disabled
+overdub notes). Device [`190847`](../../captures/session_20260901_190847.log):
+first **U:** `Overdub undone`, `DISP` 84→63. RC3 overlay stays closed.
+RC4 occupy populate shipped. Next: RC2b same-NoteId closure overwrite
+(compose `2304→2880`, draw `2304→1008`; not pairing). Plan:
 [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
-RC2b host pins are green (journal/gather/reconstruct keep `2304→2496`);
-no pairing firmware. RC4: linear source-view `2304→2496` is correctly
-absent at `hs=0`/`hs=48`; true wrap-held populate now stores one
-`end < start` row so occupy finds it. RC5 host pin is two slot entries
-(`RecordPassAdded` then session `OverdubPassAdded`); stop emits
-`DIAG,gus,slot` for a device recapture. Leave unstaged
-`TrackCaptureInput` nopart / `a.out` out of these commits. Device
-recapture still required for draw-source `2304→432` and one **U:**.
 
 **Prior — display seal handoff RC1 (`153517` coverage over-claim)**
 Idle OverlayRejected fallback was stamping `visualCache.builtFromRevision =
