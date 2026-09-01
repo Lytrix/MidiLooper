@@ -1,6 +1,6 @@
 # Overdub paint — sealed rows stay out of occupy Hide
 
-**Status:** Host shipped. Device recapture pending (`003558` shape: 5-bar, OD start ~624, multiple wraps).  
+**Status:** Device [`004351`](../../captures/session_20260902_004351.log) — sealed Hide held (`hid=1`). Remaining: closed-preview prefix Hide and stale-snapshot wrap fallback.  
 **Date:** 2026-09-02  
 **Kind:** bugfix  
 **Evidence:** [`003558`](../../captures/session_20260902_003558.log) wrap 2/3  

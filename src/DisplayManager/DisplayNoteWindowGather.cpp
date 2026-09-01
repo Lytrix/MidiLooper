@@ -246,12 +246,11 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
         committedEnd = out.size();
         return;
     }
-    const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
-    const ImmutableLoopSnapshotRef snapshot = snapshotCurrent ? loop.publishedSnapshot() : nullptr;
+    const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
     const bool captureActive = loop.captureActive();
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-        if (snapshotCurrent && snapshot) {
+        if (snapshot) {
             appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
         } else {
             appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
@@ -285,7 +284,7 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
                                                                  previewNote.endTick)) {
                 appendDisplayNoteUniqueById(out, previewNote);
             } else {
-                DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, previewNote);
+                upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote);
             }
         }
     }

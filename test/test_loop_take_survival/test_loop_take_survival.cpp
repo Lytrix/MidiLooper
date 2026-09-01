@@ -1675,13 +1675,12 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
     }
     return;
   }
-  const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
-  const ImmutableLoopSnapshotRef snapshot = snapshotCurrent ? loop.publishedSnapshot() : nullptr;
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
   const bool captureActive = loop.captureActive();
   const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
 
   for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    if (snapshotCurrent && snapshot) {
+    if (snapshot) {
       appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
     } else {
       appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
@@ -1718,7 +1717,7 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
                                                            previewNote.endTick)) {
         appendDisplayNoteUniqueById(out, previewNote);
       } else {
-        DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, previewNote);
+        upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, previewNote);
       }
     }
   }
@@ -1968,6 +1967,10 @@ void test_draw_source_upserts_closed_capture_preview_on_already_played_bar() {
   loop.loopLengthTicks = 3072;
   recordLinearNote(loop, 100, 200, 60);
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto membership = loop.publishedSnapshot()->noteMembership(60, 0);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_TRUE(snapshotMembershipCount(membership.get()) > 0);
+  const NoteId recordId = membership->references[0]->noteId;
   const size_t visualBefore = loop.visualCache.notes.size();
 
   loop.openOverdubSession(0);
@@ -1978,12 +1981,30 @@ void test_draw_source_upserts_closed_capture_preview_on_already_played_bar() {
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(420, 1, 72, 0)));
 
   NoteUtils::DisplayNoteVec drawn;
-  gatherDrawSourceDisplayNotes(loop, 0, 3, 2, 0, 127, drawn);
+  size_t committedEnd = 0;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 2, 0, 127, drawn, &committedEnd);
+  bool closedAfterPrefix = false;
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (drawn[i].note == 60 && drawn[i].startTick == 100 && drawn[i].endTick == 400) {
+      TEST_ASSERT_TRUE(i >= committedEnd);
+      closedAfterPrefix = true;
+    }
+  }
+  TEST_ASSERT_TRUE(closedAfterPrefix);
+
+  NoteUtils::DisplayNoteVec afterHide;
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (i < committedEnd && drawn[i].noteId == recordId) {
+      continue;
+    }
+    afterHide.push_back(drawn[i]);
+  }
 
   uint32_t pitch60At100 = 0;
   uint32_t pitch60End = 0;
   bool found72 = false;
-  for (const NoteUtils::DisplayNote& note : drawn) {
+  bool recordRemains = false;
+  for (const NoteUtils::DisplayNote& note : afterHide) {
     if (note.note == 60 && note.startTick == 100) {
       ++pitch60At100;
       pitch60End = note.endTick;
@@ -1991,10 +2012,14 @@ void test_draw_source_upserts_closed_capture_preview_on_already_played_bar() {
     if (note.note == 72 && note.startTick == 300 && note.endTick == 420) {
       found72 = true;
     }
+    if (note.noteId == recordId && note.endTick == 200) {
+      recordRemains = true;
+    }
   }
   TEST_ASSERT_EQUAL_UINT32(1u, pitch60At100);
   TEST_ASSERT_EQUAL_UINT32(400u, pitch60End);
   TEST_ASSERT_TRUE(found72);
+  TEST_ASSERT_FALSE(recordRemains);
   TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
 }
 
@@ -2155,6 +2180,76 @@ void test_draw_source_sealed_row_survives_prefix_hide() {
   }
   TEST_ASSERT_TRUE(sealedRemains);
   TEST_ASSERT_FALSE(recordRemains);
+}
+
+/// [`004351`] wrap 2: last published snapshot still paints after snap goes stale.
+void test_draw_source_keeps_stale_snapshot_after_second_wrap() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const size_t visualBefore = loop.visualCache.notes.size();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  const uint32_t priorRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  const PassId wrapPassId = loop.lastCommittedPassId();
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 72;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(wrapPassId));
+  loop.pushOverdubSessionPass(wrapPassId, {});
+  loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const LoopSnapshotNoteRef wrapOne = loop.publishedSnapshot()->findNote(10, 72);
+  TEST_ASSERT_TRUE(static_cast<bool>(wrapOne));
+  TEST_ASSERT_EQUAL_UINT32(400u, wrapOne->startTick);
+  TEST_ASSERT_EQUAL_UINT32(480u, wrapOne->endTick);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(900, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 900));
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundWrapOne = false;
+  bool foundSealedLapTwo = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 72 && note.startTick == 400 && note.endTick == 480) {
+      foundWrapOne = true;
+    }
+    if (note.note == 64 && note.startTick == 768 && note.endTick == 900) {
+      foundSealedLapTwo = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundWrapOne);
+  TEST_ASSERT_TRUE(foundSealedLapTwo);
+  TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
 }
 
 void test_same_pass_draw_source_keeps_closed_bar_four_end() {
@@ -2600,6 +2695,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_open_hold_grows_to_playhead_after_occupy_hide);
   RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
   RUN_TEST(test_draw_source_sealed_row_survives_prefix_hide);
+  RUN_TEST(test_draw_source_keeps_stale_snapshot_after_second_wrap);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
