@@ -1,6 +1,6 @@
 # Display seal handoff — capture retention
 
-**Status:** Firmware in tree, host gates passed, device recapture open
+**Status:** Firmware in tree, host gates passed. **Parked** — [`204043`](../../captures/session_20260901_204043.log) did not exercise pitch-64 holds. Reopen only on the recapture gate below.
 **Date:** 2026-09-01
 **Kind:** bugfix
 **Parent:** `.cursor/plans/snapshot-first_bar_painter_7a96d434.plan.md` (Stage B/C landed)
@@ -149,7 +149,7 @@ Retention is a **lifetime refinement of the existing Capture tier**, not a fourt
 | `Loop` | `sealedCapturePreviewNotes_` + `sealedCapturePreviewRevision_`, beside `capturePreview` |
 | `Loop::releaseSealedCapturePreviewIfCovered` | Drop the retained rows once the representation the painter would select covers the sealed revision, per the predicate above |
 | `VisualCache` | `builtFromRevision`, stamped on full rebuild and when the last dirty bar clears, so the cache tier can report what it carries |
-| `DisplayManager::resolveDisplayNotesByDrawSource` | Union retained rows into the committed prefix, superseding at pitch+start, before `committedDisplayEnd` is taken |
+| `DisplayManager::resolveDisplayNotesByDrawSource` | Union retained rows after snapshot/visual. [`003558`](../../captures/session_20260902_003558.log) keeps them **after** `committedDisplayEnd` so occupy Hide cannot drop wrap-1 paint — [`overdub_paint_sealed_prefix_hide_bugfix.md`](overdub_paint_sealed_prefix_hide_bugfix.md). Suffix upsert still supersedes at pitch+start. |
 | `DisplayWindowUtils::upsertDisplayNoteAtPitchStart` | Supersede helper, header-only so it is natively testable |
 
 ## Residual not covered by this slice
@@ -182,3 +182,13 @@ release                       ← MUST now leave exactly the committed represent
   re-derive the retained vector
 - `pio run -e teensy41-capture-serial` RAM1 locals >= 4000, then `pio test -e native`
 - HITL: overdub the same pitch across passes, confirm no stale frame at wrap or at stop
+
+## Parked — reopen if recaptured
+
+Not Now implementing after [`204043`](../../captures/session_20260901_204043.log) (no pitch-64 holds).
+
+| Gate | Reopen when a future capture shows |
+|------|-------------------------------------|
+| Held-note retention | After seal, a held pitch (pitch 64 in [`150650`](../../captures/session_20260901_150650.log)) paints 40/48 on the frame while MIDI / effective is ~624 (`s0 len40` / `s768 len48` vs Off 624 / 1392) |
+
+Do not treat a capture without those holds as closeout or as a reason to patch `keepShortestEndAtPitchStart`.

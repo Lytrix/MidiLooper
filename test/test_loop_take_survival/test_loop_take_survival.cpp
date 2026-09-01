@@ -1617,6 +1617,19 @@ void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out, const NoteUtils
   out.push_back(note);
 }
 
+void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes, size_t suffixBegin,
+                                       const NoteUtils::DisplayNote& row) {
+  if (row.endTick >= row.startTick) {
+    for (size_t i = suffixBegin; i < notes.size(); ++i) {
+      if (notes[i].note == row.note && notes[i].startTick == row.startTick) {
+        notes[i] = row;
+        return;
+      }
+    }
+  }
+  notes.push_back(row);
+}
+
 bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                               uint32_t loopLength) {
   const uint32_t barStart = bar * Config::TICKS_PER_BAR;
@@ -1674,19 +1687,20 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
       appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
     }
   }
+  const size_t prefixEnd = out.size();
+  if (committedEnd != nullptr) {
+    *committedEnd = prefixEnd;
+  }
   if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
     for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
       for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
           continue;
         }
-        DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, sealedRow);
+        upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, sealedRow);
         break;
       }
     }
-  }
-  if (committedEnd != nullptr) {
-    *committedEnd = out.size();
   }
   if (captureActive) {
     for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
@@ -2084,6 +2098,63 @@ void test_draw_source_unions_sealed_preview_after_wrap_before_snapshot() {
   }
   TEST_ASSERT_TRUE(foundSealed);
   TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
+}
+
+/// [`003558`] wrap 2/3: sealed sits after committedEnd so prefix Hide cannot drop it.
+void test_draw_source_sealed_row_survives_prefix_hide() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 768, 960, 64);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto membership = loop.publishedSnapshot()->noteMembership(64, 1);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_TRUE(snapshotMembershipCount(membership.get()) > 0);
+  const NoteId recordId = membership->references[0]->noteId;
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(900, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 900));
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  NoteUtils::DisplayNoteVec drawn;
+  size_t committedEnd = 0;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn, &committedEnd);
+  bool sealedAfterPrefix = false;
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (drawn[i].note == 64 && drawn[i].startTick == 768 && drawn[i].endTick == 900) {
+      TEST_ASSERT_TRUE(i >= committedEnd);
+      sealedAfterPrefix = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sealedAfterPrefix);
+
+  NoteUtils::DisplayNoteVec afterHide;
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (i < committedEnd && drawn[i].noteId == recordId) {
+      continue;
+    }
+    afterHide.push_back(drawn[i]);
+  }
+  bool sealedRemains = false;
+  bool recordRemains = false;
+  for (const NoteUtils::DisplayNote& note : afterHide) {
+    if (note.note == 64 && note.startTick == 768 && note.endTick == 900) {
+      sealedRemains = true;
+    }
+    if (note.noteId == recordId && note.endTick == 960) {
+      recordRemains = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sealedRemains);
+  TEST_ASSERT_FALSE(recordRemains);
 }
 
 void test_same_pass_draw_source_keeps_closed_bar_four_end() {
@@ -2528,6 +2599,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_upserts_closed_capture_preview_on_already_played_bar);
   RUN_TEST(test_draw_source_open_hold_grows_to_playhead_after_occupy_hide);
   RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
+  RUN_TEST(test_draw_source_sealed_row_survives_prefix_hide);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
