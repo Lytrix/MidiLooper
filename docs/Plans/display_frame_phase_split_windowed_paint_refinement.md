@@ -1,6 +1,6 @@
 # Display frame phase-split and always-windowed paint
 
-**Status:** Stage 1 host shipped (2026-09-01). Device recapture still open. Stages 2–4 stay closed.  
+**Status:** Stage 2 host shipped (2026-09-01). Stage 1 shipped. Device recapture open. Stages 3–4 stay closed.  
 **Date:** 2026-09-01  
 **Kind:** refinement  
 **Evidence:** [`220427`](../../captures/session_20260901_220427.log) (`midi_gap` ≈ `load_frame`, overdub `DFRAME` 48.5 ms / 509 notes, `clockrate` 47–48)  
@@ -191,7 +191,9 @@ Inventory leftover `kMaxDetailedWindowBars` in display files (horizon cap only, 
 
 No remaining display-paint caller uses the boolean or `boundedThreshold` as `loopLength > 16 bars`.
 
-Commit Stage 1 before Stage 2. Device HITL (4-bar + >16-bar) remains the Stage 1 device gate.
+**Device closeout:** [`230114`](../../captures/session_20260901_230114.log) 20-bar overdub — all `DISP` windowed; PLAYING/OVERDUBBING `wbars=16`, `wstart` auto-follows `0…3072`. [`230655`](../../captures/session_20260901_230655.log) 4-bar overdub — sealed `loop=3072`; every PLAYING/OVERDUBBING/STOPPED `3072` row is `wstart=0` `wbars=4` and `frame==wnotes`; `Overdub undone` ×2 and `Overdub redone` ×2. Zero-note `DFRAME`s are empty-slot frames before record start, not a mid-phrase blank.
+
+Commit Stage 1 before Stage 2. Device HITL is closed. Do not start Stage 2 until the user asks.
 
 ---
 
@@ -253,7 +255,9 @@ Do not invent a new cache owner. Use existing `DisplayManager` frame fields (`li
 
 If Stage 2 does not move `DFRAME` on a 4-bar loop, the remaining cost is **draw**. Record that and continue to Stage 3. Do not add a second gather owner.
 
-Commit Stage 2 before Stage 3.
+**Host closeout:** RAM1 locals **6880**. Native Stage 2 reuse fixtures PASS. Full native 1603 passed; one pre-existing failure `test_same_pass_playhead_tails_keep_closed_bar_four_end` (expected 2976, was 2296) — not this slice.
+
+Commit Stage 2 before Stage 3. Device HITL is the same 4-bar overdub shape as Stage 1.
 
 ---
 
@@ -454,6 +458,28 @@ Keep `SESSION_CAPTURE_BPM=0` on the default env. Do not re-enable `draw_src` for
 
 ### Proceed?
 YES — implementer pins only. Stages 2–4 stay closed.
+
+## Pre-implementation review (Stage 2)
+
+### Ready
+- Owner: `DisplayManager::resolveDisplayNotesByDrawSource`
+- Reuse policy is host-testable as `selectDrawSourceReuseKind` / `DrawSourceGatherKey`
+- Last-valid set stays `liveDisplayNotes`; rebuild/slide writes a candidate then `swap`
+- Playhead bar stays in the key; tails stay off the gather key
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Cache owner | Existing `liveDisplayNotes` + `liveDrawSourceKey_` |
+| One-bar slide | Keep notes that still intersect the new window, then append the entering bar |
+| Mutation keys | Include capture-preview / visual-cache / snapshot-current / sealed-preview / pending fingerprint so occupy and live capture miss |
+
+### Open before coding
+1. Re-applying pending transforms after a slide must stay idempotent on already-transformed rows
+2. Device `DFRAME` drop on a 4-bar loop is optional; if it does not move, remaining cost is draw
+
+### Proceed?
+YES — implementer pins only. Stages 3–4 stay closed.
 
 ---
 

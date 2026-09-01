@@ -242,6 +242,7 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveWindowGatherValid_ = false;
     liveDisplayCommittedFromWindowGather_ = false;
     liveWindowVisualCacheRevision_ = UINT32_MAX;
+    liveDrawSourceKey_ = {};
     liveCommittedLayerHeldForDirtyCache_ = false;
     liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
     liveDisplayPaintCommittedEnd_ = static_cast<size_t>(-1);

@@ -967,6 +967,164 @@ void test_long_loop_window_inclusion_matches_pre_stage_one_window() {
   TEST_ASSERT_EQUAL_UINT32(12u, filtered[1].noteId);
 }
 
+DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceTestKey(uint32_t windowStart,
+                                                              uint32_t windowLength,
+                                                              uint32_t playheadBar) {
+  DisplayWindowUtils::DrawSourceGatherKey key;
+  key.slot = 0;
+  key.track = 4;
+  key.windowStart = windowStart;
+  key.windowLength = windowLength;
+  key.playbackRevision = 3;
+  key.captureDisplayRevision = 2;
+  key.capturePreviewRevision = 8;
+  key.visualCacheRevision = 5;
+  key.publishedSnapshotRevision = 3;
+  key.playheadBar = playheadBar;
+  key.valid = 1;
+  return key;
+}
+
+void test_draw_source_reuse_hit_when_keys_match() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 16u * bar, 2);
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_draw_source_reuse_hit_ignores_playhead_tick_same_bar() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 4u * bar, 1);
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  current.windowStart = 0;
+  current.playheadBar = 1;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_draw_source_reuse_rebuilds_when_playhead_bar_changes() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 4u * bar, 1);
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  current.playheadBar = 2;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_draw_source_reuse_slides_exactly_one_bar() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(4u * bar, 16u * bar, 12);
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  current.windowStart = 5u * bar;
+  current.playheadBar = 13;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::SlideOneBar),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+  current.windowStart = 3u * bar;
+  current.playheadBar = 11;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::SlideOneBar),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_draw_source_reuse_rebuilds_two_bar_jump() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(4u * bar, 16u * bar, 12);
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  current.windowStart = 6u * bar;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_draw_source_reuse_rebuilds_on_revision_or_pending_change() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 16u * bar, 2);
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  current.playbackRevision = last.playbackRevision + 1;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+  current = last;
+  current.pendingChangeGeneration = 11;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+  current = last;
+  current.capturePreviewRevision = last.capturePreviewRevision + 1;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+  current = last;
+  current.sealedPreviewCount = 1;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t loopLength = 32u * bar;
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({10, 60, 100, 0, 48});
+  notes.push_back({11, 61, 100, 2u * bar, 4u * bar + 24});
+  notes.push_back({12, 62, 100, 16u * bar, 16u * bar + 48});
+
+  const uint32_t firstStart = 0;
+  const uint32_t firstLength = 16u * bar;
+  const uint32_t slidStart = bar;
+  const uint32_t slidLength = 16u * bar;
+
+  const NoteUtils::DisplayNoteVec firstWindow =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, firstStart, firstLength,
+                                                             loopLength);
+  NoteUtils::DisplayNoteVec slidFromFirst =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(firstWindow, slidStart, slidLength,
+                                                             loopLength);
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (!DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, 16u * bar, bar,
+                                                  loopLength)) {
+      continue;
+    }
+    bool present = false;
+    for (const NoteUtils::DisplayNote& existing : slidFromFirst) {
+      if (existing.noteId == note.noteId) {
+        present = true;
+        break;
+      }
+    }
+    if (!present) {
+      slidFromFirst.push_back(note);
+    }
+  }
+
+  const NoteUtils::DisplayNoteVec fullSlid =
+      DisplayWindowUtils::filterDisplayNotesByWindowInclusion(notes, slidStart, slidLength,
+                                                             loopLength);
+  assertSameDisplayNoteIdentitySet(fullSlid, slidFromFirst);
+  bool hasLeaving = false;
+  bool hasSpanning = false;
+  bool hasEntering = false;
+  for (const NoteUtils::DisplayNote& note : slidFromFirst) {
+    if (note.noteId == 10) {
+      hasLeaving = true;
+    }
+    if (note.noteId == 11) {
+      hasSpanning = true;
+    }
+    if (note.noteId == 12) {
+      hasEntering = true;
+    }
+  }
+  TEST_ASSERT_FALSE(hasLeaving);
+  TEST_ASSERT_TRUE(hasSpanning);
+  TEST_ASSERT_TRUE(hasEntering);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -1026,5 +1184,12 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_detailed_paint_window_centers_thirty_two_bar_loop);
   RUN_TEST(test_short_loop_window_inclusion_keeps_full_identity_set);
   RUN_TEST(test_long_loop_window_inclusion_matches_pre_stage_one_window);
+  RUN_TEST(test_draw_source_reuse_hit_when_keys_match);
+  RUN_TEST(test_draw_source_reuse_hit_ignores_playhead_tick_same_bar);
+  RUN_TEST(test_draw_source_reuse_rebuilds_when_playhead_bar_changes);
+  RUN_TEST(test_draw_source_reuse_slides_exactly_one_bar);
+  RUN_TEST(test_draw_source_reuse_rebuilds_two_bar_jump);
+  RUN_TEST(test_draw_source_reuse_rebuilds_on_revision_or_pending_change);
+  RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
   return UNITY_END();
 }
