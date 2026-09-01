@@ -15,6 +15,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 
 #include "Loop.h"
+#include "LoopInternal.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
@@ -1568,6 +1569,142 @@ void assertClosedNoteKeepsLinearEnd(const Loop& loop, NoteId noteId, uint8_t pit
   TEST_ASSERT_FALSE(wrapPairedNote->endTick < wrapPairedNote->startTick);
 }
 
+MidiEvent noteOffWithNoteId(uint32_t tick, uint8_t channel, uint8_t pitch, NoteId noteId) {
+  MidiEvent evt = MidiEvent::NoteOff(tick, channel, pitch, 0);
+  evt.noteId = noteId;
+  return evt;
+}
+
+void applyEventsToPreview(CapturePreview& preview, const MidiEventVec& events,
+                          uint32_t loopLength) {
+  for (const MidiEvent& evt : events) {
+    applyCaptureEventToPreview(preview, evt, Config::TICKS_PER_BAR, loopLength);
+  }
+}
+
+void assertSamePassClosedNoteKeepsLinearEnd(const NoteUtils::DisplayNoteVec& notes, NoteId idA,
+                                            uint32_t closedEnd, uint32_t forbiddenSiblingEnd,
+                                            uint32_t loopLength) {
+  const NoteUtils::DisplayNote* noteA = findDisplayNoteById(notes, idA);
+  TEST_ASSERT_NOT_NULL(noteA);
+  TEST_ASSERT_EQUAL_UINT32(2304u, noteA->startTick);
+  TEST_ASSERT_EQUAL_UINT32(closedEnd, noteA->endTick);
+  TEST_ASSERT_NOT_EQUAL(forbiddenSiblingEnd, noteA->endTick);
+  TEST_ASSERT_NOT_EQUAL(loopLength - 1u, noteA->endTick);
+  TEST_ASSERT_FALSE(noteA->endTick < noteA->startTick);
+}
+
+/// RC2b (181116 / 190847): same-pass Off closes A. Wrap-head reconstruction must not
+/// rewrite that NoteId to the bar-1 sibling Off or loopLength-1. Open C may be wrap-held.
+void test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling() {
+  constexpr uint32_t kLoopLength = 3072;
+  const NoteId idA = 74;
+  const NoteId idB = 79;
+  const NoteId idC = 85;
+  MidiEventVec events;
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(2304, 1, 64, 90, idA));
+  events.push_back(noteOffWithNoteId(2880, 1, 64, idA));
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(768, 1, 64, 90, idB));
+  events.push_back(noteOffWithNoteId(1008, 1, 64, idB));
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(2304, 1, 64, 90, idC));
+
+  CapturePreview preview;
+  applyEventsToPreview(preview, events, kLoopLength);
+  bool previewKeptA = false;
+  for (const NoteUtils::DisplayNote& note : preview.notes) {
+    if (note.note != 64 || note.startTick != 2304u) {
+      continue;
+    }
+    if (note.endTick == 2880u) {
+      previewKeptA = true;
+    }
+    TEST_ASSERT_NOT_EQUAL(1008u, note.endTick);
+    TEST_ASSERT_NOT_EQUAL(kLoopLength - 1u, note.endTick);
+  }
+  TEST_ASSERT_TRUE(previewKeptA);
+
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(events, kLoopLength, false, false, true);
+  assertSamePassClosedNoteKeepsLinearEnd(reconstructed, idA, 2880u, 1008u, kLoopLength);
+  const NoteUtils::DisplayNote* noteC = findDisplayNoteById(reconstructed, idC);
+  if (noteC != nullptr) {
+    TEST_ASSERT_EQUAL_UINT32(2304u, noteC->startTick);
+  }
+}
+
+/// RC2b device ticks from 190847: compose 2304→2976, drawn 2304→576.
+void test_same_pass_closed_bar_four_keeps_end_beside_hold_head() {
+  constexpr uint32_t kLoopLength = 3072;
+  const NoteId idA = 77;
+  const NoteId idB = 79;
+  const NoteId idC = 85;
+  MidiEventVec events;
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(2304, 1, 64, 90, idA));
+  events.push_back(noteOffWithNoteId(2976, 1, 64, idA));
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(0, 1, 64, 90, idB));
+  events.push_back(noteOffWithNoteId(576, 1, 64, idB));
+  events.push_back(NoteIdTestFixtures::noteOnWithNoteId(2304, 1, 64, 90, idC));
+
+  CapturePreview preview;
+  applyEventsToPreview(preview, events, kLoopLength);
+  bool previewKeptA = false;
+  for (const NoteUtils::DisplayNote& note : preview.notes) {
+    if (note.note != 64 || note.startTick != 2304u) {
+      continue;
+    }
+    if (note.endTick == 2976u) {
+      previewKeptA = true;
+    }
+    TEST_ASSERT_NOT_EQUAL(576u, note.endTick);
+    TEST_ASSERT_NOT_EQUAL(kLoopLength - 1u, note.endTick);
+  }
+  TEST_ASSERT_TRUE(previewKeptA);
+
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(events, kLoopLength, false, false, true);
+  assertSamePassClosedNoteKeepsLinearEnd(reconstructed, idA, 2976u, 576u, kLoopLength);
+  const NoteUtils::DisplayNote* noteC = findDisplayNoteById(reconstructed, idC);
+  if (noteC != nullptr) {
+    TEST_ASSERT_EQUAL_UINT32(2304u, noteC->startTick);
+  }
+}
+
+/// RC2b (190847): one wrap pass contains bar-4 close and bar-1 sibling. Snapshot paint
+/// reads membership; compose reconstruct does not. A must stay 2304→2976 in the snapshot.
+void test_same_pass_snapshot_keeps_closed_bar_four_end() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  const NoteId idA = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2976, 1, 64, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  const NoteId idB = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(576, 1, 64, 0)));
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idA);
+  TEST_ASSERT_NOT_EQUAL(idA, idB);
+  pushClosedPendingAdd(loop, idA, 64, 2304, 2976);
+  pushClosedPendingAdd(loop, idB, 64, 0, 576);
+  commitOverdubWrapLikeDevice(loop, 2976, true);
+  drainPendingSnapshotPublish(loop);
+
+  const auto snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
+  const LoopSnapshotNoteRef noteA = snapshot->findNote(idA, 64);
+  TEST_ASSERT_TRUE(static_cast<bool>(noteA));
+  TEST_ASSERT_EQUAL_UINT32(2304u, noteA->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2976u, noteA->endTick);
+  TEST_ASSERT_FALSE(noteA->isWrap(3072));
+  TEST_ASSERT_NOT_EQUAL(576u, noteA->endTick);
+  TEST_ASSERT_NOT_EQUAL(3071u, noteA->endTick);
+}
+
 /// RC2b (172532): closed 2304→2496 same NoteId must not become wrap-held 2304→432
 /// after wrap-2 journal drain / gather. Sibling 240→432 is the Off draw_src stole.
 void test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather() {
@@ -1911,6 +2048,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);
   RUN_TEST(test_pass_state_refresh_replaces_cache_when_selected_active_gather_is_complete);
   RUN_TEST(test_wrap_journal_closed_notes_do_not_pair_across_passes);
+  RUN_TEST(test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling);
+  RUN_TEST(test_same_pass_closed_bar_four_keeps_end_beside_hold_head);
+  RUN_TEST(test_same_pass_snapshot_keeps_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);

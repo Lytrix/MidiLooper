@@ -75,13 +75,13 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap RC2b after RC5b ([`181116`](../../captures/session_20260901_181116.log))**
-RC5 GUS kinds **PASS**. RC5b host shipped: pass-state refresh replaces a
-complete smaller Active gather (`slice_keep` no longer retains Disabled
-overdub notes). Device [`190847`](../../captures/session_20260901_190847.log):
-first **U:** `Overdub undone`, `DISP` 84→63. RC3 overlay stays closed.
-RC4 occupy populate shipped. Next: RC2b same-NoteId closure overwrite
-(compose `2304→2880`, draw `2304→1008`; not pairing). Plan:
+**Now — overdub wrap RC2b draw source ([`190847`](../../captures/session_20260901_190847.log))**
+RC5b device **PASS**: first **U:** `Overdub undone`, `DISP` 84→63. RC2b
+same-pass host pins are **green** (`applyCaptureEventToPreview`, reconstruct
+with wrap pairing, snapshot membership). Compose still keeps `id 77`
+`2304→2976`; `draw_src` paints `2304→576`. Remaining writer:
+`resolveDisplayNotesByDrawSource`. Do not patch reconstruct or
+`findOpenPassNote`. RC3 overlay stays closed. Plan:
 [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
 
 **Prior — display seal handoff RC1 (`153517` coverage over-claim)**

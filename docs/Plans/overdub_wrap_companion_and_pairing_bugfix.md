@@ -320,6 +320,20 @@ constructor as 172532. No pairing firmware.
 
 **Same-pass host pin (write next, expect red):** one pass with `A 2304→2880`, sibling `B 768→1008`, and open `C On@2304` with no Off. Assert `A` stays `2880`, is not `1008` or `loopLength-1`, and `C` may be wrap-held. Earlier separate-wrap fixtures were green and cannot reproduce this. Extend only the function this pin fails.
 
+**Same-pass host pin result (2026-09-01):** `test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling`,
+`test_same_pass_closed_bar_four_keeps_end_beside_hold_head` (`190847` ticks
+`2304→2976` / `0→576`), and `test_same_pass_snapshot_keeps_closed_bar_four_end`
+are **green**. `applyCaptureEventToPreview`, `reconstructDisplayNotes` with
+`overdubPassWrapPairing`, and wrap-journal snapshot membership keep the linear
+close. Do not write pairing or reconstruct firmware against those paths.
+
+**Device [`190847`](../../captures/session_20260901_190847.log):** first wrap
+`draw_src` still rewrites `id 77` compose `2304→2976` to drawn `2304→576` and
+drops bar-0 siblings (`id 79` `0→576`, `id 80` `48→96`). Compose remains the
+linear close. The remaining writer is `resolveDisplayNotesByDrawSource` (the
+`new` side of `draw_src`), not `findOpenPassNote`. No RC2b firmware from this
+pin.
+
 ---
 
 ## RC4 — occupy the span that is actually sounding
