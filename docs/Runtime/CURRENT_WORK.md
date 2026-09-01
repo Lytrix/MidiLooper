@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-02 (closed preview suffix + stale snapshot paint)
+Last updated: 2026-09-02 (005439 paint PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,8 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — closed occupy + stale snapshot paint ([`004351`](../../captures/session_20260902_004351.log)):**
-Sealed-prefix Hide held (`hid=1`). Beats 3–4 record rows go `new,0,0,0` because closed preview upserts into the Hide prefix. Wrap 2 drops `135→109` because `snap=0` abandoned the last published snapshot for record-only `visual=63`. Plans: [`overdub_paint_closed_preview_suffix_hide_bugfix.md`](../Plans/overdub_paint_closed_preview_suffix_hide_bugfix.md), [`overdub_paint_stale_snapshot_after_wrap_bugfix.md`](../Plans/overdub_paint_stale_snapshot_after_wrap_bugfix.md). Reconstruct stays off. Stage 4 stays closed. Light `DRAW_SRC` stays on. RC2b stays parked.
+**Now — closed occupy + stale snapshot paint ([`005439`](../../captures/session_20260902_005439.log)):**
+Device PASS. Occupy frame `63→82`. Wrap 2 frame **131→132** with `snap=0`. Overdub stop published (`adopt_partial` **144**, DISP **157**). Log ends mid-`LoopPersist` (`SAVE,in_progress`) after capture Ctrl+C; no HardFault line. Plans: [`overdub_paint_closed_preview_suffix_hide_bugfix.md`](../Plans/overdub_paint_closed_preview_suffix_hide_bugfix.md), [`overdub_paint_stale_snapshot_after_wrap_bugfix.md`](../Plans/overdub_paint_stale_snapshot_after_wrap_bugfix.md). Reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
 
 **Prior — overdub paint capture handoff ([`234726`](../../captures/session_20260901_234726.log)):**
 Reconstruct stays off. While capture is active, `gatherDrawSourceBars` unions `capturePreview` across the window. Plan: [`overdub_paint_capture_handoff_bugfix.md`](../Plans/overdub_paint_capture_handoff_bugfix.md).

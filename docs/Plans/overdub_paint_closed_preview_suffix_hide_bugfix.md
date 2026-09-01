@@ -1,6 +1,6 @@
 # Overdub paint — closed occupy preview stays out of Hide
 
-**Status:** Host shipped. Device recapture pending (`004351` shape: occupy beats 3–4, then at least two wraps).  
+**Status:** Device PASS [`005439`](../../captures/session_20260902_005439.log). Occupy frame grows `63→82` (`hidden` 0–2). No beats 3–4 `new,0,0,0` wipe.  
 **Date:** 2026-09-02  
 **Kind:** bugfix  
 **Evidence:** [`004351`](../../captures/session_20260902_004351.log) 62.162–62.577s  
