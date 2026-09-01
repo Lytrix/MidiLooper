@@ -1,6 +1,6 @@
 # Display frame phase-split and always-windowed paint
 
-**Status:** Stage 2 host shipped (2026-09-01). Stage 1 shipped. Device recapture open. Stages 3–4 stay closed.  
+**Status:** Stage 3 host shipped (2026-09-01). Device [`233642`](../../captures/session_20260901_233642.log) scored. Stage 4 stays closed.  
 **Date:** 2026-09-01  
 **Kind:** refinement  
 **Evidence:** [`220427`](../../captures/session_20260901_220427.log) (`midi_gap` ≈ `load_frame`, overdub `DFRAME` 48.5 ms / 509 notes, `clockrate` 47–48)  
@@ -259,6 +259,10 @@ If Stage 2 does not move `DFRAME` on a 4-bar loop, the remaining cost is **draw*
 
 Commit Stage 2 before Stage 3. Device HITL is the same 4-bar overdub shape as Stage 1.
 
+**Device closeout:** [`232353`](../../captures/session_20260901_232353.log) is the 4-bar recapture (`3072`). Ignore the leading 176 leftover `DFRAME`s (`432` notes, ~8.8 ms) from the previous 24-bar boot. After `ARMED → RECORDING`: every sealed PLAYING/OVERDUBBING/STOPPED `3072` row is `wstart=0` `wbars=4` and `frame==wnotes` (171/171). Overdub frames move (`68→168`, 86 unique). Quiet PLAYING after OD2 `DFRAME` p50 **5174 µs** vs Stage 1 [`230655`](../../captures/session_20260901_230655.log) **6368 µs**. OVERDUB 2 p50 **5443 µs** vs Stage 1 **7891 µs**. `load_frame` is the 5 s max of `runDeferredLoadAndDisplayFrame` and did not drop (p50 **11339** vs **8468**). `midi_gap` on this 4-bar shape already disagreed with `load_frame` in Stage 1 (p50 |diff| **40.7 ms**); Stage 2 is the same class (p50 **36.7 ms**), with two OVERDUB samples at remainder **481 / 495 µs**. After OD2 identity is 163 notes vs Stage 1 168; undo/redo lands 152 vs 160 — no collapse. `Overdub undone` ×1 and `Overdub redone` ×1. Remaining 4-bar cost is draw. Do not start Stage 3 until the user asks.
+
+**Earlier 24-bar evidence [`231735`](../../captures/session_20260901_231735.log):** after overdub stop, quiet PLAYING `DFRAME` is **8.7–9.0 ms** (431 notes, `wstart` held). Auto-follow slides stay **~41 ms**. Stage 1 20-bar [`230114`](../../captures/session_20260901_230114.log) PLAYING-after-overdub `DFRAME` p50 was **28–33 ms** with no 9 ms cluster.
+
 ---
 
 ## Stage 3 — phase-split `DisplayManager::update`
@@ -358,7 +362,11 @@ Capture-active “never skip OLED” still means: do not skip the LoadAndDisplay
 | `clockrate` | 47–48 |
 | 4b.3 | Score post-overdub PLAYING first `midi_gap` as in [`213738`](../../captures/session_20260901_213738.log). Do not close 4b.3 unless the OpenSpec bound is met |
 
+**Host closeout:** RAM1 locals **6880**. Native Stage 3 admission fixtures PASS. Full native 1606 passed; one pre-existing failure `test_same_pass_playhead_tails_keep_closed_bar_four_end` (expected 2976, was 2296) — not this slice.
+
 Commit Stage 3 before Stage 4.
+
+**Device evidence [`233642`](../../captures/session_20260901_233642.log):** 4-bar HITL (`3072`), Stage 3 `DFRAME` lines have resolve/draw/transfer. After `ARMED → RECORDING`: every sealed PLAYING/OVERDUBBING/STOPPED `3072` row is `wstart=0` `wbars=4` and `frame==wnotes` (196/196). Overdub frames move (`64→152`, 83 unique). `Overdub undone` ×2 and `Overdub redone` ×2. Transfer is **4495–4497 µs** on every sampled frame (full GRAM). `clockrate` is **47** after the first record-start dump (`13`). `DFRAME` wall p50 **12844 µs** (complete frame + scheduling gaps); phase-sum p50 **5169 µs**; longest phase is transfer **4496 µs**. After the first RECORDING dump (`243593`), `load_frame` is **4667–5384 µs** and no longer equals `DFRAME` wall. `midi_gap` 5 s-max dropped vs Stage 2 [`232353`](../../captures/session_20260901_232353.log) (p50 **14.4 ms** vs **45.2 ms**) but still often sits near the complete-frame span, not the 4.5 ms transfer floor; first PLAYING gap after OD2 is **6930 µs**, a later PLAYING dump is **25771 µs**. 4b.3 stays open. Stage 4 stays closed.
 
 ---
 
@@ -480,6 +488,31 @@ YES — implementer pins only. Stages 2–4 stay closed.
 
 ### Proceed?
 YES — implementer pins only. Stages 3–4 stay closed.
+
+## Pre-implementation review (Stage 3)
+
+### Ready
+- Owner: `DisplayManager::update` + `runDeferredLoadAndDisplayFrame`
+- Phase/admission helpers are host-testable in `DisplayWindowUtils`
+- Last-valid notes stay `liveDisplayNotes` / `liveDisplayPendingPaintNotes_` across draw and transfer
+- Existing `afterDeferredDisplay` / `aroundDeferredLoadFrame` polls stay; no new `handleMidiInput()`
+
+### Resolved
+| Topic | Decision |
+|-------|----------|
+| Admission | Pending phase or NOTE_EDIT request or interval due |
+| `lastDisplayUpdate` | Advances only when `update()` returns with no pending phase (complete or boot skip) |
+| NOTE_EDIT prefix | One phase per `maybeUpdateDisplayForNoteEditSelection`; continuation stays LoadAndDisplay |
+| Overlay | Same three phases; phase 0 stores `paintLoadSaveActive_` so draw/transfer finish that frame |
+| Invalidation | Dirty keys immediately; do not clear resolved notes until transfer completes |
+| Telemetry | `load_frame` child 0 = one phase; `DFRAME` after transfer with resolve/draw/transfer µs |
+
+### Open before coding
+1. Device `midi_gap` follows the longest phase; 4-bar draw may still be ~5 ms
+2. Do not close 4b.3 unless the OpenSpec bound is met
+
+### Proceed?
+YES — implementer pins only. Stage 4 stays closed.
 
 ---
 

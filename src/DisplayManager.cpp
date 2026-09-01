@@ -83,26 +83,31 @@ void DisplayManager::setup() {
     clearDisplayBuffer();
 }
 
-void DisplayManager::update() {
-#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
-    const uint32_t telemetryStartUs = micros();
-#endif
-    uint32_t now = millis();
-    if (bootScreenVisible_) {
-        if (!bootSetupComplete_ || now < bootScreenHoldUntilMs_) {
-            return;
-        }
-        bootScreenVisible_ = false;
-    }
+bool DisplayManager::hasPendingPaintPhase() const {
+    return DisplayWindowUtils::displayFramePhaseIsPending(pendingPaintPhase_);
+}
 
-    uint32_t currentTick = clockManager.getCurrentTick();
+const DisplayNoteVec& DisplayManager::resolvedPaintNotes() const {
+    return resolvedPaintUsesPending_ ? liveDisplayPendingPaintNotes_ : liveDisplayNotes;
+}
+
+void DisplayManager::runPaintResolvePhase(uint32_t now) {
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    paintFrameStartUs_ = micros();
+    paintResolveUs_ = 0;
+    paintDrawUs_ = 0;
+    paintTransferUs_ = 0;
+    const uint32_t phaseStartUs = paintFrameStartUs_;
+#endif
+    const uint32_t currentTick = clockManager.getCurrentTick();
     const bool loadSaveActive = looperState.isLoadSaveModeActive();
     if (!loadSaveActive && StorageManager::consumeRevisionLoadDisplayRefreshPending()) {
         workspaceDisplayRefreshPending_ = true;
     }
+    paintTrackIndex_ = trackManager.getSelectedTrackIndex();
+    paintSlot_ = trackManager.getSelectedSlotIndex(paintTrackIndex_);
     Track& selTrack = trackManager.getSelectedTrack();
-    const uint8_t displaySlot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
-    uint32_t displayTick = selTrack.getEffectivePlaybackTick(currentTick);
+    paintDisplayTick_ = selTrack.getEffectivePlaybackTick(currentTick);
     refreshAutoSaveBeforeLoadToast(now);
 
     if (loadSaveActive && !loadSaveModeWasActive_) {
@@ -127,47 +132,125 @@ void DisplayManager::update() {
         invalidateLoadSaveDetailCache();
     }
     loadSaveModeWasActive_ = loadSaveActive;
-
     applyWorkspaceDisplayRefreshPending(currentTick);
 
-    _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
-
-    if (loadSaveActive) {
-        drawLoadSaveView(now);
-        _display.api.display();
-        HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(micros() - telemetryStartUs);
-        DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
-        return;
+    paintLoadSaveActive_ = loadSaveActive;
+    resolvedPaintUsesPending_ = false;
+    if (!loadSaveActive) {
+        const DisplayNoteVec& resolved =
+            resolveDisplayNotes(selTrack, paintSlot_, paintDisplayTick_);
+        resolvedPaintUsesPending_ = (&resolved == &liveDisplayPendingPaintNotes_);
     }
-
-    drawTrackStatus(trackManager.getSelectedTrackIndex(), now);
-    const DisplayNoteVec& frameNotes = resolveDisplayNotes(selTrack, displaySlot, displayTick);
-#if defined(SESSION_CAPTURE)
-    maybeEmitDisplayCaptureOnChange(selTrack, displaySlot, displayTick, frameNotes);
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    paintResolveUs_ = micros() - phaseStartUs;
 #endif
-    drawPianoRoll(displayTick, selTrack, displaySlot, frameNotes);
-    drawSidebar(selTrack, displaySlot);
-    drawInfoArea(displayTick, selTrack, displaySlot, now);
-    drawNoteInfo(displayTick, selTrack, displaySlot, frameNotes);
+}
 
-   _display.api.display();
+void DisplayManager::runPaintDrawPhase() {
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    const uint32_t phaseStartUs = micros();
+#endif
+    _display.gfx.fill_buffer(_display.api.getFrameBuffer(), 0);
+    const uint32_t now = millis();
+    if (paintLoadSaveActive_) {
+        drawLoadSaveView(now);
+    } else {
+        Track& selTrack = trackManager.getTrack(paintTrackIndex_);
+        const DisplayNoteVec& frameNotes = resolvedPaintNotes();
+        drawTrackStatus(paintTrackIndex_, now);
+        drawPianoRoll(paintDisplayTick_, selTrack, paintSlot_, frameNotes);
+        drawSidebar(selTrack, paintSlot_);
+        drawInfoArea(paintDisplayTick_, selTrack, paintSlot_, now);
+        drawNoteInfo(paintDisplayTick_, selTrack, paintSlot_, frameNotes);
+    }
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    paintDrawUs_ = micros() - phaseStartUs;
+#endif
+}
+
+void DisplayManager::runPaintTransferPhase() {
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    const uint32_t phaseStartUs = micros();
+#endif
+    _display.api.display();
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    paintTransferUs_ = micros() - phaseStartUs;
+#endif
 #if defined(SESSION_CAPTURE)
+    if (!paintLoadSaveActive_) {
+        Track& selTrack = trackManager.getTrack(paintTrackIndex_);
+        maybeEmitDisplayCaptureOnChange(selTrack, paintSlot_, paintDisplayTick_,
+                                        resolvedPaintNotes());
+    }
     {
         static uint32_t dframeCounter = 0;
         if (++dframeCounter % 30U == 0U) {
-            SC_DFRAME(static_cast<uint32_t>(frameNotes.size()),
-                      static_cast<uint32_t>(micros() - telemetryStartUs), dframeCounter);
+            const uint32_t notes = paintLoadSaveActive_
+                                       ? 0U
+                                       : static_cast<uint32_t>(resolvedPaintNotes().size());
+            SC_DFRAME(notes, static_cast<uint32_t>(micros() - paintFrameStartUs_), dframeCounter,
+                      paintResolveUs_, paintDrawUs_, paintTransferUs_);
         }
     }
 #endif
+}
+
+void DisplayManager::applyCoalescedPaintInvalidation() {
+    if (!paintInvalidateCoalesced_ && !paintDeferredClearNotes_) {
+        return;
+    }
+    paintInvalidateCoalesced_ = false;
+    if (paintDeferredClearNotes_) {
+        paintDeferredClearNotes_ = false;
+        liveDisplayNotes.clear();
+        liveDisplayPendingPaintNotes_.clear();
+        livePlaybackDisplaySlot_ = 255;
+        livePlaybackDisplayTrack_ = 255;
+        resolvedPaintUsesPending_ = false;
+    }
+}
+
+void DisplayManager::update() {
+#if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
+    const uint32_t telemetryStartUs = micros();
+#endif
+    const uint32_t now = millis();
+    if (bootScreenVisible_) {
+        if (!bootSetupComplete_ || now < bootScreenHoldUntilMs_) {
+            return;
+        }
+        bootScreenVisible_ = false;
+    }
+
+    const DisplayWindowUtils::DisplayFramePhase ran =
+        DisplayWindowUtils::displayFramePhaseToRun(pendingPaintPhase_);
+    switch (ran) {
+        case DisplayWindowUtils::DisplayFramePhase::Resolve:
+            runPaintResolvePhase(now);
+            break;
+        case DisplayWindowUtils::DisplayFramePhase::Draw:
+            runPaintDrawPhase();
+            break;
+        case DisplayWindowUtils::DisplayFramePhase::Transfer:
+            runPaintTransferPhase();
+            break;
+        case DisplayWindowUtils::DisplayFramePhase::Idle:
+            break;
+    }
+    const DisplayWindowUtils::DisplayFramePhaseAdvance advanced =
+        DisplayWindowUtils::advanceDisplayFramePhase(ran);
+    pendingPaintPhase_ = advanced.pending;
+    if (advanced.frameComplete) {
+        applyCoalescedPaintInvalidation();
+        // Acknowledge unconditionally: invalidateLiveDisplayCache raises the paint request with no
+        // note-edit precondition, so gating the ack on isNoteEditActive left it permanently raised
+        // outside a session. maybeUpdateDisplayForNoteEditSelection has no cadence gate, so the OLED
+        // then repainted every loop iteration — 152948 measured a 14 ms frame period against the
+        // 30 ms interval, ~93% of loop time here, from boot onward.
+        editManager.markNoteEditDisplayPainted();
+    }
     HOT_PATH_TELEMETRY_RECORD_DISPLAY_UPDATE(micros() - telemetryStartUs);
     DIAG_TIMING_RECORD(DisplayUpdateTotal, micros() - telemetryStartUs);
-    // Acknowledge unconditionally: invalidateLiveDisplayCache raises the paint request with no
-    // note-edit precondition, so gating the ack on isNoteEditActive left it permanently raised
-    // outside a session. maybeUpdateDisplayForNoteEditSelection has no cadence gate, so the OLED
-    // then repainted every loop iteration — 152948 measured a 14 ms frame period against the
-    // 30 ms interval, ~93% of loop time here, from boot onward.
-    editManager.markNoteEditDisplayPainted();
 }
 
 #if defined(SESSION_CAPTURE)
