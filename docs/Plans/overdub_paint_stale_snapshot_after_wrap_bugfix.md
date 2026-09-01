@@ -1,6 +1,6 @@
 # Overdub paint — last snapshot stays after wrap
 
-**Status:** Host shipped. Device recapture pending (`004351` wrap 2: frame must not drop when `snap` goes 0).  
+**Status:** Device PASS [`005439`](../../captures/session_20260902_005439.log). Wrap 2 at 31.848s: `snap=0` `sealed=45` frame **131→132** (not `135→109`).  
 **Date:** 2026-09-02  
 **Kind:** bugfix  
 **Evidence:** [`004351`](../../captures/session_20260902_004351.log) wrap 2 at 76.701s  
