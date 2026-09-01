@@ -343,6 +343,14 @@ write pairing, reconstruct, or gather-union firmware against that path. The
 function still applies `applyCapturePlayheadTails` after the union; that step
 is DisplayManager-only and is not in this pin.
 
+**Playhead-tails host pin result (2026-09-01):**
+`test_same_pass_playhead_tails_keep_closed_bar_four_end` is **red**. Overdub
+`applyCapturePlayheadTails` (`allowWrapContinuation=false`) matches the first
+capture-suffix row at pitch+start. With `192435` rows `A 2296→2976` and open
+`C On@2296` in that suffix, `A` becomes `2296→2296` (playhead `1720`). That is
+not the device `draw_src` end `672`. Do not patch tails for `672` from this
+pin. Do not patch reconstruct, `findOpenPassNote`, or the gather union.
+
 ---
 
 ## RC4 — occupy the span that is actually sounding
@@ -462,6 +470,7 @@ After RC5b: first **U:** painted notes are Active record only (`slice_keep` does
 - RC2: pin-first fixture in `test_loop_take_survival` (closed A then closed B, drain, assert IDs and ends).
 - RC2b: closed `2304→2496` same `NoteId` after wrap-2 drain/gather stays `2496`, not `432`.
 - RC2b draw source: `test_same_pass_draw_source_keeps_closed_bar_four_end` keeps `2304→2976` through the committed+capture union.
+- RC2b tails: `test_same_pass_playhead_tails_keep_closed_bar_four_end` is red (`2976` → `2296` by pitch+start). Device `draw_src` is `672`.
 - RC3 host seam: IDs derive overlay; Hide(`123`) removes A(`123`); Hide(`456`) leaves A; R=9 requires overlay, R=10 and R=11 do not.
 - RC3 journal: missing parent target does not drop the operation; apply is idempotent.
 - RC3 negative: Hide of an already-absent target does not resurrect it.
@@ -476,7 +485,7 @@ After RC5b: first **U:** painted notes are Active record only (`slice_keep` does
 
 ### Ready
 - RC5b owner is `refreshVisualCacheAfterPassStateChange` → `rebuildVisualCacheIdleSlice` keep-larger.
-- RC2b writer stays unnamed until a host pin of `applyCapturePlayheadTails` fails. The gather union pin is green.
+- RC2b tails pin is red at playhead `2296`, not device `672`. Writer of `672` stays unnamed.
 
 ### Resolved
 | Topic | Decision |
