@@ -433,8 +433,14 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 
   DisplayWindowUtils::keepShortestEndAtPitchStart(sliceNotes);
   const bool fullLoopSlice = (startBar == 0 && endBar + 1 >= totalBars);
+  const bool selectedStateGatherComplete =
+      usedSnapshot || usedPrepared || fallbackGatherComplete;
+  // Pass-state refresh may shrink to the selected Active gather when that gather
+  // is complete (181116 U1). Regular idle still keeps a larger cache (`000013` /
+  // `234233`). Incomplete fallback already returned above.
   if (fullLoopSlice && DisplayWindowUtils::shouldKeepVisualCacheOverSmallerFullLoopSlice(
-                           visualCache.notes.size(), sliceNotes.size())) {
+                           visualCache.notes.size(), sliceNotes.size()) &&
+      !(visualCachePassStateRefreshActive_ && selectedStateGatherComplete)) {
     for (uint32_t bar = startBar; bar <= endBar; ++bar) {
       visualCache.dirtyBars[bar] = 0;
     }
@@ -737,9 +743,11 @@ LOOP_COLD_MEM void Loop::refreshVisualCacheAfterPassStateChange() {
   }
   constexpr uint8_t kBarsPerSlice = 4;
   const uint32_t maxSlices = (totalBars + kBarsPerSlice - 1) / kBarsPerSlice + 1;
+  visualCachePassStateRefreshActive_ = true;
   for (uint32_t slice = 0; slice < maxSlices && visualCacheDirty; ++slice) {
     rebuildVisualCacheIdleSlice(kBarsPerSlice, 0);
   }
+  visualCachePassStateRefreshActive_ = false;
 }
 
 LOOP_COLD_MEM void Loop::retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick,

@@ -1,9 +1,9 @@
 # Overdub wrap — pairing, companions, occupancy
 
-**Status:** RC2 fixture-closed (no pairing firmware). RC3 overlay shipped (`b3448759`). RC2b / RC4 / RC5 host pins green ([`172532`](../../captures/session_20260901_172532.log)). Wrap-held source-view populate shipped. Device recapture still required for draw-source `2304→432` and `DIAG,gus,slot`.
+**Status:** RC2 fixture-closed (no pairing firmware). RC3 overlay shipped (`b3448759`). RC5 GUS kinds **PASS** ([`181116`](../../captures/session_20260901_181116.log)). RC5b undo cache selection shipped (host). Next: RC2b same-NoteId closure overwrite. RC4 occupy populate shipped; `hs=768` stays separate.
 **Date:** 2026-09-01
 **Kind:** bugfix
-**Evidence:** [`172532`](../../captures/session_20260901_172532.log), [`171835`](../../captures/session_20260901_171835.log), [`170444`](../../captures/session_20260901_170444.log), [`155630`](../../captures/session_20260901_155630.log), [`153517`](../../captures/session_20260901_153517.log)
+**Evidence:** [`181116`](../../captures/session_20260901_181116.log), [`172532`](../../captures/session_20260901_172532.log), [`171835`](../../captures/session_20260901_171835.log), [`170444`](../../captures/session_20260901_170444.log), [`155630`](../../captures/session_20260901_155630.log), [`153517`](../../captures/session_20260901_153517.log)
 **Parent:** [`display_seal_handoff_coverage_and_wrap_pairing_bugfix.md`](display_seal_handoff_coverage_and_wrap_pairing_bugfix.md)
 
 **Debugging boundary:**
@@ -17,12 +17,14 @@ RC2 wrap-held pairing
     ← host A!=B already keeps 2304→2784; device still rewrites the same NoteId
 RC3 overlay paint
     ← shipped b3448759; do not reopen
-RC2b same-NoteId end rewrite (172532)
-    ← id 85 composed 2304→2496, draw_src new 2304→432
+RC2b same-NoteId closure overwrite (181116)
+    ← compose 2304→2880; draw_src 2304→1008; not a findOpenPassNote pairing miss
 RC4 occupy miss at hs=0 / hs=48 / first hs=768
     ← source view has no present-at-hold row; no Hide/Shorten to apply
 RC5 GUS record vs session-overdub
-    ← DEC-038.2 keeps wraps as one OverdubPassAdded; record must stay a second entry
+    ← device PASS: kind=1 passIds_n=5 then kind=0
+RC5b first U: still paints overdubs
+    ← slice_keep 74 after OverlayRejected fallback
 ```
 
 RC3 overlay stays closed. RC3 must not absorb RC4. If occupancy never created a Hide, no seam overlay may manufacture one.
@@ -270,9 +272,18 @@ Four overdub wraps, loop 3072, transport stop (`OverdubStopToStopped`, commit **
 
 ---
 
-## RC2b — stop same-NoteId wrap-held rewrite
+## RC2b — same-NoteId closure overwritten by wrap-head reconstruction
 
-**Invariant:** a note closed in-pass (`2304→2496` / same-pass Off) keeps that end through wrap journal, gather, and draw. It becomes wrap-held only when **that same `NoteId` is still open at the pass boundary**.
+**Semantic invariant:** a note whose same `NoteId` has a NoteOff in the same capture pass is closed at that NoteOff. No later display reconstruction may reinterpret it as wrap-held. Intermediate representations may transform coordinates; closure identity and effective endpoint must not change.
+
+```text
+same-pass Off exists     → closed; cannot become wrap-held
+same-pass Off absent     → may become wrap-held
+```
+
+Forbidden: `id A On@2304 Off@2880` → `2304→1008` or `2304→loopLength-1`.
+
+This is not a pairing problem. Journal/gather A!=B already keeps a closed linear end. Do not reopen `findOpenPassNote`.
 
 **Owner after the fixture names it.** Candidates to trace, not to patch in advance:
 
@@ -301,6 +312,14 @@ firmware against those paths. The remaining constructor is the draw-source
 rewrite (`draw_src` composed `2496` vs drawn `432`) and is not host-reachable
 without DisplayManager/Track. No RC2b firmware from this pin.
 
+**Device [`181116`](../../captures/session_20260901_181116.log):** LCR / source-view
+keep the linear close (`id=74` `2304→2880`, `id=82` `2304→2496`). `draw_src`
+still rewrites the same `NoteId` (`74` drawn `2304→1008`; `82`/`98` drawn
+`2304→960` / `2304→672`) and drops bar-0/1 siblings to `new,0,0,0`. Same
+constructor as 172532. No pairing firmware.
+
+**Same-pass host pin (write next, expect red):** one pass with `A 2304→2880`, sibling `B 768→1008`, and open `C On@2304` with no Off. Assert `A` stays `2880`, is not `1008` or `loopLength-1`, and `C` may be wrap-held. Earlier separate-wrap fixtures were green and cannot reproduce this. Extend only the function this pin fails.
+
 ---
 
 ## RC4 — occupy the span that is actually sounding
@@ -314,6 +333,12 @@ without DisplayManager/Track. No RC2b firmware from this pin.
 Remaining after RC2b (do not absorb): first-hit `64@hs=768` `n=0` (same class as 155630 bar 2). Separate fixture; still no invented Hide.
 
 **Host pin result (2026-09-01):** linear `2304→2496` in the source view is absent at `hs=0` / `hs=48` (correct after RC2b). True wrap-held `On@2304 Off@432` reconstructs as split head+tail; same-`NoteId` merge kept only the tail, so occupy missed `hs=0`. Population now collapses that split into one `end < start` row in `appendLastCommittedOverdubPassToSourceView` / `rebuildOverdubSourceView`.
+
+**Device [`181116`](../../captures/session_20260901_181116.log):** after wrap 1,
+`64@hs=0` is `n=0` with source-view rows `72` `1536→2112` and `74` `2304→2880`
+(linear; correctly absent). After wrap 3, wrap-held `90` `2296→0` is in the
+view and occupies `hs=2304` (`a=1`); `hs=0` stays `n=0` because
+`displayNotePresentAtHold` is exclusive-end (`[2296, 3072)` does not contain 0).
 
 `hs=768` and `hs=0` stay `n=0` on every pass in 155630. That is why bar 2 was never resolved in the ledger — only covered by live capture. Out of RC2/RC3/RC2b.
 
@@ -335,9 +360,31 @@ Firmware only if that pin shows a single slot entry (who dropped `RecordPassAdde
 
 **Host pin result (2026-09-01):** `collectOverdubSessionUndoPasses` after two wraps is two session ids and does not contain the record `passId`. The constructed slot stack is `RecordPassAdded` then `OverdubPassAdded` with `passIds.size()==2`. No undo-routing firmware. `pushOverdubSessionOnStop` now emits `DIAG,gus,slot,kind,passId,passIds_n` for the top two slot entries so a recapture can prove the device stack.
 
+**Device [`181116`](../../captures/session_20260901_181116.log):** after four wraps + published stop, slot log is
+`kind=1,passId=18,passIds_n=5` then `kind=0,passId=1,passIds_n=0`. First **U:**
+`Undo (entries=2)` / `kind=1`. Second **U:** `Undo (entries=1)` / `kind=0`.
+Triple-press redo restores `kind=0` first. Record is a second slot entry.
+No undo-routing firmware.
+
+### RC5b — first U still paints overdubs
+
+U1 disables the five session `passIds` (`kind=1`). Visual cache then `stale_all` 74 → OverlayRejected Fallback → `slice_keep` 74 → `DISP` 74. [`shouldKeepVisualCacheOverSmallerFullLoopSlice`](../../include/Utils/DisplayWindowUtils.h) treats the smaller Active-only gather as incomplete.
+
+**Invariant:** after `OverdubPassAdded` undo, painted notes are the Active record pass only.
+
+**Guard:** pass-state refresh **and** gather complete for the selected Active state → replace with that result. Do not bypass keep-larger on pass-state change alone. Do not weaken the global keep-larger predicate (`000013` / `234233`).
+
+**Host pin (expect red):** before U1 cache has record+overdub; after disable, selected Active gather is complete, `noteIds ∩ disabledPassNoteIds == ∅`, and replacement is permitted.
+
+**Host pin result (2026-09-01):** `test_pass_state_refresh_replaces_cache_when_selected_active_gather_is_complete` was red on `TEST_ASSERT_NULL` for the disabled overdub `NoteId` after `refreshVisualCacheAfterPassStateChange` — `slice_keep` retained the larger pre-undo cache. Completeness and disjointness already held.
+
+**Fix:** `refreshVisualCacheAfterPassStateChange` sets `visualCachePassStateRefreshActive_` while it fills idle slices. `rebuildVisualCacheIdleSlice` replaces a smaller full-loop slice when that flag is set **and** the selected-state gather is complete (`usedSnapshot` / `usedPrepared` / `fallbackGatherComplete`). `shouldKeepVisualCacheOverSmallerFullLoopSlice` is unchanged.
+
+**Device [`190847`](../../captures/session_20260901_190847.log):** first **U:** `Undo (entries=2)` / `Overdub undone` / `DISP` 84→63. Wrap lengthen remains RC2b (`id 77` compose `2304→2976`, drawn `2304→576`).
+
 ---
 
-## Architecture checkpoint (RC2 + RC3 + RC2b / RC4 / RC5)
+## Architecture checkpoint (RC2 + RC3 + RC2b / RC4 / RC5 / RC5b)
 
 | Question | RC2 / RC2b | RC3 | RC4 | RC5 |
 |---|---|---|---|---|
@@ -383,6 +430,8 @@ After RC4: if wrap-held remains authoritative, `hs=0` / `hs=48` occupy that `Not
 
 After RC5: slot stack is `RecordPassAdded` then one `OverdubPassAdded` with session wrap `passIds`. One **U:** removes only overdub.
 
+After RC5b: first **U:** painted notes are Active record only (`slice_keep` does not retain Disabled-pass notes). Second **U:** empties the slot.
+
 ---
 
 ## Tests
@@ -394,4 +443,26 @@ After RC5: slot stack is `RecordPassAdded` then one `OverdubPassAdded` with sess
 - RC3 negative: Hide of an already-absent target does not resurrect it.
 - RC4: source-view rows at `holdStart=0` and `48`; fail-loud only if a wrap-held row is present and occupy still returns empty.
 - RC5: two slot GUS entries after record + session wraps + Skipped stop; overdub `passIds.size()==2` and does not contain the record id.
+- RC5b: after disable, complete Active gather is disjoint from disabled ids and `refreshVisualCacheAfterPassStateChange` replaces the larger cache.
 - `pio run -e teensy41-capture-serial` RAM1 locals >= 4000, then `pio test -e native`.
+
+---
+
+## Pre-implementation review (RC5b / RC2b, 2026-09-01)
+
+### Ready
+- RC5b owner is `refreshVisualCacheAfterPassStateChange` → `rebuildVisualCacheIdleSlice` keep-larger.
+- RC2b writer stays unnamed until the same-pass pin fails.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Keep-larger | do not change `shouldKeepVisualCacheOverSmallerFullLoopSlice` |
+| Completeness | replace only when pass-state refresh and selected-state gather is complete |
+| Pin home | `test_loop_take_survival` |
+
+### Open before coding
+1. RC2b owner — pin-down only.
+
+### Proceed?
+YES.

@@ -258,6 +258,16 @@ void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 67));
 }
 
+const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
+                                                  NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
 void drainPendingSnapshotPublish(Loop& loop) {
   size_t steps = 0;
   while (loop.hasPendingSnapshotPublish() && steps < 10000) {
@@ -1426,6 +1436,63 @@ void test_overlay_rejected_slice_does_not_claim_playback_coverage() {
   TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
 }
 
+/// RC5b (181116): after OverdubPassAdded undo, a complete Active-only gather must
+/// replace the larger pre-undo cache. slice_keep must not retain Disabled-pass notes.
+void test_pass_state_refresh_replaces_cache_when_selected_active_gather_is_complete() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const ImmutableLoopSnapshotRef recordSnapshot = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(recordSnapshot));
+  const uint32_t recordRevision = loop.publishedSnapshotRevision();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  const NoteId overdubNoteId = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, overdubNoteId);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  const PassId overdubPassId = loop.lastCommittedPassId();
+  loop.storePublishedSnapshotForTest(recordSnapshot, recordRevision);
+  loop.rebuildVisualCacheFromPasses();
+
+  TEST_ASSERT_TRUE(loop.visualCache.notes.size() >= 2u);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.visualCache.notes, overdubNoteId));
+  NoteId recordNoteId = kInvalidNoteId;
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.noteId != kInvalidNoteId && note.noteId != overdubNoteId) {
+      recordNoteId = note.noteId;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, recordNoteId);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.visualCache.notes, recordNoteId));
+
+  TEST_ASSERT_TRUE(loop.setCapturePassState(overdubPassId, CapturePassState::Disabled));
+
+  SessionMidiEventVec selectedFlat;
+  loop.gatherCommittedEvents(selectedFlat);
+  const NoteUtils::DisplayNoteVec selectedNotes =
+      NoteUtils::reconstructDisplayNotes(selectedFlat, loop.loopLengthTicks, false, false);
+  TEST_ASSERT_FALSE(selectedNotes.empty());
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(selectedNotes, recordNoteId));
+  TEST_ASSERT_NULL(findDisplayNoteById(selectedNotes, overdubNoteId));
+  TEST_ASSERT_TRUE(selectedNotes.size() < loop.visualCache.notes.size());
+
+  loop.refreshVisualCacheAfterPassStateChange();
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::None),
+                        static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.visualCache.notes, recordNoteId));
+  TEST_ASSERT_NULL(findDisplayNoteById(loop.visualCache.notes, overdubNoteId));
+  TEST_ASSERT_EQUAL(selectedNotes.size(), loop.visualCache.notes.size());
+}
+
 /// RC2 pin-first: a later same-pitch NoteOff must not close a prior pass's closed note.
 /// Wrap-journal path uses the capture-assigned NoteIds as the match key.
 void test_wrap_journal_closed_notes_do_not_pair_across_passes() {
@@ -1462,16 +1529,6 @@ const LoopSnapshotNote* findSnapshotNote(const LoopSnapshot& snapshot, NoteId no
                                          uint8_t pitch) {
   const LoopSnapshotNoteRef note = snapshot.findNote(noteId, pitch);
   return note ? note.get() : nullptr;
-}
-
-const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
-                                                  NoteId noteId) {
-  for (const NoteUtils::DisplayNote& note : notes) {
-    if (note.noteId == noteId) {
-      return &note;
-    }
-  }
-  return nullptr;
 }
 
 void assertClosedNoteKeepsLinearEnd(const Loop& loop, NoteId noteId, uint8_t pitch,
@@ -1852,6 +1909,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
   RUN_TEST(test_seal_retention_excludes_open_capture_holds);
   RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);
+  RUN_TEST(test_pass_state_refresh_replaces_cache_when_selected_active_gather_is_complete);
   RUN_TEST(test_wrap_journal_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
