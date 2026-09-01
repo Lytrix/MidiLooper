@@ -3157,59 +3157,75 @@ ImmutableLoopSnapshotRef snapshotWithAddedNote(const ImmutableLoopSnapshotRef& p
   return withA;
 }
 
+void sealRecordedHideCompanion(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                               uint32_t endTick, uint32_t startRevision) {
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(hideChange(noteId, pitch, startTick, endTick));
+  loop.playbackRevision = startRevision;
+  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(1u, ids.size());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), ids, startRevision);
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+}
+
+void publishSnapshotAtRevision(Loop& loop, uint32_t revision) {
+  loop.playbackRevision = revision;
+  loop.storePublishedSnapshotForTest(
+      LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick, 1, 1),
+      revision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
 /// RC3: sealed companion IDs are EditPass IDs that project Hide by targetNoteId.
 void test_seal_companion_ids_project_hide_by_note_id() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
-  loop.beginCapture(CapturePhase::Overdub);
-  loop.pushPendingNoteChangeForTest(hideChange(123, 64, 2304, 2784));
+  sealRecordedHideCompanion(loop, 123, 64, 2304, 2784, 9);
 
-  const uint32_t prior = loop.playbackRevision;
-  loop.playbackRevision = 10;
-  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
-  TEST_ASSERT_EQUAL(1u, ids.size());
-  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), ids, prior);
-
-  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
   TEST_ASSERT_EQUAL(1u, loop.lastOverdubSealCompanionIdsForTest().size());
-  TEST_ASSERT_EQUAL(ids[0], loop.lastOverdubSealCompanionIdsForTest()[0]);
-
-  const EditPass* row = findEditPassById(loop, ids[0]);
+  const EditPass* row = findEditPassById(loop, loop.lastOverdubSealCompanionIdsForTest()[0]);
   TEST_ASSERT_NOT_NULL(row);
   TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete), static_cast<int>(row->actionType));
   TEST_ASSERT_EQUAL(123, row->targetNoteId);
 
-  PendingNoteChangeVec overlay;
-  overlay.push_back(hideChange(row->targetNoteId, row->pitch, row->startTick, row->endTick));
+  TEST_ASSERT_TRUE(loop.sealedCompanionOverlayRequired());
   NoteUtils::DisplayNoteVec paint;
   paint.push_back(displayNote(123, 64, 2304, 2784));
-  applyIdentityHideAndShorten(paint, overlay);
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
   TEST_ASSERT_TRUE(paint.empty());
 }
 
 /// RC3: overlay matches NoteId, not pitch/start.
 void test_companion_overlay_ignores_mismatched_note_id() {
-  PendingNoteChangeVec overlay;
-  overlay.push_back(hideChange(456, 64, 2304, 2784));
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
+  sealRecordedHideCompanion(loop, 456, 64, 2304, 2784, 9);
+  TEST_ASSERT_TRUE(loop.sealedCompanionOverlayRequired());
+
   NoteUtils::DisplayNoteVec paint;
   paint.push_back(displayNote(123, 64, 2304, 2784));
-  applyIdentityHideAndShorten(paint, overlay);
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
   TEST_ASSERT_EQUAL(1u, paint.size());
   TEST_ASSERT_EQUAL(123, paint[0].noteId);
 }
 
 /// RC3: overlay is idempotent and does not resurrect.
 void test_companion_overlay_hide_is_idempotent() {
-  PendingNoteChangeVec overlay;
-  overlay.push_back(hideChange(123, 64, 2304, 2784));
-  overlay.push_back(hideChange(123, 64, 2304, 2784));
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
+  sealRecordedHideCompanion(loop, 123, 64, 2304, 2784, 9);
+
   NoteUtils::DisplayNoteVec paint;
   paint.push_back(displayNote(123, 64, 2304, 2784));
-  applyIdentityHideAndShorten(paint, overlay);
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
   TEST_ASSERT_TRUE(paint.empty());
-  applyIdentityHideAndShorten(paint, overlay);
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
   TEST_ASSERT_TRUE(paint.empty());
 }
 
@@ -3219,18 +3235,66 @@ void test_seal_revision_implies_cumulative_companion_coverage() {
   LoopEventStore::initPool();
   Loop loop;
   seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
-  loop.beginCapture(CapturePhase::Overdub);
-  loop.pushPendingNoteChangeForTest(hideChange(123, 64, 2304, 2784));
-  // Seal increments playbackRevision. Start at 9 so Rseal lands on 10.
-  loop.playbackRevision = 9;
-  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
-  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), ids, 9);
+  sealRecordedHideCompanion(loop, 123, 64, 2304, 2784, 9);
 
   const uint32_t rSeal = loop.lastOverdubSealPlaybackRevisionForTest();
   TEST_ASSERT_EQUAL_UINT32(10u, rSeal);
-  TEST_ASSERT_TRUE(9u < rSeal);
-  TEST_ASSERT_FALSE(10u < rSeal);
-  TEST_ASSERT_FALSE(11u < rSeal);
+  TEST_ASSERT_TRUE(loop.sealedCompanionOverlayRequired());
+
+  NoteUtils::DisplayNoteVec stale;
+  stale.push_back(displayNote(123, 64, 2304, 2784));
+  loop.applyPendingNoteChangesToDisplayNotes(stale);
+  TEST_ASSERT_TRUE(stale.empty());
+
+  publishSnapshotAtRevision(loop, 10);
+  TEST_ASSERT_FALSE(loop.sealedCompanionOverlayRequired());
+  NoteUtils::DisplayNoteVec atSeal;
+  atSeal.push_back(displayNote(123, 64, 2304, 2784));
+  loop.applyPendingNoteChangesToDisplayNotes(atSeal);
+  TEST_ASSERT_EQUAL(1u, atSeal.size());
+
+  publishSnapshotAtRevision(loop, 11);
+  TEST_ASSERT_FALSE(loop.sealedCompanionOverlayRequired());
+  NoteUtils::DisplayNoteVec afterSeal;
+  afterSeal.push_back(displayNote(123, 64, 2304, 2784));
+  loop.applyPendingNoteChangesToDisplayNotes(afterSeal);
+  TEST_ASSERT_EQUAL(1u, afterSeal.size());
+}
+
+/// RC3: overlay does not manufacture a Hide for a note occupancy never resolved.
+void test_sealed_overlay_leaves_unresolved_bar_two_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
+  sealRecordedHideCompanion(loop, 123, 64, 2304, 2784, 9);
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(123, 64, 2304, 2784));
+  paint.push_back(displayNote(200, 64, 768, 816));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(200, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
+}
+
+/// RC3: playback admit-receipt clear must not drop the display overlay.
+void test_sealed_overlay_survives_admit_receipt_clear() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
+  sealRecordedHideCompanion(loop, 123, 64, 2304, 2784, 9);
+  TEST_ASSERT_TRUE(loop.sealedCompanionOverlayRequired());
+
+  loop.clearLastOverdubSealAdmitReceipt();
+  TEST_ASSERT_FALSE(loop.hasLastOverdubSealForTest());
+  TEST_ASSERT_TRUE(loop.sealedCompanionOverlayRequired());
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(123, 64, 2304, 2784));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_TRUE(paint.empty());
 }
 
 /// RC3 journal: missing parent target is not grounds to drop Hide.
@@ -3379,6 +3443,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_companion_overlay_ignores_mismatched_note_id);
   RUN_TEST(test_companion_overlay_hide_is_idempotent);
   RUN_TEST(test_seal_revision_implies_cumulative_companion_coverage);
+  RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
+  RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
   return UNITY_END();
 }

@@ -792,7 +792,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         track.isRecording(), track.isOverdubbing(), reuseLastValidFrame, budgetExceeded(),
         !loop.capturePreview.openNoteIndices.empty());
     const bool haveOpenPlayheadTails = applyLiveCaptureTails;
-    const bool havePendingPaint = track.isOverdubbing() && loop.hasPendingNoteChanges();
+    const bool havePendingPaint =
+        track.isOverdubbing() &&
+        (loop.hasPendingNoteChanges() || loop.sealedCompanionOverlayRequired());
 
     if (applyLiveCaptureTails) {
         for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {

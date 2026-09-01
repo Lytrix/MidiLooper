@@ -350,9 +350,14 @@ struct Loop {
   /// (live capture already has those). Hide matches `noteId` or same-pitch overlapping
   /// span on the committed prefix only — notes at `liveCaptureBegin` and after are
   /// playhead tails and must keep growing to currentTick. Does not mutate source view.
+  /// When live pending is empty and the selected committed representation is still
+  /// behind the last overdub seal, also applies that seal's companion overlay by
+  /// `noteId` only.
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;
+  /// True when the last sealed companion overlay must still project onto display.
+  bool sealedCompanionOverlayRequired() const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
   /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
   void emitOverlapHoldTotals() const;
@@ -373,6 +378,10 @@ struct Loop {
   void recordLastOverdubSeal(PassId passId, const EditPassIdList& companionIds,
                              uint32_t priorPlaybackRevision);
   void clearLastOverdubSeal();
+  /// Drops the one-shot merged-stream admit receipt only. Companion IDs and
+  /// `lastOverdubSealPlaybackRevision_` stay for display overlay until the
+  /// selected representation covers the seal or `clearLastOverdubSeal()`.
+  void clearLastOverdubSealAdmitReceipt();
   /// Admit `recordLastOverdubSeal` into an existing full-loop merged stream. Returns
   /// true only when the receipt, pass, companions, and geometry are all proven.
   /// Consumes or discards the receipt. Does not gather committed passes.

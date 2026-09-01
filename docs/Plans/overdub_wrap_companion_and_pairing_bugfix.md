@@ -1,6 +1,6 @@
 # Overdub wrap — pairing, companions, occupancy
 
-**Status:** RC2 fixture-closed (no pairing firmware). RC3 journal host+firmware in tree. Overlay paint not started. RC4 separate.
+**Status:** RC2 fixture-closed (no pairing firmware). RC3 journal + overlay paint in tree. RC4 separate.
 **Date:** 2026-09-01
 **Kind:** bugfix
 **Evidence:** [`155630`](../../captures/session_20260901_155630.log), [`153517`](../../captures/session_20260901_153517.log)
@@ -226,7 +226,11 @@ change set when `parent.findNote` fails. Payload is `Remove`/`Replace` with
 construction candidate by `NoteId`; missing target skips the change (no-op)
 and does not fail construction. Do not reconstruct the missing note.
 
-Overlay paint is a later RC3 slice. RC4 remains untouched.
+Overlay paint (this slice): `Loop::applyPendingNoteChangesToDisplayNotes` also
+projects the sealed companion overlay when the selected committed representation
+is still behind `lastOverdubSealPlaybackRevision_`. Match is `noteId` only.
+Display call sites stay consumers; they do not read `EditPass` rows. Admit
+receipt clear does not drop companion IDs or `Rseal`. RC4 remains untouched.
 
 **Negative (overlay is not a second content store)**
 

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (display seal handoff — RC1 coverage stamp)
+Last updated: 2026-09-01 (overdub wrap RC3 overlay paint)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,13 +75,19 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap RC3 journal shipped (overlay paint next)**
-Identity-addressed Hide/Shorten survive `parent.findNote` miss. Apply
-resolves the target on the construction candidate; missing target is a
-no-op. Host:
-`test_wrap_journal_keeps_hide_when_parent_lacks_note`. Overlay paint not
-started. RC2 fixture-closed. RC4 untouched.
-`teensy41-capture-serial` RAM1 locals **6848**. Native **1575/1575**.
+**Now — overdub wrap RC3 overlay paint**
+Sealed Hide/Shorten stay projectable after `pendingNoteChanges_.clear()`
+until the selected committed representation reaches
+`lastOverdubSealPlaybackRevision_`. `Loop::applyPendingNoteChangesToDisplayNotes`
+applies that overlay by `noteId` only. Playback admit-receipt clear leaves
+companion IDs and `Rseal`. Host: `test_seal_revision_implies_cumulative_companion_coverage`,
+`test_sealed_overlay_leaves_unresolved_bar_two_note`,
+`test_sealed_overlay_survives_admit_receipt_clear`. RC4 untouched.
+`teensy41-capture-serial` RAM1 locals **6848**. Native **1577/1577**.
+Device recapture [`170444`](../../captures/session_20260901_170444.log) has
+the overlay condition (four wraps, `OverlayRejected`, journals lag) but is
+not a PASS: first wrap sealed Adds/`n=0`, not Hides; wrap-held `2352→864`
+remains RC2; `48`/`816` Adds drop after publish.
 Plan: [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
 
 **Prior — display seal handoff RC1 (`153517` coverage over-claim)**
