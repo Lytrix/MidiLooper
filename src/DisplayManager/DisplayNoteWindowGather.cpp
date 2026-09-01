@@ -227,9 +227,10 @@ uint32_t fingerprintPendingNoteChanges(const PendingNoteChangeVec& changes) {
 
 void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
                           uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh,
-                          NoteUtils::DisplayNoteVec& out) {
+                          NoteUtils::DisplayNoteVec& out, size_t& committedEnd) {
     const uint32_t loopLength = loop.loopLengthTicks;
     if (loopLength == 0 || firstBar > lastBar) {
+        committedEnd = out.size();
         return;
     }
     const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
@@ -254,6 +255,7 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
             }
         }
     }
+    committedEnd = out.size();
     if (captureActive) {
         for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
             bool intersectsWindow = false;
@@ -358,9 +360,14 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         resolvedPitchHigh);
     currentKey.track = trackIndex;
 
-    const DisplayWindowUtils::DrawSourceReuseKind reuseKind =
+    DisplayWindowUtils::DrawSourceReuseKind reuseKind =
         DisplayWindowUtils::selectDrawSourceReuseKind(liveDrawSourceKey_, currentKey,
                                                       Config::TICKS_PER_BAR);
+    // Filtered live notes already mix preview. Slide would take committedEnd after that mix.
+    if (loop.captureActive() &&
+        reuseKind == DisplayWindowUtils::DrawSourceReuseKind::SlideOneBar) {
+        reuseKind = DisplayWindowUtils::DrawSourceReuseKind::Rebuild;
+    }
 
     size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
     if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::Hit) {
@@ -376,14 +383,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             const uint32_t enteringBar =
                 windowStart > liveDrawSourceKey_.windowStart ? lastBar : firstBar;
             gatherDrawSourceBars(loop, enteringBar, enteringBar, playheadBar, resolvedPitchLow,
-                                 resolvedPitchHigh, candidate);
-            committedDisplayEnd = candidate.size();
+                                 resolvedPitchHigh, candidate, committedDisplayEnd);
             applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
         } else {
             DIAG_COUNTER_INC(DisplayFullRebuild);
             gatherDrawSourceBars(loop, firstBar, lastBar, playheadBar, resolvedPitchLow,
-                                 resolvedPitchHigh, candidate);
-            committedDisplayEnd = candidate.size();
+                                 resolvedPitchHigh, candidate, committedDisplayEnd);
             applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
         }
         DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);

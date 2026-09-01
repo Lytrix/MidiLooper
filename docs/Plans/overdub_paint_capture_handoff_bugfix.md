@@ -1,6 +1,6 @@
 # Overdub paint capture handoff
 
-**Status:** Host shipped (2026-09-01). RAM1 locals **6880**. Reconstruct stays off during OVERDUBBING. Device recapture open.  
+**Status:** Host shipped (2026-09-01). Device [`001647`](../../captures/session_20260902_001647.log) scored: occupy Hide removes record visual IDs; closed preview rows stay in the frame (`missed_preview=0`); live occupy paints `end==start`. Frame does not empty.  
 **Date:** 2026-09-01  
 **Kind:** bugfix  
 **Evidence:** [`234726`](../../captures/session_20260901_234726.log)  

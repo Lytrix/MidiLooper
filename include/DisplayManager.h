@@ -220,42 +220,9 @@ private:
                                                           uint8_t pitchLow = 0,
                                                           uint8_t pitchHigh = 127);
 #if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
+    /// Paint vs visual/preview (not compose). Compose-rerun DRAW_SRC overflows RAM1.
     void logDrawSourceComposeDifferential(const Track& track, uint8_t displaySlot,
                                           uint32_t currentTick, const DisplayNoteVec& drawnNotes);
-    /// Compose bookkeeping saved around the capture-only differential so running the
-    /// old compose path cannot perturb the frame state it is being compared against.
-    struct ComposeFrameState {
-        DisplayNoteVec displayNotes;
-        DisplayNoteVec pendingPaintNotes;
-        SessionMidiEventVec eventBuffer;
-        std::vector<NoteUtils::OpenNoteOn> cacheOpenNotes;
-        size_t cacheEventCount = 0;
-        size_t committedNoteCount = 0;
-        size_t paintCommittedEnd = 0;
-        size_t captureNoteCount = 0;
-        size_t captureChangeCount = 0;
-        size_t baseNoteCount = 0;
-        size_t overdubSourceViewNoteCount = 0;
-        uint32_t captureReplacementRevision = 0;
-        uint32_t capturePreviewRevision = 0;
-        uint32_t cacheLoopLength = 0;
-        uint32_t mergePlaybackRevision = 0;
-        uint32_t windowGatherStart = 0;
-        uint32_t windowGatherLength = 0;
-        uint32_t windowGatherLoopLength = 0;
-        uint32_t windowVisualCacheRevision = 0;
-        uint16_t cacheCaptureRevision = 0;
-        uint16_t mergeCaptureRevision = 0;
-        uint8_t playbackDisplaySlot = 255;
-        uint8_t playbackDisplayTrack = 255;
-        uint8_t cacheSlot = 255;
-        TrackState cacheTrackState = NUM_TRACK_STATES;
-        bool windowGatherValid = false;
-        bool committedFromWindowGather = false;
-        bool committedLayerHeldForDirtyCache = false;
-    };
-    ComposeFrameState captureComposeFrameState() const;
-    void restoreComposeFrameState(const ComposeFrameState& state);
 #endif
     /// Match `drawPianoRoll` detailed-window geometry (auto-follow + clamp).
     bool syncDetailedPaintWindow(const Track& track, uint8_t displaySlot, uint32_t currentTick,

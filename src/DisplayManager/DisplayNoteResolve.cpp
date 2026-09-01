@@ -208,7 +208,12 @@ DISP_CAPTURE_MEM size_t DisplayManager::emitStoppedFrameNoteDump(size_t maxLines
 DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     const Track& track, uint8_t displaySlot, uint32_t currentTick,
     const DisplayNoteVec& drawnNotes) {
+    (void)currentTick;
     if (track.isJamming() || editManager.getEditSessionType() == EditSessionType::Note) {
+        return;
+    }
+    const Loop& loop = track.getLoop(displaySlot);
+    if (!track.isOverdubbing() && !loop.captureActive()) {
         return;
     }
 
@@ -218,19 +223,6 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         return;
     }
     sLastDiffLogMs = nowMs;
-
-    // Compose is no longer the paint owner, so its incremental bookkeeping must survive
-    // this comparison unchanged. Loop-side caches the compose path writes (visualCache
-    // adopt, LCR gather) are not restored — only DisplayManager frame state is.
-    const ComposeFrameState saved = captureComposeFrameState();
-    DisplayNoteVec drawnCopy(drawnNotes.begin(), drawnNotes.end());
-    const DisplayNoteVec& oldNotes = isLiveRecordingDisplay(track, displaySlot)
-                                         ? resolveDisplayNotesLiveCapture(track, displaySlot,
-                                                                          currentTick)
-                                         : resolveDisplayNotesCommitted(track, displaySlot,
-                                                                        currentTick);
-    DisplayNoteVec composedCopy(oldNotes.begin(), oldNotes.end());
-    restoreComposeFrameState(saved);
 
     auto findByNoteId = [](const DisplayNoteVec& notes, NoteId noteId) -> const DisplayNote* {
         if (noteId == kInvalidNoteId) {
@@ -243,134 +235,114 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         }
         return nullptr;
     };
+    auto findByPitchStart = [](const DisplayNoteVec& notes, uint8_t pitch,
+                               uint32_t startTick) -> const DisplayNote* {
+        for (const DisplayNote& note : notes) {
+            if (note.note == pitch && note.startTick == startTick) {
+                return &note;
+            }
+        }
+        return nullptr;
+    };
+    auto emitDiff = [](uint32_t bar, NoteId noteId, const DisplayNote* oldNote,
+                       const DisplayNote* newNote) {
+        char line[192];
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,draw_src,diff,bar,%u,id,%u,old,%u,%u,%u,new,%u,%u,%u",
+                 static_cast<unsigned long>(micros()), static_cast<unsigned>(bar),
+                 static_cast<unsigned>(noteId),
+                 oldNote != nullptr ? static_cast<unsigned>(oldNote->note) : 0u,
+                 oldNote != nullptr ? static_cast<unsigned>(oldNote->startTick) : 0u,
+                 oldNote != nullptr ? static_cast<unsigned>(oldNote->endTick) : 0u,
+                 newNote != nullptr ? static_cast<unsigned>(newNote->note) : 0u,
+                 newNote != nullptr ? static_cast<unsigned>(newNote->startTick) : 0u,
+                 newNote != nullptr ? static_cast<unsigned>(newNote->endTick) : 0u);
+        DebugSessionCapture::appendCaptureTextLine(line);
+    };
 
     uint32_t mismatchCount = 0;
+    uint32_t hiddenCount = 0;
+    uint32_t missedPreviewCount = 0;
     uint32_t logged = 0;
     constexpr uint32_t kMaxLoggedDiffs = 8;
+    const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
 
-    for (const DisplayNote& drawn : drawnCopy) {
-        if (drawn.noteId == kInvalidNoteId) {
+    for (const DisplayNote& visual : loop.visualCache.notes) {
+        if (visual.noteId == kInvalidNoteId) {
             continue;
         }
-        const DisplayNote* old = findByNoteId(composedCopy, drawn.noteId);
-        if (old != nullptr && old->note == drawn.note && old->startTick == drawn.startTick &&
-            old->endTick == drawn.endTick) {
+        const DisplayNote* byId = findByNoteId(drawnNotes, visual.noteId);
+        if (byId != nullptr && byId->note == visual.note && byId->startTick == visual.startTick &&
+            byId->endTick == visual.endTick) {
             continue;
         }
-        ++mismatchCount;
-        if (logged < kMaxLoggedDiffs) {
-            const uint32_t bar =
-                Config::TICKS_PER_BAR > 0 ? drawn.startTick / Config::TICKS_PER_BAR : 0;
-            char line[192];
-            snprintf(
-                line, sizeof(line),
-                "#CAP,%lu,DIAG,draw_src,diff,bar,%u,id,%u,old,%u,%u,%u,new,%u,%u,%u",
-                static_cast<unsigned long>(micros()), static_cast<unsigned>(bar),
-                static_cast<unsigned>(drawn.noteId),
-                old != nullptr ? static_cast<unsigned>(old->note) : 0u,
-                old != nullptr ? static_cast<unsigned>(old->startTick) : 0u,
-                old != nullptr ? static_cast<unsigned>(old->endTick) : 0u,
-                static_cast<unsigned>(drawn.note), static_cast<unsigned>(drawn.startTick),
-                static_cast<unsigned>(drawn.endTick));
-            DebugSessionCapture::appendCaptureTextLine(line);
-            ++logged;
-        }
-    }
-    for (const DisplayNote& old : composedCopy) {
-        if (old.noteId == kInvalidNoteId || findByNoteId(drawnCopy, old.noteId) != nullptr) {
+        const DisplayNote* byPitchStart = (byId == nullptr)
+                                              ? findByPitchStart(drawnNotes, visual.note,
+                                                                 visual.startTick)
+                                              : byId;
+        if (byPitchStart != nullptr && byPitchStart->note == visual.note &&
+            byPitchStart->startTick == visual.startTick &&
+            byPitchStart->endTick == visual.endTick) {
             continue;
         }
         ++mismatchCount;
+        if (byPitchStart == nullptr) {
+            ++hiddenCount;
+        }
         if (logged < kMaxLoggedDiffs) {
-            const uint32_t bar =
-                Config::TICKS_PER_BAR > 0 ? old.startTick / Config::TICKS_PER_BAR : 0;
-            char line[160];
-            snprintf(line, sizeof(line),
-                     "#CAP,%lu,DIAG,draw_src,diff,bar,%u,id,%u,old,%u,%u,%u,new,0,0,0",
-                     static_cast<unsigned long>(micros()), static_cast<unsigned>(bar),
-                     static_cast<unsigned>(old.noteId), static_cast<unsigned>(old.note),
-                     static_cast<unsigned>(old.startTick), static_cast<unsigned>(old.endTick));
-            DebugSessionCapture::appendCaptureTextLine(line);
+            const uint32_t bar = ticksPerBar > 0 ? visual.startTick / ticksPerBar : 0;
+            emitDiff(bar, visual.noteId, &visual, byPitchStart);
             ++logged;
         }
     }
+
+    for (const DisplayNote& preview : loop.capturePreview.notes) {
+        if (preview.noteId == kInvalidNoteId) {
+            continue;
+        }
+        if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(preview.startTick, preview.endTick)) {
+            continue;
+        }
+        const DisplayNote* byId = findByNoteId(drawnNotes, preview.noteId);
+        const DisplayNote* byPitchStart =
+            (byId != nullptr) ? byId : findByPitchStart(drawnNotes, preview.note, preview.startTick);
+        if (byPitchStart != nullptr && byPitchStart->note == preview.note &&
+            byPitchStart->startTick == preview.startTick &&
+            byPitchStart->endTick == preview.endTick) {
+            continue;
+        }
+        ++mismatchCount;
+        ++missedPreviewCount;
+        if (logged < kMaxLoggedDiffs) {
+            const uint32_t bar = ticksPerBar > 0 ? preview.startTick / ticksPerBar : 0;
+            emitDiff(bar, preview.noteId, findByPitchStart(loop.visualCache.notes, preview.note,
+                                                           preview.startTick),
+                     &preview);
+            ++logged;
+        }
+    }
+
+    char layers[192];
+    snprintf(layers, sizeof(layers),
+             "#CAP,%lu,DIAG,draw_src,layers,visual,%u,preview,%u,sealed,%u,snap,%u,frame,%u,"
+             "hidden,%u,missed_preview,%u",
+             static_cast<unsigned long>(micros()),
+             static_cast<unsigned>(loop.visualCache.notes.size()),
+             static_cast<unsigned>(loop.capturePreview.notes.size()),
+             static_cast<unsigned>(loop.sealedCapturePreviewNotes().size()),
+             loop.publishedSnapshotIsCurrent() ? 1u : 0u,
+             static_cast<unsigned>(drawnNotes.size()), static_cast<unsigned>(hiddenCount),
+             static_cast<unsigned>(missedPreviewCount));
+    DebugSessionCapture::appendCaptureTextLine(layers);
 
     if (mismatchCount > 0) {
         char summary[128];
         snprintf(summary, sizeof(summary),
                  "#CAP,%lu,DIAG,draw_src,diff,count,%u,old,%u,new,%u",
                  static_cast<unsigned long>(micros()), static_cast<unsigned>(mismatchCount),
-                 static_cast<unsigned>(composedCopy.size()),
-                 static_cast<unsigned>(drawnCopy.size()));
+                 static_cast<unsigned>(loop.visualCache.notes.size()),
+                 static_cast<unsigned>(drawnNotes.size()));
         DebugSessionCapture::appendCaptureTextLine(summary);
     }
-}
-#endif
-
-#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
-DISP_CAPTURE_MEM DisplayManager::ComposeFrameState DisplayManager::captureComposeFrameState() const {
-    ComposeFrameState state;
-    state.displayNotes.assign(liveDisplayNotes.begin(), liveDisplayNotes.end());
-    state.pendingPaintNotes.assign(liveDisplayPendingPaintNotes_.begin(),
-                                   liveDisplayPendingPaintNotes_.end());
-    state.eventBuffer.assign(liveDisplayEventBuffer.begin(), liveDisplayEventBuffer.end());
-    state.cacheOpenNotes.assign(liveDisplayCacheOpenNotes.begin(), liveDisplayCacheOpenNotes.end());
-    state.cacheEventCount = liveDisplayCacheEventCount;
-    state.committedNoteCount = liveDisplayCacheCommittedNoteCount_;
-    state.paintCommittedEnd = liveDisplayPaintCommittedEnd_;
-    state.captureNoteCount = liveDisplayCacheCaptureNoteCount_;
-    state.captureChangeCount = liveDisplayCacheCaptureChangeCount_;
-    state.baseNoteCount = liveDisplayCacheBaseNoteCount_;
-    state.captureReplacementRevision = liveDisplayCacheCaptureReplacementRevision_;
-    state.capturePreviewRevision = liveDisplayCacheCapturePreviewRevision_;
-    state.cacheCaptureRevision = liveDisplayCacheCaptureRevision;
-    state.cacheLoopLength = liveDisplayCacheLoopLength;
-    state.cacheSlot = liveDisplayCacheSlot;
-    state.cacheTrackState = liveDisplayCacheTrackState;
-    state.mergePlaybackRevision = liveMergePlaybackRevision_;
-    state.mergeCaptureRevision = liveMergeCaptureRevision_;
-    state.playbackDisplaySlot = livePlaybackDisplaySlot_;
-    state.playbackDisplayTrack = livePlaybackDisplayTrack_;
-    state.windowGatherStart = liveWindowGatherStart_;
-    state.windowGatherLength = liveWindowGatherLength_;
-    state.windowGatherLoopLength = liveWindowGatherLoopLength_;
-    state.windowGatherValid = liveWindowGatherValid_;
-    state.committedFromWindowGather = liveDisplayCommittedFromWindowGather_;
-    state.windowVisualCacheRevision = liveWindowVisualCacheRevision_;
-    state.committedLayerHeldForDirtyCache = liveCommittedLayerHeldForDirtyCache_;
-    state.overdubSourceViewNoteCount = liveOverdubSourceViewNoteCount_;
-    return state;
-}
-
-DISP_CAPTURE_MEM void DisplayManager::restoreComposeFrameState(const ComposeFrameState& state) {
-    liveDisplayNotes.assign(state.displayNotes.begin(), state.displayNotes.end());
-    liveDisplayPendingPaintNotes_.assign(state.pendingPaintNotes.begin(),
-                                         state.pendingPaintNotes.end());
-    liveDisplayEventBuffer.assign(state.eventBuffer.begin(), state.eventBuffer.end());
-    liveDisplayCacheOpenNotes.assign(state.cacheOpenNotes.begin(), state.cacheOpenNotes.end());
-    liveDisplayCacheEventCount = state.cacheEventCount;
-    liveDisplayCacheCommittedNoteCount_ = state.committedNoteCount;
-    liveDisplayPaintCommittedEnd_ = state.paintCommittedEnd;
-    liveDisplayCacheCaptureNoteCount_ = state.captureNoteCount;
-    liveDisplayCacheCaptureChangeCount_ = state.captureChangeCount;
-    liveDisplayCacheBaseNoteCount_ = state.baseNoteCount;
-    liveDisplayCacheCaptureReplacementRevision_ = state.captureReplacementRevision;
-    liveDisplayCacheCapturePreviewRevision_ = state.capturePreviewRevision;
-    liveDisplayCacheCaptureRevision = state.cacheCaptureRevision;
-    liveDisplayCacheLoopLength = state.cacheLoopLength;
-    liveDisplayCacheSlot = state.cacheSlot;
-    liveDisplayCacheTrackState = state.cacheTrackState;
-    liveMergePlaybackRevision_ = state.mergePlaybackRevision;
-    liveMergeCaptureRevision_ = state.mergeCaptureRevision;
-    livePlaybackDisplaySlot_ = state.playbackDisplaySlot;
-    livePlaybackDisplayTrack_ = state.playbackDisplayTrack;
-    liveWindowGatherStart_ = state.windowGatherStart;
-    liveWindowGatherLength_ = state.windowGatherLength;
-    liveWindowGatherLoopLength_ = state.windowGatherLoopLength;
-    liveWindowGatherValid_ = state.windowGatherValid;
-    liveDisplayCommittedFromWindowGather_ = state.committedFromWindowGather;
-    liveWindowVisualCacheRevision_ = state.windowVisualCacheRevision;
-    liveCommittedLayerHeldForDirtyCache_ = state.committedLayerHeldForDirtyCache;
-    liveOverdubSourceViewNoteCount_ = state.overdubSourceViewNoteCount;
 }
 #endif

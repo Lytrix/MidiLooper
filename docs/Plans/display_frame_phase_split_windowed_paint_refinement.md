@@ -19,7 +19,7 @@ trust: DFRAME = whole DisplayManager::update (resolve + draw + OLED)
 → current: loops ≤ 16 bars take a full-loop control-flow path (boolean / boundedThreshold)
 ```
 
-Do not reopen capture-serial volume gates (`SESSION_CAPTURE_SNAPSHOT_IDLE` / `BPM` / `DRAW_SRC`). Do not treat `DISP` as optional HITL evidence.
+`SESSION_CAPTURE_SNAPSHOT_IDLE` / `BPM` stay off. Light `SESSION_CAPTURE_DRAW_SRC=1` (paint vs visual/preview; no compose rerun) is on for the overdub paint recapture ([`000153`](../../captures/session_20260902_000153.log)). Do not treat `DISP` as optional HITL evidence.
 
 ---
 
