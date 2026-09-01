@@ -140,6 +140,17 @@ void test_capture_playhead_tails_are_paint_only() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::capturePlayheadTailsArePaintOnly());
 }
 
+void test_overdub_playhead_tails_apply_when_over_budget() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
+      false, true, true, true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
+      false, true, true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
+      true, false, true, true, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
+      true, false, false, false, true));
+}
+
 void test_prefer_preserved_overdub_stop_handoff_while_cache_dirty() {
   // session_20260820_000553: first PLAYING after overdub stop must keep the composed
   // frame while visualCache is dirty (655 → 583 flash when cache notes were used).
@@ -716,6 +727,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_clamp_preserved_display_note_count_drops_capture_suffix);
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_capture_playhead_tails_are_paint_only);
+  RUN_TEST(test_overdub_playhead_tails_apply_when_over_budget);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
   RUN_TEST(test_should_hold_composed_notes_on_overdub_wrap_revision);

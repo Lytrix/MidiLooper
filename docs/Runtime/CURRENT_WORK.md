@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (NoteOn occupy paint + compose no-grow)
+Last updated: 2026-09-01 (overdub playhead tails on over-budget frames)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -204,8 +204,11 @@ tails, including after a committed-layer rebuild. Wrap adopt: paint Hide
 on committed prefix only; same-start dedupe does not drop longer live
 capture over shorter committed sibling. Compose counts clamp to the
 vector after hide/dedupe; `liveDisplayNotes.resize` never grows
-(`111343` `DNTE,0,0,0,0`). Native **1543/1543**. RAM1 locals **6848**.
-Device recapture required.
+(`111343` `DNTE,0,0,0,0`). Overdub playhead tails stay on over-budget
+frames (`112806`). Native **1544/1544**. RAM1 locals **6848**.
+Device recapture required. Stop reconstruct still shows unshortened
+first-overdub E4 `760–1920` beside later `768–144` (`overlap_hold`
+`shorten=0`).
 **Stage 1m — stop compose adopt (`000013`):**
 [`display_visual_cache_stop_compose_adopt_bugfix.md`](../Plans/display_visual_cache_stop_compose_adopt_bugfix.md).
 Other tracks STOPPED first and cleared `liveDisplayNotes` (141→31). Adopt

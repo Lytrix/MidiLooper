@@ -104,6 +104,20 @@ inline bool capturePlayheadTailsArePaintOnly() {
     return true;
 }
 
+/// Overdub open notes grow to currentTick on every frame, including over-budget
+/// reuse (`112806` second-overdub). RECORD keeps the budget gate.
+inline bool shouldApplyLiveCapturePlayheadTails(bool recording, bool overdubbing,
+                                               bool reuseLastValidFrame, bool budgetExceeded,
+                                               bool hasOpenCaptureNotes) {
+    if (!hasOpenCaptureNotes) {
+        return false;
+    }
+    if (overdubbing) {
+        return true;
+    }
+    return recording && !reuseLastValidFrame && !budgetExceeded;
+}
+
 /// RC-W1 wrap resets live compose bookkeeping so the next OVERDUBBING frame
 /// rebuilds the committed prefix. It must not drop the composed DisplayNote
 /// vector — a stop before that frame has nothing to hold
