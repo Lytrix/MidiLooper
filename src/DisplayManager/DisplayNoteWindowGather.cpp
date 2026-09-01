@@ -180,6 +180,19 @@ void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out, const NoteUtils
     out.push_back(note);
 }
 
+void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes, size_t suffixBegin,
+                                       const NoteUtils::DisplayNote& row) {
+    if (row.endTick >= row.startTick) {
+        for (size_t i = suffixBegin; i < notes.size(); ++i) {
+            if (notes[i].note == row.note && notes[i].startTick == row.startTick) {
+                notes[i] = row;
+                return;
+            }
+        }
+    }
+    notes.push_back(row);
+}
+
 bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                               uint32_t loopLength) {
     const uint32_t barStart = bar * Config::TICKS_PER_BAR;
@@ -244,18 +257,18 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
             appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
         }
     }
+    committedEnd = out.size();
     if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
         for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
             for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
                 if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
                     continue;
                 }
-                DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, sealedRow);
+                upsertDisplayNoteAtPitchStartFrom(out, committedEnd, sealedRow);
                 break;
             }
         }
     }
-    committedEnd = out.size();
     if (captureActive) {
         for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
             bool intersectsWindow = false;

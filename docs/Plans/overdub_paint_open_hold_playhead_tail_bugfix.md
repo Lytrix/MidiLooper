@@ -1,6 +1,6 @@
 # Overdub paint — open-hold playhead tail
 
-**Status:** Host shipped. Device recapture next (`DRAW_SRC` on).  
+**Status:** Device [`003558`](../../captures/session_20260902_003558.log) lap 1 grew `74→165`. Wrap 2/3 sealed-prefix Hide is [`overdub_paint_sealed_prefix_hide_bugfix.md`](overdub_paint_sealed_prefix_hide_bugfix.md).  
 **Date:** 2026-09-02  
 **Kind:** bugfix  
 **Evidence:** [`001647`](../../captures/session_20260902_001647.log) `id 8` `77@336→384` → `77@336→336` then `new,0,0,0`  
@@ -28,12 +28,12 @@ committedDisplayEnd taken after preview union
 
 `gatherDrawSourceBars` appends the open hold, then `resolveDisplayNotesByDrawSource` sets `committedDisplayEnd = candidate.size()`. `applyCapturePlayheadTails` searches only from that index, so it does not update the zero-length hold already in the prefix. `applyPendingNoteChangesToDisplayNotes` treats the hold as committed and can Hide it by overlap.
 
-Seal handoff already required: union sealed rows **before** `committedDisplayEnd` is taken.
+Open holds stay after `committedDisplayEnd`. Sealed wrap rows moved after that mark in [`overdub_paint_sealed_prefix_hide_bugfix.md`](overdub_paint_sealed_prefix_hide_bugfix.md) (`003558`); occupy Hide must not see them.
 
 ## Invariant
 
 ```
-committedDisplayEnd is snapshot/visual + sealed only
+committedDisplayEnd is snapshot/visual only
 open holds sit after that index
 Hide/Shorten apply only below it
 playhead tails update the open hold in place to playhead
