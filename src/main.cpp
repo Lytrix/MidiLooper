@@ -54,13 +54,37 @@ takeDeferredIdleOwnerTurn() {
 }
 
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
+FLASHMEM __attribute__((noinline)) static void finishAdmittedDisplayPaintTurn(
+    uint32_t now, uint32_t& lastDisplayUpdate) {
+#if defined(SESSION_CAPTURE)
+  const uint32_t displayStartUs = micros();
+#endif
+  displayManager.update();
+#if defined(SESSION_CAPTURE)
+  RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
+#endif
+  if (!displayManager.hasPendingPaintPhase()) {
+    lastDisplayUpdate = now;
+  }
+}
+
+FLASHMEM __attribute__((noinline)) static bool admitDisplayPaintTurn(
+    uint32_t now, uint32_t lastDisplayUpdate) {
+  return DisplayWindowUtils::admitDisplayFrameTurn(
+      displayManager.hasPendingPaintPhase(),
+      now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL,
+      editManager.shouldForceNoteEditDisplayUpdate());
+}
+
 FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSelection(
     uint32_t now, uint32_t& lastDisplayUpdate) {
   if (!editManager.shouldForceNoteEditDisplayUpdate()) {
     return;
   }
-  lastDisplayUpdate = now;
   displayManager.update();
+  if (!displayManager.hasPendingPaintPhase()) {
+    lastDisplayUpdate = now;
+  }
 }
 
 #if defined(SESSION_CAPTURE)
@@ -236,16 +260,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
   if (playBackgroundLoad) {
     const bool skipFocusLoad =
         skipDisplayAfterFocusCommit || skipFocusLoadForSlotSession;
-    if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
-                           now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
-      lastDisplayUpdate = now;
-#if defined(SESSION_CAPTURE)
-      const uint32_t displayStartUs = micros();
-#endif
-      displayManager.update();
-#if defined(SESSION_CAPTURE)
-      RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
-#endif
+    if (!skipFocusLoad && admitDisplayPaintTurn(now, lastDisplayUpdate)) {
+      finishAdmittedDisplayPaintTurn(now, lastDisplayUpdate);
       if (pollDuringDeferredLoadFrame) {
         midiHandler.handleMidiInput();
       }
@@ -289,16 +305,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
   if (!playBackgroundLoad) {
     const bool skipFocusLoad =
         skipDisplayAfterFocusCommit || skipFocusLoadForSlotSession;
-    if (!skipFocusLoad && (editManager.shouldForceNoteEditDisplayUpdate() ||
-                           now - lastDisplayUpdate >= LCD::DISPLAY_UPDATE_INTERVAL)) {
-      lastDisplayUpdate = now;
-#if defined(SESSION_CAPTURE)
-      const uint32_t displayStartUs = micros();
-#endif
-      displayManager.update();
-#if defined(SESSION_CAPTURE)
-      RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(0, displayStartUs);
-#endif
+    if (!skipFocusLoad && admitDisplayPaintTurn(now, lastDisplayUpdate)) {
+      finishAdmittedDisplayPaintTurn(now, lastDisplayUpdate);
       if (pollDuringDeferredLoadFrame) {
         midiHandler.handleMidiInput();
       }
@@ -330,7 +338,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     trackManager.onBootSlotLoadComplete();
     midiHandler.processDroidUsbHostOutbound();
     displayManager.update();
-    lastDisplayUpdate = now;
+    if (!displayManager.hasPendingPaintPhase()) {
+      lastDisplayUpdate = now;
+    }
 #if defined(SESSION_CAPTURE)
     RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(3, bootCommitStartUs);
 #endif

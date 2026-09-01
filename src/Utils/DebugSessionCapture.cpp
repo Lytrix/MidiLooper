@@ -725,9 +725,11 @@ SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t 
                 selectedIdx);
 }
 
-SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex) {
-  emitCapPrintf("#CAP,%lu,DFRAME,%lu,%lu,%lu", (unsigned long)micros(), (unsigned long)frameNotes,
-                (unsigned long)elapsedUs, (unsigned long)frameIndex);
+SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex,
+                              uint32_t resolveUs, uint32_t drawUs, uint32_t transferUs) {
+  emitCapPrintf("#CAP,%lu,DFRAME,%lu,%lu,%lu,%lu,%lu,%lu", (unsigned long)micros(),
+                (unsigned long)frameNotes, (unsigned long)elapsedUs, (unsigned long)frameIndex,
+                (unsigned long)resolveUs, (unsigned long)drawUs, (unsigned long)transferUs);
 }
 
 SC_MEM_ATTR void playbackFrame(uint8_t slot, uint32_t currentTick, uint32_t tickInLoop,

@@ -533,4 +533,66 @@ inline DrawSourceReuseKind selectDrawSourceReuseKind(const DrawSourceGatherKey& 
     return DrawSourceReuseKind::Rebuild;
 }
 
+/// One DisplayManager paint phase. Idle means no frame is in progress.
+enum class DisplayFramePhase : uint8_t {
+    Idle = 0,
+    Resolve = 1,
+    Draw = 2,
+    Transfer = 3,
+};
+
+inline bool displayFramePhaseIsPending(DisplayFramePhase pending) {
+    return pending != DisplayFramePhase::Idle;
+}
+
+/// Interval and NOTE_EDIT request start a frame. A pending phase continues.
+inline bool admitDisplayFrameTurn(bool pendingPhase, bool intervalDue, bool noteEditRequest) {
+    return pendingPhase || intervalDue || noteEditRequest;
+}
+
+inline bool admitDisplayFrameTurn(DisplayFramePhase pending, bool intervalDue,
+                                  bool noteEditRequest) {
+    return admitDisplayFrameTurn(displayFramePhaseIsPending(pending), intervalDue,
+                                 noteEditRequest);
+}
+
+inline DisplayFramePhase displayFramePhaseToRun(DisplayFramePhase pending) {
+    return pending == DisplayFramePhase::Idle ? DisplayFramePhase::Resolve : pending;
+}
+
+struct DisplayFramePhaseAdvance {
+    DisplayFramePhase pending = DisplayFramePhase::Idle;
+    bool frameComplete = false;
+};
+
+inline DisplayFramePhaseAdvance advanceDisplayFramePhase(DisplayFramePhase ran) {
+    DisplayFramePhaseAdvance out;
+    switch (ran) {
+        case DisplayFramePhase::Resolve:
+            out.pending = DisplayFramePhase::Draw;
+            break;
+        case DisplayFramePhase::Draw:
+            out.pending = DisplayFramePhase::Transfer;
+            break;
+        case DisplayFramePhase::Transfer:
+            out.pending = DisplayFramePhase::Idle;
+            out.frameComplete = true;
+            break;
+        case DisplayFramePhase::Idle:
+            break;
+    }
+    return out;
+}
+
+/// Resolved notes stay live until the in-progress frame finishes transfer.
+inline bool shouldClearResolvedPaintNotesNow(DisplayFramePhase pending) {
+    return pending == DisplayFramePhase::Idle;
+}
+
+inline void noteDisplayFrameInvalidate(DisplayFramePhase pending, bool& coalesceFlag) {
+    if (pending != DisplayFramePhase::Idle) {
+        coalesceFlag = true;
+    }
+}
+
 }  // namespace DisplayWindowUtils

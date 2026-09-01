@@ -216,6 +216,15 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
 }
 
 void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
+    const bool frameInProgress =
+        DisplayWindowUtils::displayFramePhaseIsPending(pendingPaintPhase_);
+    if (frameInProgress) {
+        DisplayWindowUtils::noteDisplayFrameInvalidate(pendingPaintPhase_,
+                                                       paintInvalidateCoalesced_);
+        if (!preserveDisplayNotes) {
+            paintDeferredClearNotes_ = true;
+        }
+    }
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
     liveDisplayCacheCommittedNoteCount_ = 0;
     liveDisplayCacheCaptureNoteCount_ = 0;
@@ -228,7 +237,8 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveDisplayCacheSlot = 255;
     liveDisplayCacheTrackState = NUM_TRACK_STATES;
     liveDisplayCacheOpenNotes.clear();
-    if (!preserveDisplayNotes) {
+    if (!preserveDisplayNotes &&
+        DisplayWindowUtils::shouldClearResolvedPaintNotesNow(pendingPaintPhase_)) {
         liveDisplayNotes.clear();
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
@@ -251,6 +261,12 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
 
 void DisplayManager::invalidateNoteEditDisplayCache() {
     editManager.invalidateProjectedNoteEditDisplayCache();
+    if (DisplayWindowUtils::displayFramePhaseIsPending(pendingPaintPhase_)) {
+        DisplayWindowUtils::noteDisplayFrameInvalidate(pendingPaintPhase_,
+                                                       paintInvalidateCoalesced_);
+        paintDeferredClearNotes_ = true;
+        return;
+    }
     liveDisplayNotes.clear();
 }
 

@@ -60,6 +60,8 @@ public:
     /// Mark boot setup complete; OLED stays on boot screen until hold expires in update().
     void finishBootSetup();
     void update();
+    /// True while resolve or draw has run and transfer has not finished.
+    bool hasPendingPaintPhase() const;
     void clearDisplayBuffer();
     /// Boot branding screen during SD load; pushes frame to OLED immediately.
     void drawBootScreen();
@@ -149,6 +151,11 @@ private:
     void resizeLiveDisplayNotesNoGrow(size_t requestedCount);
     void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                          const DisplayNoteVec& frameNotes);
+    const DisplayNoteVec& resolvedPaintNotes() const;
+    void runPaintResolvePhase(uint32_t now);
+    void runPaintDrawPhase();
+    void runPaintTransferPhase();
+    void applyCoalescedPaintInvalidation();
 
     enum class SidebarMode : uint8_t {
         LOOP_EDIT,
@@ -297,6 +304,20 @@ private:
     uint32_t liveWindowVisualCacheRevision_ = UINT32_MAX;
     /// Last successfully resolved draw-source gather key. `liveDisplayNotes` holds that set.
     DisplayWindowUtils::DrawSourceGatherKey liveDrawSourceKey_{};
+    /// Next paint phase to run. Idle means the next admitted turn starts resolve.
+    DisplayWindowUtils::DisplayFramePhase pendingPaintPhase_ =
+        DisplayWindowUtils::DisplayFramePhase::Idle;
+    bool resolvedPaintUsesPending_ = false;
+    bool paintLoadSaveActive_ = false;
+    bool paintInvalidateCoalesced_ = false;
+    bool paintDeferredClearNotes_ = false;
+    uint8_t paintTrackIndex_ = 0;
+    uint8_t paintSlot_ = 0;
+    uint32_t paintDisplayTick_ = 0;
+    uint32_t paintFrameStartUs_ = 0;
+    uint32_t paintResolveUs_ = 0;
+    uint32_t paintDrawUs_ = 0;
+    uint32_t paintTransferUs_ = 0;
 
     /// RC-F follow-up: committed layer is being held because the visual cache is dirty. Cache
     /// recovery belongs to idle work, so the layer is rebuilt once the cache goes clean again.

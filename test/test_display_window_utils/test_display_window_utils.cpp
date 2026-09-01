@@ -1125,6 +1125,91 @@ void test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars() {
   TEST_ASSERT_TRUE(hasEntering);
 }
 
+void test_display_frame_admission_sequences() {
+  using DisplayWindowUtils::DisplayFramePhase;
+  using DisplayWindowUtils::admitDisplayFrameTurn;
+  using DisplayWindowUtils::advanceDisplayFramePhase;
+  using DisplayWindowUtils::displayFramePhaseToRun;
+
+  TEST_ASSERT_FALSE(admitDisplayFrameTurn(DisplayFramePhase::Idle, false, false));
+
+  TEST_ASSERT_TRUE(admitDisplayFrameTurn(DisplayFramePhase::Idle, true, false));
+  DisplayFramePhase pending = DisplayFramePhase::Idle;
+  DisplayFramePhase ran = displayFramePhaseToRun(pending);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Resolve), static_cast<int>(ran));
+  auto advanced = advanceDisplayFramePhase(ran);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Draw), static_cast<int>(advanced.pending));
+  TEST_ASSERT_FALSE(advanced.frameComplete);
+  pending = advanced.pending;
+
+  TEST_ASSERT_TRUE(admitDisplayFrameTurn(pending, false, false));
+  ran = displayFramePhaseToRun(pending);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Draw), static_cast<int>(ran));
+  advanced = advanceDisplayFramePhase(ran);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Transfer), static_cast<int>(advanced.pending));
+  TEST_ASSERT_FALSE(advanced.frameComplete);
+  pending = advanced.pending;
+
+  TEST_ASSERT_TRUE(admitDisplayFrameTurn(pending, false, false));
+  ran = displayFramePhaseToRun(pending);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Transfer), static_cast<int>(ran));
+  advanced = advanceDisplayFramePhase(ran);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Idle), static_cast<int>(advanced.pending));
+  TEST_ASSERT_TRUE(advanced.frameComplete);
+  pending = advanced.pending;
+
+  TEST_ASSERT_FALSE(admitDisplayFrameTurn(pending, false, false));
+  TEST_ASSERT_TRUE(admitDisplayFrameTurn(pending, true, false));
+  ran = displayFramePhaseToRun(pending);
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Resolve), static_cast<int>(ran));
+}
+
+void test_display_frame_note_edit_request_uses_same_phases() {
+  using DisplayWindowUtils::DisplayFramePhase;
+  using DisplayWindowUtils::admitDisplayFrameTurn;
+  using DisplayWindowUtils::advanceDisplayFramePhase;
+  using DisplayWindowUtils::displayFramePhaseToRun;
+
+  TEST_ASSERT_TRUE(admitDisplayFrameTurn(DisplayFramePhase::Idle, false, true));
+  DisplayFramePhase pending = DisplayFramePhase::Idle;
+  for (const DisplayFramePhase expected :
+       {DisplayFramePhase::Resolve, DisplayFramePhase::Draw, DisplayFramePhase::Transfer}) {
+    TEST_ASSERT_TRUE(admitDisplayFrameTurn(pending, false, true));
+    const DisplayFramePhase ran = displayFramePhaseToRun(pending);
+    TEST_ASSERT_EQUAL(static_cast<int>(expected), static_cast<int>(ran));
+    const auto advanced = advanceDisplayFramePhase(ran);
+    pending = advanced.pending;
+    if (expected == DisplayFramePhase::Transfer) {
+      TEST_ASSERT_TRUE(advanced.frameComplete);
+    } else {
+      TEST_ASSERT_FALSE(advanced.frameComplete);
+    }
+  }
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Idle), static_cast<int>(pending));
+}
+
+void test_display_frame_invalidate_during_draw_coalesces() {
+  using DisplayWindowUtils::DisplayFramePhase;
+  using DisplayWindowUtils::advanceDisplayFramePhase;
+  using DisplayWindowUtils::noteDisplayFrameInvalidate;
+  using DisplayWindowUtils::shouldClearResolvedPaintNotesNow;
+
+  DisplayFramePhase pending = DisplayFramePhase::Draw;
+  bool coalesce = false;
+  noteDisplayFrameInvalidate(pending, coalesce);
+  TEST_ASSERT_TRUE(coalesce);
+  TEST_ASSERT_FALSE(shouldClearResolvedPaintNotesNow(pending));
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayFramePhase::Draw), static_cast<int>(pending));
+
+  auto advanced = advanceDisplayFramePhase(DisplayFramePhase::Draw);
+  pending = advanced.pending;
+  TEST_ASSERT_FALSE(advanced.frameComplete);
+  advanced = advanceDisplayFramePhase(DisplayFramePhase::Transfer);
+  pending = advanced.pending;
+  TEST_ASSERT_TRUE(advanced.frameComplete);
+  TEST_ASSERT_TRUE(shouldClearResolvedPaintNotesNow(pending));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_make_viewport_interval);
@@ -1191,5 +1276,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_reuse_rebuilds_two_bar_jump);
   RUN_TEST(test_draw_source_reuse_rebuilds_on_revision_or_pending_change);
   RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
+  RUN_TEST(test_display_frame_admission_sequences);
+  RUN_TEST(test_display_frame_note_edit_request_uses_same_phases);
+  RUN_TEST(test_display_frame_invalidate_during_draw_coalesces);
   return UNITY_END();
 }

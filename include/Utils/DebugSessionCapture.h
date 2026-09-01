@@ -209,7 +209,8 @@ SC_MEM_ATTR void visualCacheState(const char* phase, int32_t events, uint32_t no
                                   uint32_t dirtyBarsSize, uint32_t dirtyCount, uint8_t dirtyFlag);
 SC_MEM_ATTR void displayNoteInfo(uint8_t pitch, uint32_t storageStart, uint32_t displayStart,
                                  uint32_t length, int selectedIdx);
-SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex);
+SC_MEM_ATTR void displayFrame(uint32_t frameNotes, uint32_t elapsedUs, uint32_t frameIndex,
+                              uint32_t resolveUs = 0, uint32_t drawUs = 0, uint32_t transferUs = 0);
 SC_MEM_ATTR void playbackFrame(uint8_t slot, uint32_t currentTick, uint32_t tickInLoop,
                                uint32_t prevTickInLoop, int32_t projectionCycleStartTick,
                                uint32_t loopStartTick, uint32_t loopLength, uint16_t indexBefore,
@@ -305,8 +306,9 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                         dirtyBarsSize, dirtyCount, dirtyFlag)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) \
   DebugSessionCapture::displayNoteInfo(pitch, storageStart, displayStart, length, selectedIdx)
-#define SC_DFRAME(frameNotes, elapsedUs, frameIndex) \
-  DebugSessionCapture::displayFrame(frameNotes, elapsedUs, frameIndex)
+#define SC_DFRAME(frameNotes, elapsedUs, frameIndex, resolveUs, drawUs, transferUs) \
+  DebugSessionCapture::displayFrame(frameNotes, elapsedUs, frameIndex, resolveUs, drawUs, \
+                                    transferUs)
 #define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
                           loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \
                           rev, gen) \
@@ -387,7 +389,7 @@ inline void restartCaptureBootGrace() {}
                   dirtyFlag) \
   ((void)0)
 #define SC_DNTE(pitch, storageStart, displayStart, length, selectedIdx) ((void)0)
-#define SC_DFRAME(frameNotes, elapsedUs, frameIndex) ((void)0)
+#define SC_DFRAME(frameNotes, elapsedUs, frameIndex, resolveUs, drawUs, transferUs) ((void)0)
 #define SC_PLAYBACK_FRAME(slot, currentTick, tickInLoop, prevTickInLoop, projStart, loopStart, \
                           loopLen, idxBefore, idxAfter, orderSize, sent, atLoopStart, wrap, stale, \
                           rev, gen) \
