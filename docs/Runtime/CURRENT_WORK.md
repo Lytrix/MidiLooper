@@ -75,14 +75,23 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — display seal handoff RC1 (`153517` coverage over-claim)**
+**Now — overdub wrap RC3 journal shipped (overlay paint next)**
+Identity-addressed Hide/Shorten survive `parent.findNote` miss. Apply
+resolves the target on the construction candidate; missing target is a
+no-op. Host:
+`test_wrap_journal_keeps_hide_when_parent_lacks_note`. Overlay paint not
+started. RC2 fixture-closed. RC4 untouched.
+`teensy41-capture-serial` RAM1 locals **6848**. Native **1575/1575**.
+Plan: [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
+
+**Prior — display seal handoff RC1 (`153517` coverage over-claim)**
 Idle OverlayRejected fallback was stamping `visualCache.builtFromRevision =
 playbackRevision` while the gather still carried the stale snapshot's content
 (8 vs 10). Retention released and the painter flashed previous-pass notes.
 `visualCacheGatherCoversPlaybackRevision` forbids that stamp; `slice_keep` also
 no longer claims coverage. Release predicate unchanged.
+Committed `c74b8e21`.
 Plan: [`display_seal_handoff_coverage_and_wrap_pairing_bugfix.md`](../Plans/display_seal_handoff_coverage_and_wrap_pairing_bugfix.md).
-RC2 (snapshot wrap-held `2304→864`) is a separate commit.
 
 **Prior — display seal handoff (capture retention)**
 Recapture [`150650`](../../captures/session_20260901_150650.log) confirms the wrap

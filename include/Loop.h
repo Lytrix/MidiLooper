@@ -379,9 +379,16 @@ struct Loop {
   bool tryAdmitLastOverdubSealIntoMergedEvents(PlaybackMergedMidiEvents& merged);
 #if defined(PIO_UNIT_TEST_NATIVE)
   bool hasLastOverdubSealForTest() const { return hasLastOverdubSeal_; }
+  uint32_t lastOverdubSealPlaybackRevisionForTest() const {
+    return lastOverdubSealPlaybackRevision_;
+  }
+  const EditPassIdList& lastOverdubSealCompanionIdsForTest() const {
+    return lastOverdubSealCompanionIds_;
+  }
   void storePublishedSnapshotForTest(ImmutableLoopSnapshotRef snapshot, uint32_t revision) {
     storePublishedSnapshot(std::move(snapshot), revision);
   }
+  const LoopSnapshotChangeSet* pendingWrapJournalChangesForTest() const;
 #endif
   ImmutableLoopSnapshotRef publishedSnapshot() const;
   /// True when the published root was stored at the current `playbackRevision`.
