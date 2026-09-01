@@ -10,6 +10,7 @@
 #include "Globals.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/SlotFocusDisplay.h"
+#include <algorithm>
 
 using namespace DisplayManagerInternal;
 
@@ -88,16 +89,24 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
     }
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+    if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         return;
     }
-    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
-    const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-    detailedWindowStartTick_[displaySlot] = DisplayWindowUtils::resolveCenteredWindowStart(
-        storagePhaseTickInLoop, windowLength, loopLength);
+    const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                    DisplayWindowUtils::kMaxDetailedWindowBars);
+    uint32_t windowStart = 0;
+    uint32_t windowLength = 0;
+    uint8_t windowBars = 0;
+    if (!DisplayWindowUtils::resolveDetailedPaintWindow(
+            loopLength, requestedBars, detailedWindowStartTick_[displaySlot],
+            storagePhaseTickInLoop, true, windowStart, windowLength, windowBars)) {
+        return;
+    }
+    if (DisplayWindowUtils::windowCoversLoop(windowLength, loopLength)) {
+        detailedWindowStartTick_[displaySlot] = 0;
+        return;
+    }
+    detailedWindowStartTick_[displaySlot] = windowStart;
 }
 
 void DisplayManager::syncLiveDisplayComposeCounts() {
@@ -186,16 +195,24 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
     }
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+    if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         return;
     }
-    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
-    const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-    detailedWindowStartTick_[displaySlot] = DisplayWindowUtils::resolveCenteredWindowStart(
-        storagePhaseTickInLoop, windowLength, loopLength);
+    const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                    DisplayWindowUtils::kMaxDetailedWindowBars);
+    uint32_t windowStart = 0;
+    uint32_t windowLength = 0;
+    uint8_t windowBars = 0;
+    if (!DisplayWindowUtils::resolveDetailedPaintWindow(
+            loopLength, requestedBars, detailedWindowStartTick_[displaySlot],
+            storagePhaseTickInLoop, true, windowStart, windowLength, windowBars)) {
+        return;
+    }
+    if (DisplayWindowUtils::windowCoversLoop(windowLength, loopLength)) {
+        detailedWindowStartTick_[displaySlot] = 0;
+        return;
+    }
+    detailedWindowStartTick_[displaySlot] = windowStart;
 }
 
 void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {

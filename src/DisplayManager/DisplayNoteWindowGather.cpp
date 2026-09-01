@@ -45,27 +45,29 @@ bool DisplayManager::syncDetailedPaintWindow(const Track& track, uint8_t display
                                              uint32_t currentTick, uint32_t loopLength,
                                              uint32_t& outWindowStart, uint32_t& outWindowLength,
                                              uint8_t& outWindowBars) {
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+    if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         outWindowStart = 0;
         outWindowLength = loopLength;
         outWindowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
         return false;
     }
-    outWindowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                                      DisplayWindowUtils::kMaxDetailedWindowBars);
-    outWindowLength = static_cast<uint32_t>(outWindowBars) * Config::TICKS_PER_BAR;
-    if (shouldAutoFollowDetailedWindow(track, loopLength)) {
-        const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        detailedWindowStartTick_[displaySlot] =
-            DisplayWindowUtils::resolveCenteredWindowStart(playhead, outWindowLength, loopLength);
+    const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                    DisplayWindowUtils::kMaxDetailedWindowBars);
+    const uint32_t horizonLength =
+        static_cast<uint32_t>(requestedBars) * Config::TICKS_PER_BAR;
+    const bool autoFollow = !DisplayWindowUtils::windowCoversLoop(horizonLength, loopLength) &&
+                            shouldAutoFollowDetailedWindow(track, loopLength);
+    const uint32_t playhead = autoFollow ? resolvePlayheadInLoop(track, displaySlot, currentTick)
+                                         : 0;
+    if (!DisplayWindowUtils::resolveDetailedPaintWindow(
+            loopLength, requestedBars, detailedWindowStartTick_[displaySlot], playhead, autoFollow,
+            outWindowStart, outWindowLength, outWindowBars)) {
+        outWindowStart = 0;
+        outWindowLength = loopLength;
+        outWindowBars = requestedBars;
+        return false;
     }
-    outWindowStart = detailedWindowStartTick_[displaySlot];
-    if (outWindowStart + outWindowLength > loopLength) {
-        outWindowStart = loopLength > outWindowLength ? loopLength - outWindowLength : 0;
-        detailedWindowStartTick_[displaySlot] = outWindowStart;
-    }
+    detailedWindowStartTick_[displaySlot] = outWindowStart;
     return true;
 }
 
@@ -300,7 +302,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     }
     DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
 
-    if (loop.hasPendingNoteChanges() || loop.sealedCompanionOverlayRequired()) {
+    if (loop.hasPendingNoteChanges() || loop.hasSealedCompanionOverlay()) {
         loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes, committedDisplayEnd);
     }
 

@@ -501,9 +501,9 @@ const VisualBarVec* DisplayManager::updateOverviewCaptureDensity(const Track& tr
     return &overviewCaptureBandMask_;
 }
 
-bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track, uint32_t loopLength) const {    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (track.isJamming() || loopLength <= boundedThreshold) {
+bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track,
+                                                    uint32_t /*loopLength*/) const {
+    if (track.isJamming()) {
         return false;
     }
     if (isPlayStopButtonHeld()) {
@@ -519,40 +519,47 @@ DetailedWindowContext DisplayManager::resolveDetailedWindow(const Track& track, 
                                                             uint32_t currentTick) const {
     DetailedWindowContext ctx;
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+    if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         return ctx;
     }
-    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
-    ctx.active = true;
-    ctx.window = DisplayWindowUtils::makeViewportInterval(
-        detailedWindowStartTick_[displaySlot],
-        static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR);
-    if (static_cast<uint32_t>(ctx.window.end) > loopLength) {
-        const uint32_t windowLength = static_cast<uint32_t>(ctx.window.length());
-        const uint32_t windowStart =
-            loopLength > windowLength ? loopLength - windowLength : 0;
-        ctx.window = DisplayWindowUtils::makeViewportInterval(windowStart, windowLength);
+    const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                    DisplayWindowUtils::kMaxDetailedWindowBars);
+    uint32_t windowStart = 0;
+    uint32_t windowLength = 0;
+    uint8_t windowBars = 0;
+    if (!DisplayWindowUtils::resolveDetailedPaintWindow(
+            loopLength, requestedBars, detailedWindowStartTick_[displaySlot],
+            resolvePlayheadInLoop(track, displaySlot, currentTick), false, windowStart,
+            windowLength, windowBars)) {
+        return ctx;
     }
+    ctx.active = true;
+    ctx.window = DisplayWindowUtils::makeViewportInterval(windowStart, windowLength);
     return ctx;
 }
 
 void DisplayManager::centerDetailedWindowOnPlayhead(Track& track, uint8_t displaySlot,
                                                     uint32_t currentTick) {
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (track.isJamming() || loopLength <= boundedThreshold || displaySlot >= kDisplaySlotCount) {
+    if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         return;
     }
-    const uint8_t windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                                                 DisplayWindowUtils::kMaxDetailedWindowBars);
-    const uint32_t windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-    const uint32_t playhead = resolvePlayheadInLoop(track, displaySlot, currentTick);
-    detailedWindowStartTick_[displaySlot] =
-        DisplayWindowUtils::resolveCenteredWindowStart(playhead, windowLength, loopLength);
+    const uint8_t requestedBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
+                                                    DisplayWindowUtils::kMaxDetailedWindowBars);
+    uint32_t windowStart = 0;
+    uint32_t windowLength = 0;
+    uint8_t windowBars = 0;
+    if (!DisplayWindowUtils::resolveDetailedPaintWindow(
+            loopLength, requestedBars, detailedWindowStartTick_[displaySlot],
+            resolvePlayheadInLoop(track, displaySlot, currentTick), true, windowStart,
+            windowLength, windowBars)) {
+        return;
+    }
+    if (DisplayWindowUtils::windowCoversLoop(windowLength, loopLength)) {
+        detailedWindowStartTick_[displaySlot] = 0;
+        return;
+    }
+    detailedWindowStartTick_[displaySlot] = windowStart;
 }
 
 void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, uint8_t displaySlot, const DisplayNoteVec& notes) {
@@ -562,36 +569,22 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
                                                  : loopLength;
     const uint32_t jamStartTick = track.isJamming() ? track.getJamStartTick()
                                                     : resolveLoopOriginTick(track, displaySlot);
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    const bool useBoundedWindow =
-        !track.isJamming() && loopLength > boundedThreshold && displaySlot < kDisplaySlotCount;
     uint32_t windowStart = 0;
     uint32_t windowLength = jamLength;
     uint8_t windowBars = DisplayWindowUtils::kMaxDetailedWindowBars;
-    if (useBoundedWindow) {
-        windowBars = std::min<uint8_t>(detailedWindowBars_[displaySlot],
-                                       DisplayWindowUtils::kMaxDetailedWindowBars);
-        windowLength = static_cast<uint32_t>(windowBars) * Config::TICKS_PER_BAR;
-        const uint32_t jamPos = resolvePlayheadInLoop(track, displaySlot, currentTick);
-        if (shouldAutoFollowDetailedWindow(track, loopLength)) {
-            detailedWindowStartTick_[displaySlot] =
-                DisplayWindowUtils::resolveCenteredWindowStart(jamPos, windowLength, loopLength);
-        }
-        windowStart = detailedWindowStartTick_[displaySlot];
-        if (windowStart + windowLength > loopLength) {
-            windowStart = loopLength > windowLength ? loopLength - windowLength : 0;
-            detailedWindowStartTick_[displaySlot] = windowStart;
-        }
-    }
+    const bool haveDetailedWindow =
+        syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                windowLength, windowBars);
+    const bool movingWindow =
+        haveDetailedWindow && !DisplayWindowUtils::windowCoversLoop(windowLength, loopLength);
     DisplayNoteVec windowFilteredNotes;
     const DisplayNoteVec* detailedNotes = &notes;
-    if (useBoundedWindow) {
+    if (movingWindow) {
         windowFilteredNotes = DisplayWindowUtils::filterDisplayNotesToWindow(
             notes, windowStart, windowLength, loopLength);
         detailedNotes = &windowFilteredNotes;
     }
-    const uint32_t detailedLength = useBoundedWindow ? windowLength : jamLength;
+    const uint32_t detailedLength = haveDetailedWindow ? windowLength : jamLength;
     const int pianoRollY0 = kDetailedPianoRollY0;
     const int pianoRollY1 = kDetailedPianoRollY1;
     if (loopLength > 0) {
@@ -603,17 +596,17 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         // RC-G: when neither is available (first record has no committed passes), use the
         // incremental per-bar density mask rather than showing only the moving window.
         const VisualBarVec* overviewBandMask =
-            useBoundedWindow ? updateOverviewCaptureDensity(track, loop, displaySlot, loopLength)
-                             : nullptr;
+            movingWindow ? updateOverviewCaptureDensity(track, loop, displaySlot, loopLength)
+                         : nullptr;
         const DisplayNoteVec& overviewDensityNotes =
             (!loop.visualCacheDirty && !loop.visualCache.notes.empty())
                 ? loop.visualCache.notes
-                : ((captureCritical && useBoundedWindow) ? *detailedNotes : notes);
+                : ((captureCritical && movingWindow) ? *detailedNotes : notes);
 
         int minPitch = 127;
         int maxPitch = 0;
         const DisplayNoteVec& pitchScanNotes =
-            (captureCritical && useBoundedWindow) ? *detailedNotes : notes;
+            (captureCritical && movingWindow) ? *detailedNotes : notes;
         for (const auto& n : pitchScanNotes) {
             if (n.note < minPitch) minPitch = n.note;
             if (n.note > maxPitch) maxPitch = n.note;
@@ -630,12 +623,12 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         }
 
         drawGridLines(detailedLength, pianoRollY0, pianoRollY1,
-                      useBoundedWindow ? windowStart : 0);
+                      movingWindow ? windowStart : 0);
         drawAllNotes(track, displaySlot, currentTick, detailedLength, minPitch, maxPitch, pianoRollY0,
-                     pianoRollY1, useBoundedWindow, windowStart, *detailedNotes);
+                     pianoRollY1, movingWindow, windowStart, *detailedNotes);
 
         uint32_t relativeBracketTick = resolveBracketDisplayTick(jamStartTick, loopLength);
-        if (useBoundedWindow) {
+        if (movingWindow) {
             if (relativeBracketTick >= windowStart &&
                 relativeBracketTick < windowStart + windowLength) {
                 relativeBracketTick -= windowStart;
@@ -651,7 +644,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         const bool drawPlayhead =
             !previewPlayheadPending || previewPlayheadFlashVisible(millis());
 
-        if (useBoundedWindow) {
+        if (movingWindow) {
             drawOverviewStrip(loopLength, jamStartTick, windowStart, windowLength, jamPos, minPitch,
                               maxPitch, overviewDensityNotes, kOverviewStripY0, kOverviewStripY1,
                               overviewBandMask);

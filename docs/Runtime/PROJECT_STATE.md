@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-01 (capture-serial volume gates + undo/redo log labels)
+Last updated: 2026-09-01 (display-frame Stage 1 host shipped; device recapture open)
 
 ---
 

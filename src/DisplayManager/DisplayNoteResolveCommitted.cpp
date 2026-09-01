@@ -139,21 +139,18 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             return liveDisplayNotes;
         }
         // Window filter is allowed from a non-empty visualCache even while globally dirty, so
-        // auto-follow can keep the next bar ready. Fully clean cache may still assign all notes
-        // on short loops. Do not snapshot-gather here when a composed live frame exists
-        // (`011829` wrap-then-stop).
+        // auto-follow can keep the next bar ready. When the window covers the loop the
+        // filter keeps the same identity set as a full-cache assign. Do not snapshot-gather
+        // here when a composed live frame exists (`011829` wrap-then-stop).
         if (incrementalCommittedDisplay && !loop.visualCache.notes.empty() &&
             liveDisplayNotes.empty()) {
-            if (avoidFullVisualRebuild ||
-                loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
-                uint32_t windowStart = 0;
-                uint32_t windowLength = 0;
-                uint8_t windowBars = 0;
-                if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
-                                            windowLength, windowBars)) {
-                    return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
-                                                       windowStart, windowLength);
-                }
+            uint32_t windowStart = 0;
+            uint32_t windowLength = 0;
+            uint8_t windowBars = 0;
+            if (syncDetailedPaintWindow(track, displaySlot, currentTick, loopLength, windowStart,
+                                        windowLength, windowBars)) {
+                return resolveWindowedDisplayNotes(track, mutLoop, loop, displaySlot, loopLength,
+                                                   windowStart, windowLength);
             }
             if (visualCacheAuthoritative) {
                 DIAG_COUNTER_INC(DisplayIncrementalUpdate);
@@ -172,13 +169,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             return liveDisplayNotes;
         }
-        // Long loops: bounded committed window before any preserved live-frame fallback.
-        // Deferred save must not keep capture-suffix / playhead-tail rows as authority
+        // Detailed window before any preserved live-frame fallback. Deferred save must
+        // not keep capture-suffix / playhead-tail rows as authority
         // (session_20260811_013056: 1872 visualCache + 1011 capturePreview).
         // When STOPPED/PLAYING already had incremental authority above, dirty-cache gather here
         // is recovery only (no preserved frame / cold context).
-        if (avoidFullVisualRebuild ||
-            loopLength > DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR) {
+        {
             uint32_t windowStart = 0;
             uint32_t windowLength = 0;
             uint8_t windowBars = 0;
@@ -200,9 +196,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         }
     }
 
-    const uint32_t boundedThreshold =
-        DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
-    if (loopLength > boundedThreshold || avoidFullVisualRebuild) {
+    {
         uint32_t windowStart = 0;
         uint32_t windowLength = 0;
         uint8_t windowBars = 0;

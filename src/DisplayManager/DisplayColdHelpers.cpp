@@ -25,9 +25,9 @@ namespace DisplayManagerInternal {
 DMAMEM SessionMidiEventVec liveDisplayEventBuffer;
 
 bool shouldAvoidFullVisualRebuild(const Loop& loop, uint32_t loopLength) {
-    // Long-loop policy only. Transient SD/undo/save pressure must not skip short-loop
-    // ensureVisualCacheBuilt — syncDetailedPaintWindow cannot run below the 16-bar threshold,
-    // and after invalidate that left the OLED on an empty roll after the first good paint.
+    // Long-loop visual-cache rebuild policy only — not a display-window predicate.
+    // Transient SD/undo/save pressure must not skip short-loop ensureVisualCacheBuilt;
+    // after invalidate that left the OLED on an empty roll after the first good paint.
     return loop.shouldAvoidFullVisualRebuild(loopLength);
 }
 
