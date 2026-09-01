@@ -626,6 +626,22 @@ void test_pending_hide_keeps_live_capture_tail() {
   TEST_ASSERT_EQUAL_UINT32(48u, paint[0].endTick);
 }
 
+void test_upsert_occupied_hides_empty_ledger_uses_hold_participants() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 73, 912, 1296, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  loop.upsertPendingHidesForOccupiedNoteIds(1, 60, 90, overlapIds({}), 912);
+  TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingPaintHides(), PendingNoteChangeKind::Hide));
+  const PendingNoteChange* hide = findTransform(loop.pendingPaintHides(), 73);
+  TEST_ASSERT_NOT_NULL(hide);
+  TEST_ASSERT_EQUAL_UINT32(912u, hide->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1296u, hide->endTick);
+}
+
 void test_upsert_occupied_hides_norowid_falls_back_to_hold_participants() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2777,6 +2793,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_upsert_occupied_hides_before_note_off);
   RUN_TEST(test_pending_hide_applies_when_display_note_id_differs);
   RUN_TEST(test_pending_hide_keeps_live_capture_tail);
+  RUN_TEST(test_upsert_occupied_hides_empty_ledger_uses_hold_participants);
   RUN_TEST(test_upsert_occupied_hides_norowid_falls_back_to_hold_participants);
   RUN_TEST(test_occupy_paint_hide_is_not_sealed_as_delete);
   RUN_TEST(test_pending_shorten_applies_to_display_notes);

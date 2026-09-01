@@ -347,6 +347,7 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
                 visualCacheGrewPastHold)) {
             // 231953: wrap first paint 109→65 when resize(committedCount) kept only
             // the pre-wrap record prefix. Sealed capture is not in visualCache (1d).
+            liveDisplayPaintCommittedEnd_ = liveDisplayCacheCommittedNoteCount_;
             liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveDisplayCacheCaptureNoteCount_ = 0;
             liveDisplayCacheCaptureChangeCount_ = 0;
@@ -390,14 +391,18 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         if (DisplayWindowUtils::shouldHoldOverdubCommittedHandoff(
                 canHoldCommittedLayer, havePaintWindow, liveWindowGatherValid_,
                 paintWindowInsideGather)) {
-            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            syncLiveDisplayComposeCounts();
+            resizeLiveDisplayNotesNoGrow(liveDisplayCacheCommittedNoteCount_);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
         }
         if (DisplayWindowUtils::shouldHoldDirtyOverdubLayerBeforeWindowGather(
                 loop.visualCacheDirty, canHoldCommittedLayer, visualCacheGrewPastHold)) {
-            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            syncLiveDisplayComposeCounts();
+            resizeLiveDisplayNotesNoGrow(liveDisplayCacheCommittedNoteCount_);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
@@ -429,7 +434,9 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
             return;
         }
         if (canHoldCommittedLayer && !visualCacheGrewPastHold) {
-            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            syncLiveDisplayComposeCounts();
+            resizeLiveDisplayNotesNoGrow(liveDisplayCacheCommittedNoteCount_);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
@@ -466,7 +473,9 @@ DISP_CAPTURE_MEM void DisplayManager::rebuildOverdubCommittedDisplayLayer(
         // budget). Hold the layer we already have; processDeferredIdleMaintenance makes the
         // cache clean in ~0.6-2.3 s and the clean branch then rebuilds it.
         if (loop.visualCacheDirty && canHoldCommittedLayer) {
-            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+            syncLiveDisplayComposeCounts();
+            resizeLiveDisplayNotesNoGrow(liveDisplayCacheCommittedNoteCount_);
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
             liveCommittedLayerHeldForDirtyCache_ = true;
             liveMergePlaybackRevision_ = loop.playbackRevision;
             return;
@@ -610,7 +619,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             }
         }
 #endif
-        liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_);
+        syncLiveDisplayComposeCounts();
+        resizeLiveDisplayNotesNoGrow(liveDisplayCacheCommittedNoteCount_);
+        liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
         liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
                                 loop.capturePreview.notes.end());
         liveDisplayCacheCaptureNoteCount_ = loop.capturePreview.notes.size();
@@ -620,6 +631,14 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             loop.capturePreview.replacementRevision;
         liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
         DIAG_TIMING_RECORD(DisplayCaptureReplace, micros() - replaceStartUs);
+    };
+
+    auto trimToComposeCounts = [&]() {
+        syncLiveDisplayComposeCounts();
+        const size_t composeEnd =
+            liveDisplayCacheCommittedNoteCount_ + liveDisplayCacheCaptureNoteCount_;
+        resizeLiveDisplayNotesNoGrow(composeEnd);
+        liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     };
 
     auto synchronizeCaptureLayer = [&]() {
@@ -640,7 +659,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             return;
         }
 
-        liveDisplayNotes.resize(liveDisplayCacheBaseNoteCount_);
+        resizeLiveDisplayNotesNoGrow(liveDisplayCacheBaseNoteCount_);
         for (size_t changeIndex = liveDisplayCacheCaptureChangeCount_;
              changeIndex < loop.capturePreview.changedNoteIndices.size(); ++changeIndex) {
             const size_t previewNoteIndex =
@@ -712,21 +731,20 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                                               0;
 
     if (reuseLastValidFrame && committedWindowStale) {
-        // Over-budget compose must still advance the committed window. Drop only the
-        // capture-layer suffix work below.
+        // Over-budget compose must still advance the committed window.
         rebuildOverdubCommittedDisplayLayer(track, mutLoop, loop, displaySlot, currentTick,
                                             liveLoopLength, havePaintWindow, paintWindowStart,
                                             paintWindowLength);
-        if (liveDisplayCacheCommittedNoteCount_ + liveDisplayCacheCaptureNoteCount_ <=
-            liveDisplayNotes.size()) {
-            liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_ +
-                                    liveDisplayCacheCaptureNoteCount_);
-            liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
+        if (track.isOverdubbing()) {
+            synchronizeCaptureLayer();
+        } else {
+            trimToComposeCounts();
         }
         DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
     } else if (reuseLastValidFrame) {
-        // Keep liveDisplayNotes as last valid frame; unfinished capture work stays
-        // pending via capturePreview.revision.
+        if (captureLayerChanged && track.isOverdubbing()) {
+            synchronizeCaptureLayer();
+        }
     } else if (committedLayerChanged) {
         const uint32_t displayBuildStartUs = micros();
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
@@ -737,16 +755,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         DIAG_TIMING_RECORD(DisplayCommittedRebuild, micros() - displayBuildStartUs);
         if (!budgetExceeded()) {
             replaceCaptureLayer();
+        } else if (track.isOverdubbing()) {
+            // 104129 / 111343: over-budget committed rebuild must still mirror capture.
+            synchronizeCaptureLayer();
+            DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
         } else {
-            // Committed window updated; keep prior capture suffix if mirror still valid.
-            if (liveDisplayCacheCommittedNoteCount_ + liveDisplayCacheCaptureNoteCount_ <=
-                liveDisplayNotes.size()) {
-                liveDisplayNotes.resize(liveDisplayCacheCommittedNoteCount_ +
-                                        liveDisplayCacheCaptureNoteCount_);
-                liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
-            } else {
-                replaceCaptureLayer();
-            }
+            trimToComposeCounts();
             DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
         }
         DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
@@ -754,11 +768,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         if (!budgetExceeded()) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
             synchronizeCaptureLayer();
+        } else if (track.isOverdubbing()) {
+            // 104129: mirror capture on over-budget overdub frames without full compose.
+            synchronizeCaptureLayer();
+            DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
         } else {
             DIAG_COUNTER_INC(DisplayResolveOverBudgetCount);
         }
     } else if (liveDisplayCacheBaseNoteCount_ <= liveDisplayNotes.size()) {
-        liveDisplayNotes.resize(liveDisplayCacheBaseNoteCount_);
+        resizeLiveDisplayNotesNoGrow(liveDisplayCacheBaseNoteCount_);
     }
     DIAG_TIMING_RECORD(DisplayCaptureCompose, micros() - composeStartUs);
 
@@ -771,8 +789,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     livePlaybackDisplayTrack_ = resolveTrackIndex(track);
     const size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
     const bool applyLiveCaptureTails =
-        !reuseLastValidFrame && (track.isRecording() || track.isOverdubbing()) &&
-        !budgetExceeded();
+        (track.isRecording() || track.isOverdubbing()) &&
+        ((!reuseLastValidFrame && !budgetExceeded()) ||
+         (track.isOverdubbing() && captureLayerChanged));
     const bool haveOpenPlayheadTails =
         applyLiveCaptureTails && !loop.capturePreview.openNoteIndices.empty();
     const bool havePendingPaint = track.isOverdubbing() && loop.hasPendingNoteChanges();

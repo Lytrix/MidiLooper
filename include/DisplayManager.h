@@ -145,6 +145,8 @@ public:
 
 private:
     void adoptComposedDisplayNotesIfAuthoritative(Loop& loop);
+    void syncLiveDisplayComposeCounts();
+    void resizeLiveDisplayNotesNoGrow(size_t requestedCount);
     void maybeEmitDisplayCaptureOnChange(const Track& track, uint8_t displaySlot, uint32_t currentTick,
                                          const DisplayNoteVec& frameNotes);
 
@@ -222,6 +224,8 @@ private:
     size_t liveDisplayCacheEventCount = static_cast<size_t>(-1);
     /// Committed-layer note count in `liveDisplayNotes` before capturePreview overlay (overdub).
     size_t liveDisplayCacheCommittedNoteCount_ = 0;
+    /// Wrap adopt: paint Hide applies only below this index so capture suffix stays visible.
+    size_t liveDisplayPaintCommittedEnd_ = static_cast<size_t>(-1);
     /// Stable capture-preview mirror before temporary per-frame tail/head segments.
     size_t liveDisplayCacheCaptureNoteCount_ = 0;
     size_t liveDisplayCacheCaptureChangeCount_ = 0;

@@ -723,7 +723,9 @@ LOOP_COLD_MEM void Loop::upsertPendingHidesForOccupiedNoteIds(
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
                                               nullptr);
   }
-  if (selected.size() < overlapNoteIds.size()) {
+  // Ledger can be empty while source-view geometry already has a present-at-hold
+  // participant (`104129` lcr,part n=0 a=1). Norowid is selected.size() < ids.size().
+  if (selected.empty() || selected.size() < overlapNoteIds.size()) {
     OverlapNoteIdSet geometricIds;
     collectOverdubSourceHoldParticipantIds(holdPhaseTick, pitch, geometricIds);
     if (OverlapCandidateLookup::shouldLookupSpans(geometricIds)) {

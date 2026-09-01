@@ -202,6 +202,9 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
   }
   loop.collectOverdubNoteOnParticipantIds(pending.note, midiChannel, runtime->ledger,
                                           pending.overlapNoteIds);
+  if (pending.overlapNoteIds.size() == 0) {
+    loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, pending.overlapNoteIds);
+  }
   loop.upsertPendingHidesForOccupiedNoteIds(pending.channel, pending.note, pending.velocity,
                                             pending.overlapNoteIds, holdStart);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)

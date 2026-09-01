@@ -100,17 +100,41 @@ void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displa
         storagePhaseTickInLoop, windowLength, loopLength);
 }
 
+void DisplayManager::syncLiveDisplayComposeCounts() {
+    DisplayWindowUtils::syncLiveDisplayComposeCounts(
+        liveDisplayNotes.size(), liveDisplayCacheCommittedNoteCount_,
+        liveDisplayCacheCaptureNoteCount_, liveDisplayCacheBaseNoteCount_);
+}
+
+void DisplayManager::resizeLiveDisplayNotesNoGrow(size_t requestedCount) {
+    liveDisplayNotes.resize(DisplayWindowUtils::clampDisplayNoteResizeCount(
+        liveDisplayNotes.size(), requestedCount));
+}
+
 void DisplayManager::adoptComposedDisplayNotesIfAuthoritative(Loop& loop) {
     if (liveDisplayNotes.empty()) {
         return;
     }
+    const size_t paintCommittedEnd =
+        liveDisplayPaintCommittedEnd_ != static_cast<size_t>(-1)
+            ? liveDisplayPaintCommittedEnd_
+            : liveDisplayCacheCommittedNoteCount_;
+    liveDisplayPaintCommittedEnd_ = static_cast<size_t>(-1);
     uint32_t loopBars = 0;
     if (Config::TICKS_PER_BAR > 0 && loop.loopLengthTicks > 0) {
         loopBars = (loop.loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
     }
-    loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes,
-                                               liveDisplayCacheCommittedNoteCount_);
-    DisplayWindowUtils::keepShortestEndAtPitchStart(liveDisplayNotes);
+    const size_t originalSize = liveDisplayNotes.size();
+    const size_t suffixCount =
+        paintCommittedEnd < originalSize ? (originalSize - paintCommittedEnd) : 0;
+    loop.applyPendingNoteChangesToDisplayNotes(liveDisplayNotes, paintCommittedEnd);
+    const size_t prefixEndAfterHide = liveDisplayNotes.size() >= suffixCount
+                                          ? (liveDisplayNotes.size() - suffixCount)
+                                          : liveDisplayNotes.size();
+    DisplayWindowUtils::keepShortestEndAtPitchStartOnCommittedPrefix(liveDisplayNotes,
+                                                                     prefixEndAfterHide);
+    syncLiveDisplayComposeCounts();
+    loop.applyPendingNoteChangesToDisplayNotes(loop.visualCache.notes, loop.visualCache.notes.size());
     DisplayWindowUtils::keepShortestEndAtPitchStart(loop.visualCache.notes);
     if (!DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(
             liveDisplayNotes.size(), loop.visualCache.notes.size(), loopBars)) {
@@ -135,7 +159,7 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     const uint16_t captureDisplayRevision = loop.captureDisplayRevision;
     invalidateLiveDisplayCache(true);
     if (preserveCount < liveDisplayNotes.size()) {
-        liveDisplayNotes.resize(preserveCount);
+        resizeLiveDisplayNotesNoGrow(preserveCount);
     }
     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
     liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
@@ -203,6 +227,7 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
     liveWindowVisualCacheRevision_ = UINT32_MAX;
     liveCommittedLayerHeldForDirtyCache_ = false;
     liveOverdubSourceViewNoteCount_ = static_cast<size_t>(-1);
+    liveDisplayPaintCommittedEnd_ = static_cast<size_t>(-1);
     editManager.invalidateProjectedNoteEditDisplayCache();
 }
 
