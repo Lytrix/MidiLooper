@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-01 (overdub wrap RC5b host shipped; RC2b next; RAM1 locals 6848)
+Last updated: 2026-09-01 (overdub wrap RC2b draw-source union pin green; tails next; RAM1 locals 6848)
 
 ---
 

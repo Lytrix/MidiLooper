@@ -16,12 +16,14 @@
 
 #include "Loop.h"
 #include "LoopInternal.h"
+#include "LoopSnapshot.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "PassReclaim.h"
 #include "StorageLoopIo.h"
+#include "Utils/DisplayWindowUtils.h"
 
 namespace {
 
@@ -1594,6 +1596,121 @@ void assertSamePassClosedNoteKeepsLinearEnd(const NoteUtils::DisplayNoteVec& not
   TEST_ASSERT_FALSE(noteA->endTick < noteA->startTick);
 }
 
+NoteUtils::DisplayNote displayNoteFromSnapshotNote(const LoopSnapshotNote& note) {
+  NoteUtils::DisplayNote out{};
+  out.noteId = note.noteId;
+  out.note = note.pitch;
+  out.velocity = note.velocity;
+  out.startTick = note.startTick;
+  out.endTick = note.endTick;
+  return out;
+}
+
+void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out, const NoteUtils::DisplayNote& note) {
+  if (note.noteId != kInvalidNoteId) {
+    for (const auto& existing : out) {
+      if (existing.noteId == note.noteId) {
+        return;
+      }
+    }
+  }
+  out.push_back(note);
+}
+
+bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
+                              uint32_t loopLength) {
+  const uint32_t barStart = bar * Config::TICKS_PER_BAR;
+  return DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, barStart,
+                                                  Config::TICKS_PER_BAR, loopLength);
+}
+
+bool barIsLiveCapture(const Loop& loop, uint32_t bar, uint32_t playheadBar, uint32_t loopLength) {
+  if (!loop.captureActive()) {
+    return false;
+  }
+  if (bar == playheadBar) {
+    return true;
+  }
+  const VisualBarVec& dirtyBars = loop.capturePreview.dirtyBars;
+  if (bar < dirtyBars.size() && dirtyBars[bar] != 0) {
+    return true;
+  }
+  for (const NoteUtils::DisplayNote& note : loop.capturePreview.notes) {
+    if (previewNoteIntersectsBar(note, bar, loopLength)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8_t pitchLow,
+                               uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
+  const uint8_t lastPitch =
+      pitchHigh < kLoopSnapshotPitchCount ? pitchHigh
+                                          : static_cast<uint8_t>(kLoopSnapshotPitchCount - 1);
+  for (uint16_t pitch = pitchLow; pitch <= lastPitch; ++pitch) {
+    const auto membership = snapshot.noteMembership(static_cast<uint8_t>(pitch), bar);
+    forEachSnapshotMembershipReference(membership.get(), [&out](const LoopSnapshotNoteRef& reference) {
+      if (!reference) {
+        return;
+      }
+      appendDisplayNoteUniqueById(out, displayNoteFromSnapshotNote(*reference));
+    });
+  }
+}
+
+void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_t bar,
+                                uint32_t loopLength, NoteUtils::DisplayNoteVec& out) {
+  for (const NoteUtils::DisplayNote& note : source) {
+    if (previewNoteIntersectsBar(note, bar, loopLength)) {
+      appendDisplayNoteUniqueById(out, note);
+    }
+  }
+}
+
+/// Same committed+capture bar union as `DisplayManager::resolveDisplayNotesByDrawSource`
+/// before playhead tails. Host-reachable without Track/DisplayManager.
+void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                  uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh,
+                                  NoteUtils::DisplayNoteVec& out) {
+  out.clear();
+  const uint32_t loopLength = loop.loopLengthTicks;
+  if (loopLength == 0 || firstBar > lastBar) {
+    return;
+  }
+  const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
+  const ImmutableLoopSnapshotRef snapshot = snapshotCurrent ? loop.publishedSnapshot() : nullptr;
+  const bool captureActive = loop.captureActive();
+  const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+
+  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+    if (snapshotCurrent && snapshot) {
+      appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
+    } else {
+      appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
+    }
+  }
+  if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
+    for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
+          continue;
+        }
+        DisplayWindowUtils::upsertDisplayNoteAtPitchStart(out, sealedRow);
+        break;
+      }
+    }
+  }
+  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+    const bool liveBar = barIsLiveCapture(loop, bar, playheadBar, loopLength);
+    const DisplayWindowUtils::DrawSourcePath path = DisplayWindowUtils::selectDrawSourceForBar(
+        captureActive, liveBar, snapshotCurrent);
+    if (path == DisplayWindowUtils::DrawSourcePath::Capture) {
+      appendNotesIntersectingBar(loop.capturePreview.notes, bar, loopLength, out);
+    }
+  }
+}
+
 /// RC2b (181116 / 190847): same-pass Off closes A. Wrap-head reconstruction must not
 /// rewrite that NoteId to the bar-1 sibling Off or loopLength-1. Open C may be wrap-held.
 void test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling() {
@@ -1703,6 +1820,54 @@ void test_same_pass_snapshot_keeps_closed_bar_four_end() {
   TEST_ASSERT_FALSE(noteA->isWrap(3072));
   TEST_ASSERT_NOT_EQUAL(576u, noteA->endTick);
   TEST_ASSERT_NOT_EQUAL(3071u, noteA->endTick);
+}
+
+/// RC2b (190847): `resolveDisplayNotesByDrawSource` paints `id 77` as `2304→576`
+/// while compose keeps `2304→2976`. This pin runs that gather's committed+capture
+/// union on the same same-pass wrap. A must stay linear; no row of that NoteId
+/// may become the bar-1 Off or `loopLength-1`.
+void test_same_pass_draw_source_keeps_closed_bar_four_end() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  const NoteId idA = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2976, 1, 64, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  const NoteId idB = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(576, 1, 64, 0)));
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idA);
+  TEST_ASSERT_NOT_EQUAL(idA, idB);
+  pushClosedPendingAdd(loop, idA, 64, 2304, 2976);
+  pushClosedPendingAdd(loop, idB, 64, 0, 576);
+  commitOverdubWrapLikeDevice(loop, 2976, true);
+  drainPendingSnapshotPublish(loop);
+  loop.rebuildVisualCacheFromPasses();
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  assertSamePassClosedNoteKeepsLinearEnd(drawn, idA, 2976u, 576u, 3072u);
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.noteId != idA) {
+      continue;
+    }
+    TEST_ASSERT_EQUAL_UINT32(2304u, note.startTick);
+    TEST_ASSERT_EQUAL_UINT32(2976u, note.endTick);
+    TEST_ASSERT_FALSE(note.endTick < note.startTick);
+  }
+
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  NoteUtils::DisplayNoteVec cacheDrawn;
+  for (uint32_t bar = 0; bar <= 3; ++bar) {
+    appendNotesIntersectingBar(loop.visualCache.notes, bar, 3072u, cacheDrawn);
+  }
+  assertSamePassClosedNoteKeepsLinearEnd(cacheDrawn, idA, 2976u, 576u, 3072u);
 }
 
 /// RC2b (172532): closed 2304→2496 same NoteId must not become wrap-held 2304→432
@@ -2051,6 +2216,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_same_pass_closed_note_keeps_linear_end_beside_bar_one_sibling);
   RUN_TEST(test_same_pass_closed_bar_four_keeps_end_beside_hold_head);
   RUN_TEST(test_same_pass_snapshot_keeps_closed_bar_four_end);
+  RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
