@@ -1,9 +1,9 @@
 # Overdub wrap — pairing, companions, occupancy
 
-**Status:** RC2 fixture-closed (no pairing firmware). RC3 journal + overlay paint in tree. RC4 separate.
+**Status:** RC2 fixture-closed (no pairing firmware). RC3 overlay shipped (`b3448759`). RC2b / RC4 / RC5 host pins green ([`172532`](../../captures/session_20260901_172532.log)). Wrap-held source-view populate shipped. Device recapture still required for draw-source `2304→432` and `DIAG,gus,slot`.
 **Date:** 2026-09-01
 **Kind:** bugfix
-**Evidence:** [`155630`](../../captures/session_20260901_155630.log), [`153517`](../../captures/session_20260901_153517.log)
+**Evidence:** [`172532`](../../captures/session_20260901_172532.log), [`171835`](../../captures/session_20260901_171835.log), [`170444`](../../captures/session_20260901_170444.log), [`155630`](../../captures/session_20260901_155630.log), [`153517`](../../captures/session_20260901_153517.log)
 **Parent:** [`display_seal_handoff_coverage_and_wrap_pairing_bugfix.md`](display_seal_handoff_coverage_and_wrap_pairing_bugfix.md)
 
 **Debugging boundary:**
@@ -13,15 +13,19 @@ RC1 builtFromRevision over-claim
     ← committed c74b8e21; not on the 155630 board
 sealed capture retention
     ← landed; replaces same pitch+start only
-RC2 wrap-journal / pass pairing
-    ← 155630 paints 2304→576 / 2304→144; 153517 paints 2304→864
-RC3 sealed companion overlay across publication lag
-    ← bar 4 Hide exists, then pending is cleared while snapshot is stale
-RC4 occupancy never resolves hs=768 / hs=0
-    ← no Hide exists to carry; capture only masked the old row
+RC2 wrap-held pairing
+    ← host A!=B already keeps 2304→2784; device still rewrites the same NoteId
+RC3 overlay paint
+    ← shipped b3448759; do not reopen
+RC2b same-NoteId end rewrite (172532)
+    ← id 85 composed 2304→2496, draw_src new 2304→432
+RC4 occupy miss at hs=0 / hs=48 / first hs=768
+    ← source view has no present-at-hold row; no Hide/Shorten to apply
+RC5 GUS record vs session-overdub
+    ← DEC-038.2 keeps wraps as one OverdubPassAdded; record must stay a second entry
 ```
 
-RC3 must not absorb RC4. If occupancy never created a Hide, no seam overlay may manufacture one.
+RC3 overlay stays closed. RC3 must not absorb RC4. If occupancy never created a Hide, no seam overlay may manufacture one.
 
 ---
 
@@ -246,22 +250,101 @@ If bar 2 disappears as a side effect of RC3, RC3 has absorbed RC4 and must be re
 
 ---
 
-## RC4 — occupancy at 768 / 0 (separate)
+## What 172532 proves
 
-`hs=768` and `hs=0` stay `n=0` on every pass in 155630. That is why bar 2 was never resolved in the ledger — only covered by live capture.
+Four overdub wraps, loop 3072, transport stop (`OverdubStopToStopped`, commit **Skipped**, `push_overdub_undo` still **ok**).
 
-Do not design the match key here. Host fixture with the device’s source-view rows at `holdStart=768`, then fail-loud if the device still reports `n=0`. Out of RC2/RC3.
+**Lengthen** is a same-`NoteId` end rewrite, not a second note:
+
+| id | Composed | Drawn |
+|---|---|---|
+| 85 `64` | `2304→2496` (linear, 192) | `2304→432` (wrap-held) |
+| 86/93 `69` | `2352→2400` | `2352→96` |
+| 94 `64` | `2536→2736` | `2536→432` |
+
+`findOpenPassNote` already keys by `NoteId`. The closed-A-then-closed-B fixture does not reproduce this. The remaining constructor is whatever **replaces id 85’s end** after the linear close. Same-pass Off for id 85 stays in LCR (`mmspan` / `mmevt` `2304→2496`). `draw_src` also drops the bar-1 sibling (`64@240→432` / `69@48→96` → `new,0,0,0`).
+
+**Shorten ignored:** later holds on the painted bar-1 head stay unresolved — `64@hs=0` is `n=0`; `69@hs=48` is `a=0`. Occupancy only walks `overdubSourceViewNotes_` via `displayNotePresentAtHold`. A linear `2304→2496` is **not** present at tick 0. A wrap-held `2304→432` **would** be (unwrap + one-loop shift). `a=0` means the source view does not carry the wrap-held span (or identity is rejected). Overlay must not invent a Hide.
+
+**Undo:** record stop ran `pushRecordPassAdded`; overdub stop ran `pushOverdubSessionOnStop` on the Skipped path. The file has **no** post-stop **U:**. Firmware contract is already two GUS kinds ([DEC-038.2](../Authority/ARCHITECTURE_RULES.md): wraps collapse into one `OverdubPassAdded`; record stays `RecordPassAdded`). This slice proves the stack, then fixes only if the device has one slot entry.
 
 ---
 
-## Architecture checkpoint (RC2 + RC3)
+## RC2b — stop same-NoteId wrap-held rewrite
 
-| Question | RC2 | RC3 |
-|---|---|---|
-| Ownership change? | NO | NO — Loop already owns companions; Display still consumes a bounded overlay |
-| Transition change? | NO | NO — wrap still seals then clears pending |
-| Unbounded interval owner? | NO | NO — apply existing bounded companion list |
-| Reuse | YES — journal / pass open-note close | YES — `lastOverdubSealCompanionIds_` → `PendingNoteChange` overlay → `applyPendingHideAndShortenToNotes` |
+**Invariant:** a note closed in-pass (`2304→2496` / same-pass Off) keeps that end through wrap journal, gather, and draw. It becomes wrap-held only when **that same `NoteId` is still open at the pass boundary**.
+
+**Owner after the fixture names it.** Candidates to trace, not to patch in advance:
+
+- `appendNextPassChangeFragment` / `appendOpenNoteChange` — only if the fixture shows a journal Add/Replace of id 85 with `end=432`
+- Display gather wrap-head continuation in `DisplayNoteResolveLiveCapture.cpp`
+- Visual-cache wrap compose (existing native: `test_visual_cache_keeps_overdub_wrap_held_without_stretching_record`)
+
+**Do not:** change `updateOpenPassNoteFromEvent` / `findOpenPassNote`; painter span-split; treat this as overlay.
+
+**Host pin (write first, expect red on current tree if the rewriter is host-reachable):**
+
+```text
+parent/snapshot: id 85 pitch 64 start 2304 end 2496  (closed, not wrap-held)
+wrap drain / gather used on device after wrap 2 publish
+assert: id 85 end still 2496 (or the captured same-pass Off)
+assert: not 432, not wrap-held
+```
+
+Then extend only the function the fixture names.
+
+**Host pin result (2026-09-01):** `test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather` and
+`test_reconstruct_closed_bar_four_keeps_linear_end_beside_bar_one_sibling` are **green**.
+Wrap journal drain, snapshot gather, full visual-cache rebuild, and reconstruct
+(with and without `overdubPassWrapPairing`) keep `2304→2496`. Do not write pairing
+firmware against those paths. The remaining constructor is the draw-source
+rewrite (`draw_src` composed `2496` vs drawn `432`) and is not host-reachable
+without DisplayManager/Track. No RC2b firmware from this pin.
+
+---
+
+## RC4 — occupy the span that is actually sounding
+
+**Invariant:** if a wrap-held span is authoritative, `collectOverdubSourceHoldParticipantIds` at `hs=0` / `hs=48` returns that `NoteId` and `resolveOccupancyAtNoteOn` emits Shorten. If RC2b forbids wrap-held, occupy `a=0` at those holds is correct and must stay visible.
+
+**Owner:** `Loop::collectOverdubSourceHoldParticipantIds` / source-view rebuild — population of `overdubSourceViewNotes_`, not a new match key and not `displayNotePresentAtHold` (unwrap already handles `end < start`).
+
+**Sequence:** RC2b first. Then host fixture with the **device’s source-view rows** at `holdStart=0` and `48` (use existing `lcr,nopart` rows). Fail-loud if the device still reports `n=0` / `a=0` while a wrap-held row is in that view.
+
+Remaining after RC2b (do not absorb): first-hit `64@hs=768` `n=0` (same class as 155630 bar 2). Separate fixture; still no invented Hide.
+
+**Host pin result (2026-09-01):** linear `2304→2496` in the source view is absent at `hs=0` / `hs=48` (correct after RC2b). True wrap-held `On@2304 Off@432` reconstructs as split head+tail; same-`NoteId` merge kept only the tail, so occupy missed `hs=0`. Population now collapses that split into one `end < start` row in `appendLastCommittedOverdubPassToSourceView` / `rebuildOverdubSourceView`.
+
+`hs=768` and `hs=0` stay `n=0` on every pass in 155630. That is why bar 2 was never resolved in the ledger — only covered by live capture. Out of RC2/RC3/RC2b.
+
+---
+
+## RC5 — two GUS entries after overdub stop
+
+**Invariant:** after record + one overdub session + stop, the **slot** stack is `RecordPassAdded` then `OverdubPassAdded`. First **U:** disables only session wrap `passIds`. Second **U:** disables the record pass. Wraps stay one `OverdubPassAdded` (DEC-038.2).
+
+**Owner:** existing `TrackUndo::pushRecordPassAdded` + `pushOverdubSessionOnStop`. Skipped stop already pushes session ids only (`kInvalidPassId`, `includeLastPass=false`). Do not add a third kind. Do not put the record `passId` into `overdubSessionPassIds_`.
+
+**Prove first (no firmware until the fixture or a GUS log shows one slot entry):**
+
+1. Host: `pushRecordPassAdded` → two `pushOverdubSessionPass` → `pushOverdubSessionOnStop` on the Skipped signature → assert two slot entries, kinds, and `passIds.size()==2` on the overdub entry.
+2. Device: one `#CAP` line after stop: `kind` + `passId` + `passIds_n` for the top two **slot** entries (not track-global `undo_entries=4`).
+3. Recapture: `STOPPED`, then one **U:**. Expect overdub notes gone, record notes still painted, and `Overdub undone` once.
+
+Firmware only if that pin shows a single slot entry (who dropped `RecordPassAdded`) or `OverdubPassAdded.passIds` contains the record id.
+
+**Host pin result (2026-09-01):** `collectOverdubSessionUndoPasses` after two wraps is two session ids and does not contain the record `passId`. The constructed slot stack is `RecordPassAdded` then `OverdubPassAdded` with `passIds.size()==2`. No undo-routing firmware. `pushOverdubSessionOnStop` now emits `DIAG,gus,slot,kind,passId,passIds_n` for the top two slot entries so a recapture can prove the device stack.
+
+---
+
+## Architecture checkpoint (RC2 + RC3 + RC2b / RC4 / RC5)
+
+| Question | RC2 / RC2b | RC3 | RC4 | RC5 |
+|---|---|---|---|---|
+| Ownership change? | NO — extend the named rewriter | NO — Loop already owns companions; Display still consumes a bounded overlay | NO — source-view population | NO — existing GUS kinds |
+| Transition change? | NO | NO — wrap still seals then clears pending | NO | NO — record stop / overdub stop already push |
+| Unbounded interval owner? | NO | NO — apply existing bounded companion list | NO | NO |
+| Reuse | YES — after fixture names the owner | YES — `lastOverdubSealCompanionIds_` → `PendingNoteChange` overlay → `applyPendingHideAndShortenToNotes` | YES — `collectOverdubSourceHoldParticipantIds` | YES — `pushRecordPassAdded` / `pushOverdubSessionOnStop` |
 
 ---
 
@@ -294,12 +377,21 @@ overdub wrap
 
 Bar 2 will still restore until RC4, and that must be visible so the residuals stay honest.
 
+After RC2b: id 85 stays `2304→2496` through wrap-2 drain/gather/draw; not wrap-held `2304→432`.
+
+After RC4: if wrap-held remains authoritative, `hs=0` / `hs=48` occupy that `NoteId`. If RC2b forbade wrap-held, `a=0` at those holds stays visible.
+
+After RC5: slot stack is `RecordPassAdded` then one `OverdubPassAdded` with session wrap `passIds`. One **U:** removes only overdub.
+
 ---
 
 ## Tests
 
 - RC2: pin-first fixture in `test_loop_take_survival` (closed A then closed B, drain, assert IDs and ends).
+- RC2b: closed `2304→2496` same `NoteId` after wrap-2 drain/gather stays `2496`, not `432`.
 - RC3 host seam: IDs derive overlay; Hide(`123`) removes A(`123`); Hide(`456`) leaves A; R=9 requires overlay, R=10 and R=11 do not.
 - RC3 journal: missing parent target does not drop the operation; apply is idempotent.
 - RC3 negative: Hide of an already-absent target does not resurrect it.
+- RC4: source-view rows at `holdStart=0` and `48`; fail-loud only if a wrap-held row is present and occupy still returns empty.
+- RC5: two slot GUS entries after record + session wraps + Skipped stop; overdub `passIds.size()==2` and does not contain the record id.
 - `pio run -e teensy41-capture-serial` RAM1 locals >= 4000, then `pio test -e native`.

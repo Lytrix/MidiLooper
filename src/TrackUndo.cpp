@@ -562,6 +562,25 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t sl
         companionIds.push_back(id);
     }
     pushOverdubPassAdded(track, slotIndex, std::move(passIds), std::move(companionIds));
+#if defined(SESSION_CAPTURE)
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    unsigned logged = 0;
+    for (size_t i = stack.entries.size(); i > 0 && logged < 2; --i) {
+        const UndoEntry& entry = stack.entries[i - 1];
+        if (entry.slotIndex != slotIndex) {
+            continue;
+        }
+        char line[160];
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,gus,slot,kind=%u,passId=%lu,passIds_n=%u",
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned>(entry.kind),
+                 static_cast<unsigned long>(entry.passId),
+                 static_cast<unsigned>(entry.passIds.size()));
+        DebugSessionCapture::appendCaptureTextLine(line);
+        ++logged;
+    }
+#endif
 }
 
 TRACK_COLD_MEM void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,

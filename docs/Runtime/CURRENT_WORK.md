@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (overdub wrap RC3 overlay paint)
+Last updated: 2026-09-01 (overdub wrap RC2b / RC4 / RC5)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,20 +75,17 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap RC3 overlay paint**
-Sealed Hide/Shorten stay projectable after `pendingNoteChanges_.clear()`
-until the selected committed representation reaches
-`lastOverdubSealPlaybackRevision_`. `Loop::applyPendingNoteChangesToDisplayNotes`
-applies that overlay by `noteId` only. Playback admit-receipt clear leaves
-companion IDs and `Rseal`. Host: `test_seal_revision_implies_cumulative_companion_coverage`,
-`test_sealed_overlay_leaves_unresolved_bar_two_note`,
-`test_sealed_overlay_survives_admit_receipt_clear`. RC4 untouched.
-`teensy41-capture-serial` RAM1 locals **6848**. Native **1577/1577**.
-Device recapture [`170444`](../../captures/session_20260901_170444.log) has
-the overlay condition (four wraps, `OverlayRejected`, journals lag) but is
-not a PASS: first wrap sealed Adds/`n=0`, not Hides; wrap-held `2352→864`
-remains RC2; `48`/`816` Adds drop after publish.
-Plan: [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
+**Now — overdub wrap RC2b / RC4 / RC5 ([`172532`](../../captures/session_20260901_172532.log))**
+RC3 overlay (`b3448759`) stays closed. Plan:
+[`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
+RC2b host pins are green (journal/gather/reconstruct keep `2304→2496`);
+no pairing firmware. RC4: linear source-view `2304→2496` is correctly
+absent at `hs=0`/`hs=48`; true wrap-held populate now stores one
+`end < start` row so occupy finds it. RC5 host pin is two slot entries
+(`RecordPassAdded` then session `OverdubPassAdded`); stop emits
+`DIAG,gus,slot` for a device recapture. Leave unstaged
+`TrackCaptureInput` nopart / `a.out` out of these commits. Device
+recapture still required for draw-source `2304→432` and one **U:**.
 
 **Prior — display seal handoff RC1 (`153517` coverage over-claim)**
 Idle OverlayRejected fallback was stamping `visualCache.builtFromRevision =
