@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (snapshot-first occupancy + bar draw routing)
+Last updated: 2026-09-01 (display seal handoff — RC1 coverage stamp)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,7 +75,49 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap snapshot publication (tasks `3.5`/`3.6`)**
+**Now — display seal handoff RC1 (`153517` coverage over-claim)**
+Idle OverlayRejected fallback was stamping `visualCache.builtFromRevision =
+playbackRevision` while the gather still carried the stale snapshot's content
+(8 vs 10). Retention released and the painter flashed previous-pass notes.
+`visualCacheGatherCoversPlaybackRevision` forbids that stamp; `slice_keep` also
+no longer claims coverage. Release predicate unchanged.
+Plan: [`display_seal_handoff_coverage_and_wrap_pairing_bugfix.md`](../Plans/display_seal_handoff_coverage_and_wrap_pairing_bugfix.md).
+RC2 (snapshot wrap-held `2304→864`) is a separate commit.
+
+**Prior — display seal handoff (capture retention)**
+Recapture [`150650`](../../captures/session_20260901_150650.log) confirms the wrap
+publication fix: `root_rev` catches `playback_rev` within 150–220 ms at every wrap
+(1, 3, 5, 7, 9, 11, 13, 15, 17), phase-0 holds resolve (`hs=0` reports `a=1`,
+`as=0`, `ae=576` from the second pass), and `DIAG,draw_src,diff` is empty. The
+STOPPED frame still differs from effective on exactly the two held pitch-64 rows:
+frame `s0 len40` / `s768 len48` against effective `624`/`624`, where MIDI input
+gives NoteOn storage 0 → NoteOff 624 and NoteOn 768 → NoteOff 1392.
+
+Root cause is a **capture → committed-tier lifetime gap**, not cache arbitration:
+the cache's last rebuild before the frame was `slice_clean` at `52023305`, four
+seconds before those notes existed, and there is no `slice_keep` in the capture.
+The pass sealed at `56135261`, the frame was painted at `56215949`, and `root_rev`
+17 published at `56288500` with the covering slice at `56311186`.
+`commitPendingCapturePass` cleared `capturePreview` at the seal, so the rows left
+the Capture tier before either committed tier carried them.
+
+`Loop` now retains the closed preview rows at the seal
+(`retainCapturePreviewAtSeal`) and releases them only when the committed
+representation the painter selects proves coverage
+(`sealedCapturePreviewIsCovered`): a current published snapshot is proof because
+that same predicate makes the painter read snapshot membership loop-wide,
+otherwise `visualCache.builtFromRevision` must reach the sealed revision.
+`resolveDisplayNotesByDrawSource` unions the retained rows into the committed
+prefix through `upsertDisplayNoteAtPitchStart`, which replaces only at equal
+pitch+start and never acts as a general newer-wins rule.
+`keepShortestEndAtPitchStart` is untouched. Retention is a lifetime refinement of
+the existing Capture tier: `Loop` owns the rows, display only consumes them,
+`VisualCache` only reports coverage, and `DrawSourcePath` is unchanged.
+Plan: [`display_seal_handoff_capture_retention_bugfix.md`](../Plans/display_seal_handoff_capture_retention_bugfix.md).
+Host gates: `teensy41-capture-serial` RAM1 locals **6848**, native **1566/1566**.
+Device recapture open.
+
+**Prior — overdub wrap snapshot publication (tasks `3.5`/`3.6`)**
 Capture [`134803`](../../captures/session_20260901_134803.log) proved
 occupancy converges (`src,reconstruct` 13 pitch-64 rows → `src,effective` 4:
 `0→576`, `768→576`, `1536→512`, `2304→576`) while the drawn frame kept the

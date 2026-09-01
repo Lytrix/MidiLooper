@@ -275,6 +275,17 @@ inline bool shouldKeepVisualCacheOverSmallerFullLoopSlice(size_t visualCacheNote
   return visualCacheNoteCount > 0 && sliceNoteCount < visualCacheNoteCount;
 }
 
+/// Coverage contract (`153517` RC1): `builtFromRevision = R` only when the completed
+/// gather consumed committed content at R. Overlay-rejected fallback does not establish
+/// that coverage, even if a substitute gather ran while `playbackRevision` was R.
+inline bool visualCacheGatherCoversPlaybackRevision(bool overlayRejected, bool usedCurrentSnapshot,
+                                                    bool usedPrepared, bool fallbackComplete) {
+  if (overlayRejected) {
+    return false;
+  }
+  return usedCurrentSnapshot || usedPrepared || fallbackComplete;
+}
+
 /// Display-only: one row per pitch+start, shortest exclusive end. Reconstruct
 /// keeps every noteId so occupy can Hide a longer same-start sibling (`002145`
 /// norow 75/76). Wrap-held (`endTick < startTick`) rows are left untouched.
@@ -307,6 +318,23 @@ inline void keepShortestEndAtPitchStart(NoteUtils::DisplayNoteVec& notes) {
     }
   }
   notes.swap(kept);
+}
+
+/// Seal handoff only: a retained sealed-capture row replaces the committed row at the same
+/// pitch+start, otherwise it is appended. Deliberately narrow — not a general "newer wins"
+/// rule, so it cannot override a companion-transformed row at a different start. Wrap-held
+/// rows (`endTick < startTick`) never replace and are only appended. Row order is preserved.
+inline void upsertDisplayNoteAtPitchStart(NoteUtils::DisplayNoteVec& notes,
+                                          const NoteUtils::DisplayNote& sealedRow) {
+  if (sealedRow.endTick >= sealedRow.startTick) {
+    for (NoteUtils::DisplayNote& existing : notes) {
+      if (existing.note == sealedRow.note && existing.startTick == sealedRow.startTick) {
+        existing = sealedRow;
+        return;
+      }
+    }
+  }
+  notes.push_back(sealedRow);
 }
 
 /// Same-start dedupe for the committed prefix only. Live capture suffix rows

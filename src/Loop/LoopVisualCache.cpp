@@ -438,6 +438,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
     ++visualCache.revision;
+    // slice_keep retains the previous notes. That does not establish coverage of
+    // playbackRevision (`153517` RC1).
     applyPendingNoteChangesToVisualCacheNotes();
     emitVisualCacheState("slice_keep", -1);
     return;
@@ -471,6 +473,11 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCacheDirty = false;
     visualCache.dirtyBars.clear();
     ++visualCache.revision;
+    if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
+            lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared,
+            fallbackGatherComplete)) {
+      visualCache.builtFromRevision = playbackRevision;
+    }
     emitVisualCacheState("slice_clean", -1);
   }
 }
@@ -677,8 +684,17 @@ LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
 
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   DIAG_COUNTER_INC(DisplayFullRebuild);
+  const uint32_t rebuildGatherRevision = playbackRevision;
   SessionMidiEventVec flat;
-  if (!tryGatherPublishedSnapshotEventsInWindow(flat, 0, loopLengthTicks)) {
+  SnapshotWindowGatherPath snapshotPath = SnapshotWindowGatherPath::None;
+  bool usedSnapshot =
+      tryGatherPublishedSnapshotEventsInWindow(flat, 0, loopLengthTicks, &snapshotPath);
+  const bool overlayRejected = snapshotPath == SnapshotWindowGatherPath::Overlay;
+  if (overlayRejected) {
+    flat.clear();
+    usedSnapshot = false;
+  }
+  if (!usedSnapshot) {
     gatherCommittedEvents(flat);
   }
   materializedEventCount_ = flat.size();
@@ -698,6 +714,10 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
     }
   }
   ++visualCache.revision;
+  if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(overlayRejected, usedSnapshot,
+                                                                  false, !usedSnapshot)) {
+    visualCache.builtFromRevision = rebuildGatherRevision;
+  }
   visualCacheDirty = false;
   emitVisualCacheState("full", static_cast<int32_t>(flat.size()));
 }
