@@ -1458,6 +1458,98 @@ void test_wrap_journal_closed_notes_do_not_pair_across_passes() {
 }
 
 /// RC2 pin-first: session-exit pass-change must use the same NoteId key. No pending Adds.
+const LoopSnapshotNote* findSnapshotNote(const LoopSnapshot& snapshot, NoteId noteId,
+                                         uint8_t pitch) {
+  const LoopSnapshotNoteRef note = snapshot.findNote(noteId, pitch);
+  return note ? note.get() : nullptr;
+}
+
+const NoteUtils::DisplayNote* findDisplayNoteById(const NoteUtils::DisplayNoteVec& notes,
+                                                  NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void assertClosedNoteKeepsLinearEnd(const Loop& loop, NoteId noteId, uint8_t pitch,
+                                    uint32_t startTick, uint32_t endTick) {
+  const auto snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
+  const LoopSnapshotNote* snapNote = findSnapshotNote(*snapshot, noteId, pitch);
+  TEST_ASSERT_NOT_NULL(snapNote);
+  TEST_ASSERT_EQUAL_UINT32(startTick, snapNote->startTick);
+  TEST_ASSERT_EQUAL_UINT32(endTick, snapNote->endTick);
+  TEST_ASSERT_FALSE(snapNote->isWrap(snapshot->loopLengthTicks()));
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  uint32_t gatheredOff = 0;
+  for (const MidiEvent& evt : gathered) {
+    if (evt.noteId == noteId && evt.isNoteOff() && evt.data.noteData.note == pitch) {
+      gatheredOff = evt.tick;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(endTick, gatheredOff);
+
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(gathered, 3072, false, false);
+  const NoteUtils::DisplayNote* reconstructedNote = findDisplayNoteById(reconstructed, noteId);
+  TEST_ASSERT_NOT_NULL(reconstructedNote);
+  TEST_ASSERT_EQUAL_UINT32(startTick, reconstructedNote->startTick);
+  TEST_ASSERT_EQUAL_UINT32(endTick, reconstructedNote->endTick);
+  TEST_ASSERT_FALSE(reconstructedNote->endTick < reconstructedNote->startTick);
+
+  const NoteUtils::DisplayNoteVec wrapPaired =
+      NoteUtils::reconstructDisplayNotes(gathered, 3072, false, false, true);
+  const NoteUtils::DisplayNote* wrapPairedNote = findDisplayNoteById(wrapPaired, noteId);
+  TEST_ASSERT_NOT_NULL(wrapPairedNote);
+  TEST_ASSERT_EQUAL_UINT32(startTick, wrapPairedNote->startTick);
+  TEST_ASSERT_EQUAL_UINT32(endTick, wrapPairedNote->endTick);
+  TEST_ASSERT_FALSE(wrapPairedNote->endTick < wrapPairedNote->startTick);
+}
+
+/// RC2b (172532): closed 2304→2496 same NoteId must not become wrap-held 2304→432
+/// after wrap-2 journal drain / gather. Sibling 240→432 is the Off draw_src stole.
+void test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2496, 1, 64, 0)));
+  const NoteId idClosed = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idClosed);
+  pushClosedPendingAdd(loop, idClosed, 64, 2304, 2496);
+  commitOverdubWrapLikeDevice(loop, 2496, true);
+  drainPendingSnapshotPublish(loop);
+  assertClosedNoteKeepsLinearEnd(loop, idClosed, 64, 2304, 2496);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(240, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(432, 1, 64, 0)));
+  const NoteId idSibling = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(idClosed, idSibling);
+  pushClosedPendingAdd(loop, idSibling, 64, 240, 432);
+  commitOverdubWrapLikeDevice(loop, 432, true);
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop));
+
+  assertClosedNoteKeepsLinearEnd(loop, idClosed, 64, 2304, 2496);
+  loop.rebuildVisualCacheFromPasses();
+  const NoteUtils::DisplayNote* cacheNote = findDisplayNoteById(loop.visualCache.notes, idClosed);
+  TEST_ASSERT_NOT_NULL(cacheNote);
+  TEST_ASSERT_EQUAL_UINT32(2304u, cacheNote->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2496u, cacheNote->endTick);
+  TEST_ASSERT_FALSE(cacheNote->endTick < cacheNote->startTick);
+}
+
 void test_session_exit_closed_notes_do_not_pair_across_passes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1761,6 +1853,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_seal_retention_excludes_open_capture_holds);
   RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);
   RUN_TEST(test_wrap_journal_closed_notes_do_not_pair_across_passes);
+  RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
