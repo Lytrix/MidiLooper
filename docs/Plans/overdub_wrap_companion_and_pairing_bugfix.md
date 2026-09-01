@@ -334,6 +334,15 @@ linear close. The remaining writer is `resolveDisplayNotesByDrawSource` (the
 `new` side of `draw_src`), not `findOpenPassNote`. No RC2b firmware from this
 pin.
 
+**Draw-source host pin result (2026-09-01):**
+`test_same_pass_draw_source_keeps_closed_bar_four_end` is **green**. The
+committed+capture bar union inside `resolveDisplayNotesByDrawSource` (snapshot
+membership, visual-cache intersect, sealed upsert, `selectDrawSourceForBar`
+capture union) keeps `id A` `2304→2976` on the `190847` same-pass wrap. Do not
+write pairing, reconstruct, or gather-union firmware against that path. The
+function still applies `applyCapturePlayheadTails` after the union; that step
+is DisplayManager-only and is not in this pin.
+
 ---
 
 ## RC4 — occupy the span that is actually sounding
@@ -452,6 +461,7 @@ After RC5b: first **U:** painted notes are Active record only (`slice_keep` does
 
 - RC2: pin-first fixture in `test_loop_take_survival` (closed A then closed B, drain, assert IDs and ends).
 - RC2b: closed `2304→2496` same `NoteId` after wrap-2 drain/gather stays `2496`, not `432`.
+- RC2b draw source: `test_same_pass_draw_source_keeps_closed_bar_four_end` keeps `2304→2976` through the committed+capture union.
 - RC3 host seam: IDs derive overlay; Hide(`123`) removes A(`123`); Hide(`456`) leaves A; R=9 requires overlay, R=10 and R=11 do not.
 - RC3 journal: missing parent target does not drop the operation; apply is idempotent.
 - RC3 negative: Hide of an already-absent target does not resurrect it.
@@ -466,7 +476,7 @@ After RC5b: first **U:** painted notes are Active record only (`slice_keep` does
 
 ### Ready
 - RC5b owner is `refreshVisualCacheAfterPassStateChange` → `rebuildVisualCacheIdleSlice` keep-larger.
-- RC2b writer stays unnamed until the same-pass pin fails.
+- RC2b writer stays unnamed until a host pin of `applyCapturePlayheadTails` fails. The gather union pin is green.
 
 ### Resolved
 | Topic | Decision |

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (overdub wrap RC5b host shipped; RC2b next)
+Last updated: 2026-09-01 (overdub wrap RC2b draw-source union pin green; tails next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,13 +75,14 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — overdub wrap RC2b draw source ([`190847`](../../captures/session_20260901_190847.log))**
+**Now — overdub wrap RC2b playhead tails ([`190847`](../../captures/session_20260901_190847.log))**
 RC5b device **PASS**: first **U:** `Overdub undone`, `DISP` 84→63. RC2b
-same-pass host pins are **green** (`applyCaptureEventToPreview`, reconstruct
-with wrap pairing, snapshot membership). Compose still keeps `id 77`
-`2304→2976`; `draw_src` paints `2304→576`. Remaining writer:
-`resolveDisplayNotesByDrawSource`. Do not patch reconstruct or
-`findOpenPassNote`. RC3 overlay stays closed. Plan:
+same-pass host pins are **green**, including the draw-source committed+capture
+union (`test_same_pass_draw_source_keeps_closed_bar_four_end`). Compose still
+keeps `id 77` `2304→2976`; `draw_src` paints `2304→576`. The remaining step
+inside `resolveDisplayNotesByDrawSource` is `applyCapturePlayheadTails`. Do
+not patch reconstruct, `findOpenPassNote`, or the gather union. RC3 overlay
+stays closed. Plan:
 [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
 
 **Prior — display seal handoff RC1 (`153517` coverage over-claim)**
