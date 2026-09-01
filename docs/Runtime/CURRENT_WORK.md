@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-01 (overdub playhead tails on over-budget frames)
+Last updated: 2026-09-01 (snapshot-first occupancy + bar draw routing)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -75,7 +75,21 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — visual cache wrap-stale (Stage 1)**
+**Now — snapshot-first bar painter (`DEC-050`)**
+Occupancy resolves at NoteOn into `pendingNoteChanges_`
+(`resolveOccupancyAtNoteOn`). Paint-only `pendingPaintHides_` is removed.
+`upsertSourceTransform` is monotonically restrictive. Deferred stored-MIDI
+verification emits `DIAG,dnte,src,effective` after raw reconstruct so Stage D
+can observe companion-applied geometry. Stage B paint uses
+`resolveDisplayNotesByDrawSource`: Snapshot when
+`publishedSnapshotIsCurrent`, otherwise VisualCache, plus Capture union on
+live bars; pending transforms then playhead tails. Stage C logs
+`DIAG,draw_src,diff` against the old compose path; compose is not deleted
+yet. Stage D host gates: `teensy41-capture-serial` RAM1 locals **6848**,
+native **1557/1557**. Device recapture required (held pitch-64 overlapped
+once per pass across six overdub wraps).
+
+**Prior — visual cache wrap-stale (Stage 1)**
 ([#41](https://github.com/Lytrix/MidiLooper/issues/41),
 [`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md)):
 Stage 1 device PASS

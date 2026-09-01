@@ -34,9 +34,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         return liveDisplayNotes;
     }
 
-    if (isLiveRecordingDisplay(track, displaySlot)) {
-        return resolveDisplayNotesLiveCapture(track, displaySlot, currentTick);
-    }
     // NOTE_EDIT: session store (editAware) is the live edit buffer; filter for Hidden / inner overlap.
     if (editManager.getEditSessionType() == EditSessionType::Note) {
         const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
@@ -71,12 +68,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotes(const
         }
         return liveDisplayNotes;
     }
-    return resolveDisplayNotesCommitted(track, displaySlot, currentTick);
+    return resolveDisplayNotesByDrawSource(track, displaySlot, currentTick);
 }
 
 DISP_CAPTURE_MEM void DisplayManager::emitDisplayCaptureSnapshot(const Track& track, uint8_t displaySlot,
                                                 uint32_t currentTick,
                                                 const DisplayNoteVec& frameNotes) {
+#if defined(SESSION_CAPTURE)
+    logDrawSourceComposeDifferential(track, displaySlot, currentTick, frameNotes);
+#endif
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLen = resolveDisplayLoopLength(track, displaySlot, currentTick);
     const size_t bufferEventsExpr =
@@ -207,5 +207,99 @@ DISP_CAPTURE_MEM size_t DisplayManager::emitStoppedFrameNoteDump(size_t maxLines
         stoppedFrameNoteDumpCursor_ = 0;
     }
     return emitted;
+}
+
+DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
+    const Track& track, uint8_t displaySlot, uint32_t currentTick,
+    const DisplayNoteVec& drawnNotes) {
+    if (track.isJamming() || editManager.getEditSessionType() == EditSessionType::Note) {
+        return;
+    }
+
+    DisplayNoteVec drawnCopy(drawnNotes.begin(), drawnNotes.end());
+    const DisplayNoteVec& oldNotes = isLiveRecordingDisplay(track, displaySlot)
+                                         ? resolveDisplayNotesLiveCapture(track, displaySlot,
+                                                                          currentTick)
+                                         : resolveDisplayNotesCommitted(track, displaySlot,
+                                                                        currentTick);
+
+    auto findByNoteId = [](const DisplayNoteVec& notes, NoteId noteId) -> const DisplayNote* {
+        if (noteId == kInvalidNoteId) {
+            return nullptr;
+        }
+        for (const DisplayNote& note : notes) {
+            if (note.noteId == noteId) {
+                return &note;
+            }
+        }
+        return nullptr;
+    };
+
+    uint32_t mismatchCount = 0;
+    uint32_t logged = 0;
+    constexpr uint32_t kMaxLoggedDiffs = 8;
+    static uint32_t sLastDiffLogMs = 0;
+    const uint32_t nowMs = millis();
+    const bool allowLog = sLastDiffLogMs == 0 || (nowMs - sLastDiffLogMs) >= 250u;
+
+    for (const DisplayNote& drawn : drawnCopy) {
+        if (drawn.noteId == kInvalidNoteId) {
+            continue;
+        }
+        const DisplayNote* old = findByNoteId(oldNotes, drawn.noteId);
+        if (old != nullptr && old->note == drawn.note && old->startTick == drawn.startTick &&
+            old->endTick == drawn.endTick) {
+            continue;
+        }
+        ++mismatchCount;
+        if (allowLog && logged < kMaxLoggedDiffs) {
+            const uint32_t bar =
+                Config::TICKS_PER_BAR > 0 ? drawn.startTick / Config::TICKS_PER_BAR : 0;
+            char line[192];
+            snprintf(
+                line, sizeof(line),
+                "#CAP,%lu,DIAG,draw_src,diff,bar,%u,id,%u,old,%u,%u,%u,new,%u,%u,%u",
+                static_cast<unsigned long>(micros()), static_cast<unsigned>(bar),
+                static_cast<unsigned>(drawn.noteId),
+                old != nullptr ? static_cast<unsigned>(old->note) : 0u,
+                old != nullptr ? static_cast<unsigned>(old->startTick) : 0u,
+                old != nullptr ? static_cast<unsigned>(old->endTick) : 0u,
+                static_cast<unsigned>(drawn.note), static_cast<unsigned>(drawn.startTick),
+                static_cast<unsigned>(drawn.endTick));
+            DebugSessionCapture::appendCaptureTextLine(line);
+            ++logged;
+        }
+    }
+    for (const DisplayNote& old : oldNotes) {
+        if (old.noteId == kInvalidNoteId || findByNoteId(drawnCopy, old.noteId) != nullptr) {
+            continue;
+        }
+        ++mismatchCount;
+        if (allowLog && logged < kMaxLoggedDiffs) {
+            const uint32_t bar =
+                Config::TICKS_PER_BAR > 0 ? old.startTick / Config::TICKS_PER_BAR : 0;
+            char line[160];
+            snprintf(line, sizeof(line),
+                     "#CAP,%lu,DIAG,draw_src,diff,bar,%u,id,%u,old,%u,%u,%u,new,0,0,0",
+                     static_cast<unsigned long>(micros()), static_cast<unsigned>(bar),
+                     static_cast<unsigned>(old.noteId), static_cast<unsigned>(old.note),
+                     static_cast<unsigned>(old.startTick), static_cast<unsigned>(old.endTick));
+            DebugSessionCapture::appendCaptureTextLine(line);
+            ++logged;
+        }
+    }
+
+    if (mismatchCount > 0 && allowLog) {
+        sLastDiffLogMs = nowMs;
+        char summary[128];
+        snprintf(summary, sizeof(summary),
+                 "#CAP,%lu,DIAG,draw_src,diff,count,%u,old,%u,new,%u",
+                 static_cast<unsigned long>(micros()), static_cast<unsigned>(mismatchCount),
+                 static_cast<unsigned>(oldNotes.size()),
+                 static_cast<unsigned>(drawnCopy.size()));
+        DebugSessionCapture::appendCaptureTextLine(summary);
+    }
+
+    liveDisplayNotes.assign(drawnCopy.begin(), drawnCopy.end());
 }
 #endif

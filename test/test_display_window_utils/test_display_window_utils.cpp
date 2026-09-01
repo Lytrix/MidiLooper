@@ -698,6 +698,34 @@ void test_overview_band_for_note_covers_full_midi_range() {
   TEST_ASSERT_EQUAL_UINT8(7, DisplayWindowUtils::overviewBandForNote(127));
 }
 
+void test_select_draw_source_for_bar_live_capture_wins() {
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayWindowUtils::DrawSourcePath::Capture),
+                    static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, true, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(DisplayWindowUtils::DrawSourcePath::Capture),
+                    static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, true, false)));
+}
+
+void test_select_draw_source_for_bar_snapshot_when_current() {
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::Snapshot),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(false, false, true)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::Snapshot),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, false, true)));
+}
+
+void test_select_draw_source_for_bar_visual_cache_fallback() {
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(false, false, false)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(true, false, false)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourcePath::VisualCache),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceForBar(false, true, false)));
+}
+
 void test_paint_window_inside_gather_tolerates_margin_slide() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   // RC-F: gather is the paint window widened by kWindowedGatherMarginBars on each side, so
@@ -760,6 +788,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overview_band_mask_marks_every_bar_the_note_spans);
   RUN_TEST(test_overview_band_mask_accumulates_bands_and_clamps_range);
   RUN_TEST(test_overview_band_for_note_covers_full_midi_range);
+  RUN_TEST(test_select_draw_source_for_bar_live_capture_wins);
+  RUN_TEST(test_select_draw_source_for_bar_snapshot_when_current);
+  RUN_TEST(test_select_draw_source_for_bar_visual_cache_fallback);
   RUN_TEST(test_paint_window_inside_gather_tolerates_margin_slide);
   RUN_TEST(test_format_loop_length_bars_info_strip);
   return UNITY_END();

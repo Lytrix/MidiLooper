@@ -398,4 +398,24 @@ inline void accumulateOverviewBandMask(std::vector<uint8_t>& mask, const Note& n
     }
 }
 
+/// Per-bar draw source. Capture is incremental: live bars still read committed
+/// Snapshot or VisualCache notes, then union capturePreview. Snapshot requires
+/// loop-global `publishedSnapshotIsCurrent`.
+enum class DrawSourcePath : uint8_t {
+    Capture = 0,
+    Snapshot = 1,
+    VisualCache = 2,
+};
+
+inline DrawSourcePath selectDrawSourceForBar(bool captureActive, bool barIsLiveCapture,
+                                            bool publishedSnapshotIsCurrent) {
+    if (captureActive && barIsLiveCapture) {
+        return DrawSourcePath::Capture;
+    }
+    if (publishedSnapshotIsCurrent) {
+        return DrawSourcePath::Snapshot;
+    }
+    return DrawSourcePath::VisualCache;
+}
+
 }  // namespace DisplayWindowUtils
