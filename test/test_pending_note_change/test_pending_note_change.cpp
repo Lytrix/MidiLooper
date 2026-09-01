@@ -35,6 +35,7 @@
 #include "Utils/NoteUtils.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "PlaybackMergedMidiEvents.h"
+#include "GlobalUndoStack.h"
 
 #include "../../src/Utils/PlaybackCursorAdvance.cpp"
 #include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"
@@ -3354,6 +3355,125 @@ void test_wrap_journal_keeps_hide_when_parent_lacks_note() {
   TEST_ASSERT_FALSE(static_cast<bool>(afterHide->findNote(999, 64)));
 }
 
+/// RC4 (172532 nopart): linear 2304→2496 is not present at hs=0 / hs=48.
+void test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 100, 200, 60, 3072);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(2304, 1, 64, 90, 85)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2496, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 2496));
+  loop.appendLastCommittedOverdubPassToSourceView();
+
+  const NoteUtils::DisplayNote* row = findDisplayNoteById(loop.overdubSourceViewNotes(), 85);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL_UINT32(2304u, row->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2496u, row->endTick);
+  TEST_ASSERT_FALSE(row->endTick < row->startTick);
+
+  OverlapNoteIdSet atZero;
+  loop.collectOverdubSourceHoldParticipantIds(0, 64, atZero);
+  TEST_ASSERT_EQUAL(0u, atZero.size());
+  OverlapNoteIdSet atFortyEight;
+  loop.collectOverdubSourceHoldParticipantIds(48, 64, atFortyEight);
+  TEST_ASSERT_EQUAL(0u, atFortyEight.size());
+}
+
+/// RC4: a wrap-held row that is actually in the source view must occupy hs=0.
+void test_wrap_held_source_row_occupies_hold_zero() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 100, 200, 60, 3072);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(2304, 1, 64, 90, 85)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(432, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 432));
+  loop.appendLastCommittedOverdubPassToSourceView();
+
+  bool idInView = false;
+  bool wrapHeldInView = false;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId != 85) {
+      continue;
+    }
+    idInView = true;
+    if (note.endTick < note.startTick) {
+      wrapHeldInView = true;
+    }
+  }
+  TEST_ASSERT_TRUE(idInView);
+
+  OverlapNoteIdSet atZero;
+  loop.collectOverdubSourceHoldParticipantIds(0, 64, atZero);
+  TEST_ASSERT_TRUE_MESSAGE(atZero.contains(85),
+                           wrapHeldInView
+                               ? "wrap-held source row missed hs=0"
+                               : "On@2304 Off@432 is in the source view but not present at hs=0");
+}
+
+/// RC5: record pass stays out of session wrap ids; slot stack is two kinds.
+void test_record_then_session_wraps_are_two_slot_undo_entries() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 100, 200, 60, 3072);
+  const PassId recordPassId = loop.passes.recordPass.id;
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, recordPassId);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(2304, 1, 64, 90, 85)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2496, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 2496));
+  const PassId wrap1 = loop.lastCommittedPassId();
+  loop.pushOverdubSessionPass(wrap1, {});
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(240, 1, 64, 90, 88)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(432, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 432));
+  const PassId wrap2 = loop.lastCommittedPassId();
+  loop.pushOverdubSessionPass(wrap2, {});
+
+  PassIdList sessionIds;
+  EditPassIdList companions;
+  loop.collectOverdubSessionUndoPasses(sessionIds, companions);
+  TEST_ASSERT_EQUAL(2u, sessionIds.size());
+  TEST_ASSERT_EQUAL(wrap1, sessionIds[0]);
+  TEST_ASSERT_EQUAL(wrap2, sessionIds[1]);
+  TEST_ASSERT_NOT_EQUAL(recordPassId, sessionIds[0]);
+  TEST_ASSERT_NOT_EQUAL(recordPassId, sessionIds[1]);
+
+  GlobalUndoStack stack;
+  UndoEntry record{};
+  record.kind = UndoEntryKind::RecordPassAdded;
+  record.slotIndex = 0;
+  record.passId = recordPassId;
+  stack.entries.push_back(record);
+  UndoEntry overdub{};
+  overdub.kind = UndoEntryKind::OverdubPassAdded;
+  overdub.slotIndex = 0;
+  overdub.passId = sessionIds.back();
+  overdub.passIds = sessionIds;
+  stack.entries.push_back(overdub);
+
+  TEST_ASSERT_EQUAL(2u, stack.entries.size());
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::RecordPassAdded),
+                    static_cast<int>(stack.entries[0].kind));
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::OverdubPassAdded),
+                    static_cast<int>(stack.entries[1].kind));
+  TEST_ASSERT_EQUAL(2u, stack.entries[1].passIds.size());
+  TEST_ASSERT_NOT_EQUAL(recordPassId, stack.entries[1].passId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -3446,5 +3566,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
+  RUN_TEST(test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight);
+  RUN_TEST(test_wrap_held_source_row_occupies_hold_zero);
+  RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
   return UNITY_END();
 }
