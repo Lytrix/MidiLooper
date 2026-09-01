@@ -1233,9 +1233,19 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
     return true;
   }
   if (nextChangeIndex_ < changes_.notes.size()) {
+    SnapshotNoteChange incoming = changes_.notes[nextChangeIndex_];
+    if ((incoming.kind == SnapshotChangeKind::Remove ||
+         incoming.kind == SnapshotChangeKind::Replace) &&
+        !incoming.previous) {
+      incoming.previous = candidate_.findNote(incoming.next.noteId, incoming.next.pitch);
+      if (!incoming.previous) {
+        ++nextChangeIndex_;
+        return nextChangeIndex_ < totalChangeCount() ? applyNextBar(playheadPhaseTick)
+                                                     : true;
+      }
+    }
     noteApply_ = std::make_unique<LoopSnapshotNoteBarApply>();
-    if (!noteApply_->begin(candidate_, changes_.notes[nextChangeIndex_],
-                           constructionSpanRoot_)) {
+    if (!noteApply_->begin(candidate_, incoming, constructionSpanRoot_)) {
       noteApply_.reset();
       return false;
     }

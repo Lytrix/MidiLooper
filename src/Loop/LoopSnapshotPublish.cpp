@@ -97,13 +97,17 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
     return true;
   }
   if (row.actionType == EditActionType::Delete) {
-    const LoopSnapshotNoteRef previous = parent.findNote(row.targetNoteId, row.pitch);
-    if (!previous) {
+    if (row.targetNoteId == kInvalidNoteId) {
       return false;
     }
     SnapshotNoteChange change{};
     change.kind = SnapshotChangeKind::Remove;
-    change.previous = previous;
+    change.next.loopId = loopId;
+    change.next.noteId = row.targetNoteId;
+    change.next.pitch = row.pitch;
+    change.next.startTick = row.startTick;
+    change.next.endTick = row.endTick;
+    change.previous = parent.findNote(row.targetNoteId, row.pitch);
     changes.notes.push_back(change);
     return true;
   }
@@ -127,14 +131,17 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
     changes.notes.push_back(change);
     return true;
   }
-  if (!previous) {
+  if (row.targetNoteId == kInvalidNoteId) {
     return false;
   }
   SnapshotNoteChange change{};
   change.kind = SnapshotChangeKind::Replace;
   change.previous = previous;
-  change.next = *previous;
+  if (previous) {
+    change.next = *previous;
+  }
   change.next.loopId = loopId;
+  change.next.noteId = row.targetNoteId;
   if (row.propertyType == EditPropertyType::Pitch ||
       row.propertyType == EditPropertyType::None ||
       row.propertyType == EditPropertyType::NoteRange ||
@@ -365,24 +372,19 @@ void appendPendingNoteChange(const LoopSnapshot& parent, const PendingNoteChange
   if (change.kind == PendingNoteChangeKind::Add) {
     noteChange.kind = SnapshotChangeKind::Add;
   } else if (change.kind == PendingNoteChangeKind::Hide) {
-    const LoopSnapshotNoteRef previous = parent.findNote(change.noteId, change.pitch);
-    if (!previous) {
-      return;
-    }
     noteChange.kind = SnapshotChangeKind::Remove;
-    noteChange.previous = previous;
+    noteChange.previous = parent.findNote(change.noteId, change.pitch);
   } else {
-    const LoopSnapshotNoteRef previous = parent.findNote(change.noteId, change.pitch);
-    if (!previous) {
-      return;
-    }
     noteChange.kind = SnapshotChangeKind::Replace;
-    noteChange.previous = previous;
-    noteChange.next = *previous;
-    noteChange.next.loopId = loopId;
-    noteChange.next.startTick = change.startTick;
-    noteChange.next.endTick = change.endTick;
-    noteChange.next.velocity = change.velocity == 0 ? previous->velocity : change.velocity;
+    noteChange.previous = parent.findNote(change.noteId, change.pitch);
+    if (noteChange.previous) {
+      noteChange.next = *noteChange.previous;
+      noteChange.next.loopId = loopId;
+      noteChange.next.startTick = change.startTick;
+      noteChange.next.endTick = change.endTick;
+      noteChange.next.velocity =
+          change.velocity == 0 ? noteChange.previous->velocity : change.velocity;
+    }
   }
   changes.notes.push_back(noteChange);
   appendPairedNoteEventChanges(parent, change, loopId, loopLengthTicks, nextEventId,
@@ -1147,6 +1149,15 @@ LOOP_COLD_MEM bool Loop::hasPendingWrapJournal() const {
   return pendingSnapshotPublishBox_ &&
          !pendingSnapshotPublishBox_->queuedWrapJournals.empty();
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+const LoopSnapshotChangeSet* Loop::pendingWrapJournalChangesForTest() const {
+  if (!pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->queuedWrapJournals.empty()) {
+    return nullptr;
+  }
+  return &pendingSnapshotPublishBox_->queuedWrapJournals.front().changes;
+}
+#endif
 
 LOOP_COLD_MEM size_t Loop::pendingSnapshotQueuedPassCount() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->queuedPassIds.size() : 0;

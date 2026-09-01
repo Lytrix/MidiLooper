@@ -1,6 +1,6 @@
 # Display seal handoff — coverage over-claim and wrap pairing
 
-**Status:** RC1 host gates next; RC2 pin-first fixture after RC1 commit
+**Status:** RC1 committed (`c74b8e21`). RC2 pin-first fixture is now implementing — see [`overdub_wrap_companion_and_pairing_bugfix.md`](overdub_wrap_companion_and_pairing_bugfix.md).
 **Date:** 2026-09-01
 **Kind:** bugfix
 **Parent:** [`display_seal_handoff_capture_retention_bugfix.md`](display_seal_handoff_capture_retention_bugfix.md)

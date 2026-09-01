@@ -276,6 +276,97 @@ void recordLinearNote(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pit
   drainPendingSnapshotPublish(loop);
 }
 
+NoteId lastCaptureNoteOnId(const Loop& loop) {
+  for (size_t i = loop.capture.store.size(); i > 0; --i) {
+    const MidiEvent& evt = loop.capture.store.at(i - 1);
+    if (evt.isNoteOn()) {
+      return evt.noteId;
+    }
+  }
+  return kInvalidNoteId;
+}
+
+void pushClosedPendingAdd(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                          uint32_t endTick) {
+  PendingNoteChange add{};
+  add.kind = PendingNoteChangeKind::Add;
+  add.noteId = noteId;
+  add.channel = 1;
+  add.pitch = pitch;
+  add.velocity = 90;
+  add.startTick = startTick;
+  add.endTick = endTick;
+  loop.pushPendingNoteChangeForTest(add);
+}
+
+void commitOverdubWrapLikeDevice(Loop& loop, uint32_t sealedAtTick, bool requireWrapJournal) {
+  const uint32_t prior = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick));
+  const PassId passId = loop.lastCommittedPassId();
+  const bool queued = loop.queueOverdubWrapSnapshotJournal(passId);
+  if (requireWrapJournal) {
+    TEST_ASSERT_TRUE(queued);
+  }
+  // Pairing fixture only: journal first, then drop live pending the way wrap seal does.
+  // Do not call sealPendingNoteChangesToEditPasses here — this suite does not link that TU.
+  loop.clearPendingNoteChanges();
+  loop.pushOverdubSessionPass(passId, {});
+  loop.recordLastOverdubSeal(passId, {}, prior);
+  loop.beginCapture(CapturePhase::Overdub);
+}
+
+void assertClosedNotesDidNotPairAcrossPasses(const Loop& loop, NoteId idA, NoteId idB,
+                                             uint32_t endA, uint32_t endB) {
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idA);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idB);
+  TEST_ASSERT_NOT_EQUAL(idA, idB);
+
+  const auto snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
+  const LoopSnapshotNoteRef noteA = snapshot->findNote(idA, 64);
+  const LoopSnapshotNoteRef noteB = snapshot->findNote(idB, 64);
+  TEST_ASSERT_TRUE(static_cast<bool>(noteA));
+  TEST_ASSERT_TRUE(static_cast<bool>(noteB));
+  TEST_ASSERT_EQUAL_UINT32(2304u, noteA->startTick);
+  TEST_ASSERT_EQUAL_UINT32(endA, noteA->endTick);
+  TEST_ASSERT_EQUAL_UINT32(768u, noteB->startTick);
+  TEST_ASSERT_EQUAL_UINT32(endB, noteB->endTick);
+  TEST_ASSERT_FALSE(noteA->isWrap(snapshot->loopLengthTicks()));
+  TEST_ASSERT_FALSE(noteB->isWrap(snapshot->loopLengthTicks()));
+  TEST_ASSERT_EQUAL(idA, noteA->noteId);
+  TEST_ASSERT_EQUAL(idB, noteB->noteId);
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  int onA = 0;
+  int offA = 0;
+  int onB = 0;
+  int offB = 0;
+  for (const MidiEvent& evt : gathered) {
+    if (evt.noteId == idA && evt.isNoteOn() && evt.data.noteData.note == 64) {
+      TEST_ASSERT_EQUAL_UINT32(2304u, evt.tick);
+      ++onA;
+    }
+    if (evt.noteId == idA && evt.isNoteOff() && evt.data.noteData.note == 64) {
+      TEST_ASSERT_EQUAL_UINT32(endA, evt.tick);
+      ++offA;
+    }
+    if (evt.noteId == idB && evt.isNoteOn() && evt.data.noteData.note == 64) {
+      TEST_ASSERT_EQUAL_UINT32(768u, evt.tick);
+      ++onB;
+    }
+    if (evt.noteId == idB && evt.isNoteOff() && evt.data.noteData.note == 64) {
+      TEST_ASSERT_EQUAL_UINT32(endB, evt.tick);
+      ++offB;
+    }
+  }
+  TEST_ASSERT_EQUAL(1, onA);
+  TEST_ASSERT_EQUAL(1, offA);
+  TEST_ASSERT_EQUAL(1, onB);
+  TEST_ASSERT_EQUAL(1, offB);
+}
+
 void test_record_stop_publishes_complete_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1335,6 +1426,64 @@ void test_overlay_rejected_slice_does_not_claim_playback_coverage() {
   TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
 }
 
+/// RC2 pin-first: a later same-pitch NoteOff must not close a prior pass's closed note.
+/// Wrap-journal path uses the capture-assigned NoteIds as the match key.
+void test_wrap_journal_closed_notes_do_not_pair_across_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2784, 1, 64, 0)));
+  const NoteId idA = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idA);
+  pushClosedPendingAdd(loop, idA, 64, 2304, 2784);
+  commitOverdubWrapLikeDevice(loop, 2784, true);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(864, 1, 64, 0)));
+  const NoteId idB = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(idA, idB);
+  pushClosedPendingAdd(loop, idB, 64, 768, 864);
+  commitOverdubWrapLikeDevice(loop, 864, true);
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop));
+  assertClosedNotesDidNotPairAcrossPasses(loop, idA, idB, 2784, 864);
+}
+
+/// RC2 pin-first: session-exit pass-change must use the same NoteId key. No pending Adds.
+void test_session_exit_closed_notes_do_not_pair_across_passes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2784, 1, 64, 0)));
+  const NoteId idA = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, idA);
+  commitOverdubWrapLikeDevice(loop, 2784, false);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(864, 1, 64, 0)));
+  const NoteId idB = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(idA, idB);
+  commitOverdubWrapLikeDevice(loop, 864, false);
+
+  TEST_ASSERT_TRUE(loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop));
+  assertClosedNotesDidNotPairAcrossPasses(loop, idA, idB, 2784, 864);
+}
+
 /// Open holds keep sounding into the next pass and the live Capture tier still paints them.
 void test_seal_retention_excludes_open_capture_holds() {
   LoopEventStore::resetPoolForTests();
@@ -1611,6 +1760,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
   RUN_TEST(test_seal_retention_excludes_open_capture_holds);
   RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);
+  RUN_TEST(test_wrap_journal_closed_notes_do_not_pair_across_passes);
+  RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);

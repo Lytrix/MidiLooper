@@ -3058,6 +3058,238 @@ void test_occupy_ledger_catchup_skips_wrap_crossing() {
   TEST_ASSERT_EQUAL_UINT16(7, loop.nextEventIndex);
 }
 
+void applyIdentityHideAndShorten(NoteUtils::DisplayNoteVec& notes,
+                                 const PendingNoteChangeVec& overlay) {
+  NoteUtils::DisplayNoteVec kept;
+  kept.reserve(notes.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    const PendingNoteChange* transform = nullptr;
+    for (const PendingNoteChange& change : overlay) {
+      if ((change.kind == PendingNoteChangeKind::Hide ||
+           change.kind == PendingNoteChangeKind::Shorten) &&
+          change.noteId == note.noteId) {
+        transform = &change;
+        break;
+      }
+    }
+    if (transform == nullptr) {
+      kept.push_back(note);
+      continue;
+    }
+    if (transform->kind == PendingNoteChangeKind::Hide) {
+      continue;
+    }
+    NoteUtils::DisplayNote revised = note;
+    revised.startTick = transform->startTick;
+    revised.endTick = transform->endTick;
+    kept.push_back(revised);
+  }
+  notes.swap(kept);
+}
+
+PendingNoteChange hideChange(NoteId noteId, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  PendingNoteChange change{};
+  change.kind = PendingNoteChangeKind::Hide;
+  change.noteId = noteId;
+  change.channel = 1;
+  change.pitch = pitch;
+  change.startTick = startTick;
+  change.endTick = endTick;
+  return change;
+}
+
+NoteUtils::DisplayNote displayNote(NoteId noteId, uint8_t pitch, uint32_t startTick,
+                                   uint32_t endTick) {
+  NoteUtils::DisplayNote note{};
+  note.noteId = noteId;
+  note.note = pitch;
+  note.velocity = 90;
+  note.startTick = startTick;
+  note.endTick = endTick;
+  return note;
+}
+
+const EditPass* findEditPassById(const Loop& loop, EditPassId id) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.id == id) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+void drainPendingSnapshotPublish(Loop& loop) {
+  size_t steps = 0;
+  while (loop.hasPendingSnapshotPublish() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+}
+
+bool completeSnapshotConstruction(LoopSnapshotConstruction& construction) {
+  size_t steps = 0;
+  while (!construction.complete() && !construction.failed() && steps < 10000) {
+    construction.step(1);
+    ++steps;
+  }
+  return construction.complete() && !construction.failed();
+}
+
+ImmutableLoopSnapshotRef snapshotWithAddedNote(const ImmutableLoopSnapshotRef& parent,
+                                               NoteId noteId, uint8_t pitch, uint32_t startTick,
+                                               uint32_t endTick) {
+  LoopSnapshotChangeSet addA;
+  SnapshotNoteChange add{};
+  add.kind = SnapshotChangeKind::Add;
+  add.next.loopId = parent->loopId();
+  add.next.noteId = noteId;
+  add.next.pitch = pitch;
+  add.next.velocity = 90;
+  add.next.startTick = startTick;
+  add.next.endTick = endTick;
+  addA.notes.push_back(add);
+  LoopSnapshotConstruction construction(parent, addA);
+  TEST_ASSERT_TRUE(completeSnapshotConstruction(construction));
+  const ImmutableLoopSnapshotRef withA = construction.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(withA));
+  TEST_ASSERT_TRUE(static_cast<bool>(withA->findNote(noteId, pitch)));
+  return withA;
+}
+
+/// RC3: sealed companion IDs are EditPass IDs that project Hide by targetNoteId.
+void test_seal_companion_ids_project_hide_by_note_id() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(hideChange(123, 64, 2304, 2784));
+
+  const uint32_t prior = loop.playbackRevision;
+  loop.playbackRevision = 10;
+  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(1u, ids.size());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), ids, prior);
+
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+  TEST_ASSERT_EQUAL(1u, loop.lastOverdubSealCompanionIdsForTest().size());
+  TEST_ASSERT_EQUAL(ids[0], loop.lastOverdubSealCompanionIdsForTest()[0]);
+
+  const EditPass* row = findEditPassById(loop, ids[0]);
+  TEST_ASSERT_NOT_NULL(row);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Delete), static_cast<int>(row->actionType));
+  TEST_ASSERT_EQUAL(123, row->targetNoteId);
+
+  PendingNoteChangeVec overlay;
+  overlay.push_back(hideChange(row->targetNoteId, row->pitch, row->startTick, row->endTick));
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(123, 64, 2304, 2784));
+  applyIdentityHideAndShorten(paint, overlay);
+  TEST_ASSERT_TRUE(paint.empty());
+}
+
+/// RC3: overlay matches NoteId, not pitch/start.
+void test_companion_overlay_ignores_mismatched_note_id() {
+  PendingNoteChangeVec overlay;
+  overlay.push_back(hideChange(456, 64, 2304, 2784));
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(123, 64, 2304, 2784));
+  applyIdentityHideAndShorten(paint, overlay);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(123, paint[0].noteId);
+}
+
+/// RC3: overlay is idempotent and does not resurrect.
+void test_companion_overlay_hide_is_idempotent() {
+  PendingNoteChangeVec overlay;
+  overlay.push_back(hideChange(123, 64, 2304, 2784));
+  overlay.push_back(hideChange(123, 64, 2304, 2784));
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(123, 64, 2304, 2784));
+  applyIdentityHideAndShorten(paint, overlay);
+  TEST_ASSERT_TRUE(paint.empty());
+  applyIdentityHideAndShorten(paint, overlay);
+  TEST_ASSERT_TRUE(paint.empty());
+}
+
+/// RC3: revision >= Rseal means cumulative companion coverage.
+void test_seal_revision_implies_cumulative_companion_coverage() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 123, 2304, 2784, 64, 3072);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(hideChange(123, 64, 2304, 2784));
+  // Seal increments playbackRevision. Start at 9 so Rseal lands on 10.
+  loop.playbackRevision = 9;
+  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), ids, 9);
+
+  const uint32_t rSeal = loop.lastOverdubSealPlaybackRevisionForTest();
+  TEST_ASSERT_EQUAL_UINT32(10u, rSeal);
+  TEST_ASSERT_TRUE(9u < rSeal);
+  TEST_ASSERT_FALSE(10u < rSeal);
+  TEST_ASSERT_FALSE(11u < rSeal);
+}
+
+/// RC3 journal: missing parent target is not grounds to drop Hide.
+void test_wrap_journal_keeps_hide_when_parent_lacks_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const NoteId recordNoteId =
+      loop.publishedSnapshot()->noteMembership(60, 0)->references[0]->noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, recordNoteId);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  loop.pushPendingNoteChangeForTest(hideChange(999, 64, 2304, 2784));
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(loop.lastCommittedPassId()));
+  const LoopSnapshotChangeSet* queued = loop.pendingWrapJournalChangesForTest();
+  TEST_ASSERT_NOT_NULL(queued);
+  LoopSnapshotChangeSet journal = *queued;
+  bool keptIdentityDelete = false;
+  for (const SnapshotNoteChange& change : journal.notes) {
+    if (change.kind == SnapshotChangeKind::Remove && change.next.noteId == 999 &&
+        !change.previous) {
+      keptIdentityDelete = true;
+    }
+  }
+  TEST_ASSERT_TRUE(keptIdentityDelete);
+
+  const ImmutableLoopSnapshotRef parent = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(parent));
+  TEST_ASSERT_FALSE(static_cast<bool>(parent->findNote(999, 64)));
+
+  LoopSnapshotConstruction missingTarget(parent, journal);
+  TEST_ASSERT_TRUE(completeSnapshotConstruction(missingTarget));
+  const ImmutableLoopSnapshotRef stillMissing = missingTarget.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(stillMissing));
+  TEST_ASSERT_FALSE(static_cast<bool>(stillMissing->findNote(999, 64)));
+  TEST_ASSERT_TRUE(static_cast<bool>(stillMissing->findNote(recordNoteId, 60)));
+
+  const ImmutableLoopSnapshotRef withA = snapshotWithAddedNote(parent, 999, 64, 2304, 2784);
+  LoopSnapshotConstruction applyHide(withA, journal);
+  TEST_ASSERT_TRUE(completeSnapshotConstruction(applyHide));
+  const ImmutableLoopSnapshotRef afterHide = applyHide.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterHide));
+  TEST_ASSERT_FALSE(static_cast<bool>(afterHide->findNote(999, 64)));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -3143,5 +3375,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_source_hold_stale_revision_does_not_drop_span);
   RUN_TEST(test_occupy_ledger_catchup_same_tick_skip_when_occupy_equals_last_tick);
   RUN_TEST(test_occupy_ledger_catchup_skips_wrap_crossing);
+  RUN_TEST(test_seal_companion_ids_project_hide_by_note_id);
+  RUN_TEST(test_companion_overlay_ignores_mismatched_note_id);
+  RUN_TEST(test_companion_overlay_hide_is_idempotent);
+  RUN_TEST(test_seal_revision_implies_cumulative_companion_coverage);
+  RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
   return UNITY_END();
 }
