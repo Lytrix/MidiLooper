@@ -191,6 +191,11 @@ void test_stopped_snapshot_track_prefers_pending_slot() {
   TEST_ASSERT_EQUAL_UINT8(1, MidiServiceDrain::selectStoppedSnapshotTrack(1, 4, none));
 }
 
+void test_visual_cache_reconstruct_slice_off_during_overdub() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowVisualCacheReconstructSlice(false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowVisualCacheReconstructSlice(true));
+}
+
 void test_stopped_pending_snapshot_wins_over_first_paint() {
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleStep(
       false, false, false, false, false, true));
@@ -218,5 +223,6 @@ int main() {
   RUN_TEST(test_stopped_clock_snapshot_requires_pending_work);
   RUN_TEST(test_stopped_snapshot_track_prefers_pending_slot);
   RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);
+  RUN_TEST(test_visual_cache_reconstruct_slice_off_during_overdub);
   return UNITY_END();
 }
