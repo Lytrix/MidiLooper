@@ -1,6 +1,6 @@
 # Overdub occupy — paint Hide and capture on NoteOn (not wrap)
 
-**Status:** Implemented — native **1543/1543**. RAM1 locals **6848**. Device recapture required.  
+**Status:** Implemented — native **1544/1544**. RAM1 locals **6848**. Device recapture required.  
 **Date:** 2026-09-01  
 **Kind:** bugfix  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41)  
@@ -22,7 +22,8 @@
 ```
 occupy NoteOn upserts paint Hide from ledger ids or present-at-hold geometry when ledger is empty
 overlapNoteIds for NoteOff accumulate includes geometric participants when ledger is empty
-over-budget overdub display resolve still synchronizes capturePreview and playhead tails
+over-budget overdub display resolve still synchronizes capturePreview
+overdub playhead tails apply on every open-note frame, including over-budget reuse
 wrap adopt applies paint Hide only to the committed prefix (not the live capture suffix)
 keepShortestEndAtPitchStart runs on committed prefix only during wrap adopt
 visual-cache idle slice applies pending paint before same-start dedupe
@@ -56,3 +57,7 @@ liveDisplayNotes.resize never grows (no MIDI 0 / tick 0 placeholder rows)
 - `syncLiveDisplayComposeCounts` / `clampDisplayNoteResizeCount` after adopt hide/dedupe.
 - Hold and capture-replace resize never grow `liveDisplayNotes`.
 - Over-budget committed rebuild still `synchronizeCaptureLayer` while overdubbing.
+
+**112806**
+- Overdub playhead tails apply on every open-note frame, including over-budget reuse.
+- Stop reconstruct still has long first-overdub E4 `760–1920` beside later `768–912` (`shorten=0`). NoteOff Shorten of the longer sibling is a separate RC.
