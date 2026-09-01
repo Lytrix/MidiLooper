@@ -428,6 +428,10 @@ struct Loop {
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
   /// Queue bounded wrap-journal fragments from settled pending mutations. Wrap path only.
   bool queueOverdubWrapSnapshotJournal(PassId wrapPassId);
+  /// Record the `playbackRevision` a queued wrap journal will represent once complete.
+  /// Called after the wrap seal, when the revision is final. Unstamped journals stay
+  /// unselectable so a candidate is never marked current for a revision it lacks.
+  void stampWrapSnapshotJournalRevision(PassId wrapPassId, uint32_t targetRevision);
   /// Apply at most `maximumChanges` pending snapshot construction units. Idle only.
   /// One unit is one dirty bar of the in-flight change. `allowStartConstruction`
   /// false advances an in-flight candidate only. `playheadPhaseTick` orders bars
@@ -661,7 +665,10 @@ struct Loop {
   std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
 
   void clearPublishedSnapshot();
-  void storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot);
+  /// `revision` is the `playbackRevision` the snapshot content represents. Zero
+  /// selects the loop's current `playbackRevision` (session-exit publication, where
+  /// the candidate is complete as of now).
+  void storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot, uint32_t revision = 0);
   void clearPendingSnapshotPublish();
   void discardUnpublishedSnapshotIfNotSessionExit();
   void enqueueLiveOverdubPasses();

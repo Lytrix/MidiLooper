@@ -75,19 +75,33 @@ record pass. Wrap completion now keeps the candidate unpublished until queued
 passes, construction progress, and companion changes complete. Device
 recapture remains open.
 
-**Now — snapshot-first bar painter (`DEC-050`)**
+**Now — overdub wrap snapshot publication (tasks `3.5`/`3.6`)**
+Capture [`134803`](../../captures/session_20260901_134803.log) proved
+occupancy converges (`src,reconstruct` 13 pitch-64 rows → `src,effective` 4:
+`0→576`, `768→576`, `1536→512`, `2304→576`) while the drawn frame kept the
+raw 144-length rows, because `root_rev` stayed **1** against `playback_rev`
+3…11 for the whole overdub. `remainingSessionExitPublishWork` gates wrap
+publication on `companionsApplied`, which only ever becomes true on the
+session-exit path, so no wrap candidate could ever publish.
+`remainingWrapPublishWork` now scopes the companion condition to
+`sessionExitQueued`, and each wrap journal carries the `targetRevision`
+stamped by `recordLastOverdubSeal` so a candidate is never selected for a
+revision it does not contain. Host gates: `teensy41-capture-serial` RAM1
+locals **6848**, native **1559/1559**. Device recapture open.
+
+**Prior — snapshot-first bar painter (`DEC-050`)**
 Occupancy resolves at NoteOn into `pendingNoteChanges_`
 (`resolveOccupancyAtNoteOn`). Paint-only `pendingPaintHides_` is removed.
 `upsertSourceTransform` is monotonically restrictive. Deferred stored-MIDI
-verification emits `DIAG,dnte,src,effective` after raw reconstruct so Stage D
-can observe companion-applied geometry. Stage B paint uses
-`resolveDisplayNotesByDrawSource`: Snapshot when
+verification emits `DIAG,dnte,src,effective` after raw reconstruct. Stage B
+paint uses `resolveDisplayNotesByDrawSource`: Snapshot when
 `publishedSnapshotIsCurrent`, otherwise VisualCache, plus Capture union on
 live bars; pending transforms then playhead tails. Stage C logs
-`DIAG,draw_src,diff` against the old compose path; compose is not deleted
-yet. Stage D host gates: `teensy41-capture-serial` RAM1 locals **6848**,
-native **1557/1557**. Device recapture required (held pitch-64 overlapped
-once per pass across six overdub wraps).
+`DIAG,draw_src,diff` against the old compose path and is read-only — it saves
+and restores compose frame bookkeeping around the comparison. Compose is not
+deleted yet. Open on the VisualCache tier: `keepShortestEndAtPitchStart`
+(idle slice and wrap adopt) keeps the shortest dual-storage sibling, so that
+tier still contradicts effective geometry when the snapshot is not current.
 
 **Prior — visual cache wrap-stale (Stage 1)**
 ([#41](https://github.com/Lytrix/MidiLooper/issues/41),

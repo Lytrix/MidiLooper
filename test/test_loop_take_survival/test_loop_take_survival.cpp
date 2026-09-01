@@ -1103,6 +1103,92 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
 }
 
+/// Task 3.5: a settled wrap with no session exit queued publishes its candidate and
+/// the published snapshot is current for the sealed revision, so display and playback
+/// can read the snapshot tier mid-overdub instead of falling back to a lagging cache.
+void test_settled_overdub_wrap_publishes_current_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  const uint32_t priorRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  const PassId wrapPassId = loop.lastCommittedPassId();
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 72;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(wrapPassId));
+  loop.pushOverdubSessionPass(wrapPassId, {});
+  loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
+}
+
+/// The candidate must not be selectable for a revision it does not contain: without
+/// the post-seal stamp the wrap journal drains but the snapshot stays unselected.
+void test_unstamped_wrap_journal_leaves_snapshot_unselected() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 72;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(loop.lastCommittedPassId()));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+  loop.beginCapture(CapturePhase::Overdub);
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+}
+
 void test_wrap_journal_drain_keeps_first_record_while_session_exit_pending() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1350,6 +1436,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
+  RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
+  RUN_TEST(test_unstamped_wrap_journal_leaves_snapshot_unselected);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);

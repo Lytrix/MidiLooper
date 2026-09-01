@@ -108,6 +108,20 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     record-stop PLAYING `discard=47` (was `15262`); first root stayed
     `root=0x0` until `pending=0` / `root=0x703248cc` / `root_rev=1`.
     `T_RT_reserve` is not frozen.
+  - Capture [`134803`](../../../captures/session_20260901_134803.log) showed
+    no wrap candidate ever published: `root_rev` stayed `1` against
+    `playback_rev` 3…11 across four settled wraps whose construction all
+    completed (`applied` 0→4, back to `pending=0`). `remainingSessionExitPublishWork`
+    gates on `companionsApplied`, which only the session-exit path ever sets,
+    so the wrap branch was unreachable. `remainingWrapPublishWork` scopes that
+    condition to `sessionExitQueued`. Each wrap journal now carries a
+    `targetRevision` stamped by `recordLastOverdubSeal`, and
+    `storePublishedSnapshot` selects it, so a candidate is never marked
+    current for a revision it does not contain; unstamped journals stay
+    unselected. Native fixtures
+    `test_settled_overdub_wrap_publishes_current_snapshot` and
+    `test_unstamped_wrap_journal_leaves_snapshot_unselected`. Device
+    recapture remains open.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers
