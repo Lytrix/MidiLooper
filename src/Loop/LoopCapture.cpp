@@ -13,6 +13,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/SnapshotNoteConversion.h"
 #include "Utils/LoopMem.h"
 #include "Utils/LoopStopFinalize.h"
 #include "Utils/NoteUtils.h"
@@ -900,8 +901,38 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     requestedWindowLength = loopLengthTicks;
   }
   const char* sourceOrigin = "passes";
-  const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
-      playbackRevision, overdubSourceSpanCacheNotes_, nullptr, loopLengthTicks, false);
+  const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
+  const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+      static_cast<bool>(snapshot), captureActive(), hasOverdubSession(),
+      !visualCache.notes.empty(), visualCacheDirty, publishedSnapshotIsCurrent());
+  if (usePublishedSnapshot) {
+    const uint32_t barCount =
+        (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+    const uint8_t lastPitch = static_cast<uint8_t>(kLoopSnapshotPitchCount - 1);
+    for (uint32_t bar = 0; bar < barCount; ++bar) {
+      for (uint16_t pitch = 0; pitch <= lastPitch; ++pitch) {
+        const auto membership = snapshot->noteMembership(static_cast<uint8_t>(pitch), bar);
+        forEachSnapshotMembershipReference(
+            membership.get(), [&](const LoopSnapshotNoteRef& reference) {
+              if (!reference) {
+                return;
+              }
+              appendDisplayNoteUniqueById(overdubSourceSpanCacheNotes_,
+                                          displayNoteFromSnapshotNote(*reference));
+            });
+      }
+    }
+    overdubSourceSpanCacheFullLoop_ = true;
+    sourceOrigin = "snapshot";
+  } else {
+    const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
+      playbackRevision, overdubSourceSpanCacheNotes_, nullptr, loopLengthTicks,
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      true
+#else
+      false
+#endif
+  );
   if (copiedPreparedSpans) {
     overdubSourceSpanCacheFullLoop_ = true;
     sourceOrigin = "prepared";
@@ -931,6 +962,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
     overdubSourceSpanCacheFullLoop_ = true;
     sourceOrigin = "passes";
+  }
   }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
@@ -1058,8 +1090,8 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
     if (committedPlaybackMergedForIdentity_ != nullptr &&
         committedPlaybackMergedForIdentity_->builtFromRevision != playbackRevision) {
       char skipLine[128];
-      snprintf(skipLine, sizeof(skipLine),
-               "#CAP,%lu,DIAG,lcr,srcskip,reason=stale_identity_stream,built=%u,loop=%u",
+      snprintf_P(skipLine, sizeof(skipLine),
+                 PSTR("#CAP,%lu,DIAG,lcr,srcskip,reason=stale_identity_stream,built=%u,loop=%u"),
                static_cast<unsigned long>(micros()),
                static_cast<unsigned>(committedPlaybackMergedForIdentity_->builtFromRevision),
                static_cast<unsigned>(playbackRevision));
@@ -1096,7 +1128,8 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
         continue;
       }
       char dropLine[112];
-      snprintf(dropLine, sizeof(dropLine), "#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=identity_invalid",
+      snprintf_P(dropLine, sizeof(dropLine),
+                 PSTR("#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=identity_invalid"),
                static_cast<unsigned long>(micros()), static_cast<unsigned>(id));
       DebugSessionCapture::appendCaptureTextLine(dropLine);
       ++dropLogged;
@@ -1106,21 +1139,21 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
       if (sourceViewHasId(id)) {
         continue;
       }
-      const char* reason = "missing_cache_span";
+      const char* reason = PSTR("missing_cache_span");
       if (idInList(id, beforeRetainIds, beforeRetainCount)) {
-        reason = "identity_invalid";
+        reason = PSTR("identity_invalid");
       } else if (LoopContentResolution::preparedCheckpointHasNoteId(id)) {
-        reason = "cache_filter";
+        reason = PSTR("cache_filter");
       }
       char deltaLine[112];
-      snprintf(deltaLine, sizeof(deltaLine), "#CAP,%lu,DIAG,lcr,srcdelta,id=%u,reason=%s",
+      snprintf_P(deltaLine, sizeof(deltaLine), PSTR("#CAP,%lu,DIAG,lcr,srcdelta,id=%u,reason=%s"),
                static_cast<unsigned long>(micros()), static_cast<unsigned>(id), reason);
       DebugSessionCapture::appendCaptureTextLine(deltaLine);
       ++deltaLogged;
     }
     char afterLine[112];
-    snprintf(afterLine, sizeof(afterLine),
-             "#CAP,%lu,DIAG,lcr,srcafter,why=%s,from=%s,before=%u,copy=%u,after=%u",
+    snprintf_P(afterLine, sizeof(afterLine),
+               PSTR("#CAP,%lu,DIAG,lcr,srcafter,why=%s,from=%s,before=%u,copy=%u,after=%u"),
              static_cast<unsigned long>(micros()), why, from, static_cast<unsigned>(beforeCount),
              static_cast<unsigned>(beforeRetainCount),
              static_cast<unsigned>(overdubSourceViewNotes_.size()));
@@ -1129,9 +1162,9 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   char line[256];
-  snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=0,proj=%lu,tot=%lu,ev=%u,notes=%u,bars=%u,"
-           "live=%lu,prep=%lu",
+  snprintf_P(line, sizeof(line),
+             PSTR("#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=0,proj=%lu,tot=%lu,ev=%u,notes=%u,"
+                  "bars=%u,live=%lu,prep=%lu"),
            static_cast<unsigned long>(micros()), why, from,
            static_cast<unsigned long>(filterUs), static_cast<unsigned long>(filterUs),
            static_cast<unsigned>(overdubSourceViewEvents_.size()),
@@ -1139,6 +1172,27 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
            static_cast<unsigned>(kOverdubSourceWindowBars),
            static_cast<unsigned long>(loopLengthTicks),
            static_cast<unsigned long>(LoopContentResolution::deviceGateLoopLengthTicks()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+  unsigned viewCount = 0;
+  constexpr unsigned kPreparedSourceViewDumpLimit = 48;
+  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (viewCount < kPreparedSourceViewDumpLimit) {
+      char spanLine[192];
+      snprintf_P(spanLine, sizeof(spanLine),
+                 PSTR("#CAP,%lu,DIAG,lcr,srcspan,at=view,id=%lu,p=%u,s=%lu,e=%lu,g=%s"),
+                 static_cast<unsigned long>(micros()), static_cast<unsigned long>(note.noteId),
+                 static_cast<unsigned>(note.note), static_cast<unsigned long>(note.startTick),
+                 static_cast<unsigned long>(note.endTick),
+                 (note.endTick < note.startTick) ? PSTR("wrap") : PSTR("linear"));
+      DebugSessionCapture::appendCaptureTextLine(spanLine);
+    }
+    ++viewCount;
+  }
+  snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,lcr,srcspan,at=view,count=%u"),
+             static_cast<unsigned long>(micros()), viewCount);
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)from;

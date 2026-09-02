@@ -24,6 +24,7 @@
 #include "PassReclaim.h"
 #include "StorageLoopIo.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/SnapshotNoteConversion.h"
 
 namespace {
 
@@ -1595,27 +1596,6 @@ void assertSamePassClosedNoteKeepsLinearEnd(const NoteUtils::DisplayNoteVec& not
   TEST_ASSERT_NOT_EQUAL(forbiddenSiblingEnd, noteA->endTick);
   TEST_ASSERT_NOT_EQUAL(loopLength - 1u, noteA->endTick);
   TEST_ASSERT_FALSE(noteA->endTick < noteA->startTick);
-}
-
-NoteUtils::DisplayNote displayNoteFromSnapshotNote(const LoopSnapshotNote& note) {
-  NoteUtils::DisplayNote out{};
-  out.noteId = note.noteId;
-  out.note = note.pitch;
-  out.velocity = note.velocity;
-  out.startTick = note.startTick;
-  out.endTick = note.endTick;
-  return out;
-}
-
-void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out, const NoteUtils::DisplayNote& note) {
-  if (note.noteId != kInvalidNoteId) {
-    for (const auto& existing : out) {
-      if (existing.noteId == note.noteId) {
-        return;
-      }
-    }
-  }
-  out.push_back(note);
 }
 
 void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes, size_t suffixBegin,

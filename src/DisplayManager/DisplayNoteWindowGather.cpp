@@ -13,6 +13,7 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/SnapshotNoteConversion.h"
 #include "Utils/SlotFocusDisplay.h"
 #include "VisualCache.h"
 #include <Arduino.h>
@@ -158,27 +159,6 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
 }
 
 namespace {
-
-NoteUtils::DisplayNote displayNoteFromSnapshotNote(const LoopSnapshotNote& note) {
-    NoteUtils::DisplayNote out{};
-    out.noteId = note.noteId;
-    out.note = note.pitch;
-    out.velocity = note.velocity;
-    out.startTick = note.startTick;
-    out.endTick = note.endTick;
-    return out;
-}
-
-void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out, const NoteUtils::DisplayNote& note) {
-    if (note.noteId != kInvalidNoteId) {
-        for (const auto& existing : out) {
-            if (existing.noteId == note.noteId) {
-                return;
-            }
-        }
-    }
-    out.push_back(note);
-}
 
 void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes, size_t suffixBegin,
                                        const NoteUtils::DisplayNote& row) {
