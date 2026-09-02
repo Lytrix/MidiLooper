@@ -54,6 +54,10 @@ auto key = std::make_tuple(note.note, note.startTick, note.endTick);
 
 **Purpose**: Removes exact duplicates that might occur during complex wrapping scenarios.
 
+### 4. Equal-tick completed pairs
+
+A same-channel same-pitch NoteOn and NoteOff at the same tick is a completed zero-duration pair. Reconstruct consumes both events and does not emit a display span or finish the On open to loop end. Off-before-On chronological order (Gate 5A) is unchanged: an Off that closes an earlier open note at that tick still pairs with `startTick < offTick` first. See [`overdub_reconstruct_equal_tick_pair_not_open_bugfix.md`](../Plans/overdub_reconstruct_equal_tick_pair_not_open_bugfix.md).
+
 ## Examples
 
 ### Scenario 1: Loop Extension (3 bars → 5 bars)

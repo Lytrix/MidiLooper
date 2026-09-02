@@ -620,6 +620,57 @@ void test_resolve_wrap_head_segment_committed_head_off_mid_loop() {
     TEST_ASSERT_EQUAL_UINT32(48u, head.endTickInclusive);
 }
 
+void test_reconstruct_equal_tick_pair_does_not_open_to_loop_end() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t pitch = 86;
+    MidiEventVec offThenOn;
+    offThenOn.push_back(MidiEvent::NoteOff(776, 13, pitch, 0));
+    offThenOn.push_back(MidiEvent::NoteOn(776, 13, pitch, 90));
+    const NoteUtils::DisplayNoteVec fromOffFirst =
+        NoteUtils::reconstructDisplayNotes(offThenOn, loopLength, false, true);
+    MidiEventVec onThenOff;
+    onThenOff.push_back(MidiEvent::NoteOn(776, 13, pitch, 90));
+    onThenOff.push_back(MidiEvent::NoteOff(776, 13, pitch, 0));
+    const NoteUtils::DisplayNoteVec fromOnFirst =
+        NoteUtils::reconstructDisplayNotes(onThenOff, loopLength, false, true);
+    auto hasOpenToLoopEnd = [&](const NoteUtils::DisplayNoteVec& notes) {
+        for (const auto& n : notes) {
+            if (n.note == pitch && n.startTick == 776u && n.endTick == loopLength - 1) {
+                return true;
+            }
+            if (n.note == pitch && n.startTick == 776u && n.endTick >= 2000u) {
+                return true;
+            }
+        }
+        return false;
+    };
+    TEST_ASSERT_FALSE(hasOpenToLoopEnd(fromOffFirst));
+    TEST_ASSERT_FALSE(hasOpenToLoopEnd(fromOnFirst));
+    const std::vector<NoteUtils::OpenNoteOn> openOffFirst =
+        NoteUtils::findOpenNoteOns(offThenOn, loopLength);
+    const std::vector<NoteUtils::OpenNoteOn> openOnFirst =
+        NoteUtils::findOpenNoteOns(onThenOff, loopLength);
+    for (const auto& open : openOffFirst) {
+        TEST_ASSERT_FALSE(open.note == pitch && open.tick == 776u);
+    }
+    for (const auto& open : openOnFirst) {
+        TEST_ASSERT_FALSE(open.note == pitch && open.tick == 776u);
+    }
+}
+
+void test_reconstruct_abutting_same_tick_still_closes_prior() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t pitch = 60;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(720, 4, pitch, 100));
+    ev.push_back(MidiEvent::NoteOff(776, 4, pitch, 0));
+    ev.push_back(MidiEvent::NoteOn(776, 4, pitch, 90));
+    ev.push_back(MidiEvent::NoteOff(816, 4, pitch, 0));
+    const auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    assert_has_note(notes, pitch, 720, 776, 100);
+    assert_has_note(notes, pitch, 776, 816, 90);
+}
+
 void test_wrap_head_exclusive_end_for_draw_at_zero() {
     constexpr uint32_t loopLength = 1536;
     TEST_ASSERT_EQUAL_UINT32(1u, NoteUtils::wrapHeadExclusiveEndForDraw(0, loopLength));
@@ -664,6 +715,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_is_live_wrap_head_continuation_false_when_loop_shorter_than_wrap_window);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_at_zero);
     RUN_TEST(test_resolve_wrap_head_segment_committed_head_off_mid_loop);
+    RUN_TEST(test_reconstruct_equal_tick_pair_does_not_open_to_loop_end);
+    RUN_TEST(test_reconstruct_abutting_same_tick_still_closes_prior);
     RUN_TEST(test_wrap_head_exclusive_end_for_draw_at_zero);
     return UNITY_END();
 }
