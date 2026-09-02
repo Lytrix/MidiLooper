@@ -217,6 +217,7 @@ struct Loop {
   void syncNextOverdubSessionIndexFromPasses();
   bool hasOverdubSession() const { return playheadPhaseTick != UINT32_MAX; }
   void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
+  /// True when armed and the playhead crosses loop end (phase 0). S is not the seal clock.
   bool shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) const;
   void noteOverdubWrapCommitted();
   void suppressNextOverdubWrap();
@@ -350,13 +351,16 @@ struct Loop {
   /// (live capture already has those). Hide matches `noteId` or same-pitch overlapping
   /// span on the committed prefix only — notes at `liveCaptureBegin` and after are
   /// playhead tails and must keep growing to currentTick. Does not mutate source view.
-  /// When live pending is empty and the selected committed representation is still
-  /// behind the last overdub seal, also applies that seal's companion overlay by
-  /// `noteId` only.
+  /// Sealed companion Hide/Shorten still project while companion IDs exist, including
+  /// after the selected representation reaches the seal revision, so a Hide target
+  /// is not re-admitted at the same pitch+start. Overlay Hide also drops a longer
+  /// same-pitch+start sibling of the kept short overdub.
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;
-  /// True when the last sealed companion overlay must still project onto display.
+  /// True when the last seal still has companion EditPass IDs to project.
+  bool hasSealedCompanionOverlay() const;
+  /// True when the selected committed representation is still behind the last seal.
   bool sealedCompanionOverlayRequired() const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
   /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
@@ -379,8 +383,9 @@ struct Loop {
                              uint32_t priorPlaybackRevision);
   void clearLastOverdubSeal();
   /// Drops the one-shot merged-stream admit receipt only. Companion IDs and
-  /// `lastOverdubSealPlaybackRevision_` stay for display overlay until the
-  /// selected representation covers the seal or `clearLastOverdubSeal()`.
+  /// `lastOverdubSealPlaybackRevision_` stay for display overlay until
+  /// `clearLastOverdubSeal()`. Snapshot-current does not release a Hide that
+  /// is still present at the same pitch+start.
   void clearLastOverdubSealAdmitReceipt();
   /// Admit `recordLastOverdubSeal` into an existing full-loop merged stream. Returns
   /// true only when the receipt, pass, companions, and geometry are all proven.

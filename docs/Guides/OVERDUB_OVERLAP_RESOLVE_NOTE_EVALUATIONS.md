@@ -96,7 +96,7 @@ PendingNoteChange     ← session overlay; Add ≠ persistence
     ↓
 draw-source gather (Snapshot / VisualCache, plus Capture on live bars)
     ↓
-applyPendingNoteChangesToDisplayNotes (effective transform, then playhead tails)
+applyPendingNoteChangesToDisplayNotes (pending + sealed Hide/Shorten while companion IDs exist; Hide also drops a longer same-pitch+start sibling on display only, then playhead tails)
     ↓
 sealed EditPass Length/Delete   (Shorten/Hide only)
     ↓
@@ -200,6 +200,15 @@ Across wrap-split, `accumulatePendingNoteChangesForIncomingNote` makes the two r
 
 Across later notes constraining the same A, upsert is monotonically restrictive. Repeated observations must not resurrect baseline.
 
+**Do not score reconstruct stacks or a longer drawn end as occupy.**
+
+| What you see | Occupy rule | Not occupy |
+|---|---|---|
+| Reconstruct keeps several same-start lengths; frame/effective keep one | Last B + Shorten/Hide. Shorten when A starts before B (`end = B.start − 1`); Hide when A starts at/after B. [`204043`](../../captures/session_20260901_204043.log) `63@0→335` is last `0→576` shortened by later `336→576` | Keep-shortest / force the short reconstruct sibling |
+| Drawn or frame **longer** than compose / effective / pending | Impossible — Shorten never lengthens | [`204043`](../../captures/session_20260901_204043.log) `79@240` compose/effective end **272**, drawn/frame end **288**. Store has `SEVT` `N@240` `F@272` `F@288`. No overdub `MI`/`COORD` for 79. Playhead tails (`applyCapturePlayheadTails`) are a later gather step, not this upsert |
+
+RC2b (closed same-`NoteId` must not become wrap-held) is **parked** after `204043`. Reopen only if a later capture shows wrap-held rewrite or the `79@240` dual-Off row above. Host tails pin `test_same_pass_playhead_tails_keep_closed_bar_four_end` stays red; do not patch `applyCapturePlayheadTails` from that pin. See [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
+
 ---
 
 ## Add is not pending persistence
@@ -273,7 +282,7 @@ JIT may supply **missing candidates**. The `PendingNoteChange` is still `resolve
 | Event is a NoteOff | `Track::appendCaptureEvent` overdub branch; `Track::finalizePendingNotes` | Live Off, or synthesized stop Off via `appendCaptureNoteOffAtPhase` | NoteOn — capture only |
 | Source view established | `Loop::accumulatePendingNoteChangesForIncomingNote` | `overdubSourceViewEstablished_` and loop length > 0 | Return false |
 | Incoming span non-empty | same | `endTick != startTick`; wrap-crossing when `endTick < startTick` | Return false |
-| Wrap while B still open | `Track::commitOverdubWrapAtSessionStart` | Does **not** call `finalizePendingNotes` | Open B stays live capture; **no** resolver run |
+| Wrap while B still open | `Track::commitOverdubWrap` | Does **not** call `finalizePendingNotes` | Open B stays live capture; **no** resolver run |
 
 ### 2. Candidate selection (not geometry)
 

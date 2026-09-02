@@ -3230,7 +3230,7 @@ void test_companion_overlay_hide_is_idempotent() {
   TEST_ASSERT_TRUE(paint.empty());
 }
 
-/// RC3: revision >= Rseal means cumulative companion coverage.
+/// RC3: revision >= Rseal is not enough to re-admit a still-present Hide target.
 void test_seal_revision_implies_cumulative_companion_coverage() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3241,6 +3241,7 @@ void test_seal_revision_implies_cumulative_companion_coverage() {
   const uint32_t rSeal = loop.lastOverdubSealPlaybackRevisionForTest();
   TEST_ASSERT_EQUAL_UINT32(10u, rSeal);
   TEST_ASSERT_TRUE(loop.sealedCompanionOverlayRequired());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
 
   NoteUtils::DisplayNoteVec stale;
   stale.push_back(displayNote(123, 64, 2304, 2784));
@@ -3249,17 +3250,60 @@ void test_seal_revision_implies_cumulative_companion_coverage() {
 
   publishSnapshotAtRevision(loop, 10);
   TEST_ASSERT_FALSE(loop.sealedCompanionOverlayRequired());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
   NoteUtils::DisplayNoteVec atSeal;
   atSeal.push_back(displayNote(123, 64, 2304, 2784));
   loop.applyPendingNoteChangesToDisplayNotes(atSeal);
-  TEST_ASSERT_EQUAL(1u, atSeal.size());
+  TEST_ASSERT_TRUE(atSeal.empty());
 
   publishSnapshotAtRevision(loop, 11);
   TEST_ASSERT_FALSE(loop.sealedCompanionOverlayRequired());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
   NoteUtils::DisplayNoteVec afterSeal;
   afterSeal.push_back(displayNote(123, 64, 2304, 2784));
   loop.applyPendingNoteChangesToDisplayNotes(afterSeal);
-  TEST_ASSERT_EQUAL(1u, afterSeal.size());
+  TEST_ASSERT_TRUE(afterSeal.empty());
+}
+
+/// 201956: after snapshot-current, Hide keeps 768→864 and drops record 768→1151.
+void test_sealed_hide_keeps_short_overdub_after_snapshot_current() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 71, 768, 1152, 63, 3072);
+  sealRecordedHideCompanion(loop, 71, 63, 768, 1151, 9);
+  publishSnapshotAtRevision(loop, 10);
+  TEST_ASSERT_FALSE(loop.sealedCompanionOverlayRequired());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(71, 63, 768, 1151));
+  paint.push_back(displayNote(95, 63, 768, 864));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(95, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT8(63, paint[0].note);
+  TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(864u, paint[0].endTick);
+}
+
+/// 201956: Hide named by pitch+start still drops a longer record sibling with a new noteId.
+void test_sealed_hide_drops_same_start_longer_when_note_id_differs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 71, 768, 1152, 63, 3072);
+  sealRecordedHideCompanion(loop, 71, 63, 768, 1151, 9);
+  publishSnapshotAtRevision(loop, 10);
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(99, 63, 768, 1151));
+  paint.push_back(displayNote(95, 63, 768, 864));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(95, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(864u, paint[0].endTick);
 }
 
 /// RC3: overlay does not manufacture a Hide for a note occupancy never resolved.
@@ -3563,6 +3607,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_companion_overlay_ignores_mismatched_note_id);
   RUN_TEST(test_companion_overlay_hide_is_idempotent);
   RUN_TEST(test_seal_revision_implies_cumulative_companion_coverage);
+  RUN_TEST(test_sealed_hide_keeps_short_overdub_after_snapshot_current);
+  RUN_TEST(test_sealed_hide_drops_same_start_longer_when_note_id_differs);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);

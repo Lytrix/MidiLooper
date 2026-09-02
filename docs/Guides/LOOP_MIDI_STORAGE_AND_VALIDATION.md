@@ -281,7 +281,7 @@ This policy is **stop-only scheduling**, not an overdub/wrap mutation rule:
 - Armed only by `Track::stopOverdubbing` (`armPlayingMidiDrainAfterOverdubStop`), then cleared on `Track::startOverdubbing`.
 - Applied only in deferred maintenance while a track is in PLAYING/STOPPED_RECORDING (`processDeferredIdleMaintenance` post-stop drain gate).
 - While OVERDUBBING (including wrap commits), no drain-window clamp applies to note-update ownership.
-- Overdub wrap processing remains unchanged: `Track::commitOverdubWrapAtSessionStart` still commits wrap capture, seals companions via `sealPendingNoteChangesToEditPasses()` (source-view update enabled), publishes prepared overdub pass, and rebuilds source view.
+- Overdub wrap processing: `Track::commitOverdubWrap` commits wrap capture when the playhead crosses loop end (phase 0), seals companions via `sealPendingNoteChangesToEditPasses()` (source-view update enabled), publishes prepared overdub pass, and rebuilds source view. Session identity stays at S.
 
 Use this guard to avoid false regressions: post-stop latency tuning must not be interpreted as a change to continuous overdub/wrap note processing.
 

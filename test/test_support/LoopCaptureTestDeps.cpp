@@ -33,6 +33,10 @@ void Loop::applyPendingNoteChangesToDisplayNotes(NoteUtils::DisplayNoteVec& note
   (void)liveCaptureBegin;
 }
 
+bool Loop::hasSealedCompanionOverlay() const {
+  return false;
+}
+
 bool Loop::sealedCompanionOverlayRequired() const {
   return false;
 }

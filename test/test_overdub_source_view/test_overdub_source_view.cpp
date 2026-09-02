@@ -631,6 +631,56 @@ void test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail() {
   TEST_ASSERT_EQUAL(1u, loop.visualCache.notes.size());
 }
 
+/// `141717` sequence: the session opens one bar in, the held pitch lands on every
+/// bar line of each pass, and occupancy resolves at each NoteOn. On device the second
+/// pass found a participant at 768, 1536 and 2304 but never at phase 0.
+void test_second_pass_hold_at_phase_zero_finds_prior_pass_participant() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.rebuildVisualCacheFromPasses();
+
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  const uint32_t sessionPhase = bar;
+  const uint32_t holdPhases[] = {bar, bar * 2, bar * 3, 0};
+  NoteId nextNoteId = 20;
+
+  loop.openOverdubSession(sessionPhase);
+  loop.beginCapture(CapturePhase::Overdub, sessionPhase);
+
+  auto runPass = [&](bool expectParticipants) {
+    for (uint32_t holdPhase : holdPhases) {
+      if (expectParticipants) {
+        OverlapNoteIdSet present;
+        loop.collectOverdubSourceHoldParticipantIds(holdPhase, 64, present);
+        char message[80];
+        snprintf(message, sizeof(message), "no participant at hold phase %lu",
+                 static_cast<unsigned long>(holdPhase));
+        TEST_ASSERT_TRUE_MESSAGE(present.size() > 0, message);
+      }
+      TEST_ASSERT_TRUE(
+          loop.appendCaptureEvent(noteOnWithNoteId(holdPhase, 1, 64, 90, nextNoteId)));
+      OverlapNoteIdSet ledgerIds;
+      OverlapNoteIdSet resolved;
+      loop.resolveOccupancyAtNoteOn(1, 64, 90, ledgerIds, holdPhase, &resolved);
+      TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(holdPhase + 144, 1, 64, 0)));
+      ++nextNoteId;
+    }
+  };
+
+  runPass(false);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, sessionPhase));
+  const PassId passA = loop.lastCommittedPassId();
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  loop.pushOverdubSessionPass(passA, companionIds);
+  loop.beginCapture(CapturePhase::Overdub, sessionPhase);
+  loop.appendLastCommittedOverdubPassToSourceView();
+
+  runPass(true);
+}
+
 void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2032,9 +2082,10 @@ void test_session_undo_skips_next_wrap_crossing() {
   TEST_ASSERT_TRUE(loop.capture.store.empty());
   loop.armOverdubWrapAfterLeavingStart(778);
   TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
-  TEST_ASSERT_TRUE(loop.consumeSuppressedOverdubWrapCrossing(776, 777));
-  loop.armOverdubWrapAfterLeavingStart(778);
-  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(776, 777));
+  TEST_ASSERT_FALSE(loop.consumeSuppressedOverdubWrapCrossing(776, 777));
+  TEST_ASSERT_TRUE(loop.consumeSuppressedOverdubWrapCrossing(kLoopLen - 1, 0));
+  loop.armOverdubWrapAfterLeavingStart(1);
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kLoopLen - 1, 0));
 }
 
 void test_stop_collects_session_wraps_then_close_clears_stack() {
@@ -2652,11 +2703,108 @@ void test_should_commit_overdub_wrap_after_leaving_start() {
   Loop loop;
   loop.loopLengthTicks = kLoopLen;
   loop.openOverdubSession(777);
-  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(kLoopLen - 1, 0));
   loop.armOverdubWrapAfterLeavingStart(778);
-  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(776, 777));
-  loop.noteOverdubWrapCommitted();
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kLoopLen - 1, 0));
   TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(776, 777));
+  loop.noteOverdubWrapCommitted();
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(kLoopLen - 1, 0));
+}
+
+void test_should_commit_overdub_wrap_at_phase_0_not_session_start() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kFourBar = 3072;
+  constexpr uint32_t kSessionStart = 640;
+  loop.loopLengthTicks = kFourBar;
+  loop.openOverdubSession(kSessionStart);
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(kFourBar - 1, 0));
+  loop.armOverdubWrapAfterLeavingStart(kSessionStart + 1);
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kFourBar - 1, 0));
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(0, 1));
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(kSessionStart - 1, kSessionStart));
+}
+
+void test_should_commit_overdub_wrap_at_zero_session_start() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.openOverdubSession(0);
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(3071, 0));
+  loop.armOverdubWrapAfterLeavingStart(1);
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(0, 1));
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(3071, 0));
+}
+
+void test_first_wrap_seal_at_phase_0_keeps_tail_linear() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kFourBar = 3072;
+  constexpr uint32_t kSessionStart = 640;
+  seedRecordNote(loop, 0, 48, 60);
+  loop.loopLengthTicks = kFourBar;
+  loop.openOverdubSession(kSessionStart);
+  loop.beginCapture(CapturePhase::Overdub, kSessionStart);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 4, 63, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2880, 4, 63, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2800, 4, 70, 100)));
+  loop.armOverdubWrapAfterLeavingStart(kSessionStart + 1);
+  TEST_ASSERT_FALSE(loop.shouldCommitOverdubWrap(kSessionStart - 1, kSessionStart));
+  TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kFourBar - 1, 0));
+
+  SessionMidiEventVec held;
+  TEST_ASSERT_EQUAL(1u, loop.extractOpenCaptureNoteOns(held));
+  TEST_ASSERT_EQUAL(2800u, held[0].tick);
+  TEST_ASSERT_EQUAL(70, held[0].data.noteData.note);
+
+  SessionMidiEventVec remaining;
+  loop.capture.store.copyEventsTo(remaining);
+  TEST_ASSERT_EQUAL(2u, remaining.size());
+  TEST_ASSERT_EQUAL(2304u, remaining[0].tick);
+  TEST_ASSERT_EQUAL(2880u, remaining[1].tick);
+  TEST_ASSERT_FALSE(NoteUtils::isWrappedLoopNotePair(remaining[0].tick, remaining[1].tick,
+                                                     kFourBar));
+
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  bool foundSeal = false;
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.id != loop.lastCommittedPassId()) {
+      continue;
+    }
+    foundSeal = true;
+    TEST_ASSERT_EQUAL(0u, pass.sealedAtTick);
+    SessionMidiEventVec sealed;
+    LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, sealed);
+    TEST_ASSERT_EQUAL(2u, sealed.size());
+    TEST_ASSERT_EQUAL(2304u, sealed[0].tick);
+    TEST_ASSERT_EQUAL(2880u, sealed[1].tick);
+    for (const MidiEvent& evt : sealed) {
+      TEST_ASSERT_TRUE(evt.tick >= kSessionStart);
+      TEST_ASSERT_TRUE(evt.tick < kFourBar);
+    }
+  }
+  TEST_ASSERT_TRUE(foundSeal);
+
+  loop.beginCapture(CapturePhase::Overdub, loop.playheadPhaseTick);
+  TEST_ASSERT_EQUAL(kSessionStart, loop.playheadPhaseTick);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(held[0]));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 4, 70, 0)));
+  SessionMidiEventVec wrap2;
+  loop.capture.store.copyEventsTo(wrap2);
+  TEST_ASSERT_EQUAL(2u, wrap2.size());
+  TEST_ASSERT_EQUAL(2800u, wrap2[0].tick);
+  TEST_ASSERT_EQUAL(200u, wrap2[1].tick);
+  bool inventedOffAtZero = false;
+  for (const MidiEvent& evt : wrap2) {
+    if (evt.isNoteOff() && evt.tick == 0) {
+      inventedOffAtZero = true;
+    }
+  }
+  TEST_ASSERT_FALSE(inventedOffAtZero);
 }
 
 void test_retire_superseded_pitch_drops_home_when_settled_present() {
@@ -3387,6 +3535,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_held_span_does_not_dirty_unchanged_interior_bars);
   RUN_TEST(test_wrap_held_on_last_bar_dirties_endpoints_only);
   RUN_TEST(test_wrap_append_restamps_span_cache_after_wrap_pair_restamp_fail);
+  RUN_TEST(test_second_pass_hold_at_phase_zero_finds_prior_pass_participant);
   RUN_TEST(test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache);
   RUN_TEST(test_short_loop_stale_keeps_notes_for_overdub_stop_handoff);
   RUN_TEST(test_short_loop_idle_slice_cleans_without_full_rebuild);
@@ -3427,6 +3576,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
   RUN_TEST(test_overdub_session_index_stamps_wraps_and_groups_after_reload);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);
+  RUN_TEST(test_should_commit_overdub_wrap_at_phase_0_not_session_start);
+  RUN_TEST(test_should_commit_overdub_wrap_at_zero_session_start);
+  RUN_TEST(test_first_wrap_seal_at_phase_0_keeps_tail_linear);
   RUN_TEST(test_retire_superseded_pitch_drops_home_when_settled_present);
   RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);
   RUN_TEST(test_long_loop_pass_state_change_keeps_notes_and_stays_dirty);

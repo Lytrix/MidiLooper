@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start) | 2026-09-01 | Overdub wrap persist seals at loop end (phase 0); S remains session identity | Accepted |
 | [DEC-050](#dec-050--occupancy-at-noteon-and-per-bar-draw-routing) | 2026-09-01 | Occupancy resolves at NoteOn into pending effective transforms; draw source is per-bar routing only | Accepted |
 | [DEC-049](#dec-049--overdub-stop-admits-the-seal-and-accelerates-snapshot-publication) | 2026-08-31 | Overdub stop preserves the merged stream for incremental seal admission; Snapshot idle uses a fixed 2-of-6 ratio while a publication backlog is present | Accepted |
 | [DEC-047](#dec-047--bounded-overdub-wrap-snapshot-publication) | 2026-08-27 | Bounded overdub-wrap snapshot publication through mutation journals and fixed-capacity membership pages | Accepted — Phase 3 tasks 3.5–3.6 |
@@ -64,7 +65,34 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-051 -->
+<!-- Append new entries below (newest first). Next ID: DEC-052 -->
+
+## DEC-051 — Overdub wrap seals at loop end, not session start
+
+**Date:** 2026-09-01  
+**Status:** Accepted  
+**Owner:** overdub wrap persist — `Loop::shouldCommitOverdubWrap` / `Track::commitOverdubWrap`  
+**Plan:** [`overdub_wrap_loop_end_commit_refinement.md`](Plans/overdub_wrap_loop_end_commit_refinement.md); evidence [`overdub_wrap_bar4_note_off_session_seal_bugfix.md`](Plans/overdub_wrap_bar4_note_off_session_seal_bugfix.md)  
+**Amends:** [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo) wrap-persist sentence 1 only  
+**Does not supersede:** DEC-038 session identity **S**, session-gated **O:** undo, one **U:** after stop, empty-wrap no-op, no `finalizePendingNotes` at wrap, 6E.1b consume rotation proof
+
+### Problem
+
+DEC-038 sealed when the playhead returned to **S**. When S is mid-loop, one wrap pass spanned `[S, L) ∪ [0, S)`. Reconstruct then paired tail ons with unrelated head offs (`2304→96` in [`193232`](../captures/session_20260901_193232.log)). 6E.1b proved consume rotation around S, not that the seal clock must be S.
+
+### Decision
+
+1. **Wrap persist clock.** When the playhead crosses **loop end (phase 0)**, seal the current wrap as an `OverdubPass` + DEC-031 companions, push a session-stack entry, `beginCapture(Overdub, S)` again, stay OVERDUBBING. `sealedAtTick = 0`. First wrap is the next loop end after leaving S; later wraps every loop end. **S** (`playheadPhaseTick`) remains session identity: source view, occupy present-at-hold, and wrap `beginCapture` still use S. Do not add a second session-start noun.
+2. **Undo suppress.** `consumeSuppressedOverdubWrapCrossing` consumes the next **0** crossing, not S.
+3. Unchanged DEC-038 sentences: still an `OverdubPass`; no `finalizePendingNotes` at wrap; empty wrap is a no-op; undo while OVERDUBBING is session-gated **O:**; after stop one **U:** `OverdubPassAdded`; crash mid-session out of scope.
+
+### Constraints created
+
+- Do not rebuild source view at 0 on wrap `beginCapture`.
+- Do not invent an Off at 0 for notes held across the musical wrap — extract and re-append only.
+- Wrap-shaped consume uses the musical loop `[start, L) ∪ [0, E)`, not S.
+
+---
 
 ## DEC-050 — Occupancy at NoteOn and per-bar draw routing
 
@@ -357,6 +385,14 @@ Compatibility gather remains only when no published root exists.
 reconstruct. When snapshot step has no in-flight construction, that turn ends.
 [`230556`](../captures/session_20260825_230556.log) `idle_reconstruct`
 241–278 ms. Visual slices resume on PLAYING / STOPPED_RECORDING.
+
+**Amendment (2026-09-01):** Stage 3 one-phase `load_frame` left remainder
+for VisualCache idle during OVERDUBBING. [`233642`](../captures/session_20260901_233642.log)
+OD2 reconstructed mid-pass (`OverlayRejected` / `slice_clean` 102→99) and
+only `adopt_partial` 146 at stop. Stage 2 [`232353`](../captures/session_20260901_232353.log)
+held visual 125 until stop. Gate is
+`MidiServiceDrain::allowVisualCacheReconstructSlice`. Overdub source-view
+idle is unchanged.
 
 **Amendment (2026-08-25):** PLAYING / STOPPED_RECORDING idle gives an empty
 dirty visual cache the turn before `stepPendingSnapshotPublish`. Snapshot
@@ -759,7 +795,7 @@ point 1. RAM1 unchanged (code 425852 / locals 4768).
 ## DEC-038 — Overdub wrap commit and session undo
 
 **Date:** 2026-08-15  
-**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.** Live +1 HITL PASS ([`011413`](../captures/session_20260816_011413.log)). **Amended 2026-08-20:** `OverdubPass.overdubSessionIndex` is content metadata so reboot derivation matches 038.2 grain. Not a `session-id` noun.  
+**Status:** Accepted. **038.1 HITL PASS.** **038.2 landed.** Live +1 HITL PASS ([`011413`](../captures/session_20260816_011413.log)). **Amended 2026-08-20:** `OverdubPass.overdubSessionIndex` is content metadata so reboot derivation matches 038.2 grain. Not a `session-id` noun. **Amended 2026-09-01 by [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start):** wrap persist seals at loop end (phase 0); S remains session identity.  
 **Owner:** overdub lifecycle — `Track` trigger / `Loop` pass list + `capture.store`. LCR publish stays `publishPreparedOverdubPass`. GUS kind stays `OverdubPassAdded`.  
 **Plan:** [`loop_content_resolution_overdub_state_evaluation_refinement.md`](Plans/loop_content_resolution_overdub_state_evaluation_refinement.md)  
 **Parent:** [DEC-037](#dec-037-loop-content-resolution-parallel-prototype) (6E native PASS); [DEC-031](#dec-031-overdub-overlap-encode-pending-buffer-to-editpass) / [DEC-032](#dec-032-overdub-editpass-unification-reassessment) companions  
@@ -771,7 +807,7 @@ Overdub source view is frozen at session start. A wrap that returns to the start
 
 ### Decision
 
-1. **Wrap persist.** **S** is the `playheadPhaseTick` already computed in `startOverdubbing` and passed to `beginCapture`. Store that first-session value on the overdub lifecycle owner (`Loop` / `Track`). Session-scoped: wrap `beginCapture` and `discardCapture` must not clear it. Clear S when the overdub session ends. When the playhead returns to S, seal the **current wrap** as an `OverdubPass` + DEC-031 companions, `publishPreparedOverdubPass`, push a session-stack entry, `beginCapture(Overdub)` again, stay OVERDUBBING. Stop seals the partial wrap the same way. Do not add a new domain noun for S.
+1. **Wrap persist.** **S** is the `playheadPhaseTick` already computed in `startOverdubbing` and passed to `beginCapture`. Store that first-session value on the overdub lifecycle owner (`Loop` / `Track`). Session-scoped: wrap `beginCapture` and `discardCapture` must not clear it. Clear S when the overdub session ends. When the playhead crosses **loop end (phase 0)**, seal the **current wrap** as an `OverdubPass` + DEC-031 companions, `publishPreparedOverdubPass`, push a session-stack entry, `beginCapture(Overdub, S)` again, stay OVERDUBBING. `sealedAtTick = 0`. Stop seals the partial wrap the same way. Do not add a new domain noun for S. **Amended [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start).**
 2. **Still an `OverdubPass`.** No new domain noun. No session-id on the pass in this DEC.
 3. **Held note at S.** Do not call `Track::finalizePendingNotes`. That closer is STOP only (6E.5). Publish completed ON/OFF pairs only. Add stays NoteOff-owned (`accumulatePendingNoteChangesForIncomingNote`).
 4. **Empty wrap.** No pass, no session-stack push, no revision bump, no LCR publish.
