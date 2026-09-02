@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-052](#dec-052--occupy-consumes-the-draw-source-predicate) | 2026-09-02 | Occupy committed source uses the paint draw-source predicate; exclusive snapshot fill when true | Accepted |
 | [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start) | 2026-09-01 | Overdub wrap persist seals at loop end (phase 0); S remains session identity | Accepted |
 | [DEC-050](#dec-050--occupancy-at-noteon-and-per-bar-draw-routing) | 2026-09-01 | Occupancy resolves at NoteOn into pending effective transforms; draw source is per-bar routing only | Accepted |
 | [DEC-049](#dec-049--overdub-stop-admits-the-seal-and-accelerates-snapshot-publication) | 2026-08-31 | Overdub stop preserves the merged stream for incremental seal admission; Snapshot idle uses a fixed 2-of-6 ratio while a publication backlog is present | Accepted |
@@ -65,7 +66,35 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-052 -->
+<!-- Append new entries below (newest first). Next ID: DEC-053 -->
+
+## DEC-052 — Occupy consumes the draw-source predicate
+
+**Date:** 2026-09-02  
+**Status:** Accepted  
+**Owner:** occupy source-span cache — `Loop::rebuildOverdubSourceSpanCache`  
+**Plan:** [`overdub_occupy_snapshot_source_refinement.md`](Plans/overdub_occupy_snapshot_source_refinement.md)  
+**Evidence:** [`134815`](../captures/session_20260902_134815.log) paint `snap=1` vs occupy `from=visual`  
+**Does not supersede:** [DEC-050](#dec-050--occupancy-at-noteon-and-per-bar-draw-routing) occupancy-at-NoteOn or per-bar paint routing
+
+### Problem
+
+Paint and occupy independently selected committed sources. `gatherDrawSourceBars` uses `shouldGatherPublishedSnapshotForDrawSource`. `rebuildOverdubSourceSpanCache` ignored that predicate and filled from prepared LCR, prior cache, covering `visualCache`, or pass reconstruction. [`134815`](../captures/session_20260902_134815.log) OD2 open: paint `snap=1`, occupy `from=visual,notes=19`.
+
+### Decision
+
+1. **Single predicate.** Occupy evaluates the same `shouldGatherPublishedSnapshotForDrawSource` call as paint (`publishedSnapshot()`, `captureActive()`, `hasOverdubSession()`, visual nonempty/dirty, `publishedSnapshotIsCurrent()`). No occupy-specific approximation.
+2. **Snapshot exclusivity.** When the predicate is true, committed occupy membership and geometry come only from the published `LoopSnapshot` (unique by `noteId` across every bar). `visualCache`, prepared LCR, prior cache, and reconstructed passes do not participate in that fill.
+3. **Fallback preservation.** When the predicate is false, the existing prepared → prior cache → covering visual → pass reconstruction order is unchanged.
+4. **Stage boundary.** This is committed-source selection consistency only. Snapshot publication, visual-cache population, `#41` Stage 2, LCR scheduling, and `resolveOccupancyAtNoteOn` stay out of this decision.
+
+### Constraints created
+
+- A current published snapshot wins over prepared LCR. [`113651`](../captures/session_20260902_113651.log) `from=prepared,notes=8` is leftover LCR, not occupy-paint authority.
+- `from=snapshot` is not a pass by itself. Occupy geometry must change when the snapshot changes even if `visualCache` is stale or unchanged.
+- Do not add `Loop::displayNoteFromSnapshotNote()` or a DisplayManager occupy API. Paint and occupy share one snapshot→`DisplayNote` conversion in a neutral utility.
+
+---
 
 ## DEC-051 — Overdub wrap seals at loop end, not session start
 

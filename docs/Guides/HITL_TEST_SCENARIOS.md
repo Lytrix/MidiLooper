@@ -59,6 +59,7 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `fader_motor_probe` | `fader_motor_probe` | NOTE_EDIT arm + fader motor pitchbend/note-0 steps (host → Teensy → DROID) | Optional | `verify_fader_motor_probe` |
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
+| `overdub_occupy_paint` | `overdub_occupy_paint` | Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -146,6 +147,26 @@ Default second overdub pass is on (2 bars, C0–B1). Undo/redo after last overdu
 Opt-in firmware flash before run: add `--build-upload` (restarts Teensy — restart capture after).
 
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
+
+### `overdub_occupy_paint` (source OD1 + occupy OD2 + GUS)
+
+Clear (if needed) → arm → record a **4-bar seed** (pitch 72 only; not an occupy target) → **first overdub** writes the half-bar phrase (48/52/56/60, unshifted) → **second overdub** occupies that phrase:
+
+| OD2 lap | Incoming notes | Occupy case |
+|---------|----------------|-------------|
+| 1 | 56 at the same on-tick as the source 56 | Same-start Hide |
+| 1 | phrase **+1/4 bar** on 48/52 | Shorten (`start < hold`); last note wraps |
+| 2 | that +1/4 phrase moved **−1/2 bar** (net **−1/4** vs first overdub) | Hide after shorten; first note wraps |
+
+Then **two undos then two redos** (GUS, not undo-redo-undo-redo). First OD2 `draw_src,layers` still gates adopted-cache paint after the source pass.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset overdub_occupy_paint \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+Host verifier: `scripts/test_occupy_paint_serial_verify.py`. Device gates: OD1 `overlap_hold` shorten=0 and hide=0, OD2 `overlap_hold` shorten≥2 and hide≥2, at least two loop-wrap pairs on 48/52/56/60 (half-bar tail On, head Off) from `WRAP` or OD2 `MI,U`, OD2 open `from=snapshot` when first `draw_src` `snap!=0` (`occupy_od2_snap_not_zero` is paint/occupy divergence only), adopted visual count does not shrink, `Overdub undone`≥2 and `Overdub redone`≥2.
 
 ### `long_loop_display_window`
 

@@ -246,9 +246,10 @@ struct Loop {
   /// `DisplayWindowUtils::kMaxDetailedWindowBars`. Experiment 1 rebuilds this
   /// value (1/2/4/8/16); a timing-passing length is evidence, not policy.
   static constexpr uint32_t kOverdubSourceWindowBars = 16;
-  /// Rebuild source notes from prepared `NoteSpan`s when ready, else window MIDI
-  /// source notes from the span cache (`overdubSourceSpanCacheNotes_`) using the
-  /// source window filter. Not visual cache.
+  /// Rebuild source notes from the span cache (`overdubSourceSpanCacheNotes_`)
+  /// using the source window filter. Cache fill follows the paint draw-source
+  /// predicate (DEC-052): published snapshot when true; otherwise prepared →
+  /// prior → covering visual → passes. Not visual-cache ownership.
   /// `why` is CAP `open` / `wrap` / `undo` / `redo` / `idle`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// Append display notes from `lastCommittedPassId()` chunks into the existing
@@ -305,6 +306,13 @@ struct Loop {
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
   void pushPendingNoteChangeForTest(PendingNoteChange change);
   bool overdubSourceSpanCacheReadyForTest() const { return overdubSourceSpanCacheReady(); }
+  const char* rebuildOverdubSourceSpanCacheForTest(uint32_t requestedWindowStart = 0,
+                                                   uint32_t requestedWindowLength = 0) {
+    return rebuildOverdubSourceSpanCache(requestedWindowStart, requestedWindowLength);
+  }
+  const NoteUtils::DisplayNoteVec& overdubSourceSpanCacheNotesForTest() const {
+    return overdubSourceSpanCacheNotes_;
+  }
 #endif
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.

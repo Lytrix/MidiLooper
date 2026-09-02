@@ -35,6 +35,8 @@
 #include "Globals.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SnapshotNoteConversion.h"
+#include "LoopSnapshot.h"
 
 #include <cstdio>
 #include <initializer_list>
@@ -3517,6 +3519,170 @@ void test_undo_overdub_idle_refresh_restores_record_layer() {
   TEST_ASSERT_EQUAL(materialized.size(), loop.visualCache.notes.size());
 }
 
+bool drainSnapshotConstruction(LoopSnapshotConstruction& construction) {
+  size_t steps = 0;
+  while (!construction.complete() && !construction.failed() && steps < 10000) {
+    construction.step(1);
+    ++steps;
+  }
+  return construction.complete() && !construction.failed();
+}
+
+ImmutableLoopSnapshotRef buildOccupySnapshot(LoopId loopId, uint32_t loopLength, NoteId noteId,
+                                             uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loopId, loopLength, 0, 100, 100));
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange add{};
+  add.kind = SnapshotChangeKind::Add;
+  add.next.loopId = loopId;
+  add.next.noteId = noteId;
+  add.next.pitch = pitch;
+  add.next.velocity = 100;
+  add.next.startTick = startTick;
+  add.next.endTick = endTick;
+  changes.notes.push_back(add);
+  LoopSnapshotConstruction construction(empty, changes);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot->findNote(noteId, pitch)));
+  return snapshot;
+}
+
+void plantVisualGeometry(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                         uint32_t endTick) {
+  NoteUtils::DisplayNote note{};
+  note.noteId = noteId;
+  note.note = pitch;
+  note.velocity = 100;
+  note.startTick = startTick;
+  note.endTick = endTick;
+  loop.visualCache.notes.clear();
+  loop.visualCache.notes.push_back(note);
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+}
+
+const NoteUtils::DisplayNote* findSpanCacheNote(const Loop& loop, NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceSpanCacheNotesForTest()) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void seedOccupyIdentityTriple(Loop& loop) {
+  LoopContentResolution::deviceGateReset();
+  loop.loopId = 1;
+  seedRecordNote(loop, 10, 300, 60);
+  loop.nextNoteId_ = 2;
+  LoopContentResolution::DeviceGateSample sample;
+  LoopContentResolution::measureDeviceGate(loop.passes, loop.loopLengthTicks, sample);
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  plantVisualGeometry(loop, 1, 60, 10, 200);
+}
+
+void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedOccupyIdentityTriple(loop);
+  loop.storePublishedSnapshotForTest(buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128),
+                                     loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.openOverdubSession(0);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+      static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(), loop.hasOverdubSession(),
+      !loop.visualCache.notes.empty(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent()));
+  const char* from = loop.rebuildOverdubSourceSpanCacheForTest();
+  TEST_ASSERT_EQUAL_STRING("snapshot", from);
+  const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(occupy);
+  TEST_ASSERT_EQUAL_UINT32(10u, occupy->startTick);
+  TEST_ASSERT_EQUAL_UINT32(128u, occupy->endTick);
+  TEST_ASSERT_EQUAL(1u, loop.overdubSourceSpanCacheNotesForTest().size());
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_occupy_predicate_false_uses_prepared_not_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedOccupyIdentityTriple(loop);
+  loop.storePublishedSnapshotForTest(buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128),
+                                     loop.playbackRevision);
+  ++loop.playbackRevision;
+  LoopContentResolution::deviceGateComplete(loop.playbackRevision);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  loop.openOverdubSession(0);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+      static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(), loop.hasOverdubSession(),
+      !loop.visualCache.notes.empty(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent()));
+  const char* from = loop.rebuildOverdubSourceSpanCacheForTest();
+  TEST_ASSERT_EQUAL_STRING("prepared", from);
+  const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(occupy);
+  TEST_ASSERT_EQUAL_UINT32(10u, occupy->startTick);
+  TEST_ASSERT_EQUAL_UINT32(300u, occupy->endTick);
+  TEST_ASSERT_NOT_EQUAL(128u, occupy->endTick);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopId = 1;
+  seedRecordNote(loop, 10, 300, 60);
+  loop.storePublishedSnapshotForTest(buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128),
+                                     loop.playbackRevision);
+  ++loop.playbackRevision;
+  plantVisualGeometry(loop, 1, 60, 10, 200);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(LoopContentResolution::preparedWindowReady(loop.playbackRevision));
+  loop.openOverdubSession(0);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+      static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(), loop.hasOverdubSession(),
+      !loop.visualCache.notes.empty(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent()));
+  const char* from = loop.rebuildOverdubSourceSpanCacheForTest();
+  TEST_ASSERT_EQUAL_STRING("visual", from);
+  const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(occupy);
+  TEST_ASSERT_EQUAL_UINT32(10u, occupy->startTick);
+  TEST_ASSERT_EQUAL_UINT32(200u, occupy->endTick);
+  TEST_ASSERT_NOT_EQUAL(128u, occupy->endTick);
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_occupy_follows_snapshot_change_while_visual_stale() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedOccupyIdentityTriple(loop);
+  loop.storePublishedSnapshotForTest(buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128),
+                                     loop.playbackRevision);
+  loop.openOverdubSession(0);
+  TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
+  TEST_ASSERT_EQUAL_UINT32(128u, findSpanCacheNote(loop, 1)->endTick);
+
+  plantVisualGeometry(loop, 1, 60, 10, 200);
+  loop.storePublishedSnapshotForTest(buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 176),
+                                     loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
+  const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(occupy);
+  TEST_ASSERT_EQUAL_UINT32(10u, occupy->startTick);
+  TEST_ASSERT_EQUAL_UINT32(176u, occupy->endTick);
+  TEST_ASSERT_NOT_EQUAL(200u, occupy->endTick);
+  TEST_ASSERT_NOT_EQUAL(300u, occupy->endTick);
+  LoopContentResolution::deviceGateReset();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
@@ -3606,5 +3772,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_without_snapshot_uses_fallback);
   RUN_TEST(test_idle_slice_incomplete_fallback_budget_keeps_dirty);
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
+  RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
+  RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
+  RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
+  RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);
   return UNITY_END();
 }

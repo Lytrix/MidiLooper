@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-02 (092344 OD2 stale snapshot)
+Last updated: 2026-09-02 (occupy snapshot source DEC-052)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,14 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — second-overdub stale snapshot ([`092344`](../../captures/session_20260902_092344.log)):**
-OD2 `snap=0` after `adopt_partial notes,164 dirty,0` gathered the last snapshot: frame 113, `hidden=39`, `39@2976→3055` rewritten to wrap `2976→2784`. Capture/session active is no longer enough to select snapshot. Current snapshot, or dirty/empty cache, still gathers snapshot (`004351`). Clean nonempty `visualCacheDirty==false` gathers visualCache. Plan: [`overdub_paint_second_overdub_stale_snapshot_bugfix.md`](../Plans/overdub_paint_second_overdub_stale_snapshot_bugfix.md). Persist/`usbdisp` cadence stays a follow-up. OVERDUBBING reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
+**Now — occupy snapshot source ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)):**
+`rebuildOverdubSourceSpanCache` consumes `shouldGatherPublishedSnapshotForDrawSource`. Predicate true → exclusive published-`LoopSnapshot` fill (`from=snapshot`). Predicate false → prepared → prior → covering visual → passes unchanged. Plan: [`overdub_occupy_snapshot_source_refinement.md`](../Plans/overdub_occupy_snapshot_source_refinement.md). Native occupy fixtures in `test_overdub_source_view` PASS. `teensy41-capture-serial` RAM1 locals **6848**. Host `test_occupy_paint_serial_verify` PASS. Full native **1628/1630** — one pre-existing fail in `test_same_pass_playhead_tails_keep_closed_bar_four_end` (does not call occupy fill). Device: `overdub_occupy_paint` OD2 open `from=snapshot` when paint `snap!=0`; `occupy_od2_snap_not_zero` is paint/occupy divergence only. OVERDUBBING reconstruct stays off. Stage 4 stays closed. `#41` Stage 2 stays out.
+
+**Prior — occupy prepared source pin ([`134815`](../../captures/session_20260902_134815.log)):**
+`srcskip` `not_finished` because the LCR device gate is STOPPED-only and occupy-paint never idles STOPPED with committed passes (`sess=0 prep=0`). Opens were `from=visual`. [`113651`](../../captures/session_20260902_113651.log) `from=prepared,notes=8` is leftover LCR on a restamped finished session (`prep=3072` at OD1 open), not occupy-paint owner. Plan: [`overdub_occupy_prepared_source_incomplete_bugfix.md`](../Plans/overdub_occupy_prepared_source_incomplete_bugfix.md).
+
+**Prior — occupy-paint HITL + second-overdub stale snapshot ([`092344`](../../captures/session_20260902_092344.log)):**
+Preset `overdub_occupy_paint`: record seeds loop length (pitch 72). First overdub writes the half-bar phrase (48/52/56/60). Second overdub occupies that phrase: same-start 56 (Hide), +1/4 on 48/52 (Shorten + wrap), then −1/2 from that (+1/4 − 1/2 = −1/4 vs source) Hide + wrap. Host verifier is `verify_occupy_paint` (OD1 must not Shorten/Hide; occupy gates are OD2). Plan: [`overdub_paint_second_overdub_stale_snapshot_bugfix.md`](../Plans/overdub_paint_second_overdub_stale_snapshot_bugfix.md). Persist/`usbdisp` cadence stays a follow-up. OVERDUBBING reconstruct stays off. Stage 4 stays closed. RC2b stays parked. Source-view wrap-held [`013709`](../../captures/session_20260902_013709.log) stays a separate plan.
 
 **Prior — source-view wrap-held wrong head Off ([`013709`](../../captures/session_20260902_013709.log)):**
 Occupy `39@3024→448` at `hs=288` while storage WRAP is `3024→64`. Effective `39@288` len **2784**. A 4-event reconstruct does not emit `3024→448` (Off@64 blocked by intervening On@288; 3024 finishes to 3071). Pin the source-view merge / collapse / companion path next. Plan: [`overdub_source_view_wrap_held_wrong_head_off_bugfix.md`](../Plans/overdub_source_view_wrap_held_wrong_head_off_bugfix.md). Equal-tick consume shipped `932a58d6`.
