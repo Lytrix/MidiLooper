@@ -264,13 +264,16 @@ inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCo
                                                      heldCommittedNoteCount);
 }
 
-/// During capture, keep the last published snapshot even when stale (`004351` wrap 2).
-/// After stop, a nonempty `visualCache` (`adopt_partial`) is paint authority so a
-/// successor snapshot cannot replace linear stop closes with wrap-shaped ends (`010217`).
+/// During capture or an open overdub session, keep the last published snapshot even
+/// when stale (`004351` wrap 2). Wrap seal clears `captureActive` before `beginCapture`;
+/// the session flag must still select snapshot (`011906`). After the session closes, a
+/// nonempty `visualCache` (`adopt_partial`) is paint authority (`010217`).
 inline bool shouldGatherPublishedSnapshotForDrawSource(bool hasPublishedSnapshot,
                                                        bool captureActive,
+                                                       bool overdubSessionActive,
                                                        bool visualCacheNonempty) {
-    return hasPublishedSnapshot && (captureActive || !visualCacheNonempty);
+    return hasPublishedSnapshot &&
+           (captureActive || overdubSessionActive || !visualCacheNonempty);
 }
 
 /// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
@@ -295,6 +298,17 @@ inline bool shouldAdoptComposedNotesOverVisualCache(size_t composedNoteCount,
 inline bool shouldKeepVisualCacheOverSmallerFullLoopSlice(size_t visualCacheNoteCount,
                                                           size_t sliceNoteCount) {
   return visualCacheNoteCount > 0 && sliceNoteCount < visualCacheNoteCount;
+}
+
+/// Sealed rows stay in the live session frame until visual cache covers the seal
+/// (`012714` wrap 2). After stop the adopted VisualCache is paint authority — do
+/// not suffix-union sealed onto it.
+inline bool shouldUnionSealedCapturePreviewForDrawSource(bool hasSealedCapturePreview,
+                                                         bool sealedCapturePreviewCovered,
+                                                         bool captureActive,
+                                                         bool overdubSessionActive) {
+    return hasSealedCapturePreview && !sealedCapturePreviewCovered &&
+           (captureActive || overdubSessionActive);
 }
 
 /// Coverage contract (`153517` RC1): `builtFromRevision = R` only when the completed
@@ -448,11 +462,12 @@ inline void accumulateOverviewBandMask(std::vector<uint8_t>& mask, const Note& n
     }
 }
 
-/// Per-bar draw source. While capture is active every window bar reads committed
-/// Snapshot (when a published snapshot exists) or VisualCache notes, then unions
-/// `capturePreview`. After stop, a nonempty VisualCache is preferred over the
-/// successor snapshot. Closed preview rows supersede at pitch+start in the suffix
-/// after `committedDisplayEnd`; open holds (`endTick == startTick`) append.
+/// Per-bar draw source. While capture or an overdub session is active every window
+/// bar reads committed Snapshot (when a published snapshot exists) or VisualCache
+/// notes, then unions sealed preview (until visual covers the seal) and
+/// `capturePreview`. After the session closes, a nonempty VisualCache is preferred.
+/// Closed preview rows supersede at pitch+start in the suffix after
+/// `committedDisplayEnd`; open holds (`endTick == startTick`) append.
 enum class DrawSourcePath : uint8_t {
     Capture = 0,
     Snapshot = 1,

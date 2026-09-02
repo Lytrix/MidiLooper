@@ -426,11 +426,8 @@ struct Loop {
   bool hasSealedCapturePreview() const { return !sealedCapturePreviewNotes_.empty(); }
   /// Copies the live preview rows once, before the seal clears them.
   void retainCapturePreviewAtSeal();
-  /// True when the committed representation `resolveDisplayNotesByDrawSource` would select
-  /// covers the sealed revision. Evaluated against the *selected* representation, never as a
-  /// disjunction over both tiers: a current Snapshot is proof because that same predicate makes
-  /// the painter ignore the cache loop-wide, and a stale Snapshot means the cache is what
-  /// paints, so only `visualCache.builtFromRevision` can prove coverage.
+  /// True when `visualCache` has consumed the sealed revision. A current published
+  /// snapshot is not membership proof (`012714` wrap 2: snap=1 dropped sealed=47).
   bool sealedCapturePreviewIsCovered() const;
   /// Drops the retained rows once `sealedCapturePreviewIsCovered()` holds. Paint reads the
   /// predicate directly, so a late release cannot show stale rows.

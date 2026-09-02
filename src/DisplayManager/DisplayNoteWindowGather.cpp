@@ -249,7 +249,8 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
     const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
     const bool captureActive = loop.captureActive();
     const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-        static_cast<bool>(snapshot), captureActive, !loop.visualCache.notes.empty());
+        static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
+        !loop.visualCache.notes.empty());
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (usePublishedSnapshot) {
@@ -259,7 +260,9 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
         }
     }
     committedEnd = out.size();
-    if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
+    if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+            loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
+            loop.hasOverdubSession())) {
         for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
             for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
                 if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
@@ -315,7 +318,9 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     key.capturePreviewRevision = loop.capturePreview.revision;
     key.visualCacheRevision = loop.visualCache.revision;
     key.publishedSnapshotRevision = loop.publishedSnapshotRevision();
-    if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
+    if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+            loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(),
+            loop.captureActive(), loop.hasOverdubSession())) {
         key.sealedPreviewRevision = loop.playbackRevision;
         const size_t sealedCount = loop.sealedCapturePreviewNotes().size();
         key.sealedPreviewCount =

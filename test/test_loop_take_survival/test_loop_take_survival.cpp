@@ -1353,11 +1353,12 @@ void test_seal_retains_capture_rows_until_snapshot_covers_revision() {
   }
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 
-  // A current snapshot is proof on its own: the painter reads snapshot membership for every
-  // committed bar, so the still-dirty cache cannot contribute a stale row.
-  TEST_ASSERT_TRUE(loop.sealedCapturePreviewIsCovered());
+  // `012714` wrap 2: snapshot current is not membership proof. Visual is still
+  // behind, so sealed rows stay until the cache consumes the sealed revision.
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
   loop.releaseSealedCapturePreviewIfCovered();
-  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_EQUAL(1u, loop.sealedCapturePreviewNotes().size());
 }
 
 /// With a stale snapshot the cache is what paints, so only `visualCache.builtFromRevision` can
@@ -1678,7 +1679,8 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
   const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
   const bool captureActive = loop.captureActive();
   const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-      static_cast<bool>(snapshot), captureActive, !loop.visualCache.notes.empty());
+      static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
+      !loop.visualCache.notes.empty());
   const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
 
   for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
@@ -1692,7 +1694,9 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
   if (committedEnd != nullptr) {
     *committedEnd = prefixEnd;
   }
-  if (loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) {
+  if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+          loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
+          loop.hasOverdubSession())) {
     for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
       for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
@@ -2044,6 +2048,7 @@ void test_draw_source_open_hold_grows_to_playhead_after_occupy_hide() {
   TEST_ASSERT_EQUAL_UINT32(384u, membership->references[0]->endTick);
 
   loop.openOverdubSession(0);
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(336, 1, 77, 90)));
   TEST_ASSERT_FALSE(loop.capturePreview.openNoteIndices.empty());
@@ -2292,7 +2297,6 @@ void test_draw_source_after_stop_keeps_adopted_linear_ends() {
   loop.clearPendingNoteChanges();
   loop.pushOverdubSessionPass(wrapPassId, {});
   loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
-  TEST_ASSERT_FALSE(loop.captureActive());
 
   size_t steps = 0;
   while (loop.hasPendingWrapJournal() && steps < 10000) {
@@ -2301,6 +2305,9 @@ void test_draw_source_after_stop_keeps_adopted_linear_ends() {
   }
   TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
   TEST_ASSERT_TRUE(static_cast<bool>(loop.publishedSnapshot()));
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.captureActive());
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
   for (const auto& row : chord) {
     const LoopSnapshotNoteRef snapNote = loop.publishedSnapshot()->findNote(row.noteId, row.pitch);
     TEST_ASSERT_TRUE(static_cast<bool>(snapNote));
@@ -2337,6 +2344,117 @@ void test_draw_source_after_stop_keeps_adopted_linear_ends() {
     }
     TEST_ASSERT_TRUE(foundLinear);
   }
+}
+
+/// [`011906`] wrap seal: session still open after `captureActive` goes false.
+void test_draw_source_keeps_snapshot_when_wrap_clears_capture() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const size_t visualBefore = loop.visualCache.notes.size();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  const uint32_t priorRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  const PassId wrapPassId = loop.lastCommittedPassId();
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 72;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(wrapPassId));
+  loop.clearPendingNoteChanges();
+  loop.pushOverdubSessionPass(wrapPassId, {});
+  loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
+  TEST_ASSERT_FALSE(loop.captureActive());
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundWrapOne = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 72 && note.startTick == 400 && note.endTick == 480) {
+      foundWrapOne = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundWrapOne);
+  TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
+}
+
+/// [`012714`] wrap 2: snap-current must keep sealed bar-3 notes in the session frame.
+void test_draw_source_sealed_survives_current_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2304, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2784, 1, 64, 0)));
+  const uint32_t priorRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 2784));
+  const PassId wrapPassId = loop.lastCommittedPassId();
+
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 21;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 64;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 2304;
+  wrapAdd.endTick = 2784;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(wrapPassId));
+  loop.pushOverdubSessionPass(wrapPassId, {});
+  loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundSealedBarThree = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 64 && note.startTick == 2304 && note.endTick == 2784) {
+      foundSealedBarThree = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundSealedBarThree);
 }
 
 void test_same_pass_draw_source_keeps_closed_bar_four_end() {
@@ -2784,6 +2902,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_sealed_row_survives_prefix_hide);
   RUN_TEST(test_draw_source_keeps_stale_snapshot_after_second_wrap);
   RUN_TEST(test_draw_source_after_stop_keeps_adopted_linear_ends);
+  RUN_TEST(test_draw_source_keeps_snapshot_when_wrap_clears_capture);
+  RUN_TEST(test_draw_source_sealed_survives_current_snapshot);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);

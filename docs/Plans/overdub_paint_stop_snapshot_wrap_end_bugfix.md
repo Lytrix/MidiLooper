@@ -1,6 +1,6 @@
 # Overdub paint — stop gather keeps adopted linear ends
 
-**Status:** Host shipped — device recapture next  
+**Status:** Host shipped — session flag stays; keep-larger reverted (`012714`)  
 **Date:** 2026-09-02  
 **Kind:** bugfix  
 **Evidence:** [`010217`](../../captures/session_20260902_010217.log) stop at 284.681s  
@@ -35,10 +35,16 @@ STOPPED paint: `adopt_partial` **132** `dirty=0`, first frame **133**, then afte
 ## Invariant
 
 ```
-if captureActive and publishedSnapshot() exists: gather that snapshot
-if !captureActive and visualCache.notes nonempty: gather visualCache
-visualCache only when no published snapshot exists, or after stop when visual is nonempty
+if (captureActive or overdubSession) and publishedSnapshot() exists: gather that snapshot
+if session is closed and visualCache.notes nonempty: gather visualCache
 ```
+
+Keep-larger (adopted visual over a smaller snapshot during a live session) reverted after
+[`012714`](../../captures/session_20260902_012714.log): it locked the previous pass onto
+bars the playhead had not recrossed. Sealed coverage is
+[`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](overdub_paint_sealed_survives_current_snapshot_bugfix.md).
+
+[`011906`](../../captures/session_20260902_011906.log): wrap seal clears `captureActive` while the session stays open (frame fell toward record `visual=65`). Second overdub used successor snapshot **111** over adopted visual **132**. Stop resolved (`STOPPED` 155).
 
 ## Architecture checkpoint
 

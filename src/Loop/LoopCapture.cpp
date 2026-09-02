@@ -1201,12 +1201,8 @@ LOOP_COLD_MEM bool Loop::sealedCapturePreviewIsCovered() const {
   if (sealedCapturePreviewNotes_.empty()) {
     return true;
   }
-  if (publishedSnapshotIsCurrent()) {
-    // Snapshot is current, which is also what makes the painter read snapshot membership for
-    // every committed bar, so the cache cannot contribute a stale row in the same frame.
-    return publishedSnapshotRevision() >= sealedCapturePreviewRevision_;
-  }
-  // Snapshot is stale, so the cache is the representation that paints.
+  // A current snapshot is not membership proof. `012714` wrap 2: snap=1 released
+  // sealed=47 and the frame dropped 148→129; bars 2–3 had no draw_src diff.
   return !visualCacheDirty && visualCache.builtFromRevision >= sealedCapturePreviewRevision_;
 }
 

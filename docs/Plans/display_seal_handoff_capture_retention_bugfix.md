@@ -96,20 +96,13 @@ The selection and the coverage proof are the same predicate, which makes this ex
 
 | `publishedSnapshotIsCurrent()` | Representation the painter selects | Coverage proof |
 |---|---|---|
-| true | Snapshot, for every committed bar in the window | `publishedSnapshotRevision() == playbackRevision`, and `playbackRevision >= R` because `R` is a past seal and the counter only grows. Loop-wide, so no bar can fall back to the cache in the same frame. |
-| false | `visualCache.notes` | `visualCache.builtFromRevision >= R` |
-
-So the predicate is **coverage by the selected representation**, never a disjunction over both
-tiers:
+| true or false | Snapshot prefix while capture/session is active; VisualCache after stop | `visualCache.builtFromRevision >= R` and `!visualCacheDirty` only. Snap-current is not membership (`012714` wrap 2: `snap=1` dropped `sealed=47`, frame 148→129). |
 
 ```text
-release iff (snapshotCurrent and snapshotRevision >= R)
-        or  (not snapshotCurrent and visualCache.builtFromRevision >= R)
+release iff !visualCacheDirty and visualCache.builtFromRevision >= R
 ```
 
-The guarantee that makes the first row sufficient is that `resolveDisplayNotesByDrawSource`
-branches on `snapshotCurrent` once for the whole committed pass over bars, so when it is true
-the cache contributes nothing to the frame.
+Amended by [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](overdub_paint_sealed_survives_current_snapshot_bugfix.md).
 
 ## Supersede contract
 

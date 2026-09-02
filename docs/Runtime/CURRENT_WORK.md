@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-02 (010217 stop gather linear ends)
+Last updated: 2026-09-02 (013709 sealed held; next equal-tick + pairing)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,14 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — stop gather keeps adopted linear ends ([`010217`](../../captures/session_20260902_010217.log)):**
-Host shipped. Storage Off is `2640→2784/2792`. After persist, STOPPED gather preferred the successor snapshot and painted wrap-to-0 until NOTE_EDIT rematerialize. `gatherDrawSourceBars` keeps the 086480f9 snapshot while `captureActive`; after stop a nonempty `visualCache` is paint authority. Plan: [`overdub_paint_stop_snapshot_wrap_end_bugfix.md`](../Plans/overdub_paint_stop_snapshot_wrap_end_bugfix.md). Reconstruct stays off. Stage 4 stays closed. RC2b stays parked. Device recapture next.
+**Now — equal-tick reconstruct + source-view pairing ([`013709`](../../captures/session_20260902_013709.log)):**
+Sealed-union recapture held: `sealed` 28→45 across six wraps, no bar-2/3 fallback, only record-pass `draw_src,diff`. Next two RCs (not gather): (1) same-tick `SEVT N+F@776 ch13 pitch 86` reconstructs as `776` len **2296**; (2) source-view phantom `39@3024→448` feeds occupy at hold 288 and effective `288` len **2784**. Crash left no `CrashReport` in this log — check SD `crashlog.txt` / recapture with boot wait. Reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
+
+**Prior — sealed survives current snapshot ([`012714`](../../captures/session_20260902_012714.log), recapture [`013709`](../../captures/session_20260902_013709.log)):**
+`sealedCapturePreviewIsCovered` uses `visualCache.builtFromRevision` only. Sealed unions only while capture or the overdub session is active. `openOverdubSession` clears leftover record sealed. Keep-larger during a live session is reverted. Plan: [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](../Plans/overdub_paint_sealed_survives_current_snapshot_bugfix.md).
+
+**Prior — stop gather keeps adopted linear ends ([`011906`](../../captures/session_20260902_011906.log)):**
+`!captureActive` was too wide: wrap seal still has an overdub session, so gather fell back to record `visual=65`. Session flag stays. Keep-larger reverted after `012714`. Plan: [`overdub_paint_stop_snapshot_wrap_end_bugfix.md`](../Plans/overdub_paint_stop_snapshot_wrap_end_bugfix.md).
 
 **Prior — closed occupy + stale snapshot paint ([`005439`](../../captures/session_20260902_005439.log)):**
 Device PASS. Occupy frame `63→82`. Wrap 2 frame **131→132** with `snap=0`. Overdub stop published (`adopt_partial` **144**, DISP **157**). Log ends mid-`LoopPersist` (`SAVE,in_progress`) after capture Ctrl+C; no HardFault line. Plans: [`overdub_paint_closed_preview_suffix_hide_bugfix.md`](../Plans/overdub_paint_closed_preview_suffix_hide_bugfix.md), [`overdub_paint_stale_snapshot_after_wrap_bugfix.md`](../Plans/overdub_paint_stale_snapshot_after_wrap_bugfix.md). Reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
@@ -182,9 +188,8 @@ the Capture tier before either committed tier carried them.
 `Loop` now retains the closed preview rows at the seal
 (`retainCapturePreviewAtSeal`) and releases them only when the committed
 representation the painter selects proves coverage
-(`sealedCapturePreviewIsCovered`): a current published snapshot is proof because
-that same predicate makes the painter read snapshot membership loop-wide,
-otherwise `visualCache.builtFromRevision` must reach the sealed revision.
+(`sealedCapturePreviewIsCovered`): only `visualCache.builtFromRevision` proves
+coverage. A current published snapshot is not membership (`012714` wrap 2).
 `resolveDisplayNotesByDrawSource` unions the retained rows into the committed
 prefix through `upsertDisplayNoteAtPitchStart`, which replaces only at equal
 pitch+start and never acts as a general newer-wins rule.

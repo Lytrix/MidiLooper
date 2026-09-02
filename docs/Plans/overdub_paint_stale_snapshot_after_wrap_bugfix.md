@@ -5,7 +5,7 @@
 **Kind:** bugfix  
 **Evidence:** [`004351`](../../captures/session_20260902_004351.log) wrap 2 at 76.701s  
 **Does not replace:** [`overdub_paint_closed_preview_suffix_hide_bugfix.md`](overdub_paint_closed_preview_suffix_hide_bugfix.md), DEC-045  
-**Does not authorize:** OVERDUBBING reconstruct, Stage 4, changing `sealedCapturePreviewIsCovered`
+**Does not authorize:** OVERDUBBING reconstruct, Stage 4. Sealed coverage amended by [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](overdub_paint_sealed_survives_current_snapshot_bugfix.md).
 
 ---
 

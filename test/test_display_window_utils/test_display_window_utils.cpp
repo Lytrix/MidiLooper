@@ -306,16 +306,34 @@ void test_should_assign_grown_visual_cache_over_overdub_hold() {
 void test_should_gather_published_snapshot_for_draw_source() {
   // Capture-active: keep snapshot even when visualCache is nonempty (004351).
   TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, true));
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, false, true));
   TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, false));
-  // After stop: nonempty visualCache is paint authority (010217).
-  TEST_ASSERT_FALSE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, true));
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, false, false));
+  // Wrap seal: capture off, session still open (011906).
   TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, false));
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, true, true));
+  // After stop: session closed, nonempty visualCache is paint authority (010217).
   TEST_ASSERT_FALSE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(false, false, true));
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, false, true));
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, false, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(false, false, false, true));
+}
+
+void test_should_union_sealed_capture_preview_for_draw_source() {
+  // Live session: uncovered sealed stays in the frame (012714 wrap 2).
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+      true, false, false, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+      true, false, true, false));
+  // Covered, or session closed: do not suffix-union onto adopted visual.
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+      true, true, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+      true, false, false, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+      false, false, true, true));
 }
 
 void test_should_adopt_composed_notes_over_visual_cache() {
@@ -1259,6 +1277,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
   RUN_TEST(test_should_gather_published_snapshot_for_draw_source);
+  RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);
   RUN_TEST(test_clamp_display_note_resize_never_grows);
