@@ -280,6 +280,32 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
         self.assertEqual(result["od2_open_from"], "snapshot")
         self.assertEqual(result["od2_srcspan"][0]["id"], 7)
 
+    def test_pass_when_overlap_hold_uses_short_oh_keys(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,1100,DIAG,oh,n,16,e,0,i,0,o,0,k,0,x,0,s,0,u,0,t,0,add,16,shorten,0,hide,0",
+            "#CAP,2000,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,2100,VCACHE,adopt_partial,ev,-1,notes,80,first,0,last,3,total,4,dsz,4,dcnt,0,dirty,0",
+            "#CAP,2200,DISP,0,PLAYING,3072,80,80,80,80,1",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3001,DIAG,lcr,src,why=open,from=snapshot,win=0,proj=1,tot=1,ev=0,notes,19,"
+            "bars=16,live=3072,prep=0",
+            "#CAP,3100,DIAG,draw_src,layers,visual,80,preview,1,sealed,0,snap,1,frame,80,"
+            "hidden,0,missed_preview,0",
+            "#CAP,3200,DIAG,oh,n,20,e,0,i,2,o,0,k,12,x,2,s,12,u,1,t,2,add,4,shorten,8,hide,6",
+            "#CAP,3300,WRAP,2880,192,5,52",
+            "#CAP,3301,WRAP,2880,192,5,48",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+            "Overdub undone",
+            "Overdub undone",
+            "Overdub redone",
+            "Overdub redone",
+        ]
+        result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertEqual(result["max_shorten"], 8)
+        self.assertEqual(result["max_hide"], 6)
+
     def test_fail_when_wrap_pairs_missing(self) -> None:
         lines = [
             "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",

@@ -11,7 +11,7 @@ from hitl.flows.occupy_paint import HALF_BAR_TICKS, WRAP_PITCHES
 _DRAW_SRC_RE = re.compile(
     r"draw_src,layers,visual,(\d+),preview,(\d+),sealed,(\d+),snap,(\d+),frame,(\d+)"
 )
-_OVERLAP_HOLD_RE = re.compile(r"DIAG,overlap_hold,.*?,shorten,(\d+),hide,(\d+)")
+_OVERLAP_HOLD_RE = re.compile(r"DIAG,(?:overlap_hold|oh),.*?,shorten,(\d+),hide,(\d+)")
 _VCACHE_ADOPT_RE = re.compile(r"VCACHE,adopt_partial,.*?notes,(\d+),.*?dirty,(\d+)")
 _SRC_OPEN_RE = re.compile(r"DIAG,lcr,src,why=open,from=([^,]+)")
 _SRCSPAN_VIEW_RE = re.compile(

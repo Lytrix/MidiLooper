@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstring>
 #include <unity.h>
 
 #include "Utils/CaptureLineTier.h"
@@ -83,6 +84,18 @@ void test_timing_telemetry_lines_are_tier_a() {
       "#CAP,18121016,DIAG,overlap_hold,note_offs,3,empty_sets,1,max_ids,4,overflows,0,"
       "looked_up,2,max_examined,30,sum_examined,40,max_lookup_us,12,sum_lookup_us,18,"
       "add,3,shorten,1,hide,0"));
+  char overlapHoldWorst[192];
+  const int overlapHoldWorstLen = snprintf(
+      overlapHoldWorst, sizeof(overlapHoldWorst),
+      "#CAP,%lu,DIAG,oh,n,%lu,e,%lu,i,%lu,o,%lu,k,%lu,x,%lu,s,%lu,u,%lu,t,%lu,"
+      "add,%lu,shorten,%lu,hide,%lu",
+      4294967295UL, 4294967295UL, 4294967295UL, 4294967295UL, 4294967295UL, 4294967295UL,
+      4294967295UL, 4294967295UL, 4294967295UL, 4294967295UL, 4294967295UL, 4294967295UL,
+      4294967295UL);
+  TEST_ASSERT_TRUE(overlapHoldWorstLen > 0);
+  TEST_ASSERT_TRUE(overlapHoldWorstLen < 192);
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(overlapHoldWorst));
+  TEST_ASSERT_NOT_NULL(strstr(overlapHoldWorst, ",hide,4294967295"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,328705775,DIAG,timing_max,PlaybackBuildTime,74729"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701476,DIAG,late_on,0,0"));
