@@ -259,6 +259,55 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
            static_cast<unsigned long>(holdStart),
            static_cast<unsigned long>(observeUs));
   DebugSessionCapture::appendCaptureTextLine(line);
+  // Fail loud when nothing is present at the hold: every `141717` hold at phase 0 reported
+  // n=0/a=0/b=0 while 768/1536/2304 resolved, and the capture could not say whether the
+  // prior pass's row was absent, shaped so present-at-hold misses it, or filtered out.
+  if (sourceViewIds.size() == 0) {
+    unsigned pitchRows = 0;
+    unsigned rowsLogged = 0;
+    constexpr unsigned kMaxZeroParticipantRows = 6;
+    for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+      if (note.note != pending.note) {
+        continue;
+      }
+      ++pitchRows;
+      if (rowsLogged >= kMaxZeroParticipantRows) {
+        continue;
+      }
+      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,nopart,row,id=%lu,s=%lu,e=%lu",
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(note.noteId),
+               static_cast<unsigned long>(note.startTick),
+               static_cast<unsigned long>(note.endTick));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      ++rowsLogged;
+    }
+    unsigned mergedOns = 0;
+    unsigned mergedLogged = 0;
+    for (const MidiEvent& evt : runtime->mergedMidiEvents.mergedEvents) {
+      if (!evt.isNoteOn() || evt.data.noteData.note != pending.note) {
+        continue;
+      }
+      ++mergedOns;
+      if (mergedLogged >= kMaxZeroParticipantRows) {
+        continue;
+      }
+      snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,nopart,merged,id=%lu,t=%lu",
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(evt.noteId),
+               static_cast<unsigned long>(evt.tick));
+      DebugSessionCapture::appendCaptureTextLine(line);
+      ++mergedLogged;
+    }
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,lcr,nopart,pitch=%u,hs=%lu,rows=%u,mons=%u,est=%u,len=%lu,win=%lu,"
+             "mrev=%lu,prev=%lu",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(pending.note),
+             static_cast<unsigned long>(holdStart), pitchRows, mergedOns,
+             loop.hasOverdubSourceView() ? 1u : 0u, static_cast<unsigned long>(loopLength),
+             static_cast<unsigned long>(runtime->mergedMidiEvents.windowLengthTicks),
+             static_cast<unsigned long>(runtime->mergedMidiEvents.builtFromRevision),
+             static_cast<unsigned long>(loop.playbackRevision));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
   // Mismatch only: ledger vs source view disagree on this lane. Passing occupies stay quiet.
   if (pending.overlapNoteIds.size() != sourceViewIds.size()) {
     logOccupyLedgerMismatch(loop, runtime->ledger, runtime->mergedMidiEvents, midiChannel,

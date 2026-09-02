@@ -131,7 +131,7 @@ public:
   void noteLoopPrefixMeasureAfterUndo();
   /// DEC-038 038.1: seal completed pairs at S, publish, beginCapture, stay OVERDUBBING.
   /// Returns true only when a capture pass was committed (`CommitResult::Committed`).
-  bool commitOverdubWrapAtSessionStart();
+  bool commitOverdubWrap();
   bool maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase);
 
   // Track management

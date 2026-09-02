@@ -189,11 +189,75 @@ LOOP_COLD_MEM bool hideMatchesDisplayNote(const NoteUtils::DisplayNote& note,
                                           hide.endTick, loopLength);
 }
 
+LOOP_COLD_MEM bool hideMarksPitchStart(const PendingNoteChangeVec& transforms, uint8_t pitch,
+                                       uint32_t startTick) {
+  for (const PendingNoteChange& change : transforms) {
+    if (change.kind == PendingNoteChangeKind::Hide && change.pitch == pitch &&
+        change.startTick == startTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// After Hide apply, drop a longer same-pitch+start sibling so a sealed Hide cannot
+/// re-admit the record remnant next to the short overdub (`201956` 63@768→1151 vs 864).
+/// Only pitch+starts named by a Hide are touched — not a general shortest-wins rule
+/// (`150650` long sealed hold must not lose to a shorter stale row).
+LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedByHide(
+    NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
+    size_t liveCaptureBegin) {
+  if (notes.size() < 2) {
+    return;
+  }
+  bool anyHide = false;
+  for (const PendingNoteChange& change : transforms) {
+    if (change.kind == PendingNoteChangeKind::Hide) {
+      anyHide = true;
+      break;
+    }
+  }
+  if (!anyHide) {
+    return;
+  }
+  const size_t committedEnd = liveCaptureBegin < notes.size() ? liveCaptureBegin : notes.size();
+  if (committedEnd < 2) {
+    return;
+  }
+  NoteUtils::DisplayNoteVec kept;
+  kept.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i) {
+    const NoteUtils::DisplayNote& note = notes[i];
+    if (i >= committedEnd || note.endTick < note.startTick ||
+        !hideMarksPitchStart(transforms, note.note, note.startTick)) {
+      kept.push_back(note);
+      continue;
+    }
+    bool dominated = false;
+    for (size_t j = 0; j < committedEnd; ++j) {
+      const NoteUtils::DisplayNote& other = notes[j];
+      if (other.note != note.note || other.startTick != note.startTick ||
+          other.endTick < other.startTick) {
+        continue;
+      }
+      if (other.endTick < note.endTick || (other.endTick == note.endTick && j < i)) {
+        dominated = true;
+        break;
+      }
+    }
+    if (!dominated) {
+      kept.push_back(note);
+    }
+  }
+  notes.swap(kept);
+}
+
 LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& notes,
                                                      const PendingNoteChangeVec& pending,
                                                      uint32_t loopLength,
                                                      bool matchHideByOverlap,
-                                                     size_t liveCaptureBegin) {
+                                                     size_t liveCaptureBegin,
+                                                     bool dropSameStartLongerAfterHide) {
   PendingNoteChangeVec transforms;
   for (const PendingNoteChange& change : pending) {
     if ((change.kind == PendingNoteChangeKind::Shorten ||
@@ -239,6 +303,9 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
     updated.push_back(revised);
   }
   notes.swap(updated);
+  if (dropSameStartLongerAfterHide) {
+    dropLongerSamePitchStartSiblingsMarkedByHide(notes, transforms, liveCaptureBegin);
+  }
 }
 
 }  // namespace
@@ -880,10 +947,10 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
     }
   }
   applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, pendingNoteChanges_, loopLen, false,
-                                    static_cast<size_t>(-1));
+                                    static_cast<size_t>(-1), false);
   if (overdubSourceSpanCacheValid_) {
     applyPendingHideAndShortenToNotes(overdubSourceSpanCacheNotes_, pendingNoteChanges_, loopLen,
-                                      false, static_cast<size_t>(-1));
+                                      false, static_cast<size_t>(-1), false);
   }
 }
 
@@ -925,8 +992,12 @@ void appendSealedCompanionOverlay(const Loop& loop, PendingNoteChangeVec& overla
 
 }  // namespace
 
+LOOP_COLD_MEM bool Loop::hasSealedCompanionOverlay() const {
+  return !lastOverdubSealCompanionIds_.empty();
+}
+
 LOOP_COLD_MEM bool Loop::sealedCompanionOverlayRequired() const {
-  if (lastOverdubSealCompanionIds_.empty() || lastOverdubSealPlaybackRevision_ == 0) {
+  if (!hasSealedCompanionOverlay() || lastOverdubSealPlaybackRevision_ == 0) {
     return false;
   }
   const uint32_t selectedRevision = publishedSnapshotIsCurrent()
@@ -941,17 +1012,21 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
                                ? overdubSourceViewLoopLengthTicks_
                                : loopLengthTicks;
   if (!pendingNoteChanges_.empty()) {
-    applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin);
+    applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin,
+                                      true);
   }
-  if (!sealedCompanionOverlayRequired()) {
+  if (!hasSealedCompanionOverlay()) {
     return;
   }
+  // Hide stays projectable after snapshot-current. Revision >= Rseal released the
+  // overlay while the Hide target was still in snapshot membership (`201956`
+  // draw_src id 71 63@768→1151 next to 768→864).
   PendingNoteChangeVec overlay;
   appendSealedCompanionOverlay(*this, overlay);
   if (overlay.empty()) {
     return;
   }
-  applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin);
+  applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin, true);
 }
 
 LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(

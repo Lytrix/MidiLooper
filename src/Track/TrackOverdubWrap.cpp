@@ -19,10 +19,10 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   if (!loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
     return false;
   }
-  return commitOverdubWrapAtSessionStart();
+  return commitOverdubWrap();
 }
 
-TRACK_COLD_MEM bool Track::commitOverdubWrapAtSessionStart() {
+TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   Loop& loop = getActiveLoop();
   if (!loop.hasOverdubSession() || loop.capture.phase != CapturePhase::Overdub) {
     return false;
@@ -36,7 +36,7 @@ TRACK_COLD_MEM bool Track::commitOverdubWrapAtSessionStart() {
     loop.noteOverdubWrapCommitted();
     return false;
   }
-  const uint32_t sealedAtTick = loop.playheadPhaseTick;
+  const uint32_t sealedAtTick = 0;
   const uint32_t priorPlaybackRevision = loop.playbackRevision;
   const CommitResult result = loop.commitCapturePass(CommitReason::OverdubWrap, sealedAtTick);
   const bool wrapped = result == CommitResult::Committed;

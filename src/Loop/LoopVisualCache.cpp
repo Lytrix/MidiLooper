@@ -248,7 +248,7 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToVisualCacheNotes() {
   if (!hasOverdubSession() || visualCache.notes.empty()) {
     return;
   }
-  if (!hasPendingNoteChanges() && !sealedCompanionOverlayRequired()) {
+  if (!hasPendingNoteChanges() && !hasSealedCompanionOverlay()) {
     return;
   }
   applyPendingNoteChangesToDisplayNotes(visualCache.notes, visualCache.notes.size());

@@ -1,6 +1,6 @@
 # Overdub wrap — pairing, companions, occupancy
 
-**Status:** RC2 fixture-closed (no pairing firmware). RC3 overlay shipped (`b3448759`). RC5 GUS kinds **PASS** ([`181116`](../../captures/session_20260901_181116.log)). RC5b undo cache selection shipped (host). Next: RC2b same-NoteId closure overwrite. RC4 occupy populate shipped; `hs=768` stays separate.
+**Status:** RC2 fixture-closed (no pairing firmware). RC3 overlay shipped (`b3448759`); stop hide re-admit **PASS** [`204043`](../../captures/session_20260901_204043.log). RC5 GUS kinds **PASS** ([`181116`](../../captures/session_20260901_181116.log)). RC5b undo cache selection shipped (host). RC2b **parked** — reopen only on the recapture gates below. RC4 occupy populate shipped; `hs=768` stays separate.
 **Date:** 2026-09-01
 **Kind:** bugfix
 **Evidence:** [`181116`](../../captures/session_20260901_181116.log), [`172532`](../../captures/session_20260901_172532.log), [`171835`](../../captures/session_20260901_171835.log), [`170444`](../../captures/session_20260901_170444.log), [`155630`](../../captures/session_20260901_155630.log), [`153517`](../../captures/session_20260901_153517.log)
@@ -18,7 +18,7 @@ RC2 wrap-held pairing
 RC3 overlay paint
     ← shipped b3448759; do not reopen
 RC2b same-NoteId closure overwrite (181116)
-    ← compose 2304→2880; draw_src 2304→1008; not a findOpenPassNote pairing miss
+    ← parked 2026-09-01; reopen if recapture shows wrap-held rewrite or 79@240 dual Off
 RC4 occupy miss at hs=0 / hs=48 / first hs=768
     ← source view has no present-at-hold row; no Hide/Shorten to apply
 RC5 GUS record vs session-overdub
@@ -187,6 +187,10 @@ selected representation R=11
 ```
 
 That proves `revision >= lastOverdubSealPlaybackRevision_` means cumulative companion coverage, not merely a monotonic counter.
+
+**Amended 2026-09-01 ([`201956`](../../captures/session_20260901_201956.log)):** revision >= Rseal is not sufficient when the Hide target is still in snapshot membership (`63@768→1151` next to `768→864`). Display keeps projecting sealed Hide while companion IDs exist. See [`overdub_occupy_same_start_stop_hide_readmit_bugfix.md`](overdub_occupy_same_start_stop_hide_readmit_bugfix.md).
+
+**Closed 2026-09-01 ([`204043`](../../captures/session_20260901_204043.log)):** that re-admit did not return after snapshot-current (`pending=0` `root_rev=15`/`playback_rev=15`, frame `63@768` len 95, `DFRAME` 81). Do not reopen RC3 for `768→1151`.
 
 ### Host tests before RC3 firmware
 
@@ -462,6 +466,19 @@ After RC4: if wrap-held remains authoritative, `hs=0` / `hs=48` occupy that `Not
 After RC5: slot stack is `RecordPassAdded` then one `OverdubPassAdded` with session wrap `passIds`. One **U:** removes only overdub.
 
 After RC5b: first **U:** painted notes are Active record only (`slice_keep` does not retain Disabled-pass notes). Second **U:** empties the slot.
+
+---
+
+## Parked — reopen if recaptured (RC2b / `79@240`)
+
+Not Now implementing after [`204043`](../../captures/session_20260901_204043.log). Classic wrap-held rewrite (`2296→672`, `2304→2976`) is absent there. Host pin `test_same_pass_playhead_tails_keep_closed_bar_four_end` stays red (`2976` → `2296`); do **not** patch `applyCapturePlayheadTails` from that pin.
+
+| Gate | Reopen when a future capture shows |
+|------|-------------------------------------|
+| Wrap-held rewrite | `draw_src` or frame turns a closed same-`NoteId` into wrap-held (`2296→672`, `2304→2976` / `576` / `1008`) |
+| Dual Off `79@240` | compose/effective end **272** and drawn/frame end **288** with `SEVT` `N@240` `F@272` `F@288` (no overdub of 79). Occupy cannot explain this ([`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) Shorten never lengthens) |
+
+Do not reopen RC2b because reconstruct still stacks same-start lengths.
 
 ---
 
