@@ -27,6 +27,10 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
   if (hasOverdubSession()) {
     return;
   }
+  // Record-stop may still hold sealed rows when visual has not consumed that
+  // revision. Those rows describe the previous session; wrapping them into this
+  // one leaves a 336→336 hold beside the occupy suffix (`001647`).
+  clearSealedCapturePreview();
   playheadPhaseTick = sessionPlayheadPhaseTick;
   currentOverdubSessionIndex_ = nextOverdubSessionIndex_;
   if (nextOverdubSessionIndex_ == 255) {
@@ -68,8 +72,8 @@ LOOP_COLD_MEM bool Loop::shouldCommitOverdubWrap(uint32_t prevPhase, uint32_t cu
   if (!hasOverdubSession() || !overdubWrapArmed_ || loopLengthTicks == 0) {
     return false;
   }
-  return IntervalProjection::didPlayheadCrossPhase(prevPhase, currentPhase, playheadPhaseTick,
-                                                   loopLengthTicks);
+  // DEC-051: seal when playhead crosses loop end (phase 0). S stays session identity.
+  return IntervalProjection::didPlayheadCrossPhase(prevPhase, currentPhase, 0, loopLengthTicks);
 }
 
 LOOP_COLD_MEM void Loop::noteOverdubWrapCommitted() {
@@ -87,8 +91,7 @@ LOOP_COLD_MEM bool Loop::consumeSuppressedOverdubWrapCrossing(uint32_t prevPhase
   if (!hasOverdubSession() || !overdubWrapSuppressNext_ || loopLengthTicks == 0) {
     return false;
   }
-  if (!IntervalProjection::didPlayheadCrossPhase(prevPhase, currentPhase, playheadPhaseTick,
-                                                 loopLengthTicks)) {
+  if (!IntervalProjection::didPlayheadCrossPhase(prevPhase, currentPhase, 0, loopLengthTicks)) {
     return false;
   }
   overdubWrapSuppressNext_ = false;

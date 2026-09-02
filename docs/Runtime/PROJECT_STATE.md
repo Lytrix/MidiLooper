@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-02 (010217 stop gather linear ends)
+Last updated: 2026-09-02 (013709 sealed held; next equal-tick + pairing)
 
 ---
 
