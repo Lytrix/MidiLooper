@@ -44,7 +44,7 @@ using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t
 struct PublishedSnapshotBox;
 struct PendingSnapshotPublishBox;
 
-/// Overdub-session totals for `#CAP,DIAG,overlap_hold`. Incremented on note-off; emitted at stop.
+/// Overdub-session totals for `#CAP,DIAG,oh` (`add`/`shorten`/`hide` last). Incremented on note-off; emitted at stop.
 struct OverlapHoldTotals {
   uint32_t noteOffs = 0;
   uint32_t emptySets = 0;
@@ -371,7 +371,7 @@ struct Loop {
   /// True when the selected committed representation is still behind the last seal.
   bool sealedCompanionOverlayRequired() const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
-  /// One `#CAP,DIAG,overlap_hold` at overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
+  /// One `#CAP,DIAG,oh` at overdub-stop seal (`add`/`shorten`/`hide` last). SESSION_CAPTURE / FLASHMEM only.
   void emitOverlapHoldTotals() const;
 
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);

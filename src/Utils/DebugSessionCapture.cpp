@@ -669,10 +669,14 @@ SC_MEM_ATTR void overlapHold(uint32_t noteOffs, uint32_t emptySets, uint32_t max
                              uint32_t overflows, uint32_t lookedUp, uint32_t maxExamined,
                              uint32_t sumExamined, uint32_t maxLookupUs, uint32_t sumLookupUs,
                              uint32_t add, uint32_t shorten, uint32_t hide) {
+  // Keys stay short so add/shorten/hide fit in kMaxCaptureTextBytes (192, NUL
+  // inclusive) at uint32 worst case. n=note_offs e=empty_sets i=max_ids
+  // o=overflows k=looked_up x=max_examined s=sum_examined u=max_lookup_us
+  // t=sum_lookup_us. Pre-2026-09-02 logs used DIAG,overlap_hold,note_offs,…
+  // and clipped hide (session_20260902_150143).
   emitCapPrintf(
-      "#CAP,%lu,DIAG,overlap_hold,note_offs,%lu,empty_sets,%lu,max_ids,%lu,overflows,%lu,"
-      "looked_up,%lu,max_examined,%lu,sum_examined,%lu,max_lookup_us,%lu,sum_lookup_us,%lu,"
-      "add,%lu,shorten,%lu,hide,%lu\r\n",
+      "#CAP,%lu,DIAG,oh,n,%lu,e,%lu,i,%lu,o,%lu,k,%lu,x,%lu,s,%lu,u,%lu,t,%lu,"
+      "add,%lu,shorten,%lu,hide,%lu",
       (unsigned long)micros(), (unsigned long)noteOffs, (unsigned long)emptySets,
       (unsigned long)maxIds, (unsigned long)overflows, (unsigned long)lookedUp,
       (unsigned long)maxExamined, (unsigned long)sumExamined, (unsigned long)maxLookupUs,
