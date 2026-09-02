@@ -489,6 +489,37 @@ struct NoteUtils::CanonicalSpanBuild::Impl {
 
 namespace {
 
+NOTE_EDIT_MEM bool midiEventIsSoundingNoteOn(const MidiEvent& evt) {
+    return evt.type == midi::NoteOn && evt.data.noteData.velocity > 0;
+}
+
+/// Off-before-On at the same tick (Gate 5A) discards the Off while the stack is
+/// empty, then `finishCanonicalSpansOpenNotes` extends the later On to L
+/// (`013709` 86@776 len 2296). Consume the matching On instead of emitting a span.
+/// Non-template so FLASHMEM sticks (template instantiations of this file land in ITCM).
+NOTE_EDIT_MEM bool consumeEqualTickCompletedNoteOn(const MidiEvent* events, uint32_t beginSearch,
+                                                   uint32_t endEventExclusive, uint32_t tick,
+                                                   uint8_t channel, uint8_t pitch,
+                                                   std::set<uint32_t>& consumedOnIndices) {
+    if (events == nullptr) {
+        return false;
+    }
+    for (uint32_t j = beginSearch; j < endEventExclusive; ++j) {
+        if (consumedOnIndices.count(j) != 0) {
+            continue;
+        }
+        const MidiEvent& later = events[j];
+        if (later.tick != tick || later.channel != channel || later.data.noteData.note != pitch) {
+            continue;
+        }
+        if (midiEventIsSoundingNoteOn(later)) {
+            consumedOnIndices.insert(j);
+            return true;
+        }
+    }
+    return false;
+}
+
 template <typename EventAlloc>
 NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
     const std::vector<MidiEvent, EventAlloc>& midiEvents, uint32_t loopLength, bool verboseLog,
@@ -509,15 +540,19 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
     const bool logDetails = shouldLogReconstructDetails(verboseLog, midiEvents.size());
     const uint32_t tailStart = NoteUtils::wrapTailStartTick(loopLength);
     uint8_t offZeroPaired[128] = {};
+    std::set<uint32_t> consumedEqualTickOnIndices;
 
     for (uint32_t eventIndex = beginEvent; eventIndex < endEventExclusive; ++eventIndex) {
         const MidiEvent& evt = midiEvents[eventIndex];
-        const bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        const bool isNoteOn = midiEventIsSoundingNoteOn(evt);
         const bool isNoteOff =
             (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
         const uint8_t pitch = evt.data.noteData.note;
 
         if (isNoteOn) {
+            if (consumedEqualTickOnIndices.count(eventIndex) != 0) {
+                continue;
+            }
             uint32_t noteOnTick = evt.tick;
             if (wrappedTailOnTicks.count({pitch, noteOnTick}) != 0) {
                 continue;
@@ -561,6 +596,9 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                     }
                     continue;
                 }
+                consumeEqualTickCompletedNoteOn(midiEvents.data(), eventIndex + 1,
+                                                endEventExclusive, noteOffTick, evt.channel, pitch,
+                                                consumedEqualTickOnIndices);
                 continue;
             }
 
@@ -610,6 +648,10 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                             break;
                         }
                     }
+                    continue;
+                }
+                if (!stack.empty() && stack.back().startTick == pairingOffTick) {
+                    stack.pop_back();
                 }
                 continue;
             }
@@ -917,13 +959,14 @@ NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(cons
 
     std::map<uint8_t, std::vector<OpenNoteOn>> activeStacks;
     std::set<std::pair<uint8_t, uint32_t>> wrappedTailOnTicks;
+    std::set<uint32_t> consumedEqualTickOnIndices;
     for (size_t eventIndex = 0; eventIndex < midiEvents.size(); ++eventIndex) {
         const MidiEvent& evt = midiEvents[eventIndex];
         if (evt.tick >= loopLength) {
             continue;
         }
 
-        const bool isNoteOn = (evt.type == midi::NoteOn && evt.data.noteData.velocity > 0);
+        const bool isNoteOn = midiEventIsSoundingNoteOn(evt);
         const bool isNoteOff =
             (evt.type == midi::NoteOff || (evt.type == midi::NoteOn && evt.data.noteData.velocity == 0));
         if (!isNoteOn && !isNoteOff) {
@@ -932,6 +975,9 @@ NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(cons
 
         const uint8_t pitch = evt.data.noteData.note;
         if (isNoteOn) {
+            if (consumedEqualTickOnIndices.count(static_cast<uint32_t>(eventIndex)) != 0) {
+                continue;
+            }
             if (wrappedTailOnTicks.count({pitch, evt.tick}) != 0) {
                 continue;
             }
@@ -951,6 +997,11 @@ NOTE_EDIT_MEM std::vector<NoteUtils::OpenNoteOn> NoteUtils::findOpenNoteOns(cons
             if (tryPairWrappedTailOn(midiEvents, evt.tick, pitch, evt.channel, loopLength,
                                      wrappedOnTick, wrappedVelocity)) {
                 wrappedTailOnTicks.insert({pitch, wrappedOnTick});
+            } else {
+                consumeEqualTickCompletedNoteOn(midiEvents.data(),
+                                                static_cast<uint32_t>(eventIndex + 1),
+                                                static_cast<uint32_t>(midiEvents.size()), evt.tick,
+                                                evt.channel, pitch, consumedEqualTickOnIndices);
             }
         }
     }

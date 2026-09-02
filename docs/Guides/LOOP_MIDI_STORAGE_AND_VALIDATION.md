@@ -238,7 +238,7 @@ For faster time-to-UI on large loops, follow [prioritized_boot_load_isolation_re
 
 **Files:** `src/Utils/NoteUtils.cpp`, tests in `test/test_noteutils_reconstruct/`
 
-`NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). It does **not** write back to committed passes or `passesMaterializedStore_`.
+`NoteUtils::reconstructNotes(events, loopLength)` builds **DisplayNote** segments for piano roll / LEDs. It discards note-ons at or beyond `loopLength` and wraps note-offs for UI — see [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md). A same-channel same-pitch NoteOn+NoteOff at the same tick is a completed zero-duration pair: both events are consumed and no span is emitted (`013709` `86@776` must not finish open to loop end). Gate 5A Off-before-On chronological order is unchanged. It does **not** write back to committed passes or `passesMaterializedStore_`.
 
 ### NOTE_EDIT live store — pairing and overlap (EditSessionAction)
 

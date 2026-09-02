@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-02 (013709 sealed held; next equal-tick + pairing)
+Last updated: 2026-09-02 (013709 equal-tick reconstruct)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,8 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — equal-tick reconstruct + source-view pairing ([`013709`](../../captures/session_20260902_013709.log)):**
-Sealed-union recapture held: `sealed` 28→45 across six wraps, no bar-2/3 fallback, only record-pass `draw_src,diff`. Next two RCs (not gather): (1) same-tick `SEVT N+F@776 ch13 pitch 86` reconstructs as `776` len **2296**; (2) source-view phantom `39@3024→448` feeds occupy at hold 288 and effective `288` len **2784**. Crash left no `CrashReport` in this log — check SD `crashlog.txt` / recapture with boot wait. Reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
+**Now — equal-tick reconstruct ([`013709`](../../captures/session_20260902_013709.log)):**
+Same-tick `SEVT N+F@776 ch13 pitch 86` reconstructed as `776` len **2296**. `appendCanonicalSpansFromMidiRange` consumes the pair and does not finish the On open to loop end. Gate 5A Off-before-On is unchanged. Plan: [`overdub_reconstruct_equal_tick_pair_not_open_bugfix.md`](../Plans/overdub_reconstruct_equal_tick_pair_not_open_bugfix.md). Next RC: source-view phantom `39@3024→448` / occupy at 288. Crash left no `CrashReport` in this log. OVERDUBBING reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
 
 **Prior — sealed survives current snapshot ([`012714`](../../captures/session_20260902_012714.log), recapture [`013709`](../../captures/session_20260902_013709.log)):**
 `sealedCapturePreviewIsCovered` uses `visualCache.builtFromRevision` only. Sealed unions only while capture or the overdub session is active. `openOverdubSession` clears leftover record sealed. Keep-larger during a live session is reverted. Plan: [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](../Plans/overdub_paint_sealed_survives_current_snapshot_bugfix.md).
