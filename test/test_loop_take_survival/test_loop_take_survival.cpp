@@ -1680,7 +1680,8 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
   const bool captureActive = loop.captureActive();
   const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
       static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
-      !loop.visualCache.notes.empty());
+      !loop.visualCache.notes.empty(), loop.visualCacheDirty,
+      loop.publishedSnapshotIsCurrent());
   const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
 
   for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
@@ -2257,6 +2258,145 @@ void test_draw_source_keeps_stale_snapshot_after_second_wrap() {
   TEST_ASSERT_TRUE(foundWrapOne);
   TEST_ASSERT_TRUE(foundSealedLapTwo);
   TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+}
+
+NoteUtils::DisplayNote makeAdoptedNote(NoteId noteId, uint8_t pitch, uint32_t startTick,
+                                       uint32_t endTick) {
+  NoteUtils::DisplayNote note{};
+  note.noteId = noteId;
+  note.note = pitch;
+  note.velocity = 90;
+  note.startTick = startTick;
+  note.endTick = endTick;
+  return note;
+}
+
+void adoptFourBarLinearCache(Loop& loop, NoteId pitch39Id) {
+  NoteUtils::DisplayNoteVec adopted;
+  adopted.push_back(makeAdoptedNote(1, 60, 48, 64));
+  adopted.push_back(makeAdoptedNote(2, 60, 768, 800));
+  adopted.push_back(makeAdoptedNote(3, 60, 1536, 1568));
+  adopted.push_back(makeAdoptedNote(pitch39Id, 39, 2976, 3055));
+  loop.adoptComposedDisplayNotesFromViewport(adopted);
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+}
+
+/// [`092344`] OD2 after adopt: clean nonempty cache wins over a stale wrap snapshot.
+void test_draw_source_od2_clean_adopt_keeps_linear_tail() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 48, 64, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2976, 1, 39, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2784, 1, 39, 0)));
+  const uint32_t priorRevision = loop.playbackRevision;
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 2784));
+  const PassId wrapPassId = loop.lastCommittedPassId();
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 144;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 39;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 2976;
+  wrapAdd.endTick = 2784;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  TEST_ASSERT_TRUE(loop.queueOverdubWrapSnapshotJournal(wrapPassId));
+  loop.pushOverdubSessionPass(wrapPassId, {});
+  loop.recordLastOverdubSeal(wrapPassId, {}, priorRevision);
+
+  size_t steps = 0;
+  while (loop.hasPendingWrapJournal() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const LoopSnapshotNoteRef snapWrap = loop.publishedSnapshot()->findNote(144, 39);
+  TEST_ASSERT_TRUE(static_cast<bool>(snapWrap));
+  TEST_ASSERT_EQUAL_UINT32(2976u, snapWrap->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2784u, snapWrap->endTick);
+
+  loop.closeOverdubSession();
+  adoptFourBarLinearCache(loop, 144);
+  ++loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(static_cast<bool>(loop.publishedSnapshot()));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.captureActive());
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundLinear = false;
+  bool foundWrap = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note != 39 || note.startTick != 2976u) {
+      continue;
+    }
+    if (note.endTick == 3055u) {
+      foundLinear = true;
+    }
+    if (note.endTick == 2784u) {
+      foundWrap = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundLinear);
+  TEST_ASSERT_FALSE(foundWrap);
+}
+
+/// No published snapshot: gather the clean adopted cache, never a snapshot prefix.
+void test_draw_source_no_snapshot_uses_clean_visual_cache() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  adoptFourBarLinearCache(loop, 144);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_FALSE(static_cast<bool>(loop.publishedSnapshot()));
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundLinear = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 39 && note.startTick == 2976u && note.endTick == 3055u) {
+      foundLinear = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundLinear);
+}
+
+/// No published snapshot and empty dirty cache: existing empty fallback.
+void test_draw_source_no_snapshot_empty_dirty_cache_stays_empty() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.visualCache.notes.clear();
+  loop.visualCacheDirty = true;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_FALSE(static_cast<bool>(loop.publishedSnapshot()));
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  TEST_ASSERT_TRUE(drawn.empty());
 }
 
 /// [`010217`] after stop: successor snapshot wrap-shaped 2640→0 must not replace
@@ -2901,6 +3041,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
   RUN_TEST(test_draw_source_sealed_row_survives_prefix_hide);
   RUN_TEST(test_draw_source_keeps_stale_snapshot_after_second_wrap);
+  RUN_TEST(test_draw_source_od2_clean_adopt_keeps_linear_tail);
+  RUN_TEST(test_draw_source_no_snapshot_uses_clean_visual_cache);
+  RUN_TEST(test_draw_source_no_snapshot_empty_dirty_cache_stays_empty);
   RUN_TEST(test_draw_source_after_stop_keeps_adopted_linear_ends);
   RUN_TEST(test_draw_source_keeps_snapshot_when_wrap_clears_capture);
   RUN_TEST(test_draw_source_sealed_survives_current_snapshot);

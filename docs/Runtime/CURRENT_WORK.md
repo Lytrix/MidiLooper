@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-02 (013709 equal-tick reconstruct)
+Last updated: 2026-09-02 (092344 OD2 stale snapshot)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,11 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — equal-tick reconstruct ([`013709`](../../captures/session_20260902_013709.log)):**
-Same-tick `SEVT N+F@776 ch13 pitch 86` reconstructed as `776` len **2296**. `appendCanonicalSpansFromMidiRange` consumes the pair and does not finish the On open to loop end. Gate 5A Off-before-On is unchanged. Plan: [`overdub_reconstruct_equal_tick_pair_not_open_bugfix.md`](../Plans/overdub_reconstruct_equal_tick_pair_not_open_bugfix.md). Next RC: source-view phantom `39@3024→448` / occupy at 288. Crash left no `CrashReport` in this log. OVERDUBBING reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
+**Now — second-overdub stale snapshot ([`092344`](../../captures/session_20260902_092344.log)):**
+OD2 `snap=0` after `adopt_partial notes,164 dirty,0` gathered the last snapshot: frame 113, `hidden=39`, `39@2976→3055` rewritten to wrap `2976→2784`. Capture/session active is no longer enough to select snapshot. Current snapshot, or dirty/empty cache, still gathers snapshot (`004351`). Clean nonempty `visualCacheDirty==false` gathers visualCache. Plan: [`overdub_paint_second_overdub_stale_snapshot_bugfix.md`](../Plans/overdub_paint_second_overdub_stale_snapshot_bugfix.md). Persist/`usbdisp` cadence stays a follow-up. OVERDUBBING reconstruct stays off. Stage 4 stays closed. RC2b stays parked.
+
+**Prior — source-view wrap-held wrong head Off ([`013709`](../../captures/session_20260902_013709.log)):**
+Occupy `39@3024→448` at `hs=288` while storage WRAP is `3024→64`. Effective `39@288` len **2784**. A 4-event reconstruct does not emit `3024→448` (Off@64 blocked by intervening On@288; 3024 finishes to 3071). Pin the source-view merge / collapse / companion path next. Plan: [`overdub_source_view_wrap_held_wrong_head_off_bugfix.md`](../Plans/overdub_source_view_wrap_held_wrong_head_off_bugfix.md). Equal-tick consume shipped `932a58d6`.
 
 **Prior — sealed survives current snapshot ([`012714`](../../captures/session_20260902_012714.log), recapture [`013709`](../../captures/session_20260902_013709.log)):**
 `sealedCapturePreviewIsCovered` uses `visualCache.builtFromRevision` only. Sealed unions only while capture or the overdub session is active. `openOverdubSession` clears leftover record sealed. Keep-larger during a live session is reverted. Plan: [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](../Plans/overdub_paint_sealed_survives_current_snapshot_bugfix.md).

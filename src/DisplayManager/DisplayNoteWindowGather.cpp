@@ -250,7 +250,8 @@ void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
     const bool captureActive = loop.captureActive();
     const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
         static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
-        !loop.visualCache.notes.empty());
+        !loop.visualCache.notes.empty(), loop.visualCacheDirty,
+        loop.publishedSnapshotIsCurrent());
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (usePublishedSnapshot) {
