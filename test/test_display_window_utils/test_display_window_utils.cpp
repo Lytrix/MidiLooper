@@ -304,21 +304,36 @@ void test_should_assign_grown_visual_cache_over_overdub_hold() {
 }
 
 void test_should_gather_published_snapshot_for_draw_source() {
-  // Capture-active: keep snapshot even when visualCache is nonempty (004351).
-  TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, false, true));
-  TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, true, false, false));
-  // Wrap seal: capture off, session still open (011906).
-  TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, true, true));
-  // After stop: session closed, nonempty visualCache is paint authority (010217).
-  TEST_ASSERT_FALSE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, false, true));
-  TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(true, false, false, false));
-  TEST_ASSERT_FALSE(
-      DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(false, false, false, true));
+  auto gather = [](bool hasSnapshot, bool capture, bool session, bool nonempty, bool dirty,
+                   bool current) {
+    return DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+        hasSnapshot, capture, session, nonempty, dirty, current);
+  };
+
+  // No usable snapshot: never manufacture one.
+  TEST_ASSERT_FALSE(gather(false, true, true, true, false, false));
+  TEST_ASSERT_FALSE(gather(false, true, true, false, true, false));
+  TEST_ASSERT_FALSE(gather(false, false, false, true, false, false));
+
+  // Active + current snapshot → snapshot.
+  TEST_ASSERT_TRUE(gather(true, true, false, true, false, true));
+  TEST_ASSERT_TRUE(gather(true, false, true, true, false, true));
+
+  // Active + stale + dirty nonempty → last snapshot (004351 wrap).
+  TEST_ASSERT_TRUE(gather(true, true, false, true, true, false));
+  TEST_ASSERT_TRUE(gather(true, false, true, true, true, false));
+
+  // Active + stale + empty → last snapshot.
+  TEST_ASSERT_TRUE(gather(true, true, false, false, false, false));
+
+  // Active + stale + clean nonempty → visualCache (092344 OD2 after adopt).
+  TEST_ASSERT_FALSE(gather(true, true, false, true, false, false));
+  TEST_ASSERT_FALSE(gather(true, false, true, true, false, false));
+
+  // After stop: nonempty visualCache is paint authority (010217).
+  TEST_ASSERT_FALSE(gather(true, false, false, true, false, false));
+  TEST_ASSERT_FALSE(gather(true, false, false, true, true, true));
+  TEST_ASSERT_TRUE(gather(true, false, false, false, false, false));
 }
 
 void test_should_union_sealed_capture_preview_for_draw_source() {

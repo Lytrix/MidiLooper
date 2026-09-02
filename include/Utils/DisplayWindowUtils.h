@@ -264,16 +264,33 @@ inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCo
                                                      heldCommittedNoteCount);
 }
 
-/// During capture or an open overdub session, keep the last published snapshot even
-/// when stale (`004351` wrap 2). Wrap seal clears `captureActive` before `beginCapture`;
-/// the session flag must still select snapshot (`011906`). After the session closes, a
-/// nonempty `visualCache` (`adopt_partial`) is paint authority (`010217`).
+/// Draw-source committed prefix: Snapshot vs VisualCache.
+/// `visualCacheDirty` is `Loop::visualCacheDirty` (adopt/stale paint authority),
+/// not `pendingNoteChanges_`. `hasPublishedSnapshot` is a hard gate.
+///
+/// Capture/session active:
+///   current snapshot → snapshot
+///   else dirty or empty cache → last snapshot (`004351` wrap)
+///   else clean nonempty cache → visualCache (`092344` OD2 after adopt)
+/// Inactive (session closed): nonempty visualCache is paint authority (`010217`).
+/// Capture/session active alone is not enough to select snapshot.
 inline bool shouldGatherPublishedSnapshotForDrawSource(bool hasPublishedSnapshot,
                                                        bool captureActive,
                                                        bool overdubSessionActive,
-                                                       bool visualCacheNonempty) {
-    return hasPublishedSnapshot &&
-           (captureActive || overdubSessionActive || !visualCacheNonempty);
+                                                       bool visualCacheNonempty,
+                                                       bool visualCacheDirty,
+                                                       bool publishedSnapshotIsCurrent) {
+    if (!hasPublishedSnapshot) {
+        return false;
+    }
+    const bool sessionOrCapture = captureActive || overdubSessionActive;
+    if (!sessionOrCapture) {
+        return !visualCacheNonempty;
+    }
+    if (publishedSnapshotIsCurrent || visualCacheDirty || !visualCacheNonempty) {
+        return true;
+    }
+    return false;
 }
 
 /// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
