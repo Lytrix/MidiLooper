@@ -160,19 +160,6 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
 
 namespace {
 
-void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes, size_t suffixBegin,
-                                       const NoteUtils::DisplayNote& row) {
-    if (row.endTick >= row.startTick) {
-        for (size_t i = suffixBegin; i < notes.size(); ++i) {
-            if (notes[i].note == row.note && notes[i].startTick == row.startTick) {
-                notes[i] = row;
-                return;
-            }
-        }
-    }
-    notes.push_back(row);
-}
-
 bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                               uint32_t loopLength) {
     const uint32_t barStart = bar * Config::TICKS_PER_BAR;
@@ -269,7 +256,8 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBa
                 if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
                     continue;
                 }
-                upsertDisplayNoteAtPitchStartFrom(out, committedEnd, sealedRow);
+                DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, sealedRow,
+                                                                     captureActive);
                 break;
             }
         }
@@ -292,7 +280,8 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBa
                                                              previewNote.endTick)) {
             appendDisplayNoteUniqueById(out, previewNote);
         } else {
-            upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote);
+            DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote,
+                                                                 true);
         }
     }
 }

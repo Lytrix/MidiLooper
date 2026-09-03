@@ -1,9 +1,9 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 host shipped. Device recapture next.  
+**Status:** RC1 host shipped. RC1b host shipped — device recapture next ([`154310`](../../captures/session_20260903_154310.log)).  
 **Date:** 2026-09-03  
 **Kind:** convergence bugfix (display realization)  
-**Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS  
+**Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log)  
 **Does not authorize:** redefining effective resolution; reconstruct pairing; gather `keepShortestEndAtPitchStart` (`150650`); `#41` Stage 2; off-clock wrap seal; LoopContentResolution redesign; source-view sibling drop (`002145`)
 
 ---
@@ -45,10 +45,12 @@ Display-frame walk stays a bounded id list, not a new interval owner, and not a 
 gatherCommittedEvents / src,effective     ← trust (product truth)
 reconstruct dump                          ← diagnostic only
 lastOverdubSealCompanionIds_ (admission)  ← last wrap only; do not union
-sealedCompanionOverlayIds_ (display)      ← RC1
+sealedCompanionOverlayIds_ (display)      ← RC1 kept
+stop-only sealed skip                     ← RC1b ([`154310`](../../captures/session_20260903_154310.log))
 sealed upsert 77@336                      ← RC2 if recapture still 48
 69@5328 admission miss                    ← RC3 separate
 keepShortest on gather                    ← still forbidden
+suffix sibling-drop                       ← still forbidden (`150650`)
 ```
 
 ---
@@ -120,6 +122,36 @@ paint / apply overlay
 
 ---
 
+## RC1b — stop-only sealed skip ([`154310`](../../captures/session_20260903_154310.log))
+
+RC1 Shortens the committed prefix (`63@0` **143** matches effective). `upsertDisplayNoteAtPitchStartFrom` still starts at `committedEnd`, so sealed **appends** record **576**. Sibling-drop does not scan that suffix (`150650`). First STOPPED `src,frame` **204** paints both lengths. `140729` passed because sealed copies were the same short length.
+
+**Intended invariant:**
+
+```text
+After stop, a linear sealed row is not appended when the committed
+prefix already has that pitch+start. During capture, suffix upsert
+stays so a live long hold is not lost to a stale short prefix.
+```
+
+| Session | Prefix | Sealed | Capture | Required |
+|---------|--------|--------|---------|----------|
+| `154310` first STOPPED | 143 | 576 | **off** | one length: **143** |
+| `150650` seam | stale 40 | live 624 | **on** | keep the **long** suffix |
+
+Owner: `DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom`. Draw-source walk passes `captureActive`. Do not extend `dropLongerSamePitchStartSiblingsMarkedBySourceTransform` into the suffix. Do not add gather `keepShortest`.
+
+### Architecture checkpoint
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** — draw-source sealed union still owns the walk |
+| State transition change? | **NO** |
+| Unbounded interval owner? | **NO** — same sealed row walk; prefix scan bounded by `committedEnd` |
+| Reuse | **YES** — extend `upsertDisplayNoteAtPitchStartFrom` |
+
+Host pins in `test_display_window_utils`: `test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310`, `test_capture_sealed_upsert_keeps_longer_suffix_150650`.
+
 ## RC2 — gated on recapture
 
 `77@336 == 16` after RC1 → stop. Else sealed upsert (`existing = sealedRow`) is a projection RC, not effective. No gather `keepShortest`.
@@ -152,6 +184,32 @@ paint / apply overlay
 ### Open before coding
 
 None — implementer pin only.
+
+### Proceed?
+
+YES
+
+## Pre-implementation review (RC1b)
+
+### Ready
+
+- `DisplayWindowUtils::upsertDisplayNoteAtPitchStart` / new `upsertDisplayNoteAtPitchStartFrom`
+- `applyDrawSourceOverlays` in `DisplayNoteWindowGather.cpp`
+- Host clone in `test_loop_take_survival`
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|-------|----------|
+| Discriminator | `!captureActive` |
+| Prefix already has linear pitch+start | skip sealed append |
+| Capture seam | existing suffix upsert (`150650`) |
+| Sibling-drop suffix | still excluded |
+| RC1 | keep |
+
+### Open before coding
+
+None.
 
 ### Proceed?
 

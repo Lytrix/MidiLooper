@@ -1666,16 +1666,9 @@ void assertSamePassClosedNoteKeepsLinearEnd(const NoteUtils::DisplayNoteVec& not
 }
 
 void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes, size_t suffixBegin,
-                                       const NoteUtils::DisplayNote& row) {
-  if (row.endTick >= row.startTick) {
-    for (size_t i = suffixBegin; i < notes.size(); ++i) {
-      if (notes[i].note == row.note && notes[i].startTick == row.startTick) {
-        notes[i] = row;
-        return;
-      }
-    }
-  }
-  notes.push_back(row);
+                                       const NoteUtils::DisplayNote& row,
+                                       bool captureActive = true) {
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(notes, suffixBegin, row, captureActive);
 }
 
 bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
@@ -1742,7 +1735,7 @@ void applyDrawSourceDisplayOverlays(const Loop& loop, uint32_t firstBar, uint32_
         if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
           continue;
         }
-        upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, sealedRow);
+        upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, sealedRow, captureActive);
         break;
       }
     }

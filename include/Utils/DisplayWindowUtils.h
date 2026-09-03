@@ -403,6 +403,36 @@ inline void upsertDisplayNoteAtPitchStart(NoteUtils::DisplayNoteVec& notes,
   notes.push_back(sealedRow);
 }
 
+/// Draw-source sealed/preview union after `committedEnd`. During capture, replace in
+/// the suffix or append (`150650` stale prefix 40 + live sealed 624). After stop,
+/// do not append a linear sealed row whose pitch+start already exists in the
+/// committed prefix (`154310` prefix 143 + sealed 576). Wrap-held rows still
+/// append. This is not gather `keepShortestEndAtPitchStart`.
+inline void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes,
+                                              size_t suffixBegin,
+                                              const NoteUtils::DisplayNote& row,
+                                              bool captureActive = true) {
+  if (!captureActive && row.endTick >= row.startTick) {
+    const size_t prefixEnd = suffixBegin < notes.size() ? suffixBegin : notes.size();
+    for (size_t i = 0; i < prefixEnd; ++i) {
+      const NoteUtils::DisplayNote& existing = notes[i];
+      if (existing.note == row.note && existing.startTick == row.startTick &&
+          existing.endTick >= existing.startTick) {
+        return;
+      }
+    }
+  }
+  if (row.endTick >= row.startTick) {
+    for (size_t i = suffixBegin; i < notes.size(); ++i) {
+      if (notes[i].note == row.note && notes[i].startTick == row.startTick) {
+        notes[i] = row;
+        return;
+      }
+    }
+  }
+  notes.push_back(row);
+}
+
 /// Same-start dedupe for the committed prefix only. Live capture suffix rows
 /// (open overdub holds) must not lose to a shorter committed sibling (`110022`).
 inline void keepShortestEndAtPitchStartOnCommittedPrefix(NoteUtils::DisplayNoteVec& notes,
