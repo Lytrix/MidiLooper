@@ -1618,16 +1618,28 @@ bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                                                   Config::TICKS_PER_BAR, loopLength);
 }
 
+struct DrawSourceGatherWalkCounts {
+  uint32_t committedWalks = 0;
+  uint32_t sealedWalks = 0;
+  uint32_t previewWalks = 0;
+  bool pendingApplied = false;
+};
+
 void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8_t pitchLow,
-                               uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
+                               uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
+                               uint32_t* walkCount = nullptr) {
   const uint8_t lastPitch =
       pitchHigh < kLoopSnapshotPitchCount ? pitchHigh
                                           : static_cast<uint8_t>(kLoopSnapshotPitchCount - 1);
   for (uint16_t pitch = pitchLow; pitch <= lastPitch; ++pitch) {
     const auto membership = snapshot.noteMembership(static_cast<uint8_t>(pitch), bar);
-    forEachSnapshotMembershipReference(membership.get(), [&out](const LoopSnapshotNoteRef& reference) {
+    forEachSnapshotMembershipReference(membership.get(),
+                                       [&out, walkCount](const LoopSnapshotNoteRef& reference) {
       if (!reference) {
         return;
+      }
+      if (walkCount != nullptr) {
+        ++(*walkCount);
       }
       appendDisplayNoteUniqueById(out, displayNoteFromSnapshotNote(*reference));
     });
@@ -1635,50 +1647,30 @@ void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8
 }
 
 void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_t bar,
-                                uint32_t loopLength, NoteUtils::DisplayNoteVec& out) {
+                                uint32_t loopLength, NoteUtils::DisplayNoteVec& out,
+                                uint32_t* walkCount = nullptr) {
   for (const NoteUtils::DisplayNote& note : source) {
+    if (walkCount != nullptr) {
+      ++(*walkCount);
+    }
     if (previewNoteIntersectsBar(note, bar, loopLength)) {
       appendDisplayNoteUniqueById(out, note);
     }
   }
 }
 
-/// Same committed+capture bar union as `DisplayManager::resolveDisplayNotesByDrawSource`
-/// before playhead tails. Host-reachable without Track/DisplayManager.
-void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
-                                  uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh,
-                                  NoteUtils::DisplayNoteVec& out, size_t* committedEnd = nullptr) {
-  out.clear();
+void applyDrawSourceDisplayOverlays(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                    NoteUtils::DisplayNoteVec& out, size_t prefixEnd,
+                                    DrawSourceGatherWalkCounts* walks) {
   const uint32_t loopLength = loop.loopLengthTicks;
-  if (loopLength == 0 || firstBar > lastBar) {
-    if (committedEnd != nullptr) {
-      *committedEnd = 0;
-    }
-    return;
-  }
-  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
   const bool captureActive = loop.captureActive();
-  const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-      static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
-      !loop.visualCache.notes.empty(), loop.visualCacheDirty,
-      loop.publishedSnapshotIsCurrent());
-  const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
-
-  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    if (usePublishedSnapshot) {
-      appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
-    } else {
-      appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
-    }
-  }
-  const size_t prefixEnd = out.size();
-  if (committedEnd != nullptr) {
-    *committedEnd = prefixEnd;
-  }
   if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
           loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
           loop.hasOverdubSession())) {
     for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+      if (walks != nullptr) {
+        ++walks->sealedWalks;
+      }
       for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
         if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
           continue;
@@ -1688,24 +1680,79 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
       }
     }
   }
-  if (captureActive) {
-    for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
-      bool intersectsWindow = false;
-      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-        if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
-          intersectsWindow = true;
-          break;
-        }
+  if (!captureActive) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
+    if (walks != nullptr) {
+      ++walks->previewWalks;
+    }
+    bool intersectsWindow = false;
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+      if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
+        intersectsWindow = true;
+        break;
       }
-      if (!intersectsWindow) {
-        continue;
-      }
-      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
-                                                           previewNote.endTick)) {
-        appendDisplayNoteUniqueById(out, previewNote);
+    }
+    if (!intersectsWindow) {
+      continue;
+    }
+    if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
+                                                         previewNote.endTick)) {
+      appendDisplayNoteUniqueById(out, previewNote);
+    } else {
+      upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, previewNote);
+    }
+  }
+}
+
+/// Same committed+capture bar union as `DisplayManager::resolveDisplayNotesByDrawSource`
+/// before playhead tails. Host-reachable without Track/DisplayManager.
+void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                  uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh,
+                                  NoteUtils::DisplayNoteVec& out, size_t* committedEnd = nullptr,
+                                  DrawSourceGatherWalkCounts* walks = nullptr,
+                                  bool reuseCommittedPrefix = false, bool applyPending = false) {
+  const uint32_t loopLength = loop.loopLengthTicks;
+  if (loopLength == 0 || firstBar > lastBar) {
+    if (!reuseCommittedPrefix) {
+      out.clear();
+    }
+    if (committedEnd != nullptr) {
+      *committedEnd = out.size();
+    }
+    return;
+  }
+  size_t prefixEnd = 0;
+  if (reuseCommittedPrefix) {
+    prefixEnd = out.size();
+  } else {
+    out.clear();
+    const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+    const bool captureActive = loop.captureActive();
+    const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+        static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
+        !loop.visualCache.notes.empty(), loop.visualCacheDirty,
+        loop.publishedSnapshotIsCurrent());
+    const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+    uint32_t* committedWalks = walks != nullptr ? &walks->committedWalks : nullptr;
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+      if (usePublishedSnapshot) {
+        appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out, committedWalks);
       } else {
-        upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, previewNote);
+        appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out, committedWalks);
       }
+    }
+    prefixEnd = out.size();
+  }
+  if (committedEnd != nullptr) {
+    *committedEnd = prefixEnd;
+  }
+  applyDrawSourceDisplayOverlays(loop, firstBar, lastBar, out, prefixEnd, walks);
+  if (applyPending && (loop.hasPendingNoteChanges() || loop.hasSealedCompanionOverlay())) {
+    loop.applyPendingNoteChangesToDisplayNotes(out, prefixEnd);
+    if (walks != nullptr) {
+      walks->pendingApplied = true;
     }
   }
   (void)playheadBar;
@@ -2437,16 +2484,14 @@ void test_draw_source_after_stop_keeps_adopted_linear_ends() {
   }
 
   NoteUtils::DisplayNoteVec adopted;
+  adopted.push_back(makeAdoptedNote(1, 60, 100, 200));
+  adopted.push_back(makeAdoptedNote(2, 60, 768, 800));
+  adopted.push_back(makeAdoptedNote(3, 60, 1536, 1568));
   for (const auto& row : chord) {
-    NoteUtils::DisplayNote note{};
-    note.noteId = row.noteId;
-    note.note = row.pitch;
-    note.velocity = 90;
-    note.startTick = 2640;
-    note.endTick = row.linearEnd;
-    adopted.push_back(note);
+    adopted.push_back(makeAdoptedNote(row.noteId, row.pitch, 2640, row.linearEnd));
   }
   loop.adoptComposedDisplayNotesFromViewport(adopted);
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
   TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
   TEST_ASSERT_FALSE(loop.captureActive());
 
@@ -2949,6 +2994,99 @@ void test_overdub_without_parent_does_not_invent_snapshot() {
   TEST_ASSERT_NULL(loop.publishedSnapshot().get());
 }
 
+void assertSameDrawSourceUnion(const NoteUtils::DisplayNoteVec& expected,
+                               const NoteUtils::DisplayNoteVec& actual) {
+  TEST_ASSERT_EQUAL(expected.size(), actual.size());
+  for (const NoteUtils::DisplayNote& exp : expected) {
+    bool found = false;
+    for (const NoteUtils::DisplayNote& act : actual) {
+      if (act.noteId == exp.noteId && act.note == exp.note && act.startTick == exp.startTick &&
+          act.endTick == exp.endTick) {
+        found = true;
+        break;
+      }
+    }
+    TEST_ASSERT_TRUE(found);
+  }
+}
+
+/// RC-D2: overlay-only invalidation reuses [0, committedEnd) and does not walk
+/// snapshot/visual committed notes. Final union matches a full-gather oracle.
+void test_draw_source_overlay_only_reuse_skips_committed_walk() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto membership = loop.publishedSnapshot()->noteMembership(60, 0);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_TRUE(snapshotMembershipCount(membership.get()) > 0);
+  const NoteId recordId = membership->references[0]->noteId;
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(300, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(420, 1, 72, 0)));
+
+  NoteUtils::DisplayNoteVec first;
+  size_t committedEnd = 0;
+  DrawSourceGatherWalkCounts firstWalks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, first, &committedEnd, &firstWalks);
+  TEST_ASSERT_TRUE(firstWalks.committedWalks > 0);
+  TEST_ASSERT_TRUE(firstWalks.previewWalks > 0);
+  TEST_ASSERT_TRUE(committedEnd > 0);
+  TEST_ASSERT_TRUE(committedEnd <= first.size());
+
+  NoteUtils::DisplayNoteVec committedPrefix(first.begin(),
+                                            first.begin() + static_cast<std::ptrdiff_t>(committedEnd));
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(500, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(560, 1, 64, 0)));
+
+  NoteUtils::DisplayNoteVec oracle;
+  DrawSourceGatherWalkCounts oracleWalks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, oracle, nullptr, &oracleWalks, false, true);
+  TEST_ASSERT_TRUE(oracleWalks.committedWalks > 0);
+  TEST_ASSERT_TRUE(oracleWalks.previewWalks > 0);
+
+  NoteUtils::DisplayNoteVec reused = committedPrefix;
+  size_t reusedCommittedEnd = 0;
+  DrawSourceGatherWalkCounts reuseWalks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, reused, &reusedCommittedEnd, &reuseWalks,
+                               true, true);
+  TEST_ASSERT_EQUAL_UINT32(0u, reuseWalks.committedWalks);
+  TEST_ASSERT_TRUE(reuseWalks.previewWalks > 0);
+  TEST_ASSERT_EQUAL(committedEnd, reusedCommittedEnd);
+  assertSameDrawSourceUnion(oracle, reused);
+
+  PendingNoteChange hide{};
+  hide.kind = PendingNoteChangeKind::Hide;
+  hide.noteId = recordId;
+  hide.channel = 1;
+  hide.pitch = 60;
+  hide.startTick = 100;
+  hide.endTick = 200;
+  loop.pushPendingNoteChangeForTest(hide);
+  TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
+
+  NoteUtils::DisplayNoteVec pendingOracle;
+  DrawSourceGatherWalkCounts pendingOracleWalks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, pendingOracle, nullptr, &pendingOracleWalks,
+                               false, true);
+  TEST_ASSERT_TRUE(pendingOracleWalks.pendingApplied);
+
+  NoteUtils::DisplayNoteVec pendingReused = committedPrefix;
+  DrawSourceGatherWalkCounts pendingReuseWalks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, pendingReused, nullptr, &pendingReuseWalks,
+                               true, true);
+  TEST_ASSERT_EQUAL_UINT32(0u, pendingReuseWalks.committedWalks);
+  TEST_ASSERT_TRUE(pendingReuseWalks.previewWalks > 0);
+  TEST_ASSERT_TRUE(pendingReuseWalks.pendingApplied);
+  assertSameDrawSourceUnion(pendingOracle, pendingReused);
+}
+
 void test_reclaim_disabled_overdub_releases_committed_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3020,6 +3158,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_open_hold_grows_to_playhead_after_occupy_hide);
   RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
   RUN_TEST(test_draw_source_sealed_row_survives_prefix_hide);
+  RUN_TEST(test_draw_source_overlay_only_reuse_skips_committed_walk);
   RUN_TEST(test_draw_source_keeps_stale_snapshot_after_second_wrap);
   RUN_TEST(test_draw_source_od2_clean_adopt_keeps_linear_tail);
   RUN_TEST(test_draw_source_no_snapshot_uses_clean_visual_cache);

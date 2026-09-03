@@ -36,6 +36,8 @@ after stop, nonempty visualCache is paint authority
 visualCache only when no published snapshot exists, or after stop when visual is nonempty
 ```
 
+Amended by [`display_draw_source_reuse_empty_bar_bugfix.md`](display_draw_source_reuse_empty_bar_bugfix.md): closed + current + dirty/empty visual selects snapshot; closed + stale never selects snapshot.
+
 Amended by [`overdub_paint_stop_snapshot_wrap_end_bugfix.md`](overdub_paint_stop_snapshot_wrap_end_bugfix.md) (`010217`). Capture-active stale snapshot still gathers the last published snapshot.
 
 ## Architecture checkpoint

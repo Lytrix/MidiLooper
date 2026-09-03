@@ -550,10 +550,13 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
 }
 
 SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
-                                 uint32_t srcAppendUs) {
-  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,wrap,total=%lu,seal=%lu,pass_apply=%lu,src_append=%lu\r\n"),
+                                 uint32_t srcAppendUs, uint32_t commitUs, uint32_t sealPendUs,
+                                 uint32_t beginUs) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,wrap,total=%lu,seal=%lu,pass_apply=%lu,src_append=%lu,"
+                       "commit=%lu,seal_pend=%lu,begin=%lu\r\n"),
                 (unsigned long)micros(), (unsigned long)totalUs, (unsigned long)sealUs,
-                (unsigned long)passApplyUs, (unsigned long)srcAppendUs);
+                (unsigned long)passApplyUs, (unsigned long)srcAppendUs, (unsigned long)commitUs,
+                (unsigned long)sealPendUs, (unsigned long)beginUs);
 }
 
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,

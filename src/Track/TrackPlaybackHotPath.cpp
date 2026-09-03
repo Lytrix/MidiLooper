@@ -160,7 +160,8 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
 #if defined(SESSION_CAPTURE)
     const uint32_t wrapSrcAppendUs = micros() - wrapSrcAppendStartUs;
     SC_ODUB_WRAP_TICK(wrapSealUs + wrapPassApplyUs + wrapSrcAppendUs, wrapSealUs, wrapPassApplyUs,
-                      wrapSrcAppendUs);
+                      wrapSrcAppendUs, g_overdubWrapCommitUs, g_overdubWrapSealPendingUs,
+                      g_overdubWrapBeginCaptureUs);
 #endif
   }
 #if defined(SESSION_CAPTURE)

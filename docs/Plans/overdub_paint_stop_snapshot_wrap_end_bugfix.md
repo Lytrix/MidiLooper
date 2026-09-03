@@ -39,6 +39,8 @@ if (captureActive or overdubSession) and publishedSnapshot() exists: gather that
 if session is closed and visualCache.notes nonempty: gather visualCache
 ```
 
+Amended by [`display_draw_source_reuse_empty_bar_bugfix.md`](display_draw_source_reuse_empty_bar_bugfix.md): closed + current + dirty/empty visual selects snapshot; stale snapshot still must not win.
+
 Keep-larger (adopted visual over a smaller snapshot during a live session) reverted after
 [`012714`](../../captures/session_20260902_012714.log): it locked the previous pass onto
 bars the playhead had not recrossed. Sealed coverage is

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-02 (occupy snapshot source DEC-052)
+Last updated: 2026-09-03 (draw-source reuse RC-D1/D2 + wrap-seal measure)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,7 +23,10 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — occupy snapshot source ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)):**
+**Now — draw-source reuse + wrap-seal measure ([`151552`](../../captures/session_20260902_151552.log)):**
+RC-D1/D2/W host shipped. Playhead-only Hit; closed-session current+dirty/empty → snapshot; record-stop keeps the composed handoff seed; overlay-only reuse walks committed notes 0 times (host oracle). `DIAG,wrap` now emits `commit` / `seal_pend` / `begin`. Plan: [`display_draw_source_reuse_empty_bar_bugfix.md`](../Plans/display_draw_source_reuse_empty_bar_bugfix.md). `teensy41-capture-serial` RAM1 locals **6848**. Focused native PASS (`test_display_window_utils`, overlay-reuse fixture). Full native **1631/1633** — pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end` only. Device still required: first PLAYING `DISP` equals last RECORDING frame; OVERDUBBING `DFRAME resolveUs` under 8 ms when only preview/playhead/pending moved. Display stays `resolveDisplayNotesByDrawSource`. Do not promote `liveDisplayNotes` to committed-source authority. Do not call `refreshVisualCacheAfterPassStateChange` on record stop. `#41` Stage 2 stays out. STOPPED `usbdisp` / `PERS` stay out. Wrap seal stays on the clock.
+
+**Prior — occupy snapshot source ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)):**
 `rebuildOverdubSourceSpanCache` consumes `shouldGatherPublishedSnapshotForDrawSource`. Predicate true → exclusive published-`LoopSnapshot` fill (`from=snapshot`). Predicate false → prepared → prior → covering visual → passes unchanged. Plan: [`overdub_occupy_snapshot_source_refinement.md`](../Plans/overdub_occupy_snapshot_source_refinement.md). Native occupy fixtures in `test_overdub_source_view` PASS. `teensy41-capture-serial` RAM1 locals **6848**. Host `test_occupy_paint_serial_verify` PASS. Full native **1628/1630** — one pre-existing fail in `test_same_pass_playhead_tails_keep_closed_bar_four_end` (does not call occupy fill). Device: `overdub_occupy_paint` OD2 open `from=snapshot` when paint `snap!=0`; `occupy_od2_snap_not_zero` is paint/occupy divergence only. Stop totals emit `#CAP,DIAG,oh` so `add`/`shorten`/`hide` fit `kMaxCaptureTextBytes` (192); [`150143`](../../captures/session_20260902_150143.log) `overlap_hold` clipped `hide`. OVERDUBBING reconstruct stays off. Stage 4 stays closed. `#41` Stage 2 stays out.
 
 **Prior — occupy prepared source pin ([`134815`](../../captures/session_20260902_134815.log)):**
