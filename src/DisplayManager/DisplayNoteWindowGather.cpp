@@ -206,17 +206,27 @@ void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_
     }
 }
 
-DISP_CAPTURE_MEM void reuseCommittedDrawSourcePrefix(const NoteUtils::DisplayNoteVec& live,
-                                                     size_t committedEnd,
+DISP_CAPTURE_MEM void reuseCommittedDrawSourcePrefix(const NoteUtils::DisplayNoteVec& prefix,
                                                      NoteUtils::DisplayNoteVec& out) {
     out.clear();
-    if (committedEnd > live.size()) {
-        committedEnd = live.size();
+    if (prefix.empty()) {
+        return;
+    }
+    out.insert(out.end(), prefix.begin(), prefix.end());
+}
+
+DISP_CAPTURE_MEM void storeCommittedDrawSourcePrefix(const NoteUtils::DisplayNoteVec& gathered,
+                                                     size_t committedEnd,
+                                                     NoteUtils::DisplayNoteVec& prefixOut) {
+    prefixOut.clear();
+    if (committedEnd > gathered.size()) {
+        committedEnd = gathered.size();
     }
     if (committedEnd == 0) {
         return;
     }
-    out.insert(out.end(), live.begin(), live.begin() + static_cast<std::ptrdiff_t>(committedEnd));
+    prefixOut.insert(prefixOut.end(), gathered.begin(),
+                     gathered.begin() + static_cast<std::ptrdiff_t>(committedEnd));
 }
 
 DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t firstBar,
@@ -299,15 +309,6 @@ uint32_t fingerprintPendingNoteChanges(const PendingNoteChangeVec& changes) {
     return generation;
 }
 
-DISP_CAPTURE_MEM void gatherDrawSourceBars(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
-                                           uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh,
-                                           NoteUtils::DisplayNoteVec& out, size_t& committedEnd) {
-    gatherCommittedDrawSourceBars(loop, firstBar, lastBar, pitchLow, pitchHigh, out,
-                                  committedEnd);
-    applyDrawSourceOverlays(loop, firstBar, lastBar, out, committedEnd);
-    (void)playheadBar;
-}
-
 void applyPendingDrawSourceTransforms(const Loop& loop, NoteUtils::DisplayNoteVec& notes,
                                       size_t committedDisplayEnd) {
     if (loop.hasPendingNoteChanges() || loop.hasSealedCompanionOverlay()) {
@@ -359,6 +360,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
     if (loopLength == 0) {
         liveDisplayNotes.clear();
+        liveDisplayCommittedPrefix_.clear();
         liveDrawSourceKey_ = {};
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
@@ -394,66 +396,64 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     DisplayWindowUtils::DrawSourceReuseKind reuseKind =
         DisplayWindowUtils::selectDrawSourceReuseKind(liveDrawSourceKey_, currentKey,
                                                       Config::TICKS_PER_BAR);
-    const bool overlayOnlyReuse =
-        reuseKind == DisplayWindowUtils::DrawSourceReuseKind::Hit &&
-        !DisplayWindowUtils::drawSourceOverlayKeysMatch(liveDrawSourceKey_, currentKey);
-    const size_t priorCommittedEnd = liveDisplayCacheCommittedNoteCount_;
-    const bool canReuseCommittedPrefix =
-        priorCommittedEnd > 0 && priorCommittedEnd <= liveDisplayNotes.size();
+    const bool canReuseCommittedPrefix = !liveDisplayCommittedPrefix_.empty();
     const bool canSlideCommittedPrefix =
-        reuseKind == DisplayWindowUtils::DrawSourceReuseKind::SlideOneBar &&
+        reuseKind == DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource &&
         canReuseCommittedPrefix;
 
-    size_t committedDisplayEnd = priorCommittedEnd;
-    if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::Hit && !overlayOnlyReuse) {
+    size_t committedDisplayEnd = liveDisplayCommittedPrefix_.size();
+    DisplayNoteVec candidate;
+    const uint32_t gatherStartUs = micros();
+    if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource &&
+        canReuseCommittedPrefix) {
+        // Reuse the untransformed committed prefix. Overlays/pending on a copy.
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
+        committedDisplayEnd = candidate.size();
+        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
+        liveDisplayNotes.swap(candidate);
+    } else if (canSlideCommittedPrefix) {
+        DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
+        candidate = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
+            candidate, windowStart, windowLength, loopLength);
+        const uint32_t enteringBar =
+            windowStart > liveDrawSourceKey_.windowStart ? lastBar : firstBar;
+        gatherCommittedDrawSourceBars(loop, enteringBar, enteringBar, resolvedPitchLow,
+                                      resolvedPitchHigh, candidate, committedDisplayEnd);
+        storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
+        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
+        liveDisplayNotes.swap(candidate);
     } else {
-        DisplayNoteVec candidate;
-        const uint32_t gatherStartUs = micros();
-        if (overlayOnlyReuse && canReuseCommittedPrefix) {
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            reuseCommittedDrawSourcePrefix(liveDisplayNotes, priorCommittedEnd, candidate);
-            committedDisplayEnd = candidate.size();
-            applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-            applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
-            liveDisplayNotes.swap(candidate);
-        } else if (canSlideCommittedPrefix) {
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            reuseCommittedDrawSourcePrefix(liveDisplayNotes, priorCommittedEnd, candidate);
-            candidate = DisplayWindowUtils::filterDisplayNotesByWindowInclusion(
-                candidate, windowStart, windowLength, loopLength);
-            const uint32_t enteringBar =
-                windowStart > liveDrawSourceKey_.windowStart ? lastBar : firstBar;
-            gatherCommittedDrawSourceBars(loop, enteringBar, enteringBar, resolvedPitchLow,
-                                          resolvedPitchHigh, candidate, committedDisplayEnd);
-            applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-            applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
-            liveDisplayNotes.swap(candidate);
+        DIAG_COUNTER_INC(DisplayFullRebuild);
+        gatherCommittedDrawSourceBars(loop, firstBar, lastBar, resolvedPitchLow, resolvedPitchHigh,
+                                      candidate, committedDisplayEnd);
+        storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
+        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
+        const bool snapshotSelected =
+            DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+                static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(),
+                loop.hasOverdubSession(), !loop.visualCache.notes.empty(),
+                loop.visualCacheDirty, loop.publishedSnapshotIsCurrent());
+        const bool visualCleanNonempty =
+            !loop.visualCacheDirty && !loop.visualCache.notes.empty();
+        const bool retainHandoffSeed =
+            !loop.captureActive() && !loop.hasOverdubSession() &&
+            DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(snapshotSelected,
+                                                                 visualCleanNonempty) &&
+            !liveDisplayNotes.empty();
+        if (retainHandoffSeed) {
+            committedDisplayEnd = liveDisplayNotes.size();
+            storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+                                           liveDisplayCommittedPrefix_);
         } else {
-            DIAG_COUNTER_INC(DisplayFullRebuild);
-            gatherDrawSourceBars(loop, firstBar, lastBar, playheadBar, resolvedPitchLow,
-                                 resolvedPitchHigh, candidate, committedDisplayEnd);
-            applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
-            const bool snapshotSelected =
-                DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-                    static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(),
-                    loop.hasOverdubSession(), !loop.visualCache.notes.empty(),
-                    loop.visualCacheDirty, loop.publishedSnapshotIsCurrent());
-            const bool visualCleanNonempty =
-                !loop.visualCacheDirty && !loop.visualCache.notes.empty();
-            const bool retainHandoffSeed =
-                !loop.captureActive() && !loop.hasOverdubSession() &&
-                DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(snapshotSelected,
-                                                                     visualCleanNonempty) &&
-                !liveDisplayNotes.empty();
-            if (retainHandoffSeed) {
-                committedDisplayEnd = liveDisplayNotes.size();
-            } else {
-                liveDisplayNotes.swap(candidate);
-            }
+            liveDisplayNotes.swap(candidate);
         }
-        DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
     }
+    DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
 
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), false, false,

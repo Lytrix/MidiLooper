@@ -1053,88 +1053,88 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceTestKey(uint32_t windowSta
   return key;
 }
 
-void test_draw_source_reuse_hit_when_keys_match() {
+void test_reuse_committed_draw_source_when_keys_match() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 16u * bar, 2);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
-void test_draw_source_reuse_hit_ignores_playhead_tick_same_bar() {
+void test_reuse_committed_draw_source_ignores_playhead_tick_same_bar() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 4u * bar, 1);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
   current.windowStart = 0;
   current.playheadBar = 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
-void test_draw_source_reuse_hit_when_playhead_bar_changes() {
+void test_reuse_committed_draw_source_when_playhead_bar_changes() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 4u * bar, 1);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
   current.playheadBar = 2;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
-void test_draw_source_reuse_slides_exactly_one_bar() {
+void test_slide_committed_draw_source_exactly_one_bar() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(4u * bar, 16u * bar, 12);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
   current.windowStart = 5u * bar;
   current.playheadBar = 13;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::SlideOneBar),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current.windowStart = 3u * bar;
   current.playheadBar = 11;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::SlideOneBar),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
-void test_draw_source_reuse_rebuilds_two_bar_jump() {
+void test_rebuild_committed_draw_source_two_bar_jump() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(4u * bar, 16u * bar, 12);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
   current.windowStart = 6u * bar;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
-void test_draw_source_reuse_rebuilds_on_committed_revision() {
+void test_rebuild_committed_draw_source_on_committed_revision() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 16u * bar, 2);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
   current.playbackRevision = last.playbackRevision + 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
   current.visualCacheRevision = last.visualCacheRevision + 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
   current.publishedSnapshotRevision = last.publishedSnapshotRevision + 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
   current.snapshotCurrent = 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Rebuild),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
-void test_draw_source_reuse_hit_when_only_overlay_keys_change() {
+void test_reuse_committed_draw_source_when_only_overlay_keys_change() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 16u * bar, 2);
   DisplayWindowUtils::DrawSourceGatherKey current = last;
@@ -1142,22 +1142,22 @@ void test_draw_source_reuse_hit_when_only_overlay_keys_change() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::drawSourceCommittedSourceKeysMatch(last, current));
   TEST_ASSERT_FALSE(DisplayWindowUtils::drawSourceOverlayKeysMatch(last, current));
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
   current.capturePreviewRevision = last.capturePreviewRevision + 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
   current.sealedPreviewCount = 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
   current.sealedCompanionOverlay = 1;
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::Hit),
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
@@ -1368,13 +1368,13 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_resolve_detailed_paint_window_centers_thirty_two_bar_loop);
   RUN_TEST(test_short_loop_window_inclusion_keeps_full_identity_set);
   RUN_TEST(test_long_loop_window_inclusion_matches_pre_stage_one_window);
-  RUN_TEST(test_draw_source_reuse_hit_when_keys_match);
-  RUN_TEST(test_draw_source_reuse_hit_ignores_playhead_tick_same_bar);
-  RUN_TEST(test_draw_source_reuse_hit_when_playhead_bar_changes);
-  RUN_TEST(test_draw_source_reuse_slides_exactly_one_bar);
-  RUN_TEST(test_draw_source_reuse_rebuilds_two_bar_jump);
-  RUN_TEST(test_draw_source_reuse_rebuilds_on_committed_revision);
-  RUN_TEST(test_draw_source_reuse_hit_when_only_overlay_keys_change);
+  RUN_TEST(test_reuse_committed_draw_source_when_keys_match);
+  RUN_TEST(test_reuse_committed_draw_source_ignores_playhead_tick_same_bar);
+  RUN_TEST(test_reuse_committed_draw_source_when_playhead_bar_changes);
+  RUN_TEST(test_slide_committed_draw_source_exactly_one_bar);
+  RUN_TEST(test_rebuild_committed_draw_source_two_bar_jump);
+  RUN_TEST(test_rebuild_committed_draw_source_on_committed_revision);
+  RUN_TEST(test_reuse_committed_draw_source_when_only_overlay_keys_change);
   RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
   RUN_TEST(test_display_frame_admission_sequences);
   RUN_TEST(test_display_frame_note_edit_request_uses_same_phases);

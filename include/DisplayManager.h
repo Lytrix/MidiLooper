@@ -235,6 +235,9 @@ private:
                                                      uint32_t windowLength);
     void invalidateNoteEditDisplayCache();
     DisplayNoteVec liveDisplayNotes;
+    /// Last untransformed committed draw-source walk. Overlays and pending
+    /// transforms apply to a frame-local copy; this prefix is never mutated.
+    DisplayNoteVec liveDisplayCommittedPrefix_;
     /// Paint copy with pending Hide/Shorten applied. `liveDisplayNotes` stays the
     /// un-hidden compose so capture-layer index math stays valid.
     DisplayNoteVec liveDisplayPendingPaintNotes_;

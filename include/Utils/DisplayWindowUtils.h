@@ -385,10 +385,11 @@ inline void keepShortestEndAtPitchStart(NoteUtils::DisplayNoteVec& notes) {
   notes.swap(kept);
 }
 
-/// Seal handoff only: a retained sealed-capture row replaces the committed row at the same
-/// pitch+start, otherwise it is appended. Deliberately narrow — not a general "newer wins"
-/// rule, so it cannot override a companion-transformed row at a different start. Wrap-held
-/// rows (`endTick < startTick`) never replace and are only appended. Row order is preserved.
+/// Seal handoff only: a retained sealed-capture row replaces the existing row at the same
+/// pitch+start, otherwise it is appended. Used when unioning sealed onto a committed prefix
+/// and when `retainCapturePreviewAtSeal` merges a new pass's closed preview into uncovered
+/// sealed rows. Deliberately narrow — not a general "newer wins" / "new lap discards"
+/// rule. Wrap-held rows (`endTick < startTick`) never replace and are only appended.
 inline void upsertDisplayNoteAtPitchStart(NoteUtils::DisplayNoteVec& notes,
                                           const NoteUtils::DisplayNote& sealedRow) {
   if (sealedRow.endTick >= sealedRow.startTick) {
@@ -521,11 +522,13 @@ inline bool capturePreviewNoteIsOpenHold(uint32_t startTick, uint32_t endTick) {
     return endTick == startTick;
 }
 
-/// Last successfully resolved draw-source gather. Not a painted framebuffer.
+/// Committed-source decision for the next draw-source frame. Not a painted
+/// framebuffer. `ReuseCommittedDrawSource` means the gathered committed prefix
+/// remains valid; overlays, pending transforms, and tails still re-apply.
 enum class DrawSourceReuseKind : uint8_t {
-    Hit = 0,
-    SlideOneBar = 1,
-    Rebuild = 2,
+    ReuseCommittedDrawSource = 0,
+    SlideCommittedDrawSource = 1,
+    RebuildCommittedDrawSource = 2,
 };
 
 struct DrawSourceGatherKey {
@@ -576,31 +579,33 @@ inline bool drawSourceGatherContentKeysMatch(const DrawSourceGatherKey& last,
            drawSourceOverlayKeysMatch(last, current);
 }
 
-/// Hit when committed-source keys and `windowStart` match. Playhead-bar motion
-/// and overlay-key motion do not force Rebuild (`151552`). One-bar slide only
-/// when committed keys match and `windowStart` moves by exactly one bar.
+/// Reuse the committed prefix when committed-source keys and `windowStart`
+/// match. Playhead-bar motion and overlay-key motion do not force
+/// `RebuildCommittedDrawSource` (`151552`). Overlays and pending still re-apply
+/// on a frame-local copy of the untransformed prefix. One-bar slide only when
+/// committed keys match and `windowStart` moves by exactly one bar.
 inline DrawSourceReuseKind selectDrawSourceReuseKind(const DrawSourceGatherKey& last,
                                                      const DrawSourceGatherKey& current,
                                                      uint32_t ticksPerBar) {
     if (last.valid == 0 || current.valid == 0) {
-        return DrawSourceReuseKind::Rebuild;
+        return DrawSourceReuseKind::RebuildCommittedDrawSource;
     }
     if (!drawSourceCommittedSourceKeysMatch(last, current)) {
-        return DrawSourceReuseKind::Rebuild;
+        return DrawSourceReuseKind::RebuildCommittedDrawSource;
     }
     if (last.windowStart == current.windowStart) {
-        return DrawSourceReuseKind::Hit;
+        return DrawSourceReuseKind::ReuseCommittedDrawSource;
     }
     if (ticksPerBar == 0) {
-        return DrawSourceReuseKind::Rebuild;
+        return DrawSourceReuseKind::RebuildCommittedDrawSource;
     }
     const uint32_t delta = last.windowStart > current.windowStart
                                ? last.windowStart - current.windowStart
                                : current.windowStart - last.windowStart;
     if (delta == ticksPerBar) {
-        return DrawSourceReuseKind::SlideOneBar;
+        return DrawSourceReuseKind::SlideCommittedDrawSource;
     }
-    return DrawSourceReuseKind::Rebuild;
+    return DrawSourceReuseKind::RebuildCommittedDrawSource;
 }
 
 /// One DisplayManager paint phase. Idle means no frame is in progress.
