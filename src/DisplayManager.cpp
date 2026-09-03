@@ -203,6 +203,7 @@ void DisplayManager::applyCoalescedPaintInvalidation() {
     if (paintDeferredClearNotes_) {
         paintDeferredClearNotes_ = false;
         liveDisplayNotes.clear();
+        liveDisplayCommittedPrefix_.clear();
         liveDisplayPendingPaintNotes_.clear();
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;

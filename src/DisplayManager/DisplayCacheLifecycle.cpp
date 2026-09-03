@@ -230,6 +230,7 @@ void DisplayManager::invalidateLiveDisplayCache(bool preserveDisplayNotes) {
         }
     }
     liveDisplayCacheEventCount = static_cast<size_t>(-1);
+    liveDisplayCommittedPrefix_.clear();
     liveDisplayCacheCommittedNoteCount_ = 0;
     liveDisplayCacheCaptureNoteCount_ = 0;
     liveDisplayCacheCaptureChangeCount_ = 0;
@@ -272,6 +273,7 @@ void DisplayManager::invalidateNoteEditDisplayCache() {
         return;
     }
     liveDisplayNotes.clear();
+    liveDisplayCommittedPrefix_.clear();
 }
 
 void DisplayManager::requestNoteInfoRefresh(Track& track) {

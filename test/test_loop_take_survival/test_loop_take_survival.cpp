@@ -3154,6 +3154,96 @@ void test_draw_source_overlay_only_reuse_skips_committed_walk() {
   assertSameDrawSourceUnion(pendingOracle, pendingReused);
 }
 
+bool displayNoteVecHasId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void hideCommittedPrefixNoteById(NoteUtils::DisplayNoteVec& notes, size_t committedEnd,
+                                 NoteId noteId) {
+  NoteUtils::DisplayNoteVec kept;
+  kept.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (i < committedEnd && notes[i].noteId == noteId) {
+      continue;
+    }
+    kept.push_back(notes[i]);
+  }
+  notes.swap(kept);
+}
+
+/// RC-D3: ReuseCommittedDrawSource keeps the untransformed committed prefix.
+/// This suite stubs `applyPendingNoteChangesToDisplayNotes`, so Hide is applied
+/// on the frame copy the same way sibling draw-source pins do. The stored
+/// prefix stays un-hidden. A second reuse from that prefix walks committed
+/// notes 0 times and matches the first frame.
+void test_draw_source_reuse_reapplies_pending_without_mutating_prefix() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 8;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto membership = loop.publishedSnapshot()->noteMembership(60, 0);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  TEST_ASSERT_TRUE(snapshotMembershipCount(membership.get()) > 0);
+  const NoteId recordId = membership->references[0]->noteId;
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(300, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(420, 1, 72, 0)));
+
+  NoteUtils::DisplayNoteVec first;
+  size_t committedEnd = 0;
+  DrawSourceGatherWalkCounts firstWalks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, first, &committedEnd, &firstWalks);
+  TEST_ASSERT_TRUE(committedEnd > 0);
+  TEST_ASSERT_TRUE(displayNoteVecHasId(first, recordId));
+
+  NoteUtils::DisplayNoteVec storedPrefix(first.begin(),
+                                         first.begin() + static_cast<std::ptrdiff_t>(committedEnd));
+  TEST_ASSERT_TRUE(displayNoteVecHasId(storedPrefix, recordId));
+
+  PendingNoteChange hide{};
+  hide.kind = PendingNoteChangeKind::Hide;
+  hide.noteId = recordId;
+  hide.channel = 1;
+  hide.pitch = 60;
+  hide.startTick = 100;
+  hide.endTick = 200;
+  loop.pushPendingNoteChangeForTest(hide);
+  TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
+
+  NoteUtils::DisplayNoteVec frame1 = storedPrefix;
+  size_t frame1End = 0;
+  DrawSourceGatherWalkCounts frame1Walks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, frame1, &frame1End, &frame1Walks, true,
+                               true);
+  TEST_ASSERT_EQUAL_UINT32(0u, frame1Walks.committedWalks);
+  TEST_ASSERT_TRUE(frame1Walks.pendingApplied);
+  hideCommittedPrefixNoteById(frame1, frame1End, recordId);
+  TEST_ASSERT_FALSE(displayNoteVecHasId(frame1, recordId));
+  TEST_ASSERT_TRUE(displayNoteVecHasId(storedPrefix, recordId));
+
+  NoteUtils::DisplayNoteVec frame2 = storedPrefix;
+  size_t frame2End = 0;
+  DrawSourceGatherWalkCounts frame2Walks;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, frame2, &frame2End, &frame2Walks, true,
+                               true);
+  TEST_ASSERT_EQUAL_UINT32(0u, frame2Walks.committedWalks);
+  TEST_ASSERT_TRUE(frame2Walks.pendingApplied);
+  hideCommittedPrefixNoteById(frame2, frame2End, recordId);
+  TEST_ASSERT_FALSE(displayNoteVecHasId(frame2, recordId));
+  TEST_ASSERT_TRUE(displayNoteVecHasId(storedPrefix, recordId));
+  assertSameDrawSourceUnion(frame1, frame2);
+}
+
 void test_reclaim_disabled_overdub_releases_committed_chunks() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3227,6 +3317,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_unions_sealed_preview_after_wrap_before_snapshot);
   RUN_TEST(test_draw_source_sealed_row_survives_prefix_hide);
   RUN_TEST(test_draw_source_overlay_only_reuse_skips_committed_walk);
+  RUN_TEST(test_draw_source_reuse_reapplies_pending_without_mutating_prefix);
   RUN_TEST(test_draw_source_keeps_stale_snapshot_after_second_wrap);
   RUN_TEST(test_draw_source_od2_clean_adopt_keeps_linear_tail);
   RUN_TEST(test_draw_source_no_snapshot_uses_clean_visual_cache);

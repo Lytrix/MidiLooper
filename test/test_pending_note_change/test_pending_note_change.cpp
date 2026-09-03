@@ -561,6 +561,31 @@ void test_pending_hide_applies_to_display_notes_not_source_view() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 64));
 }
 
+/// RC-D3: Hide/Shorten apply to a frame-local copy. The reusable committed
+/// prefix stays un-hidden so a second apply from that prefix is idempotent.
+void test_pending_hide_does_not_mutate_copied_committed_prefix() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 64, 240, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 60, 90, 64, 288, 10,
+                                                                   overlapIds({1})));
+  NoteUtils::DisplayNoteVec storedPrefix = loop.overdubSourceViewNotes();
+  TEST_ASSERT_TRUE(hasDisplayNote(storedPrefix, 60, 64));
+
+  NoteUtils::DisplayNoteVec frame1 = storedPrefix;
+  loop.applyPendingNoteChangesToDisplayNotes(frame1);
+  TEST_ASSERT_FALSE(hasDisplayNote(frame1, 60, 64));
+  TEST_ASSERT_TRUE(hasDisplayNote(storedPrefix, 60, 64));
+
+  NoteUtils::DisplayNoteVec frame2 = storedPrefix;
+  loop.applyPendingNoteChangesToDisplayNotes(frame2);
+  TEST_ASSERT_FALSE(hasDisplayNote(frame2, 60, 64));
+  TEST_ASSERT_TRUE(hasDisplayNote(storedPrefix, 60, 64));
+}
+
 void test_resolve_occupancy_at_note_on_same_start_hides() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3619,6 +3644,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_shorter_note_off_seals_length_not_delete);
   RUN_TEST(test_pending_hide_same_start_longer);
   RUN_TEST(test_pending_hide_applies_to_display_notes_not_source_view);
+  RUN_TEST(test_pending_hide_does_not_mutate_copied_committed_prefix);
   RUN_TEST(test_resolve_occupancy_at_note_on_same_start_hides);
   RUN_TEST(test_pending_hide_applies_when_display_note_id_differs);
   RUN_TEST(test_pending_hide_keeps_live_capture_tail);
