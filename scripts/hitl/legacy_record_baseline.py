@@ -49,6 +49,7 @@ from hitl.capture_transitions import (
     _parse_disp_track_state,
     _record_entry_to_recording_count,
     _serial_capture_sparse_for_verification,
+    _serial_has_recording_active,
     _wait_for_armed_state,
     _wait_for_recording_active,
     _wait_for_state_entry_count,
@@ -1034,6 +1035,15 @@ def _run_record_arm_until_capturing(
         )
     if not armed:
         return False, None
+
+    if _serial_has_recording_active(
+        serial_collector.snapshot(), after_index=arm_baseline_len
+    ):
+        print(
+            "[info] RECORDING already active after arm press; "
+            "skipping transport start so capture is not toggled off."
+        )
+        return True, time.monotonic()
 
     transport_baseline_len = len(serial_collector.snapshot())
     ok, press_sent = _restart_transport_after_clear(
@@ -2637,7 +2647,7 @@ def _build_serial_verification(
     issues: list[str] = []
     if record["phase_missing"] or (not record_only and overdub["phase_missing"]):
         issues.append("missing_phase_boundaries")
-    if record["unmatched_open_notes"] > 0:
+    if record["unmatched_open_notes"] > 0 and not getattr(args, "occupy_paint_pattern", False):
         issues.append("record_unmatched_open_notes")
     if not record_only and overdub["unmatched_open_notes"] > 0:
         issues.append("overdub_unmatched_open_notes")
@@ -2675,7 +2685,9 @@ def _build_serial_verification(
     if stored_record_grid is not None and not record_only:
         if stored_record_grid.get("revt_missing"):
             issues.append("record_stored_revt_missing")
-        elif not stored_record_grid.get("grid_ok", False):
+        elif not stored_record_grid.get("grid_ok", False) and not getattr(
+            args, "occupy_paint_pattern", False
+        ):
             issues.append("record_stored_note_grid_bad")
     first_missing_stage = record_stop_stage_trace.get("first_missing_stage")
     if first_missing_stage is not None:
@@ -2731,14 +2743,15 @@ def _build_serial_verification(
                 if issue not in issues:
                     issues.append(str(issue))
     if stored_overdub_span is not None and not stored_overdub_span.get("phase_disabled"):
-        if stored_overdub_span.get("sevt_missing"):
-            issues.append("overdub_stored_sevt_missing")
-        elif not stored_overdub_span.get("count_ok", False):
-            issues.append("overdub_stored_count_short")
-        elif not stored_overdub_span.get("span_ok", False):
-            issues.append("overdub_stored_span_too_short")
-        elif not stored_overdub_span.get("bars_match_ok", False):
-            issues.append("overdub_stored_bars_short")
+        if not getattr(args, "occupy_paint_pattern", False):
+            if stored_overdub_span.get("sevt_missing"):
+                issues.append("overdub_stored_sevt_missing")
+            elif not stored_overdub_span.get("count_ok", False):
+                issues.append("overdub_stored_count_short")
+            elif not stored_overdub_span.get("span_ok", False):
+                issues.append("overdub_stored_span_too_short")
+            elif not stored_overdub_span.get("bars_match_ok", False):
+                issues.append("overdub_stored_bars_short")
 
     second_overdub: Optional[dict[str, object]] = None
     second_overdub_first_note_offset: Optional[dict[str, object]] = None
@@ -2765,7 +2778,9 @@ def _build_serial_verification(
         )
         if second_overdub.get("phase_missing"):
             issues.append("second_overdub_missing_phase_boundaries")
-        if int(second_overdub.get("unmatched_open_notes", 0)) > 0:
+        if int(second_overdub.get("unmatched_open_notes", 0)) > 0 and not getattr(
+            args, "occupy_paint_pattern", False
+        ):
             issues.append("second_overdub_unmatched_open_notes")
         if int(second_overdub.get("out_of_range_count", 0)) > 0:
             issues.append("second_overdub_out_of_range_notes")
@@ -2793,7 +2808,11 @@ def _build_serial_verification(
                 grid_step_clocks=args.second_overdub_step_clocks,
                 after_ts=boundaries.get("second_overdub_start_ts"),
             )
-            if stored_second_overdub_span is not None and not stored_second_overdub_span.get("phase_disabled"):
+            if (
+                stored_second_overdub_span is not None
+                and not stored_second_overdub_span.get("phase_disabled")
+                and not getattr(args, "occupy_paint_pattern", False)
+            ):
                 if stored_second_overdub_span.get("sevt_missing"):
                     issues.append("second_overdub_stored_sevt_missing")
                 elif not stored_second_overdub_span.get("count_ok", False):
@@ -2959,7 +2978,39 @@ def _run_overdub_pass(
             overdub_stop_advance_clocks = 0
         if args.overdub_wrap_note_off_test and pass_label != "overdub":
             return "wrap test incompatible with multi-pass overdub", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
-        if args.overdub_wrap_note_off_test:
+        if getattr(args, "occupy_paint_pattern", False) and pass_label == "overdub":
+            from hitl.flows.occupy_paint import stream_occupy_source_phrase
+
+            if not args.record_bars:
+                return "occupy pattern requires record-bars", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+            occupy_bpm = wall_clock_tempo if wall_clock_tempo is not None else args.tempo_bpm
+            od_notes, od_cc, od_clock_count, od_timing = stream_occupy_source_phrase(
+                out_port,
+                in_port,
+                serial_collector,
+                midi_channel_1based=args.midi_channel,
+                loop_bars=args.record_bars,
+                tempo_bpm=float(occupy_bpm),
+                max_seconds_guard=guard,
+                abort=abort,
+            )
+        elif getattr(args, "occupy_paint_pattern", False) and pass_label == "second overdub":
+            from hitl.flows.occupy_paint import stream_occupy_overdub_laps
+
+            if not args.record_bars:
+                return "occupy pattern requires record-bars", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
+            occupy_bpm = wall_clock_tempo if wall_clock_tempo is not None else args.tempo_bpm
+            od_notes, od_cc, od_clock_count, od_timing = stream_occupy_overdub_laps(
+                out_port,
+                in_port,
+                serial_collector,
+                midi_channel_1based=args.midi_channel,
+                loop_bars=args.record_bars,
+                tempo_bpm=float(occupy_bpm),
+                max_seconds_guard=guard,
+                abort=abort,
+            )
+        elif args.overdub_wrap_note_off_test:
             if not args.record_bars:
                 return "wrap test requires record-bars", od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
             od_notes, od_cc, od_clock_count, od_timing = _stream_overdub_wrap_note_off_test(
@@ -3133,7 +3184,7 @@ def run() -> int:
     parser.add_argument(
         "--overdub-bars",
         type=int,
-        choices=[1, 2, 4, 5, 8, 16, 24, 32, 48, 64, 128],
+        choices=[1, 2, 4, 5, 8, 12, 16, 24, 32, 48, 64, 128],
         default=0,
         help="Overdub duration in bars (overrides --overdub-seconds)",
     )
@@ -3214,6 +3265,20 @@ def run() -> int:
         help=(
             "Wait after overdub stop before undo, and between undo and redo "
             "(default: 3000 — long loops need deferred save to finish first)"
+        ),
+    )
+    parser.add_argument(
+        "--undo-redo-cycles",
+        type=int,
+        default=1,
+        help="Undo double-presses, then the same number of redo triple-presses (default: 1)",
+    )
+    parser.add_argument(
+        "--occupy-paint-pattern",
+        action="store_true",
+        help=(
+            "Record a seed loop; first overdub writes the half-bar phrase; "
+            "second overdub occupies it (same-start hide, +1/4 shorten, -1/2 hide)"
         ),
     )
     parser.add_argument(
@@ -3731,6 +3796,7 @@ def run() -> int:
                 rec_clock_count = 0
                 rec_fallback_seconds = False
                 fixture_record_stop_sent = False
+                occupy_record_stop_sent = False
                 rec_timing = {
                     "grid_steps_emitted": 0.0,
                     "max_abs_grid_jitter_clocks": 0.0,
@@ -3785,6 +3851,27 @@ def run() -> int:
                             "mean_abs_grid_jitter_clocks": 0.0,
                         }
                         fixture_record_stop_sent = record_stop_sent
+                    elif getattr(args, "occupy_paint_pattern", False):
+                        from hitl.flows.occupy_paint import stream_occupy_record_bars
+
+                        occupy_bpm = wall_clock_tempo if wall_clock_tempo is not None else args.tempo_bpm
+                        rec_notes, rec_cc, rec_clock_count, rec_timing = stream_occupy_record_bars(
+                            out_port,
+                            serial_collector,
+                            midi_channel_1based=args.midi_channel,
+                            loop_bars=args.record_bars,
+                            tempo_bpm=float(occupy_bpm),
+                            max_seconds_guard=guard,
+                            stream_start_monotonic=recording_confirmed_at,
+                            stop_press_advance_clocks=int(
+                                getattr(args, "stop_press_advance_clocks", 0) or 0
+                            ),
+                            stop_press_ms=args.press_ms,
+                            abort=abort,
+                        )
+                        occupy_record_stop_sent = rec_timing.get(
+                            "stop_press_sent_during_stream", 0.0
+                        ) > 0.0
                     else:
                         rec_notes, rec_cc, rec_clock_count, rec_timing = _stream_pattern_for_bars(
                             out_port,
@@ -3832,11 +3919,20 @@ def run() -> int:
                     abort_reason = "record phase saw 0 midi clock pulses"
                     break
 
-                if not (edit_fixture and fixture_record_stop_sent):
+                record_stop_sent_during_stream = (
+                    (edit_fixture and fixture_record_stop_sent) or occupy_record_stop_sent
+                )
+                if not record_stop_sent_during_stream:
                     time.sleep(max(args.post_stream_settle_ms, 0) / 1000.0)
                 print(f"[track {_user_track_number(idx)}] record stop (returns to play)")
-                record_stop_baseline_len = len(serial_collector.snapshot()) if serial_collector else 0
-                if not (edit_fixture and fixture_record_stop_sent):
+                # In-stream stop already emitted ST PLAYING; a post-stream snapshot
+                # baseline would miss it and the retry press starts another capture.
+                record_stop_baseline_len = (
+                    record_baseline_len
+                    if record_stop_sent_during_stream
+                    else (len(serial_collector.snapshot()) if serial_collector else 0)
+                )
+                if not record_stop_sent_during_stream:
                     _send_short_press(
                         out_port,
                         note=RECORD_BUTTON_NOTE,
@@ -3844,7 +3940,7 @@ def run() -> int:
                         press_ms=args.press_ms,
                     )
                 elif serial_collector is not None:
-                    print("[info] Record stop already sent during wall-time fixture stream; waiting for PLAYING.")
+                    print("[info] Record stop already sent during stream; waiting for PLAYING.")
                 if serial_collector is not None:
                     from hitl.capture_transitions import _wait_for_playing_after_record_stop
 
@@ -3990,24 +4086,33 @@ def run() -> int:
 
                     if args.undo_redo_after_overdub_stop:
                         undo_redo_gap_s = max(args.undo_redo_delay_ms, 0) / 1000.0
-                        time.sleep(undo_redo_gap_s)
-                        print(f"[track {_user_track_number(idx)}] undo after overdub stop (double press)")
-                        _send_multi_short_press(
-                            out_port,
-                            note=RECORD_BUTTON_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
-                            press_ms=args.press_ms,
-                            count=2,
-                        )
-                        time.sleep(undo_redo_gap_s)
-                        print(f"[track {_user_track_number(idx)}] redo after overdub stop (triple press)")
-                        _send_multi_short_press(
-                            out_port,
-                            note=RECORD_BUTTON_NOTE,
-                            channel_1based=CONTROL_CHANNEL_1BASED,
-                            press_ms=args.press_ms,
-                            count=3,
-                        )
+                        undo_redo_cycles = max(1, int(getattr(args, "undo_redo_cycles", 1)))
+                        for cycle in range(undo_redo_cycles):
+                            time.sleep(undo_redo_gap_s)
+                            print(
+                                f"[track {_user_track_number(idx)}] undo after overdub stop "
+                                f"(double press {cycle + 1}/{undo_redo_cycles})"
+                            )
+                            _send_multi_short_press(
+                                out_port,
+                                note=RECORD_BUTTON_NOTE,
+                                channel_1based=CONTROL_CHANNEL_1BASED,
+                                press_ms=args.press_ms,
+                                count=2,
+                            )
+                        for cycle in range(undo_redo_cycles):
+                            time.sleep(undo_redo_gap_s)
+                            print(
+                                f"[track {_user_track_number(idx)}] redo after overdub stop "
+                                f"(triple press {cycle + 1}/{undo_redo_cycles})"
+                            )
+                            _send_multi_short_press(
+                                out_port,
+                                note=RECORD_BUTTON_NOTE,
+                                channel_1based=CONTROL_CHANNEL_1BASED,
+                                press_ms=args.press_ms,
+                                count=3,
+                            )
                         time.sleep(args.phase_wait_ms / 1000.0)
                     if args.stop_after_overdub:
                         print(f"[track {_user_track_number(idx)}] transport stop")
@@ -4097,6 +4202,7 @@ def run() -> int:
     clear_undo_prune = _extract_clear_undo_prune(verification_lines)
 
     expected_min = args.track_count
+    undo_redo_expected_min = expected_min * max(1, int(getattr(args, "undo_redo_cycles", 1)))
     expected_record_notes_min = 0
     expected_overdub_notes_min = 0
     expected_record_clocks = 0
@@ -4108,17 +4214,37 @@ def run() -> int:
             from host_midi_automation_edit_baseline import EDIT_RECORD_FIXTURE
 
             expected_record_notes_min = len(EDIT_RECORD_FIXTURE)
+        elif getattr(args, "occupy_paint_pattern", False):
+            from hitl.flows.occupy_paint import occupy_record_notes_min
+
+            expected_record_notes_min = occupy_record_notes_min(
+                loop_bars=args.record_bars or 4
+            )
         else:
             # 16th-note grid; allow one-step edge variance at boundaries.
             expected_record_notes_min = max(1, args.record_bars * 16 - 1)
         expected_record_clocks = args.record_bars * MIDI_CLOCKS_PER_BAR
     if (not args.record_only) and args.overdub_bars and args.bar_sync_from_midi_clock:
-        expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
+        if getattr(args, "occupy_paint_pattern", False):
+            from hitl.flows.occupy_paint import occupy_source_notes_min
+
+            expected_overdub_notes_min = occupy_source_notes_min(
+                loop_bars=args.record_bars or 4
+            )
+        else:
+            expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
         expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
     if args.second_overdub_bars and args.bar_sync_from_midi_clock:
-        expected_second_overdub_notes_min = _expected_overdub_notes_min(
-            args.second_overdub_bars, args.second_overdub_step_clocks
-        )
+        if getattr(args, "occupy_paint_pattern", False):
+            from hitl.flows.occupy_paint import occupy_overdub_notes_min
+
+            expected_second_overdub_notes_min = occupy_overdub_notes_min(
+                loop_bars=args.record_bars or 4
+            )
+        else:
+            expected_second_overdub_notes_min = _expected_overdub_notes_min(
+                args.second_overdub_bars, args.second_overdub_step_clocks
+            )
         expected_second_overdub_clocks = args.second_overdub_bars * MIDI_CLOCKS_PER_BAR
     if args.overdub_wrap_note_off_test:
         expected_overdub_notes_min = 1
@@ -4284,7 +4410,7 @@ def run() -> int:
             "delay_ms": args.undo_redo_delay_ms if args.undo_redo_after_overdub_stop else None,
             "undo_log_count": undo_log_count if verification_lines else None,
             "redo_log_count": redo_log_count if verification_lines else None,
-            "expected_min": expected_min if (verification_lines and args.undo_redo_after_overdub_stop) else None,
+            "expected_min": undo_redo_expected_min if (verification_lines and args.undo_redo_after_overdub_stop) else None,
         },
         "clear_undo_prune": clear_undo_prune if (verification_lines and args.clear_before_record) else None,
     }
@@ -4307,7 +4433,9 @@ def run() -> int:
         for row in transition_checks:
             if row["ok"] is False:
                 overall_ok = False
-        if args.undo_redo_after_overdub_stop and (undo_log_count < expected_min or redo_log_count < expected_min):
+        if args.undo_redo_after_overdub_stop and (
+            undo_log_count < undo_redo_expected_min or redo_log_count < undo_redo_expected_min
+        ):
             overall_ok = False
         if (not args.record_only) and args.clear_before_record and not _clear_undo_prune_gate_ok(
             clear_precondition_results,
@@ -4360,7 +4488,7 @@ def run() -> int:
         if args.undo_redo_after_overdub_stop:
             print(
                 "  Undo/Redo after overdub-stop logs: "
-                f"undo={undo_log_count} redo={redo_log_count} (min {expected_min})"
+                f"undo={undo_log_count} redo={redo_log_count} (min {undo_redo_expected_min})"
             )
         if args.clear_before_record:
             print(

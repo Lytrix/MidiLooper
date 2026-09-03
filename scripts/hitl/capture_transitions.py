@@ -330,11 +330,15 @@ def _wait_for_armed_state(
     timeout_s: float,
     abort: Optional[RunAbort] = None,
 ) -> bool:
+    """Wait for ARMED, or RECORDING if the arm press started capture while transport ran."""
     deadline = time.monotonic() + max(timeout_s, 0.0)
     while time.monotonic() < deadline:
         if abort is not None and abort.check() is not None:
             return False
-        if _serial_has_armed_after(collector.snapshot(), after_index=baseline_len):
+        lines = collector.snapshot()
+        if _serial_has_armed_after(lines, after_index=baseline_len):
+            return True
+        if _serial_has_recording_active(lines, after_index=baseline_len):
             return True
         time.sleep(0.01)
     return False

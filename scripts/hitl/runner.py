@@ -29,7 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_parser = sub.add_parser("run", help="Run MIDI phases and optional serial verifiers")
-    run_parser.add_argument("--preset", default=None, help="Named preset: base, edit_full")
+    run_parser.add_argument(
+        "--preset",
+        default=None,
+        help="Named preset: base, edit_full, overdub_occupy_paint",
+    )
     run_parser.add_argument(
         "--scenarios",
         default=None,

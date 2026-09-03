@@ -21,6 +21,7 @@ class ScenarioSpec:
 PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "base": ("base",),
     "edit_full": ("edit_record_prelude", "edit_full"),
+    "overdub_occupy_paint": ("overdub_occupy_paint",),
 }
 
 
@@ -30,6 +31,10 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.scenarios.edit_record_prelude import (
         run_edit_record_prelude,
         verify_edit_record_prelude,
+    )
+    from hitl.scenarios.overdub_occupy_paint import (
+        run_overdub_occupy_paint,
+        verify_overdub_occupy_paint,
     )
 
     return {
@@ -50,6 +55,16 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             description="Full note-edit overlap suite (legacy edit baseline body)",
             run=run_edit_full_scenario,
             verify=verify_edit_full_scenario,
+        ),
+        "overdub_occupy_paint": ScenarioSpec(
+            scenario_id="overdub_occupy_paint",
+            description=(
+                "Clear/arm, seed record, first overdub half-bar phrase, second "
+                "overdub occupy (same-start hide / +1/4 shorten / -1/2 hide), "
+                "two undo then two redo"
+            ),
+            run=run_overdub_occupy_paint,
+            verify=verify_overdub_occupy_paint,
         ),
     }
 

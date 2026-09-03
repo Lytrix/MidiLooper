@@ -56,4 +56,4 @@ Reuse: `DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource`. Host tw
 
 ## Device gate
 
-First OD2 `draw_src,layers`: `visual=164` `snap=0`. Frame contains adopted `39@2976→3055`, not stale `2976→2784`. Preview may grow. The adopted prefix must not reconstruct from the stale snapshot.
+Preset `overdub_occupy_paint` (managed capture). First OD2 `draw_src,layers`: `snap=0` and `visual` does not shrink below the OD1 `adopt_partial` count. Preview may grow. The adopted prefix must not reconstruct from the stale snapshot. Also: OD1 `overlap_hold` shorten=0 hide=0; OD2 `overlap_hold` shorten≥2 and hide≥2; at least two half-bar wrap-crossing pairs on 48/52/56/60 (`WRAP` or OD2 `MI,U`); two `Overdub undone` then two `Overdub redone`.
