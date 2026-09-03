@@ -3334,6 +3334,42 @@ void test_sealed_hide_keeps_short_overdub_after_snapshot_current() {
   TEST_ASSERT_EQUAL_UINT32(864u, paint[0].endTick);
 }
 
+/// RC1: wrap 2 must not replace wrap-1 overlay Hide. Admission list stays last wrap.
+void test_sealed_companion_overlay_retains_prior_wrap_hide() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 10, 1680, 2112, 63, 5376);
+  seedLongSourceNote(loop, 20, 2304, 2448, 63, 5376);
+  sealRecordedHideCompanion(loop, 10, 63, 1680, 2112, 9);
+  TEST_ASSERT_EQUAL(1u, loop.lastOverdubSealCompanionIdsForTest().size());
+  TEST_ASSERT_EQUAL(1u, loop.sealedCompanionOverlayIdsForTest().size());
+  const EditPassId wrap1Id = loop.lastOverdubSealCompanionIdsForTest()[0];
+
+  sealRecordedHideCompanion(loop, 20, 63, 2304, 2448, 11);
+  TEST_ASSERT_EQUAL(1u, loop.lastOverdubSealCompanionIdsForTest().size());
+  TEST_ASSERT_TRUE(loop.lastOverdubSealCompanionIdsForTest()[0] != wrap1Id);
+  TEST_ASSERT_EQUAL(2u, loop.sealedCompanionOverlayIdsForTest().size());
+  bool hasWrap1 = false;
+  bool hasWrap2 = false;
+  for (const EditPassId id : loop.sealedCompanionOverlayIdsForTest()) {
+    if (id == wrap1Id) {
+      hasWrap1 = true;
+    }
+    if (id == loop.lastOverdubSealCompanionIdsForTest()[0]) {
+      hasWrap2 = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasWrap1);
+  TEST_ASSERT_TRUE(hasWrap2);
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(10, 63, 1680, 1968));
+  paint.push_back(displayNote(20, 63, 2304, 2448));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_TRUE(paint.empty());
+}
+
 /// 201956: Hide named by pitch+start still drops a longer record sibling with a new noteId.
 void test_sealed_hide_drops_same_start_longer_when_note_id_differs() {
   LoopEventStore::resetPoolForTests();
@@ -3715,6 +3751,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_companion_overlay_hide_is_idempotent);
   RUN_TEST(test_seal_revision_implies_cumulative_companion_coverage);
   RUN_TEST(test_sealed_hide_keeps_short_overdub_after_snapshot_current);
+  RUN_TEST(test_sealed_companion_overlay_retains_prior_wrap_hide);
   RUN_TEST(test_sealed_hide_drops_same_start_longer_when_note_id_differs);
   RUN_TEST(test_sealed_shorten_drops_same_start_longer_sibling);
   RUN_TEST(test_pending_shorten_drops_same_start_longer_sibling);

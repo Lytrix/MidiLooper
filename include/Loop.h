@@ -112,6 +112,9 @@ struct Loop {
   uint32_t lastOverdubSealPriorRevision_ = 0;
   uint32_t lastOverdubSealPlaybackRevision_ = 0;
   EditPassIdList lastOverdubSealCompanionIds_;
+  /// Display overlay only. Appended across wraps; not used for merged-stream
+  /// admission. Transitional bridge so frame can realize effective Hide/Shorten.
+  EditPassIdList sealedCompanionOverlayIds_;
 
   uint32_t startLoopTick = 0;
   uint32_t loopLengthTicks = 0;
@@ -369,7 +372,7 @@ struct Loop {
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;
-  /// True when the last seal still has companion EditPass IDs to project.
+  /// True when display still has sealed companion overlay IDs to project.
   bool hasSealedCompanionOverlay() const;
   /// True when the selected committed representation is still behind the last seal.
   bool sealedCompanionOverlayRequired() const;
@@ -393,8 +396,8 @@ struct Loop {
   void recordLastOverdubSeal(PassId passId, const EditPassIdList& companionIds,
                              uint32_t priorPlaybackRevision);
   void clearLastOverdubSeal();
-  /// Drops the one-shot merged-stream admit receipt only. Companion IDs and
-  /// `lastOverdubSealPlaybackRevision_` stay for display overlay until
+  /// Drops the one-shot merged-stream admit receipt only. Last-wrap companion
+  /// IDs, overlay IDs, and `lastOverdubSealPlaybackRevision_` stay until
   /// `clearLastOverdubSeal()`. Snapshot-current does not release a Hide that
   /// is still present at the same pitch+start.
   void clearLastOverdubSealAdmitReceipt();
@@ -409,6 +412,9 @@ struct Loop {
   }
   const EditPassIdList& lastOverdubSealCompanionIdsForTest() const {
     return lastOverdubSealCompanionIds_;
+  }
+  const EditPassIdList& sealedCompanionOverlayIdsForTest() const {
+    return sealedCompanionOverlayIds_;
   }
   void storePublishedSnapshotForTest(ImmutableLoopSnapshotRef snapshot, uint32_t revision) {
     storePublishedSnapshot(std::move(snapshot), revision);
