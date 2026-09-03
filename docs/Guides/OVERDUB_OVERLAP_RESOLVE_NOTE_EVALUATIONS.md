@@ -96,7 +96,7 @@ PendingNoteChange     ← session overlay; Add ≠ persistence
     ↓
 draw-source gather (Snapshot / VisualCache, plus Capture on live bars)
     ↓
-applyPendingNoteChangesToDisplayNotes (pending + sealed Hide/Shorten while companion IDs exist; Hide also drops a longer same-pitch+start sibling on display only, then playhead tails)
+applyPendingNoteChangesToDisplayNotes (pending + sealed Hide/Shorten while companion IDs exist; Hide or Shorten also drops a longer same-pitch+start sibling on display only, then playhead tails)
     ↓
 sealed EditPass Length/Delete   (Shorten/Hide only)
     ↓

@@ -363,8 +363,9 @@ struct Loop {
   /// playhead tails and must keep growing to currentTick. Does not mutate source view.
   /// Sealed companion Hide/Shorten still project while companion IDs exist, including
   /// after the selected representation reaches the seal revision, so a Hide target
-  /// is not re-admitted at the same pitch+start. Overlay Hide also drops a longer
-  /// same-pitch+start sibling of the kept short overdub.
+  /// is not re-admitted at the same pitch+start. Overlay Hide or Shorten also
+  /// drops a longer same-pitch+start sibling of the kept short row (`123236`).
+  /// Suffix rows at `liveCaptureBegin` are not dropped (`150650`).
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;

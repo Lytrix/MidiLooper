@@ -189,35 +189,38 @@ LOOP_COLD_MEM bool hideMatchesDisplayNote(const NoteUtils::DisplayNote& note,
                                           hide.endTick, loopLength);
 }
 
-LOOP_COLD_MEM bool hideMarksPitchStart(const PendingNoteChangeVec& transforms, uint8_t pitch,
-                                       uint32_t startTick) {
+LOOP_COLD_MEM bool sourceTransformMarksPitchStart(const PendingNoteChangeVec& transforms,
+                                                  uint8_t pitch, uint32_t startTick) {
   for (const PendingNoteChange& change : transforms) {
-    if (change.kind == PendingNoteChangeKind::Hide && change.pitch == pitch &&
-        change.startTick == startTick) {
+    if ((change.kind == PendingNoteChangeKind::Hide ||
+         change.kind == PendingNoteChangeKind::Shorten) &&
+        change.pitch == pitch && change.startTick == startTick) {
       return true;
     }
   }
   return false;
 }
 
-/// After Hide apply, drop a longer same-pitch+start sibling so a sealed Hide cannot
-/// re-admit the record remnant next to the short overdub (`201956` 63@768→1151 vs 864).
-/// Only pitch+starts named by a Hide are touched — not a general shortest-wins rule
-/// (`150650` long sealed hold must not lose to a shorter stale row).
-LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedByHide(
+/// After Hide or Shorten apply, drop a longer same-pitch+start sibling in the committed
+/// prefix so a record remnant cannot sit beside the shortened row (`201956` Hide;
+/// `123236` Shorten 63@768 len 95 vs 576). Only pitch+starts named by those
+/// transforms are touched — not a general shortest-wins rule (`150650` long sealed
+/// hold must not lose to a shorter stale row).
+LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
     size_t liveCaptureBegin) {
   if (notes.size() < 2) {
     return;
   }
-  bool anyHide = false;
+  bool anyNamedTransform = false;
   for (const PendingNoteChange& change : transforms) {
-    if (change.kind == PendingNoteChangeKind::Hide) {
-      anyHide = true;
+    if (change.kind == PendingNoteChangeKind::Hide ||
+        change.kind == PendingNoteChangeKind::Shorten) {
+      anyNamedTransform = true;
       break;
     }
   }
-  if (!anyHide) {
+  if (!anyNamedTransform) {
     return;
   }
   const size_t committedEnd = liveCaptureBegin < notes.size() ? liveCaptureBegin : notes.size();
@@ -229,7 +232,7 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedByHide(
   for (size_t i = 0; i < notes.size(); ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
     if (i >= committedEnd || note.endTick < note.startTick ||
-        !hideMarksPitchStart(transforms, note.note, note.startTick)) {
+        !sourceTransformMarksPitchStart(transforms, note.note, note.startTick)) {
       kept.push_back(note);
       continue;
     }
@@ -257,7 +260,7 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
                                                      uint32_t loopLength,
                                                      bool matchHideByOverlap,
                                                      size_t liveCaptureBegin,
-                                                     bool dropSameStartLongerAfterHide) {
+                                                     bool dropSameStartLongerAfterSourceTransform) {
   PendingNoteChangeVec transforms;
   for (const PendingNoteChange& change : pending) {
     if ((change.kind == PendingNoteChangeKind::Shorten ||
@@ -303,8 +306,8 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
     updated.push_back(revised);
   }
   notes.swap(updated);
-  if (dropSameStartLongerAfterHide) {
-    dropLongerSamePitchStartSiblingsMarkedByHide(notes, transforms, liveCaptureBegin);
+  if (dropSameStartLongerAfterSourceTransform) {
+    dropLongerSamePitchStartSiblingsMarkedBySourceTransform(notes, transforms, liveCaptureBegin);
   }
 }
 

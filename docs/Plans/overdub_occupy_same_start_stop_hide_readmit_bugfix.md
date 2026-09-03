@@ -22,6 +22,8 @@ sealed overlay released at revision >= Rseal
     ← closed on 204043 (Hide stays projectable; 768→1151 did not return)
 display keepShortest on adopt/idle
     ← stays; not used on draw-source gather
+Shorten same-start sibling drop
+    ← [`overdub_paint_shorten_same_start_sibling_bugfix.md`](overdub_paint_shorten_same_start_sibling_bugfix.md) (`123236`)
 ```
 
 ---
