@@ -1,10 +1,10 @@
 # Overdub paint — Shorten must drop the longer same-start sibling
 
-**Status:** Host in tree — device recapture pending  
+**Status:** Device **PASS** [`140729`](../../captures/session_20260903_140729.log). Host `88d24b6c`.  
 **Date:** 2026-09-03  
 **Kind:** bugfix  
 **Parent:** [`overdub_occupy_same_start_stop_hide_readmit_bugfix.md`](overdub_occupy_same_start_stop_hide_readmit_bugfix.md) (`201956` Hide sibling drop)  
-**Evidence:** [`123236`](../../captures/session_20260903_123236.log)  
+**Evidence:** fail [`123236`](../../captures/session_20260903_123236.log); pass [`140729`](../../captures/session_20260903_140729.log)  
 **Does not authorize:** `keepShortestEndAtPitchStart` on draw-source gather (`150650`); source-view sibling drop (`002145`); RC-D4 / reuse; `#41` Stage 2; off-clock wrap seal
 
 ---
@@ -15,7 +15,7 @@
 RC-S retain+merge                         ← closed (122730)
 ReuseCommittedDrawSource pending apply    ← closed (D3)
 Hide same-start sibling drop              ← closed (201956 / 204043)
-Shorten same-start sibling drop           ← this slice
+Shorten same-start sibling drop           ← device PASS 140729
 keepShortest on gather                    ← still forbidden (150650)
 source-view sibling drop                  ← still off
 ```
@@ -67,7 +67,35 @@ Source view does not drop siblings.
 ## Host / device gates
 
 - Native: sealed Shorten keeps `63@768→863` and drops `768→1344` / `768→1392`. Pending Shorten (unsealed) same. Suffix long hold at the same pitch+start survives (`liveCaptureBegin` exclusion). Existing Hide fixtures stay.
-- Device: `123236`-shaped recapture. First STOPPED `src,frame` must not keep a longer same-pitch+start sibling beside the effective Shorten (no `63@768` **95 and 576**). Then pause — no gather `keepShortest`, no `#41` Stage 2.
+- Device **PASS** [`140729`](../../captures/session_20260903_140729.log): first STOPPED `src,frame` has no two-length same-pitch+start pair. Reconstruct longer siblings are gone from the frame.
+
+## Device closeout ([`140729`](../../captures/session_20260903_140729.log))
+
+One OVERDUBBING session (L3112–L6941). Three wraps. Loop **7 bars** (`5376`). First STOPPED `DISP` / `src,frame` **159**, then settle `135`. `src,effective` **133**. `src,reconstruct` **145**.
+
+| `63@start` | reconstruct | effective | first STOPPED frame |
+|---|---|---|---|
+| 0 | 144 / **576** | **144** | **144** (twice; not 576) |
+| 768 | 144 / **192** | **144** | **144** (not 192) |
+| 2304 | 144 / **568** | **144** | **144** (not 568) |
+| 3072 | 144 / **568** | **144** | **144** (not 568) |
+| 3840 | 144 / **576** | **144** | **144** (not 576) |
+| 4608 | 144 / **576** | **144** | **144** (not 576) |
+
+No `src,frame` key has two distinct lengths. That is the `123236` `63@768` **95 and 576** gate.
+
+Not this RC (do not start gather `keepShortest` / `#41` Stage 2 from these):
+
+| Row | Fact |
+|---|---|
+| `77@336` | reconstruct/effective **16**; frame **48** |
+| `63@1680` | reconstruct 432; absent from effective; frame 288 |
+| `69@5328` | in effective 48; absent from frame |
+
+### Open after device PASS
+
+1. RC-D2 `resolveUs` 8 ms — measured, not started.
+2. `#41` Stage 2 / off-clock wrap seal stay out.
 
 ## Pre-implementation review
 
