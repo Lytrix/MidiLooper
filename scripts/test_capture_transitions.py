@@ -49,6 +49,14 @@ class CaptureTransitionEvidenceTests(unittest.TestCase):
         ]
         self.assertFalse(_serial_has_recording_active(lines))
 
+    def test_stopped_to_recording_is_active_not_armed(self) -> None:
+        lines = [
+            "#CAP,44713251,ST,Track,STOPPED,RECORDING",
+            "#CAP,44713252,RECA,0,346",
+        ]
+        self.assertTrue(_serial_has_recording_active(lines))
+        self.assertFalse(_serial_has_armed_after(lines))
+
     def test_recording_detected_when_baseline_before_started_line(self) -> None:
         lines = [
             "bootstrap",

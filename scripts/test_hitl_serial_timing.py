@@ -49,6 +49,19 @@ class ExtractPhaseBoundariesTests(unittest.TestCase):
         self.assertEqual(bounds["record_start_ts"], 1836133000)
         self.assertEqual(bounds["record_stop_ts"], 1840890000)
 
+    def test_uses_last_complete_recording_window(self) -> None:
+        lines = [
+            "#CAP,400,ST,Track,EMPTY,RECORDING",
+            "#CAP,500,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+        ]
+        bounds = extract_phase_boundaries(lines)
+        self.assertEqual(bounds["record_start_ts"], 1000)
+        self.assertEqual(bounds["record_stop_ts"], 2000)
+
 
 class ExtractFirstNoteOffsetTests(unittest.TestCase):
     def test_offset_from_us_delta_at_120_bpm(self) -> None:

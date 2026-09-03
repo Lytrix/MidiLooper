@@ -65,6 +65,59 @@ def canonical_edit_full_legacy_args() -> list[str]:
     ]
 
 
+def canonical_occupy_paint_legacy_args() -> list[str]:
+    """Seed record, 4-bar source OD1, 8-bar occupy OD2 (same-start / +1/4 / −1/2), two undo then two redo."""
+    return [
+        "--occupy-paint-pattern",
+        "--record-bars",
+        "4",
+        "--overdub-bars",
+        "4",
+        "--second-overdub-bars",
+        "8",
+        "--stop-press-advance-clocks",
+        "24",
+        "--record-low-note",
+        "72",
+        "--record-high-note",
+        "72",
+        "--overdub-low-note",
+        "48",
+        "--overdub-high-note",
+        "60",
+        "--second-overdub-low-note",
+        "48",
+        "--second-overdub-high-note",
+        "60",
+        "--second-overdub-step-clocks",
+        "6",
+        "--second-overdub-gate-clocks",
+        "12",
+        "--no-fixed-grid-notes",
+        "--start-transport",
+        "--overdub-start-delay-bars",
+        "0",
+        "--overdub-start-delay-beats",
+        "0",
+        "--second-overdub-start-delay-bars",
+        "0",
+        "--second-overdub-start-delay-beats",
+        "0",
+        "--overdub-first-note-max-clocks",
+        "400",
+        "--undo-redo-cycles",
+        "2",
+        "--undo-redo-delay-ms",
+        "3000",
+        "--phase-wait-ms",
+        "500",
+        "--final-wait-ms",
+        "3000",
+        "--press-ms",
+        "120",
+    ]
+
+
 def canonical_edit_minimal_base_legacy_args() -> list[str]:
     """2-bar record-only base seed for edit_minimal (proven baseline record path, no overdub)."""
     return [

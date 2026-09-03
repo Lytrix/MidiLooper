@@ -23,6 +23,8 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
         "second_overdub_start_ts": None,
         "second_overdub_stop_ts": None,
     }
+    record_sessions: list[tuple[int, int]] = []
+    open_record_start: Optional[int] = None
     overdub_sessions: list[tuple[int, int]] = []
     open_overdub_start: Optional[int] = None
     for line in lines:
@@ -37,10 +39,15 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
             continue
         from_state = parts[4].strip()
         to_state = parts[5].strip()
-        if to_state == "RECORDING" and boundaries["record_start_ts"] is None:
-            boundaries["record_start_ts"] = ts
-        elif from_state == "RECORDING" and to_state == "STOPPED_RECORDING" and boundaries["record_stop_ts"] is None:
-            boundaries["record_stop_ts"] = ts
+        if to_state == "RECORDING":
+            open_record_start = ts
+        elif (
+            from_state == "RECORDING"
+            and to_state == "STOPPED_RECORDING"
+            and open_record_start is not None
+        ):
+            record_sessions.append((open_record_start, ts))
+            open_record_start = None
         elif from_state == "PLAYING" and to_state == "OVERDUBBING":
             open_overdub_start = ts
         elif (
@@ -51,17 +58,19 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
             overdub_sessions.append((open_overdub_start, ts))
             open_overdub_start = None
 
+    human_record_starts: list[int] = []
+    human_record_stops: list[int] = []
     human_overdub_starts: list[int] = []
     human_overdub_stops: list[int] = []
     for index, line in enumerate(lines):
-        if boundaries["record_start_ts"] is None and "Recording started" in line:
+        if "Recording started" in line:
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
-                boundaries["record_start_ts"] = ts
-        if boundaries["record_stop_ts"] is None and "Recording stopped" in line:
+                human_record_starts.append(ts)
+        if "Recording stopped" in line:
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
-                boundaries["record_stop_ts"] = ts
+                human_record_stops.append(ts)
         if "Overdubbing started" in line:
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
@@ -70,6 +79,22 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
             ts = _phase_ts_from_marker_line(lines, index)
             if ts is not None:
                 human_overdub_stops.append(ts)
+
+    if not record_sessions and human_record_starts:
+        remaining_stops = list(human_record_stops)
+        for start_ts in human_record_starts:
+            stop_ts = None
+            for candidate in remaining_stops:
+                if candidate > start_ts:
+                    stop_ts = candidate
+                    break
+            if stop_ts is not None:
+                record_sessions.append((start_ts, stop_ts))
+                remaining_stops.remove(stop_ts)
+
+    if record_sessions:
+        boundaries["record_start_ts"] = record_sessions[-1][0]
+        boundaries["record_stop_ts"] = record_sessions[-1][1]
 
     if not overdub_sessions and human_overdub_starts:
         for start_ts in human_overdub_starts:
