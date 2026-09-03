@@ -1,17 +1,17 @@
 # Overdub ledger note evaluations
 
 **Status:** Durable evaluation catalog. **Not architecture authority.** Update this file when ledger / occupy-catch-up / playback-order owners change.  
-**Date:** 2026-08-19  
-**Companion:** [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md)  
+**Date:** 2026-09-02  
+**Companion:** [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) · wrap display: [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md)  
 **Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md)
 
 This catalog is every **note evaluation** that decides whether an identity is open in `ActiveNoteLedger` (**open ledger identities**) or whether a committed playback event is applied to the ledger. It is **not** overlap geometry and **not** source-view covering identities.
 
-CAP `n=` = open ledger identities (`collectOverdubNoteOnParticipantIds`). CAP `a=` = source-view covering identities (`collectOverdubSourceHoldParticipantIds`). They are allowed to differ: they answer different questions.
+CAP `n=` = open ledger identities (`collectOverdubNoteOnParticipantIds`). CAP `a=` = source-view covering identities (`collectOverdubSourceHoldParticipantIds`). CAP `b=` = prepared LCR present-at-hold (diagnostic only). They are allowed to differ: they answer different questions.
 
 **RC closed (FROZEN).** Gate 5A shipped. D2-D HITL [`174246`](../../captures/session_20260819_174246.log). **`n>a` is diagnostic only** — do not patch occupy collect. Gate 5B **withdrawn**.
 
-**Update this catalog in the same change** if any of these moved: `ActiveNoteLedger::applyPlaybackEvent` / `noteOn`, `rebuildPlaybackOrder`, `CommittedPlaybackLedgerCatchUp`, `collectOverdubNoteOnParticipantIds`, wrap catch-up exclusion.
+**Update this catalog in the same change** if any of these moved: `ActiveNoteLedger::applyPlaybackEvent` / `noteOn`, `rebuildPlaybackOrder`, `CommittedPlaybackLedgerCatchUp`, `collectOverdubNoteOnParticipantIds`, `Track::snapshotOverlapHoldCandidates`, wrap catch-up exclusion.
 
 ---
 
@@ -210,7 +210,42 @@ Shipped clock invariant ([`overdub_occupy_clock_same_tick_off_before_on_bugfix.m
 | Lane filter | `Loop::collectOverdubNoteOnParticipantIds` | Every open Entry with matching `channel` and `pitch` (inserts `entry.noteId`) |
 | Newest-on-lane accessor | `ActiveNoteLedger::noteId` | Compatibility only — **not** occupy. Occupy uses `forEachActive` / the collect above |
 
-The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lcr,part` `n=` is this collect. `a=` is the source-view covering identity count (`collectOverdubSourceHoldParticipantIds`) — see overlap-resolve overview, adjacent table.
+The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lcr,part` `n=` is this collect. `a=` is the source-view covering identity count (`collectOverdubSourceHoldParticipantIds`) — see overlap-resolve current occupy resolve.
+
+### How ledger feeds occupy resolve
+
+`Track::snapshotOverlapHoldCandidates` builds the On candidate set, then `resolveOccupancyAtNoteOn` writes Shorten/Hide. Ledger is the first source of identities. Source-view covering is the fallback when the ledger set cannot produce rows.
+
+```mermaid
+flowchart TD
+  Hold["B NoteOn holdStart"]
+  Catch["catchUpCommittedPlaybackLedgerToPhase"]
+  N["n = collectOverdubNoteOnParticipantIds"]
+  Empty{"n = 0?"}
+  A["overlapNoteIds = collectOverdubSourceHoldParticipantIds"]
+  Keep["overlapNoteIds stays ledger ids"]
+  Res["resolveOccupancyAtNoteOn"]
+  Rows["appendNotesForIds"]
+  Miss{"selected empty or selected.size less than n?"}
+  Geo["also append present-at-hold source-view ids"]
+  Geom["Shorten if A.start less than hold; else Hide"]
+
+  Hold --> Catch --> N --> Empty
+  Empty -->|yes| A --> Res
+  Empty -->|no| Keep --> Res
+  Res --> Rows --> Miss
+  Miss -->|yes| Geo --> Geom
+  Miss -->|no| Geom
+```
+
+| Step | Owner | Uses |
+|---|---|---|
+| 1 | `collectOverdubNoteOnParticipantIds` | Every open ledger Entry on `(channel, pitch)` → `n` |
+| 2 | if `n == 0` | `collectOverdubSourceHoldParticipantIds` fills `overlapNoteIds` |
+| 3 | `resolveOccupancyAtNoteOn` | Rows for `overlapNoteIds`. If selected is empty **or** `selected.size() < n`, also collect present-at-hold source-view ids |
+| 4 | geometry | `A.startTick < holdStart` → Shorten `end = holdStart - 1`. Else Hide |
+
+`n ≠ a` stays diagnostic. Do not patch occupy collect to force equality. Resolve may still Shorten/Hide from ledger ids when `a=0` (`n>0`), or from source-view when `n=0`. Empty `n` and `a` means nothing is present at the hold — On writes no transform; Off may still resolve interiors.
 
 ---
 
@@ -218,7 +253,7 @@ The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lc
 
 | Not evaluated | Where that lives instead |
 |---|---|
-| Exclusive end / Shorten / Hide | `resolveConstrainedGeometry` |
+| Exclusive end / Shorten / Hide | `resolveOccupancyAtNoteOn` (On) and `resolveConstrainedGeometry` (Off / NOTE_EDIT) |
 | Present-at-hold covering | `displayNotePresentAtHold` on source-view notes |
 | Whether a NoteOn is still live capture (uncommitted) | `extractOpenCaptureNoteOns` — open B never reaches this ledger |
 | Pairing Off to On in storage | `reconstructDisplayNotes` |

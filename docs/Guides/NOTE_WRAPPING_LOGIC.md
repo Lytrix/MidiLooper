@@ -1,8 +1,11 @@
 # Note Wrapping and Loop Shortening Logic
 
+**Date:** 2026-09-02  
+**Companion:** occupy resolve [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) · ledger [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](OVERDUB_LEDGER_NOTE_EVALUATIONS.md)
+
 ## Overview
 
-This document explains the note reconstruction logic used in the MIDI looper when loop lengths are dynamically changed. The system handles both loop extension and shortening while preserving musical integrity.
+This document explains the note reconstruction logic used in the MIDI looper when loop lengths are dynamically changed, and how wrap-held display rows interact with overdub occupy resolve. The system handles both loop extension and shortening while preserving musical integrity.
 
 ## Core Concepts
 
@@ -140,6 +143,47 @@ Tail-region open notes without a loop-end off yet use `isLiveWrapHeadContinuatio
 **Overdub:** wrap continuation is also off. Wrap seals when the playhead crosses loop end (phase 0), not session start S ([DEC-051](../DECISION_LOG.md#dec-051--overdub-wrap-seals-at-loop-end-not-session-start)). Session wrap extracts only preview-open held ONs and re-appends them after `beginCapture(Overdub, S)`. A completed wrap-held pair stays in the sealed overdub wrap ([`014937`](../../captures/session_20260816_014937.log) note 12 ON@2976 / OFF@96). Merged reconstruct pairing stays on the original `allLaterOnsInTailOrNone` rule — relaxing it on record+overdub together rewrote record-pass lengths around wrap ([`015618`](../../captures/session_20260816_015618.log)). `Loop::appendOverdubPassWrapPairedNotes` reconstructs each Active overdub pass with `overdubPassWrapPairing` and appends notes merged reconstruct omitted when that pitch+start is not already in the list. Visual-cache callers use `appendOverdubPassDisplayNotes` (`wrapHeldOnly`): wrap-held heads/tails only. Interior wrap-paired body notes (204132 source-view `192–592` beside `192–16`) stay off the piano-roll list. Wrap-tick `appendLastCommittedOverdubPassToSourceView` does not merge the sealed pass into `visualCache` (`205138` wrap 2 `205→271`). Idle slice is the fill. Idle rejects Overlay gather and fills from current committed content (`205917`); playback Overlay is unchanged. NOTE_EDIT open `rebuildVisualCacheFromPasses` uses the same display append, so it must not lengthen the STOPPED slice. Source view still uses full wrap pairing. `rebuildOverdubSourceView` copies prepared `NoteSpan`s when LCR is ready; wrap-paired fill stays on the visual-cache path and on the unprepared MIDI fallback only. Visual cache uses the same primitive (`rebuildVisualCacheFromPasses`; idle slices only when the slice keeps bar 0 or the last bar). Interior idle slices use the gather or LCR window only — merged reconstruct cannot take wrap pairing ([`015618`](../../captures/session_20260816_015618.log)). Device PASS [`021218`](../../captures/session_20260816_021218.log): `WRAP,2976,96,4,12`, VCACHE 63→87. Live overlay extends to the playhead only. Sealed wrap-held heads still appear on NoteOff via the capture-preview wrap path.
 
 Piano-roll drawing uses `wrapHeadExclusiveEndForDraw` to map inclusive head ends to exclusive pixel ends (main piano roll and overview strip).
+
+### Overdub occupy vs wrap-held rows
+
+Display wrap (this guide) reconstructs piano-roll segments. Occupy resolve does **not** pass a circular `[start, end)` into `resolveConstrainedGeometry`. The two representations stay separate.
+
+```mermaid
+flowchart TD
+  Src["Source-view row"]
+  Linear{"endTick greater than startTick?"}
+  WrapHeld["wrap-held: end less than start — one NoteId"]
+  Present["displayNotePresentAtHold unwraps by loopLength"]
+  Incoming["Incoming B closed span"]
+  Cross{"B.endTick less than B.startTick?"}
+  Two["Off: two linear segments start→loopLen then 0→end"]
+  One["Off: one linear segment"]
+  On["On: holdStart phase only — no segment split"]
+  ResOn["resolveOccupancyAtNoteOn"]
+  ResOff["resolveConstrainedGeometry per linear segment"]
+
+  Src --> Linear
+  Linear -->|yes| Present
+  Linear -->|no| WrapHeld --> Present
+  Incoming --> Cross
+  Cross -->|yes| Two --> ResOff
+  Cross -->|no| One --> ResOff
+  Incoming --> On --> ResOn
+  Present --> ResOn
+  Present --> ResOff
+```
+
+| Representation | Shape | Occupy use |
+|---|---|---|
+| Linear source row | `endTick > startTick` | `displayNotePresentAtHold`: `start <= hold < end` |
+| Wrap-held source row | `endTick < startTick`, same `NoteId` after `collapseSplitHeadTailToWrapHeld` | Same present-at-hold helper unwraps by `loopLength` (`linearSoundingSpan`) |
+| Incoming B On | one phase `holdStart` | Shorten if `A.start < holdStart`, else Hide. No wrap split |
+| Incoming B Off, linear | `[start, end)` | Consume overlap + starts strictly inside `(start, end)` |
+| Incoming B Off, wrap-crossing | `end < start` | Two resolver calls in order: `[start, loopLen)` then `[0, end)`. Strictly-inside is `start < tick OR tick < end` |
+
+`resolveConstrainedGeometry` never receives `end < start`. Do not “simplify” wrap by passing a wrapped pair into it.
+
+On does not re-resolve across wrap: `occupancyResolvedNoteIds` stay skipped at Off. Live capture continuation of an open B is not B’s resolved source-view span. See occupy lifecycle in the overlap-resolve catalog.
 
 ### 3. Preserve Original MIDI Data
 

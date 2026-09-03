@@ -4,6 +4,7 @@
 #include <unity.h>
 #include <vector>
 #include <algorithm>
+#include <cstdio>
 
 // Compile production translation units into this test only (native stub Logger + real NoteUtils).
 #include "../../src/Logger.cpp"
@@ -678,6 +679,108 @@ void test_wrap_head_exclusive_end_for_draw_at_zero() {
     TEST_ASSERT_EQUAL_UINT32(0u, NoteUtils::wrapHeadExclusiveEndForDraw(loopLength - 1, loopLength));
 }
 
+/// [`113651`](captures/session_20260902_113651.log) OD1 occupy phrase.
+/// On ticks from OD1 `lcr,part hs=`; Off ticks from BAR-interpolated `MI,U` 128.
+/// Pin: expected committed NoteIds ⊆ reconstruct identities. Flag comparison is
+/// diagnostic — do not treat wrap-pairing=true as a required pass criterion.
+void test_reconstruct_113651_od1_identity_coverage() {
+    constexpr uint32_t loopLength = 3072;
+    constexpr uint8_t ch = 5;
+    MidiEventVec ev;
+    struct Pair {
+        uint8_t pitch;
+        uint32_t onTick;
+        uint32_t offTick;
+        NoteId id;
+    };
+    const Pair pairs[] = {
+        {48, 112, 497, 1},   {56, 112, 497, 2},   {52, 497, 846, 3},   {60, 497, 846, 4},
+        {48, 846, 1231, 5},  {56, 846, 1231, 6},  {52, 1232, 1602, 7}, {60, 1232, 1602, 8},
+        {48, 1603, 1986, 9}, {56, 1603, 1986, 10}, {52, 1986, 2371, 11}, {60, 1987, 2371, 12},
+        {48, 2372, 2774, 13}, {56, 2372, 2774, 14}, {52, 2776, 84, 15}, {60, 2776, 84, 16},
+    };
+    for (const Pair& pair : pairs) {
+        MidiEvent on = MidiEvent::NoteOn(pair.onTick, ch, pair.pitch, 100);
+        on.noteId = pair.id;
+        ev.push_back(on);
+        MidiEvent off = MidiEvent::NoteOff(pair.offTick, ch, pair.pitch, 0);
+        ev.push_back(off);
+    }
+    std::stable_sort(ev.begin(), ev.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+
+    const NoteUtils::DisplayNoteVec publishPath =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, false);
+    const NoteUtils::DisplayNoteVec wrapPaired =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, true);
+
+    auto collectIds = [](const NoteUtils::DisplayNoteVec& notes) {
+        std::vector<NoteId> ids;
+        for (const NoteUtils::DisplayNote& note : notes) {
+            if (note.noteId == kInvalidNoteId) {
+                continue;
+            }
+            if (std::find(ids.begin(), ids.end(), note.noteId) == ids.end()) {
+                ids.push_back(note.noteId);
+            }
+        }
+        return ids;
+    };
+    auto containsId = [](const std::vector<NoteId>& ids, NoteId id) {
+        return std::find(ids.begin(), ids.end(), id) != ids.end();
+    };
+    auto noteIdHasWrapGeometry = [&](const NoteUtils::DisplayNoteVec& notes, NoteId id) {
+        bool tail = false;
+        bool head = false;
+        for (const NoteUtils::DisplayNote& note : notes) {
+            if (note.noteId != id) {
+                continue;
+            }
+            if (note.endTick < note.startTick) {
+                return true;
+            }
+            if (note.startTick >= NoteUtils::wrapTailStartTick(loopLength)) {
+                tail = true;
+            }
+            if (note.startTick == 0 && note.endTick > 0) {
+                head = true;
+            }
+        }
+        return tail && head;
+    };
+
+    const std::vector<NoteId> publishIds = collectIds(publishPath);
+    const std::vector<NoteId> wrapIds = collectIds(wrapPaired);
+    bool publishCovers = true;
+    bool wrapCovers = true;
+    for (const Pair& pair : pairs) {
+        if (!containsId(publishIds, pair.id)) {
+            publishCovers = false;
+        }
+        if (!containsId(wrapIds, pair.id)) {
+            wrapCovers = false;
+        }
+    }
+    const bool publishWrap52 = noteIdHasWrapGeometry(publishPath, 15);
+    const bool wrapPairWrap52 = noteIdHasWrapGeometry(wrapPaired, 15);
+    const bool publishWrap60 = noteIdHasWrapGeometry(publishPath, 16);
+    const bool wrapPairWrap60 = noteIdHasWrapGeometry(wrapPaired, 16);
+
+    printf("113651 pin publish-path identity=%d wrap-geom 52/60=%d/%d notes=%u\n",
+           publishCovers ? 1 : 0, publishWrap52 ? 1 : 0, publishWrap60 ? 1 : 0,
+           static_cast<unsigned>(publishPath.size()));
+    printf("113651 pin wrap-pairing identity=%d wrap-geom 52/60=%d/%d notes=%u\n",
+           wrapCovers ? 1 : 0, wrapPairWrap52 ? 1 : 0, wrapPairWrap60 ? 1 : 0,
+           static_cast<unsigned>(wrapPaired.size()));
+
+    TEST_ASSERT_TRUE_MESSAGE(publishCovers || wrapCovers,
+                             "neither reconstruct covers committed OD1 NoteIds");
+    TEST_ASSERT_TRUE_MESSAGE(publishWrap52 || wrapPairWrap52,
+                             "neither reconstruct has wrap geometry for 52@2776");
+    TEST_ASSERT_TRUE_MESSAGE(publishWrap60 || wrapPairWrap60,
+                             "neither reconstruct has wrap geometry for 60@2776");
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_project_display_notes_head_tail_split);
@@ -718,5 +821,6 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_equal_tick_pair_does_not_open_to_loop_end);
     RUN_TEST(test_reconstruct_abutting_same_tick_still_closes_prior);
     RUN_TEST(test_wrap_head_exclusive_end_for_draw_at_zero);
+    RUN_TEST(test_reconstruct_113651_od1_identity_coverage);
     return UNITY_END();
 }
