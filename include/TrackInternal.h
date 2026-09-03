@@ -102,4 +102,7 @@ TRACK_INTERNAL_MEM PlaybackEventStream makeCapturePlaybackStream(Loop& loop);
 TRACK_INTERNAL_MEM void logOverdubCaptureCoordinate(const Track& track, uint32_t absTick,
                                                     uint32_t storageTick, uint8_t channel,
                                                     uint8_t note);
+extern uint32_t g_overdubWrapCommitUs;
+extern uint32_t g_overdubWrapSealPendingUs;
+extern uint32_t g_overdubWrapBeginCaptureUs;
 #endif

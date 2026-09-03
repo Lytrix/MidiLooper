@@ -67,22 +67,26 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
 
 void DisplayManager::refreshViewportAfterRecordStop(Track& track, uint8_t displaySlot,
                                                    uint32_t storagePhaseTickInLoop) {
-    // Capture-layer rows and playhead tails must not become post-stop display authority.
-    // Keep only the committed prefix (may be empty after live record); committed resolve
-    // replaces it through the bounded window path.
-    const size_t committedBaseNoteCount = liveDisplayCacheCommittedNoteCount_;
+    // Current snapshot selected by the draw-source predicate is authority. Otherwise
+    // keep the last RECORDING composed prefix as a continuity seed only (`151552`).
+    // Do not clamp that seed to an empty committed prefix. Idle fill stays the
+    // visual-cache owner — do not refresh visual cache here.
     const uint8_t trackIndex = resolveTrackIndex(track);
     invalidateLiveDisplayCache(true);
     const Loop& loop = track.getLoop(displaySlot);
-    if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
+    const bool snapshotSelected = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+        static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(),
+        loop.hasOverdubSession(), !loop.visualCache.notes.empty(), loop.visualCacheDirty,
+        loop.publishedSnapshotIsCurrent());
+    const bool visualCleanNonempty = !loop.visualCacheDirty && !loop.visualCache.notes.empty();
+    if (!snapshotSelected && visualCleanNonempty) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-    } else {
-        liveDisplayNotes.resize(DisplayWindowUtils::clampPreservedDisplayNoteCount(
-            liveDisplayNotes.size(), committedBaseNoteCount));
     }
     if (!liveDisplayNotes.empty()) {
         livePlaybackDisplaySlot_ = displaySlot;
         livePlaybackDisplayTrack_ = trackIndex;
+        liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+        liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     } else {
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;

@@ -272,7 +272,11 @@ inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCo
 ///   current snapshot → snapshot
 ///   else dirty or empty cache → last snapshot (`004351` wrap)
 ///   else clean nonempty cache → visualCache (`092344` OD2 after adopt)
-/// Inactive (session closed): nonempty visualCache is paint authority (`010217`).
+/// Inactive (session closed):
+///   current snapshot + (dirty or empty visual) → snapshot (`151552`)
+///   clean nonempty visual → visualCache (`010217`)
+///   stale snapshot → never snapshot (`092344`); visual if clean nonempty,
+///   otherwise the record-stop handoff seed
 /// Capture/session active alone is not enough to select snapshot.
 inline bool shouldGatherPublishedSnapshotForDrawSource(bool hasPublishedSnapshot,
                                                        bool captureActive,
@@ -285,12 +289,20 @@ inline bool shouldGatherPublishedSnapshotForDrawSource(bool hasPublishedSnapshot
     }
     const bool sessionOrCapture = captureActive || overdubSessionActive;
     if (!sessionOrCapture) {
-        return !visualCacheNonempty;
+        return publishedSnapshotIsCurrent && (visualCacheDirty || !visualCacheNonempty);
     }
     if (publishedSnapshotIsCurrent || visualCacheDirty || !visualCacheNonempty) {
         return true;
     }
     return false;
+}
+
+/// Record-stop first PLAYING paint: keep the last RECORDING composed prefix only
+/// when the predicate did not select a current snapshot and clean visual is not
+/// authority. The seed is not a committed-source representation (`151552`).
+inline bool shouldRetainRecordStopHandoffSeed(bool snapshotSelectedByPredicate,
+                                             bool visualCacheCleanNonempty) {
+    return !snapshotSelectedByPredicate && !visualCacheCleanNonempty;
 }
 
 /// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
@@ -537,39 +549,47 @@ struct DrawSourceGatherKey {
     uint8_t valid = 0;
 };
 
-inline bool drawSourceGatherContentKeysMatch(const DrawSourceGatherKey& last,
-                                             const DrawSourceGatherKey& current) {
+inline bool drawSourceCommittedSourceKeysMatch(const DrawSourceGatherKey& last,
+                                               const DrawSourceGatherKey& current) {
     return last.slot == current.slot && last.track == current.track &&
            last.pitchLow == current.pitchLow && last.pitchHigh == current.pitchHigh &&
            last.windowLength == current.windowLength &&
            last.playbackRevision == current.playbackRevision &&
            last.captureDisplayRevision == current.captureDisplayRevision &&
-           last.capturePreviewRevision == current.capturePreviewRevision &&
            last.visualCacheRevision == current.visualCacheRevision &&
            last.publishedSnapshotRevision == current.publishedSnapshotRevision &&
+           last.snapshotCurrent == current.snapshotCurrent;
+}
+
+inline bool drawSourceOverlayKeysMatch(const DrawSourceGatherKey& last,
+                                       const DrawSourceGatherKey& current) {
+    return last.capturePreviewRevision == current.capturePreviewRevision &&
            last.sealedPreviewRevision == current.sealedPreviewRevision &&
            last.sealedPreviewCount == current.sealedPreviewCount &&
            last.pendingChangeGeneration == current.pendingChangeGeneration &&
-           last.snapshotCurrent == current.snapshotCurrent &&
            last.sealedCompanionOverlay == current.sealedCompanionOverlay;
 }
 
-/// Hit when every mutation key and the playhead bar are unchanged. One-bar slide
-/// only when content keys match and `windowStart` moves by exactly one bar.
+inline bool drawSourceGatherContentKeysMatch(const DrawSourceGatherKey& last,
+                                             const DrawSourceGatherKey& current) {
+    return drawSourceCommittedSourceKeysMatch(last, current) &&
+           drawSourceOverlayKeysMatch(last, current);
+}
+
+/// Hit when committed-source keys and `windowStart` match. Playhead-bar motion
+/// and overlay-key motion do not force Rebuild (`151552`). One-bar slide only
+/// when committed keys match and `windowStart` moves by exactly one bar.
 inline DrawSourceReuseKind selectDrawSourceReuseKind(const DrawSourceGatherKey& last,
                                                      const DrawSourceGatherKey& current,
                                                      uint32_t ticksPerBar) {
     if (last.valid == 0 || current.valid == 0) {
         return DrawSourceReuseKind::Rebuild;
     }
-    if (!drawSourceGatherContentKeysMatch(last, current)) {
+    if (!drawSourceCommittedSourceKeysMatch(last, current)) {
         return DrawSourceReuseKind::Rebuild;
-    }
-    if (last.windowStart == current.windowStart && last.playheadBar == current.playheadBar) {
-        return DrawSourceReuseKind::Hit;
     }
     if (last.windowStart == current.windowStart) {
-        return DrawSourceReuseKind::Rebuild;
+        return DrawSourceReuseKind::Hit;
     }
     if (ticksPerBar == 0) {
         return DrawSourceReuseKind::Rebuild;

@@ -114,9 +114,11 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);
-/** Wrap-tick children only: DIAG,wrap,total=<us>,seal=<us>,pass_apply=<us>,src_append=<us>. */
+/** Wrap-tick children only: DIAG,wrap,total=<us>,seal=<us>,pass_apply=<us>,src_append=<us>,
+ *  commit=<us>,seal_pend=<us>,begin=<us>. */
 SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
-                                 uint32_t srcAppendUs);
+                                 uint32_t srcAppendUs, uint32_t commitUs, uint32_t sealPendUs,
+                                 uint32_t beginUs);
 SC_MEM_ATTR void architectureCounter(const char* name, uint32_t value);
 SC_MEM_ATTR void memoryPressureTransition(const char* transitionLabel, uint32_t heapFreeBytes,
                                           uint16_t chunksFree, uint16_t persistQueueDepth);
@@ -250,8 +252,10 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::recStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::overdubStartStage(stage, durationUs, heapBefore, heapAfter, outcome)
-#define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs) \
-  DebugSessionCapture::overdubWrapTick(totalUs, sealUs, passApplyUs, srcAppendUs)
+#define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs, commitUs, sealPendUs, \
+                          beginUs) \
+  DebugSessionCapture::overdubWrapTick(totalUs, sealUs, passApplyUs, srcAppendUs, commitUs, \
+                                       sealPendUs, beginUs)
 #define SC_PLAYBACK_ORDER(durationUs, eventCount) \
   DebugSessionCapture::playbackOrder(durationUs, eventCount)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
@@ -354,7 +358,9 @@ inline void restartCaptureBootGrace() {}
 #define SC_REC_STOP(kind, slot, tick, start, raw, final, align) ((void)0)
 #define SC_REC_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_ODUB_STAGE(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
-#define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs) ((void)0)
+#define SC_ODUB_WRAP_TICK(totalUs, sealUs, passApplyUs, srcAppendUs, commitUs, sealPendUs, \
+                          beginUs) \
+  ((void)0)
 #define SC_PLAYBACK_ORDER(durationUs, eventCount) ((void)0)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
