@@ -63,7 +63,7 @@ Source view still keeps both noteIds so occupy can Hide the longer one.
 
 ## Implementation
 
-- `hasSealedCompanionOverlay()` is true while `lastOverdubSealCompanionIds_` is non-empty.
+- `hasSealedCompanionOverlay()` is true while `sealedCompanionOverlayIds_` is non-empty (appended across wraps). `lastOverdubSealCompanionIds_` stays last-wrap-only for admission.
 - Draw-source, live-capture paint, and visual-cache apply run while that list exists — not only while `sealedCompanionOverlayRequired()` (revision stale).
 - After display Hide/Shorten apply, drop a longer same-pitch+start sibling only at pitch+starts named by a Hide. Source-view apply does not drop siblings (`002145` norow).
 

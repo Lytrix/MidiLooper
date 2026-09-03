@@ -538,6 +538,33 @@ LOOP_COLD_MEM void Loop::recordLastOverdubSeal(PassId passId, const EditPassIdLi
   lastOverdubSealPriorRevision_ = priorPlaybackRevision;
   lastOverdubSealPlaybackRevision_ = playbackRevision;
   lastOverdubSealCompanionIds_ = companionIds;
+  EditPassIdList overlayIds;
+  overlayIds.reserve(sealedCompanionOverlayIds_.size() + companionIds.size());
+  for (const EditPassId id : sealedCompanionOverlayIds_) {
+    bool active = false;
+    for (const EditPass& row : passes.editPasses) {
+      if (row.id == id && row.state == EditPassState::Active) {
+        active = true;
+        break;
+      }
+    }
+    if (active) {
+      overlayIds.push_back(id);
+    }
+  }
+  for (const EditPassId id : companionIds) {
+    bool already = false;
+    for (const EditPassId existing : overlayIds) {
+      if (existing == id) {
+        already = true;
+        break;
+      }
+    }
+    if (!already) {
+      overlayIds.push_back(id);
+    }
+  }
+  sealedCompanionOverlayIds_.swap(overlayIds);
   stampWrapSnapshotJournalRevision(passId, playbackRevision);
 }
 
@@ -551,6 +578,7 @@ LOOP_COLD_MEM void Loop::clearLastOverdubSeal() {
   clearLastOverdubSealAdmitReceipt();
   lastOverdubSealPlaybackRevision_ = 0;
   lastOverdubSealCompanionIds_.clear();
+  sealedCompanionOverlayIds_.clear();
 }
 
 namespace {

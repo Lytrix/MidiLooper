@@ -969,8 +969,8 @@ const EditPass* findActiveSealedCompanionRow(const Loop& loop, EditPassId id) {
 }
 
 void appendSealedCompanionOverlay(const Loop& loop, PendingNoteChangeVec& overlay) {
-  overlay.reserve(loop.lastOverdubSealCompanionIds_.size());
-  for (const EditPassId id : loop.lastOverdubSealCompanionIds_) {
+  overlay.reserve(loop.sealedCompanionOverlayIds_.size());
+  for (const EditPassId id : loop.sealedCompanionOverlayIds_) {
     const EditPass* row = findActiveSealedCompanionRow(loop, id);
     if (row == nullptr || row->targetNoteId == kInvalidNoteId) {
       continue;
@@ -996,7 +996,7 @@ void appendSealedCompanionOverlay(const Loop& loop, PendingNoteChangeVec& overla
 }  // namespace
 
 LOOP_COLD_MEM bool Loop::hasSealedCompanionOverlay() const {
-  return !lastOverdubSealCompanionIds_.empty();
+  return !sealedCompanionOverlayIds_.empty();
 }
 
 LOOP_COLD_MEM bool Loop::sealedCompanionOverlayRequired() const {
@@ -1021,8 +1021,8 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
   if (!hasSealedCompanionOverlay()) {
     return;
   }
-  // Hide stays projectable after snapshot-current. Revision >= Rseal released the
-  // overlay while the Hide target was still in snapshot membership (`201956`
+  // Overlay ids persist across wraps (`140729`). Revision >= Rseal must not
+  // drop a Hide whose target is still in the painted prefix (`201956`
   // draw_src id 71 63@768→1151 next to 768→864).
   PendingNoteChangeVec overlay;
   appendSealedCompanionOverlay(*this, overlay);
