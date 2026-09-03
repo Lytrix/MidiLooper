@@ -3099,6 +3099,17 @@ PendingNoteChange hideChange(NoteId noteId, uint8_t pitch, uint32_t startTick, u
   return change;
 }
 
+PendingNoteChange shortenChange(NoteId noteId, uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  PendingNoteChange change{};
+  change.kind = PendingNoteChangeKind::Shorten;
+  change.noteId = noteId;
+  change.channel = 1;
+  change.pitch = pitch;
+  change.startTick = startTick;
+  change.endTick = endTick;
+  return change;
+}
+
 NoteUtils::DisplayNote displayNote(NoteId noteId, uint8_t pitch, uint32_t startTick,
                                    uint32_t endTick) {
   NoteUtils::DisplayNote note{};
@@ -3162,6 +3173,17 @@ void sealRecordedHideCompanion(Loop& loop, NoteId noteId, uint8_t pitch, uint32_
                                uint32_t endTick, uint32_t startRevision) {
   loop.beginCapture(CapturePhase::Overdub);
   loop.pushPendingNoteChangeForTest(hideChange(noteId, pitch, startTick, endTick));
+  loop.playbackRevision = startRevision;
+  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(1u, ids.size());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), ids, startRevision);
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+}
+
+void sealRecordedShortenCompanion(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                                  uint32_t endTick, uint32_t startRevision) {
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(shortenChange(noteId, pitch, startTick, endTick));
   loop.playbackRevision = startRevision;
   const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses(false);
   TEST_ASSERT_EQUAL(1u, ids.size());
@@ -3304,6 +3326,65 @@ void test_sealed_hide_drops_same_start_longer_when_note_id_differs() {
   TEST_ASSERT_EQUAL(95, paint[0].noteId);
   TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(864u, paint[0].endTick);
+}
+
+/// `123236`: sealed Shorten keeps 768→863 and drops the longer same-start remnant.
+void test_sealed_shorten_drops_same_start_longer_sibling() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 71, 768, 1392, 63, 7680);
+  sealRecordedShortenCompanion(loop, 71, 63, 768, 863, 9);
+  publishSnapshotAtRevision(loop, 10);
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(71, 63, 768, 1392));
+  paint.push_back(displayNote(99, 63, 768, 1344));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(71, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT8(63, paint[0].note);
+  TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(863u, paint[0].endTick);
+}
+
+/// `123236`: pending Shorten (not yet sealed) drops the longer same-start remnant.
+void test_pending_shorten_drops_same_start_longer_sibling() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 7680;
+  loop.pushPendingNoteChangeForTest(shortenChange(71, 63, 768, 863));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(71, 63, 768, 1392));
+  paint.push_back(displayNote(99, 63, 768, 1344));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(71, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(863u, paint[0].endTick);
+}
+
+/// `150650`: a long sealed/preview suffix at the Shorten pitch+start is not dropped.
+void test_shorten_does_not_drop_suffix_same_start_hold() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 71, 768, 1392, 63, 7680);
+  sealRecordedShortenCompanion(loop, 71, 63, 768, 863, 9);
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(71, 63, 768, 1392));
+  paint.push_back(displayNote(99, 63, 768, 1344));
+  paint.push_back(displayNote(200, 63, 768, 2000));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 2);
+  TEST_ASSERT_EQUAL(2u, paint.size());
+  TEST_ASSERT_EQUAL(71, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(863u, paint[0].endTick);
+  TEST_ASSERT_EQUAL(200, paint[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(2000u, paint[1].endTick);
 }
 
 /// RC3: overlay does not manufacture a Hide for a note occupancy never resolved.
@@ -3609,6 +3690,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_seal_revision_implies_cumulative_companion_coverage);
   RUN_TEST(test_sealed_hide_keeps_short_overdub_after_snapshot_current);
   RUN_TEST(test_sealed_hide_drops_same_start_longer_when_note_id_differs);
+  RUN_TEST(test_sealed_shorten_drops_same_start_longer_sibling);
+  RUN_TEST(test_pending_shorten_drops_same_start_longer_sibling);
+  RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
