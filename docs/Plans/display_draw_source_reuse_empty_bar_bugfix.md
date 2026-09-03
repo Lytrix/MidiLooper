@@ -1,9 +1,9 @@
 # Display draw-source reuse and wrap-seal overruns
 
-**Status:** RC-D1/D2/W host shipped (`a92595d9`). RC-D3 device **PASS** on [`115237`](../../captures/session_20260903_115237.log) and [`120321`](../../captures/session_20260903_120321.log). RC-S host in tree — device recapture pending.  
+**Status:** RC-D1/D2/W host shipped (`a92595d9`). RC-D3 device **PASS**. RC-S device **PASS** on [`122730`](../../captures/session_20260903_122730.log) (`030e1a08`). D2 `resolveUs` 8 ms still open.  
 **Date:** 2026-09-03  
 **Kind:** bugfix  
-**Evidence:** [`151552`](../../captures/session_20260902_151552.log), [`095648`](../../captures/session_20260903_095648.log), [`101721`](../../captures/session_20260903_101721.log), [`115237`](../../captures/session_20260903_115237.log), [`120321`](../../captures/session_20260903_120321.log)  
+**Evidence:** [`151552`](../../captures/session_20260902_151552.log), [`095648`](../../captures/session_20260903_095648.log), [`101721`](../../captures/session_20260903_101721.log), [`115237`](../../captures/session_20260903_115237.log), [`120321`](../../captures/session_20260903_120321.log), [`122730`](../../captures/session_20260903_122730.log)  
 **Does not replace:** DEC-052 occupy predicate consumption, [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1 visual-cache slices, [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](overdub_paint_sealed_survives_current_snapshot_bugfix.md) (`012714`)  
 **Does not authorize:** STOPPED `usbdisp` / `PERS`; wrap-seal redesign or off-clock `commitCapturePass`; `#41` Stage 2 snapshot fill of `visualCache`; `refreshVisualCacheAfterPassStateChange` on record stop; RC-D4 / `liveDisplayNotes` authority
 
@@ -15,9 +15,9 @@
 Track::commitOverdubWrap / DIAG,wrap.seal     ← RC-W (measure only; shipped)
 selectDrawSourceReuseKind + gather + handoff  ← RC-D1 / RC-D2 (host shipped)
 ReuseCommittedDrawSource overlays             ← RC-D3 (device PASS 115237 / 120321)
-retainCapturePreviewAtSeal retain+merge       ← RC-S (host in tree; device pending)
-DFRAME resolveUs 8 ms                         ← RC-D2 device gate; still open
-live hidden vs stop DIAG,oh hide              ← reassess after RC-S recapture
+retainCapturePreviewAtSeal retain+merge       ← RC-S (device PASS 122730)
+DFRAME resolveUs 8 ms                         ← RC-D2 device gate; still open (122730)
+live hidden vs stop DIAG,oh hide              ← reassessed; different counters; not a reuse owner
 visualCache idle / #41 Stage 2                ← do not start
 moving wrap seal off the clock                ← still a design session
 RC-D4 / liveDisplayNotes authority            ← do not introduce
@@ -192,7 +192,7 @@ Split the user-visible “only updates at wrap” report:
 | Notes played this pass | `frameNotes` climbs every few hundred ms ([`115237`](../../captures/session_20260903_115237.log), [`101721`](../../captures/session_20260903_101721.log)) | No new source-selection work |
 | Occupy Hide/Shorten of existing source notes | [`101721`](../../captures/session_20260903_101721.log) `hidden=0` until wrap/stop; [`115237`](../../captures/session_20260903_115237.log) / [`120321`](../../captures/session_20260903_120321.log) `hidden` climbs before wrap 1 | **RC-D3 PASS** |
 | `visualCache` count | stays 126/127 until post-stop idle adopt | `#41` Stage 2 — do not start |
-| Wrap 2+ preview vs sealed | [`120321`](../../captures/session_20260903_120321.log) wrap 2: preview **91 → 1**, sealed **78 → 85**, frame **323 → 242** | **RC-S** |
+| Wrap 2+ preview vs sealed | [`120321`](../../captures/session_20260903_120321.log) wrap 2: preview **91 → 1**, sealed **78 → 85**, frame **323 → 242**. [`122730`](../../captures/session_20260903_122730.log) wrap 2: sealed **63 → 159**, frame **316 → 311** | **RC-S PASS** |
 
 ## Device recapture [`120321`](../../captures/session_20260903_120321.log)
 
@@ -211,6 +211,24 @@ One OVERDUBBING session (L2669 → L10134). Two wraps (L4543 / L7564). Loop **8 
 | Stop | `DIAG,oh` hide=38 shorten=3 add=66 (L10132); `VCACHE,adopt_partial` notes=269 (L10136); first STOPPED `visual=269,frame=358` then `292` |
 
 `drawPianoRoll` paints the composed `notes` argument when the window covers the loop. Serial `frame` climbs during every lap. The rows that *stay* after wrap 2 are record `visual` 126 plus the new sealed 85. Stop adopt is when `visual` leaves 126. RC-S below.
+
+## Device recapture [`122730`](../../captures/session_20260903_122730.log)
+
+One OVERDUBBING session (L2751 → L11526). Three wraps (L4490 / L7712 / L11341). Loop **8 bars** (`DISP` 6144). `DRAW_SRC` on. Firmware `030e1a08`.
+
+| Marker | Value |
+|--------|--------|
+| OD open layers | `visual=127,preview=0,sealed=0,snap=1,frame=127,hidden=0` (L2818) |
+| First `hidden>0` | L3032 `hidden=1` — before wrap 1 (L4490) |
+| Last before wrap 1 | `preview=66,sealed=0,snap=1,frame=189,hidden=4` (L4465) |
+| First after wrap 1 | `preview=4,sealed=63,snap=0,frame=190,hidden=4` (L4520) |
+| Last before wrap 2 | `preview=106,sealed=63,snap=1,frame=316,hidden=4` (L7692) |
+| First after wrap 2 | `preview=2,sealed=159,snap=0,frame=311,hidden=4` (L7765) |
+| Last before wrap 3 | `preview=97,sealed=159,snap=1,frame=375,hidden=4` (L11321) |
+| First after wrap 3 | `preview=2,sealed=217,snap=0,frame=389,hidden=4` (L11378) |
+| Stop | `DIAG,oh` hide=1 shorten=0 add=2 (L11524); `VCACHE,adopt_partial` notes=341 (L11528); first STOPPED `DISP` visual=341 frame=559 then 341 |
+
+Wrap 2 sealed **63 → 159** (159 > lap-2 preview 106), so sealed is not “this lap only.” Frame **316 → 311**, not `visual + new-sealed` (127 + 96 + 2 = 225). Wrap 3 sealed **159 → 217**, frame **375 → 389**. `visual` stays 127 for the whole OVERDUBBING session. RC-S device **PASS**.
 
 ---
 
@@ -253,7 +271,7 @@ Device gate **PASS**: [`115237`](../../captures/session_20260903_115237.log) `hi
 
 **Owner:** `Loop::retainCapturePreviewAtSeal` (same call site in `commitCapturePass`). Display still consumes sealed via `applyDrawSourceOverlays` / `shouldUnionSealedCapturePreviewForDrawSource`.
 
-Host in tree. Sequence accepted: RC-S → reassess hide 5 vs 38 → measure D2 8 ms → `#41` / off-clock stay out.
+Host `030e1a08`. Device **PASS** [`122730`](../../captures/session_20260903_122730.log).
 
 ### Root cause
 
@@ -325,9 +343,9 @@ Reuse: **YES** — extend `retainCapturePreviewAtSeal`.
 
 ### Sequence (accepted)
 
-1. **RC-S (this)** — retain+merge. Fixes the wrap-2 frame drop. Host fixture + `120321`-shaped recapture.
-2. **Reassess live `hidden` vs stop `DIAG,oh` hide** — 120321 was 5 vs 38. Recapture after RC-S; do not treat as a second reuse owner.
-3. **RC-D2 device 8 ms** — still a measured gate (`101721` 15–33 ms). Overlay union against a larger sealed set may move this number; measure after RC-S, do not start an index.
+1. **RC-S** — retain+merge. Host `030e1a08`. Device **PASS** [`122730`](../../captures/session_20260903_122730.log).
+2. **Reassess live `hidden` vs stop `DIAG,oh` hide** — **not a reuse owner.** `hidden` counts `visualCache` rows with no pitch+start in the drawn frame (`DisplayNoteResolve.cpp`). `DIAG,oh hide` is the occupy overlap-hold Hide tally (`overlapHold`). [`122730`](../../captures/session_20260903_122730.log) live `hidden` max=4 (L3732, before wrap 1) vs stop hide=1. [`120321`](../../captures/session_20260903_120321.log) was 5 vs 38. Different counters; do not start RC-D4.
+3. **RC-D2 device 8 ms** — still open. [`122730`](../../captures/session_20260903_122730.log) OVERDUBBING `DFRAME resolveUs` min 2149 / median 8724 / max 15285 (16 of 31 frames ≥ 8000). Do not start an index.
 4. **`#41` Stage 2 / off-clock wrap seal** — still out.
 
 Not a substitute for RC-S: making wrap-journal snapshots include the just-sealed lap. `012714` already showed `snap=1` can omit that lap; 120321 still had `sealed=78` while `snap=1`.
@@ -335,7 +353,7 @@ Not a substitute for RC-S: making wrap-journal snapshots include the just-sealed
 ### Host / device gates
 
 - Native: `test_retain_at_seal_merges_uncovered_laps` — two wrap seals, visual left behind `sealedCapturePreviewRevision_`; after wrap 2 sealed is not wrap-2-only; same pitch+start updates geometry only. Existing `test_seal_retains_capture_rows_until_snapshot_covers_revision` stays.
-- Device: after wrap 2, `sealed` does not fall back to “this lap only”; `frame` does not drop from the pre-wrap-2 composed count down to `visual + new-sealed` (`323 → 242` on [`120321`](../../captures/session_20260903_120321.log)). Then pause — no `#41` Stage 2, no RC-D4.
+- Device **PASS** [`122730`](../../captures/session_20260903_122730.log): wrap 2 `sealed` 63→159, `frame` 316→311. Pause — no `#41` Stage 2, no RC-D4.
 
 ---
 
@@ -382,11 +400,13 @@ Not a substitute for RC-S: making wrap-journal snapshots include the just-sealed
 | RC-S owner | Extend `retainCapturePreviewAtSeal`; do not move wrap seal off the clock |
 | RC-S apply | Retain uncovered sealed, then merge closed preview; existing pitch+start upsert only |
 | Snapshot completeness | Not a substitute — `012714` / 120321 `snap=1` still needed `sealed=78` |
+| [`122730`](../../captures/session_20260903_122730.log) | RC-S device PASS; wrap 2 sealed 63→159; hidden vs oh hide are different counters |
+| D2 8 ms after RC-S | [`122730`](../../captures/session_20260903_122730.log) resolveUs median 8724, max 15285 — still open |
 
-### Open after RC-S host
+### Open after RC-S device
 
-1. Device recapture (`120321` shape): wrap-2 `sealed` / `frame` must not drop to visual + latest lap only.
-2. Then reassess live `hidden` vs stop `DIAG,oh` hide; then measure D2 8 ms.
+1. RC-D2 `resolveUs` 8 ms — measured, not started.
+2. `#41` Stage 2 / off-clock wrap seal stay out.
 
 ## Tests
 

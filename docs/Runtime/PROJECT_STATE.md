@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-03 (draw-source reuse RC-S host in tree; device recapture pending)
+Last updated: 2026-09-03 (draw-source reuse RC-S device PASS 122730; D2 8 ms still open)
 
 ---
 
