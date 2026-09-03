@@ -1232,7 +1232,8 @@ void Loop::clearPendingNoteChanges() {
 }
 
 LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {
-  sealedCapturePreviewNotes_.clear();
+  // Uncovered sealed rows stay. Only releaseSealedCapturePreviewIfCovered may drop them
+  // (`120321` wrap 2: clear() replaced lap-1 sealed with lap-2 only).
   sealedCapturePreviewRevision_ = playbackRevision;
   if (capturePreview.notes.empty()) {
     return;
@@ -1247,7 +1248,8 @@ LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {
     if (open) {
       continue;
     }
-    sealedCapturePreviewNotes_.push_back(capturePreview.notes[index]);
+    DisplayWindowUtils::upsertDisplayNoteAtPitchStart(sealedCapturePreviewNotes_,
+                                                      capturePreview.notes[index]);
   }
 }
 
@@ -1933,9 +1935,8 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
 #if defined(SESSION_CAPTURE)
   const uint32_t clearCaptureStartUs = traceMicros();
 #endif
-  // Seal handoff (150650): the sealed pass reaches Snapshot ~150-220ms later and VisualCache on
-  // its next idle slice, so clearing the preview here would leave the frame on the previous pass
-  // until then. Keep the rows until a committed tier proves coverage.
+  // Seal handoff (150650 / 120321): keep uncovered sealed rows and merge this pass's
+  // closed preview. Only releaseSealedCapturePreviewIfCovered may drop the overlay.
   retainCapturePreviewAtSeal();
   capture.store.clear();
   capture.phase = CapturePhase::None;
