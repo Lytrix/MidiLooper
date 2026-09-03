@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-03 (Shorten same-start sibling drop host in tree)
+Last updated: 2026-09-03 (Shorten same-start sibling drop device PASS 140729)
 
 ---
 

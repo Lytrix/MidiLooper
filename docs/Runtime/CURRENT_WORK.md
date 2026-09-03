@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-03 (Shorten same-start sibling drop host in tree; device recapture pending)
+Last updated: 2026-09-03 (Shorten same-start sibling drop device PASS 140729)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,11 +23,11 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — Shorten same-start sibling drop ([`123236`](../../captures/session_20260903_123236.log)):**
-Display Hide/Shorten apply drops a longer same-pitch+start sibling in the committed prefix only. Suffix sealed/preview holds stay (`150650`). Source view does not drop siblings. Host pins in `test_pending_note_change`. Device next: first STOPPED `src,frame` must not keep `63@768` 95 and 576. Do not add gather `keepShortest`. `#41` Stage 2 / off-clock seal stay out. Plan: [`overdub_paint_shorten_same_start_sibling_bugfix.md`](../Plans/overdub_paint_shorten_same_start_sibling_bugfix.md).
+**Now — RC-D2 `resolveUs` 8 ms (measured only):**
+[`122730`](../../captures/session_20260903_122730.log) OVERDUBBING `DFRAME resolveUs` min 2149 / median 8724 / max 15285 (16 of 31 ≥ 8000). Do not start an index. `#41` Stage 2 / off-clock seal stay out. Plan: [`display_draw_source_reuse_empty_bar_bugfix.md`](../Plans/display_draw_source_reuse_empty_bar_bugfix.md).
 
-**Prior — RC-D2 `resolveUs` 8 ms (measured only):**
-[`122730`](../../captures/session_20260903_122730.log) OVERDUBBING `DFRAME resolveUs` min 2149 / median 8724 / max 15285 (16 of 31 ≥ 8000). Do not start an index. Plan: [`display_draw_source_reuse_empty_bar_bugfix.md`](../Plans/display_draw_source_reuse_empty_bar_bugfix.md).
+**Prior — Shorten same-start sibling drop ([`123236`](../../captures/session_20260903_123236.log), [`140729`](../../captures/session_20260903_140729.log)):**
+Display Hide/Shorten apply drops a longer same-pitch+start sibling in the committed prefix only. Device **PASS**: first STOPPED `src,frame` has no two-length pair (`63@0` reconstruct 144/576 → frame 144 only). Host `88d24b6c`. Not this RC: `77@336` frame 48 vs effective 16; `63@1680` frame 288 while effective omits it. Do not add gather `keepShortest`. Plan: [`overdub_paint_shorten_same_start_sibling_bugfix.md`](../Plans/overdub_paint_shorten_same_start_sibling_bugfix.md).
 
 **Prior — RC-S retain+merge ([`120321`](../../captures/session_20260903_120321.log), [`122730`](../../captures/session_20260903_122730.log)):**
 `Loop::retainCapturePreviewAtSeal` retains uncovered sealed rows, then merges this pass’s closed preview via `upsertDisplayNoteAtPitchStart`. Device **PASS**: wrap 2 `sealed` 63→159 (159 > lap-2 preview 106), `frame` 316→311, not visual+latest-lap (`225`). Live `hidden` vs stop `DIAG,oh hide` are different counters (122730 hidden=4 vs hide=1); not a reuse owner. Host `030e1a08`. Snapshot completeness is not a substitute.
