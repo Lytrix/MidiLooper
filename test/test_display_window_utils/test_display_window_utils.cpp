@@ -495,6 +495,78 @@ void test_upsert_display_note_at_pitch_start_appends_when_no_match() {
   TEST_ASSERT_EQUAL(67u, committed[2].note);
 }
 
+void test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310() {
+  // First STOPPED frame: overlay-shortened prefix 63@0 len 143, sealed remnant 576.
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote prefix{};
+  prefix.noteId = 1;
+  prefix.note = 63;
+  prefix.startTick = 0;
+  prefix.endTick = 143;
+  notes.push_back(prefix);
+  const size_t committedEnd = notes.size();
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 2;
+  sealed.note = 63;
+  sealed.startTick = 0;
+  sealed.endTick = 576;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(notes, committedEnd, sealed, false);
+
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL(63u, notes[0].note);
+  TEST_ASSERT_EQUAL_UINT32(0u, notes[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(143u, notes[0].endTick);
+  TEST_ASSERT_EQUAL(1, notes[0].noteId);
+}
+
+void test_capture_sealed_upsert_keeps_longer_suffix_150650() {
+  // Capture seam: stale prefix 64@0 len 40, live sealed 624 must still append.
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote prefix{};
+  prefix.noteId = 11;
+  prefix.note = 64;
+  prefix.startTick = 0;
+  prefix.endTick = 40;
+  notes.push_back(prefix);
+  const size_t committedEnd = notes.size();
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 21;
+  sealed.note = 64;
+  sealed.startTick = 0;
+  sealed.endTick = 624;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(notes, committedEnd, sealed, true);
+
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(40u, notes[0].endTick);
+  TEST_ASSERT_EQUAL(11, notes[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(624u, notes[1].endTick);
+  TEST_ASSERT_EQUAL(21, notes[1].noteId);
+}
+
+void test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote prefix{};
+  prefix.noteId = 1;
+  prefix.note = 63;
+  prefix.startTick = 0;
+  prefix.endTick = 143;
+  notes.push_back(prefix);
+  const size_t committedEnd = notes.size();
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 3;
+  sealed.note = 63;
+  sealed.startTick = 192;
+  sealed.endTick = 576;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(notes, committedEnd, sealed, false);
+
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(192u, notes[1].startTick);
+  TEST_ASSERT_EQUAL_UINT32(576u, notes[1].endTick);
+}
+
 void test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces() {
   NoteUtils::DisplayNoteVec committed;
   NoteUtils::DisplayNote closedRow{};
@@ -1361,6 +1433,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_select_draw_source_for_bar_visual_cache_fallback);
   RUN_TEST(test_upsert_display_note_at_pitch_start_replaces_stale_committed_row);
   RUN_TEST(test_upsert_display_note_at_pitch_start_appends_when_no_match);
+  RUN_TEST(test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310);
+  RUN_TEST(test_capture_sealed_upsert_keeps_longer_suffix_150650);
+  RUN_TEST(test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start);
   RUN_TEST(test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces);
   RUN_TEST(test_paint_window_inside_gather_tolerates_margin_slide);
   RUN_TEST(test_format_loop_length_bars_info_strip);
