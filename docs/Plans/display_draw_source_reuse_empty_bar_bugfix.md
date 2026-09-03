@@ -1,25 +1,35 @@
 # Display draw-source reuse and wrap-seal overruns
 
-**Status:** Host shipped — device recapture required  
+**Status:** RC-D1/D2/W host shipped (`a92595d9`). RC-D3 device **PASS** on [`115237`](../../captures/session_20260903_115237.log) and [`120321`](../../captures/session_20260903_120321.log). RC-S host in tree — device recapture pending.  
 **Date:** 2026-09-03  
 **Kind:** bugfix  
-**Evidence:** [`151552`](../../captures/session_20260902_151552.log)  
-**Does not replace:** DEC-052 occupy predicate consumption, [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1 visual-cache slices  
-**Does not authorize:** STOPPED `usbdisp` / `PERS`; wrap-seal redesign or off-clock `commitCapturePass`; `#41` Stage 2 snapshot fill of `visualCache`; `refreshVisualCacheAfterPassStateChange` on record stop
+**Evidence:** [`151552`](../../captures/session_20260902_151552.log), [`095648`](../../captures/session_20260903_095648.log), [`101721`](../../captures/session_20260903_101721.log), [`115237`](../../captures/session_20260903_115237.log), [`120321`](../../captures/session_20260903_120321.log)  
+**Does not replace:** DEC-052 occupy predicate consumption, [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 1 visual-cache slices, [`overdub_paint_sealed_survives_current_snapshot_bugfix.md`](overdub_paint_sealed_survives_current_snapshot_bugfix.md) (`012714`)  
+**Does not authorize:** STOPPED `usbdisp` / `PERS`; wrap-seal redesign or off-clock `commitCapturePass`; `#41` Stage 2 snapshot fill of `visualCache`; `refreshVisualCacheAfterPassStateChange` on record stop; RC-D4 / `liveDisplayNotes` authority
 
 ---
 
 ## Debugging boundary
 
 ```text
-Track::commitOverdubWrap / DIAG,wrap.seal     ← RC-W (child timings only)
-selectDrawSourceReuseKind + gatherDrawSourceBars + record-stop handoff
-                                              ← RC-D1 / RC-D2 (implement)
-visualCache idle slice / #41 Stage 2          ← do not start
-moving wrap seal off the clock                ← design session, not this slice
+Track::commitOverdubWrap / DIAG,wrap.seal     ← RC-W (measure only; shipped)
+selectDrawSourceReuseKind + gather + handoff  ← RC-D1 / RC-D2 (host shipped)
+ReuseCommittedDrawSource overlays             ← RC-D3 (device PASS 115237 / 120321)
+retainCapturePreviewAtSeal retain+merge       ← RC-S (host in tree; device pending)
+DFRAME resolveUs 8 ms                         ← RC-D2 device gate; still open
+live hidden vs stop DIAG,oh hide              ← reassess after RC-S recapture
+visualCache idle / #41 Stage 2                ← do not start
+moving wrap seal off the clock                ← still a design session
+RC-D4 / liveDisplayNotes authority            ← do not introduce
 ```
 
-Reuse is reuse of a **derived gather result**. It does not make `liveDisplayNotes` a new committed source owner.
+Reuse is an optimization over a **derived gather result**. It does not make `liveDisplayNotes` a new committed source owner.
+
+`DrawSourceReuseKind::ReuseCommittedDrawSource` means the **committed gathered source** remains valid for this frame. It does **not** mean the complete resolved display result remains valid. The shipped no-op (reuse the resolved frame) is too strong; RC-D3 is that correction.
+
+**Prefix immutability (D3 shipped):** overlay and pending-transform application operates on a frame-local copy. It never mutates the reusable committed prefix.
+
+**RC-S:** `retainCapturePreviewAtSeal` retains all currently uncovered sealed rows, then merges this pass's closed preview. It must not discard previously retained sealed rows merely because a new pass is being sealed. Release remains exclusively `releaseSealedCapturePreviewIfCovered`. Do not move wrap seal off the clock, fill `visualCache` on the clock, or add a reuse owner.
 
 ## Architecture checkpoint
 
@@ -29,7 +39,7 @@ Reuse is reuse of a **derived gather result**. It does not make `liveDisplayNote
 | State transition change? | **NO** |
 | Unbounded interval owner? | **NO** for display (LoadAndDisplay remainder). Wrap seal already lives on the clock |
 
-Reuse: extend `selectDrawSourceReuseKind`, `resolveDisplayNotesByDrawSource`, `shouldGatherPublishedSnapshotForDrawSource`, `refreshViewportAfterRecordStop`. No new Manager. Prefer existing `DrawSourceReuseKind` values (Hit / SlideOneBar / Rebuild). Overlay-only reuse is a branch in `resolveDisplayNotesByDrawSource` (Hit + overlay-key mismatch).
+Reuse: extend `selectDrawSourceReuseKind`, `resolveDisplayNotesByDrawSource`, `shouldGatherPublishedSnapshotForDrawSource`, `refreshViewportAfterRecordStop`. No new Manager. Committed-source decision values: `ReuseCommittedDrawSource` / `SlideCommittedDrawSource` / `RebuildCommittedDrawSource`. Overlay work stays `applyDrawSourceOverlays` / `applyPendingDrawSourceTransforms` / `applyCapturePlayheadTails`. RC-S: extend `Loop::retainCapturePreviewAtSeal` only.
 
 ## Layer contract (pin)
 
@@ -41,7 +51,7 @@ Reuse: extend `selectDrawSourceReuseKind`, `resolveDisplayNotesByDrawSource`, `s
 4. **Pending transforms** — `applyPendingDrawSourceTransforms` after gather.
 5. **Playhead tails** — `applyCapturePlayheadTails` after gather, paint-only.
 
-**Sealed is a transient overlay, not part of the reusable committed prefix.** Overlay-only invalidation includes sealed-key changes. The reusable prefix is `[0, liveDisplayCacheCommittedNoteCount_)` from the last committed-source walk.
+**Sealed is a transient overlay, not part of the reusable committed prefix.** Overlay-only invalidation includes sealed-key changes. The reusable prefix is the last **untransformed** committed-source walk, not the post-Hide contents of `liveDisplayNotes`.
 
 ## Intended pipeline
 
@@ -91,11 +101,11 @@ Measure `commitCapturePass` / `sealPendingNoteChangesToEditPasses` / `beginCaptu
 
 **Owner:** `selectDrawSourceReuseKind` + `refreshViewportAfterRecordStop` + inactive branch of `shouldGatherPublishedSnapshotForDrawSource`.
 
-### Playhead-only Hit
+### Playhead-only `ReuseCommittedDrawSource`
 
 Today, `windowStart` unchanged + `playheadBar` changed → **Rebuild**. `gatherDrawSourceBars` does `(void)playheadBar`. On a 16-bar full-loop window that is a full gather every bar crossing.
 
-**Invariant:** a playhead-only Hit reuses the committed gathered source; all playhead-dependent tails/overlays continue to be applied after the gather.
+**Invariant:** `ReuseCommittedDrawSource` reuses the committed gathered source. It does not freeze the resolved frame. Tails always apply. Overlays/pending apply on a frame-local copy of that prefix.
 
 ### Record-stop continuity (two authorities, one seed)
 
@@ -127,7 +137,7 @@ Amends the closed-session row that treated any nonempty visual as authority, inc
 
 Active-session rows stay as they are (current → snapshot; stale+dirty/empty → last snapshot; stale+clean nonempty → visual).
 
-Native: `test_display_window_utils` playhead-only Hit + the closed-session table above. Device: first PLAYING `DISP` after record equals last RECORDING frame; no `frame=0`.
+Native: `test_display_window_utils` playhead-only `ReuseCommittedDrawSource` + the closed-session table above. Device occupy-paint [`095648`](../../captures/session_20260903_095648.log) / [`094740`](../../captures/session_20260903_094740.log): last RECORDING `frameNotes=4` → first PLAYING `frameNotes=4`. [`151552`](../../captures/session_20260902_151552.log) was `251 → 0`. Not a 16-bar / 251-note recapture.
 
 ---
 
@@ -147,7 +157,7 @@ Snapshot identity / revision / current flag; visual-cache revision when visual i
 
 **Invariant:** a preview/pending/sealed-only invalidation may reuse the previously gathered committed bars. It must not cause any walk of snapshot/visual committed notes. Only the changed transient layers are re-evaluated against `[0, committedEnd)`.
 
-Stop forcing `captureActive && SlideOneBar` → Rebuild once overlay-only reuse exists. `appendDisplayNoteUniqueById` stays as-is. If overlay union against a large prefix is still ≥ 8 ms, that is a **new measured RC**, not an index in this slice.
+Stop forcing `captureActive && SlideCommittedDrawSource` → `RebuildCommittedDrawSource` once overlay-only reuse exists. `appendDisplayNoteUniqueById` stays as-is. If overlay union against a large prefix is still ≥ 8 ms, that is a **new measured RC**, not an index in this slice.
 
 ### Fixture contract
 
@@ -156,19 +166,191 @@ Stop forcing `captureActive && SlideOneBar` → Rebuild once overlay-only reuse 
 - pending transform = yes when pending changed
 - final union matches the full-gather oracle
 
-Device acceptance: OVERDUBBING `DFRAME` `resolveUs` **under 8 ms** on a dense 16-bar pass when the window covers the loop and only preview/playhead/pending moved.
+Device acceptance: OVERDUBBING `DFRAME` `resolveUs` **under 8 ms** on a dense 16-bar pass when the window covers the loop and only preview/playhead/pending moved. [`101721`](../../captures/session_20260903_101721.log) still **15–33 ms** — gate open.
+
+---
+
+## Device recapture [`115237`](../../captures/session_20260903_115237.log)
+
+One overdub session only: `PLAYING → OVERDUBBING` (L2636) → `OVERDUBBING → STOPPED` (L11047). Three wraps (L4358 / L7314 / L10576). No second `PLAYING → OVERDUBBING`. `DRAW_SRC` is on (`DIAG,draw_src,layers`). `hidden` climbs `0 → 1` at L3811, `2` at L4080, before wrap 1 (L4358). `visual` stays **127** the whole OVERDUBBING.
+
+`DISP` `frameNotes` **grows during each lap**, before wrap:
+
+| Lap | `frameNotes` |
+|-----|----------------|
+| Before wrap 1 | **127 → 199** |
+| Wrap 1 → wrap 2 | **200 → 323** |
+| Wrap 2 → wrap 3 | starts **246**, then **246 → 323** |
+| Wrap 3 → stop | **265–268** |
+
+Wrap **drops** the live preview and replaces it with the sealed count (323 → 246 at wrap 2; 312 → 265 at wrap 3). That is seal handoff, not “notes only appear at wrap.”
+
+Split the user-visible “only updates at wrap” report:
+
+| What | Serial | Action |
+|------|--------|--------|
+| Notes played this pass | `frameNotes` climbs every few hundred ms ([`115237`](../../captures/session_20260903_115237.log), [`101721`](../../captures/session_20260903_101721.log)) | No new source-selection work |
+| Occupy Hide/Shorten of existing source notes | [`101721`](../../captures/session_20260903_101721.log) `hidden=0` until wrap/stop; [`115237`](../../captures/session_20260903_115237.log) / [`120321`](../../captures/session_20260903_120321.log) `hidden` climbs before wrap 1 | **RC-D3 PASS** |
+| `visualCache` count | stays 126/127 until post-stop idle adopt | `#41` Stage 2 — do not start |
+| Wrap 2+ preview vs sealed | [`120321`](../../captures/session_20260903_120321.log) wrap 2: preview **91 → 1**, sealed **78 → 85**, frame **323 → 242** | **RC-S** |
+
+## Device recapture [`120321`](../../captures/session_20260903_120321.log)
+
+One OVERDUBBING session (L2669 → L10134). Two wraps (L4543 / L7564). Loop **8 bars** (`BAR,6144,8`). `DRAW_SRC` on.
+
+| Marker | Value |
+|--------|--------|
+| OD open layers | `visual=126,preview=0,sealed=0,snap=1,frame=126,hidden=0` (L2732) |
+| Last before wrap 1 | `preview=81,sealed=0,snap=1,frame=201,hidden=5` (L4518) |
+| First `hidden>0` | L3516 — before wrap 1 (L4543). D3 gate **PASS** |
+| First after wrap 1 | `preview=4,sealed=78,snap=0,frame=202,hidden=5` (L4575) |
+| First `snap=1` after wrap 1 | `preview=26,sealed=78,frame=298` (L5294) |
+| Last before wrap 2 | `preview=91,sealed=78,snap=1,frame=323,hidden=5` (L7497) |
+| First after wrap 2 | `preview=1,sealed=85,snap=0,frame=242,hidden=5` (L7592) |
+| After wrap 2 `snap=1` | one row only, L9896, `frame=326` — then stop |
+| Stop | `DIAG,oh` hide=38 shorten=3 add=66 (L10132); `VCACHE,adopt_partial` notes=269 (L10136); first STOPPED `visual=269,frame=358` then `292` |
+
+`drawPianoRoll` paints the composed `notes` argument when the window covers the loop. Serial `frame` climbs during every lap. The rows that *stay* after wrap 2 are record `visual` 126 plus the new sealed 85. Stop adopt is when `visual` leaves 126. RC-S below.
+
+---
+
+## RC-D3 — occupy must paint on reuse, not only at wrap
+
+**Owner:** `resolveDisplayNotesByDrawSource` `ReuseCommittedDrawSource` branch.
+
+[`101721`](../../captures/session_20260903_101721.log): `preview`/`frame` grow during OVERDUBBING; `visual` stays 127; `hidden=0` for the whole pass including both wraps; stop `DIAG,oh` hide=53 shorten=4; first PLAYING 351 / adopt 274. [`151552`](../../captures/session_20260902_151552.log) `hidden` climbed `1 → 8` during the first lap before wrap.
+
+Shipped `a92595d9` reuse + overlay-key match left `liveDisplayNotes` unchanged and only ran `applyCapturePlayheadTails`. That treated reuse as “don't rebuild anything,” so pending Hide/Shorten waited until wrap/stop rebuilt the committed source.
+
+### Proposed solution (host in tree)
+
+Do **not** wait for wrap seal to make occupy visible. Do **not** fill `visualCache` on the clock. Complete the existing layer contract:
+
+```text
+ReuseCommittedDrawSource
+    → copy liveDisplayCommittedPrefix_   (untransformed [0, committedEnd))
+    → applyDrawSourceOverlays            (sealed + preview)
+    → applyPendingDrawSourceTransforms   (Hide / Shorten)
+    → applyCapturePlayheadTails
+    → draw
+    → prefix unchanged
+```
+
+`liveDisplayCommittedPrefix_` is the last untransformed committed walk. Overlay/pending apply only on a frame-local candidate that is swapped into `liveDisplayNotes`. Hide never mutates the reusable prefix.
+
+No new `DrawSourceReuseKind`. No new cache owner. Wrap seal stays on the clock.
+
+Host fixtures:
+
+- `test_draw_source_reuse_reapplies_pending_without_mutating_prefix` — walk 0; Hide on the frame copy; stored prefix un-hidden; second reuse idempotent (`test_loop_take_survival` stubs apply, so Hide is the suite’s prefix drop).
+- `test_pending_hide_does_not_mutate_copied_committed_prefix` — real `applyPendingNoteChangesToDisplayNotes` on a copy.
+
+Device gate **PASS**: [`115237`](../../captures/session_20260903_115237.log) `hidden` 0→2 before wrap 1; [`120321`](../../captures/session_20260903_120321.log) `hidden` 0→5 before wrap 1. Live `hidden` max is not the stop `DIAG,oh` hide count (120321 hide=38). That remainder and the wrap-2 preview/sealed drop are not a second reuse owner. **Pause D3** — no RC-D4, no `#41` Stage 2.
+
+---
+
+## RC-S — wrap-2 sealed replace drops uncovered laps
+
+**Owner:** `Loop::retainCapturePreviewAtSeal` (same call site in `commitCapturePass`). Display still consumes sealed via `applyDrawSourceOverlays` / `shouldUnionSealedCapturePreviewForDrawSource`.
+
+Host in tree. Sequence accepted: RC-S → reassess hide 5 vs 38 → measure D2 8 ms → `#41` / off-clock stay out.
+
+### Root cause
+
+Two facts, both in code.
+
+**1. Sealed is the only live home for the just-sealed lap until visual covers it.**
+
+`Loop::sealedCapturePreviewIsCovered` is visual-revision only (`012714`: a current snapshot is not membership). [`120321`](../../captures/session_20260903_120321.log) `visual` stays 126, so sealed must keep every uncovered lap. That is the 150650 / `012714` contract: retain closed preview at seal; release only on coverage.
+
+**2. The next wrap throws that overlay away.**
+
+Before this slice, `Loop::retainCapturePreviewAtSeal` did `sealedCapturePreviewNotes_.clear()` then copied **this pass’s closed** `capturePreview` rows (open holds skipped). Called from `commitCapturePass` immediately before `capturePreview.clear()`.
+
+```text
+wrap 1: preview 81 closed → sealed 78     (record snapshot/visual 126 still the prefix)
+wrap 2: clear sealed 78; copy lap-2 closed → sealed 85
+        lap-1 notes are not in visual (126) and not in last snapshot membership
+        frame = 126 + 85 + open preview 1 → 242
+```
+
+The comment at the call site says keep the rows until a committed tier proves coverage. `clear()` on wrap 2+ violates that. `012714` stopped *releasing* sealed when `snap=1`; it did not stop *replacing* sealed on the next wrap.
+
+This is not a wrap-seal clock move and not `#41` Stage 2. Wrap-1 snapshot publication (`snap=1` at L5294) still left `sealed=78` in the frame, which is the `012714` “current snapshot can omit the just-sealed lap” case. Replacing sealed is the hole in that contract.
+
+```text
+lap-1 preview → wrap 1 retain → sealed 78
+snap-current still omits lap 1 ─┐
+visual 126 ─────────────────────┼→ frame 323 → 242
+sealed 78 → wrap 2 clear+copy ──┤
+lap-2 preview 91 ───────────────┘→ sealed 85 (lap 2 only)
+                                   → stop adopt visual 269
+```
+
+### Solution
+
+**Do not** redesign `Track::commitOverdubWrap`, defer `commitCapturePass`, fill `visualCache` on the clock, or add a new reuse kind.
+
+**Change:** retain all currently uncovered sealed rows, then merge this pass’s closed preview. Do not `clear()` first.
+
+- Skip open holds (unchanged).
+- Identity is the existing overlay rule `DisplayWindowUtils::upsertDisplayNoteAtPitchStart` (same as gather’s `upsertDisplayNoteAtPitchStartFrom` with suffix begin 0): replace that row’s geometry only when pitch+start match and the incoming row is linear; otherwise append. Wrap-held (`end < start`) always appends. This is not a new “latest lap discards” rule — a newer lap does not drop a distinct sealed row merely by existing.
+- If preview is empty, do not clear existing sealed; still set `sealedCapturePreviewRevision_ = playbackRevision`.
+- Set `sealedCapturePreviewRevision_ = playbackRevision` so coverage still waits for visual to consume the **latest** seal.
+- `releaseSealedCapturePreviewIfCovered` still drops the whole overlay when visual covers.
+
+**Invariant:**
+
+```text
+retainCapturePreviewAtSeal never removes an existing sealed row merely
+because a new pass is being sealed.
+
+Existing sealed rows may be removed only by
+releaseSealedCapturePreviewIfCovered.
+```
+
+`retainCapturePreviewAtSeal` may merge new closed preview rows into existing sealed rows, but it must not discard previously retained sealed rows merely because a new pass is being sealed; release remains exclusively governed by `releaseSealedCapturePreviewIfCovered`.
+
+Consequence of that invariant: after wrap 2, sealed still contains uncovered lap-1 rows plus lap-2 closed rows (pitch+start identity updates only).
+
+### Architecture checkpoint (RC-S)
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** |
+| State transition change? | **NO** — same seal call, same coverage release |
+| Unbounded interval owner? | **NO** — same wrap-clock walk; merge adds the existing sealed length, not a new MIDI-interval owner |
+
+Reuse: **YES** — extend `retainCapturePreviewAtSeal`.
+
+### Sequence (accepted)
+
+1. **RC-S (this)** — retain+merge. Fixes the wrap-2 frame drop. Host fixture + `120321`-shaped recapture.
+2. **Reassess live `hidden` vs stop `DIAG,oh` hide** — 120321 was 5 vs 38. Recapture after RC-S; do not treat as a second reuse owner.
+3. **RC-D2 device 8 ms** — still a measured gate (`101721` 15–33 ms). Overlay union against a larger sealed set may move this number; measure after RC-S, do not start an index.
+4. **`#41` Stage 2 / off-clock wrap seal** — still out.
+
+Not a substitute for RC-S: making wrap-journal snapshots include the just-sealed lap. `012714` already showed `snap=1` can omit that lap; 120321 still had `sealed=78` while `snap=1`.
+
+### Host / device gates
+
+- Native: `test_retain_at_seal_merges_uncovered_laps` — two wrap seals, visual left behind `sealedCapturePreviewRevision_`; after wrap 2 sealed is not wrap-2-only; same pitch+start updates geometry only. Existing `test_seal_retains_capture_rows_until_snapshot_covers_revision` stays.
+- Device: after wrap 2, `sealed` does not fall back to “this lap only”; `frame` does not drop from the pre-wrap-2 composed count down to `visual + new-sealed` (`323 → 242` on [`120321`](../../captures/session_20260903_120321.log)). Then pause — no `#41` Stage 2, no RC-D4.
 
 ---
 
 ## Explicitly not this slice
 
 - STOPPED `usbdisp` / `PERS`
-- Redesign / defer / off-clock wrap seal
+- Redesign / defer / off-clock wrap seal (`Track::commitOverdubWrap` stays; RC-S is retain merge only)
 - `#41` Stage 2 snapshot fill of `visualCache`
 - `refreshVisualCacheAfterPassStateChange` on record stop
 - Record-start `idle_maint` 99 ms, `begin_capture` 10 ms
 - New uniqueness index
 - Promoting `liveDisplayNotes` or the RECORDING compose prefix to committed-source authority
+- RC-D4 / new reuse cache owner
+- Making wrap-journal snapshots include the just-sealed lap as a substitute for RC-S
+- Mutating the reusable committed prefix in place when applying Hide/Shorten
 
 ## Pre-implementation review
 
@@ -179,22 +361,37 @@ Device acceptance: OVERDUBBING `DFRAME` `resolveUs` **under 8 ms** on a dense 16
 - `refreshViewportAfterRecordStop` in `DisplayCacheLifecycle.cpp`
 - Host twin `gatherDrawSourceDisplayNotes` in `test_loop_take_survival`
 - `Track::commitOverdubWrap` / `overdubWrapTick`
+- RC-S: `Loop::retainCapturePreviewAtSeal` / `sealedCapturePreviewIsCovered` in `LoopCapture.cpp`
+- RC-S: `DisplayWindowUtils::upsertDisplayNoteAtPitchStart` (gather uses the suffix variant)
+- RC-S: `test_seal_retains_capture_rows_until_snapshot_covers_revision` / `test_retain_at_seal_merges_uncovered_laps`
 
 ### Resolved
 
 | Topic | Decision |
 |-------|----------|
-| Playhead-only | Hit when committed keys match and `windowStart` is unchanged |
-| Overlay-only | Hit kind + resolve re-applies overlays; no new `DrawSourceReuseKind` |
+| Playhead-only | `ReuseCommittedDrawSource` when committed keys match and `windowStart` is unchanged |
+| Overlay-only | Same reuse kind; resolve re-applies overlays; no new `DrawSourceReuseKind` |
 | Record-stop | Current+dirty → snapshot; otherwise retain composed handoff seed |
 | Slide + capture | Remove force Rebuild; slide committed prefix then re-apply overlays |
 | RC-W fields | `commit` / `seal_pend` / `begin` on existing `DIAG,wrap` |
+| Reuse meaning | Committed prefix valid; not resolved-frame valid |
+| D3 apply | Frame-local copy; stored prefix never mutated |
+| Prefix store | `liveDisplayCommittedPrefix_` on DisplayManager |
+| [`115237`](../../captures/session_20260903_115237.log) | Preview `frameNotes` update before wrap; occupy-until-wrap was D3, not a second session |
+| [`120321`](../../captures/session_20260903_120321.log) wrap 2 | `clear()` in `retainCapturePreviewAtSeal` drops uncovered lap-1 sealed |
+| RC-S owner | Extend `retainCapturePreviewAtSeal`; do not move wrap seal off the clock |
+| RC-S apply | Retain uncovered sealed, then merge closed preview; existing pitch+start upsert only |
+| Snapshot completeness | Not a substitute — `012714` / 120321 `snap=1` still needed `sealed=78` |
 
-### Open before coding
+### Open after RC-S host
 
-None.
+1. Device recapture (`120321` shape): wrap-2 `sealed` / `frame` must not drop to visual + latest lap only.
+2. Then reassess live `hidden` vs stop `DIAG,oh` hide; then measure D2 8 ms.
 
 ## Tests
 
-- `test_display_window_utils`: playhead-only Hit; closed-session predicate table; committed vs overlay key split; `shouldRetainRecordStopHandoffSeed`
-- `test_loop_take_survival`: overlay-only reuse walk counts + full-gather oracle
+- `test_display_window_utils`: playhead-only `ReuseCommittedDrawSource`; closed-session predicate table; committed vs overlay key split; `shouldRetainRecordStopHandoffSeed`
+- `test_loop_take_survival`: overlay-only reuse walk counts + prefix-immutability reuse pin
+- `test_pending_note_change`: Hide on a frame-local copy does not mutate the stored prefix
+- RC-S: `test_retain_at_seal_merges_uncovered_laps`; keep `test_seal_retains_capture_rows_until_snapshot_covers_revision`
+- Full native **1634/1636** — pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end` only

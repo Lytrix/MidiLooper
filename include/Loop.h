@@ -94,8 +94,10 @@ struct Loop {
   bool deferredVisualCacheWrapAppendPending_ = false;
   CapturePreview capturePreview;
   /// Seal handoff: capture rows kept alive past `capturePreview.clear()` until the committed
-  /// representation the painter selects proves it covers `sealedCapturePreviewRevision_`. Copied
-  /// once per seal and never rebuilt per frame. `Loop` owns these; display only consumes them.
+  /// representation the painter selects proves it covers `sealedCapturePreviewRevision_`.
+  /// Each seal retains uncovered rows and merges this pass's closed preview; it never
+  /// discards retained rows merely because a new pass is sealing (`120321`). `Loop` owns
+  /// these; display only consumes them.
   NoteUtils::DisplayNoteVec sealedCapturePreviewNotes_;
   uint32_t sealedCapturePreviewRevision_ = 0;
   VisualCacheDelta pendingVisualDelta;
@@ -432,7 +434,8 @@ struct Loop {
     return sealedCapturePreviewNotes_;
   }
   bool hasSealedCapturePreview() const { return !sealedCapturePreviewNotes_.empty(); }
-  /// Copies the live preview rows once, before the seal clears them.
+  /// Retains uncovered sealed rows, then merges this pass's closed preview before
+  /// `capturePreview.clear()`. Release stays `releaseSealedCapturePreviewIfCovered`.
   void retainCapturePreviewAtSeal();
   /// True when `visualCache` has consumed the sealed revision. A current published
   /// snapshot is not membership proof (`012714` wrap 2: snap=1 dropped sealed=47).

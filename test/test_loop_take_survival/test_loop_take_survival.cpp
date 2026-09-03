@@ -1362,6 +1362,73 @@ void test_seal_retains_capture_rows_until_snapshot_covers_revision() {
   TEST_ASSERT_EQUAL(1u, loop.sealedCapturePreviewNotes().size());
 }
 
+/// `120321` wrap 2: retain must keep uncovered lap-1 sealed and merge lap-2 closed preview.
+/// `clear()` then copy would leave only the latest lap (`sealed=78` → `85`).
+void test_retain_at_seal_merges_uncovered_laps() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  recordLinearNote(loop, 0, 40, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(624, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 624));
+  TEST_ASSERT_EQUAL(1u, loop.sealedCapturePreviewNotes().size());
+  TEST_ASSERT_EQUAL(64u, loop.sealedCapturePreviewNotes()[0].note);
+  TEST_ASSERT_EQUAL(624u, loop.sealedCapturePreviewNotes()[0].endTick);
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 67, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(1392, 1, 67, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 1392));
+
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+  loop.releaseSealedCapturePreviewIfCovered();
+  TEST_ASSERT_EQUAL(2u, loop.sealedCapturePreviewNotes().size());
+  bool foundLap1 = false;
+  bool foundLap2 = false;
+  for (const NoteUtils::DisplayNote& note : loop.sealedCapturePreviewNotes()) {
+    if (note.note == 64 && note.startTick == 0 && note.endTick == 624) {
+      foundLap1 = true;
+    }
+    if (note.note == 67 && note.startTick == 768 && note.endTick == 1392) {
+      foundLap2 = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundLap1);
+  TEST_ASSERT_TRUE(foundLap2);
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  TEST_ASSERT_EQUAL(2u, loop.sealedCapturePreviewNotes().size());
+  bool foundReplacedLap1 = false;
+  foundLap2 = false;
+  for (const NoteUtils::DisplayNote& note : loop.sealedCapturePreviewNotes()) {
+    if (note.note == 64 && note.startTick == 0 && note.endTick == 480) {
+      foundReplacedLap1 = true;
+    }
+    if (note.note == 64 && note.endTick == 624) {
+      TEST_FAIL_MESSAGE("pitch+start upsert must not keep the replaced sealed geometry");
+    }
+    if (note.note == 67 && note.startTick == 768 && note.endTick == 1392) {
+      foundLap2 = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundReplacedLap1);
+  TEST_ASSERT_TRUE(foundLap2);
+}
+
 /// With a stale snapshot the cache is what paints, so only `visualCache.builtFromRevision` can
 /// release. A cache one revision behind must keep the retained rows alive.
 void test_stale_snapshot_release_requires_visual_cache_coverage() {
@@ -3146,6 +3213,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
   RUN_TEST(test_unstamped_wrap_journal_leaves_snapshot_unselected);
   RUN_TEST(test_seal_retains_capture_rows_until_snapshot_covers_revision);
+  RUN_TEST(test_retain_at_seal_merges_uncovered_laps);
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
   RUN_TEST(test_seal_retention_excludes_open_capture_holds);
   RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);
