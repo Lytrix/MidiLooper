@@ -21,6 +21,11 @@
 #include "Utils/MemoryPressurePolicy.h"
 #include "Utils/RecordStopLength.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "OverlapNoteIdSet.h"
+
+namespace {
+const OverlapNoteIdSet kEmptyOverlapNoteIds{};
+}
 
 #if defined(SESSION_CAPTURE)
 static void logCaptureAppendDeny(const Loop& loop, const CaptureAppendResult& result,
@@ -493,7 +498,6 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
 #endif
       if (isOverdubbing() && loop.hasOverdubSourceView()) {
         const auto overlapIt = pendingNotes.find(key);
-        static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
         const OverlapNoteIdSet& overlapNoteIds = (overlapIt != pendingNotes.end())
                                                      ? overlapIt->second.overlapNoteIds
                                                      : kEmptyOverlapNoteIds;
@@ -653,7 +657,6 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         const uint32_t noteChangeStartUs = micros();
 #endif
         const auto pendingIt = pendingNotes.find({data1, channel});
-        static const OverlapNoteIdSet kEmptyOverlapNoteIds{};
         const OverlapNoteIdSet& overlapNoteIds = (pendingIt != pendingNotes.end())
                                                      ? pendingIt->second.overlapNoteIds
                                                      : kEmptyOverlapNoteIds;

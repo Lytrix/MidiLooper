@@ -1,8 +1,8 @@
 # Overdub overlap-resolve note evaluations
 
 **Status:** Durable evaluation catalog. **Not architecture authority.** Update this file when overlap-resolve owners change.  
-**Date:** 2026-08-19  
-**Companion:** [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](OVERDUB_LEDGER_NOTE_EVALUATIONS.md)  
+**Date:** 2026-09-02  
+**Companion:** [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](OVERDUB_LEDGER_NOTE_EVALUATIONS.md) · wrap display: [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md)  
 **Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md) — HITL [`174246`](../../captures/session_20260819_174246.log)
 
 This catalog is every **note evaluation** in overlap resolve: candidate selection, interaction classification, exclusive-end / Hide geometry, and where that result survives. It is **not** open ledger identities and **not** source-view covering identities.
@@ -15,6 +15,57 @@ ledger owns open identities
 source-view covering identities answer present-at-hold
 ```
 
+## Current occupy resolve (implemented)
+
+Overdub occupy is **On-primary**. Incoming B is already in `capture.store` before resolve runs. Authoritative Shorten/Hide for notes present at B's On are written by `Loop::resolveOccupancyAtNoteOn`. B's Off does not re-resolve those identities. Off still runs `accumulatePendingNoteChangesForIncomingNote` to Add closed B and to resolve notes whose start is **strictly inside** `(B.startTick, B.endTick)`.
+
+```mermaid
+flowchart TD
+  On["B NoteOn — already in capture.store"]
+  Catch["catchUpCommittedPlaybackLedgerToPhase holdStart"]
+  N["collectOverdubNoteOnParticipantIds → n"]
+  Afill["if n = 0: collectOverdubSourceHoldParticipantIds fills overlapNoteIds"]
+  ResOn["resolveOccupancyAtNoteOn"]
+  Rows["appendNotesForIds on overlapNoteIds"]
+  Geo["if selected empty or selected.size less than n: also present-at-hold source-view ids"]
+  Rule{"A.startTick less than holdStart?"}
+  Short["Shorten A.endTick = holdStart - 1"]
+  Hide["Hide A — keep A start/end on the row"]
+  Pend["upsertSourceTransform pendingNoteChanges_"]
+  Ids["occupancyResolvedNoteIds"]
+  Off["B NoteOff — closed incoming span"]
+  Acc["accumulatePendingNoteChangesForIncomingNote"]
+  Skip["skip occupancyResolvedNoteIds"]
+  Interior["source-view notes with start strictly inside B.start, B.end"]
+  Wrap{"endTick less than startTick?"}
+  Seg["two linear segments: start→loopLen then 0→end"]
+  One["one linear segment start→end"]
+  Class["classify + resolveConstrainedGeometry"]
+  Add["Pending Add for closed B — overlay only"]
+
+  On --> Catch --> N --> Afill --> ResOn --> Rows --> Geo --> Rule
+  Rule -->|yes| Short --> Pend
+  Rule -->|no| Hide --> Pend
+  Pend --> Ids
+  Off --> Acc --> Skip --> Interior --> Wrap
+  Wrap -->|yes| Seg --> Class
+  Wrap -->|no| One --> Class
+  Class --> Add
+```
+
+| Edge | Owner | What it decides |
+|---|---|---|
+| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold** (ledger first, source-view if `n=0` or rows missing). Shorten if `A.startTick < holdStart`, Hide otherwise |
+| B still open across wrap | `extractOpenCaptureNoteOns` | Carries the On into the next capture pass. Does **not** re-resolve `occupancyResolvedNoteIds` |
+| B Off | `accumulatePendingNoteChangesForIncomingNote` | Skip On-resolved ids. Consume-overlap remaining ids. Also take source-view notes whose start is strictly inside the closed span. Wrap-crossing incoming is two linear resolver calls |
+| Seal | `sealPendingNoteChangesToEditPasses` | Shorten → Length companion. Hide → Delete companion. Add is not sealed. Stop log is `#CAP,DIAG,oh,…,add,shorten,hide` (fits 192-byte capture text). Pre-2026-09-02 `DIAG,overlap_hold,note_offs,…` clipped `hide` |
+
+**Present-at-hold vs strictly-inside.** On uses `displayNotePresentAtHold` (`start <= hold < end`, wrap-held `end < start` unwraps by `loopLength`). A source note that starts **after** B's On is not present at the hold, so On does not Shorten/Hide it. Off can still resolve it when `noteStartStrictlyInsideIncoming` is true.
+
+**Pending is the live effective transform.** Paint applies `applyPendingNoteChangesToDisplayNotes` after draw-source selection. The published `LoopSnapshot` is not stepped per overdub bar; session-exit and wrap journals publish later ([DEC-047](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication)). Resolve does not wait on a successor snapshot.
+
+**Committed occupy source** (the rows On/Off look up) is `overdubSourceSpanCacheNotes_` / `overdubSourceViewNotes_`. `Loop::rebuildOverdubSourceSpanCache` uses the same draw-source predicate as paint ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)): exclusive published-`LoopSnapshot` membership when the predicate is true (`from=snapshot`); otherwise prepared → prior cache → covering visual → pass reconstruction. `rebuildOverdubSourceView` copies the cache into the hold window and runs `collapseSplitHeadTailToWrapHeld`.
+
 **MIDI protocol boundary:** ordinary MIDI 1.0 Note On/Note Off messages carry
 channel, note number, and velocity, but not the loop’s internal `NoteId`.
 Overlap resolution therefore uses internal snapshot identities; receiver voice
@@ -23,7 +74,7 @@ rule. See [`MIDI_PROTOCOL_GUIDE.md`](MIDI_PROTOCOL_GUIDE.md).
 
 Do not converge those three because a mismatch between open ledger identities and source-view covering identities looks suspicious. **Gate 5A shipped** (equal-tick Off-before-On). **RC closed** — D2-D revision guard [`174246`](../../captures/session_20260819_174246.log); plans **FROZEN**. Remaining `n>a` is diagnostic-only. **Gate 5B withdrawn** — no Length skip firmware.
 
-**Update this catalog in the same change** if any of these moved: `resolveConstrainedGeometry`, `classifyEditSessionInteraction`, `computeShortenedEndTick`, `accumulatePendingNoteChangesForIncomingNote`, `sealPendingNoteChangesToEditPasses`, `applyChangeLengthById` shorten/lengthen, `rebuildOverdubSourceView`, `collectOverdubSourceHoldParticipantIds`, pending overlay vs cache.
+**Update this catalog in the same change** if any of these moved: `resolveOccupancyAtNoteOn`, `Track::snapshotOverlapHoldCandidates`, `resolveConstrainedGeometry`, `classifyEditSessionInteraction`, `computeShortenedEndTick`, `accumulatePendingNoteChangesForIncomingNote`, `sealPendingNoteChangesToEditPasses`, `applyChangeLengthById` shorten/lengthen, `rebuildOverdubSourceSpanCache`, `rebuildOverdubSourceView`, `collectOverdubSourceHoldParticipantIds`, pending overlay vs cache.
 
 ---
 
@@ -31,25 +82,28 @@ Do not converge those three because a mismatch between open ledger identities an
 
 | Decision | Question | Owner |
 |---|---|---|
-| Candidate selection | Should A even be considered? | `OverlapCandidateLookup` + `existingNoteOverlapsIncomingHold` |
-| Interaction classification | What relationship does A have to B? | `classifyEditSessionInteraction` |
-| Geometry resolution | What should A become? | `resolveConstrainedGeometry` |
+| Candidate selection | Should A even be considered? | On: ledger then present-at-hold. Off: `OverlapCandidateLookup` + `existingNoteOverlapsIncomingHold` |
+| Interaction classification | What relationship does A have to B? | Off / NOTE_EDIT: `classifyEditSessionInteraction`. Occupy On skips the classifier |
+| Geometry resolution | What should A become? | On: `resolveOccupancyAtNoteOn`. Off / NOTE_EDIT: `resolveConstrainedGeometry` |
 | Persistence / handoff | Where does that result survive? | Pending → (display overlay) → sealed EditPass. `rebuildOverdubSourceView` can drop it from the **cache** without deleting the EditPass |
 
 Wrong final geometry is not a license to change candidate lookup.
 
 ---
 
-## Lifecycle (elevate: occupancy at B's On; NoteOff closes B)
+## Lifecycle (On-primary; Off closes B and interiors)
 
 ```
 B On
   → capture store only (already appended)
-  → resolve occupancy over committed geometry (`resolveOccupancyAtNoteOn`)
-  → `A.startTick < B.startTick` → Shorten A to `B.startTick - 1`
-  → `A.startTick >= B.startTick` → Hide A
-  → identities go on `PendingNote.occupancyResolvedNoteIds`
-  → pending is an effective-state transform, not a paint overlay
+  → catch-up ledger to holdStart
+  → n = open ledger identities on this channel+pitch
+  → if n = 0, overlapNoteIds = present-at-hold source-view identities
+  → resolveOccupancyAtNoteOn
+  → A.startTick < holdStart → Shorten A to holdStart - 1
+  → A.startTick >= holdStart → Hide A
+  → identities go on PendingNote.occupancyResolvedNoteIds
+  → pending is an effective-state transform; paint overlays it after draw-source
 
 B remains open across overdub wrap
   → extractOpenCaptureNoteOns carries the On into the next capture pass
@@ -57,9 +111,10 @@ B remains open across overdub wrap
   → live capture continuation is not B's resolved source-view span
 
 B Off  (live, or synthesized stop Off)
-  → B is a closed incoming linear span
+  → B is a closed incoming span (wrap-crossing when endTick < startTick)
   → skip identities already resolved at this hold's NoteOn
-  → resolve only notes that start strictly inside `(B.startTick, B.endTick)`
+  → resolve remaining consume-overlap ids plus notes that start strictly
+    inside (B.startTick, B.endTick)  [wrap: start < tick OR tick < end]
   → Pending Add (B, overlay only)
   → pending geometry exists
 
@@ -70,12 +125,14 @@ seal (wrap / stop)
 
 rebuildOverdubSourceView
   → clears overdubSourceViewNotes_
-  → fills from reconstructDisplayNotes (pin: from=win, prep=0)
+  → copies overdubSourceSpanCacheNotes_ for the source window
+    (rebuilds the cache first when not ready — DEC-052 fill)
+  → collapseSplitHeadTailToWrapHeld
   → source-view cache can stop reflecting resolved geometry even when
     pending/sealed Length still exists elsewhere
 ```
 
-**B's live capture continuation is not the same object as B's eventual resolved source-view span.** A start at 168 without an Off does not authorize shortening A.
+**B's live capture continuation is not the same object as B's eventual resolved source-view span.** A start at 168 without an Off does not authorize shortening A at On. Off may still resolve A if A's start is strictly inside B's closed span.
 
 ---
 
@@ -221,7 +278,7 @@ RC2b (closed same-`NoteId` must not become wrap-held) is **parked** after `20404
 | Pending Add | Live overlay only: `applyPendingNoteChangesToOverdubSourceView` merges Add into the source-view cache (native tests). Display paint does not add B from this path unless that merge ran |
 | Companion EditPass | A’s Shorten/Hide only |
 
-**“Pending change” does not mean “pending persistence” for Add.** B may already exist in capture while A’s resolver geometry exists only in pending / companion EditPass. That is the investigation split: B does not cause A’s resolver geometry until B’s Off, but B’s events can already be in another representation.
+**“Pending change” does not mean “pending persistence” for Add.** B may already exist in capture while A’s resolver geometry exists only in pending / companion EditPass. On already wrote A’s Shorten/Hide for present-at-hold identities. Off still records Add for closed B and may write additional Shorten/Hide for interiors.
 
 ---
 
@@ -242,6 +299,8 @@ source-view cache no longer shows resolved geometry unless gather replayed it
 ```
 
 `rebuildOverdubSourceView` can erase the resolved geometry from the **source-view representation** even when that geometry still exists in pending or in the companion EditPass. This RC is cache/handoff loss, not “the EditPass was never committed.”
+
+Current fill: if `overdubSourceSpanCacheReady()` is false, `rebuildOverdubSourceSpanCache` runs first (DEC-052 predicate). The hold window then copies matching `overdubSourceSpanCacheNotes_` and `collapseSplitHeadTailToWrapHeld`. Historical `from=win` reconstruct below is the predicate-false pass-reconstruction fallback inside the span-cache fill, not the occupy-open path when a current snapshot exists.
 
 When `tryResolvePreparedWindow` misses (`from=win`, pin `prep=0`), gather consume is:
 
@@ -279,10 +338,11 @@ JIT may supply **missing candidates**. The `PendingNoteChange` is still `resolve
 
 | Evaluation | Owner | True / accepted | False / rejected |
 |---|---|---|---|
-| Event is a NoteOff | `Track::appendCaptureEvent` overdub branch; `Track::finalizePendingNotes` | Live Off, or synthesized stop Off via `appendCaptureNoteOffAtPhase` | NoteOn — capture only |
-| Source view established | `Loop::accumulatePendingNoteChangesForIncomingNote` | `overdubSourceViewEstablished_` and loop length > 0 | Return false |
-| Incoming span non-empty | same | `endTick != startTick`; wrap-crossing when `endTick < startTick` | Return false |
-| Wrap while B still open | `Track::commitOverdubWrap` | Does **not** call `finalizePendingNotes` | Open B stays live capture; **no** resolver run |
+| Event is a NoteOn | `Track::snapshotOverlapHoldCandidates` | Overdubbing, source view established, loop length > 0 | Record-only / no source view — capture only |
+| Event is a NoteOff | `Track::recordMidiEvents` overdub branch; `Track::finalizePendingNotes` | Live Off, or synthesized stop Off via `appendCaptureNoteOffAtPhase` | Non-note; On already handled occupancy |
+| Source view established | `resolveOccupancyAtNoteOn` / `accumulatePendingNoteChangesForIncomingNote` | `overdubSourceViewEstablished_` and loop length > 0 | Return / no-op |
+| Incoming span non-empty (Off only) | `accumulatePendingNoteChangesForIncomingNote` | `endTick != startTick`; wrap-crossing when `endTick < startTick` | Return false |
+| Wrap while B still open | `Track::commitOverdubWrap` | Does **not** call `finalizePendingNotes` | Open B stays live capture; **no** Off resolver run. On occupancy already recorded |
 
 ### 2. Candidate selection (not geometry)
 
@@ -347,13 +407,14 @@ The lengthen branch's sibling candidates come from `reconstructNotesForPitch`, w
 
 ## NOTE_EDIT vs overdub
 
-Same resolver, different intake.
+Same `resolveConstrainedGeometry` on the Off / NOTE_EDIT path. Occupy **On** does not call the classifier: it writes Shorten/Hide from `A.startTick` vs `holdStart` only.
 
-| | Overdub | NOTE_EDIT |
-|---|---|---|
-| Trigger | Later note's Off | Session interaction analysis |
-| Candidates | Source-view notes overlapping consume interval | `determineConstrainedGeometryTargetNoteIds` |
-| Outcome | `PendingNoteChange` → companion EditPass (Shorten/Hide) | `ConstrainedNoteGeometry` → session / commit EditPass |
+| | Overdub On | Overdub Off | NOTE_EDIT |
+|---|---|---|---|
+| Trigger | Incoming B On (`snapshotOverlapHoldCandidates`) | Incoming B Off | Session interaction analysis |
+| Candidates | Ledger open ids (`n`); source-view present-at-hold if `n=0` or rows missing | Leftover occupy ids + source-view starts strictly inside B | `determineConstrainedGeometryTargetNoteIds` |
+| Geometry | `resolveOccupancyAtNoteOn` | `classifyEditSessionInteraction` then `resolveConstrainedGeometry` | `resolveConstrainedGeometry` |
+| Outcome | `PendingNoteChange` Shorten/Hide now | Pending Add for B; Shorten/Hide for interiors not already resolved | `ConstrainedNoteGeometry` → session / commit EditPass |
 
 ---
 

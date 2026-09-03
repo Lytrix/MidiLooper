@@ -48,6 +48,35 @@ struct ElapsedTimer {
 #endif
 };
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+constexpr unsigned kPreparedSourceSpanDumpLimit = 48;
+
+TRACK_COLD_MEM void logPreparedSourceSpanRow(const char* at, NoteId noteId, uint8_t pitch,
+                                             uint32_t startTick, uint32_t endTick) {
+  if (at == nullptr || at[0] == '\0') {
+    return;
+  }
+  char line[192];
+  snprintf_P(line, sizeof(line),
+             PSTR("#CAP,%lu,DIAG,lcr,srcspan,at=%s,id=%lu,p=%u,s=%lu,e=%lu,g=%s"),
+             static_cast<unsigned long>(micros()), at, static_cast<unsigned long>(noteId),
+             static_cast<unsigned>(pitch), static_cast<unsigned long>(startTick),
+             static_cast<unsigned long>(endTick),
+             (endTick < startTick) ? PSTR("wrap") : PSTR("linear"));
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+
+TRACK_COLD_MEM void logPreparedSourceSpanCount(const char* at, unsigned count) {
+  if (at == nullptr || at[0] == '\0') {
+    return;
+  }
+  char line[128];
+  snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,lcr,srcspan,at=%s,count=%u"),
+             static_cast<unsigned long>(micros()), at, count);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
 TRACK_COLD_MEM void mergeSortedMidiVectors(SessionMidiEventVec& base, SessionMidiEventVec&& addition) {
   if (addition.empty()) {
     return;
@@ -2382,18 +2411,71 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
          sDeviceGateSession.preparedPlaybackRevision == playbackRevision;
 }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+TRACK_COLD_MEM void logPreparedSourceSkip(const char* at, const char* reason, uint32_t passId,
+                                          uint32_t liveRev, uint32_t liveLen) {
+  if (at == nullptr || reason == nullptr) {
+    return;
+  }
+  char line[224];
+  snprintf_P(line, sizeof(line),
+           PSTR("#CAP,%lu,DIAG,lcr,srcskip,at=%s,reason=%s,fin=%u,kept=%u,pass=%u,rev=%lu,"
+                "prep=%lu,live=%lu,sess=%lu,spans=%u"),
+           static_cast<unsigned long>(micros()), at, reason, sDeviceGateFinished ? 1u : 0u,
+           sDeviceGateSession.preparedIndexKept ? 1u : 0u, static_cast<unsigned>(passId),
+           static_cast<unsigned long>(liveRev),
+           static_cast<unsigned long>(sDeviceGateSession.preparedPlaybackRevision),
+           static_cast<unsigned long>(liveLen),
+           static_cast<unsigned long>(sDeviceGateSession.loopLengthTicks),
+           static_cast<unsigned>(sDeviceGateSession.checkpoints.spans.size()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
 TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
     const OverdubPass& pass, uint32_t playbackRevision, uint32_t loopLengthTicks,
     const EditPassVec& editPasses, const EditPassIdList& companionIds) {
-  if (!sDeviceGateFinished || !sDeviceGateSession.preparedIndexKept ||
-      pass.id == kInvalidPassId) {
+  if (!sDeviceGateFinished) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("not_finished"), static_cast<uint32_t>(pass.id),
+                          playbackRevision, loopLengthTicks);
+#endif
     return;
   }
-  if (loopLengthTicks == 0 || loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
+  if (!sDeviceGateSession.preparedIndexKept) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("not_kept"), static_cast<uint32_t>(pass.id),
+                          playbackRevision, loopLengthTicks);
+#endif
+    return;
+  }
+  if (pass.id == kInvalidPassId) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("invalid_pass"), 0, playbackRevision,
+                          loopLengthTicks);
+#endif
+    return;
+  }
+  if (loopLengthTicks == 0) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("length_zero"), static_cast<uint32_t>(pass.id),
+                          playbackRevision, loopLengthTicks);
+#endif
+    return;
+  }
+  if (loopLengthTicks != sDeviceGateSession.loopLengthTicks) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("length_mismatch"),
+                          static_cast<uint32_t>(pass.id), playbackRevision, loopLengthTicks);
+#endif
     return;
   }
   TickIndex& index = sDeviceGateSession.index;
   if (findPass(index, pass.id) != nullptr) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("already_indexed"),
+                          static_cast<uint32_t>(pass.id), playbackRevision, loopLengthTicks);
+#endif
     return;
   }
   index.beginCapturePass(pass.id, pass.state, pass.mergeSequence);
@@ -2402,6 +2484,10 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
   }
   const TickIndex::CapturePassEntry* entry = findPass(index, pass.id);
   if (entry == nullptr) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("publish"), PSTR("missing_entry"), static_cast<uint32_t>(pass.id),
+                          playbackRevision, loopLengthTicks);
+#endif
     return;
   }
   TickIndex::appendTickEventEntries(*entry, 0, static_cast<uint32_t>(entry->events.size()),
@@ -2444,6 +2530,49 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
   projectSealedCompanionsOntoCheckpoints(checkpoints, editPasses, companionIds,
                                          sDeviceGateSession.preparedCompanions);
   sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  unsigned onCount = 0;
+  for (const MidiEvent& evt : entry->events) {
+    if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (onCount < kPreparedSourceSpanDumpLimit) {
+      char onLine[160];
+      snprintf_P(onLine, sizeof(onLine),
+                 PSTR("#CAP,%lu,DIAG,lcr,srcon,at=publish,id=%lu,p=%u,t=%lu"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned long>(evt.noteId),
+               static_cast<unsigned>(evt.data.noteData.note),
+               static_cast<unsigned long>(evt.tick));
+      DebugSessionCapture::appendCaptureTextLine(onLine);
+    }
+    ++onCount;
+  }
+  logPreparedSourceSpanCount(PSTR("ons"), onCount);
+  unsigned publishCount = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (publishCount < kPreparedSourceSpanDumpLimit) {
+      logPreparedSourceSpanRow(PSTR("publish"), note.noteId, note.note, note.startTick,
+                               note.endTick);
+    }
+    ++publishCount;
+  }
+  logPreparedSourceSpanCount(PSTR("publish"), publishCount);
+  unsigned checkpointCount = 0;
+  for (const StateCheckpoints::NoteSpan& span : checkpoints.spans) {
+    if (span.note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (checkpointCount < kPreparedSourceSpanDumpLimit) {
+      logPreparedSourceSpanRow(PSTR("checkpoint"), span.note.noteId, span.note.pitch, span.startTick,
+                               span.endTick);
+    }
+    ++checkpointCount;
+  }
+  logPreparedSourceSpanCount(PSTR("checkpoint"), checkpointCount);
+#endif
 }
 
 TRACK_COLD_MEM void LoopContentResolution::setPreparedCapturePassState(PassId id,
@@ -2613,13 +2742,45 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     uint32_t playbackRevision, NoteUtils::DisplayNoteVec& out,
     const SessionMidiEventVec* windowEvents, uint32_t loopLengthTicks, bool logSpanExclusions) {
   out.clear();
-  if (!preparedWindowReady(playbackRevision) ||
-      sDeviceGateSession.checkpoints.spans.empty() ||
-      sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
+  if (!sDeviceGateFinished) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("copy"), PSTR("not_finished"), 0, playbackRevision,
+                          loopLengthTicks);
+#endif
+    return false;
+  }
+  if (!sDeviceGateSession.preparedIndexKept) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("copy"), PSTR("not_kept"), 0, playbackRevision, loopLengthTicks);
+#endif
+    return false;
+  }
+  if (sDeviceGateSession.preparedPlaybackRevision != playbackRevision) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("copy"), PSTR("rev_mismatch"), 0, playbackRevision,
+                          loopLengthTicks);
+#endif
+    return false;
+  }
+  if (sDeviceGateSession.checkpoints.spans.empty()) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("copy"), PSTR("empty_spans"), 0, playbackRevision, loopLengthTicks);
+#endif
+    return false;
+  }
+  if (sDeviceGateSession.checkpoints.loopLengthTicks == 0) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("copy"), PSTR("checkpoint_len0"), 0, playbackRevision,
+                          loopLengthTicks);
+#endif
     return false;
   }
   if (loopLengthTicks != 0 &&
       loopLengthTicks != sDeviceGateSession.checkpoints.loopLengthTicks) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    logPreparedSourceSkip(PSTR("copy"), PSTR("length_mismatch"), 0, playbackRevision,
+                          loopLengthTicks);
+#endif
     return false;
   }
   std::vector<NoteId> windowNoteOnIds;
@@ -2632,6 +2793,10 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
       windowNoteOnIds.push_back(evt.noteId);
     }
     if (windowNoteOnIds.empty()) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      logPreparedSourceSkip(PSTR("copy"), PSTR("empty_window_ids"), 0, playbackRevision,
+                            loopLengthTicks);
+#endif
       return false;
     }
     std::sort(windowNoteOnIds.begin(), windowNoteOnIds.end());
@@ -2685,8 +2850,8 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     }
     ++srcdropLogged;
     char line[96];
-    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=%s",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), reason);
+    snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=%s"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), reason);
     DebugSessionCapture::appendCaptureTextLine(line);
   };
 #else
@@ -2698,13 +2863,13 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     }
     if (!inWindow(span.note.noteId)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      logSpanExclusion(span.note.noteId, "inWindow");
+      logSpanExclusion(span.note.noteId, PSTR("inWindow"));
 #endif
       continue;
     }
     if (!capturePassIsActive(span.note.noteId)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      logSpanExclusion(span.note.noteId, "inactive");
+      logSpanExclusion(span.note.noteId, PSTR("inactive"));
 #endif
       continue;
     }
@@ -2719,20 +2884,20 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     }
     if (!inWindow(row.note.noteId)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      logSpanExclusion(row.note.noteId, "inWindow");
+      logSpanExclusion(row.note.noteId, PSTR("inWindow"));
 #endif
       continue;
     }
     // Same guards as tryCollectPreparedPresentNoteIdsAtTick (034455 wrap flash).
     if (!capturePassIsActive(row.note.noteId)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      logSpanExclusion(row.note.noteId, "inactive");
+      logSpanExclusion(row.note.noteId, PSTR("inactive"));
 #endif
       continue;
     }
     if (hasActiveCompanion(row.note.noteId)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-      logSpanExclusion(row.note.noteId, "hide_companion");
+      logSpanExclusion(row.note.noteId, PSTR("hide_companion"));
 #endif
       continue;
     }
@@ -2741,10 +2906,21 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
   if (logSpanExclusions && srcdropLogged >= kMaxSrcdropLogs) {
     char line[96];
-    snprintf(line, sizeof(line), "#CAP,%lu,DIAG,lcr,srcdrop,reason=truncated,limit=%u",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(kMaxSrcdropLogs));
+    snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,lcr,srcdrop,reason=truncated,limit=%u"),
+               static_cast<unsigned long>(micros()), static_cast<unsigned>(kMaxSrcdropLogs));
     DebugSessionCapture::appendCaptureTextLine(line);
   }
+  unsigned copyCount = 0;
+  for (const NoteUtils::DisplayNote& note : out) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (copyCount < kPreparedSourceSpanDumpLimit) {
+      logPreparedSourceSpanRow(PSTR("copy"), note.noteId, note.note, note.startTick, note.endTick);
+    }
+    ++copyCount;
+  }
+  logPreparedSourceSpanCount(PSTR("copy"), copyCount);
 #endif
   return !out.empty();
 }
