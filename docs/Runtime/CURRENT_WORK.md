@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (RC1d-c recapture: 52@2172 gone; leftover 52@2180)
+Last updated: 2026-09-05 (RC3 tagged-Off NoteId pair from occupy-paint `52@664`)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,26 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Capture-serial volume + undo labels ([`213738`](../../captures/session_20260901_213738.log)):**
+**RC3 tagged-Off reconstruct pair ([`175026`](../../captures/session_20260905_175026.log) `52@664`):**
+Reconstruct Off pairing uses `NoteId` when the Off is tagged. Source
+`F@808` (`id=11`) must not LIFO-steal this-pass `N@664` (`id=26`). Host
+`test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on` expects
+`664→1040` (376), not 144. Do not paint frame to 144. Do not edit occupy
+On or `applyCapturePlayheadTails`. If occupy-paint RC1b becomes `E=376`
+`F=363`, stop — that leftover is the 1028 Shorten in gather. **RC2 still
+pinned.** Plan:
+[`overdub_paint_shorten_live_stop_bugfix.md`](../Plans/overdub_paint_shorten_live_stop_bugfix.md).
+
+**Prior — RC1 pending overlay eligibility ([`172734`](../../captures/session_20260905_172734.log)):**
+`applyPendingHideAndShortenToNotes` skips only open capture holds
+(`capturePreviewNoteIsOpenHold`). Closed prefix and sealed/closed suffix
+rows take pending Hide/Shorten by `NoteId`. `liveCaptureBegin` stays the
+sibling-drop / Hide-by-overlap prefix end. No pitch+start fallback.
+Host `test_pending_shorten_172734_open_hold_eligibility_matrix`. Device
+recapture required: live frame must show this-pass Shorten (`63@680→1207`)
+before the next BAR.
+
+**Prior — Capture-serial volume + undo labels ([`213738`](../../captures/session_20260901_213738.log)):**
 `SESSION_CAPTURE_SNAPSHOT_IDLE`, `SESSION_CAPTURE_BPM`, and
 `SESSION_CAPTURE_DRAW_SRC` default **0** on `teensy41-capture-serial`.
 Re-enable independently or via `teensy41-capture-serial-investigation-diag`.
@@ -23,7 +42,13 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — RC1d-c occupy HITL recapture [`162325`](../../captures/session_20260905_162325.log) (`fedcc25f`):**
+**Prior — RC1 occupy-paint closed; RC2 / RC3 withdrawn ([`172213`](../../captures/session_20260905_172213.log)):**
+RC1d-d sealed closed Off shipped. Occupy-paint verifier **PASS** [`172322`](../../captures/host_midi_hitl_occupy_paint_20260905_172322.json): `rc1b.mismatches=[]`. **RC2 / RC3 withdrawn** — [`140729`](../../captures/session_20260903_140729.log) `77@336` / `69@5328` cannot be remade. Do not start sealed upsert or admission-miss from occupy-paint. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+
+**Prior — occupy hold shared capture phase ([`162652`](../../captures/session_20260905_162652.log)):**
+`Track::snapshotOverlapHoldCandidates` and `Track::collectOverlapHoldPlaybackNoteOn` compute `holdStart` via `Track::capturePhaseTick`, the same frame as capture storage and source-view ticks. Origin-0 `tickPhaseInLoop(..., 0, loopLength)` is off by `startLoopTick` and produced missed occupy, wrong-frame Shorten, and spurious occupy when transport was already running. Host pin `test_occupy_nonzero_start_loop_shortens_at_storage_hold`. HITL occupy_paint required in both transport conditions (`startLoopTick == 0` and nonzero). Plan: [`overdub_occupy_hold_phase_frame_bugfix.md`](../Plans/overdub_occupy_hold_phase_frame_bugfix.md).
+
+**Prior — RC1d-c occupy HITL recapture [`162325`](../../captures/session_20260905_162325.log) (`fedcc25f`):**
 Flashed `teensy41-capture-serial`. Occupy holds PASS: OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22, GUS 2/2. Dumps reconstruct 39 / effective 28 / frame 26. No two-length. `52@2172` absent. HITL FAIL is one 1-tick key: `52@2180` f=46 e=47 (E=R=47). Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
 
 **Prior — RC1d-c first-STOPPED playhead tail ([`153848`](../../captures/session_20260905_153848.log) `52@2172`):**

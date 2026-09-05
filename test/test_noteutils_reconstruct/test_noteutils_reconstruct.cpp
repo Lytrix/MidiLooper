@@ -781,6 +781,39 @@ void test_reconstruct_113651_od1_identity_coverage() {
                              "neither reconstruct has wrap geometry for 60@2776");
 }
 
+/// RC3 (175026): tagged F@808 id=11 must not LIFO-steal this-pass N@664 id=26.
+void test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on() {
+    constexpr uint32_t loopLength = 2304;
+    MidiEventVec ev;
+    MidiEvent onThisPass = MidiEvent::NoteOn(664, 5, 52, 100);
+    onThisPass.noteId = 26;
+    MidiEvent offSource = MidiEvent::NoteOff(808, 5, 52, 0);
+    offSource.noteId = 11;
+    MidiEvent onLater = MidiEvent::NoteOn(1028, 5, 52, 100);
+    MidiEvent offThisPass = MidiEvent::NoteOff(1040, 5, 52, 0);
+    offThisPass.noteId = 26;
+    ev.push_back(onThisPass);
+    ev.push_back(offSource);
+    ev.push_back(onLater);
+    ev.push_back(offThisPass);
+
+    const NoteUtils::DisplayNoteVec notes =
+        NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, false);
+    bool foundThisPass = false;
+    bool foundStolen = false;
+    for (const auto& note : notes) {
+        if (note.note == 52 && note.startTick == 664u && note.endTick == 1040u) {
+            foundThisPass = true;
+            TEST_ASSERT_EQUAL_UINT32(26u, note.noteId);
+        }
+        if (note.note == 52 && note.startTick == 664u && note.endTick == 808u) {
+            foundStolen = true;
+        }
+    }
+    TEST_ASSERT_TRUE(foundThisPass);
+    TEST_ASSERT_FALSE(foundStolen);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
     UNITY_BEGIN();
     RUN_TEST(test_project_display_notes_head_tail_split);
@@ -822,5 +855,6 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_abutting_same_tick_still_closes_prior);
     RUN_TEST(test_wrap_head_exclusive_end_for_draw_at_zero);
     RUN_TEST(test_reconstruct_113651_od1_identity_coverage);
+    RUN_TEST(test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on);
     return UNITY_END();
 }

@@ -605,7 +605,27 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
             const uint32_t pairingOffTick = offWasBeyondLoop ? evt.tick : noteOffTick;
             ActiveCanonicalNoteVec& stack = activeNoteStacks[pitch];
             int pairIndex = -1;
-            if (!stack.empty() && stack.back().startTick < pairingOffTick) {
+            if (evt.noteId != kInvalidNoteId) {
+                for (int stackIndex = static_cast<int>(stack.size()) - 1; stackIndex >= 0;
+                     --stackIndex) {
+                    const ActiveCanonicalNote& candidate =
+                        stack[static_cast<size_t>(stackIndex)];
+                    if (candidate.noteId != evt.noteId) {
+                        continue;
+                    }
+                    if (candidate.startTick < pairingOffTick) {
+                        pairIndex = stackIndex;
+                        break;
+                    }
+                    if (noteOffTick < candidate.startTick && candidate.startTick >= tailStart &&
+                        isPreferredWrapTailForHeadOffInSpanBuild(candidate.startTick, noteOffTick,
+                                                                 midiEvents, pitch, evt.channel,
+                                                                 loopLength)) {
+                        pairIndex = stackIndex;
+                        break;
+                    }
+                }
+            } else if (!stack.empty() && stack.back().startTick < pairingOffTick) {
                 pairIndex = static_cast<int>(stack.size()) - 1;
             } else {
                 for (int stackIndex = static_cast<int>(stack.size()) - 1; stackIndex >= 0;
@@ -650,7 +670,8 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                     }
                     continue;
                 }
-                if (!stack.empty() && stack.back().startTick == pairingOffTick) {
+                if (!stack.empty() && stack.back().startTick == pairingOffTick &&
+                    (evt.noteId == kInvalidNoteId || stack.back().noteId == evt.noteId)) {
                     stack.pop_back();
                 }
                 continue;
