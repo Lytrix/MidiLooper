@@ -424,8 +424,8 @@ NOTE_EDIT_MEM std::vector<NoteUtils::DisplayNote> reconstructNotesForPitch(
   return NoteUtils::reconstructNotes(pitchEvents, loopLength, false);
 }
 
-void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
-                           uint32_t loopLength, NoteOnIndexLookupCache* cache) {
+NOTE_EDIT_MEM void applyChangeLengthById(MidiEventVec& events, NoteId noteId, uint32_t newEnd,
+                                         uint32_t loopLength, NoteOnIndexLookupCache* cache) {
   const int onIndex = findNoteOnByIdCached(events, noteId, cache);
   if (onIndex < 0) {
     return;
@@ -732,9 +732,9 @@ void deleteNoteById(MidiEventVec& events, NoteId noteId) {
   applyDeleteNoteById(events, noteId, 0, nullptr);
 }
 
-void applyNoteEditPassWithLookupCache(MidiEventVec& events, const EditPass& editPass,
-                                      uint32_t loopLengthTicks,
-                                      NoteOnIndexLookupCache* lookupCache) {
+NOTE_EDIT_MEM void applyNoteEditPassWithLookupCache(MidiEventVec& events, const EditPass& editPass,
+                                                    uint32_t loopLengthTicks,
+                                                    NoteOnIndexLookupCache* lookupCache) {
   switch (editPass.actionType) {
     case EditActionType::Delete:
       applyDeleteNoteById(events, editPass.targetNoteId, loopLengthTicks, lookupCache);
@@ -771,7 +771,8 @@ void applyNoteEditPassWithLookupCache(MidiEventVec& events, const EditPass& edit
   }
 }
 
-void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass, uint32_t loopLengthTicks) {
+NOTE_EDIT_MEM void applyNoteEditPass(MidiEventVec& events, const EditPass& editPass,
+                                     uint32_t loopLengthTicks) {
   applyNoteEditPassWithLookupCache(events, editPass, loopLengthTicks, nullptr);
 }
 
