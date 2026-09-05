@@ -55,6 +55,15 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
                         uint32_t closeTick, NoteUtils::DisplayNoteVec& notes,
                         bool extendHeldNotesToPlayhead);
 
+/// Single pending-Shorten source recovery owner. Live capture may invoke this;
+/// it must not define a second recovery policy.
+bool recoverMissingPendingShortenSources(const Loop& loop, NoteUtils::DisplayNoteVec& compose,
+                                         size_t& committedEnd);
+
+void emitPaintedPendingShortenDiagnostics(const Loop& loop,
+                                          const NoteUtils::DisplayNoteVec& compose,
+                                          const NoteUtils::DisplayNoteVec& paint);
+
 uint32_t resolveBracketDisplayTick(uint32_t loopStartTick, uint32_t loopLength);
 int resolveDrawHighlightIndex(const NoteUtils::DisplayNoteVec& notes,
                               const EditorSelection& selection, uint32_t loopStartTick,

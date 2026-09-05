@@ -3779,6 +3779,51 @@ void test_draw_source_compose_193815_63_1536_forks() {
   }
 }
 
+/// `215658`: NoteOn resolve writes pending Shorten (`as=768,ae=1440,hs=1104`).
+/// Compose keeps the original end; the first paint copy has holdStart-1.
+void test_noteon_shorten_paint_keeps_compose_original_end_215658() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 40, 768, 1440, 63, 3840);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  OverlapNoteIdSet resolved;
+  loop.resolveOccupancyAtNoteOn(1, 63, 90, overlapIds({40}), 1104, &resolved);
+  TEST_ASSERT_TRUE(resolved.contains(40));
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), 40);
+  TEST_ASSERT_NOT_NULL(shorten);
+  TEST_ASSERT_EQUAL_UINT32(768u, shorten->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1103u, shorten->endTick);
+
+  NoteUtils::DisplayNoteVec compose;
+  uint32_t originalEnd = 0;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == 40) {
+      compose.push_back(note);
+      originalEnd = note.endTick;
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL(1u, compose.size());
+  TEST_ASSERT_TRUE(originalEnd > 1103u);
+
+  NoteUtils::DisplayNoteVec painted = compose;
+  loop.applyPendingNoteChangesToDisplayNotes(painted, painted.size());
+  const DisplayWindowUtils::PaintedPendingShorten described =
+      DisplayWindowUtils::describePaintedPendingShorten(compose, painted, 40, 1103);
+  TEST_ASSERT_TRUE(described.composeHasTarget);
+  TEST_ASSERT_EQUAL_UINT32(originalEnd, described.composeEndTick);
+  TEST_ASSERT_EQUAL_UINT32(originalEnd, compose[0].endTick);
+  TEST_ASSERT_TRUE(described.paintHasTarget);
+  TEST_ASSERT_TRUE(described.paintHasShortenedEnd);
+  TEST_ASSERT_EQUAL_UINT32(768u, described.paintStartTick);
+  TEST_ASSERT_EQUAL_UINT32(1103u, described.paintEndTick);
+  TEST_ASSERT_EQUAL(0, loop.passes.editPasses.size());
+}
+
 /// `202821` Stage 1: NoteOn pending Shorten paints holdStart-1 on the next
 /// live frame. Compose / capture storage stay untransformed until seal.
 void test_noteon_pending_paint_copy_shortens_before_stop_202821() {
@@ -4216,6 +4261,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_172734_open_hold_eligibility_matrix);
   RUN_TEST(test_pending_shorten_193815_63_1536_hold_1919_matrix);
   RUN_TEST(test_draw_source_compose_193815_63_1536_forks);
+  RUN_TEST(test_noteon_shorten_paint_keeps_compose_original_end_215658);
   RUN_TEST(test_noteon_pending_paint_copy_shortens_before_stop_202821);
   RUN_TEST(test_pending_shorten_recovers_authoritative_source_212700);
   RUN_TEST(test_pending_shorten_authoritative_absence_does_not_resurrect_212700);

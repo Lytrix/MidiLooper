@@ -306,19 +306,30 @@ void applyPendingDrawSourceTransforms(const Loop& loop, NoteUtils::DisplayNoteVe
     }
 }
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-DISP_CAPTURE_MEM void emitPendingShortenSourceKind(NoteId noteId,
-                                                   DisplayWindowUtils::PendingShortenSourceKind kind) {
+}  // namespace
+
+namespace DisplayManagerInternal {
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_DRAW_SRC
+DISP_CAPTURE_MEM void emitPendingShortenSourceKind(
+    NoteId noteId, DisplayWindowUtils::PendingShortenSourceKind kind,
+    const NoteUtils::DisplayNote* visualHint, const NoteUtils::DisplayNote* authoritative) {
     const char* kindName = "not_needed";
     if (kind == DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative) {
         kindName = "stale_visual_source";
     } else if (kind == DisplayWindowUtils::PendingShortenSourceKind::AuthoritativeAbsence) {
         kindName = "authoritative_absence";
     }
-    char line[160];
+    char line[192];
     snprintf(line, sizeof(line),
-             "#CAP,%lu,DIAG,draw_src,shorten_src,id,%u,kind,%s",
-             static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), kindName);
+             "#CAP,%lu,DIAG,draw_src,shorten_src,id,%u,kind,%s,old,%u,%u,%u,new,%u,%u,%u",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), kindName,
+             visualHint != nullptr ? static_cast<unsigned>(visualHint->note) : 0u,
+             visualHint != nullptr ? static_cast<unsigned>(visualHint->startTick) : 0u,
+             visualHint != nullptr ? static_cast<unsigned>(visualHint->endTick) : 0u,
+             authoritative != nullptr ? static_cast<unsigned>(authoritative->note) : 0u,
+             authoritative != nullptr ? static_cast<unsigned>(authoritative->startTick) : 0u,
+             authoritative != nullptr ? static_cast<unsigned>(authoritative->endTick) : 0u);
     DebugSessionCapture::appendCaptureTextLine(line);
 }
 #endif
@@ -386,9 +397,10 @@ DISP_CAPTURE_MEM bool recoverMissingPendingShortenSources(const Loop& loop,
             }
             recoveredAny = true;
         }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_DRAW_SRC
         if (kind != DisplayWindowUtils::PendingShortenSourceKind::NotNeeded) {
-            emitPendingShortenSourceKind(change.noteId, kind);
+            emitPendingShortenSourceKind(change.noteId, kind, visualHint,
+                                         authoritativeHasTarget ? &authoritative : nullptr);
         }
 #endif
     }
@@ -397,6 +409,56 @@ DISP_CAPTURE_MEM bool recoverMissingPendingShortenSources(const Loop& loop,
     }
     return recoveredAny;
 }
+
+DISP_CAPTURE_MEM void emitPaintedPendingShortenDiagnostics(const Loop& loop,
+                                                          const NoteUtils::DisplayNoteVec& compose,
+                                                          const NoteUtils::DisplayNoteVec& paint) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_DRAW_SRC
+    if (!loop.hasPendingNoteChanges()) {
+        return;
+    }
+    const uint32_t generation = fingerprintPendingNoteChanges(loop.pendingNoteChanges());
+    static uint32_t sLastPaintedShortenGeneration = 0;
+    if (generation == sLastPaintedShortenGeneration) {
+        return;
+    }
+    bool emitted = false;
+    for (const PendingNoteChange& change : loop.pendingNoteChanges()) {
+        if (change.kind != PendingNoteChangeKind::Shorten || change.noteId == kInvalidNoteId) {
+            continue;
+        }
+        const DisplayWindowUtils::PaintedPendingShorten described =
+            DisplayWindowUtils::describePaintedPendingShorten(compose, paint, change.noteId,
+                                                             change.endTick);
+        if (!described.paintHasShortenedEnd) {
+            continue;
+        }
+        char line[192];
+        snprintf(line, sizeof(line),
+                 "#CAP,%lu,DIAG,draw_src,painted_pending_shorten,id,%u,old,%u,%u,%u,new,%u,%u,%u",
+                 static_cast<unsigned long>(micros()), static_cast<unsigned>(change.noteId),
+                 described.composeHasTarget ? static_cast<unsigned>(change.pitch) : 0u,
+                 static_cast<unsigned>(described.composeStartTick),
+                 static_cast<unsigned>(described.composeEndTick),
+                 static_cast<unsigned>(change.pitch),
+                 static_cast<unsigned>(described.paintStartTick),
+                 static_cast<unsigned>(described.paintEndTick));
+        DebugSessionCapture::appendCaptureTextLine(line);
+        emitted = true;
+    }
+    if (emitted) {
+        sLastPaintedShortenGeneration = generation;
+    }
+#else
+    (void)loop;
+    (void)compose;
+    (void)paint;
+#endif
+}
+
+}  // namespace DisplayManagerInternal
+
+namespace {
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
 DISP_CAPTURE_MEM void emitPaintedOccupy193815Row(const char* stage,
@@ -590,6 +652,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         if (havePendingPaint) {
             applyPendingDrawSourceTransforms(loop, liveDisplayPendingPaintNotes_,
                                              committedDisplayEnd);
+            emitPaintedPendingShortenDiagnostics(loop, liveDisplayNotes,
+                                                 liveDisplayPendingPaintNotes_);
         }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
         emitPaintedOccupy193815Row("after_pending", loop, liveDisplayPendingPaintNotes_);

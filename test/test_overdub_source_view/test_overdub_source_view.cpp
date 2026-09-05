@@ -3888,11 +3888,15 @@ void test_draw_source_snapshot_miss_recovers_pending_shorten_212700() {
   shorten.startTick = 4560;
   shorten.endTick = 4575;
   loop.pushPendingNoteChangeForTest(shorten);
-  loop.applyPendingNoteChangesToDisplayNotes(compose, compose.size());
-  TEST_ASSERT_EQUAL(1u, compose.size());
-  TEST_ASSERT_EQUAL(84, compose[0].noteId);
-  TEST_ASSERT_EQUAL_UINT32(4560u, compose[0].startTick);
-  TEST_ASSERT_EQUAL_UINT32(4575u, compose[0].endTick);
+  NoteUtils::DisplayNoteVec painted = compose;
+  loop.applyPendingNoteChangesToDisplayNotes(painted, painted.size());
+  TEST_ASSERT_EQUAL_UINT32(4608u, compose[0].endTick);
+  const DisplayWindowUtils::PaintedPendingShorten described =
+      DisplayWindowUtils::describePaintedPendingShorten(compose, painted, 84, 4575);
+  TEST_ASSERT_TRUE(described.composeHasTarget);
+  TEST_ASSERT_EQUAL_UINT32(4608u, described.composeEndTick);
+  TEST_ASSERT_TRUE(described.paintHasShortenedEnd);
+  TEST_ASSERT_EQUAL_UINT32(4575u, described.paintEndTick);
 }
 
 void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {

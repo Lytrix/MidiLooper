@@ -415,6 +415,39 @@ struct PendingShortenRecoveryCounts {
 /// Append authoritative committed geometry for pending Shorten targets that
 /// compose dropped while VisualCache still shows the same `NoteId`. Never
 /// copies VisualCache geometry. Hide is not a recovery input.
+/// First paint after NoteOn: compose keeps original geometry; paint has the
+/// pending Shorten end. Absence stays absence (`215658`).
+struct PaintedPendingShorten {
+    NoteId noteId = kInvalidNoteId;
+    uint32_t composeStartTick = 0;
+    uint32_t composeEndTick = 0;
+    uint32_t paintStartTick = 0;
+    uint32_t paintEndTick = 0;
+    bool composeHasTarget = false;
+    bool paintHasTarget = false;
+    bool paintHasShortenedEnd = false;
+};
+
+inline PaintedPendingShorten describePaintedPendingShorten(const NoteUtils::DisplayNoteVec& compose,
+                                                           const NoteUtils::DisplayNoteVec& paint,
+                                                           NoteId noteId,
+                                                           uint32_t pendingEndTick) {
+    PaintedPendingShorten described{};
+    described.noteId = noteId;
+    if (const NoteUtils::DisplayNote* composeNote = findDisplayNoteByNoteId(compose, noteId)) {
+        described.composeHasTarget = true;
+        described.composeStartTick = composeNote->startTick;
+        described.composeEndTick = composeNote->endTick;
+    }
+    if (const NoteUtils::DisplayNote* paintNote = findDisplayNoteByNoteId(paint, noteId)) {
+        described.paintHasTarget = true;
+        described.paintStartTick = paintNote->startTick;
+        described.paintEndTick = paintNote->endTick;
+        described.paintHasShortenedEnd = paintNote->endTick == pendingEndTick;
+    }
+    return described;
+}
+
 inline PendingShortenRecoveryCounts recoverMissingPendingShortenRows(
     NoteUtils::DisplayNoteVec& compose, const NoteUtils::DisplayNoteVec& visualCache,
     const NoteId* pendingShortenIds, size_t pendingShortenCount,

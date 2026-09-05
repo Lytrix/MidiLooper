@@ -1,6 +1,6 @@
 # Overdub paint — pending Shorten source recovery
 
-**Status:** Host shipped. Device recapture open.  
+**Status:** Host shipped. Device recapture superseded by [`215658`](../../captures/session_20260905_215658.log) / [`overdub_paint_noteon_shorten_paint_bugfix.md`](overdub_paint_noteon_shorten_paint_bugfix.md).  
 **Date:** 2026-09-05  
 **Kind:** bugfix (draw-source compose recovery)  
 **Evidence:** [`212700`](../../captures/session_20260905_212700.log) `DIAG,draw_src,diff` `id,95,old,84,4560,4608,new,0,0,0` with `hidden,1`; [`212004`](../../captures/session_20260905_212004.log) pending `shorten>=1` before stop  

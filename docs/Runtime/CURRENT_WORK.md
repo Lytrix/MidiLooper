@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (overdub paint pending Shorten source recovery)
+Last updated: 2026-09-05 (overdub NoteOn Shorten paint)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub paint — pending Shorten source recovery ([`212700`](../../captures/session_20260905_212700.log)):**
+**Overdub paint — NoteOn Shorten on the first paint ([`215658`](../../captures/session_20260905_215658.log)):**
+NoteOn writes pending Shorten (`lcr,part` `as=768,ae=1440,hs=1104`) but
+the next paint still matched VisualCache geometry. Live compose may omit
+the Shorten target or keep the original end; `applyPendingHideAndShortenToNotes`
+cannot shorten a row the compose path does not expose. Live capture now
+invokes the existing `recoverMissingPendingShortenSources` owner, then
+applies pending on the paint copy only. Compose stays original.
+`painted_pending_shorten` / `stale_visual_source` / `authoritative_absence`
+carry NoteId and old/new geometry. VisualCache is not mutated. Hide is
+not recovered. Parent source recovery and Stage 1+2 stay closed.
+Host: focused suites PASS; `teensy41-capture-serial` RAM1 locals **6848**;
+native **1667/1670** (pre-existing playhead-tails fail). Device recapture open.
+Plan: [`overdub_paint_noteon_shorten_paint_bugfix.md`](../Plans/overdub_paint_noteon_shorten_paint_bugfix.md).
+Parent: [`overdub_paint_shorten_source_recovery_bugfix.md`](../Plans/overdub_paint_shorten_source_recovery_bugfix.md).
+
+**Prior — pending Shorten source recovery ([`212700`](../../captures/session_20260905_212700.log)):**
 Compose can drop a Shorten target when the selected current snapshot
 membership omits a row that VisualCache still has (`old,84,4560,4608` →
 `new,0,0,0`). Hide can look correct from that absence; Shorten cannot.
@@ -19,7 +34,8 @@ row by `NoteId` before the paint copy. VisualCache is mismatch evidence
 only — never copied. Authoritative absence stays absent. Hide is not
 recovered. Stage 1 paint-copy and Stage 2 wrap-append stay closed.
 Host: focused suites PASS; `teensy41-capture-serial` RAM1 locals **6848**;
-native **1663/1666** (pre-existing playhead-tails fail). Device recapture open.
+native **1663/1666** (pre-existing playhead-tails fail). Device recapture
+superseded by [`215658`](../../captures/session_20260905_215658.log).
 Plan: [`overdub_paint_shorten_source_recovery_bugfix.md`](../Plans/overdub_paint_shorten_source_recovery_bugfix.md).
 Parent Stage 1+2: [`overdub_paint_noteon_pending_handoff_bugfix.md`](../Plans/overdub_paint_noteon_pending_handoff_bugfix.md).
 
