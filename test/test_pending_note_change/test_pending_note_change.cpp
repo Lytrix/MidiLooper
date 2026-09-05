@@ -4051,6 +4051,37 @@ void test_pending_shorten_wins_over_older_sealed_length_002200() {
   TEST_ASSERT_EQUAL_UINT32(1055u, paint[0].endTick);
 }
 
+/// `002708`: a long occupy that starts earlier and covers already-shortened
+/// inners must drop those inners. Same-start shorter keepers stay (`201956`).
+void test_long_occupy_hides_inner_shortened_notes_002708() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.pushPendingNoteChangeForTest(hideChange(92, 63, 864, 1336));
+  loop.pushPendingNoteChangeForTest(hideChange(91, 63, 1056, 1200));
+  loop.pushPendingNoteChangeForTest(hideChange(83, 63, 1296, 1440));
+  loop.pushPendingNoteChangeForTest(shortenChange(83, 63, 1296, 1335));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(74, 63, 768, 863));
+  paint.push_back(displayNote(90, 63, 864, 1344));
+  paint.push_back(displayNote(91, 63, 1056, 1200));
+  paint.push_back(displayNote(83, 63, 1296, 1335));
+  paint.push_back(displayNote(183, 63, 1296, 1440));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 1);
+  TEST_ASSERT_EQUAL(2u, paint.size());
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 74));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 90));
+  TEST_ASSERT_EQUAL_UINT32(768u, findDisplayNoteById(paint, 74)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(863u, findDisplayNoteById(paint, 74)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(864u, findDisplayNoteById(paint, 90)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1344u, findDisplayNoteById(paint, 90)->endTick);
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 91));
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 83));
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 183));
+}
+
 /// `001145`: same-start Hide after earlier Shortens must drop the closed remnant
 /// at that pitch+start. The new occupy is an open hold and cannot dominate it.
 void test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145() {
@@ -4672,6 +4703,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_drops_suffix_longer_remnant_000402);
   RUN_TEST(test_later_occupy_shorten_drops_suffix_remnant_000402);
   RUN_TEST(test_pending_shorten_wins_over_older_sealed_length_002200);
+  RUN_TEST(test_long_occupy_hides_inner_shortened_notes_002708);
   RUN_TEST(test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145);
   RUN_TEST(test_same_start_hide_drops_remnant_when_hold_present_001145);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);

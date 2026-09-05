@@ -376,11 +376,13 @@ struct Loop {
   /// drops a longer same-pitch+start closed sibling of the kept short row
   /// (`123236`, `000402`), including sealed-preview suffix remnants. Hide
   /// also drops a closed remnant at the hidden source pitch+start when the
-  /// new occupy is still an open hold (`001145`). Open capture holds are
-  /// kept. Occupying Adds start at hold, not at the shortened source start.
-  /// Sealed overlay applies first; this-lap pending then wins for the same
-  /// NoteId (`002200`). `liveCaptureBegin` remains Hide-by-overlap prefix
-  /// only. Gather upsert during capture is unchanged (`150650`).
+  /// new occupy is still an open hold (`001145`). A later same-pitch occupy
+  /// that starts earlier and covers an inner shortened row drops that inner
+  /// (`002708`). Open capture holds are kept. Occupying Adds start at hold,
+  /// not at the shortened source start. Sealed overlay applies first; this-lap
+  /// pending then wins for the same NoteId (`002200`). Hide absorbs an earlier
+  /// Length of the same NoteId. `liveCaptureBegin` remains Hide-by-overlap
+  /// prefix only. Gather upsert during capture is unchanged (`150650`).
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;

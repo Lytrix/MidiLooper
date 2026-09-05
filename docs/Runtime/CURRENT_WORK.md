@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-06 (`002200`: pending Shorten wins over sealed Length)
+Last updated: 2026-09-06 (`002708`: long occupy hides inner shortened notes)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Pending Shorten overwritten by sealed Length ([`002200`](../../captures/session_20260906_002200.log)):**
+**Long occupy leaves inner shortened notes ([`002708`](../../captures/session_20260906_002708.log)):**
+After a second pass, a long occupy (`864–1344`) covers already-shortened
+inners (`1056–1200`, `1296–1335`). Stop effective hid them; the frame
+still painted them. Same-start Hide drop kept `1296–1335` as a shorter
+keeper because the occupy starts earlier. Hide now drops an inner when
+an earlier same-pitch occupy covers it. Hide absorbs a later Length of
+the same NoteId. Host pin
+`test_long_occupy_hides_inner_shortened_notes_002708`. Device: a long
+occupy that covers several shortened notes must not show those inners
+on the next `DISP` after the occupy NoteOn, including after wrap.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Pending Shorten overwritten by sealed Length ([`002200`](../../captures/session_20260906_002200.log)):**
 After wrap 2, occupy of already-sealed `73@768–1247` at `hs=1056` writes
 pending `768–1055`. Paint applied pending first, then sealed Length
 `1247`, so `painted_pending_shorten` never logged 73 and OLED kept the

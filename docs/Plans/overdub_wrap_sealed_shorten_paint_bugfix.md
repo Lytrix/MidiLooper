@@ -1,9 +1,9 @@
 # Overdub wrap — sealed Shorten must keep the live paint end
 
-**Status:** Host shipped (`002200` pending wins over sealed Length). Device recapture required.  
+**Status:** Host shipped (`002708` long occupy hides inner shortened notes). Device recapture required.  
 **Date:** 2026-09-06  
 **Kind:** bugfix (sealed-companion draw-source paint)  
-**Evidence:** [`002200`](../../captures/session_20260906_002200.log) (prior [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
+**Evidence:** [`002708`](../../captures/session_20260906_002708.log) (prior [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
 **Does not authorize:** occupy / wrap seal persist changes; VisualCache mutation on wrap; pending across wrap; Stage 1 wrap-held head occupy (`225200` device FAIL)
 
 ---
@@ -50,6 +50,11 @@ Two gaps after wrap seal:
    occupy of sealed `73@768–1247` at `hs=1056` writes pending `768–1055`.
    Applying pending then sealed restored `1247`. Stop effective already
    has `768–1055`. Sealed baseline now applies first.
+7. **Long occupy leaves inner shortened notes (`002708`):** long
+   `864–1344` covers `1056–1200` and `1296–1335`. Effective hid them;
+   frame kept the inners because same-start Hide drop treated `1296–1335`
+   as a shorter keeper. An earlier same-pitch covering occupy now drops
+   those inners. Hide absorbs a later Length of the same NoteId.
 
 Pin owners: sealed apply + sealed Length compose recovery + Length
 fallback + closed same-start remnant drop.
@@ -96,6 +101,9 @@ during capture is unchanged (`150650`).
   keeper is present; RC3 mismatched NoteId without occupy stays
 - `test_pending_shorten_wins_over_older_sealed_length_002200` — sealed
   `73@768–1247` plus pending `768–1055` paints `1055`
+- `test_long_occupy_hides_inner_shortened_notes_002708` — long
+  `864–1344` plus Hide of `1296–1440` / `1056–1200` drops those inners;
+  `768–863` stays
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**

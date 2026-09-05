@@ -161,6 +161,13 @@ LOOP_COLD_MEM void insertOrReplaceSourceTransformSorted(PendingNoteChangeVec& tr
         return existing.noteId < noteId;
       });
   if (it != transforms.end() && it->noteId == change.noteId) {
+    // Hide absorbs an earlier Length of the same NoteId so a later sealed
+    // Shorten cannot restore an inner note the long occupy already hid
+    // (`002708` 83@1296–1335 under 864–1344).
+    if (it->kind == PendingNoteChangeKind::Hide &&
+        change.kind == PendingNoteChangeKind::Shorten) {
+      return;
+    }
     *it = change;
     return;
   }
@@ -227,9 +234,13 @@ LOOP_COLD_MEM bool hideSourceEndAtPitchStart(const PendingNoteChangeVec& transfo
 /// while the longer suffix remnant stayed visible). Hide also drops a closed
 /// remnant whose end is at least the hidden source end when an open occupy
 /// hold or a shorter closed keeper is already at that pitch+start (`001145`
-/// 63@1152). A Hide whose target was never in the frame does not delete a
-/// different NoteId (`RC3`). Only pitch+starts named by those transforms
-/// are touched. Open capture holds are kept so playhead tails can grow.
+/// 63@1152). A later same-pitch occupy that starts earlier and covers the
+/// inner row also drops that inner (`002708` 1296–1335 under 864–1344).
+/// A Hide whose target was never in the frame does not delete a different
+/// NoteId (`RC3`). Same-start shorter keepers stay (`201956` 768–864).
+/// Only pitch+starts named by those transforms, or inners CompleteCovered
+/// by a Hide plus an earlier occupy, are touched. Open capture holds are
+/// kept so playhead tails can grow.
 LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
     size_t /*liveCaptureBegin*/) {
@@ -251,6 +262,39 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     return note.endTick >= note.startTick &&
            !DisplayWindowUtils::capturePreviewNoteIsOpenHold(note.startTick, note.endTick);
   };
+  auto earlierStartOccupyCovers = [&](const NoteUtils::DisplayNote& note) {
+    for (const NoteUtils::DisplayNote& other : notes) {
+      if (other.note != note.note || other.startTick >= note.startTick) {
+        continue;
+      }
+      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(other.startTick, other.endTick) ||
+          (isClosedLinear(other) && other.endTick >= note.endTick)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto earlierStartOccupyOverlaps = [&](const NoteUtils::DisplayNote& note) {
+    for (const NoteUtils::DisplayNote& other : notes) {
+      if (other.note != note.note || other.startTick >= note.startTick) {
+        continue;
+      }
+      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(other.startTick, other.endTick) ||
+          (isClosedLinear(other) && other.endTick > note.startTick)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto hideCompleteCovers = [&](const NoteUtils::DisplayNote& note) {
+    for (const PendingNoteChange& change : transforms) {
+      if (change.kind == PendingNoteChangeKind::Hide && change.pitch == note.note &&
+          change.startTick <= note.startTick && change.endTick >= note.endTick) {
+        return true;
+      }
+    }
+    return false;
+  };
   NoteUtils::DisplayNoteVec kept;
   kept.reserve(notes.size());
   for (size_t i = 0; i < notes.size(); ++i) {
@@ -260,7 +304,11 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
       kept.push_back(note);
       continue;
     }
+    const bool coveredByEarlierOccupy = earlierStartOccupyCovers(note);
     if (hideSourceEndAtPitchStart(transforms, note.note, note.startTick, hideEndTick)) {
+      if (coveredByEarlierOccupy) {
+        continue;
+      }
       if (note.endTick < hideEndTick) {
         kept.push_back(note);
         continue;
@@ -277,9 +325,12 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
           break;
         }
       }
-      if (!occupyPresent) {
+      if (!occupyPresent && !earlierStartOccupyOverlaps(note)) {
         kept.push_back(note);
       }
+      continue;
+    }
+    if (hideCompleteCovers(note) && coveredByEarlierOccupy) {
       continue;
     }
     if (!sourceTransformMarksPitchStart(transforms, note.note, note.startTick)) {
