@@ -96,7 +96,10 @@ LOOP_COLD_MEM bool insertSortedUniquePendingNoteId(std::vector<NoteId>& ids, Not
 }
 
 bool composedShortenDegradesToHide(uint32_t startTick, uint32_t endTick) {
-  if (endTick <= startTick) {
+  if (endTick < startTick) {
+    return false;
+  }
+  if (endTick == startTick) {
     return true;
   }
   return noteMinLengthRemoveEnabled && (endTick - startTick) < noteMinLengthTicks;
@@ -876,7 +879,10 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
     transform.pitch = note.note;
     transform.velocity = note.velocity;
     transform.startTick = note.startTick;
-    if (note.startTick < holdPhaseTick) {
+    const bool wrapHeld = note.endTick < note.startTick;
+    const bool wrapHeldHeadShorten =
+        wrapHeld && holdPhaseTick > 0 && holdPhaseTick != note.startTick;
+    if (note.startTick < holdPhaseTick || wrapHeldHeadShorten) {
       transform.kind = PendingNoteChangeKind::Shorten;
       transform.endTick = holdPhaseTick - 1;
     } else {

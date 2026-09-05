@@ -4161,6 +4161,88 @@ void test_wrap_held_source_row_occupies_hold_zero() {
                                : "On@2304 Off@432 is in the source view but not present at hs=0");
 }
 
+/// `225200`: stored wrap pair is `WRAP,4560,760` id 96, not Off@48. That
+/// wrap-held row must stay in source view after overdub open + wrap rebuild so
+/// occupy at hs=48 can Shorten. Failure A is a missing row (do not touch
+/// occupancy). Failure B is occupancy after the row exists. Intermediate
+/// reconstruct/collapse asserts name the owner. Untagged Off@4607 is in the
+/// capture and must not steal the wrap pair.
+void test_wrap_held_record_row_occupies_head_225200() {
+  constexpr uint32_t kLen = 4608;
+  constexpr NoteId kId = 96;
+  constexpr uint8_t kPitch = 69;
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 4560, 1, kPitch, 100, kId));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(760, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(4607, 1, kPitch, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = kId + 1;
+
+  SessionMidiEventVec recordEvents;
+  loop.passes.materializeToEventVector(recordEvents, kLen);
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(recordEvents, kLen, false, false);
+  bool reconstructedWrapHeld = false;
+  bool reconstructedTail = false;
+  bool reconstructedHead = false;
+  for (const NoteUtils::DisplayNote& note : reconstructed) {
+    if (note.noteId != kId) {
+      continue;
+    }
+    TEST_ASSERT_EQUAL(kPitch, note.note);
+    if (note.endTick < note.startTick && note.startTick == 4560u && note.endTick == 760u) {
+      reconstructedWrapHeld = true;
+    }
+    if (note.startTick == 4560u && note.endTick == kLen - 1u) {
+      reconstructedTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == 760u) {
+      reconstructedHead = true;
+    }
+  }
+  TEST_ASSERT_TRUE_MESSAGE(
+      reconstructedWrapHeld || (reconstructedTail && reconstructedHead),
+      "reconstructDisplayNotes dropped WRAP 4560→760 id 96 (no wrap-held and no split head+tail)");
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(240, 1, 72, 90, 200)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(288, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 0));
+  loop.appendLastCommittedOverdubPassToSourceView();
+  loop.rebuildOverdubSourceView(48, "test-225200");
+
+  const NoteUtils::DisplayNote* sourceRow =
+      findDisplayNoteById(loop.overdubSourceViewNotes(), kId);
+  TEST_ASSERT_NOT_NULL_MESSAGE(
+      sourceRow, "rebuildOverdubSourceView dropped id 96 after wrap (span-cache copy)");
+  TEST_ASSERT_TRUE_MESSAGE(sourceRow->endTick < sourceRow->startTick,
+                           "collapseSplitHeadTailToWrapHeld did not merge id 96 to wrap-held");
+  TEST_ASSERT_EQUAL_UINT32(4560u, sourceRow->startTick);
+  TEST_ASSERT_EQUAL_UINT32(760u, sourceRow->endTick);
+
+  OverlapNoteIdSet atHead;
+  loop.collectOverdubSourceHoldParticipantIds(48, kPitch, atHead);
+  TEST_ASSERT_TRUE_MESSAGE(atHead.contains(kId),
+                           "Failure A: wrap-held 69@4560→760 missing at hs=48");
+
+  OverlapNoteIdSet resolved;
+  loop.resolveOccupancyAtNoteOn(1, kPitch, 100, overlapIds({kId}), 48, &resolved);
+  TEST_ASSERT_TRUE(resolved.contains(kId));
+  const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), kId);
+  TEST_ASSERT_NOT_NULL_MESSAGE(shorten, "Failure B: row present but occupancy wrote no Shorten");
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten),
+                    static_cast<int>(shorten->kind));
+  TEST_ASSERT_EQUAL_UINT32(4560u, shorten->startTick);
+  TEST_ASSERT_EQUAL_UINT32(47u, shorten->endTick);
+}
+
 /// RC5: record pass stays out of session wrap ids; slot stack is two kinds.
 void test_record_then_session_wraps_are_two_slot_undo_entries() {
   LoopEventStore::resetPoolForTests();
@@ -4329,6 +4411,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
   RUN_TEST(test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight);
   RUN_TEST(test_wrap_held_source_row_occupies_hold_zero);
+  RUN_TEST(test_wrap_held_record_row_occupies_head_225200);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
   return UNITY_END();
 }
