@@ -1,10 +1,11 @@
 # Overdub paint — pending overlay eligibility (open-hold skip)
 
-**Status:** RC1 host shipped. Occupy-paint recapture [`175026`](../../captures/session_20260905_175026.log): RC3 unparked (`52@664` E=144 / F=363). RC2 still pinned.  
+**Status:** RC1 host shipped. RC3 NoteId Off pairing **reverted and parked** (`44f47e94`). Truth capture is [`191913`](../../captures/session_20260905_191913.log). RC2 still pinned.  
 **Date:** 2026-09-05  
-**Kind:** bugfix (display realization + reconstruct pairing)  
-**Evidence:** [`captures/session_20260905_172734.log`](../../captures/session_20260905_172734.log) (RC1); [`captures/session_20260905_175026.log`](../../captures/session_20260905_175026.log) / [`captures/host_midi_hitl_occupy_paint_20260905_175138.json`](../../captures/host_midi_hitl_occupy_paint_20260905_175138.json) (RC3)  
-**Parent:** occupy-paint close [`overdub_paint_effective_frame_parity_bugfix.md`](overdub_paint_effective_frame_parity_bugfix.md) [`172213`](../../captures/session_20260905_172213.log)
+**Kind:** bugfix (display realization; reconstruct pairing parked)  
+**Evidence:** [`captures/session_20260905_172734.log`](../../captures/session_20260905_172734.log) (RC1); [`captures/session_20260905_175026.log`](../../captures/session_20260905_175026.log) (parked `52@664`); [`captures/session_20260905_191913.log`](../../captures/session_20260905_191913.log) (Bugs 1–4)  
+**Parent:** occupy-paint close [`overdub_paint_effective_frame_parity_bugfix.md`](overdub_paint_effective_frame_parity_bugfix.md) [`172213`](../../captures/session_20260905_172213.log)  
+**Next:** [`overdub_occupy_paint_191913_findings_bugfix.md`](overdub_occupy_paint_191913_findings_bugfix.md)
 
 **Does not authorize:** gather `keepShortest`; source-view sibling drop; redefining occupy On; changing `holdStart - 1`; applying pending to `overdubSourceViewNotes_`; painting B from pending Add; `#41` Stage 2; withdrawn `77@336` / `69@5328`; `applyCapturePlayheadTails` patch (`79@240`)
 
@@ -13,14 +14,14 @@
 ## Debugging boundary
 
 ```text
-resolveOccupancyAtNoteOn          ← trust (664 selected wrap 1971)
-applyPendingHideAndShorten        ← RC1 shipped; not the 52@664 fail
-reconstruct Off pair (pitch LIFO) ← RC3 (this slice)
-Off/seal Hide vs Shorten          ← RC2 still pinned
+resolveOccupancyAtNoteOn          ← trust
+applyPendingHideAndShorten        ← RC1 shipped; 191913 Bug 2 continues this owner
+reconstruct Off pair (pitch LIFO) ← RC3 reverted and parked (175026 finding kept)
+Off/seal Hide vs Shorten          ← RC2 still pinned; 191913 Bug 3 is invented Shorten
 applyCapturePlayheadTails         ← still parked
 ```
 
-Sequence: **RC1 shipped → occupy-paint recapture → RC3 → RC2 pin only if still needed.**
+Sequence: **RC3 pairing reverted → 191913 truth → Bug 4 → Bug 1 → Bug 2 → Bug 3. Reassess reconstruct pairing only after those owners.**
 
 ---
 
@@ -70,26 +71,15 @@ Do **not** paint 144 to match E. That would score reconstruct as occupy. Catalog
 
 Prior PASS [`172213`](../../captures/session_20260905_172213.log) has no `52@664` — this key is this run’s grid, not an RC1 overlay regression.
 
-### RC3 fix — tagged Off pairs by NoteId
+### RC3 pairing reverted and parked
 
-**Owner:** `NoteUtils` reconstruct Off walk (same function that currently takes `stack.back()`).
+`44f47e94` made tagged Offs pair by `NoteId`. That fixed `175026` `52@664` (RC1b `mismatches=[]` on `191913`) and is **not** kept. The global pairing contract is not understood.
 
-**Invariant:**
+Keep the finding. Do not add fallbacks. Reconstruct Off walk is the exact pre-`44f47e94` LIFO / wrap pair.
 
-```text
-When a NoteOff has a valid NoteId, pair it with the open On that
-carries that id. Untagged Offs keep current LIFO / wrap rules (Gate 5A).
-```
+Parked diagnostic `diagnostic_only_reconstruct_175026_tagged_off_pairing` (`TEST_IGNORE`): LIFO today = 144; desired later = 376. Not an invariant.
 
-**Architecture checkpoint:** ownership NO · transitions NO · unbounded NO · reuse YES — extend existing reconstruct pair. No new owner. Do not change `resolveOccupancyAtNoteOn`. Do not patch `applyCapturePlayheadTails`.
-
-**Host pin** `test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on` in `test_noteutils_reconstruct`:
-
-- `N@664 id=26`, `F@808 id=11`, `N@1028`, `F@1040 id=26`
-- Today: `52@664` length 144
-- After: `52@664` is `664→1040` (376), not 144; `F@808` stays on `id=11`
-
-**Then device:** occupy-paint RC1b. If dumps become `E=376` and `F=363`, stop — that leftover is gather applying the 1028 Shorten (do not bundle). If `E=F=363`, RC1b closes.
+Parked question (do not answer here): is `NoteId` a stable reconstruct-pairing identity across every event source that reaches `NoteUtils`?
 
 ---
 

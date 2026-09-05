@@ -2705,10 +2705,10 @@ void test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback() {
   const Loop::VisualCacheIdleGatherSource source = loop.lastVisualCacheIdleGatherSource();
   TEST_ASSERT_TRUE(source == Loop::VisualCacheIdleGatherSource::Fallback ||
                    source == Loop::VisualCacheIdleGatherSource::Prepared);
-  // Merged Delete still LIFO-attaches Off@448 to record On@192 id=1, leaving
-  // On@10 + tagged Off@256 id=1. Reconstruct must not steal that Off onto
-  // id=10 (`175026` 52@664). RC1c does not extend this fallback owner.
-  TEST_ASSERT_EQUAL(0u, countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  // Budgeted idle fallback still applies Delete on the merged session
+  // (`advanceFallbackGatherSession`). That remaining owner can keep 256.
+  // RC1c does not extend that path.
   LoopContentResolution::deviceGateReset();
 }
 

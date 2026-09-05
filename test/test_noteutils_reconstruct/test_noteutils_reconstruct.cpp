@@ -781,8 +781,12 @@ void test_reconstruct_113651_od1_identity_coverage() {
                              "neither reconstruct has wrap geometry for 60@2776");
 }
 
-/// RC3 (175026): tagged F@808 id=11 must not LIFO-steal this-pass N@664 id=26.
-void test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on() {
+/// Parked diagnostic only. Not an invariant. NoteId pairing is not established.
+/// After revert of 44f47e94, pitch-LIFO reconstruct of this fixture is 664→808 (144).
+/// Desired later: 664→1040 (376). Do not enable as a production assert.
+void diagnostic_only_reconstruct_175026_tagged_off_pairing() {
+    TEST_IGNORE_MESSAGE(
+        "Parked 175026 pairing finding. LIFO today=144; NoteId pair is not an invariant.");
     constexpr uint32_t loopLength = 2304;
     MidiEventVec ev;
     MidiEvent onThisPass = MidiEvent::NoteOn(664, 5, 52, 100);
@@ -799,19 +803,19 @@ void test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on() {
 
     const NoteUtils::DisplayNoteVec notes =
         NoteUtils::reconstructDisplayNotes(ev, loopLength, false, false, false);
-    bool foundThisPass = false;
-    bool foundStolen = false;
+    bool foundLifoSteal = false;
+    bool foundNoteIdPair = false;
     for (const auto& note : notes) {
-        if (note.note == 52 && note.startTick == 664u && note.endTick == 1040u) {
-            foundThisPass = true;
-            TEST_ASSERT_EQUAL_UINT32(26u, note.noteId);
-        }
         if (note.note == 52 && note.startTick == 664u && note.endTick == 808u) {
-            foundStolen = true;
+            foundLifoSteal = true;
+        }
+        if (note.note == 52 && note.startTick == 664u && note.endTick == 1040u) {
+            foundNoteIdPair = true;
         }
     }
-    TEST_ASSERT_TRUE(foundThisPass);
-    TEST_ASSERT_FALSE(foundStolen);
+    (void)foundLifoSteal;
+    (void)foundNoteIdPair;
+    (void)notes;
 }
 
 int main(int /*argc*/, char** /*argv*/) {
@@ -855,6 +859,6 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_abutting_same_tick_still_closes_prior);
     RUN_TEST(test_wrap_head_exclusive_end_for_draw_at_zero);
     RUN_TEST(test_reconstruct_113651_od1_identity_coverage);
-    RUN_TEST(test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on);
+    RUN_TEST(diagnostic_only_reconstruct_175026_tagged_off_pairing);
     return UNITY_END();
 }
