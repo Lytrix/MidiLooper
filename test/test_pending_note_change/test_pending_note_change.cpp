@@ -4162,6 +4162,81 @@ void test_wrap_held_source_row_occupies_hold_zero() {
 }
 
 /// `225200`: stored wrap pair is `WRAP,4560,760` id 96, not Off@48. That
+/// `233150`: pending Shorten painted before wrap must survive the first
+/// post-seal draw-source paint. Compose may still hold VisualCache originals.
+void test_wrap_seal_keeps_painted_shorten_233150() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kId = 71;
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, kId, 2304, 2880, 63, kLoopLength);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  OverlapNoteIdSet resolved;
+  loop.resolveOccupancyAtNoteOn(1, 63, 100, overlapIds({kId}), 2736, &resolved);
+  TEST_ASSERT_TRUE(resolved.contains(kId));
+  const PendingNoteChange* pending = findTransform(loop.pendingNoteChanges(), kId);
+  TEST_ASSERT_NOT_NULL(pending);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten),
+                    static_cast<int>(pending->kind));
+  TEST_ASSERT_EQUAL_UINT32(2304u, pending->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2735u, pending->endTick);
+
+  NoteUtils::DisplayNoteVec compose;
+  compose.push_back(displayNote(kId, 63, 2304, 2880));
+  NoteUtils::DisplayNoteVec painted = compose;
+  loop.applyPendingNoteChangesToDisplayNotes(painted, compose.size());
+  const NoteUtils::DisplayNote* pendingPaint = findDisplayNoteById(painted, kId);
+  TEST_ASSERT_NOT_NULL(pendingPaint);
+  TEST_ASSERT_EQUAL_UINT32(2735u, pendingPaint->endTick);
+
+  const uint32_t priorRevision = loop.playbackRevision;
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(1u, companionIds.size());
+  TEST_ASSERT_FALSE(companionIds.empty());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+
+  const EditPass* sealedRow = findEditPassById(loop, companionIds[0]);
+  TEST_ASSERT_NOT_NULL(sealedRow);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(sealedRow->actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(sealedRow->propertyType));
+  TEST_ASSERT_EQUAL(kId, sealedRow->targetNoteId);
+  TEST_ASSERT_EQUAL_UINT32(2735u, sealedRow->endTick);
+
+  NoteUtils::DisplayNoteVec postCompose;
+  postCompose.push_back(displayNote(80, 63, 2736, 2832));
+  NoteUtils::DisplayNoteVec postPaint = postCompose;
+  loop.applyPendingNoteChangesToDisplayNotes(postPaint, 0u);
+  TEST_ASSERT_NULL(findDisplayNoteById(postPaint, kId));
+
+  postCompose.clear();
+  postCompose.push_back(displayNote(kId, 63, 2304, 2880));
+  postCompose.push_back(displayNote(80, 63, 2736, 2832));
+  const size_t committedEnd = 1u;
+  postPaint = postCompose;
+  loop.applyPendingNoteChangesToDisplayNotes(postPaint, committedEnd);
+  const NoteUtils::DisplayNote* sealedPaint = findDisplayNoteById(postPaint, kId);
+  TEST_ASSERT_NOT_NULL(sealedPaint);
+  TEST_ASSERT_EQUAL_UINT32(2304u, sealedPaint->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2735u, sealedPaint->endTick);
+
+  postCompose.clear();
+  postCompose.push_back(displayNote(82, 82, 96, 104));
+  postCompose.push_back(displayNote(kId, 63, 2304, 2880));
+  postPaint = postCompose;
+  loop.applyPendingNoteChangesToDisplayNotes(postPaint, 1u);
+  sealedPaint = findDisplayNoteById(postPaint, kId);
+  TEST_ASSERT_NOT_NULL(sealedPaint);
+  TEST_ASSERT_EQUAL_UINT32(2735u, sealedPaint->endTick);
+}
+
 /// wrap-held row must stay in source view after overdub open + wrap rebuild so
 /// occupy at hs=48 can Shorten. Failure A is a missing row (do not touch
 /// occupancy). Failure B is occupancy after the row exists. Intermediate
@@ -4411,6 +4486,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
   RUN_TEST(test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight);
   RUN_TEST(test_wrap_held_source_row_occupies_hold_zero);
+  RUN_TEST(test_wrap_seal_keeps_painted_shorten_233150);
   RUN_TEST(test_wrap_held_record_row_occupies_head_225200);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
   return UNITY_END();
