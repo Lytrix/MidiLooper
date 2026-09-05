@@ -4256,6 +4256,92 @@ void test_wrap_seal_keeps_painted_shorten_233150() {
   TEST_ASSERT_EQUAL_UINT32(2735u, sealedPaint->endTick);
 }
 
+/// `235546`: first sealed Shorten (id 74) stayed after wrap; later id 76 did not.
+/// Snapshot/source-view can supply only the first wrap-1 NoteId. Sealed Length
+/// geometry must recover every missing companion, not just the first lookup hit.
+void test_wrap_seal_keeps_later_painted_shorten_235546() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kFirstId = 74;
+  constexpr NoteId kLaterId = 76;
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 1536, 1, 63, 100, kFirstId));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(2256, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 2304, 1, 63, 100, kLaterId));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(3024, 1, 63, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = kLaterId + 1;
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  OverlapNoteIdSet firstResolved;
+  loop.resolveOccupancyAtNoteOn(1, 63, 100, overlapIds({kFirstId}), 1968, &firstResolved);
+  TEST_ASSERT_TRUE(firstResolved.contains(kFirstId));
+  OverlapNoteIdSet laterResolved;
+  loop.resolveOccupancyAtNoteOn(1, 63, 100, overlapIds({kLaterId}), 2736, &laterResolved);
+  TEST_ASSERT_TRUE(laterResolved.contains(kLaterId));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), kFirstId));
+  TEST_ASSERT_NOT_NULL(findTransform(loop.pendingNoteChanges(), kLaterId));
+  TEST_ASSERT_EQUAL_UINT32(1967u, findTransform(loop.pendingNoteChanges(), kFirstId)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2735u, findTransform(loop.pendingNoteChanges(), kLaterId)->endTick);
+
+  const uint32_t priorRevision = loop.playbackRevision;
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(2u, companionIds.size());
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+
+  uint32_t lengthRows = 0;
+  const EditPass* laterLength = nullptr;
+  for (const EditPassId id : companionIds) {
+    const EditPass* row = findEditPassById(loop, id);
+    TEST_ASSERT_NOT_NULL(row);
+    if (row->actionType == EditActionType::Update &&
+        row->propertyType == EditPropertyType::Length) {
+      ++lengthRows;
+      if (row->targetNoteId == kLaterId) {
+        laterLength = row;
+      }
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(2u, lengthRows);
+  TEST_ASSERT_NOT_NULL(laterLength);
+  TEST_ASSERT_EQUAL_UINT32(2304u, laterLength->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2735u, laterLength->endTick);
+
+  NoteUtils::DisplayNoteVec bothOriginals;
+  bothOriginals.push_back(displayNote(kFirstId, 63, 1536, 2256));
+  bothOriginals.push_back(displayNote(kLaterId, 63, 2304, 3024));
+  NoteUtils::DisplayNoteVec bothPaint = bothOriginals;
+  loop.applyPendingNoteChangesToDisplayNotes(bothPaint, bothOriginals.size());
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(bothPaint, kFirstId));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(bothPaint, kLaterId));
+  TEST_ASSERT_EQUAL_UINT32(1967u, findDisplayNoteById(bothPaint, kFirstId)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2735u, findDisplayNoteById(bothPaint, kLaterId)->endTick);
+
+  NoteUtils::DisplayNoteVec firstOnly;
+  firstOnly.push_back(displayNote(kFirstId, 63, 1536, 2256));
+  NoteUtils::DisplayNoteVec laterAuthoritative;
+  laterAuthoritative.push_back(displayNote(kLaterId, laterLength->pitch, laterLength->startTick,
+                                           laterLength->endTick));
+  const NoteId recoverIds[] = {kFirstId, kLaterId};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(firstOnly, {}, recoverIds, 2,
+                                                           laterAuthoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, counts.recovered);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(firstOnly, kLaterId));
+  loop.applyPendingNoteChangesToDisplayNotes(firstOnly, firstOnly.size());
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(firstOnly, kFirstId));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(firstOnly, kLaterId));
+  TEST_ASSERT_EQUAL_UINT32(1967u, findDisplayNoteById(firstOnly, kFirstId)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2735u, findDisplayNoteById(firstOnly, kLaterId)->endTick);
+}
+
 /// wrap-held row must stay in source view after overdub open + wrap rebuild so
 /// occupy at hs=48 can Shorten. Failure A is a missing row (do not touch
 /// occupancy). Failure B is occupancy after the row exists. Intermediate
@@ -4506,6 +4592,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_linear_bar_four_source_row_is_absent_at_hold_zero_and_forty_eight);
   RUN_TEST(test_wrap_held_source_row_occupies_hold_zero);
   RUN_TEST(test_wrap_seal_keeps_painted_shorten_233150);
+  RUN_TEST(test_wrap_seal_keeps_later_painted_shorten_235546);
   RUN_TEST(test_wrap_held_record_row_occupies_head_225200);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
   return UNITY_END();

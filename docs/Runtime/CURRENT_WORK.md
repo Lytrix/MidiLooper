@@ -10,17 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Wrap sealed Shorten paint ([`233150`](../../captures/session_20260905_233150.log) / [`234535`](../../captures/session_20260905_234535.log)):**
-After wrap seal, already-shortened notes snapped back on the first
-draw-source paint. RC-A: sealed overlay skipped capture-suffix rows
-(`liveCaptureBegin` gate). RC-B: snapshot gather omitted overdub NoteIds
-while sealed Length companions remained (`234535`). Fixes: apply overlay
-to all closed rows (open holds only skip); `recoverMissingSealedShortenSources`
-after pending recovery on draw-source and live-capture paths. Host pin
-`test_wrap_seal_keeps_painted_shorten_233150`. Focused suites PASS.
-`teensy41-capture-serial` RAM1 locals **6848**. Native **1670/1671**
-(pre-existing playhead-tails fail). Device recapture: first post-wrap
-`DISP` for sealed Shorten must show `holdStart-1` before next `BAR`.
+**Wrap sealed Shorten paint ([`235546`](../../captures/session_20260905_235546.log)):**
+First sealed Shorten stayed after wrap; later ones did not. RC-C:
+`recoverMissingSealedShortenSources` skipped a Length companion when
+snapshot/source-view/visual missed that NoteId. Fallback is the sealed
+Length row itself (`74@1536–1967` stayed; `76@2304–2735` must recover).
+Host pin `test_wrap_seal_keeps_later_painted_shorten_235546`. Prior RC-A
+suffix apply and RC-B recover owner stay. Device recapture: every
+already-shortened note must keep `holdStart-1` on the first post-wrap
+`DISP`, not only the first one.
 Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
 
 **Wrap-held head occupy Shorten ([`225200`](../../captures/session_20260905_225200.log)) — Stage 1:**

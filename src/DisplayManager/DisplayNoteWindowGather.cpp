@@ -445,7 +445,15 @@ DISP_CAPTURE_MEM bool recoverMissingSealedShortenSources(const Loop& loop,
         NoteUtils::DisplayNote authoritativeRow{};
         if (!lookupAuthoritativeCommittedShortenRow(loop, row->targetNoteId, row->pitch,
                                                     visualHint, authoritativeRow)) {
-            continue;
+            // `235546` id 76: snapshot/source-view/visual can miss later wrap-1
+            // NoteIds while the first sealed Length is still findable. The sealed
+            // Length row is the committed shorten geometry — same payload stop
+            // effective already keeps.
+            authoritativeRow.noteId = row->targetNoteId;
+            authoritativeRow.note = row->pitch;
+            authoritativeRow.velocity = row->velocity;
+            authoritativeRow.startTick = row->startTick;
+            authoritativeRow.endTick = row->endTick;
         }
         shortenIds.push_back(row->targetNoteId);
         authoritative.push_back(authoritativeRow);
