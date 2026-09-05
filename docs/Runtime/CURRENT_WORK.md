@@ -10,20 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Wrap sealed Shorten paint ([`233150`](../../captures/session_20260905_233150.log)):**
-After wrap seal, already-shortened notes snapped back to VisualCache
-originals on the first draw-source paint when the target row landed in
-the capture suffix (`i >= committedDisplayEnd`). Pin owner: sealed apply
-in `applyPendingHideAndShortenToNotes` — `liveCaptureBegin` is only
-sibling-drop / Hide-by-overlap; open holds skip transforms. Host pin
-`test_wrap_seal_keeps_painted_shorten_233150`. Focused
-`test_pending_note_change` + `test_overdub_source_view` +
-`test_display_window_utils` PASS. `teensy41-capture-serial` RAM1 locals
-**6848**. Native **1670/1671** (pre-existing playhead-tails fail; one
-skipped). Device recapture: first post-wrap `DISP` for a sealed Shorten
-must still show `holdStart-1` before the next `BAR` (no
-`painted_pending_shorten` for sealed rows). Stage 1 wrap-held occupy
-device FAIL stays on its own plan.
+**Wrap sealed Shorten paint ([`233150`](../../captures/session_20260905_233150.log) / [`234535`](../../captures/session_20260905_234535.log)):**
+After wrap seal, already-shortened notes snapped back on the first
+draw-source paint. RC-A: sealed overlay skipped capture-suffix rows
+(`liveCaptureBegin` gate). RC-B: snapshot gather omitted overdub NoteIds
+while sealed Length companions remained (`234535`). Fixes: apply overlay
+to all closed rows (open holds only skip); `recoverMissingSealedShortenSources`
+after pending recovery on draw-source and live-capture paths. Host pin
+`test_wrap_seal_keeps_painted_shorten_233150`. Focused suites PASS.
+`teensy41-capture-serial` RAM1 locals **6848**. Native **1670/1671**
+(pre-existing playhead-tails fail). Device recapture: first post-wrap
+`DISP` for sealed Shorten must show `holdStart-1` before next `BAR`.
 Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
 
 **Wrap-held head occupy Shorten ([`225200`](../../captures/session_20260905_225200.log)) — Stage 1:**

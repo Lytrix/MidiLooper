@@ -167,6 +167,9 @@ pending Shorten source recovery (`212700` / `215658` / `223435`): if
     and the authoritative source lacks the target, keep it absent
     (`authoritative_absence`). Never copy VisualCache geometry. Hide
     keeps the existing absence path.
+    After wrap seal, pending is empty. `recoverMissingSealedShortenSources`
+    applies the same authoritative lookup for sealed Length companions
+    when snapshot gather omits overdub NoteIds (`234535`).
     ↓
 paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     (pending + sealed Hide/Shorten by NoteId on any closed painted row —
@@ -178,8 +181,13 @@ paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     pending/overlay exists — it does not read a clean VisualCache that
     still has pre-pending lengths. VisualCache is not mutated to make this
     paint work. First paint after NoteOn must show the pending Shorten end
-    while compose keeps the original (`215658`). Capture
-    `painted_pending_shorten` records NoteId and old/new geometry.
+    while compose keeps the original (`215658`).
+    [`221758`](../../captures/session_20260905_221758.log) met that gate
+    (`painted_pending_shorten` `id,114` `old 2304–2928` →
+    `new 2304–2783` before the next `BAR`).
+    When reading stored-verify, note that `DIAG,dnte,src,reconstruct`
+    replays **no** EditPass and therefore shows pre-seal originals by
+    design; only `effective` and `frame` reflect sealed Hide/Shorten.
     ↓
 sealed EditPass Length/Delete   (Shorten/Hide only)
     ↓

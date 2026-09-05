@@ -4235,6 +4235,25 @@ void test_wrap_seal_keeps_painted_shorten_233150() {
   sealedPaint = findDisplayNoteById(postPaint, kId);
   TEST_ASSERT_NOT_NULL(sealedPaint);
   TEST_ASSERT_EQUAL_UINT32(2735u, sealedPaint->endTick);
+
+  NoteUtils::DisplayNoteVec missingCompose;
+  NoteUtils::DisplayNoteVec authoritative;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == kId) {
+      authoritative.push_back(note);
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL(1u, authoritative.size());
+  const NoteId recoverIds[] = {kId};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(missingCompose, {}, recoverIds, 1,
+                                                         authoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, counts.recovered);
+  loop.applyPendingNoteChangesToDisplayNotes(missingCompose, missingCompose.size());
+  sealedPaint = findDisplayNoteById(missingCompose, kId);
+  TEST_ASSERT_NOT_NULL(sealedPaint);
+  TEST_ASSERT_EQUAL_UINT32(2735u, sealedPaint->endTick);
 }
 
 /// wrap-held row must stay in source view after overdub open + wrap rebuild so

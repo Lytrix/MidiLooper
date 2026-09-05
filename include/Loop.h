@@ -380,6 +380,7 @@ struct Loop {
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;
   /// True when display still has sealed companion overlay IDs to project.
   bool hasSealedCompanionOverlay() const;
+  const EditPassIdList& sealedCompanionOverlayIds() const;
   /// True when the selected committed representation is still behind the last seal.
   bool sealedCompanionOverlayRequired() const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }

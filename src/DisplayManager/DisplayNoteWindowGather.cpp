@@ -19,6 +19,7 @@
 #include <Arduino.h>
 #include <algorithm>
 #include <cstdio>
+#include <vector>
 
 #if defined(__IMXRT1062__)
 #define DISP_COLD_MEM FLASHMEM
@@ -160,6 +161,15 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
 }
 
 namespace {
+
+const EditPass* findActiveSealedCompanionRow(const Loop& loop, EditPassId id) {
+    for (const EditPass& row : loop.passes.editPasses) {
+        if (row.id == id && row.state == EditPassState::Active) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
 
 bool previewNoteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar,
                               uint32_t loopLength) {
@@ -410,6 +420,50 @@ DISP_CAPTURE_MEM bool recoverMissingPendingShortenSources(const Loop& loop,
     return recoveredAny;
 }
 
+DISP_CAPTURE_MEM bool recoverMissingSealedShortenSources(const Loop& loop,
+                                                         NoteUtils::DisplayNoteVec& compose,
+                                                         size_t& committedEnd) {
+    if (!loop.hasSealedCompanionOverlay()) {
+        return false;
+    }
+    std::vector<NoteId> shortenIds;
+    NoteUtils::DisplayNoteVec authoritative;
+    shortenIds.reserve(loop.sealedCompanionOverlayIds().size());
+    authoritative.reserve(loop.sealedCompanionOverlayIds().size());
+    for (const EditPassId id : loop.sealedCompanionOverlayIds()) {
+        const EditPass* row = findActiveSealedCompanionRow(loop, id);
+        if (row == nullptr || row->targetNoteId == kInvalidNoteId) {
+            continue;
+        }
+        if (row->actionType != EditActionType::Update ||
+            row->propertyType != EditPropertyType::Length) {
+            continue;
+        }
+        const NoteUtils::DisplayNote* visualHint =
+            DisplayWindowUtils::findDisplayNoteByNoteId(loop.visualCache.notes,
+                                                        row->targetNoteId);
+        NoteUtils::DisplayNote authoritativeRow{};
+        if (!lookupAuthoritativeCommittedShortenRow(loop, row->targetNoteId, row->pitch,
+                                                    visualHint, authoritativeRow)) {
+            continue;
+        }
+        shortenIds.push_back(row->targetNoteId);
+        authoritative.push_back(authoritativeRow);
+    }
+    if (shortenIds.empty()) {
+        return false;
+    }
+    const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+        DisplayWindowUtils::recoverMissingPendingShortenRows(compose, loop.visualCache.notes,
+                                                             shortenIds.data(), shortenIds.size(),
+                                                             authoritative);
+    if (counts.recovered == 0) {
+        return false;
+    }
+    committedEnd = compose.size();
+    return true;
+}
+
 DISP_CAPTURE_MEM void emitPaintedPendingShortenDiagnostics(const Loop& loop,
                                                           const NoteUtils::DisplayNoteVec& compose,
                                                           const NoteUtils::DisplayNoteVec& paint) {
@@ -627,7 +681,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     }
     DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
 
-    if (recoverMissingPendingShortenSources(loop, liveDisplayNotes, committedDisplayEnd)) {
+    if (recoverMissingPendingShortenSources(loop, liveDisplayNotes, committedDisplayEnd) ||
+        recoverMissingSealedShortenSources(loop, liveDisplayNotes, committedDisplayEnd)) {
         storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
                                        liveDisplayCommittedPrefix_);
     }

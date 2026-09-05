@@ -60,6 +60,11 @@ void applyLiveOpenTails(const std::vector<NoteUtils::OpenNoteOn>& openNotes,
 bool recoverMissingPendingShortenSources(const Loop& loop, NoteUtils::DisplayNoteVec& compose,
                                          size_t& committedEnd);
 
+/// After wrap seal, pending is empty but sealed Length companions still need
+/// compose rows when snapshot gather omits overdub NoteIds (`234535`).
+bool recoverMissingSealedShortenSources(const Loop& loop, NoteUtils::DisplayNoteVec& compose,
+                                        size_t& committedEnd);
+
 void emitPaintedPendingShortenDiagnostics(const Loop& loop,
                                           const NoteUtils::DisplayNoteVec& compose,
                                           const NoteUtils::DisplayNoteVec& paint);

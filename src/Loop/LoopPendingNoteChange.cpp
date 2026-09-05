@@ -1016,6 +1016,10 @@ LOOP_COLD_MEM bool Loop::hasSealedCompanionOverlay() const {
   return !sealedCompanionOverlayIds_.empty();
 }
 
+LOOP_COLD_MEM const EditPassIdList& Loop::sealedCompanionOverlayIds() const {
+  return sealedCompanionOverlayIds_;
+}
+
 LOOP_COLD_MEM bool Loop::sealedCompanionOverlayRequired() const {
   if (!hasSealedCompanionOverlay() || lastOverdubSealPlaybackRevision_ == 0) {
     return false;
