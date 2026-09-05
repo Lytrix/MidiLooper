@@ -92,6 +92,9 @@ struct Loop {
   PendingCapturePass pendingCapturePass_;
   VisualCache visualCache;
   bool deferredVisualCacheWrapAppendPending_ = false;
+  /// `playbackRevision` at the moment wrap-append was first deferred. Append
+  /// resumes only when this still matches the current revision (`203406`).
+  uint32_t deferredVisualCacheWrapAppendFromRevision_ = 0;
   CapturePreview capturePreview;
   /// Seal handoff: capture rows kept alive past `capturePreview.clear()` until the committed
   /// representation the painter selects proves it covers `sealedCapturePreviewRevision_`.
@@ -583,6 +586,9 @@ struct Loop {
                                    bool constrainFallbackGather = false,
                                    size_t fallbackGatherEventBudget = 0);
   /// Resume wrap-pair append that was deferred during runtime-priority idle slices.
+  /// Appends only when `deferredVisualCacheWrapAppendFromRevision_` still equals
+  /// `playbackRevision`. A mismatch obtains the current-source frame instead of
+  /// appending an earlier last pass (`203406`).
   void applyDeferredVisualCacheWrapAppend();
   bool hasDeferredVisualCacheWrapAppend() const {
     return deferredVisualCacheWrapAppendPending_;

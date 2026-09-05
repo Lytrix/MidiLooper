@@ -1284,6 +1284,24 @@ void test_reuse_committed_draw_source_when_only_overlay_keys_change() {
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
 }
 
+void test_pending_paint_representation_and_overview_source() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(true, true, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(true, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(true, false, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(false, true, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUseCleanVisualCacheForOverview(true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUseCleanVisualCacheForOverview(true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUseCleanVisualCacheForOverview(false, false));
+}
+
+void test_deferred_wrap_append_source_identity() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldApplyDeferredVisualCacheWrapAppend(true, 4, 4));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldApplyDeferredVisualCacheWrapAppend(true, 4, 5));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldApplyDeferredVisualCacheWrapAppend(false, 4, 4));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheIsCurrentSourceRevision(5, 5));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentSourceRevision(4, 5));
+}
+
 void test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const uint32_t loopLength = 32u * bar;
@@ -1503,6 +1521,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_rebuild_committed_draw_source_two_bar_jump);
   RUN_TEST(test_rebuild_committed_draw_source_on_committed_revision);
   RUN_TEST(test_reuse_committed_draw_source_when_only_overlay_keys_change);
+  RUN_TEST(test_pending_paint_representation_and_overview_source);
+  RUN_TEST(test_deferred_wrap_append_source_identity);
   RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
   RUN_TEST(test_display_frame_admission_sequences);
   RUN_TEST(test_display_frame_note_edit_request_uses_same_phases);

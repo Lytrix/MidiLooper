@@ -598,8 +598,14 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
         const VisualBarVec* overviewBandMask =
             movingWindow ? updateOverviewCaptureDensity(track, loop, displaySlot, loopLength)
                          : nullptr;
+        const bool pendingPaintRepresentation =
+            DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(
+                track.isOverdubbing(), loop.hasPendingNoteChanges(),
+                loop.hasSealedCompanionOverlay());
         const DisplayNoteVec& overviewDensityNotes =
-            (!loop.visualCacheDirty && !loop.visualCache.notes.empty())
+            DisplayWindowUtils::shouldUseCleanVisualCacheForOverview(
+                !loop.visualCacheDirty && !loop.visualCache.notes.empty(),
+                pendingPaintRepresentation)
                 ? loop.visualCache.notes
                 : ((captureCritical && movingWindow) ? *detailedNotes : notes);
 
