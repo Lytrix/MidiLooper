@@ -55,12 +55,12 @@ flowchart TD
 
 | Edge | Owner | What it decides |
 |---|---|---|
-| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold** (ledger first, source-view if `n=0` or rows missing). Shorten if `A.startTick < holdStart`, Hide otherwise |
+| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold**. Ledger supplies identity only; a ledger-selected note is transformed only when `displayNotePresentAtHold` is true. Filter that set before geometric fallback (`134436` n=1 a=0). Source-view fill if `n=0` or no present row remains. Shorten if `A.startTick < holdStart`, Hide otherwise |
 | B still open across wrap | `extractOpenCaptureNoteOns` | Carries the On into the next capture pass. Does **not** re-resolve `occupancyResolvedNoteIds` |
 | B Off | `accumulatePendingNoteChangesForIncomingNote` | Skip On-resolved ids. Consume-overlap remaining ids. Also take source-view notes whose start is strictly inside the closed span. Wrap-crossing incoming is two linear resolver calls |
 | Seal | `sealPendingNoteChangesToEditPasses` | Shorten → Length companion. Hide → Delete companion. Add is not sealed. Stop log is `#CAP,DIAG,oh,…,add,shorten,hide` (fits 192-byte capture text). Pre-2026-09-02 `DIAG,overlap_hold,note_offs,…` clipped `hide` |
 
-**Present-at-hold vs strictly-inside.** On uses `displayNotePresentAtHold` (`start <= hold < end`, wrap-held `end < start` unwraps by `loopLength`). A source note that starts **after** B's On is not present at the hold, so On does not Shorten/Hide it. Off can still resolve it when `noteStartStrictlyInsideIncoming` is true.
+**Present-at-hold vs strictly-inside.** On uses `displayNotePresentAtHold` (`start <= hold < end`, wrap-held `end < start` unwraps by `loopLength`). `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. A source note that starts **after** B's On, or a wrap remnant that is not sounding at the hold (`134436` `52@2948→107` at `hs=263`), is not transformed. Off can still resolve a later start when `noteStartStrictlyInsideIncoming` is true.
 
 **Pending is the live effective transform.** Paint applies `applyPendingNoteChangesToDisplayNotes` after draw-source selection. The published `LoopSnapshot` is not stepped per overdub bar; session-exit and wrap journals publish later ([DEC-047](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication)). Resolve does not wait on a successor snapshot.
 

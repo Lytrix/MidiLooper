@@ -851,8 +851,21 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
     OverlapCandidateLookup::appendNotesForIds(overdubSourceViewNotes_, overlapNoteIds, selected,
                                               nullptr);
   }
+  const uint32_t loopLen = overdubSourceViewLoopLengthTicks_;
+  size_t write = 0;
+  for (size_t read = 0; read < selected.size(); ++read) {
+    if (displayNotePresentAtHold(selected[read].startTick, selected[read].endTick, holdPhaseTick,
+                                 loopLen)) {
+      if (write != read) {
+        selected[write] = selected[read];
+      }
+      ++write;
+    }
+  }
+  selected.resize(write);
   // Ledger can be empty while source-view geometry already has a present-at-hold
-  // participant (`104129` lcr,part n=0 a=1). Norowid is selected.size() < ids.size().
+  // participant (`104129` lcr,part n=0 a=1). Compare surviving present rows to
+  // the id set so a non-present ledger row cannot skip fallback (`134436`).
   if (selected.empty() || selected.size() < overlapNoteIds.size()) {
     OverlapNoteIdSet geometricIds;
     collectOverdubSourceHoldParticipantIds(holdPhaseTick, pitch, geometricIds);

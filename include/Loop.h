@@ -338,8 +338,10 @@ struct Loop {
                                                        nullptr);
   /// Occupy On / playback cross: authoritative Shorten/Hide into `pendingNoteChanges_`.
   /// `A.startTick < B.startTick` Shortens A to `B.startTick - 1`; otherwise Hide.
-  /// When occupy ids are empty or have no source-view row, fall back to present-at-hold
-  /// participants at `holdPhaseTick` (`010926` norowid, `104129` ledger n=0).
+  /// A ledger-selected note is transformed only when it is present at `holdPhaseTick`.
+  /// Filter that set before geometric fallback (`134436` n=1 a=0 wrap remnant).
+  /// When occupy ids are empty or none survive the filter, fall back to present-at-hold
+  /// participants (`010926` norowid, `104129` ledger n=0).
   /// Resolved identities are written to `occupancyResolvedNoteIds` when non-null.
   void resolveOccupancyAtNoteOn(uint8_t channel, uint8_t pitch, uint8_t velocity,
                                 const OverlapNoteIdSet& overlapNoteIds, uint32_t holdPhaseTick,
