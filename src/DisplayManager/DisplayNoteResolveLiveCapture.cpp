@@ -786,9 +786,14 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     livePlaybackDisplaySlot_ = displaySlot;
     livePlaybackDisplayTrack_ = resolveTrackIndex(track);
     const size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
-    if (track.isOverdubbing() && loop.hasPendingNoteChanges()) {
+    if (track.isOverdubbing()) {
         size_t recoverEnd = committedDisplayEnd;
-        recoverMissingPendingShortenSources(loop, liveDisplayNotes, recoverEnd);
+        if (loop.hasPendingNoteChanges()) {
+            recoverMissingPendingShortenSources(loop, liveDisplayNotes, recoverEnd);
+        }
+        if (loop.hasSealedCompanionOverlay()) {
+            recoverMissingSealedShortenSources(loop, liveDisplayNotes, recoverEnd);
+        }
     }
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), reuseLastValidFrame, budgetExceeded(),
@@ -798,16 +803,14 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         track.isOverdubbing() &&
         (loop.hasPendingNoteChanges() || loop.hasSealedCompanionOverlay());
 
-    if (applyLiveCaptureTails) {
-        for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {
-            if (previewNoteIndex >= loop.capturePreview.notes.size()) {
-                continue;
-            }
-            const size_t displayNoteIndex = committedDisplayEnd + previewNoteIndex;
-            if (displayNoteIndex < liveDisplayCacheBaseNoteCount_) {
-                liveDisplayNotes[displayNoteIndex] =
-                    loop.capturePreview.notes[previewNoteIndex];
-            }
+    // Stage 1j: compose base stays at capture-preview lengths (open and closed).
+    // Playhead tails write the paint copy only.
+    const size_t previewCount = loop.capturePreview.notes.size();
+    for (size_t previewNoteIndex = 0; previewNoteIndex < previewCount; ++previewNoteIndex) {
+        const size_t displayNoteIndex = committedDisplayEnd + previewNoteIndex;
+        if (displayNoteIndex < liveDisplayCacheBaseNoteCount_ &&
+            displayNoteIndex < liveDisplayNotes.size()) {
+            liveDisplayNotes[displayNoteIndex] = loop.capturePreview.notes[previewNoteIndex];
         }
     }
 

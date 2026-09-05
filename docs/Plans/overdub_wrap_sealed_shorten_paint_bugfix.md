@@ -21,16 +21,17 @@ applyPendingNoteChangesToDisplayNotes (sealed)   ← this slice
 
 ## Root cause
 
-`applyPendingHideAndShortenToNotes` skipped pending and sealed-companion
-Hide/Shorten whenever `i >= liveCaptureBegin`. After wrap, draw-source
-compose can place a VisualCache original in the capture suffix (index ≥
-`committedDisplayEnd`) while `sealedCompanionOverlayIds_` still carries
-the sealed Length row. The first post-seal paint then restored the
-original end even though stop effective already kept the short end.
+Two gaps after wrap seal:
 
-Pin owner: **sealed apply** in `applyPendingNoteChangesToDisplayNotes`
-(via `applyPendingHideAndShortenToNotes`). Overlay ids and Length rows
-were present; compose had the target `NoteId` in the suffix.
+1. **Suffix skip:** `applyPendingHideAndShortenToNotes` skipped sealed overlay
+   when `i >= liveCaptureBegin` (fixed: only open holds skip).
+2. **Missing compose row:** draw-source gather prefers published snapshot
+   while visual cache is dirty (`234535`). Overdub NoteIds sealed at wrap are
+   absent from compose; sealed overlay matches by NoteId only. Pending recovery
+   is empty after seal — `recoverMissingSealedShortenSources` reuses the same
+   authoritative lookup as `223435`.
+
+Pin owners: sealed apply + sealed Length compose recovery.
 
 ## Invariant
 
@@ -57,7 +58,8 @@ the sole transform skip on the paint copy.
 ## Host pins
 
 - `test_wrap_seal_keeps_painted_shorten_233150` — occupy `63@2304–2880`
-  id 71 `hs=2736` → seal → compose suffix row must paint `2304–2735`
+  id 71 `hs=2736` → seal → suffix compose row + missing-compose recovery
+  must paint `2304–2735`
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**
