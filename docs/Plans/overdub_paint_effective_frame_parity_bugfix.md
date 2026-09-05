@@ -1,9 +1,9 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 host shipped. RC1b host shipped — device recapture next ([`154310`](../../captures/session_20260903_154310.log)).  
-**Date:** 2026-09-03  
-**Kind:** convergence bugfix (display realization)  
-**Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log)  
+**Status:** RC1 / RC1b host shipped. RC4 host next, then RC5 wrap `oh`. RC2 / RC3 stay gated.  
+**Date:** 2026-09-05  
+**Kind:** convergence bugfix (display realization) + occupy eligibility  
+**Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
 **Does not authorize:** redefining effective resolution; reconstruct pairing; gather `keepShortestEndAtPitchStart` (`150650`); `#41` Stage 2; off-clock wrap seal; LoopContentResolution redesign; source-view sibling drop (`002145`)
 
 ---
@@ -47,6 +47,8 @@ reconstruct dump                          ← diagnostic only
 lastOverdubSealCompanionIds_ (admission)  ← last wrap only; do not union
 sealedCompanionOverlayIds_ (display)      ← RC1 kept
 stop-only sealed skip                     ← RC1b ([`154310`](../../captures/session_20260903_154310.log))
+occupy On present-at-hold                 ← RC4 ([`134436`](../../captures/session_20260905_134436.log))
+wrap seal oh (diagnostic only)            ← RC5
 sealed upsert 77@336                      ← RC2 if recapture still 48
 69@5328 admission miss                    ← RC3 separate
 keepShortest on gather                    ← still forbidden
@@ -151,6 +153,42 @@ Owner: `DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom`. Draw-source walk
 | Reuse | **YES** — extend `upsertDisplayNoteAtPitchStartFrom` |
 
 Host pins in `test_display_window_utils`: `test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310`, `test_capture_sealed_upsert_keeps_longer_suffix_150650`.
+
+## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
+
+**Invariant:** `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase.
+
+Ledger supplies identity (DEC-050). Filter `appendNotesForIds` with `displayNotePresentAtHold` **before** geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill.
+
+```text
+ledger IDs
+  → appendNotesForIds
+  → present-at-hold filter
+  → compare surviving selection against eligible ID set
+  → geometric fallback if required
+  → Shorten / Hide
+```
+
+Host pin: `test_occupancy_ledger_id_not_present_at_hold_does_not_transform_134436`.
+
+RC4 alone does not make stop `oh` shorten>=2. Lap-0 Shortens are wrap-cleared. RC5 next.
+
+### Architecture checkpoint
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Unbounded interval owner? | **NO** |
+| Reuse | **YES** — extend `resolveOccupancyAtNoteOn`; reuse `displayNotePresentAtHold` |
+
+## RC5 — emit diagnostic `oh` at wrap seal, before pending clear
+
+**Invariant:** every wrap that seals pending Shorten/Hide emits `oh` with the same occupancy classification semantics as stop-seal `oh`, from current `pendingNoteChanges_` before clear.
+
+`oh` is observational only. No selection, paint, playback, or publication path may consume it. Extract the existing On/Off `overlapHoldTotals_` recount into one helper; do not paste a third copy.
+
+Do not move +1/4 onto lap 1. Do not count `draw_src hidden=`.
 
 ## RC2 — gated on recapture
 
