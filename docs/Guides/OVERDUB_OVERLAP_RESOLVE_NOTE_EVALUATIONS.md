@@ -169,7 +169,9 @@ pending Shorten source recovery (`212700` / `215658` / `223435`): if
     keeps the existing absence path.
     After wrap seal, pending is empty. `recoverMissingSealedShortenSources`
     applies the same authoritative lookup for sealed Length companions
-    when snapshot gather omits overdub NoteIds (`234535`).
+    when snapshot gather omits overdub NoteIds (`234535`). If that lookup
+    misses a later companion (`235546` id 76), the sealed Length row itself
+    is the recover geometry.
     ↓
 paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     (pending + sealed Hide/Shorten by NoteId on any closed painted row —

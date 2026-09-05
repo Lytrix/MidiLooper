@@ -30,8 +30,12 @@ Two gaps after wrap seal:
    absent from compose; sealed overlay matches by NoteId only. Pending recovery
    is empty after seal — `recoverMissingSealedShortenSources` reuses the same
    authoritative lookup as `223435`.
+3. **Later Length skipped (`235546`):** lookup can find the first wrap-1
+   NoteId and miss later ones (snapshot/source-view/visual). Recovery skipped
+   those companions, so only the first sealed Shorten stayed. Fallback is the
+   sealed Length row itself.
 
-Pin owners: sealed apply + sealed Length compose recovery.
+Pin owners: sealed apply + sealed Length compose recovery + Length fallback.
 
 ## Invariant
 
@@ -60,6 +64,9 @@ the sole transform skip on the paint copy.
 - `test_wrap_seal_keeps_painted_shorten_233150` — occupy `63@2304–2880`
   id 71 `hs=2736` → seal → suffix compose row + missing-compose recovery
   must paint `2304–2735`
+- `test_wrap_seal_keeps_later_painted_shorten_235546` — id 74 and id 76
+  both sealed; compose with only id 74 must recover id 76 from sealed
+  Length and paint `1967` / `2735`
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**
