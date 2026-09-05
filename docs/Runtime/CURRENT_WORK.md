@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (`223435`: wrap NoteOn Shorten recovery host shipped)
+Last updated: 2026-09-05 (`225200`: wrap-held head occupy Shorten host shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,24 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Wrap NoteOn Shorten recovery ([`223435`](../../captures/session_20260905_223435.log)):**
+**Wrap-held head occupy Shorten ([`225200`](../../captures/session_20260905_225200.log)) — Stage 1:**
+Pin Failure A passed: wrap-held `69@4560→760` id 96 stays in source view
+and `collectOverdubSourceHoldParticipantIds(48, 69)` contains it. Failure
+B was occupancy: `startTick < holdStart` wrote Hide (`4560 < 48` is
+false). `resolveOccupancyAtNoteOn` now Shortens a wrap-held row present
+at a head hold (`hold > 0`, `hold != start`) to `hold-1`.
+`composedShortenDegradesToHide` keeps wrap-held Shorten (`end < start`).
+Linear Shorten/Hide and `hs=0` Hide are unchanged. Host pin
+`test_wrap_held_record_row_occupies_head_225200`. Focused
+`test_pending_note_change` + `test_overdub_source_view` PASS.
+`teensy41-capture-serial` RAM1 locals **6848**. Native **1669/1672**
+(pre-existing playhead-tails fail; one skipped). Device recapture:
+post-wrap occupy of that wrap-held row at `hs=48` must be `a>=1` and
+`painted_pending_shorten` before the next `BAR`. `63@hs=0` `n=0,a=0`
+stays correct. Do not start Stage 2 (stop-hop foreign frame).
+Plan: [`overdub_wrap_head_occupy_shorten_bugfix.md`](../Plans/overdub_wrap_head_occupy_shorten_bugfix.md).
+
+**Prior — Wrap NoteOn Shorten recovery ([`223435`](../../captures/session_20260905_223435.log)):**
 Post-wrap1 occupies wrote pending Shorten (`as=1536,ae=2208,hs=1824` /
 `hs=1872`) but the next paint omitted `painted_pending_shorten`. Later
 same-lap `as=2304,ae=2976,hs=2592` painted id 72; stop sealed

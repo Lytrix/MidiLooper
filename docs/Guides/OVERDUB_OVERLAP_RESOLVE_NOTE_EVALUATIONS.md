@@ -55,7 +55,7 @@ flowchart TD
 
 | Edge | Owner | What it decides |
 |---|---|---|
-| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold**. `holdStart` is the shared capture phase (`Track::capturePhaseTick(pending.startNoteTick)`), the same frame as capture storage ticks and `overdubSourceViewNotes` ticks. `#CAP,DIAG,lcr,part` `hs=` is that phase. Ledger supplies identity only; a ledger-selected note is transformed only when `displayNotePresentAtHold` is true. Filter that set before geometric fallback (`134436` n=1 a=0). Source-view fill if `n=0` or no present row remains. Shorten if `A.startTick < holdStart`, Hide otherwise |
+| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold**. `holdStart` is the shared capture phase (`Track::capturePhaseTick(pending.startNoteTick)`), the same frame as capture storage ticks and `overdubSourceViewNotes` ticks. `#CAP,DIAG,lcr,part` `hs=` is that phase. Ledger supplies identity only; a ledger-selected note is transformed only when `displayNotePresentAtHold` is true. Filter that set before geometric fallback (`134436` n=1 a=0). Source-view fill if `n=0` or no present row remains. Shorten if `A.startTick < holdStart`, or if A is wrap-held (`end < start`) and the hold is in the head (`holdStart > 0` and `holdStart != A.startTick`); Hide otherwise. Wrap-held Shorten keeps `end < start` (`225200` `4560→760` at `hs=48` → Shorten `4560–47`). `composedShortenDegradesToHide` does not rewrite that shape to Hide |
 | B still open across wrap | `extractOpenCaptureNoteOns` | Carries the On into the next capture pass. Does **not** re-resolve `occupancyResolvedNoteIds` |
 | B Off | `accumulatePendingNoteChangesForIncomingNote` | Skip On-resolved ids. Consume-overlap remaining ids. Also take source-view notes whose start is strictly inside the closed span. Wrap-crossing incoming is two linear resolver calls |
 | Seal | `sealPendingNoteChangesToEditPasses` | Shorten → Length companion. Hide → Delete companion. Add is not sealed. `#CAP,DIAG,oh` is observational only (no paint/playback/publication consume). Stop seal and wrap seal (`commitOverdubWrap`) emit the same pending-kind totals via `recountOverlapHoldTotalsFromPending` before pending clear. Pre-2026-09-02 `DIAG,overlap_hold,note_offs,…` clipped `hide` |
@@ -102,7 +102,8 @@ B On
   → if n = 0, overlapNoteIds = present-at-hold source-view identities
   → resolveOccupancyAtNoteOn
   → A.startTick < holdStart → Shorten A to holdStart - 1
-  → A.startTick >= holdStart → Hide A
+  → wrap-held A (end < start) and holdStart in the head (holdStart > 0, != start) → Shorten A to holdStart - 1
+  → otherwise → Hide A
   → identities go on PendingNote.occupancyResolvedNoteIds
   → pending is an effective-state transform; paint overlays it after draw-source
 
