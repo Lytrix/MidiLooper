@@ -3985,8 +3985,9 @@ void test_pending_hide_does_not_recover_dropped_source_row() {
   TEST_ASSERT_TRUE(compose.empty());
 }
 
-/// `150650`: a long sealed/preview suffix at the Shorten pitch+start is not dropped.
-void test_shorten_does_not_drop_suffix_same_start_hold() {
+/// `000402`: paint shortens later NoteIds, but a longer suffix remnant at the
+/// same pitch+start stayed visible. Drop that remnant. Keep an open hold.
+void test_pending_shorten_drops_suffix_longer_remnant_000402() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -3997,12 +3998,38 @@ void test_shorten_does_not_drop_suffix_same_start_hold() {
   paint.push_back(displayNote(71, 63, 768, 1392));
   paint.push_back(displayNote(99, 63, 768, 1344));
   paint.push_back(displayNote(200, 63, 768, 2000));
+  paint.push_back(displayNote(201, 63, 864, 864));
   loop.applyPendingNoteChangesToDisplayNotes(paint, 2);
   TEST_ASSERT_EQUAL(2u, paint.size());
   TEST_ASSERT_EQUAL(71, paint[0].noteId);
   TEST_ASSERT_EQUAL_UINT32(863u, paint[0].endTick);
-  TEST_ASSERT_EQUAL(200, paint[1].noteId);
-  TEST_ASSERT_EQUAL_UINT32(2000u, paint[1].endTick);
+  TEST_ASSERT_EQUAL(201, paint[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(864u, paint[1].endTick);
+}
+
+/// `000402`: first occupy Shorten paints; later occupy also paints by NoteId but
+/// a sealed-preview original at that pitch+start must not remain beside it.
+void test_later_occupy_shorten_drops_suffix_remnant_000402() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.pushPendingNoteChangeForTest(shortenChange(71, 63, 1536, 1967));
+  loop.pushPendingNoteChangeForTest(shortenChange(73, 63, 2296, 2639));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(71, 63, 1536, 2208));
+  paint.push_back(displayNote(73, 63, 2296, 2976));
+  paint.push_back(displayNote(171, 63, 1536, 2208));
+  paint.push_back(displayNote(173, 63, 2296, 2976));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 2);
+  TEST_ASSERT_EQUAL(2u, paint.size());
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 71));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 73));
+  TEST_ASSERT_EQUAL_UINT32(1967u, findDisplayNoteById(paint, 71)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2639u, findDisplayNoteById(paint, 73)->endTick);
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 171));
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 173));
 }
 
 /// RC3: overlay does not manufacture a Hide for a note occupancy never resolved.
@@ -4585,7 +4612,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_noteon_shorten_recovers_without_visual_identity_223435);
   RUN_TEST(test_pending_shorten_authoritative_absence_does_not_resurrect_212700);
   RUN_TEST(test_pending_hide_does_not_recover_dropped_source_row);
-  RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
+  RUN_TEST(test_pending_shorten_drops_suffix_longer_remnant_000402);
+  RUN_TEST(test_later_occupy_shorten_drops_suffix_remnant_000402);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);
