@@ -24,7 +24,7 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 back on when measuring 3.6.
 
 **Now — effective vs frame RC1b ([`154310`](../../captures/session_20260903_154310.log)):**
-After stop, draw-source sealed union does not append a linear row whose pitch+start already exists in the committed prefix. During capture, suffix upsert stays (`150650`). RC1 overlay list stays. Do not extend sibling-drop into the live-capture suffix. Do not add gather `keepShortest`. RC2 (`77@336` 48) and RC3 (`69@5328` miss) stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+After stop, draw-source sealed union does not append a linear row whose pitch+start already exists in the committed prefix. During capture, suffix upsert stays (`150650`). RC1 overlay list stays. Do not extend sibling-drop into the live-capture suffix. Do not add gather `keepShortest`. RC2 (`77@336` 48) and RC3 (`69@5328` miss) stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md). Occupy HITL phase windows close OD2 on `Overdubbing stopped` / `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing ([`133818`](../../captures/session_20260905_133818.log)).
 
 **Prior — effective vs frame RC1 ([`140729`](../../captures/session_20260903_140729.log)):**
 Display overlay appends sealed companion ids across wraps so frame realizes already-correct effective Hide/Shorten. `lastOverdubSealCompanionIds_` stays last-wrap-only for admission. Overlay list is a transitional bridge, not a second effective owner. Device first-STOPPED two-length FAIL [`154310`](../../captures/session_20260903_154310.log) is RC1b (sealed suffix), not an RC1 revert.
