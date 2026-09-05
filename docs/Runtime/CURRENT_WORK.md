@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (Bug 2 On-tick draw-source path pin)
+Last updated: 2026-09-05 (Bug 2 occupy On paints Shorten in 202821)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Bug 2 — On-tick draw-source path pin ([`193815`](../../captures/session_20260905_193815.log)):**
-Occupy wrote closed Shorten `63` `1536–2208` → **1919**. Host
-`applyPending` already realizes that. Live `draw_src` never did. Live
-painted `NoteId` is not in the capture. Host compose pin
-`test_draw_source_compose_193815_63_1536_forks`: Fork C is false for
-rewriting `1536–2208`; A vs B remain. Gated investigation-diag logs
-`63@1536` `noteId`+`end` after pending and after tails. Do not start
-Bug 2 firmware, Bug 4, Bug 1, or Bug 3. Do not patch
-`applyCapturePlayheadTails`. Plan:
+**Bug 2 — occupy On paint named ([`202821`](../../captures/session_20260905_202821.log)):**
+Occupy `#CAP,30465195` `63` `as=1536 ae=2208 hs=2016` → next draw-source
+`after_pending` and `after_tails` are `id=73` end **2015**. Forks A, B
+(at that On), and C are false. First-loop `id=0` + tails growth is the
+open-hold skip. Do not patch `applyCapturePlayheadTails`. Do not start
+Bug 4, Bug 1, or Bug 3 until the next named slice. Plan:
 [`overdub_occupy_paint_191913_findings_bugfix.md`](../Plans/overdub_occupy_paint_191913_findings_bugfix.md).
 
 **Prior — Stage 0 RC3 NoteId Off pair reverted ([`191913`](../../captures/session_20260905_191913.log)):**

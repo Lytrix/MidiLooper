@@ -118,18 +118,24 @@ Host pin `test_draw_source_compose_193815_63_1536_forks` runs the draw-source se
 | B — live id ≠ occupy id | closed `1536–2208` with invalid/other id stays **2208** | not named — live `NoteId` missing |
 | C — pending 1919, tails emit differs | same-id closed → **1919**; tails grow `1920` only; `1536` stays **1919** | **false** for rewriting `1536–2208` |
 
-A vs B remain. Gated `SESSION_CAPTURE_INVESTIGATION_DIAG` logs painted `63@1536` `noteId`+`end` after pending and after tails:
+Device recapture [`202821`](../../captures/session_20260905_202821.log) (`teensy41-capture-serial-investigation-diag`):
 
-`DIAG,draw_src,bug2,after_pending,p,63,s,1536,present,{0|1},id,{noteId|-1},end,{tick}`
-`DIAG,draw_src,bug2,after_tails,p,63,s,1536,present,{0|1},id,{noteId|-1},end,{tick}`
+| Clock | Paint `63@1536` |
+|---|---|
+| first-loop On `#CAP,21219138` `hs=1536` `n=0` | `present=1` `id=0` (`kInvalidNoteId`); `after_pending` end **1536**; `after_tails` grows 1640…2200 |
+| after Off | `id=0` end **2208** |
+| `#CAP,25220593` `hs=0` `n=0` | `id` becomes **73**, end still **2208** |
+| occupy `#CAP,30465195` `n=1 a=1 as=1536 ae=2208 hs=2016` | next `after_pending` and `after_tails`: `present=1` `id=73` end **2015** (`holdStart-1`) |
 
-`present=0` names A. `present=1` with `end=2208` and `id` ≠ occupy Shorten id names B. `present=1` `end=1919` after pending and not after tails would have been C (host compose already rules that out for this geometry).
+| Fork | Device at occupy On |
+|---|---|
+| A — row absent | **false** (`present=1`) |
+| B — live id ≠ occupy id | **false** at this On (`id=73`, end **2015**) |
+| C — tails overwrite Shorten | **false** (pending 2015, tails 2015) |
 
-Not default-on for `teensy41-capture-serial` (RAM1 locals **6848** after the gated log). Recapture with `teensy41-capture-serial-investigation-diag` to name A or B.
+On-tick `applyPending` painted Shorten when the row carried NoteId 73. First-loop `id=0` + tails growth is the open-hold skip, not this occupy miss. Do not patch tails. Owner stays `Loop::applyPendingHideAndShortenToNotes`. No owner move.
 
-Owner stays `Loop::applyPendingHideAndShortenToNotes` until A or B is named. No owner move.
-
-**Boundary:** Do not patch tails. Do not change occupy On or `holdStart-1`. Do not reopen RC3 pairing. Not Bug 4 (this loop is 3072). Do not start Bug 2 firmware until A or B is named.
+**Boundary:** Do not change occupy On or `holdStart-1`. Do not reopen RC3 pairing. Not Bug 4 (this loop is 3072).
 
 ---
 
