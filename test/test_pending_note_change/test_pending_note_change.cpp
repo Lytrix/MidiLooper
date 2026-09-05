@@ -3882,6 +3882,62 @@ void test_pending_shorten_recovers_authoritative_source_212700() {
   TEST_ASSERT_EQUAL_UINT32(4575u, painted[0].endTick);
 }
 
+/// `223435`: after wrap, compose and VisualCache both miss id 70 `1536–2208`
+/// while source-view still has the row. Recover authoritative geometry, then
+/// the first NoteOn paint shows holdStart-1. Compose keeps the original end.
+void test_wrap_noteon_shorten_recovers_without_visual_identity_223435() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 70, 1536, 2208, 63, 3072);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+
+  OverlapNoteIdSet resolved;
+  loop.resolveOccupancyAtNoteOn(1, 63, 100, overlapIds({70}), 1824, &resolved);
+  TEST_ASSERT_TRUE(resolved.contains(70));
+  const PendingNoteChange* shorten = findTransform(loop.pendingNoteChanges(), 70);
+  TEST_ASSERT_NOT_NULL(shorten);
+  TEST_ASSERT_EQUAL(static_cast<int>(PendingNoteChangeKind::Shorten),
+                    static_cast<int>(shorten->kind));
+  TEST_ASSERT_EQUAL_UINT32(1536u, shorten->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1823u, shorten->endTick);
+
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  NoteUtils::DisplayNoteVec authoritative;
+  for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+    if (note.noteId == 70) {
+      authoritative.push_back(note);
+      break;
+    }
+  }
+  TEST_ASSERT_EQUAL(1u, authoritative.size());
+  TEST_ASSERT_EQUAL_UINT32(2208u, authoritative[0].endTick);
+
+  const NoteId shortenIds[] = {70};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, shortenIds, 1,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, counts.recovered);
+  TEST_ASSERT_EQUAL_UINT32(0u, counts.authoritativeAbsence);
+  TEST_ASSERT_EQUAL(1u, compose.size());
+  TEST_ASSERT_EQUAL(70, compose[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1536u, compose[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, compose[0].endTick);
+
+  NoteUtils::DisplayNoteVec painted = compose;
+  loop.applyPendingNoteChangesToDisplayNotes(painted, painted.size());
+  const DisplayWindowUtils::PaintedPendingShorten described =
+      DisplayWindowUtils::describePaintedPendingShorten(compose, painted, 70, 1823);
+  TEST_ASSERT_TRUE(described.composeHasTarget);
+  TEST_ASSERT_EQUAL_UINT32(2208u, described.composeEndTick);
+  TEST_ASSERT_TRUE(described.paintHasShortenedEnd);
+  TEST_ASSERT_EQUAL_UINT32(1536u, described.paintStartTick);
+  TEST_ASSERT_EQUAL_UINT32(1823u, described.paintEndTick);
+  TEST_ASSERT_EQUAL(0, loop.passes.editPasses.size());
+}
+
 /// VisualCache still showing 84 is not enough to fabricate a Shorten source.
 void test_pending_shorten_authoritative_absence_does_not_resurrect_212700() {
   LoopEventStore::resetPoolForTests();
@@ -4264,6 +4320,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_noteon_shorten_paint_keeps_compose_original_end_215658);
   RUN_TEST(test_noteon_pending_paint_copy_shortens_before_stop_202821);
   RUN_TEST(test_pending_shorten_recovers_authoritative_source_212700);
+  RUN_TEST(test_wrap_noteon_shorten_recovers_without_visual_identity_223435);
   RUN_TEST(test_pending_shorten_authoritative_absence_does_not_resurrect_212700);
   RUN_TEST(test_pending_hide_does_not_recover_dropped_source_row);
   RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
