@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC1c host shipped (`copyEffectiveCommittedEventsInRange` applies Active Note rows per committed pass layer, then merges). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL pairs OD1/OD2 by start time and scores occupy-sized first-STOPPED effective/frame. Device [`144743`](../../captures/session_20260905_144743.log) / [`152012`](../../captures/session_20260905_152012.log) remain pre-fix RC1c FAIL. Firmware does not claim device PASS until occupy HITL recapture. RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. HITL still FAILs one 1-tick key (`52@2172` f=58 e=59). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -44,7 +44,7 @@ Display-frame walk stays a bounded id list, not a new interval owner, and not a 
 ```text
 gatherCommittedEvents / src,effective     ← trust (48@616 = 400, Off@1016)
 materializeToEventVector (per layer)      ← trust (same 400)
-copyEffectiveCommittedEventsInRange       ← RC1c host shipped (per-layer apply, then merge)
+copyEffectiveCommittedEventsInRange       ← RC1c host shipped; device [`153848`](../../captures/session_20260905_153848.log) (no F==R remnant)
 reconstruct dump                          ← diagnostic only (2292)
 resolveOccupancyAtNoteOn hold-1           ← writes 884 when applied to display
 first STOPPED frame / visualCache         ← realizes the window-gather miss
@@ -235,7 +235,9 @@ YES — firmware this slice. Host fixture now expects window gather 400 / Off@10
 
 ### Host shipped
 
-`copyEffectiveCommittedEventsInRange` windows and applies Active Note rows on each `CommittedChunkIdList`, then merges. The merged stream is not applied again. `includeActiveEditRows == false` stays merge-only. Host `test_occupy_144743_48_616_materialize_vs_window_vs_pending` PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1644/1646** (pre-existing playhead-tails fail). Device occupy recapture scores `E` then `F`.
+`copyEffectiveCommittedEventsInRange` windows and applies Active Note rows on each `CommittedChunkIdList`, then merges. The merged stream is not applied again. `includeActiveEditRows == false` stays merge-only. Host `test_occupy_144743_48_616_materialize_vs_window_vs_pending` PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1644/1646** (pre-existing playhead-tails fail).
+
+Device [`153848`](../../captures/session_20260905_153848.log): occupy holds PASS; dumps 39 / 28 / 26; no two-length; 15 `E != R` occupy-short keys; **0** `F == R` remnants. `48@666` E=F=396 vs R=744 (was frame 739 / effective 399 on [`152012`](../../captures/session_20260905_152012.log)). HITL FAIL `52@2172` f=58 e=59 (E=R=59). First flash run [`153705`](../../captures/session_20260905_153705.log) dropped USB before dumps.
 
 `advanceFallbackGatherSession` still applies Delete on the merged budgeted session. That remaining owner is not RC1c. `test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback` pins window gather 448 and keeps overlay-reject; it does not require idle cache end == window gather.
 
