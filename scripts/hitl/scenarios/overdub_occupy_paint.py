@@ -61,12 +61,15 @@ def run_overdub_occupy_paint(args: object) -> int:
     if occupy_check.get("issues"):
         print(f"[occupy-paint] FAIL — {occupy_check['issues']}")
     else:
+        rc1b = occupy_check.get("rc1b") or {}
         print(
             "[occupy-paint] PASS — "
             f"shorten={occupy_check.get('max_shorten')} "
             f"hide={occupy_check.get('max_hide')} "
             f"undo={occupy_check.get('undo_count')} "
-            f"redo={occupy_check.get('redo_count')}"
+            f"redo={occupy_check.get('redo_count')} "
+            f"frame={rc1b.get('frame_count')} "
+            f"effective={rc1b.get('effective_count')}"
         )
     if not occupy_check.get("ok", False):
         return max(code, 2)

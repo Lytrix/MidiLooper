@@ -359,8 +359,9 @@ namespace {
 // emitted WRAP=0. Bound work per slice instead.
 
 #if defined(SESSION_CAPTURE)
-// One stored-MIDI verification dump per boot — enough for a single HITL/evidence capture, then
-// off so manual overdub retests are not blocked by merge+SEVT cost on every stop. Reboot to re-arm.
+// One stored-MIDI verification dump after each queue. Overdub stop consumes the boot arm so
+// later stops stay cheap. Transport `stopPlaying` re-arms so occupy HITL can score the STOPPED
+// reconstruct / effective / frame trio of the loop that just left PLAYING.
 bool sStoredMidiVerificationArmed = true;
 
 void logStoredMidiVerificationArmState(bool armed) {
@@ -579,6 +580,16 @@ TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
   deferredStoredVerificationPending = true;
   sStoredMidiVerificationArmed = false;
   logStoredMidiVerificationArmState(false);
+#endif
+}
+
+TRACK_COLD_MEM void Track::rearmDeferredStoredMidiVerification() {
+#if !defined(SESSION_CAPTURE)
+  return;
+#else
+  sStoredMidiVerificationArmed = true;
+  logStoredMidiVerificationArmState(true);
+  queueDeferredStoredMidiVerification();
 #endif
 }
 

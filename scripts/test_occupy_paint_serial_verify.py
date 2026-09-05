@@ -35,6 +35,15 @@ from hitl.flows.occupy_paint import (
 )
 from hitl.verify.occupy_paint import verify_occupy_paint
 
+_RC1B_PASS_DUMPS = [
+    "#CAP,9000000,DIAG,dnte,src,reconstruct,count,1",
+    "#CAP,9000001,DNTE,63,0,0,143,0",
+    "#CAP,9000002,DIAG,dnte,src,effective,count,1",
+    "#CAP,9000003,DNTE,63,0,0,143,0",
+    "#CAP,9000004,DIAG,dnte,src,frame,count,1",
+    "#CAP,9000005,DNTE,63,0,0,143,0",
+]
+
 
 class OccupyPaintScheduleTests(unittest.TestCase):
     def test_record_seed_is_not_occupy_phrase(self) -> None:
@@ -126,6 +135,7 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
             "Overdub undone",
             "Overdub redone",
             "Overdub redone",
+            *_RC1B_PASS_DUMPS,
         ]
         result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
         self.assertTrue(result["ok"], result.get("issues"))
@@ -189,6 +199,7 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
             "Overdub undone",
             "Overdub redone",
             "Overdub redone",
+            *_RC1B_PASS_DUMPS,
         ]
         result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
         self.assertTrue(result["ok"], result.get("issues"))
@@ -274,6 +285,7 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
             "Overdub undone",
             "Overdub redone",
             "Overdub redone",
+            *_RC1B_PASS_DUMPS,
         ]
         result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
         self.assertTrue(result["ok"], result.get("issues"))
@@ -300,6 +312,7 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
             "Overdub undone",
             "Overdub redone",
             "Overdub redone",
+            *_RC1B_PASS_DUMPS,
         ]
         result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
         self.assertTrue(result["ok"], result.get("issues"))
@@ -327,6 +340,7 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
             "Overdub undone",
             "Overdub redone",
             "Overdub redone",
+            *_RC1B_PASS_DUMPS,
         ]
         result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
         self.assertTrue(result["ok"], result.get("issues"))
@@ -358,6 +372,104 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
         result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
         self.assertFalse(result["ok"])
         self.assertTrue(any(issue.startswith("occupy_wrap_pairs_lt_2") for issue in result["issues"]))
+
+    def test_fail_when_rc1b_dumps_missing(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,1100,DIAG,oh,n,16,e,0,i,0,o,0,k,0,x,0,s,0,u,0,t,0,add,16,shorten,0,hide,0",
+            "#CAP,2000,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,2100,VCACHE,adopt_partial,ev,-1,notes,80,first,0,last,3,total,4,dsz,4,dcnt,0,dirty,0",
+            "#CAP,2200,DISP,0,PLAYING,3072,80,80,80,80,1",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3100,DIAG,draw_src,layers,visual,80,preview,1,sealed,0,snap,0,frame,80,"
+            "hidden,0,missed_preview,0",
+            "#CAP,3200,DIAG,oh,n,20,e,0,i,2,o,0,k,12,x,2,s,12,u,1,t,2,add,4,shorten,8,hide,6",
+            "#CAP,3300,WRAP,2880,192,5,52",
+            "#CAP,3301,WRAP,2880,192,5,48",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+            "Overdub undone",
+            "Overdub undone",
+            "Overdub redone",
+            "Overdub redone",
+        ]
+        result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(issue.startswith("occupy_rc1b_dumps_missing") for issue in result["issues"])
+        )
+
+    def test_fail_when_frame_has_two_lengths_at_same_pitch_start(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,1100,DIAG,oh,n,16,e,0,i,0,o,0,k,0,x,0,s,0,u,0,t,0,add,16,shorten,0,hide,0",
+            "#CAP,2000,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,2100,VCACHE,adopt_partial,ev,-1,notes,80,first,0,last,3,total,4,dsz,4,dcnt,0,dirty,0",
+            "#CAP,2200,DISP,0,PLAYING,3072,80,80,80,80,1",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3100,DIAG,draw_src,layers,visual,80,preview,1,sealed,0,snap,0,frame,80,"
+            "hidden,0,missed_preview,0",
+            "#CAP,3200,DIAG,oh,n,20,e,0,i,2,o,0,k,12,x,2,s,12,u,1,t,2,add,4,shorten,8,hide,6",
+            "#CAP,3300,WRAP,2880,192,5,52",
+            "#CAP,3301,WRAP,2880,192,5,48",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+            "Overdub undone",
+            "Overdub undone",
+            "Overdub redone",
+            "Overdub redone",
+            "#CAP,9000000,DIAG,dnte,src,reconstruct,count,2",
+            "#CAP,9000001,DNTE,63,0,0,143,0",
+            "#CAP,9000002,DNTE,63,0,0,576,1",
+            "#CAP,9000003,DIAG,dnte,src,effective,count,1",
+            "#CAP,9000004,DNTE,63,0,0,143,0",
+            "#CAP,9000005,DIAG,dnte,src,frame,count,2",
+            "#CAP,9000006,DNTE,63,0,0,143,0",
+            "#CAP,9000007,DNTE,63,0,0,576,1",
+        ]
+        result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(issue.startswith("occupy_rc1b_two_length:63@0:143,576") for issue in result["issues"])
+        )
+        self.assertTrue(
+            any(
+                issue.startswith("occupy_rc1b_frame_effective_mismatch:63@0:f=143,576,e=143")
+                for issue in result["issues"]
+            )
+        )
+
+    def test_fail_when_frame_length_disagrees_with_effective(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,1100,DIAG,oh,n,16,e,0,i,0,o,0,k,0,x,0,s,0,u,0,t,0,add,16,shorten,0,hide,0",
+            "#CAP,2000,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,2100,VCACHE,adopt_partial,ev,-1,notes,80,first,0,last,3,total,4,dsz,4,dcnt,0,dirty,0",
+            "#CAP,2200,DISP,0,PLAYING,3072,80,80,80,80,1",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3100,DIAG,draw_src,layers,visual,80,preview,1,sealed,0,snap,0,frame,80,"
+            "hidden,0,missed_preview,0",
+            "#CAP,3200,DIAG,oh,n,20,e,0,i,2,o,0,k,12,x,2,s,12,u,1,t,2,add,4,shorten,8,hide,6",
+            "#CAP,3300,WRAP,2880,192,5,52",
+            "#CAP,3301,WRAP,2880,192,5,48",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+            "Overdub undone",
+            "Overdub undone",
+            "Overdub redone",
+            "Overdub redone",
+            "#CAP,9000000,DIAG,dnte,src,reconstruct,count,1",
+            "#CAP,9000001,DNTE,63,0,0,143,0",
+            "#CAP,9000002,DIAG,dnte,src,effective,count,1",
+            "#CAP,9000003,DNTE,63,0,0,143,0",
+            "#CAP,9000004,DIAG,dnte,src,frame,count,1",
+            "#CAP,9000005,DNTE,63,0,0,576,0",
+        ]
+        result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                issue.startswith("occupy_rc1b_frame_effective_mismatch:63@0:f=576,e=143")
+                for issue in result["issues"]
+            )
+        )
 
 
 if __name__ == "__main__":

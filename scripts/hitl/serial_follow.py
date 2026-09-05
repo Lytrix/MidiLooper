@@ -7,7 +7,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from hitl.serial_collector import _wait_for_serial_line_idle, serial_line_resets_heartbeat
+from hitl.serial_collector import (
+    _wait_for_serial_line_idle,
+    _wait_for_serial_predicate,
+    serial_line_resets_heartbeat,
+)
 
 
 class ExternalSerialFollowCollector:
@@ -137,6 +141,15 @@ class ExternalSerialFollowCollector:
         return _wait_for_serial_line_idle(
             self.line_count,
             idle_ms=idle_ms,
+            max_drain_ms=max_drain_ms,
+        )
+
+    def drain_until_dnte_src_dumps(self, *, max_drain_ms: int) -> bool:
+        from hitl.verify.dnte_src_dumps import dnte_src_dump_trio_complete
+
+        return _wait_for_serial_predicate(
+            self.snapshot,
+            dnte_src_dump_trio_complete,
             max_drain_ms=max_drain_ms,
         )
 

@@ -8,6 +8,12 @@ from typing import Any, Optional
 from hitl.control_constants import TICKS_PER_BAR, TICKS_PER_BEAT
 from hitl.flows.occupy_paint import HALF_BAR_TICKS, WRAP_PITCHES
 from hitl.serial_timing import extract_phase_boundaries
+from hitl.verify.dnte_src_dumps import (
+    frame_effective_length_mismatches,
+    last_complete_dump,
+    parse_dnte_src_dumps,
+    two_length_pairs,
+)
 
 _DRAW_SRC_RE = re.compile(
     r"draw_src,layers,visual,(\d+),preview,(\d+),sealed,(\d+),snap,(\d+),frame,(\d+)"
@@ -379,6 +385,9 @@ def verify_occupy_paint(lines: list[str], args: object) -> dict[str, Any]:
     if redo_count < expected_cycles:
         issues.append(f"occupy_redo_lt_{expected_cycles}:{redo_count}")
 
+    rc1b = _verify_occupy_rc1b_dumps(lines, windows)
+    issues.extend(rc1b["issues"])
+
     return {
         "ok": len(issues) == 0,
         "issues": issues,
@@ -397,4 +406,56 @@ def verify_occupy_paint(lines: list[str], args: object) -> dict[str, Any]:
         "wrap_pairs": wrap_pairs,
         "wrap_source": wrap_source,
         "windows": windows,
+        "rc1b": rc1b,
+    }
+
+
+def _verify_occupy_rc1b_dumps(
+    lines: list[str],
+    windows: dict[str, Optional[int]],
+) -> dict[str, Any]:
+    """Score first-STOPPED reconstruct / effective / frame after occupy OD2."""
+    after_ts = windows.get("od2_stop")
+    dumps = parse_dnte_src_dumps(lines)
+    reconstruct = last_complete_dump(dumps, "reconstruct", after_ts=after_ts)
+    effective = last_complete_dump(dumps, "effective", after_ts=after_ts)
+    frame = last_complete_dump(dumps, "frame", after_ts=after_ts)
+    issues: list[str] = []
+    missing = [
+        kind
+        for kind, dump in (
+            ("reconstruct", reconstruct),
+            ("effective", effective),
+            ("frame", frame),
+        )
+        if dump is None
+    ]
+    if missing:
+        issues.append("occupy_rc1b_dumps_missing:" + "|".join(missing))
+    two_length: list[dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
+    if frame is not None:
+        two_length = two_length_pairs(frame["rows"])
+        for pair in two_length:
+            lengths = ",".join(str(length) for length in pair["lengths"])
+            issues.append(
+                f"occupy_rc1b_two_length:{pair['pitch']}@{pair['start']}:{lengths}"
+            )
+    if frame is not None and effective is not None:
+        mismatches = frame_effective_length_mismatches(frame["rows"], effective["rows"])
+        for row in mismatches:
+            frame_lengths = ",".join(str(length) for length in row["frame"])
+            effective_lengths = ",".join(str(length) for length in row["effective"])
+            issues.append(
+                f"occupy_rc1b_frame_effective_mismatch:{row['pitch']}@{row['start']}:"
+                f"f={frame_lengths},e={effective_lengths}"
+            )
+    return {
+        "issues": issues,
+        "after_ts": after_ts,
+        "reconstruct_count": None if reconstruct is None else reconstruct["expected"],
+        "effective_count": None if effective is None else effective["expected"],
+        "frame_count": None if frame is None else frame["expected"],
+        "two_length": two_length,
+        "mismatches": mismatches,
     }

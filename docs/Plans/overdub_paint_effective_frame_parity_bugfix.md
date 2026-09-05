@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC1b frame recapture next. RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL now waits for reconstruct / effective / frame and scores RC1b. Device recapture next. RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -153,6 +153,20 @@ Owner: `DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom`. Draw-source walk
 | Reuse | **YES** — extend `upsertDisplayNoteAtPitchStartFrom` |
 
 Host pins in `test_display_window_utils`: `test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310`, `test_capture_sealed_upsert_keeps_longer_suffix_150650`.
+
+### HITL evaluation
+
+[`141142`](../../captures/session_20260905_141142.log) cannot score RC1b: no `dnte,src,{reconstruct,effective,frame}` rows. Occupy stays PLAYING until transport stop; the boot one-shot stored-verify / frame dump is already consumed.
+
+Occupy preset `--dnte-src-dump-drain-ms 30000` waits until the three dump headers have their DNTE rows. `verify_occupy_paint` then scores:
+
+| Issue | Meaning |
+|-------|---------|
+| `occupy_rc1b_dumps_missing` | trio absent after OD2 |
+| `occupy_rc1b_two_length:p@s:a,b` | first STOPPED frame has two lengths at one pitch+start |
+| `occupy_rc1b_frame_effective_mismatch:p@s:f=…,e=…` | frame length ≠ effective at that pitch+start |
+
+Firmware `Track::stopPlaying` re-arms stored-verify and `armStoppedFrameNoteDump` so the occupy loop’s transport STOPPED emits the trio. Diagnostic only; `oh` stays observational.
 
 ## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
 
