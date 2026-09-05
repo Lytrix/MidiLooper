@@ -372,6 +372,77 @@ inline bool visualCacheIsCurrentSourceRevision(uint32_t builtFromRevision,
     return builtFromRevision == playbackRevision;
 }
 
+/// Pending Shorten needs the committed source row before paint. VisualCache
+/// identity is mismatch evidence only — never the geometry to copy (`212700`).
+enum class PendingShortenSourceKind : uint8_t {
+    NotNeeded = 0,
+    RecoverAuthoritative = 1,
+    AuthoritativeAbsence = 2,
+};
+
+inline const NoteUtils::DisplayNote* findDisplayNoteByNoteId(const NoteUtils::DisplayNoteVec& notes,
+                                                             NoteId noteId) {
+    if (noteId == kInvalidNoteId) {
+        return nullptr;
+    }
+    for (const NoteUtils::DisplayNote& note : notes) {
+        if (note.noteId == noteId) {
+            return &note;
+        }
+    }
+    return nullptr;
+}
+
+inline bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+    return findDisplayNoteByNoteId(notes, noteId) != nullptr;
+}
+
+inline PendingShortenSourceKind classifyPendingShortenSource(bool composeHasTarget,
+                                                             bool visualCacheHasSameIdentity,
+                                                             bool authoritativeHasTarget) {
+    if (composeHasTarget || !visualCacheHasSameIdentity) {
+        return PendingShortenSourceKind::NotNeeded;
+    }
+    return authoritativeHasTarget ? PendingShortenSourceKind::RecoverAuthoritative
+                                  : PendingShortenSourceKind::AuthoritativeAbsence;
+}
+
+struct PendingShortenRecoveryCounts {
+    uint32_t recovered = 0;
+    uint32_t authoritativeAbsence = 0;
+};
+
+/// Append authoritative committed geometry for pending Shorten targets that
+/// compose dropped while VisualCache still shows the same `NoteId`. Never
+/// copies VisualCache geometry. Hide is not a recovery input.
+inline PendingShortenRecoveryCounts recoverMissingPendingShortenRows(
+    NoteUtils::DisplayNoteVec& compose, const NoteUtils::DisplayNoteVec& visualCache,
+    const NoteId* pendingShortenIds, size_t pendingShortenCount,
+    const NoteUtils::DisplayNoteVec& authoritativeCommitted) {
+    PendingShortenRecoveryCounts counts{};
+    if (pendingShortenIds == nullptr || pendingShortenCount == 0) {
+        return counts;
+    }
+    for (size_t index = 0; index < pendingShortenCount; ++index) {
+        const NoteId noteId = pendingShortenIds[index];
+        const bool composeHasTarget = displayNotesContainNoteId(compose, noteId);
+        const bool visualCacheHasSameIdentity = displayNotesContainNoteId(visualCache, noteId);
+        const NoteUtils::DisplayNote* authoritative =
+            findDisplayNoteByNoteId(authoritativeCommitted, noteId);
+        const PendingShortenSourceKind kind = classifyPendingShortenSource(
+            composeHasTarget, visualCacheHasSameIdentity, authoritative != nullptr);
+        if (kind == PendingShortenSourceKind::RecoverAuthoritative && authoritative != nullptr) {
+            if (!displayNotesContainNoteId(compose, noteId)) {
+                compose.push_back(*authoritative);
+            }
+            ++counts.recovered;
+        } else if (kind == PendingShortenSourceKind::AuthoritativeAbsence) {
+            ++counts.authoritativeAbsence;
+        }
+    }
+    return counts;
+}
+
 /// Coverage contract (`153517` RC1): `builtFromRevision = R` only when the completed
 /// gather consumed committed content at R. Overlay-rejected fallback does not establish
 /// that coverage, even if a substitute gather ran while `playbackRevision` was R.

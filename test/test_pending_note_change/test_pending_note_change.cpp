@@ -3807,6 +3807,83 @@ void test_noteon_pending_paint_copy_shortens_before_stop_202821() {
   TEST_ASSERT_EQUAL(0, loop.passes.editPasses.size());
 }
 
+/// `212700`: snapshot compose drops NoteId 84 while VisualCache still has it.
+/// Recover committed geometry, then pending Shorten paints the shortened end.
+void test_pending_shorten_recovers_authoritative_source_212700() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 6144;
+  loop.pushPendingNoteChangeForTest(shortenChange(84, 84, 4560, 4575));
+
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  visual.push_back(displayNote(84, 84, 4560, 4608));
+  NoteUtils::DisplayNoteVec authoritative;
+  authoritative.push_back(displayNote(84, 84, 4560, 4608));
+  const NoteId shortenIds[] = {84};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, shortenIds, 1,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, counts.recovered);
+  TEST_ASSERT_EQUAL(1u, compose.size());
+  TEST_ASSERT_EQUAL_UINT32(4608u, compose[0].endTick);
+
+  NoteUtils::DisplayNoteVec painted = compose;
+  loop.applyPendingNoteChangesToDisplayNotes(painted, painted.size());
+  TEST_ASSERT_EQUAL(1u, painted.size());
+  TEST_ASSERT_EQUAL(84, painted[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(4560u, painted[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(4575u, painted[0].endTick);
+}
+
+/// VisualCache still showing 84 is not enough to fabricate a Shorten source.
+void test_pending_shorten_authoritative_absence_does_not_resurrect_212700() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 6144;
+  loop.pushPendingNoteChangeForTest(shortenChange(84, 84, 4560, 4575));
+
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  visual.push_back(displayNote(84, 84, 4560, 4608));
+  NoteUtils::DisplayNoteVec authoritative;
+  const NoteId shortenIds[] = {84};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, shortenIds, 1,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(0u, counts.recovered);
+  TEST_ASSERT_EQUAL_UINT32(1u, counts.authoritativeAbsence);
+  TEST_ASSERT_TRUE(compose.empty());
+
+  loop.applyPendingNoteChangesToDisplayNotes(compose, compose.size());
+  TEST_ASSERT_TRUE(compose.empty());
+}
+
+/// Hide keeps the existing absence path. Recovery is Shorten-only.
+void test_pending_hide_does_not_recover_dropped_source_row() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 6144;
+  loop.pushPendingNoteChangeForTest(hideChange(84, 84, 4560, 4608));
+
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  visual.push_back(displayNote(84, 84, 4560, 4608));
+  NoteUtils::DisplayNoteVec authoritative;
+  authoritative.push_back(displayNote(84, 84, 4560, 4608));
+  const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, nullptr, 0,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(0u, counts.recovered);
+  TEST_ASSERT_TRUE(compose.empty());
+
+  loop.applyPendingNoteChangesToDisplayNotes(compose, compose.size());
+  TEST_ASSERT_TRUE(compose.empty());
+}
+
 /// `150650`: a long sealed/preview suffix at the Shorten pitch+start is not dropped.
 void test_shorten_does_not_drop_suffix_same_start_hold() {
   LoopEventStore::resetPoolForTests();
@@ -4140,6 +4217,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_193815_63_1536_hold_1919_matrix);
   RUN_TEST(test_draw_source_compose_193815_63_1536_forks);
   RUN_TEST(test_noteon_pending_paint_copy_shortens_before_stop_202821);
+  RUN_TEST(test_pending_shorten_recovers_authoritative_source_212700);
+  RUN_TEST(test_pending_shorten_authoritative_absence_does_not_resurrect_212700);
+  RUN_TEST(test_pending_hide_does_not_recover_dropped_source_row);
   RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);

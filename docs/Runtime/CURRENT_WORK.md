@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (overdub paint NoteOn pending handoff + wrap-append source guard)
+Last updated: 2026-09-05 (overdub paint pending Shorten source recovery)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,20 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub paint — NoteOn pending handoff + wrap-append source guard:**
+**Overdub paint — pending Shorten source recovery ([`212700`](../../captures/session_20260905_212700.log)):**
+Compose can drop a Shorten target when the selected current snapshot
+membership omits a row that VisualCache still has (`old,84,4560,4608` →
+`new,0,0,0`). Hide can look correct from that absence; Shorten cannot.
+`resolveDisplayNotesByDrawSource` recovers the authoritative committed
+row by `NoteId` before the paint copy. VisualCache is mismatch evidence
+only — never copied. Authoritative absence stays absent. Hide is not
+recovered. Stage 1 paint-copy and Stage 2 wrap-append stay closed.
+Host: focused suites PASS; `teensy41-capture-serial` RAM1 locals **6848**;
+native **1663/1666** (pre-existing playhead-tails fail). Device recapture open.
+Plan: [`overdub_paint_shorten_source_recovery_bugfix.md`](../Plans/overdub_paint_shorten_source_recovery_bugfix.md).
+Parent Stage 1+2: [`overdub_paint_noteon_pending_handoff_bugfix.md`](../Plans/overdub_paint_noteon_pending_handoff_bugfix.md).
+
+**Prior — NoteOn pending handoff + wrap-append source guard:**
 Stage 1 ([`202821`](../../captures/session_20260905_202821.log)): NoteOn
 `pendingNoteChanges_` advances the live paint representation. Compose stays
 untransformed; the next paint consumes a pending-painted copy. Overview does

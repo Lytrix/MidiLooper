@@ -153,7 +153,26 @@ PendingNoteChange     ← session overlay; Add ≠ persistence
     ↓
 draw-source gather (Snapshot / VisualCache, plus Capture on live bars)
     ↓
-applyPendingNoteChangesToDisplayNotes (pending + sealed Hide/Shorten while companion IDs exist; Hide or Shorten also drops a longer same-pitch+start sibling on display only, then playhead tails)
+compose base (untransformed prefix + overlays)
+    ↓
+pending Shorten source recovery (`212700`): if compose lacks a Shorten
+    target and VisualCache still has that `NoteId`, establish
+    authoritative committed geometry (`findNote` / source-view /
+    windowed gather). Recover that committed row into compose, then
+    paint. If the authoritative source also lacks the target, keep it
+    absent (`authoritative_absence`). Never copy VisualCache geometry.
+    Hide keeps the existing absence path.
+    ↓
+paint copy: tails, then applyPendingNoteChangesToDisplayNotes
+    (pending + sealed Hide/Shorten by NoteId on any closed painted row —
+    prefix or sealed/closed suffix; open holds `endTick == startTick` skip
+    so playhead tails can grow; Hide-by-overlap and same-start sibling drop
+    stay prefix-only via `liveCaptureBegin`)
+    A reused compose frame that predates the pending change is not the
+    painted source (`202821`). Overview density uses that paint copy while
+    pending/overlay exists — it does not read a clean VisualCache that
+    still has pre-pending lengths. VisualCache is not mutated to make this
+    paint work.
     ↓
 sealed EditPass Length/Delete   (Shorten/Hide only)
     ↓
