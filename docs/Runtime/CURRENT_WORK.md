@@ -2,13 +2,29 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (`225200`: wrap-held head occupy Shorten host shipped)
+Last updated: 2026-09-05 (`233150`: wrap sealed Shorten paint host shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
 ---
 
 ## Now implementing
+
+**Wrap sealed Shorten paint ([`233150`](../../captures/session_20260905_233150.log)):**
+After wrap seal, already-shortened notes snapped back to VisualCache
+originals on the first draw-source paint when the target row landed in
+the capture suffix (`i >= committedDisplayEnd`). Pin owner: sealed apply
+in `applyPendingHideAndShortenToNotes` — `liveCaptureBegin` is only
+sibling-drop / Hide-by-overlap; open holds skip transforms. Host pin
+`test_wrap_seal_keeps_painted_shorten_233150`. Focused
+`test_pending_note_change` + `test_overdub_source_view` +
+`test_display_window_utils` PASS. `teensy41-capture-serial` RAM1 locals
+**6848**. Native **1670/1671** (pre-existing playhead-tails fail; one
+skipped). Device recapture: first post-wrap `DISP` for a sealed Shorten
+must still show `holdStart-1` before the next `BAR` (no
+`painted_pending_shorten` for sealed rows). Stage 1 wrap-held occupy
+device FAIL stays on its own plan.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
 
 **Wrap-held head occupy Shorten ([`225200`](../../captures/session_20260905_225200.log)) — Stage 1:**
 Pin Failure A passed: wrap-held `69@4560→760` id 96 stays in source view

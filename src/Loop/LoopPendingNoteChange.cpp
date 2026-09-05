@@ -281,13 +281,20 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
   updated.reserve(notes.size());
   for (size_t i = 0; i < notes.size(); ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
-    if (i >= liveCaptureBegin) {
+    // A pending Hide/Shorten applies to any painted note carrying the
+    // target NoteId, regardless of whether that note came from the
+    // committed prefix or sealed/closed capture suffix.
+    // The only display note excluded from the pending transform is an
+    // open capture hold whose end is intentionally extended by
+    // applyCapturePlayheadTails().
+    if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(note.startTick, note.endTick)) {
       updated.push_back(note);
       continue;
     }
     const PendingNoteChange* transform =
         findSourceTransformByNoteIdSorted(transforms, note.noteId);
-    if (transform == nullptr && matchHideByOverlap && loopLength != 0) {
+    if (transform == nullptr && matchHideByOverlap && loopLength != 0 &&
+        i < liveCaptureBegin) {
       for (const PendingNoteChange& candidate : transforms) {
         if (candidate.kind == PendingNoteChangeKind::Hide &&
             hideMatchesDisplayNote(note, candidate, loopLength)) {
