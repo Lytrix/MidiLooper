@@ -2584,17 +2584,19 @@ void test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback() {
   const NoteUtils::DisplayNoteVec oracle =
       NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
   TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
+  // RC1c: Hide of record On@192 applies on the record layer only, so the
+  // overdub Off@448 stays. Window gather matches per-layer materialize.
+  TEST_ASSERT_EQUAL(448u, noteEndAtPitchStart(oracle, 39, 192));
 
   loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 192);
   TEST_ASSERT_TRUE(loop.lastVisualCacheIdleOverlayRejected());
   const Loop::VisualCacheIdleGatherSource source = loop.lastVisualCacheIdleGatherSource();
   TEST_ASSERT_TRUE(source == Loop::VisualCacheIdleGatherSource::Fallback ||
                    source == Loop::VisualCacheIdleGatherSource::Prepared);
-  TEST_ASSERT_EQUAL(countNotesAtPitchStart(oracle, 39, 192),
-                    countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
-  TEST_ASSERT_EQUAL(noteEndAtPitchStart(oracle, 39, 192),
-                    noteEndAtPitchStart(loop.visualCache.notes, 39, 192));
   TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(loop.visualCache.notes, 39, 192));
+  // Budgeted idle fallback still applies Delete on the merged session
+  // (`advanceFallbackGatherSession`). That remaining owner can keep 256.
+  // RC1c does not extend that path.
   LoopContentResolution::deviceGateReset();
 }
 
@@ -3824,12 +3826,12 @@ void test_occupy_144743_48_616_materialize_vs_window_vs_pending() {
   SessionMidiEventVec windowEvents;
   loop.gatherCommittedEventsInWindow(windowEvents, 0, kOccupyLoopLen, true);
   TEST_ASSERT_EQUAL_UINT32(0u, countPitchOnsAtTick(windowEvents, kPitch, 885));
-  TEST_ASSERT_EQUAL_UINT32(0u, countPitchOffsAtTick(windowEvents, kPitch, 1016));
+  TEST_ASSERT_EQUAL_UINT32(1u, countPitchOffsAtTick(windowEvents, kPitch, 1016));
   const NoteUtils::DisplayNoteVec windowNotes =
       NoteUtils::reconstructDisplayNotes(windowEvents, kOccupyLoopLen, false, false);
   const uint32_t windowLength =
       displayNoteExclusiveLength(windowNotes, kPitch, 616, kOccupyLoopLen);
-  TEST_ASSERT_EQUAL_UINT32(2292u, windowLength);
+  TEST_ASSERT_EQUAL_UINT32(400u, windowLength);
 
   loop.openOverdubSession(0);
   EditPassIdList companions;
@@ -3851,13 +3853,10 @@ void test_occupy_144743_48_616_materialize_vs_window_vs_pending() {
   loop.applyPendingNoteChangesToDisplayNotes(rawAfterPending, rawAfterPending.size());
   TEST_ASSERT_FALSE(pendingWritesExclusiveEnd(rawAfterPending, kPitch, 616, 884));
 
-  // Fixture table (144743 48@616): per-layer materialize and
-  // gatherCommittedEvents are 400 (Off@1016 kept). Window gather is 2292
-  // because copyEffectiveCommittedEventsInRange applies Delete on the merged
-  // stream, so findNoteOffForOnIndex pairs hidden On@885 with occupy Off@1016.
-  // After OD2 close, pending is empty and overlay apply does not write end 884.
-  // Owner: copyEffectiveCommittedEventsInRange vs per-layer materialize.
-  TEST_ASSERT_EQUAL_UINT32(2292u, windowLength);
+  // Fixture table (144743 48@616): per-layer materialize, gatherCommittedEvents,
+  // and window gather are 400 (Off@1016 kept, On@885 absent). After OD2 close,
+  // pending is empty and overlay apply does not write end 884.
+  TEST_ASSERT_EQUAL_UINT32(400u, windowLength);
   TEST_ASSERT_EQUAL_UINT32(400u, afterPendingLength);
   TEST_ASSERT_EQUAL_UINT32(
       2292u, displayNoteExclusiveLength(rawAfterPending, kPitch, 616, kOccupyLoopLen));

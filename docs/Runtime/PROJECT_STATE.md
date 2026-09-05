@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-05 (occupy 48@616 RC1c host pin)
+Last updated: 2026-09-05 (RC1c window gather per-layer apply)
 
 ---
 

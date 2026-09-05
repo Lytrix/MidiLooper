@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL pairs OD1/OD2 by start time and scores occupy-sized first-STOPPED effective/frame. Device [`144743`](../../captures/session_20260905_144743.log): occupy holds PASS; `E != F` is **RC1c** (window-gather merged Delete), not RC1b two-length. Host pin `test_occupy_144743_48_616_materialize_vs_window_vs_pending`. Firmware not started. RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC1c host shipped (`copyEffectiveCommittedEventsInRange` applies Active Note rows per committed pass layer, then merges). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL pairs OD1/OD2 by start time and scores occupy-sized first-STOPPED effective/frame. Device [`144743`](../../captures/session_20260905_144743.log) / [`152012`](../../captures/session_20260905_152012.log) remain pre-fix RC1c FAIL. Firmware does not claim device PASS until occupy HITL recapture. RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -44,7 +44,7 @@ Display-frame walk stays a bounded id list, not a new interval owner, and not a 
 ```text
 gatherCommittedEvents / src,effective     ← trust (48@616 = 400, Off@1016)
 materializeToEventVector (per layer)      ← trust (same 400)
-copyEffectiveCommittedEventsInRange       ← RC1c current (merged Delete steals Off@1016)
+copyEffectiveCommittedEventsInRange       ← RC1c host shipped (per-layer apply, then merge)
 reconstruct dump                          ← diagnostic only (2292)
 resolveOccupancyAtNoteOn hold-1           ← writes 884 when applied to display
 first STOPPED frame / visualCache         ← realizes the window-gather miss
@@ -166,6 +166,8 @@ RC1b scores occupy-loop first-STOPPED `src,effective` vs `src,frame` only. Recon
 
 Device [`144743`](../../captures/session_20260905_144743.log): OD1 source 509580888–518042419 (`shorten=0 hide=0`); OD2 occupy 518679360–533664815 (`shorten=11 hide=9`, `from=snapshot`, visual 22). Occupy-sized dumps reconstruct 39 / effective 30 / frame 28. HITL still labels those 11 `E != F` keys as `occupy_rc1b_frame_effective_mismatch`. They are **RC1c**, not the 154310 sealed-append class (no two-length). Verify-only [`144036`](../../captures/session_20260905_144036.log) is the same class after the OD1/OD2 time-order fix.
 
+Recapture [`152012`](../../captures/session_20260905_152012.log) (same firmware, no RC1c code change): occupy holds PASS; 9 `E != F`; dumps 39 / 28 / 25; no two-length. `48@666` frame 739 / effective 399.
+
 | Issue | Meaning |
 |-------|---------|
 | `occupy_rc1b_dumps_missing` | occupy-sized effective/frame absent after OD2 |
@@ -181,7 +183,7 @@ Host fixture `test_occupy_144743_48_616_materialize_vs_window_vs_pending` (14474
 | `mergeActiveCapturePasses` reconstruct | 2292 | present (Hide not applied) |
 | `LoopPasses::materializeToEventVector` | **400** | present |
 | `gatherCommittedEvents` (effective dump) | **400** | present |
-| `gatherCommittedEventsInWindow` | **2292** | **absent** |
+| `gatherCommittedEventsInWindow` | **400** | present |
 | pending after OD2 close | empty | — |
 | `applyPendingNoteChangesToDisplayNotes` | does not write end 884 | — |
 
@@ -204,7 +206,7 @@ Owner to extend: `Loop::copyEffectiveCommittedEventsInRange`. Do not add gather 
 | Ownership change? | **NO** — window gather still owns the merged apply; match per-layer pairing |
 | State transition change? | **NO** |
 | Unbounded interval owner? | **NO** — same windowed chunk walk + existing Delete apply |
-| Reuse | **YES** — extend `copyEffectiveCommittedEventsInRange` / the Delete it runs on the merged window |
+| Reuse | **YES** — extend `copyEffectiveCommittedEventsInRange`; apply per committed list, then `mergeSortedLoopCaptureLayers` |
 
 ### Pre-implementation review (RC1c)
 
@@ -219,17 +221,23 @@ Owner to extend: `Loop::copyEffectiveCommittedEventsInRange`. Do not add gather 
 | Topic | Decision |
 |-------|----------|
 | Effective dump | `gatherCommittedEvents` → per-layer materialize = 400 |
-| Window gather | merged Delete steals Off@1016 → 2292 |
+| Window gather | per-layer apply then merge → 400, Off@1016 kept |
 | Pending / overlay after close | empty pending; apply does not write 884 |
 | Owner | `copyEffectiveCommittedEventsInRange`, not RC1 overlay, not adopt_partial |
 
 ### Open before coding
 
-None — firmware not started in this slice.
+None.
 
 ### Proceed?
 
-YES — host pin only. Firmware when the next session extends the named owner.
+YES — firmware this slice. Host fixture now expects window gather 400 / Off@1016 kept.
+
+### Host shipped
+
+`copyEffectiveCommittedEventsInRange` windows and applies Active Note rows on each `CommittedChunkIdList`, then merges. The merged stream is not applied again. `includeActiveEditRows == false` stays merge-only. Host `test_occupy_144743_48_616_materialize_vs_window_vs_pending` PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1644/1646** (pre-existing playhead-tails fail). Device occupy recapture scores `E` then `F`.
+
+`advanceFallbackGatherSession` still applies Delete on the merged budgeted session. That remaining owner is not RC1c. `test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback` pins window gather 448 and keeps overlay-reject; it does not require idle cache end == window gather.
 
 ## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
 

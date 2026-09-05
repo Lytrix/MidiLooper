@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (occupy 48@616 RC1c host pin)
+Last updated: 2026-09-05 (RC1c window gather per-layer apply)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,11 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — occupy `48@616` RC1c host pin ([`144743`](../../captures/session_20260905_144743.log)):**
-Effective and `materializeToEventVector` are 400 (Off@1016 kept). `gatherCommittedEventsInWindow` is 2292 because `copyEffectiveCommittedEventsInRange` applies Delete on the merged stream and `findNoteOffForOnIndex` pairs hidden On@885 with occupy Off@1016. Pending after OD2 close is empty; overlay apply does not write end 884. Owner: `Loop::copyEffectiveCommittedEventsInRange`. Host pin `test_occupy_144743_48_616_materialize_vs_window_vs_pending`. No firmware in this slice. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+**Now — RC1c window gather per-layer apply ([`144743`](../../captures/session_20260905_144743.log) / [`152012`](../../captures/session_20260905_152012.log)):**
+`copyEffectiveCommittedEventsInRange` applies Active Note rows on each committed chunk list, then merges. Host `test_occupy_144743_48_616_materialize_vs_window_vs_pending` expects window gather **400**, On@885 absent, Off@1016 kept. `teensy41-capture-serial` RAM1 locals **6848**. Native **1644/1646** — pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end` (does not call window gather). Firmware does not claim device PASS until occupy HITL recapture: `E` must match materialize; `F` follows only if STOPPED display consumes that window-effective stream. Extra-short keys stay out. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+
+**Prior — occupy HITL recapture [`152012`](../../captures/session_20260905_152012.log):**
+Flashed `teensy41-capture-serial` (no RC1c firmware). Occupy holds PASS: OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22, GUS 2/2. RC1c FAIL — 9 `E != F`, no two-length; dumps reconstruct 39 / effective 28 / frame 25. Representative `48@666` frame 739 / effective 399 (same reconstruct-remnant class as [`144743`](../../captures/session_20260905_144743.log) `48@616`).
 
 **Prior — occupy present-at-hold RC4 ([`134436`](../../captures/session_20260905_134436.log)):**
 `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. Filter before geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill. Host `a04e2bd5`.
