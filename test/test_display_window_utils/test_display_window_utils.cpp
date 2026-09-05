@@ -547,7 +547,7 @@ void test_capture_sealed_upsert_keeps_longer_suffix_150650() {
 
 void test_stopped_playhead_tail_takes_closed_capture_off_153848() {
   // Last OVERDUBBING paint left 52@2172 at playhead 2230. Sealed Off is 2231.
-  // RC1b skip keeps 2230; stop-handoff rewrite takes the closed Off.
+  // RC1b skip keeps 2230; this-pass suffix takes the closed Off (not stopPhase).
   NoteUtils::DisplayNoteVec notes;
   NoteUtils::DisplayNote live{};
   live.noteId = 40;
@@ -568,7 +568,7 @@ void test_stopped_playhead_tail_takes_closed_capture_off_153848() {
 
   NoteUtils::DisplayNoteVec closedPreview;
   closedPreview.push_back(sealed);
-  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 2231);
+  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 0);
   TEST_ASSERT_EQUAL(1u, notes.size());
   TEST_ASSERT_EQUAL_UINT32(2172u, notes[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(2231u, notes[0].endTick);
@@ -590,7 +590,7 @@ void test_stopped_playhead_tail_does_not_take_sealed_remnant_154310() {
   sealed.endTick = 576;
   NoteUtils::DisplayNoteVec closedPreview;
   closedPreview.push_back(sealed);
-  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 2231);
+  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 1);
   TEST_ASSERT_EQUAL(1u, notes.size());
   TEST_ASSERT_EQUAL_UINT32(143u, notes[0].endTick);
   TEST_ASSERT_EQUAL(1, notes[0].noteId);
@@ -1302,6 +1302,52 @@ void test_deferred_wrap_append_source_identity() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentSourceRevision(4, 5));
 }
 
+void test_noteon_shorten_paint_copy_keeps_compose_original_end() {
+  NoteUtils::DisplayNoteVec compose;
+  compose.push_back({40, 63, 90, 768, 1440});
+  NoteUtils::DisplayNoteVec paint = compose;
+  paint[0].endTick = 1103;
+  const DisplayWindowUtils::PaintedPendingShorten described =
+      DisplayWindowUtils::describePaintedPendingShorten(compose, paint, 40, 1103);
+  TEST_ASSERT_TRUE(described.composeHasTarget);
+  TEST_ASSERT_EQUAL_UINT32(1440u, described.composeEndTick);
+  TEST_ASSERT_TRUE(described.paintHasTarget);
+  TEST_ASSERT_TRUE(described.paintHasShortenedEnd);
+  TEST_ASSERT_EQUAL_UINT32(1103u, described.paintEndTick);
+}
+
+void test_noteon_shorten_authoritative_absence_omits_compose_and_paint() {
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  visual.push_back({40, 63, 90, 768, 1440});
+  NoteUtils::DisplayNoteVec authoritative;
+  const NoteId shortenIds[] = {40};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts absence =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, shortenIds, 1,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(0u, absence.recovered);
+  TEST_ASSERT_EQUAL_UINT32(1u, absence.authoritativeAbsence);
+  TEST_ASSERT_TRUE(compose.empty());
+  const DisplayWindowUtils::PaintedPendingShorten described =
+      DisplayWindowUtils::describePaintedPendingShorten(compose, compose, 40, 1103);
+  TEST_ASSERT_FALSE(described.composeHasTarget);
+  TEST_ASSERT_FALSE(described.paintHasTarget);
+  TEST_ASSERT_FALSE(described.paintHasShortenedEnd);
+}
+
+void test_noteon_hide_absence_is_not_recovered() {
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  visual.push_back({40, 63, 90, 768, 1440});
+  NoteUtils::DisplayNoteVec authoritative;
+  authoritative.push_back({40, 63, 90, 768, 1440});
+  const DisplayWindowUtils::PendingShortenRecoveryCounts hideCounts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, nullptr, 0,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(0u, hideCounts.recovered);
+  TEST_ASSERT_TRUE(compose.empty());
+}
+
 void test_pending_shorten_source_classify_and_recover_212700() {
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::NotNeeded),
@@ -1570,6 +1616,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_reuse_committed_draw_source_when_only_overlay_keys_change);
   RUN_TEST(test_pending_paint_representation_and_overview_source);
   RUN_TEST(test_deferred_wrap_append_source_identity);
+  RUN_TEST(test_noteon_shorten_paint_copy_keeps_compose_original_end);
+  RUN_TEST(test_noteon_shorten_authoritative_absence_omits_compose_and_paint);
+  RUN_TEST(test_noteon_hide_absence_is_not_recovered);
   RUN_TEST(test_pending_shorten_source_classify_and_recover_212700);
   RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
   RUN_TEST(test_display_frame_admission_sequences);

@@ -786,6 +786,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     livePlaybackDisplaySlot_ = displaySlot;
     livePlaybackDisplayTrack_ = resolveTrackIndex(track);
     const size_t committedDisplayEnd = liveDisplayCacheCommittedNoteCount_;
+    if (track.isOverdubbing() && loop.hasPendingNoteChanges()) {
+        size_t recoverEnd = committedDisplayEnd;
+        recoverMissingPendingShortenSources(loop, liveDisplayNotes, recoverEnd);
+    }
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), reuseLastValidFrame, budgetExceeded(),
         !loop.capturePreview.openNoteIndices.empty());
@@ -828,6 +832,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         if (havePendingPaint) {
             loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_,
                                                        committedDisplayEnd);
+            emitPaintedPendingShortenDiagnostics(loop, liveDisplayNotes,
+                                                 liveDisplayPendingPaintNotes_);
         }
         paintedNotes = &liveDisplayPendingPaintNotes_;
     }

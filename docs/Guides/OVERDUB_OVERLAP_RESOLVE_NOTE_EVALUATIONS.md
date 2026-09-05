@@ -55,12 +55,12 @@ flowchart TD
 
 | Edge | Owner | What it decides |
 |---|---|---|
-| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold**. Ledger supplies identity only; a ledger-selected note is transformed only when `displayNotePresentAtHold` is true. Filter that set before geometric fallback (`134436` n=1 a=0). Source-view fill if `n=0` or no present row remains. Shorten if `A.startTick < holdStart`, Hide otherwise |
+| B On | `Track::snapshotOverlapHoldCandidates` → `resolveOccupancyAtNoteOn` | Notes **present at hold**. `holdStart` is the shared capture phase (`Track::capturePhaseTick(pending.startNoteTick)`), the same frame as capture storage ticks and `overdubSourceViewNotes` ticks. `#CAP,DIAG,lcr,part` `hs=` is that phase. Ledger supplies identity only; a ledger-selected note is transformed only when `displayNotePresentAtHold` is true. Filter that set before geometric fallback (`134436` n=1 a=0). Source-view fill if `n=0` or no present row remains. Shorten if `A.startTick < holdStart`, Hide otherwise |
 | B still open across wrap | `extractOpenCaptureNoteOns` | Carries the On into the next capture pass. Does **not** re-resolve `occupancyResolvedNoteIds` |
 | B Off | `accumulatePendingNoteChangesForIncomingNote` | Skip On-resolved ids. Consume-overlap remaining ids. Also take source-view notes whose start is strictly inside the closed span. Wrap-crossing incoming is two linear resolver calls |
 | Seal | `sealPendingNoteChangesToEditPasses` | Shorten → Length companion. Hide → Delete companion. Add is not sealed. `#CAP,DIAG,oh` is observational only (no paint/playback/publication consume). Stop seal and wrap seal (`commitOverdubWrap`) emit the same pending-kind totals via `recountOverlapHoldTotalsFromPending` before pending clear. Pre-2026-09-02 `DIAG,overlap_hold,note_offs,…` clipped `hide` |
 
-**Present-at-hold vs strictly-inside.** On uses `displayNotePresentAtHold` (`start <= hold < end`, wrap-held `end < start` unwraps by `loopLength`). `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. A source note that starts **after** B's On, or a wrap remnant that is not sounding at the hold (`134436` `52@2948→107` at `hs=263`), is not transformed. Off can still resolve a later start when `noteStartStrictlyInsideIncoming` is true.
+**Present-at-hold vs strictly-inside.** On uses `displayNotePresentAtHold` (`start <= hold < end`, wrap-held `end < start` unwraps by `loopLength`). `holdStart` is `Track::capturePhaseTick`, not `tickPhaseInLoop(pending.startNoteTick, 0, loopLength)`. Origin 0 is off by `startLoopTick` (mod `loopLength`) and misses or Shortens the wrong storage tick (`162652` `hs=543` vs storage `296`; `hs=1607` Shorten `1606` vs `1359`). `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. A source note that starts **after** B's On, or a wrap remnant that is not sounding at the hold (`134436` `52@2948→107` at `hs=263`), is not transformed. Off can still resolve a later start when `noteStartStrictlyInsideIncoming` is true.
 
 **Pending is the live effective transform.** Paint applies `applyPendingNoteChangesToDisplayNotes` after draw-source selection. The published `LoopSnapshot` is not stepped per overdub bar; session-exit and wrap journals publish later ([DEC-047](../DECISION_LOG.md#dec-047--bounded-overdub-wrap-snapshot-publication)). Resolve does not wait on a successor snapshot.
 
@@ -96,6 +96,7 @@ Wrong final geometry is not a license to change candidate lookup.
 ```
 B On
   → capture store only (already appended)
+  → holdStart = capturePhaseTick(pending.startNoteTick)
   → catch-up ledger to holdStart
   → n = open ledger identities on this channel+pitch
   → if n = 0, overlapNoteIds = present-at-hold source-view identities
@@ -155,13 +156,15 @@ draw-source gather (Snapshot / VisualCache, plus Capture on live bars)
     ↓
 compose base (untransformed prefix + overlays)
     ↓
-pending Shorten source recovery (`212700`): if compose lacks a Shorten
-    target and VisualCache still has that `NoteId`, establish
+pending Shorten source recovery (`212700` / `215658`): if compose lacks a
+    Shorten target and VisualCache still has that `NoteId`, establish
     authoritative committed geometry (`findNote` / source-view /
-    windowed gather). Recover that committed row into compose, then
-    paint. If the authoritative source also lacks the target, keep it
-    absent (`authoritative_absence`). Never copy VisualCache geometry.
-    Hide keeps the existing absence path.
+    windowed gather). `recoverMissingPendingShortenSources` is the single
+    owner; `resolveDisplayNotesByDrawSource` and
+    `resolveDisplayNotesLiveCapture` may invoke it. Recover that committed
+    row into compose, then paint. If the authoritative source also lacks
+    the target, keep it absent (`authoritative_absence`). Never copy
+    VisualCache geometry. Hide keeps the existing absence path.
     ↓
 paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     (pending + sealed Hide/Shorten by NoteId on any closed painted row —
@@ -172,7 +175,9 @@ paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     painted source (`202821`). Overview density uses that paint copy while
     pending/overlay exists — it does not read a clean VisualCache that
     still has pre-pending lengths. VisualCache is not mutated to make this
-    paint work.
+    paint work. First paint after NoteOn must show the pending Shorten end
+    while compose keeps the original (`215658`). Capture
+    `painted_pending_shorten` records NoteId and old/new geometry.
     ↓
 sealed EditPass Length/Delete   (Shorten/Hide only)
     ↓
@@ -181,7 +186,7 @@ persistent note event geometry (Off tick via shortenNoteEndById)
 
 `overdubSourceViewNotes_` is a cache. Source-view covering identities are read from it **without** applying pending. Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView` (that function is used from native tests; wrap path seals then rebuilds). Display gather is per-bar `DrawSourcePath` routing (`resolveDisplayNotesByDrawSource`); pending Hide/Shorten apply after source selection. The old compose path remains for capture-only differential until that layer is deleted. Wrap-held populate collapses reconstruct split head+tail (same `NoteId`) into one `end < start` row so `displayNotePresentAtHold` unwraps at `hs=0`. A linear closed row (`2304→2496`) stays linear and is correctly absent at that hold.
 
-**Candidate selection.** `accumulatePendingNoteChangesForIncomingNote` builds `effectiveOverlapNoteIds`: occupy/playback ids plus geometric participants from `overdubSourceViewNotes_` that `existingNoteOverlapsIncomingHold` with each hold segment. Long loops call `ensureOverdubSourceNotesForHold` only when occupy ids lack source-view rows or empty ids need ahead-note materialization; hold hydration now reads `overdubSourceSpanCacheNotes_`. `Loop::rebuildOverdubSourceSpanCache` selects that committed fill with the same draw-source predicate as paint ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)): exclusive published-`LoopSnapshot` membership when the predicate is true (`from=snapshot`); otherwise prepared → prior cache → covering visual → pass reconstruction. Hold hydration then filters the cache by pitch/hold window before merge (`from=cache`). The cache is prewarmed from idle STOPPED maintenance (`Loop::prewarmOverdubSourceSpanCache`) on a later clean-cache turn after `boot_commit`, so first overdub entry does not pay the cold rebuild cost in `why=open`. Do not call it in the same turn as `slice_clean` (`160519`). Without that later call, session-open stamps an empty cache and occupy stays `norow` ([`162928`](../../captures/session_20260821_162928.log)). Device PASS [`165107`](../../captures/session_20260821_165107.log): open `notes` 1319–1394, `idsel>0`. STOPPED idle visual-cache slices use a budgeted gather and defer wrap-append so undo / track-switch do not pay unbounded `idle_append` in the same turn. Candidates come from `appendNotesForIds` only. Plans: [`../Plans/overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md), [`../Plans/overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md).
+**Candidate selection.** `accumulatePendingNoteChangesForIncomingNote` builds `effectiveOverlapNoteIds`: occupy/playback ids plus geometric participants from `overdubSourceViewNotes_` that `existingNoteOverlapsIncomingHold` with each hold segment. Long loops call `ensureOverdubSourceNotesForHold` only when occupy ids lack source-view rows or empty ids need ahead-note materialization; hold hydration now reads `overdubSourceSpanCacheNotes_`. `Loop::rebuildOverdubSourceSpanCache` selects that committed fill with the same draw-source predicate as paint ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)): exclusive published-`LoopSnapshot` membership when the predicate is true (`from=snapshot`); otherwise prepared → prior cache → covering visual → pass reconstruction. Hold hydration then filters the cache by pitch/hold window before merge (`from=cache`). The cache is prewarmed from idle STOPPED maintenance (`Loop::prewarmOverdubSourceSpanCache`) on a later clean-cache turn after `boot_commit`, so first overdub entry does not pay the cold rebuild cost in `why=open`. Do not call it in the same turn as `slice_clean` (`160519`). Without that later call, session-open stamps an empty cache and occupy stays `norow` ([`162928`](../../captures/session_20260821_162928.log)). Device PASS [`165107`](../../captures/session_20260821_165107.log): open `notes` 1319–1394, `idsel>0`. STOPPED idle visual-cache slices use a budgeted gather and defer wrap-append so undo / track-switch do not pay unbounded `idle_append` in the same turn. `applyDeferredVisualCacheWrapAppend` resumes that append only when the deferred `playbackRevision` still matches; a mismatch obtains the current-source frame (`VCACHE,append_skip` then `full` if the cache is not already current) instead of appending an earlier last pass (`203406`). Candidates come from `appendNotesForIds` only. Plans: [`../Plans/overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md), [`../Plans/overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md).
 
 **Candidate attribution (observability).** Counters `scanOnlyCandidates`, `lateNoteCandidates`, and `idsWithoutNotes` remain on `OverlapHoldTotals`. After id-resolution completeness, attributed holds should show `scan=0`, `late=0`, `norow=0` on `DIAG,consume,select`. Prior attribution-only plan: [`../Plans/overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md) (FROZEN).
 
@@ -389,7 +394,7 @@ Inputs are **linear** spans. Overdub uses source-view ticks; NOTE_EDIT linearize
 | `OverlapNoteOff` | Target starts before causing and `targetEnd >= causingStart` (includes start-abut) | Shorten to `computeShortenedEndTick` |
 | `BoundaryTouch` | No inclusive overlap; edges share a tick | Leave baseline (no upsert) |
 
-`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff`, Shortens `OverlapNoteOn` to the occupy exclusive end − 1 (Length companion), and Hides only `CompleteCover` or an inverted / min-length remnant. Occupy On (`resolveOccupancyAtNoteOn`) writes authoritative Shorten/Hide into `pendingNoteChanges_`: Shorten when A starts before B, Hide otherwise. Those identities are skipped at NoteOff. When occupy ledger ids are empty or have no source-view row (`104129` `n=0` / `010926` `norowid`), resolve falls back to present-at-hold source-view participants. Wrap idle slice / `adopt_partial` / grown-cache assign apply the same pending effective transforms so wrap first `DISP` does not restore occupied rows. During overdub, over-budget display resolve still mirrors `capturePreview` so open capture notes paint on NoteOn (`104129`), including after a committed-layer rebuild. Overdub playhead tails apply on every open-note frame, including over-budget reuse (`112806`); they are not gated on `captureLayerChanged`. Live capture tails stay on the frame and grow to currentTick until NoteOff. After wrap/stop adopt hide/dedupe, compose committed/capture/base counts clamp to `liveDisplayNotes.size()`; resize never grows a default MIDI 0 / tick 0 row (`111343`).
+`resolveConstrainedGeometry` maps `CompleteCover` **or** `OverlapNoteOn` to Hide. Inverted / empty (`endTick <= startTick`) Hides. Optional min-length remove Hides when `(end - start) < noteMinLengthTicks`. Overdub pending (`accumulatePendingNoteChangesFromSourceNotes`) Shortens `OverlapNoteOff`, Shortens `OverlapNoteOn` to the occupy exclusive end − 1 (Length companion), and Hides only `CompleteCover` or an inverted / min-length remnant. Occupy On (`resolveOccupancyAtNoteOn`) writes authoritative Shorten/Hide into `pendingNoteChanges_`: Shorten when A starts before B, Hide otherwise. Those identities are skipped at NoteOff. When occupy ledger ids are empty or have no source-view row (`104129` `n=0` / `010926` `norowid`), resolve falls back to present-at-hold source-view participants. Wrap idle slice / `adopt_partial` / grown-cache assign apply the same pending effective transforms so wrap first `DISP` does not restore occupied rows. Pending Hide/Shorten overlay matches `NoteId` on any closed painted row (committed prefix or sealed/closed capture suffix). `liveCaptureBegin` is only the sibling-drop / Hide-by-overlap prefix end — not transform eligibility. The only painted row that skips the overlay is an open capture hold (`capturePreviewNoteIsOpenHold`). During overdub, over-budget display resolve still mirrors `capturePreview` so open capture notes paint on NoteOn (`104129`), including after a committed-layer rebuild. Overdub playhead tails apply on every open-note frame, including over-budget reuse (`112806`); they are not gated on `captureLayerChanged`. Live capture tails stay on the frame and grow to currentTick until NoteOff. After wrap/stop adopt hide/dedupe, compose committed/capture/base counts clamp to `liveDisplayNotes.size()`; resize never grows a default MIDI 0 / tick 0 row (`111343`).
 
 ### 4. What is stored after resolve?
 
