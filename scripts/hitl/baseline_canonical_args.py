@@ -115,6 +115,8 @@ def canonical_occupy_paint_legacy_args() -> list[str]:
         "3000",
         "--press-ms",
         "120",
+        "--dnte-src-dump-drain-ms",
+        "30000",
     ]
 
 

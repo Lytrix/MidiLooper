@@ -39,6 +39,24 @@ class RunAbort:
         return None
 
 
+def _wait_for_serial_predicate(
+    snapshot_fn: Any,
+    predicate: Any,
+    *,
+    max_drain_ms: int,
+    poll_s: float = 0.05,
+) -> bool:
+    """Poll snapshot_fn until predicate(lines) is true or max_drain_ms elapses."""
+    if max_drain_ms <= 0:
+        return bool(predicate(snapshot_fn()))
+    deadline = time.monotonic() + max(max_drain_ms, 0) / 1000.0
+    while time.monotonic() < deadline:
+        if predicate(snapshot_fn()):
+            return True
+        time.sleep(max(poll_s, 0.001))
+    return bool(predicate(snapshot_fn()))
+
+
 def _wait_for_serial_line_idle(
     line_count_fn: Any,
     *,
@@ -96,6 +114,16 @@ class SerialCaptureCollector:
         return _wait_for_serial_line_idle(
             self.line_count,
             idle_ms=idle_ms,
+            max_drain_ms=max_drain_ms,
+        )
+
+    def drain_until_dnte_src_dumps(self, *, max_drain_ms: int) -> bool:
+        """Wait until reconstruct / effective / frame dump headers have their rows."""
+        from hitl.verify.dnte_src_dumps import dnte_src_dump_trio_complete
+
+        return _wait_for_serial_predicate(
+            self.snapshot,
+            dnte_src_dump_trio_complete,
             max_drain_ms=max_drain_ms,
         )
 

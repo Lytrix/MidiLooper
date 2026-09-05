@@ -123,6 +123,9 @@ public:
     void queueStoppedFrameNoteDump(const DisplayNoteVec& frameNotes, uint32_t loopLength,
                                    uint32_t loopStartTick);
     size_t emitStoppedFrameNoteDump(size_t maxLines);
+    /// Re-arm after an earlier STOPPED paint consumed the boot one-shot (occupy HITL
+    /// transport stop must dump this loop, not a leftover slot hop).
+    void armStoppedFrameNoteDump();
 #endif
 
     // Margin for piano roll, info area and note info

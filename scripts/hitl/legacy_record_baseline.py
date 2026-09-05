@@ -3374,6 +3374,15 @@ def run() -> int:
         ),
     )
     parser.add_argument(
+        "--dnte-src-dump-drain-ms",
+        type=int,
+        default=0,
+        help=(
+            "After final_wait, keep serial open until reconstruct / effective / "
+            "frame DNTE dumps complete (occupy RC1b). 0 = idle drain only."
+        ),
+    )
+    parser.add_argument(
         "--boot-settle-ms",
         type=int,
         default=0,
@@ -4170,7 +4179,22 @@ def run() -> int:
         if serial_collector is not None:
             close_drain_ms = max(getattr(args, "serial_close_drain_ms", 0), 0)
             close_idle_ms = max(getattr(args, "serial_close_idle_ms", 750), 0)
-            if close_drain_ms > 0:
+            dump_drain_ms = max(getattr(args, "dnte_src_dump_drain_ms", 0), 0)
+            if dump_drain_ms > 0:
+                dump_ok = serial_collector.drain_until_dnte_src_dumps(
+                    max_drain_ms=dump_drain_ms,
+                )
+                if dump_ok:
+                    print(
+                        f"[info] Serial dump drain complete "
+                        f"(reconstruct/effective/frame, cap={dump_drain_ms}ms)"
+                    )
+                else:
+                    print(
+                        f"[info] Serial dump drain timeout "
+                        f"(reconstruct/effective/frame missing, cap={dump_drain_ms}ms)"
+                    )
+            elif close_drain_ms > 0:
                 added = serial_collector.drain_until_idle(
                     idle_ms=close_idle_ms,
                     max_drain_ms=close_drain_ms,

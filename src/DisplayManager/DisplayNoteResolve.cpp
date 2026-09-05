@@ -152,6 +152,15 @@ DISP_CAPTURE_MEM void DisplayManager::maybeEmitDisplayCaptureOnChange(const Trac
 }
 
 #if defined(SESSION_CAPTURE)
+DISP_CAPTURE_MEM void DisplayManager::armStoppedFrameNoteDump() {
+    stoppedFrameNoteDumpArmed_ = true;
+    stoppedFrameNoteDump_.clear();
+    stoppedFrameNoteDumpCursor_ = 0;
+    stoppedFrameNoteDumpLoopLength_ = 0;
+    stoppedFrameNoteDumpLoopStart_ = 0;
+    stoppedFrameNoteDumpHeaderEmitted_ = false;
+}
+
 DISP_CAPTURE_MEM void DisplayManager::queueStoppedFrameNoteDump(const DisplayNoteVec& frameNotes,
                                                                 uint32_t loopLength,
                                                                 uint32_t loopStartTick) {
