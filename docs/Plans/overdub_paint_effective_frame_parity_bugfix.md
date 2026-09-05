@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. HITL still FAILs one 1-tick key (`52@2172` f=58 e=59). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. HITL still FAILs one 1-tick key (`52@2172` f=58 e=59). **RC1d pin shipped (investigation only):** host Loop occupy/commit/draw-source clone never writes inclusive 2230 on `52@2172` — not RC1d-a, not RC1d-b. Firmware gated. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -57,6 +57,7 @@ sealed upsert 77@336                      ← RC2 if recapture still 48
 69@5328 admission miss                    ← RC3 separate
 keepShortest on gather                    ← still forbidden
 suffix sibling-drop                       ← still forbidden (`150650`)
+RC1d pin (host Loop path)                 ← not a, not b; 2230 missing seam
 ```
 
 ---
@@ -240,6 +241,29 @@ YES — firmware this slice. Host fixture now expects window gather 400 / Off@10
 Device [`153848`](../../captures/session_20260905_153848.log): occupy holds PASS; dumps 39 / 28 / 26; no two-length; 15 `E != R` occupy-short keys; **0** `F == R` remnants. `48@666` E=F=396 vs R=744 (was frame 739 / effective 399 on [`152012`](../../captures/session_20260905_152012.log)). HITL FAIL `52@2172` f=58 e=59 (E=R=59). First flash run [`153705`](../../captures/session_20260905_153705.log) dropped USB before dumps.
 
 `advanceFallbackGatherSession` still applies Delete on the merged budgeted session. That remaining owner is not RC1c. `test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback` pins window gather 448 and keeps overlay-reject; it does not require idle cache end == window gather.
+
+## RC1d — pin first inclusive 2230 on occupy Add `52@2172` ([`153848`](../../captures/session_20260905_153848.log))
+
+**Investigation only. No firmware.** E=R=59 is product truth. Do not change events so E becomes 58.
+
+Host `test_occupy_153848_52_2172_first_inclusive_2230_pin`:
+
+```text
+effective event          Add@2172 → Off@2231   dump 59
+draw-source prefix       inclusive 2231
+after sealed/preview     inclusive 2231
+after companion overlay  inclusive 2231
+pending/Length on Add@2172 end 2230   absent
+```
+
+| Candidate | First 2230? |
+|-----------|-------------|
+| RC1d-a draw-source prefix | **no** |
+| RC1d-b overlay Length on the Add | **no** |
+
+Missing seam: inclusive 2230 on the device frame is not produced by the host-reachable Loop occupy/commit/seal/visual-rebuild/draw-source clone. Do not invent a third owner. Do not add DisplayManager/playhead-tail hooks in this stage.
+
+Firmware stays gated until a later session can reach the first-STOPPED painted prefix without a new publication owner. Hard stop if the only match is shortening the Add in events.
 
 ## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
 

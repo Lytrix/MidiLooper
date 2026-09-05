@@ -2522,6 +2522,118 @@ bool pendingWritesExclusiveEnd(const NoteUtils::DisplayNoteVec& notes, uint8_t p
   return noteEndAtPitchStart(notes, pitch, startTick) == exclusiveEnd;
 }
 
+bool noteIntersectsBar(const NoteUtils::DisplayNote& note, uint32_t bar, uint32_t loopLength) {
+  const uint32_t barStart = bar * Config::TICKS_PER_BAR;
+  return DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, barStart,
+                                                  Config::TICKS_PER_BAR, loopLength);
+}
+
+void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8_t pitchLow,
+                               uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
+  const uint8_t lastPitch =
+      pitchHigh < kLoopSnapshotPitchCount ? pitchHigh
+                                          : static_cast<uint8_t>(kLoopSnapshotPitchCount - 1);
+  for (uint16_t pitch = pitchLow; pitch <= lastPitch; ++pitch) {
+    const auto membership = snapshot.noteMembership(static_cast<uint8_t>(pitch), bar);
+    forEachSnapshotMembershipReference(membership.get(), [&out](const LoopSnapshotNoteRef& reference) {
+      if (!reference) {
+        return;
+      }
+      appendDisplayNoteUniqueById(out, displayNoteFromSnapshotNote(*reference));
+    });
+  }
+}
+
+void appendNotesIntersectingBar(const NoteUtils::DisplayNoteVec& source, uint32_t bar,
+                                uint32_t loopLength, NoteUtils::DisplayNoteVec& out) {
+  for (const NoteUtils::DisplayNote& note : source) {
+    if (noteIntersectsBar(note, bar, loopLength)) {
+      appendDisplayNoteUniqueById(out, note);
+    }
+  }
+}
+
+/// Same committed prefix as `gatherCommittedDrawSourceBars`. No sealed/preview union,
+/// no pending overlay. Host clone — not a firmware hook.
+void gatherDrawSourcePrefix(const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
+                            uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out) {
+  out.clear();
+  const uint32_t loopLength = loop.loopLengthTicks;
+  if (loopLength == 0 || firstBar > lastBar) {
+    return;
+  }
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+      static_cast<bool>(snapshot), loop.captureActive(), loop.hasOverdubSession(),
+      !loop.visualCache.notes.empty(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent());
+  const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+    if (usePublishedSnapshot) {
+      appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
+    } else {
+      appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
+    }
+  }
+}
+
+void applyDrawSourceSealedAndPreview(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                     NoteUtils::DisplayNoteVec& out, size_t committedEnd) {
+  const uint32_t loopLength = loop.loopLengthTicks;
+  const bool captureActive = loop.captureActive();
+  if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+          loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
+          loop.hasOverdubSession())) {
+    for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        if (!noteIntersectsBar(sealedRow, bar, loopLength)) {
+          continue;
+        }
+        DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, sealedRow,
+                                                             captureActive);
+        break;
+      }
+    }
+  }
+  if (!captureActive) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
+    bool intersectsWindow = false;
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+      if (noteIntersectsBar(previewNote, bar, loopLength)) {
+        intersectsWindow = true;
+        break;
+      }
+    }
+    if (!intersectsWindow) {
+      continue;
+    }
+    DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote, true);
+  }
+}
+
+bool lengthCompanionTargetsEnd(const Loop& loop, NoteId noteId, uint32_t endTick) {
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.state == EditPassState::Active && row.passType == EditPassType::Note &&
+        row.actionType == EditActionType::Update &&
+        row.propertyType == EditPropertyType::Length && row.targetNoteId == noteId &&
+        row.endTick == endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool pendingShortenTargetsEnd(const Loop& loop, NoteId noteId, uint32_t endTick) {
+  for (const PendingNoteChange& change : loop.pendingNoteChanges()) {
+    if (change.kind == PendingNoteChangeKind::Shorten && change.noteId == noteId &&
+        change.endTick == endTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void test_idle_slice_current_snapshot_is_accepted() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3864,6 +3976,111 @@ void test_occupy_144743_48_616_materialize_vs_window_vs_pending() {
   LoopContentResolution::deviceGateReset();
 }
 
+/// RC1d pin ([`153848`] 52@2172 f=58 e=59). Host Loop occupy/commit/seal plus
+/// draw-source clone (no DisplayManager hook). Effective Off@2231 / dump 59.
+/// Prefix, sealed union, and companion overlay all stay inclusive 2231.
+/// Not RC1d-a (stale draw-source prefix) and not RC1d-b (Length on the Add).
+/// First 2230 is not host-reachable without a new firmware hook — missing seam.
+void test_occupy_153848_52_2172_first_inclusive_2230_pin() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+
+  constexpr uint32_t kOccupyLoopLen = 3072;
+  constexpr uint8_t kPitch = 52;
+  constexpr NoteId kSource1847 = 15;
+  constexpr NoteId kOccupy2172 = 40;
+  constexpr uint32_t kLastBar = (kOccupyLoopLen / Config::TICKS_PER_BAR) - 1u;
+
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = kOccupyLoopLen;
+
+  LoopEventStore recordStore;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(recordStore, 80, 1, 72, 100, 1));
+  TEST_ASSERT_TRUE(recordStore.append(MidiEvent::NoteOff(460, 1, 72, 0)));
+  loop.seedRecordPassFromStore(recordStore);
+  loop.loopLengthTicks = kOccupyLoopLen;
+  loop.rebuildVisualCacheFromPasses();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(1847, 1, kPitch, 100, kSource1847)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2230, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 2230));
+  (void)loop.sealPendingNoteChangesToEditPasses();
+  loop.closeOverdubSession();
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, kPitch, 1847));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  loop.rebuildOverdubSourceView(0);
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), kPitch, 1847));
+
+  OverlapNoteIdSet ledger = overlapIds({kSource1847});
+  OverlapNoteIdSet resolved;
+  TEST_ASSERT_TRUE(
+      loop.appendCaptureEvent(noteOnWithNoteId(2172, 1, kPitch, 100, kOccupy2172)));
+  loop.resolveOccupancyAtNoteOn(1, kPitch, 100, ledger, 2172, &resolved);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2231, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(
+      1, kPitch, 100, 2172, 2231, kOccupy2172, ledger, &resolved));
+  loop.applyPendingNoteChangesToOverdubSourceView();
+
+  TEST_ASSERT_FALSE(pendingShortenTargetsEnd(loop, kOccupy2172, 2230));
+
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 2231));
+  const PassId od2PassId = loop.lastCommittedPassId();
+  const EditPassIdList companions = loop.sealPendingNoteChangesToEditPasses();
+  loop.recordLastOverdubSeal(od2PassId, companions, loop.playbackRevision);
+  loop.closeOverdubSession();
+  loop.rebuildVisualCacheFromPasses();
+
+  TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  TEST_ASSERT_FALSE(lengthCompanionTargetsEnd(loop, kOccupy2172, 2230));
+  TEST_ASSERT_FALSE(pendingShortenTargetsEnd(loop, kOccupy2172, 2230));
+
+  SessionMidiEventVec effectiveEvents;
+  loop.gatherCommittedEvents(effectiveEvents);
+  TEST_ASSERT_EQUAL_UINT32(1u, countPitchOnsAtTick(effectiveEvents, kPitch, 2172));
+  TEST_ASSERT_EQUAL_UINT32(1u, countPitchOffsAtTick(effectiveEvents, kPitch, 2231));
+  const NoteUtils::DisplayNoteVec effectiveNotes =
+      NoteUtils::reconstructDisplayNotes(effectiveEvents, kOccupyLoopLen, false, false);
+  TEST_ASSERT_EQUAL_UINT32(2231u, noteEndAtPitchStart(effectiveNotes, kPitch, 2172));
+  TEST_ASSERT_EQUAL_UINT32(
+      59u, displayNoteExclusiveLength(effectiveNotes, kPitch, 2172, kOccupyLoopLen));
+
+  NoteUtils::DisplayNoteVec beforeOverlay;
+  gatherDrawSourcePrefix(loop, 0, kLastBar, kPitch, kPitch, beforeOverlay);
+  const uint32_t beforeOverlayEnd = noteEndAtPitchStart(beforeOverlay, kPitch, 2172);
+  const size_t prefixEnd = beforeOverlay.size();
+  applyDrawSourceSealedAndPreview(loop, 0, kLastBar, beforeOverlay, prefixEnd);
+  const uint32_t afterSealedEnd = noteEndAtPitchStart(beforeOverlay, kPitch, 2172);
+
+  NoteUtils::DisplayNoteVec afterOverlay = beforeOverlay;
+  loop.applyPendingNoteChangesToDisplayNotes(afterOverlay, prefixEnd);
+  const uint32_t afterOverlayEnd = noteEndAtPitchStart(afterOverlay, kPitch, 2172);
+
+  char pin[192];
+  snprintf(pin, sizeof(pin),
+           "RC1d pin 52@2172 ends: effective=%lu prefix=%lu sealed=%lu overlay=%lu",
+           static_cast<unsigned long>(noteEndAtPitchStart(effectiveNotes, kPitch, 2172)),
+           static_cast<unsigned long>(beforeOverlayEnd),
+           static_cast<unsigned long>(afterSealedEnd),
+           static_cast<unsigned long>(afterOverlayEnd));
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2231u, beforeOverlayEnd, pin);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2231u, afterSealedEnd, pin);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2231u, afterOverlayEnd, pin);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      59u, displayNoteExclusiveLength(afterOverlay, kPitch, 2172, kOccupyLoopLen), pin);
+
+  LoopContentResolution::deviceGateReset();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
@@ -3958,5 +4175,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
   RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);
   RUN_TEST(test_occupy_144743_48_616_materialize_vs_window_vs_pending);
+  RUN_TEST(test_occupy_153848_52_2172_first_inclusive_2230_pin);
   return UNITY_END();
 }
