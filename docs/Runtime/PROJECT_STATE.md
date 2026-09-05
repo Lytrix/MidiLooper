@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-05 (RC3 tagged-Off NoteId pair from occupy-paint `52@664`)
+Last updated: 2026-09-05 (RC3 NoteId Off pair reverted; 191913 is truth)
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (RC3 tagged-Off NoteId pair from occupy-paint `52@664`)
+Last updated: 2026-09-05 (RC3 NoteId Off pair reverted; 191913 is truth)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**RC3 tagged-Off reconstruct pair ([`175026`](../../captures/session_20260905_175026.log) `52@664`):**
-Reconstruct Off pairing uses `NoteId` when the Off is tagged. Source
-`F@808` (`id=11`) must not LIFO-steal this-pass `N@664` (`id=26`). Host
-`test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on` expects
-`664→1040` (376), not 144. Do not paint frame to 144. Do not edit occupy
-On or `applyCapturePlayheadTails`. If occupy-paint RC1b becomes `E=376`
-`F=363`, stop — that leftover is the 1028 Shorten in gather. **RC2 still
-pinned.** Plan:
+**Stage 0 — RC3 NoteId Off pair reverted ([`191913`](../../captures/session_20260905_191913.log)):**
+Restore exact pre-`44f47e94` reconstruct LIFO. Keep `175026` `52@664`
+(E=144 vs occupy 363) as a parked finding, not a production pairing
+contract. Diagnostic `diagnostic_only_reconstruct_175026_tagged_off_pairing`
+is `TEST_IGNORE`. Do not add NoteId pairing fallbacks. Do not patch
+`applyCapturePlayheadTails`. 2304 is a legal loop. Next after the
+post-revert baseline gate: Bug 4 → 1 → 2 → 3. Plan:
+[`overdub_occupy_paint_191913_findings_bugfix.md`](../Plans/overdub_occupy_paint_191913_findings_bugfix.md).
+
+**Prior — RC3 tagged-Off reconstruct pair (reverted) ([`175026`](../../captures/session_20260905_175026.log) `52@664`):**
+`44f47e94` paired tagged Offs by `NoteId`. That fixed one reconstruct
+mismatch and is reverted. Parked diagnostic documents LIFO=144 vs
+desired 376. Plan:
 [`overdub_paint_shorten_live_stop_bugfix.md`](../Plans/overdub_paint_shorten_live_stop_bugfix.md).
 
 **Prior — RC1 pending overlay eligibility ([`172734`](../../captures/session_20260905_172734.log)):**
