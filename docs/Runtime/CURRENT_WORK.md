@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (overdub NoteOn Shorten paint)
+Last updated: 2026-09-05 (`223435`: wrap NoteOn Shorten recovery host shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,18 +10,41 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub paint — NoteOn Shorten on the first paint ([`215658`](../../captures/session_20260905_215658.log)):**
-NoteOn writes pending Shorten (`lcr,part` `as=768,ae=1440,hs=1104`) but
-the next paint still matched VisualCache geometry. Live compose may omit
-the Shorten target or keep the original end; `applyPendingHideAndShortenToNotes`
-cannot shorten a row the compose path does not expose. Live capture now
-invokes the existing `recoverMissingPendingShortenSources` owner, then
-applies pending on the paint copy only. Compose stays original.
-`painted_pending_shorten` / `stale_visual_source` / `authoritative_absence`
-carry NoteId and old/new geometry. VisualCache is not mutated. Hide is
-not recovered. Parent source recovery and Stage 1+2 stay closed.
+**Wrap NoteOn Shorten recovery ([`223435`](../../captures/session_20260905_223435.log)):**
+Post-wrap1 occupies wrote pending Shorten (`as=1536,ae=2208,hs=1824` /
+`hs=1872`) but the next paint omitted `painted_pending_shorten`. Later
+same-lap `as=2304,ae=2976,hs=2592` painted id 72; stop sealed
+`oh shorten=2`. Recovery required VisualCache to still hold the same
+`NoteId`. After wrap both compose and VisualCache can miss that identity
+while source-view still has the row. `classifyPendingShortenSource` now
+recovers whenever compose lacks the target and an authoritative row
+exists. VisualCache identity remains `authoritative_absence` evidence
+only. Host pins in `test_display_window_utils` and
+`test_pending_note_change`. `teensy41-capture-serial` RAM1 locals
+**6848**. Native **1668/1671** (pre-existing playhead-tails fail; one
+skipped). Device recapture required: first post-wrap Shorten hold must
+paint before the next `BAR`.
+Plan: [`overdub_paint_wrap_noteon_shorten_bugfix.md`](../Plans/overdub_paint_wrap_noteon_shorten_bugfix.md).
+Parent: [`overdub_paint_noteon_shorten_paint_bugfix.md`](../Plans/overdub_paint_noteon_shorten_paint_bugfix.md).
+
+**Prior — reported unfixed undo/reappear after stop ([`221758`](../../captures/session_20260905_221758.log)):**
+User reports that a previously undone overdub pass reappears after
+overdub stop. That capture boots empty and contains **no undo or redo**.
+Not this wrap-recovery RC. Blocked on a capture that contains the undo
+and the reappearing notes.
+
+**Prior — Overdub paint NoteOn Shorten on the first paint ([`221758`](../../captures/session_20260905_221758.log), paint gate met):**
+[`215658`](../../captures/session_20260905_215658.log) wrote pending Shorten
+at NoteOn (`as=768,ae=1440,hs=1104`) but the next paint still matched
+VisualCache geometry. Live capture now invokes
+`recoverMissingPendingShortenSources`, then applies pending on the paint
+copy only. Compose stays original. Device: first occupy Shorten
+`65928297` `63@2304–2928` `hs=2784` → `painted_pending_shorten` `65977618`
+id **114** `2304–2783` before `BAR,19200,25`; row stays through the next
+BAR. Same-start Hides do not emit. No `shorten_src` required. Parent
+source recovery and Stage 1+2 stay closed.
 Host: focused suites PASS; `teensy41-capture-serial` RAM1 locals **6848**;
-native **1667/1670** (pre-existing playhead-tails fail). Device recapture open.
+native **1667/1670** (pre-existing playhead-tails fail).
 Plan: [`overdub_paint_noteon_shorten_paint_bugfix.md`](../Plans/overdub_paint_noteon_shorten_paint_bugfix.md).
 Parent: [`overdub_paint_shorten_source_recovery_bugfix.md`](../Plans/overdub_paint_shorten_source_recovery_bugfix.md).
 

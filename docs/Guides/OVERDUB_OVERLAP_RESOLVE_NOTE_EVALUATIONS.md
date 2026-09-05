@@ -156,15 +156,16 @@ draw-source gather (Snapshot / VisualCache, plus Capture on live bars)
     ↓
 compose base (untransformed prefix + overlays)
     ↓
-pending Shorten source recovery (`212700` / `215658`): if compose lacks a
-    Shorten target and VisualCache still has that `NoteId`, establish
-    authoritative committed geometry (`findNote` / source-view /
-    windowed gather). `recoverMissingPendingShortenSources` is the single
-    owner; `resolveDisplayNotesByDrawSource` and
+pending Shorten source recovery (`212700` / `215658` / `223435`): if
+    compose lacks a Shorten target, establish authoritative committed
+    geometry (`findNote` / source-view / windowed gather) even when
+    VisualCache also lacks that `NoteId`. `recoverMissingPendingShortenSources`
+    is the single owner; `resolveDisplayNotesByDrawSource` and
     `resolveDisplayNotesLiveCapture` may invoke it. Recover that committed
-    row into compose, then paint. If the authoritative source also lacks
-    the target, keep it absent (`authoritative_absence`). Never copy
-    VisualCache geometry. Hide keeps the existing absence path.
+    row into compose, then paint. If VisualCache still has the identity
+    and the authoritative source lacks the target, keep it absent
+    (`authoritative_absence`). Never copy VisualCache geometry. Hide
+    keeps the existing absence path.
     ↓
 paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     (pending + sealed Hide/Shorten by NoteId on any closed painted row —

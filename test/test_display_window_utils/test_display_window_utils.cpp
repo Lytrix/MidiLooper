@@ -1353,7 +1353,7 @@ void test_pending_shorten_source_classify_and_recover_212700() {
       static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::NotNeeded),
       static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(true, true, true)));
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::NotNeeded),
+      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative),
       static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(false, false, true)));
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative),
@@ -1361,6 +1361,9 @@ void test_pending_shorten_source_classify_and_recover_212700() {
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::AuthoritativeAbsence),
       static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(false, true, false)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::NotNeeded),
+      static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(false, false, false)));
 
   NoteUtils::DisplayNoteVec compose;
   NoteUtils::DisplayNoteVec visual;
@@ -1377,6 +1380,18 @@ void test_pending_shorten_source_classify_and_recover_212700() {
   TEST_ASSERT_EQUAL(84, compose[0].noteId);
   TEST_ASSERT_EQUAL_UINT32(4560u, compose[0].startTick);
   TEST_ASSERT_EQUAL_UINT32(4608u, compose[0].endTick);
+
+  NoteUtils::DisplayNoteVec wrapCompose;
+  NoteUtils::DisplayNoteVec emptyVisual;
+  const DisplayWindowUtils::PendingShortenRecoveryCounts wrapRecovered =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(wrapCompose, emptyVisual, shortenIds, 1,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, wrapRecovered.recovered);
+  TEST_ASSERT_EQUAL_UINT32(0u, wrapRecovered.authoritativeAbsence);
+  TEST_ASSERT_EQUAL(1u, wrapCompose.size());
+  TEST_ASSERT_EQUAL(84, wrapCompose[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(4560u, wrapCompose[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(4608u, wrapCompose[0].endTick);
 
   NoteUtils::DisplayNoteVec absentCompose;
   NoteUtils::DisplayNoteVec emptyAuthoritative;

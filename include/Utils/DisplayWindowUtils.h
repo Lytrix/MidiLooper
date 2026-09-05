@@ -400,11 +400,16 @@ inline bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, No
 inline PendingShortenSourceKind classifyPendingShortenSource(bool composeHasTarget,
                                                              bool visualCacheHasSameIdentity,
                                                              bool authoritativeHasTarget) {
-    if (composeHasTarget || !visualCacheHasSameIdentity) {
+    if (composeHasTarget) {
         return PendingShortenSourceKind::NotNeeded;
     }
-    return authoritativeHasTarget ? PendingShortenSourceKind::RecoverAuthoritative
-                                  : PendingShortenSourceKind::AuthoritativeAbsence;
+    if (authoritativeHasTarget) {
+        return PendingShortenSourceKind::RecoverAuthoritative;
+    }
+    if (visualCacheHasSameIdentity) {
+        return PendingShortenSourceKind::AuthoritativeAbsence;
+    }
+    return PendingShortenSourceKind::NotNeeded;
 }
 
 struct PendingShortenRecoveryCounts {
@@ -413,10 +418,14 @@ struct PendingShortenRecoveryCounts {
 };
 
 /// Append authoritative committed geometry for pending Shorten targets that
-/// compose dropped while VisualCache still shows the same `NoteId`. Never
-/// copies VisualCache geometry. Hide is not a recovery input.
-/// First paint after NoteOn: compose keeps original geometry; paint has the
-/// pending Shorten end. Absence stays absence (`215658`).
+/// compose dropped. VisualCache identity is mismatch evidence for
+/// `authoritative_absence` only — never the geometry to copy (`212700`).
+/// Post-wrap compose may miss a row while VisualCache is also dirty
+/// (`223435` id 70 `1536–2208`). Recover from snapshot / source-view /
+/// windowed gather when that identity is authoritative. Hide is not a
+/// recovery input. First paint after NoteOn: compose keeps original
+/// geometry; paint has the pending Shorten end. Absence stays absence
+/// (`215658`).
 struct PaintedPendingShorten {
     NoteId noteId = kInvalidNoteId;
     uint32_t composeStartTick = 0;
