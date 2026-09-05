@@ -3460,6 +3460,102 @@ void test_pending_shorten_drops_same_start_longer_sibling() {
   TEST_ASSERT_EQUAL_UINT32(863u, paint[0].endTick);
 }
 
+/// `172734` RC1: transform eligibility is open-hold, not suffix position.
+void test_pending_shorten_172734_open_hold_eligibility_matrix() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 80, 680, 1352, 63, 5376);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(shortenChange(80, 63, 680, 1207));
+
+  NoteUtils::DisplayNoteVec prefixPaint;
+  prefixPaint.push_back(displayNote(80, 63, 680, 1352));
+  loop.applyPendingNoteChangesToDisplayNotes(prefixPaint, 1);
+  TEST_ASSERT_EQUAL(1u, prefixPaint.size());
+  TEST_ASSERT_EQUAL(80, prefixPaint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(680u, prefixPaint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1207u, prefixPaint[0].endTick);
+
+  NoteUtils::DisplayNoteVec suffixPaint;
+  suffixPaint.push_back(displayNote(1, 71, 536, 584));
+  suffixPaint.push_back(displayNote(80, 63, 680, 1352));
+  loop.applyPendingNoteChangesToDisplayNotes(suffixPaint, 1);
+  TEST_ASSERT_EQUAL(2u, suffixPaint.size());
+  TEST_ASSERT_EQUAL(1, suffixPaint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(584u, suffixPaint[0].endTick);
+  TEST_ASSERT_EQUAL(80, suffixPaint[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(680u, suffixPaint[1].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1207u, suffixPaint[1].endTick);
+
+  NoteUtils::DisplayNoteVec openPaint;
+  openPaint.push_back(displayNote(1, 71, 536, 584));
+  openPaint.push_back(displayNote(80, 63, 1208, 1208));
+  loop.applyPendingNoteChangesToDisplayNotes(openPaint, 1);
+  TEST_ASSERT_EQUAL(2u, openPaint.size());
+  TEST_ASSERT_EQUAL(80, openPaint[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1208u, openPaint[1].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1208u, openPaint[1].endTick);
+
+  NoteUtils::DisplayNoteVec unrelatedPaint;
+  unrelatedPaint.push_back(displayNote(1, 71, 536, 584));
+  unrelatedPaint.push_back(displayNote(81, 69, 728, 776));
+  loop.applyPendingNoteChangesToDisplayNotes(unrelatedPaint, 1);
+  TEST_ASSERT_EQUAL(2u, unrelatedPaint.size());
+  TEST_ASSERT_EQUAL(81, unrelatedPaint[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(728u, unrelatedPaint[1].startTick);
+  TEST_ASSERT_EQUAL_UINT32(776u, unrelatedPaint[1].endTick);
+
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.overdubSourceViewNotes(), 80));
+  const NoteUtils::DisplayNote* source = findDisplayNoteById(loop.overdubSourceViewNotes(), 80);
+  TEST_ASSERT_EQUAL_UINT32(680u, source->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1352u, source->endTick);
+}
+
+/// `193815` Bug 2 diagnosis: occupy `63` as=1536 ae=2208 hs=1920 → Shorten 1919.
+/// Records what `applyPendingNoteChangesToDisplayNotes` does for each device-shaped
+/// paint. Does not assume the root mechanism.
+void test_pending_shorten_193815_63_1536_hold_1919_matrix() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(shortenChange(40, 63, 1536, 1919));
+
+  NoteUtils::DisplayNoteVec sameIdClosed;
+  sameIdClosed.push_back(displayNote(40, 63, 1536, 2208));
+  loop.applyPendingNoteChangesToDisplayNotes(sameIdClosed, 1);
+  TEST_ASSERT_EQUAL(1u, sameIdClosed.size());
+  TEST_ASSERT_EQUAL(40, sameIdClosed[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1536u, sameIdClosed[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1919u, sameIdClosed[0].endTick);
+
+  NoteUtils::DisplayNoteVec invalidIdClosed;
+  invalidIdClosed.push_back(displayNote(kInvalidNoteId, 63, 1536, 2208));
+  loop.applyPendingNoteChangesToDisplayNotes(invalidIdClosed, 1);
+  TEST_ASSERT_EQUAL(1u, invalidIdClosed.size());
+  TEST_ASSERT_EQUAL(kInvalidNoteId, invalidIdClosed[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1536u, invalidIdClosed[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, invalidIdClosed[0].endTick);
+
+  NoteUtils::DisplayNoteVec openHold;
+  openHold.push_back(displayNote(40, 63, 1920, 1920));
+  loop.applyPendingNoteChangesToDisplayNotes(openHold, 1);
+  TEST_ASSERT_EQUAL(1u, openHold.size());
+  TEST_ASSERT_EQUAL(40, openHold[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1920u, openHold[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1920u, openHold[0].endTick);
+
+  NoteUtils::DisplayNoteVec otherIdClosed;
+  otherIdClosed.push_back(displayNote(99, 63, 1536, 2208));
+  loop.applyPendingNoteChangesToDisplayNotes(otherIdClosed, 1);
+  TEST_ASSERT_EQUAL(1u, otherIdClosed.size());
+  TEST_ASSERT_EQUAL(99, otherIdClosed[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1536u, otherIdClosed[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, otherIdClosed[0].endTick);
+}
+
 /// `150650`: a long sealed/preview suffix at the Shorten pitch+start is not dropped.
 void test_shorten_does_not_drop_suffix_same_start_hold() {
   LoopEventStore::resetPoolForTests();
@@ -3789,6 +3885,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_hide_drops_same_start_longer_when_note_id_differs);
   RUN_TEST(test_sealed_shorten_drops_same_start_longer_sibling);
   RUN_TEST(test_pending_shorten_drops_same_start_longer_sibling);
+  RUN_TEST(test_pending_shorten_172734_open_hold_eligibility_matrix);
+  RUN_TEST(test_pending_shorten_193815_63_1536_hold_1919_matrix);
   RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
