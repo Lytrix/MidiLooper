@@ -379,7 +379,11 @@ struct Loop {
   /// True when the selected committed representation is still behind the last seal.
   bool sealedCompanionOverlayRequired() const;
   const OverlapHoldTotals& overlapHoldTotals() const { return overlapHoldTotals_; }
-  /// One `#CAP,DIAG,oh` at overdub-stop seal (`add`/`shorten`/`hide` last). SESSION_CAPTURE / FLASHMEM only.
+  /// Derive `overlapHoldTotals_` add/shorten/hide from current `pendingNoteChanges_`.
+  /// Same occupancy classification as On/Off. Diagnostic accounting only.
+  void recountOverlapHoldTotalsFromPending();
+  /// One `#CAP,DIAG,oh` (`add`/`shorten`/`hide` last). Observational only — wrap
+  /// seal and overdub-stop seal. SESSION_CAPTURE / FLASHMEM only.
   void emitOverlapHoldTotals() const;
 
   CaptureAppendResult appendCaptureEventWithResult(const MidiEvent& evt);

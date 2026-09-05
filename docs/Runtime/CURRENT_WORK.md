@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (occupy present-at-hold RC4)
+Last updated: 2026-09-05 (occupy RC4 + RC5 host shipped — recapture next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,11 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — occupy present-at-hold RC4 ([`134436`](../../captures/session_20260905_134436.log)):**
-`resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. Filter before geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill. RC5 (wrap-seal `oh`, diagnostic only) is next. RC1b recapture, RC2 (`77@336` 48), and RC3 (`69@5328` miss) stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+**Now — occupy RC4 + RC5 host shipped ([`134436`](../../captures/session_20260905_134436.log)):**
+RC4: ledger-selected occupy On transforms only when present at hold. RC5: wrap seal emits diagnostic `oh` from the same pending-kind recount before clear. Device: `overdub_occupy_paint` (wrap `oh` shorten>=2). Stay on the occupy slot for RC1b frame dump. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md). RAM1 locals **6848**. Full native **1643/1645** — pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end` only.
+
+**Prior — occupy present-at-hold RC4 ([`134436`](../../captures/session_20260905_134436.log)):**
+`resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. Filter before geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill. Host `a04e2bd5`.
 
 **Prior — effective vs frame RC1b ([`154310`](../../captures/session_20260903_154310.log)):**
 After stop, draw-source sealed union does not append a linear row whose pitch+start already exists in the committed prefix. During capture, suffix upsert stays (`150650`). RC1 overlay list stays. Do not extend sibling-drop into the live-capture suffix. Do not add gather `keepShortest`. Occupy HITL phase windows close OD2 on `Overdubbing stopped` / `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing ([`133818`](../../captures/session_20260905_133818.log)).
