@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (RC1d-c: stop playhead tail takes sealed Off)
+Last updated: 2026-09-05 (RC1d-c recapture: 52@2172 gone; leftover 52@2180)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,11 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — RC1d-c first-STOPPED playhead tail ([`153848`](../../captures/session_20260905_153848.log) `52@2172`):**
-Last OVERDUBBING playhead tail freezes inclusive 2230 on `liveDisplayNotes`. RC1b skip keeps that prefix after stop. `refreshViewportAfterOverdubStop` rewrites stop-phase tails from sealed closed Off (2231). Host pins PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1647/1649** (pre-existing playhead-tails fail). Do not change RC1b skip, events, or E=59. Occupy HITL recapture gated until flash: `52@2172` f=e=59. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+**Now — RC1d-c occupy HITL recapture [`162325`](../../captures/session_20260905_162325.log) (`fedcc25f`):**
+Flashed `teensy41-capture-serial`. Occupy holds PASS: OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22, GUS 2/2. Dumps reconstruct 39 / effective 28 / frame 26. No two-length. `52@2172` absent. HITL FAIL is one 1-tick key: `52@2180` f=46 e=47 (E=R=47). Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+
+**Prior — RC1d-c first-STOPPED playhead tail ([`153848`](../../captures/session_20260905_153848.log) `52@2172`):**
+Last OVERDUBBING playhead tail freezes inclusive 2230 on `liveDisplayNotes`. RC1b skip keeps that prefix after stop. `refreshViewportAfterOverdubStop` rewrites stop-phase tails from sealed closed Off (2231). Host pins PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1647/1649** (pre-existing playhead-tails fail). Do not change RC1b skip, events, or E=59.
 
 **Prior — RC1d Loop pin (investigation only, [`153848`](../../captures/session_20260905_153848.log) `52@2172`):**
 Host `test_occupy_153848_52_2172_first_inclusive_2230_pin` PASS. Effective Off@2231 / dump 59. Draw-source prefix, sealed union, and companion overlay stay inclusive 2231. No pending/Length companion on the Add at 2230. **Not RC1d-a. Not RC1d-b.**

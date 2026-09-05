@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. HITL still FAILs one 1-tick key (`52@2172` f=58 e=59) until RC1d-c flash. **RC1d Loop pin shipped:** not RC1d-a, not RC1d-b. **RC1d-c host shipped:** stop playhead tail takes sealed closed Off. Occupy HITL recapture gated. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. **RC1d Loop pin shipped:** not RC1d-a, not RC1d-b. **RC1d-c host + device recapture [`162325`](../../captures/session_20260905_162325.log):** `52@2172` gone. HITL FAIL is one 1-tick key (`52@2180` f=46 e=47, E=R=47). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -300,7 +300,9 @@ Host pins in `test_display_window_utils`: `test_stopped_playhead_tail_takes_clos
 
 ### Host shipped
 
-`refreshViewportAfterOverdubStop` calls `realizeClosedCaptureOffOnStopPlayheadTails` after preserve/resize and before adopt. Host pins PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1647/1649** (pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end`). Occupy HITL recapture gated until flash: `52@2172` f=e=59.
+`refreshViewportAfterOverdubStop` calls `realizeClosedCaptureOffOnStopPlayheadTails` after preserve/resize and before adopt. Host pins PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1647/1649** (pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end`).
+
+Device [`162325`](../../captures/session_20260905_162325.log) / [`host_midi_hitl_occupy_paint_20260905_162429.json`](../../captures/host_midi_hitl_occupy_paint_20260905_162429.json): flashed `fedcc25f`. Occupy holds PASS (OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22). Dumps reconstruct 39 / effective 28 / frame 26. No two-length. `52@2172` absent. Leftover `52@2180` R=E=47 / F=46.
 
 ### Architecture checkpoint
 
