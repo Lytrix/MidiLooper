@@ -178,6 +178,11 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     liveMergePlaybackRevision_ = playbackRevision;
     liveMergeCaptureRevision_ = captureDisplayRevision;
+    // RC1d-c: last OVERDUBBING playhead tails freeze inclusive ends on
+    // liveDisplayNotes. After commit, closed Off is in sealed preview only.
+    // Rewrite stop-phase tails from that Off before adopt; RC1b skip stays.
+    DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(
+        liveDisplayNotes, loop.sealedCapturePreviewNotes(), storagePhaseTickInLoop);
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
     // Do not rebuildVisualCacheFromPasses / ensureVisualCacheBuilt here — overdub
