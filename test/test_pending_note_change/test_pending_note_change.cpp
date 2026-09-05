@@ -32,8 +32,11 @@
 #include "ActiveNoteLedger.h"
 #include "Utils/CommittedPlaybackLedgerCatchUp.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/PlaybackCursorAdvance.h"
+#include "Utils/SnapshotNoteConversion.h"
+#include "VisualCache.h"
 #include "PlaybackMergedMidiEvents.h"
 #include "GlobalUndoStack.h"
 
@@ -3556,6 +3559,209 @@ void test_pending_shorten_193815_63_1536_hold_1919_matrix() {
   TEST_ASSERT_EQUAL_UINT32(2208u, otherIdClosed[0].endTick);
 }
 
+bool previewNoteIntersectsBarForTest(const NoteUtils::DisplayNote& note, uint32_t bar,
+                                     uint32_t loopLength) {
+  const uint32_t barStart = bar * Config::TICKS_PER_BAR;
+  return DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, barStart,
+                                                  Config::TICKS_PER_BAR, loopLength);
+}
+
+/// Same sequence as `DisplayManagerInternal::applyDrawSourceOverlays`.
+void applyDrawSourceOverlaysForTest(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                    NoteUtils::DisplayNoteVec& out, size_t committedEnd) {
+  const uint32_t loopLength = loop.loopLengthTicks;
+  if (loopLength == 0 || firstBar > lastBar) {
+    return;
+  }
+  const bool captureActive = loop.captureActive();
+  if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+          loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
+          loop.hasOverdubSession())) {
+    for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        if (!previewNoteIntersectsBarForTest(sealedRow, bar, loopLength)) {
+          continue;
+        }
+        DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, sealedRow,
+                                                             captureActive);
+        break;
+      }
+    }
+  }
+  if (!captureActive) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
+    bool intersectsWindow = false;
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+      if (previewNoteIntersectsBarForTest(previewNote, bar, loopLength)) {
+        intersectsWindow = true;
+        break;
+      }
+    }
+    if (!intersectsWindow) {
+      continue;
+    }
+    if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(previewNote.startTick,
+                                                         previewNote.endTick)) {
+      appendDisplayNoteUniqueById(out, previewNote);
+    } else {
+      DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, previewNote, true);
+    }
+  }
+}
+
+/// Same body as overdub `applyCapturePlayheadTails` (`allowWrapContinuation=false`).
+void applyOverdubCapturePlayheadTailsForTest(const CapturePreview& preview, uint32_t loopLength,
+                                             uint32_t closeTick, size_t captureRegionStart,
+                                             NoteUtils::DisplayNoteVec& notes) {
+  const uint32_t clampedCloseTick =
+      (loopLength == 0) ? 0u : (closeTick >= loopLength ? (loopLength - 1u) : closeTick);
+  for (const uint32_t previewNoteIndex : preview.openNoteIndices) {
+    if (previewNoteIndex >= preview.notes.size() ||
+        previewNoteIndex >= preview.noteStates.size()) {
+      continue;
+    }
+    const NoteUtils::DisplayNote& previewNote = preview.notes[previewNoteIndex];
+    const CapturePreviewNoteState& state = preview.noteStates[previewNoteIndex];
+    if (!state.open) {
+      continue;
+    }
+    uint32_t noteStartTick = previewNote.startTick;
+    uint32_t playheadEndTick =
+        noteStartTick > clampedCloseTick ? noteStartTick : clampedCloseTick;
+    DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(noteStartTick, playheadEndTick, loopLength);
+    bool updated = false;
+    for (size_t i = captureRegionStart; i < notes.size(); ++i) {
+      if (notes[i].note == previewNote.note && notes[i].startTick == previewNote.startTick) {
+        notes[i].startTick = noteStartTick;
+        notes[i].endTick = playheadEndTick;
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) {
+      NoteUtils::DisplayNote liveNote{};
+      liveNote.note = previewNote.note;
+      liveNote.velocity = previewNote.velocity;
+      liveNote.startTick = noteStartTick;
+      liveNote.endTick = playheadEndTick;
+      notes.push_back(liveNote);
+    }
+  }
+}
+
+const NoteUtils::DisplayNote* findPaintAtPitchStart(const NoteUtils::DisplayNoteVec& notes,
+                                                    uint8_t pitch, uint32_t startTick) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.startTick == startTick) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void seedOccupyOpenHoldPreview(Loop& loop, NoteId holdId) {
+  NoteUtils::DisplayNote hold = displayNote(holdId, 63, 1920, 1920);
+  loop.capturePreview.notes.push_back(hold);
+  CapturePreviewNoteState state{};
+  state.open = true;
+  loop.capturePreview.noteStates.push_back(state);
+  loop.capturePreview.openNoteIndices.push_back(0);
+}
+
+/// `193815` Bug 2 compose pin. Live painted NoteId is not in the capture.
+/// Host stand-in ids label layer shapes only — not the device id.
+/// Sequence matches `resolveDisplayNotesByDrawSource`: prefix + overlays +
+/// `applyPendingNoteChangesToDisplayNotes` + overdub tails.
+void test_draw_source_compose_193815_63_1536_forks() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
+  constexpr NoteId kHostOccupyId = 1;
+  constexpr NoteId kHostHoldId = 2;
+  constexpr NoteId kHostOtherId = 3;
+
+  auto compose = [&](Loop& loop, NoteUtils::DisplayNoteVec prefix) -> NoteUtils::DisplayNoteVec {
+    const size_t committedEnd = prefix.size();
+    applyDrawSourceOverlaysForTest(loop, 0, kLastBar, prefix, committedEnd);
+    loop.applyPendingNoteChangesToDisplayNotes(prefix, committedEnd);
+    return prefix;
+  };
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.pushPendingNoteChangeForTest(shortenChange(kHostOccupyId, 63, 1536, 1919));
+    seedOccupyOpenHoldPreview(loop, kHostHoldId);
+
+    NoteUtils::DisplayNoteVec afterPending = compose(loop, {});
+    TEST_ASSERT_NULL(findPaintAtPitchStart(afterPending, 63, 1536));
+
+    NoteUtils::DisplayNoteVec afterTails = afterPending;
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 1920, 0, afterTails);
+    TEST_ASSERT_NULL(findPaintAtPitchStart(afterTails, 63, 1536));
+    const NoteUtils::DisplayNote* hold = findPaintAtPitchStart(afterTails, 63, 1920);
+    TEST_ASSERT_NOT_NULL(hold);
+    TEST_ASSERT_EQUAL_UINT32(1920u, hold->endTick);
+  }
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.pushPendingNoteChangeForTest(shortenChange(kHostOccupyId, 63, 1536, 1919));
+    seedOccupyOpenHoldPreview(loop, kHostHoldId);
+
+    NoteUtils::DisplayNoteVec prefix;
+    prefix.push_back(displayNote(kInvalidNoteId, 63, 1536, 2208));
+    NoteUtils::DisplayNoteVec afterPending = compose(loop, prefix);
+    const NoteUtils::DisplayNote* painted = findPaintAtPitchStart(afterPending, 63, 1536);
+    TEST_ASSERT_NOT_NULL(painted);
+    TEST_ASSERT_EQUAL(kInvalidNoteId, painted->noteId);
+    TEST_ASSERT_EQUAL_UINT32(2208u, painted->endTick);
+
+    prefix.clear();
+    prefix.push_back(displayNote(kHostOtherId, 63, 1536, 2208));
+    afterPending = compose(loop, prefix);
+    painted = findPaintAtPitchStart(afterPending, 63, 1536);
+    TEST_ASSERT_NOT_NULL(painted);
+    TEST_ASSERT_EQUAL(kHostOtherId, painted->noteId);
+    TEST_ASSERT_EQUAL_UINT32(2208u, painted->endTick);
+  }
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.pushPendingNoteChangeForTest(shortenChange(kHostOccupyId, 63, 1536, 1919));
+    seedOccupyOpenHoldPreview(loop, kHostHoldId);
+
+    NoteUtils::DisplayNoteVec prefix;
+    prefix.push_back(displayNote(kHostOccupyId, 63, 1536, 2208));
+    NoteUtils::DisplayNoteVec afterPending = compose(loop, prefix);
+    const NoteUtils::DisplayNote* painted = findPaintAtPitchStart(afterPending, 63, 1536);
+    TEST_ASSERT_NOT_NULL(painted);
+    TEST_ASSERT_EQUAL(kHostOccupyId, painted->noteId);
+    TEST_ASSERT_EQUAL_UINT32(1919u, painted->endTick);
+
+    NoteUtils::DisplayNoteVec afterTails = afterPending;
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 2365, 1, afterTails);
+    painted = findPaintAtPitchStart(afterTails, 63, 1536);
+    TEST_ASSERT_NOT_NULL(painted);
+    TEST_ASSERT_EQUAL_UINT32(1919u, painted->endTick);
+    const NoteUtils::DisplayNote* hold = findPaintAtPitchStart(afterTails, 63, 1920);
+    TEST_ASSERT_NOT_NULL(hold);
+    TEST_ASSERT_EQUAL_UINT32(2365u, hold->endTick);
+  }
+}
+
 /// `150650`: a long sealed/preview suffix at the Shorten pitch+start is not dropped.
 void test_shorten_does_not_drop_suffix_same_start_hold() {
   LoopEventStore::resetPoolForTests();
@@ -3887,6 +4093,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_drops_same_start_longer_sibling);
   RUN_TEST(test_pending_shorten_172734_open_hold_eligibility_matrix);
   RUN_TEST(test_pending_shorten_193815_63_1536_hold_1919_matrix);
+  RUN_TEST(test_draw_source_compose_193815_63_1536_forks);
   RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);

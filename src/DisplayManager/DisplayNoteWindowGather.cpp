@@ -18,6 +18,7 @@
 #include "VisualCache.h"
 #include <Arduino.h>
 #include <algorithm>
+#include <cstdio>
 
 #if defined(__IMXRT1062__)
 #define DISP_COLD_MEM FLASHMEM
@@ -305,6 +306,35 @@ void applyPendingDrawSourceTransforms(const Loop& loop, NoteUtils::DisplayNoteVe
     }
 }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+DISP_CAPTURE_MEM void emitPaintedOccupy193815Row(const char* stage,
+                                                 const Loop& loop,
+                                                 const NoteUtils::DisplayNoteVec& notes) {
+    if (!loop.hasPendingNoteChanges() || stage == nullptr) {
+        return;
+    }
+    constexpr uint8_t kPitch = 63;
+    constexpr uint32_t kStartTick = 1536;
+    uint32_t present = 0;
+    int32_t noteId = -1;
+    uint32_t endTick = 0;
+    for (const NoteUtils::DisplayNote& note : notes) {
+        if (note.note == kPitch && note.startTick == kStartTick) {
+            present = 1;
+            noteId = static_cast<int32_t>(note.noteId);
+            endTick = note.endTick;
+            break;
+        }
+    }
+    char line[176];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,draw_src,bug2,%s,p,63,s,1536,present,%u,id,%ld,end,%u",
+             static_cast<unsigned long>(micros()), stage, static_cast<unsigned>(present),
+             static_cast<long>(noteId), static_cast<unsigned>(endTick));
+    DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
 DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     const Track& track, const Loop& loop, uint8_t displaySlot, uint32_t windowStart,
     uint32_t windowLength, uint32_t playheadBar, uint8_t pitchLow, uint8_t pitchHigh) {
@@ -401,6 +431,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         committedDisplayEnd = candidate.size();
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
         applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        emitPaintedOccupy193815Row("after_pending", loop, candidate);
+#endif
         liveDisplayNotes.swap(candidate);
     } else if (canSlideCommittedPrefix) {
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
@@ -414,6 +447,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
         applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        emitPaintedOccupy193815Row("after_pending", loop, candidate);
+#endif
         liveDisplayNotes.swap(candidate);
     } else {
         DIAG_COUNTER_INC(DisplayFullRebuild);
@@ -422,6 +458,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
         applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        emitPaintedOccupy193815Row("after_pending", loop, candidate);
+#endif
         const bool snapshotSelected =
             DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
                 static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(),
@@ -459,6 +498,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                                   allowWrapContinuation);
         paintedNotes = &liveDisplayPendingPaintNotes_;
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    emitPaintedOccupy193815Row("after_tails", loop, *paintedNotes);
+#endif
 
     liveDisplayCacheCommittedNoteCount_ = committedDisplayEnd;
     liveDisplayCacheBaseNoteCount_ = paintedNotes->size();
