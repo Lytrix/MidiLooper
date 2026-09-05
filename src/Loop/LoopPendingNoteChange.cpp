@@ -204,16 +204,36 @@ LOOP_COLD_MEM bool sourceTransformMarksPitchStart(const PendingNoteChangeVec& tr
   return false;
 }
 
+LOOP_COLD_MEM bool hideSourceEndAtPitchStart(const PendingNoteChangeVec& transforms,
+                                             uint8_t pitch, uint32_t startTick,
+                                             uint32_t& hideEndTick) {
+  bool found = false;
+  hideEndTick = 0;
+  for (const PendingNoteChange& change : transforms) {
+    if (change.kind == PendingNoteChangeKind::Hide && change.pitch == pitch &&
+        change.startTick == startTick) {
+      if (!found || change.endTick > hideEndTick) {
+        hideEndTick = change.endTick;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
 /// After Hide or Shorten apply, drop a longer same-pitch+start closed sibling so a
 /// snapshot/sealed-preview remnant cannot sit beside the shortened row (`201956`
 /// Hide; `123236` Shorten; `000402` later occupy still painted short by NoteId
-/// while the longer suffix remnant stayed visible). Only pitch+starts named by
-/// those transforms are touched. Open capture holds are kept so playhead tails
-/// can grow. Occupying Adds start at hold, not at the shortened source start.
+/// while the longer suffix remnant stayed visible). Hide also drops a closed
+/// remnant whose end is at least the hidden source end when an open occupy
+/// hold or a shorter closed keeper is already at that pitch+start (`001145`
+/// 63@1152). A Hide whose target was never in the frame does not delete a
+/// different NoteId (`RC3`). Only pitch+starts named by those transforms
+/// are touched. Open capture holds are kept so playhead tails can grow.
 LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
     size_t /*liveCaptureBegin*/) {
-  if (notes.size() < 2) {
+  if (notes.empty()) {
     return;
   }
   bool anyNamedTransform = false;
@@ -235,8 +255,34 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
   kept.reserve(notes.size());
   for (size_t i = 0; i < notes.size(); ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
-    if (!isClosedLinear(note) ||
-        !sourceTransformMarksPitchStart(transforms, note.note, note.startTick)) {
+    uint32_t hideEndTick = 0;
+    if (!isClosedLinear(note)) {
+      kept.push_back(note);
+      continue;
+    }
+    if (hideSourceEndAtPitchStart(transforms, note.note, note.startTick, hideEndTick)) {
+      if (note.endTick < hideEndTick) {
+        kept.push_back(note);
+        continue;
+      }
+      bool occupyPresent = false;
+      for (size_t j = 0; j < notes.size(); ++j) {
+        const NoteUtils::DisplayNote& other = notes[j];
+        if (other.note != note.note || other.startTick != note.startTick) {
+          continue;
+        }
+        if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(other.startTick, other.endTick) ||
+            (isClosedLinear(other) && other.endTick < hideEndTick)) {
+          occupyPresent = true;
+          break;
+        }
+      }
+      if (!occupyPresent) {
+        kept.push_back(note);
+      }
+      continue;
+    }
+    if (!sourceTransformMarksPitchStart(transforms, note.note, note.startTick)) {
       kept.push_back(note);
       continue;
     }

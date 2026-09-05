@@ -4032,6 +4032,44 @@ void test_later_occupy_shorten_drops_suffix_remnant_000402() {
   TEST_ASSERT_NULL(findDisplayNoteById(paint, 173));
 }
 
+/// `001145`: same-start Hide after earlier Shortens must drop the closed remnant
+/// at that pitch+start. The new occupy is an open hold and cannot dominate it.
+void test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.pushPendingNoteChangeForTest(hideChange(80, 63, 1152, 1440));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(80, 63, 1152, 1440));
+  paint.push_back(displayNote(180, 63, 1152, 1440));
+  paint.push_back(displayNote(90, 63, 1152, 1152));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 2);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(90, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1152u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1152u, paint[0].endTick);
+}
+
+/// `001145`: Hide target already gone; remnant still drops when the new occupy
+/// hold is present. A Hide whose target was never in the frame stays RC3.
+void test_same_start_hide_drops_remnant_when_hold_present_001145() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.pushPendingNoteChangeForTest(hideChange(80, 63, 1152, 1440));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(180, 63, 1152, 1440));
+  paint.push_back(displayNote(90, 63, 1152, 1152));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 1);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(90, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(1152u, paint[0].endTick);
+}
+
 /// RC3: overlay does not manufacture a Hide for a note occupancy never resolved.
 void test_sealed_overlay_leaves_unresolved_bar_two_note() {
   LoopEventStore::resetPoolForTests();
@@ -4614,6 +4652,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_does_not_recover_dropped_source_row);
   RUN_TEST(test_pending_shorten_drops_suffix_longer_remnant_000402);
   RUN_TEST(test_later_occupy_shorten_drops_suffix_remnant_000402);
+  RUN_TEST(test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145);
+  RUN_TEST(test_same_start_hide_drops_remnant_when_hold_present_001145);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);
   RUN_TEST(test_wrap_journal_keeps_hide_when_parent_lacks_note);

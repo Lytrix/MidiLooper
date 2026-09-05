@@ -1,9 +1,9 @@
 # Overdub wrap — sealed Shorten must keep the live paint end
 
-**Status:** Host shipped (`000402` remnant drop). Device recapture required.  
+**Status:** Host shipped (`001145` Hide remnant drop). Device recapture required.  
 **Date:** 2026-09-06  
 **Kind:** bugfix (sealed-companion draw-source paint)  
-**Evidence:** [`000402`](../../captures/session_20260906_000402.log) (prior [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log), [`232926`](../../captures/session_20260905_232926.log))  
+**Evidence:** [`001145`](../../captures/session_20260906_001145.log) (prior [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
 **Does not authorize:** occupy / wrap seal persist changes; VisualCache mutation on wrap; pending across wrap; Stage 1 wrap-held head occupy (`225200` device FAIL)
 
 ---
@@ -39,6 +39,12 @@ Two gaps after wrap seal:
    for id 73 / 77). `drawAllNotes` still draws a longer same-pitch+start
    sealed-preview remnant, so only the first shorten looks updated. Sibling
    drop now covers all closed rows at named Hide/Shorten pitch+starts;
+   open holds stay.
+5. **Same-start Hide remnant (`001145`):** after several Shortens, a later
+   occupy at the previous Add start Hides that NoteId (`63@1152–1440`
+   `hs=1152`). The new occupy is an open hold, so shortest-wins never
+   dominates the closed remnant. Hide now drops closed rows whose end is
+   at least the hidden source end; shorter keepers (`201956` 768–864) and
    open holds stay.
 
 Pin owners: sealed apply + sealed Length compose recovery + Length
@@ -80,10 +86,14 @@ during capture is unchanged (`150650`).
   `test_later_occupy_shorten_drops_suffix_remnant_000402` — later occupy
   NoteIds paint short; longer same-pitch+start suffix remnants drop;
   open holds stay
+- `test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145` /
+  `test_same_start_hide_drops_remnant_when_hold_present_001145` — Hide of
+  `63@1152–1440` drops the closed remnant when an open hold or shorter
+  keeper is present; RC3 mismatched NoteId without occupy stays
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**
-- `pio test -e native` **1672/1673** — pre-existing
+- `pio test -e native` **1674/1675** — pre-existing
   `test_same_pass_playhead_tails_keep_closed_bar_four_end`
 
 ## Device recapture

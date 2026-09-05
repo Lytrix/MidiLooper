@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-06 (`000402`: later occupy Shorten remnant drop)
+Last updated: 2026-09-06 (`001145`: same-start Hide remnant drop)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Later occupy Shorten remnant ([`000402`](../../captures/session_20260906_000402.log)):**
+**Same-start Hide remnant ([`001145`](../../captures/session_20260906_001145.log)):**
+After several occupy Shortens, a later same-start occupy Hides the
+previous Add (`63@1152–1440` `hs=1152`). Hide removes that NoteId, but
+the closed remnant stayed because the new occupy is an open hold and
+shortest-wins never dominates it. That remnant is the old note that
+returns before the new occupy lengthens. Hide now drops closed rows
+whose end is at least the hidden source end. Shorter keepers
+(`201956` 768–864) and open holds stay. Host pins
+`test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145` and
+`test_same_start_hide_drops_remnant_when_hold_present_001145`. A Hide
+whose target was never in the frame still leaves that row (`RC3`). Device: a
+same-start Hide must not show the hidden source on the next `DISP`
+before the occupy Add grows.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Later occupy Shorten remnant ([`000402`](../../captures/session_20260906_000402.log)):**
 `painted_pending_shorten` already rewrites later NoteIds (id 73 after
 id 71; id 77 after id 75). OLED still shows the original length until
 overdub stop because `drawAllNotes` also draws a longer same-pitch+start
