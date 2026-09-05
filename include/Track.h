@@ -150,8 +150,8 @@ public:
   /// Queue the stored-MIDI verification dump; draining happens in idle maintenance, never on the
   /// MIDI-dispatched stop path.
   void queueDeferredStoredMidiVerification();
-  /// SESSION_CAPTURE: re-arm the one-shot dump so transport STOPPED can emit reconstruct /
-  /// effective / frame after an earlier overdub stop already consumed the boot arm.
+  /// SESSION_CAPTURE: re-arm the one-shot dump so the selected track’s transport STOPPED
+  /// can emit effective / frame after an earlier overdub stop consumed the boot arm.
   void rearmDeferredStoredMidiVerification();
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(

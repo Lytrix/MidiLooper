@@ -84,6 +84,7 @@ def last_complete_dump(
     kind: str,
     *,
     after_ts: Optional[int] = None,
+    max_expected: Optional[int] = None,
 ) -> Optional[dict[str, Any]]:
     chosen: Optional[dict[str, Any]] = None
     for dump in dumps:
@@ -91,6 +92,9 @@ def last_complete_dump(
             continue
         ts = dump.get("ts")
         if after_ts is not None and ts is not None and ts < after_ts:
+            continue
+        expected = int(dump.get("expected") or 0)
+        if max_expected is not None and expected > max_expected:
             continue
         chosen = dump
     return chosen
@@ -100,10 +104,20 @@ def dnte_src_dump_trio_complete(
     lines: list[str],
     *,
     after_ts: Optional[int] = None,
+    max_expected: Optional[int] = None,
+    required_kinds: tuple[str, ...] = _DUMP_KINDS,
 ) -> bool:
     dumps = parse_dnte_src_dumps(lines)
+    kinds = required_kinds if required_kinds else _DUMP_KINDS
     return all(
-        last_complete_dump(dumps, kind, after_ts=after_ts) is not None for kind in _DUMP_KINDS
+        last_complete_dump(
+            dumps,
+            kind,
+            after_ts=after_ts,
+            max_expected=max_expected,
+        )
+        is not None
+        for kind in kinds
     )
 
 

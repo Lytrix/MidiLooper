@@ -3378,8 +3378,9 @@ def run() -> int:
         type=int,
         default=0,
         help=(
-            "After final_wait, keep serial open until reconstruct / effective / "
-            "frame DNTE dumps complete (occupy RC1b). 0 = idle drain only."
+            "After final_wait, keep serial open until occupy-sized effective / "
+            "frame DNTE dumps complete (RC1b). Leftover 352/1430 dumps are ignored. "
+            "0 = idle drain only."
         ),
     )
     parser.add_argument(
@@ -4181,18 +4182,28 @@ def run() -> int:
             close_idle_ms = max(getattr(args, "serial_close_idle_ms", 750), 0)
             dump_drain_ms = max(getattr(args, "dnte_src_dump_drain_ms", 0), 0)
             if dump_drain_ms > 0:
+                from hitl.serial_timing import extract_phase_boundaries
+                from hitl.verify.occupy_paint import (
+                    OCCUPY_DNTE_SRC_MAX_COUNT,
+                    OCCUPY_RC1B_REQUIRED_KINDS,
+                )
+
+                dump_bounds = extract_phase_boundaries(serial_collector.snapshot())
                 dump_ok = serial_collector.drain_until_dnte_src_dumps(
                     max_drain_ms=dump_drain_ms,
+                    after_ts=dump_bounds.get("second_overdub_stop_ts"),
+                    max_expected=OCCUPY_DNTE_SRC_MAX_COUNT,
+                    required_kinds=OCCUPY_RC1B_REQUIRED_KINDS,
                 )
                 if dump_ok:
                     print(
                         f"[info] Serial dump drain complete "
-                        f"(reconstruct/effective/frame, cap={dump_drain_ms}ms)"
+                        f"(occupy effective/frame, cap={dump_drain_ms}ms)"
                     )
                 else:
                     print(
                         f"[info] Serial dump drain timeout "
-                        f"(reconstruct/effective/frame missing, cap={dump_drain_ms}ms)"
+                        f"(occupy effective/frame missing, cap={dump_drain_ms}ms)"
                     )
             elif close_drain_ms > 0:
                 added = serial_collector.drain_until_idle(

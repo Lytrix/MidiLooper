@@ -156,17 +156,15 @@ Host pins in `test_display_window_utils`: `test_stopped_sealed_upsert_skips_long
 
 ### HITL evaluation
 
-[`141142`](../../captures/session_20260905_141142.log) cannot score RC1b: no `dnte,src,{reconstruct,effective,frame}` rows. Occupy stays PLAYING until transport stop; the boot one-shot stored-verify / frame dump is already consumed.
+RC1b scores occupy-loop first-STOPPED `src,effective` vs `src,frame` only. Reconstruct is diagnostic. Leftover hops (`frame,count,352`, reconstruct/effective 1430 on [`142807`](../../captures/session_20260905_142807.log)) are not a gate and must not be waited on.
 
-Occupy preset `--dnte-src-dump-drain-ms 30000` waits until the three dump headers have their DNTE rows. `verify_occupy_paint` then scores:
+`Track::stopPlaying` re-arms stored-verify and `armStoppedFrameNoteDump` only when `trackManager.isSelectedTrack`. Occupy preset `--dnte-src-dump-drain-ms 8000` waits for occupy-sized (`<= 96`) effective + frame after OD2.
 
 | Issue | Meaning |
 |-------|---------|
-| `occupy_rc1b_dumps_missing` | trio absent after OD2 |
+| `occupy_rc1b_dumps_missing` | occupy-sized effective/frame absent after OD2 |
 | `occupy_rc1b_two_length:p@s:a,b` | first STOPPED frame has two lengths at one pitch+start |
 | `occupy_rc1b_frame_effective_mismatch:p@s:f=…,e=…` | frame length ≠ effective at that pitch+start |
-
-Firmware `Track::stopPlaying` re-arms stored-verify and `armStoppedFrameNoteDump` so the occupy loop’s transport STOPPED emits the trio. Diagnostic only; `oh` stays observational.
 
 ## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
 

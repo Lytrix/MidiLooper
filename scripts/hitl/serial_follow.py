@@ -144,12 +144,29 @@ class ExternalSerialFollowCollector:
             max_drain_ms=max_drain_ms,
         )
 
-    def drain_until_dnte_src_dumps(self, *, max_drain_ms: int) -> bool:
+    def drain_until_dnte_src_dumps(
+        self,
+        *,
+        max_drain_ms: int,
+        after_ts: Optional[int] = None,
+        max_expected: Optional[int] = None,
+        required_kinds: Optional[tuple[str, ...]] = None,
+    ) -> bool:
         from hitl.verify.dnte_src_dumps import dnte_src_dump_trio_complete
+
+        kinds = required_kinds if required_kinds is not None else ("effective", "frame")
+
+        def _predicate(lines: list[str]) -> bool:
+            return dnte_src_dump_trio_complete(
+                lines,
+                after_ts=after_ts,
+                max_expected=max_expected,
+                required_kinds=kinds,
+            )
 
         return _wait_for_serial_predicate(
             self.snapshot,
-            dnte_src_dump_trio_complete,
+            _predicate,
             max_drain_ms=max_drain_ms,
         )
 

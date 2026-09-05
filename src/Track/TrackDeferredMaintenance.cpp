@@ -360,8 +360,8 @@ namespace {
 
 #if defined(SESSION_CAPTURE)
 // One stored-MIDI verification dump after each queue. Overdub stop consumes the boot arm so
-// later stops stay cheap. Transport `stopPlaying` re-arms so occupy HITL can score the STOPPED
-// reconstruct / effective / frame trio of the loop that just left PLAYING.
+// later stops stay cheap. Selected-track `stopPlaying` re-arms so occupy HITL can score that
+// loop’s first-STOPPED effective / frame. Leftover tracks in the transport-stop hop do not re-arm.
 bool sStoredMidiVerificationArmed = true;
 
 void logStoredMidiVerificationArmState(bool armed) {

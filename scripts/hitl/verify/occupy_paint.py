@@ -15,6 +15,10 @@ from hitl.verify.dnte_src_dumps import (
     two_length_pairs,
 )
 
+# 4-bar occupy first-STOPPED frame is ~32 notes. Leftover hops are 352 / 1430.
+OCCUPY_DNTE_SRC_MAX_COUNT = 96
+OCCUPY_RC1B_REQUIRED_KINDS = ("effective", "frame")
+
 _DRAW_SRC_RE = re.compile(
     r"draw_src,layers,visual,(\d+),preview,(\d+),sealed,(\d+),snap,(\d+),frame,(\d+)"
 )
@@ -414,17 +418,22 @@ def _verify_occupy_rc1b_dumps(
     lines: list[str],
     windows: dict[str, Optional[int]],
 ) -> dict[str, Any]:
-    """Score first-STOPPED reconstruct / effective / frame after occupy OD2."""
+    """Score occupy-loop first-STOPPED effective vs frame. Reconstruct is diagnostic."""
     after_ts = windows.get("od2_stop")
     dumps = parse_dnte_src_dumps(lines)
-    reconstruct = last_complete_dump(dumps, "reconstruct", after_ts=after_ts)
-    effective = last_complete_dump(dumps, "effective", after_ts=after_ts)
-    frame = last_complete_dump(dumps, "frame", after_ts=after_ts)
+    reconstruct = last_complete_dump(
+        dumps, "reconstruct", after_ts=after_ts, max_expected=OCCUPY_DNTE_SRC_MAX_COUNT
+    )
+    effective = last_complete_dump(
+        dumps, "effective", after_ts=after_ts, max_expected=OCCUPY_DNTE_SRC_MAX_COUNT
+    )
+    frame = last_complete_dump(
+        dumps, "frame", after_ts=after_ts, max_expected=OCCUPY_DNTE_SRC_MAX_COUNT
+    )
     issues: list[str] = []
     missing = [
         kind
         for kind, dump in (
-            ("reconstruct", reconstruct),
             ("effective", effective),
             ("frame", frame),
         )

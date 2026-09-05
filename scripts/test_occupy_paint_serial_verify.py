@@ -471,6 +471,37 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
             )
         )
 
+    def test_rc1b_ignores_leftover_large_dumps_after_occupy(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,1100,DIAG,oh,n,16,e,0,i,0,o,0,k,0,x,0,s,0,u,0,t,0,add,16,shorten,0,hide,0",
+            "#CAP,2000,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,2100,VCACHE,adopt_partial,ev,-1,notes,80,first,0,last,3,total,4,dsz,4,dcnt,0,dirty,0",
+            "#CAP,2200,DISP,0,PLAYING,3072,80,80,80,80,1",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3100,DIAG,draw_src,layers,visual,80,preview,1,sealed,0,snap,0,frame,80,"
+            "hidden,0,missed_preview,0",
+            "#CAP,3200,DIAG,oh,n,20,e,0,i,2,o,0,k,12,x,2,s,12,u,1,t,2,add,4,shorten,8,hide,6",
+            "#CAP,3300,WRAP,2880,192,5,52",
+            "#CAP,3301,WRAP,2880,192,5,48",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+            "Overdub undone",
+            "Overdub undone",
+            "Overdub redone",
+            "Overdub redone",
+            *_RC1B_PASS_DUMPS,
+            "#CAP,9100000,DIAG,dnte,src,reconstruct,count,100",
+            *[f"#CAP,{9100001 + i},DNTE,1,0,0,40,{i}" for i in range(100)],
+            "#CAP,9200000,DIAG,dnte,src,effective,count,100",
+            *[f"#CAP,{9200001 + i},DNTE,1,0,0,40,{i}" for i in range(100)],
+            "#CAP,9300000,DIAG,dnte,src,frame,count,100",
+            *[f"#CAP,{9300001 + i},DNTE,1,0,0,40,{i}" for i in range(100)],
+        ]
+        result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
+        self.assertTrue(result["ok"], result.get("issues"))
+        self.assertEqual(result["rc1b"]["frame_count"], 1)
+        self.assertEqual(result["rc1b"]["effective_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
