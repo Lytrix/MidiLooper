@@ -166,7 +166,7 @@ Then **two undos then two redos** (GUS, not undo-redo-undo-redo). First OD2 `dra
   --track-number 5 --loop-slot 1 --midi-channel 5
 ```
 
-Host verifier: `scripts/test_occupy_paint_serial_verify.py`. Device gates: OD1 `overlap_hold` shorten=0 and hide=0, OD2 `overlap_hold` shorten≥2 and hide≥2, at least two loop-wrap pairs on 48/52/56/60 (half-bar tail On, head Off) from `WRAP` or OD2 `MI,U`, OD2 open `from=snapshot` when first `draw_src` `snap!=0` (`occupy_od2_snap_not_zero` is paint/occupy divergence only), adopted visual count does not shrink, `Overdub undone`≥2 and `Overdub redone`≥2.
+Host verifier: `scripts/test_occupy_paint_serial_verify.py`. Device gates: OD1 `overlap_hold` shorten=0 and hide=0, OD2 `overlap_hold` shorten≥2 and hide≥2, at least two loop-wrap pairs on 48/52/56/60 (half-bar tail On, head Off) from `WRAP` or OD2 `MI,U`, OD2 open `from=snapshot` when first `draw_src` `snap!=0` (`occupy_od2_snap_not_zero` is paint/occupy divergence only), adopted visual count does not shrink, `Overdub undone`≥2 and `Overdub redone`≥2. Phase windows close OD2 on `Overdubbing stopped` / `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing so second-overdub first-note, SEVT, and occupy `oh` still score.
 
 ### `long_loop_display_window`
 

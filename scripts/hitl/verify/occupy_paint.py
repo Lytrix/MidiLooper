@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from hitl.control_constants import TICKS_PER_BAR, TICKS_PER_BEAT
 from hitl.flows.occupy_paint import HALF_BAR_TICKS, WRAP_PITCHES
+from hitl.serial_timing import extract_phase_boundaries
 
 _DRAW_SRC_RE = re.compile(
     r"draw_src,layers,visual,(\d+),preview,(\d+),sealed,(\d+),snap,(\d+),frame,(\d+)"
@@ -250,26 +251,13 @@ def _cap_ts(line: str) -> Optional[int]:
 
 
 def _phase_windows(lines: list[str]) -> dict[str, Optional[int]]:
-    """First/last OVERDUBBING entries for OD1 and OD2."""
-    starts: list[int] = []
-    stops: list[int] = []
-    for line in lines:
-        ts = _cap_ts(line)
-        if ts is None:
-            continue
-        if ",ST,Track,PLAYING,OVERDUBBING" in line:
-            starts.append(ts)
-        elif ",ST,Track,OVERDUBBING,PLAYING" in line:
-            stops.append(ts)
-    od1_start = starts[0] if starts else None
-    od1_stop = stops[0] if stops else None
-    od2_start = starts[1] if len(starts) > 1 else None
-    od2_stop = stops[1] if len(stops) > 1 else None
+    """OD1/OD2 windows. Close a missing OD2 ST stop from Overdubbing stopped / ODUB,stop,enter."""
+    bounds = extract_phase_boundaries(lines)
     return {
-        "od1_start": od1_start,
-        "od1_stop": od1_stop,
-        "od2_start": od2_start,
-        "od2_stop": od2_stop,
+        "od1_start": bounds.get("overdub_start_ts"),
+        "od1_stop": bounds.get("overdub_stop_ts"),
+        "od2_start": bounds.get("second_overdub_start_ts"),
+        "od2_stop": bounds.get("second_overdub_stop_ts"),
     }
 
 
