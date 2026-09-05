@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b / RC4 / RC5 host shipped. Device occupy recapture next. RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC1b frame recapture next. RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
