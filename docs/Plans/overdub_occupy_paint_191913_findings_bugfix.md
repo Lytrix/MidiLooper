@@ -78,15 +78,37 @@ Bug 4 → Bug 1 → Bug 2 → Bug 3. One stage-commit each. Reassess reconstruct
 
 RC1 continuation. Occupy classification stays trusted.
 
-**Failure:** Notes that occupy classified for Hide/Shorten stay on the roll and grow with the current tick.
+**Failure:** Notes that occupy classified for Hide/Shorten stay on the roll and grow with the current tick. Shorten to incoming On `holdStart-1` is not painted at that On.
 
 **Owner:** `Loop::applyPendingHideAndShortenToNotes`
 
-**Invariant:** After occupy writes Hide for a present-at-hold `NoteId`, that painted row is gone. After Shorten, the painted end is `holdStart-1` for that same id. The row must not follow `applyCapturePlayheadTails`.
+**Invariant:** After occupy writes Hide for a present-at-hold `NoteId`, that painted row is gone. After Shorten, the painted end is `holdStart-1` for that same id. The row must not follow `applyCapturePlayheadTails`. The Shorten must be in the next draw-source frame after that On, not on a later dirty-bar idle walk.
 
-**Evidence, not mechanism:** occupy `52` `as=1970` `hs=55`; `draw_src` Hide is `id=7` `52@1217`. Host pin must choose among wrong id / absent id / open-hold skip before coding.
+**Authority pin [`193815`](../../captures/session_20260905_193815.log)** (3072-tick loop, one OVERDUBBING session, second loop after wrap):
 
-**Boundary:** Do not patch tails. Do not change occupy On. Do not reopen RC3 pairing.
+| Clock | Fact |
+|---|---|
+| `#CAP,40111972` | occupy `63` `n=1 a=1 as=1536 ae=2208 hs=1920` — Shorten end must be **1919** at this On |
+| next `draw_src` | no `63@1536` Shorten |
+| entire OD `draw_src,diff` | one unique change: `id=7` `78@288` **320→336** (lengthen 16), always `bar,0` |
+| `draw_src,layers` | `visual,63` the whole pass; `hidden,0` |
+| `#CAP,43113929` | `oh` `shorten,2 hide,2` — pending totals exist ~1 bar later |
+| `VCACHE,stale_range` | `first,0 last,3 total,4` — dirty bars refresh later, not at the On |
+
+Occupy selected the overlapping span. The frame never paints `holdStart-1`. The only live geometry change is a bar-0 lengthen. Later bar refreshes (user: bar 4, then 1, then 3, then 2) are the dirty-bar walk, not On-tick realization.
+
+Host pin `test_pending_shorten_193815_63_1536_hold_1919_matrix` records what `applyPendingNoteChangesToDisplayNotes` does for each device-shaped paint (pending Shorten id=40 `1536→1919`):
+
+| Paint | After apply |
+|---|---|
+| same NoteId, closed `1536-2208` | end **1919** (RC1 already) |
+| `kInvalidNoteId`, closed | stay **2208** |
+| same NoteId, open hold `1920/1920` | skip |
+| same pitch+start, other id | stay **2208** |
+
+If the device paints the first input and still shows 2208, Bug 2 is pending not on the On-tick draw-source path. If it paints one of the other three, Bug 2 is identity or open-hold skip. Do not treat “wrong same-pitch Hide” from `191913` as the mechanism. Do not start Bug 2 firmware until this matrix names the device input.
+
+**Boundary:** Do not patch tails. Do not change occupy On or `holdStart-1`. Do not reopen RC3 pairing. Not Bug 4 (this loop is 3072).
 
 ---
 
