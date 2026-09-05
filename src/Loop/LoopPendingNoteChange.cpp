@@ -236,11 +236,13 @@ LOOP_COLD_MEM bool hideSourceEndAtPitchStart(const PendingNoteChangeVec& transfo
 /// hold or a shorter closed keeper is already at that pitch+start (`001145`
 /// 63@1152). A later same-pitch occupy that starts earlier and covers the
 /// inner row also drops that inner (`002708` 1296–1335 under 864–1344).
-/// A Hide whose target was never in the frame does not delete a different
-/// NoteId (`RC3`). Same-start shorter keepers stay (`201956` 768–864).
-/// Only pitch+starts named by those transforms, or inners CompleteCovered
-/// by a Hide plus an earlier occupy, are touched. Open capture holds are
-/// kept so playhead tails can grow.
+/// The covering row must be the shortest keeper at its start — a longer
+/// earlier remnant must not delete the new long occupy (`003622` 768–1344
+/// remnant vs 816–1344). An open hold that has not grown over the inner
+/// does not drop later same-pitch notes. A Hide whose target was never in
+/// the frame does not delete a different NoteId (`RC3`). Same-start shorter
+/// keepers stay (`201956` 768–864). Open capture holds are kept so
+/// playhead tails can grow.
 LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
     size_t /*liveCaptureBegin*/) {
@@ -262,13 +264,28 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     return note.endTick >= note.startTick &&
            !DisplayWindowUtils::capturePreviewNoteIsOpenHold(note.startTick, note.endTick);
   };
-  auto earlierStartOccupyCovers = [&](const NoteUtils::DisplayNote& note) {
+  auto isShortestClosedAtPitchStart = [&](const NoteUtils::DisplayNote& candidate) {
+    if (!isClosedLinear(candidate)) {
+      return false;
+    }
     for (const NoteUtils::DisplayNote& other : notes) {
-      if (other.note != note.note || other.startTick >= note.startTick) {
+      if (!isClosedLinear(other) || other.note != candidate.note ||
+          other.startTick != candidate.startTick) {
         continue;
       }
-      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(other.startTick, other.endTick) ||
-          (isClosedLinear(other) && other.endTick >= note.endTick)) {
+      if (other.endTick < candidate.endTick) {
+        return false;
+      }
+    }
+    return true;
+  };
+  auto earlierStartOccupyCovers = [&](const NoteUtils::DisplayNote& note) {
+    for (const NoteUtils::DisplayNote& other : notes) {
+      if (other.note != note.note || other.startTick >= note.startTick ||
+          other.endTick < note.endTick) {
+        continue;
+      }
+      if (isShortestClosedAtPitchStart(other)) {
         return true;
       }
     }
@@ -276,11 +293,11 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
   };
   auto earlierStartOccupyOverlaps = [&](const NoteUtils::DisplayNote& note) {
     for (const NoteUtils::DisplayNote& other : notes) {
-      if (other.note != note.note || other.startTick >= note.startTick) {
+      if (other.note != note.note || other.startTick >= note.startTick ||
+          other.endTick <= note.startTick) {
         continue;
       }
-      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(other.startTick, other.endTick) ||
-          (isClosedLinear(other) && other.endTick > note.startTick)) {
+      if (isShortestClosedAtPitchStart(other)) {
         return true;
       }
     }

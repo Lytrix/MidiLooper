@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-06 (`002708`: long occupy hides inner shortened notes)
+Last updated: 2026-09-06 (`003622`: earlier remnant must not drop new long occupy)
 
 ---
 

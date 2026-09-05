@@ -378,7 +378,8 @@ struct Loop {
   /// also drops a closed remnant at the hidden source pitch+start when the
   /// new occupy is still an open hold (`001145`). A later same-pitch occupy
   /// that starts earlier and covers an inner shortened row drops that inner
-  /// (`002708`). Open capture holds are kept. Occupying Adds start at hold,
+  /// (`002708`) only when that earlier row is the shortest keeper at its
+  /// start (`003622`). Open capture holds are kept. Occupying Adds start at hold,
   /// not at the shortened source start. Sealed overlay applies first; this-lap
   /// pending then wins for the same NoteId (`002200`). Hide absorbs an earlier
   /// Length of the same NoteId. `liveCaptureBegin` remains Hide-by-overlap

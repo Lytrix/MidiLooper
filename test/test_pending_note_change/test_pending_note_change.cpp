@@ -4082,6 +4082,56 @@ void test_long_occupy_hides_inner_shortened_notes_002708() {
   TEST_ASSERT_NULL(findDisplayNoteById(paint, 183));
 }
 
+/// `003622`: a longer earlier remnant must not delete the new long occupy.
+/// Shorten 768–815 is the keeper at 768; remnant 768–1344 is not.
+void test_earlier_remnant_does_not_drop_new_long_occupy_003622() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.pushPendingNoteChangeForTest(shortenChange(74, 63, 768, 815));
+  loop.pushPendingNoteChangeForTest(hideChange(92, 63, 816, 1344));
+  loop.pushPendingNoteChangeForTest(hideChange(91, 63, 1056, 1200));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(74, 63, 768, 1344));
+  paint.push_back(displayNote(274, 63, 768, 1344));
+  paint.push_back(displayNote(90, 63, 816, 1344));
+  paint.push_back(displayNote(91, 63, 1056, 1200));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 0);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 74));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 90));
+  TEST_ASSERT_EQUAL_UINT32(768u, findDisplayNoteById(paint, 74)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(815u, findDisplayNoteById(paint, 74)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(816u, findDisplayNoteById(paint, 90)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1344u, findDisplayNoteById(paint, 90)->endTick);
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 274));
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 91));
+}
+
+/// `003622`: an open hold that has not grown over later same-pitch notes must
+/// not drop them for a frame (`69@48` hold vs `69@816–864`).
+void test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.pushPendingNoteChangeForTest(hideChange(180, 69, 816, 864));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(70, 69, 720, 768));
+  paint.push_back(displayNote(80, 69, 816, 864));
+  paint.push_back(displayNote(90, 69, 48, 48));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 0);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 70));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 80));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 90));
+  TEST_ASSERT_EQUAL_UINT32(720u, findDisplayNoteById(paint, 70)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(768u, findDisplayNoteById(paint, 70)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(816u, findDisplayNoteById(paint, 80)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(864u, findDisplayNoteById(paint, 80)->endTick);
+}
+
 /// `001145`: same-start Hide after earlier Shortens must drop the closed remnant
 /// at that pitch+start. The new occupy is an open hold and cannot dominate it.
 void test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145() {
@@ -4704,6 +4754,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_later_occupy_shorten_drops_suffix_remnant_000402);
   RUN_TEST(test_pending_shorten_wins_over_older_sealed_length_002200);
   RUN_TEST(test_long_occupy_hides_inner_shortened_notes_002708);
+  RUN_TEST(test_earlier_remnant_does_not_drop_new_long_occupy_003622);
+  RUN_TEST(test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622);
   RUN_TEST(test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145);
   RUN_TEST(test_same_start_hide_drops_remnant_when_hold_present_001145);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
