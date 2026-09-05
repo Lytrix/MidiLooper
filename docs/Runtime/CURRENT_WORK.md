@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (RC3 NoteId Off pair reverted; 191913 is truth)
+Last updated: 2026-09-05 (Bug 2 On-tick draw-source path pin)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,23 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Stage 0 — RC3 NoteId Off pair reverted ([`191913`](../../captures/session_20260905_191913.log)):**
+**Bug 2 — On-tick draw-source path pin ([`193815`](../../captures/session_20260905_193815.log)):**
+Occupy wrote closed Shorten `63` `1536–2208` → **1919**. Host
+`applyPending` already realizes that. Live `draw_src` never did. Live
+painted `NoteId` is not in the capture. Host compose pin
+`test_draw_source_compose_193815_63_1536_forks`: Fork C is false for
+rewriting `1536–2208`; A vs B remain. Gated investigation-diag logs
+`63@1536` `noteId`+`end` after pending and after tails. Do not start
+Bug 2 firmware, Bug 4, Bug 1, or Bug 3. Do not patch
+`applyCapturePlayheadTails`. Plan:
+[`overdub_occupy_paint_191913_findings_bugfix.md`](../Plans/overdub_occupy_paint_191913_findings_bugfix.md).
+
+**Prior — Stage 0 RC3 NoteId Off pair reverted ([`191913`](../../captures/session_20260905_191913.log)):**
 Restore exact pre-`44f47e94` reconstruct LIFO. Keep `175026` `52@664`
 (E=144 vs occupy 363) as a parked finding, not a production pairing
 contract. Diagnostic `diagnostic_only_reconstruct_175026_tagged_off_pairing`
-is `TEST_IGNORE`. Do not add NoteId pairing fallbacks. Do not patch
-`applyCapturePlayheadTails`. 2304 is a legal loop. Next after the
-post-revert baseline gate: Bug 4 → 1 → 2 → 3. Plan:
+is `TEST_IGNORE`. Do not add NoteId pairing fallbacks. 2304 is a legal
+loop. Documented order after this pin: Bug 4 → 1 → 2 → 3. Plan:
 [`overdub_occupy_paint_191913_findings_bugfix.md`](../Plans/overdub_occupy_paint_191913_findings_bugfix.md).
 
 **Prior — RC3 tagged-Off reconstruct pair (reverted) ([`175026`](../../captures/session_20260905_175026.log) `52@664`):**

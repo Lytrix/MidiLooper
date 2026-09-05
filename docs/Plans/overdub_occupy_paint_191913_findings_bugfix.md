@@ -1,6 +1,6 @@
 # Occupy-paint 191913 findings — four sibling Bugs
 
-**Status:** Stage 0 revert shipped. Post-revert baseline gate below. Next: Bug 4.  
+**Status:** Stage 0 revert shipped. Bug 2 On-tick compose path pin in progress (overrides 4→1→2 for this investigation only).  
 **Date:** 2026-09-05  
 **Kind:** bugfix  
 **Authority capture:** [`captures/session_20260905_191913.log`](../../captures/session_20260905_191913.log) / [`captures/host_midi_hitl_occupy_paint_20260905_192033.json`](../../captures/host_midi_hitl_occupy_paint_20260905_192033.json)  
@@ -45,6 +45,8 @@ known baseline restored
 ## Order
 
 Bug 4 → Bug 1 → Bug 2 → Bug 3. One stage-commit each. Reassess reconstruct pairing only after those owners.
+
+**This slice:** Bug 2 On-tick draw-source path pin only. Do not start Bug 4, Bug 1, Bug 3, or Bug 2 firmware.
 
 ---
 
@@ -92,7 +94,7 @@ RC1 continuation. Occupy classification stays trusted.
 | next `draw_src` | no `63@1536` Shorten |
 | entire OD `draw_src,diff` | one unique change: `id=7` `78@288` **320→336** (lengthen 16), always `bar,0` |
 | `draw_src,layers` | `visual,63` the whole pass; `hidden,0` |
-| `#CAP,43113929` | `oh` `shorten,2 hide,2` — pending totals exist ~1 bar later |
+| `#CAP,43113929` | `oh` `shorten,2 hide,2` — first wrap after that On (`emitOverlapHoldTotals` is wrap/stop only). Pending existed between occupy and wrap |
 | `VCACHE,stale_range` | `first,0 last,3 total,4` — dirty bars refresh later, not at the On |
 
 Occupy selected the overlapping span. The frame never paints `holdStart-1`. The only live geometry change is a bar-0 lengthen. Later bar refreshes (user: bar 4, then 1, then 3, then 2) are the dirty-bar walk, not On-tick realization.
@@ -106,9 +108,28 @@ Host pin `test_pending_shorten_193815_63_1536_hold_1919_matrix` records what `ap
 | same NoteId, open hold `1920/1920` | skip |
 | same pitch+start, other id | stay **2208** |
 
-If the device paints the first input and still shows 2208, Bug 2 is pending not on the On-tick draw-source path. If it paints one of the other three, Bug 2 is identity or open-hold skip. Do not treat “wrong same-pitch Hide” from `191913` as the mechanism. Do not start Bug 2 firmware until this matrix names the device input.
+Occupy geometry is matrix row 1 (closed `1536–2208`). **Live painted `NoteId` is not in `193815`** (DNTE has no id; this occupy has no `lid`/`mismatch`; no `srcspan` for `p=63`). Stopped effective/frame `1919` is not proof the live row carried the occupy id.
 
-**Boundary:** Do not patch tails. Do not change occupy On or `holdStart-1`. Do not reopen RC3 pairing. Not Bug 4 (this loop is 3072).
+Host pin `test_draw_source_compose_193815_63_1536_forks` runs the draw-source sequence (prefix + overlays + `applyPendingNoteChangesToDisplayNotes` + overdub tails). Host stand-in ids label layer shapes only.
+
+| Fork | Host compose | Device? |
+|---|---|---|
+| A — `63@1536` absent at apply | empty prefix + open `1920/1920` only → no `1536` after pending or tails | not named — live frame dump missing |
+| B — live id ≠ occupy id | closed `1536–2208` with invalid/other id stays **2208** | not named — live `NoteId` missing |
+| C — pending 1919, tails emit differs | same-id closed → **1919**; tails grow `1920` only; `1536` stays **1919** | **false** for rewriting `1536–2208` |
+
+A vs B remain. Gated `SESSION_CAPTURE_INVESTIGATION_DIAG` logs painted `63@1536` `noteId`+`end` after pending and after tails:
+
+`DIAG,draw_src,bug2,after_pending,p,63,s,1536,present,{0|1},id,{noteId|-1},end,{tick}`
+`DIAG,draw_src,bug2,after_tails,p,63,s,1536,present,{0|1},id,{noteId|-1},end,{tick}`
+
+`present=0` names A. `present=1` with `end=2208` and `id` ≠ occupy Shorten id names B. `present=1` `end=1919` after pending and not after tails would have been C (host compose already rules that out for this geometry).
+
+Not default-on for `teensy41-capture-serial` (RAM1 locals **6848** after the gated log). Recapture with `teensy41-capture-serial-investigation-diag` to name A or B.
+
+Owner stays `Loop::applyPendingHideAndShortenToNotes` until A or B is named. No owner move.
+
+**Boundary:** Do not patch tails. Do not change occupy On or `holdStart-1`. Do not reopen RC3 pairing. Not Bug 4 (this loop is 3072). Do not start Bug 2 firmware until A or B is named.
 
 ---
 
