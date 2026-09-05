@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. HITL still FAILs one 1-tick key (`52@2172` f=58 e=59). **RC1d pin shipped (investigation only):** host Loop occupy/commit/draw-source clone never writes inclusive 2230 on `52@2172` — not RC1d-a, not RC1d-b. Firmware gated. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. HITL still FAILs one 1-tick key (`52@2172` f=58 e=59) until RC1d-c flash. **RC1d Loop pin shipped:** not RC1d-a, not RC1d-b. **RC1d-c host shipped:** stop playhead tail takes sealed closed Off. Occupy HITL recapture gated. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -57,7 +57,8 @@ sealed upsert 77@336                      ← RC2 if recapture still 48
 69@5328 admission miss                    ← RC3 separate
 keepShortest on gather                    ← still forbidden
 suffix sibling-drop                       ← still forbidden (`150650`)
-RC1d pin (host Loop path)                 ← not a, not b; 2230 missing seam
+RC1d pin (host Loop path)                 ← not a, not b
+RC1d-c first STOPPED playhead tail        ← live 2230 + RC1b skip; sealed Off 2231
 ```
 
 ---
@@ -244,9 +245,9 @@ Device [`153848`](../../captures/session_20260905_153848.log): occupy holds PASS
 
 ## RC1d — pin first inclusive 2230 on occupy Add `52@2172` ([`153848`](../../captures/session_20260905_153848.log))
 
-**Investigation only. No firmware.** E=R=59 is product truth. Do not change events so E becomes 58.
+E=R=59 is product truth. Do not change events so E becomes 58.
 
-Host `test_occupy_153848_52_2172_first_inclusive_2230_pin`:
+Host Loop pin `test_occupy_153848_52_2172_first_inclusive_2230_pin` (shipped):
 
 ```text
 effective event          Add@2172 → Off@2231   dump 59
@@ -261,9 +262,80 @@ pending/Length on Add@2172 end 2230   absent
 | RC1d-a draw-source prefix | **no** |
 | RC1d-b overlay Length on the Add | **no** |
 
-Missing seam: inclusive 2230 on the device frame is not produced by the host-reachable Loop occupy/commit/seal/visual-rebuild/draw-source clone. Do not invent a third owner. Do not add DisplayManager/playhead-tail hooks in this stage.
+Loop occupy/commit/seal/visual-rebuild/draw-source clone never writes inclusive 2230. First 2230 is the last OVERDUBBING playhead tail (`endTick = currentTick`) frozen into `liveDisplayNotes` at stop. After `commitCaptureForStop`, live `capturePreview` is empty; closed Off@2231 is in `sealedCapturePreviewNotes_`. RC1b `upsertDisplayNoteAtPitchStartFrom` (`!captureActive`) keeps the 2230 prefix and drops sealed 2231.
 
-Firmware stays gated until a later session can reach the first-STOPPED painted prefix without a new publication owner. Hard stop if the only match is shortening the Add in events.
+Do not change RC1b to “always take sealed” — that reopens two-length (`154310` prefix 143 + sealed 576). Do not invent a new publication owner. Hard stop if the only match is shortening the Add in events.
+
+## RC1d-c — first-STOPPED playhead tail takes this pass’s closed capture Off
+
+**Intended invariant:**
+
+```text
+When a committed capture Add is newly represented in the STOPPED
+draw-source, a paint-only playhead tail at stop (end == stopPhase
+or stopPhase-1) takes the closed capture-preview Off for the same
+linear pitch+start. Notes whose end is not the stop playhead tail
+keep the prefix (`154310` 143 vs sealed 576).
+```
+
+```text
+last OVERDUBBING liveDisplayNotes 52@2172 end 2230
+  ↓
+commitCaptureForStop (preview cleared; sealed Off@2231)
+  ↓
+refreshViewportAfterOverdubStop
+  realizeClosedCaptureOffOnStopPlayheadTails
+  ↓
+first STOPPED src,frame 52@2172 inclusive 2231  dump 59
+```
+
+Owner: `DisplayManager::refreshViewportAfterOverdubStop`. Shared helper `DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails` so host and firmware share the walk. Does not append. Does not apply Length companions. Does not change events, reconstruct, RC1c, RC1b skip, or `resolveOccupancyAtNoteOn`.
+
+| Session | Live end | Sealed Off | Stop phase | Required |
+|---------|----------|------------|------------|----------|
+| `153848` `52@2172` | 2230 | 2231 | 2231 | rewrite to **2231** |
+| `154310` `63@0` | 143 | 576 | not 143/144 | keep **143** |
+
+Host pins in `test_display_window_utils`: `test_stopped_playhead_tail_takes_closed_capture_off_153848`, `test_stopped_playhead_tail_does_not_take_sealed_remnant_154310`.
+
+### Host shipped
+
+`refreshViewportAfterOverdubStop` calls `realizeClosedCaptureOffOnStopPlayheadTails` after preserve/resize and before adopt. Host pins PASS. `teensy41-capture-serial` RAM1 locals **6848**. Native **1647/1649** (pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end`). Occupy HITL recapture gated until flash: `52@2172` f=e=59.
+
+### Architecture checkpoint
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** — stop display handoff still owns the composed frame |
+| State transition change? | **NO** — same commit-then-refresh order |
+| Unbounded interval owner? | **NO** — walk is live notes × sealed preview rows; stop path only |
+| Reuse | **YES** — extend `refreshViewportAfterOverdubStop`; helper on `DisplayWindowUtils` |
+
+### Pre-implementation review (RC1d-c)
+
+### Ready
+
+- `DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails`
+- `DisplayManager::refreshViewportAfterOverdubStop` in `DisplayCacheLifecycle.cpp`
+- Host pins in `test_display_window_utils`
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|-------|----------|
+| Product truth | E=R=59; do not shorten the Add |
+| First 2230 | last OVERDUBBING playhead tail + RC1b skip |
+| Discriminant | rewrite only when live end is stopPhase or stopPhase-1 |
+| `154310` | non-tail prefix stays; RC1b skip unchanged |
+| New publication owner | none |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — firmware this slice.
 
 ## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
 

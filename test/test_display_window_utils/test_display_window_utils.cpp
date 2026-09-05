@@ -545,6 +545,57 @@ void test_capture_sealed_upsert_keeps_longer_suffix_150650() {
   TEST_ASSERT_EQUAL(21, notes[1].noteId);
 }
 
+void test_stopped_playhead_tail_takes_closed_capture_off_153848() {
+  // Last OVERDUBBING paint left 52@2172 at playhead 2230. Sealed Off is 2231.
+  // RC1b skip keeps 2230; stop-handoff rewrite takes the closed Off.
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote live{};
+  live.noteId = 40;
+  live.note = 52;
+  live.startTick = 2172;
+  live.endTick = 2230;
+  notes.push_back(live);
+  const size_t committedEnd = notes.size();
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 40;
+  sealed.note = 52;
+  sealed.startTick = 2172;
+  sealed.endTick = 2231;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(notes, committedEnd, sealed, false);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(2230u, notes[0].endTick);
+
+  NoteUtils::DisplayNoteVec closedPreview;
+  closedPreview.push_back(sealed);
+  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 2231);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(2172u, notes[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2231u, notes[0].endTick);
+}
+
+void test_stopped_playhead_tail_does_not_take_sealed_remnant_154310() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote prefix{};
+  prefix.noteId = 1;
+  prefix.note = 63;
+  prefix.startTick = 0;
+  prefix.endTick = 143;
+  notes.push_back(prefix);
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 2;
+  sealed.note = 63;
+  sealed.startTick = 0;
+  sealed.endTick = 576;
+  NoteUtils::DisplayNoteVec closedPreview;
+  closedPreview.push_back(sealed);
+  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 2231);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(143u, notes[0].endTick);
+  TEST_ASSERT_EQUAL(1, notes[0].noteId);
+}
+
 void test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start() {
   NoteUtils::DisplayNoteVec notes;
   NoteUtils::DisplayNote prefix{};
@@ -1434,6 +1485,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_upsert_display_note_at_pitch_start_replaces_stale_committed_row);
   RUN_TEST(test_upsert_display_note_at_pitch_start_appends_when_no_match);
   RUN_TEST(test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310);
+  RUN_TEST(test_stopped_playhead_tail_takes_closed_capture_off_153848);
+  RUN_TEST(test_stopped_playhead_tail_does_not_take_sealed_remnant_154310);
   RUN_TEST(test_capture_sealed_upsert_keeps_longer_suffix_150650);
   RUN_TEST(test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start);
   RUN_TEST(test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces);

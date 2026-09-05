@@ -403,6 +403,39 @@ inline void upsertDisplayNoteAtPitchStart(NoteUtils::DisplayNoteVec& notes,
   notes.push_back(sealedRow);
 }
 
+/// RC1d-c: first STOPPED frame. A paint-only playhead tail at stop (end ==
+/// stopPhase or stopPhase-1) takes the closed capture-preview Off for the same
+/// linear pitch+start (`153848` 52@2172 live 2230 / sealed 2231). Does not
+/// append. Does not rewrite notes whose end is not the stop playhead tail
+/// (`154310` prefix 143 vs sealed 576). Wrap-held rows are skipped.
+inline void realizeClosedCaptureOffOnStopPlayheadTails(
+    NoteUtils::DisplayNoteVec& notes,
+    const NoteUtils::DisplayNoteVec& closedCapturePreviewNotes, uint32_t stopPhaseTick) {
+  if (notes.empty() || closedCapturePreviewNotes.empty()) {
+    return;
+  }
+  for (NoteUtils::DisplayNote& note : notes) {
+    if (note.endTick < note.startTick) {
+      continue;
+    }
+    const bool isStopPlayheadTail =
+        (note.endTick == stopPhaseTick) ||
+        (stopPhaseTick > 0 && note.endTick == stopPhaseTick - 1);
+    if (!isStopPlayheadTail) {
+      continue;
+    }
+    for (const NoteUtils::DisplayNote& closed : closedCapturePreviewNotes) {
+      if (closed.endTick < closed.startTick) {
+        continue;
+      }
+      if (closed.note == note.note && closed.startTick == note.startTick) {
+        note.endTick = closed.endTick;
+        break;
+      }
+    }
+  }
+}
+
 /// Draw-source sealed/preview union after `committedEnd`. During capture, replace in
 /// the suffix or append (`150650` stale prefix 40 + live sealed 624). After stop,
 /// do not append a linear sealed row whose pitch+start already exists in the
