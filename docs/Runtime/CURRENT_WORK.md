@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (`233150`: wrap sealed Shorten paint host shipped)
+Last updated: 2026-09-06 (`000402`: later occupy Shorten remnant drop)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,16 +10,27 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Wrap sealed Shorten paint ([`235546`](../../captures/session_20260905_235546.log)):**
+**Later occupy Shorten remnant ([`000402`](../../captures/session_20260906_000402.log)):**
+`painted_pending_shorten` already rewrites later NoteIds (id 73 after
+id 71; id 77 after id 75). OLED still shows the original length until
+overdub stop because `drawAllNotes` also draws a longer same-pitch+start
+sealed-preview remnant. Sibling drop now removes closed remnants at
+named Hide/Shorten pitch+starts, including the live-capture suffix.
+Open holds stay. Occupying Adds start at hold, not at the source start.
+Gather upsert during capture is unchanged (`150650`). Host pins
+`test_pending_shorten_drops_suffix_longer_remnant_000402` and
+`test_later_occupy_shorten_drops_suffix_remnant_000402`. Device: every
+occupy Shorten, not only the first, must show `holdStart-1` on the next
+`DISP` before the next `BAR`, before and after wrap.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Wrap sealed Shorten paint ([`235546`](../../captures/session_20260905_235546.log)):**
 First sealed Shorten stayed after wrap; later ones did not. RC-C:
 `recoverMissingSealedShortenSources` skipped a Length companion when
 snapshot/source-view/visual missed that NoteId. Fallback is the sealed
 Length row itself (`74@1536–1967` stayed; `76@2304–2735` must recover).
 Host pin `test_wrap_seal_keeps_later_painted_shorten_235546`. Prior RC-A
-suffix apply and RC-B recover owner stay. Device recapture: every
-already-shortened note must keep `holdStart-1` on the first post-wrap
-`DISP`, not only the first one.
-Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+suffix apply and RC-B recover owner stay.
 
 **Wrap-held head occupy Shorten ([`225200`](../../captures/session_20260905_225200.log)) — Stage 1:**
 Pin Failure A passed: wrap-held `69@4560→760` id 96 stays in source view
@@ -176,7 +187,7 @@ Flashed `teensy41-capture-serial` (no RC1c firmware). Occupy holds PASS: OD1 `sh
 `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. Filter before geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill. Host `a04e2bd5`.
 
 **Prior — effective vs frame RC1b ([`154310`](../../captures/session_20260903_154310.log)):**
-After stop, draw-source sealed union does not append a linear row whose pitch+start already exists in the committed prefix. During capture, suffix upsert stays (`150650`). RC1 overlay list stays. Do not extend sibling-drop into the live-capture suffix. Do not add gather `keepShortest`. Occupy HITL phase windows close OD2 on `Overdubbing stopped` / `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing ([`133818`](../../captures/session_20260905_133818.log)).
+After stop, draw-source sealed union does not append a linear row whose pitch+start already exists in the committed prefix. During capture, suffix upsert stays (`150650`). RC1 overlay list stays. Named Hide/Shorten sibling drop now includes closed suffix remnants (`000402`); open holds and gather upsert stay. Do not add gather `keepShortest`. Occupy HITL phase windows close OD2 on `Overdubbing stopped` / `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing ([`133818`](../../captures/session_20260905_133818.log)).
 
 **Prior — effective vs frame RC1 ([`140729`](../../captures/session_20260903_140729.log)):**
 Display overlay appends sealed companion ids across wraps so frame realizes already-correct effective Hide/Shorten. `lastOverdubSealCompanionIds_` stays last-wrap-only for admission. Overlay list is a transitional bridge, not a second effective owner. Device first-STOPPED two-length FAIL [`154310`](../../captures/session_20260903_154310.log) is RC1b (sealed suffix), not an RC1 revert.
@@ -185,7 +196,7 @@ Display overlay appends sealed companion ids across wraps so frame realizes alre
 [`122730`](../../captures/session_20260903_122730.log) OVERDUBBING `DFRAME resolveUs` min 2149 / median 8724 / max 15285 (16 of 31 ≥ 8000). Do not start an index. `#41` Stage 2 / off-clock seal stay out. Plan: [`display_draw_source_reuse_empty_bar_bugfix.md`](../Plans/display_draw_source_reuse_empty_bar_bugfix.md).
 
 **Prior — Shorten same-start sibling drop ([`123236`](../../captures/session_20260903_123236.log), [`140729`](../../captures/session_20260903_140729.log)):**
-Display Hide/Shorten apply drops a longer same-pitch+start sibling in the committed prefix only. Device **PASS**: first STOPPED `src,frame` has no two-length pair (`63@0` reconstruct 144/576 → frame 144 only). Host `88d24b6c`. Not this RC: `77@336` frame 48 vs effective 16; `63@1680` frame 288 while effective omits it. Do not add gather `keepShortest`. Plan: [`overdub_paint_shorten_same_start_sibling_bugfix.md`](../Plans/overdub_paint_shorten_same_start_sibling_bugfix.md).
+Display Hide/Shorten apply drops a longer same-pitch+start closed sibling of the kept short row, including suffix remnants (`000402`). Device **PASS** for the original prefix-only slice: first STOPPED `src,frame` has no two-length pair (`63@0` reconstruct 144/576 → frame 144 only). Host `88d24b6c`. Not that RC: `77@336` frame 48 vs effective 16; `63@1680` frame 288 while effective omits it. Do not add gather `keepShortest`. Plan: [`overdub_paint_shorten_same_start_sibling_bugfix.md`](../Plans/overdub_paint_shorten_same_start_sibling_bugfix.md).
 
 **Prior — RC-S retain+merge ([`120321`](../../captures/session_20260903_120321.log), [`122730`](../../captures/session_20260903_122730.log)):**
 `Loop::retainCapturePreviewAtSeal` retains uncovered sealed rows, then merges this pass’s closed preview via `upsertDisplayNoteAtPitchStart`. Device **PASS**: wrap 2 `sealed` 63→159 (159 > lap-2 preview 106), `frame` 316→311, not visual+latest-lap (`225`). Live `hidden` vs stop `DIAG,oh hide` are different counters (122730 hidden=4 vs hide=1); not a reuse owner. Host `030e1a08`. Snapshot completeness is not a substitute.

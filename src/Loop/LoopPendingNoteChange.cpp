@@ -204,14 +204,15 @@ LOOP_COLD_MEM bool sourceTransformMarksPitchStart(const PendingNoteChangeVec& tr
   return false;
 }
 
-/// After Hide or Shorten apply, drop a longer same-pitch+start sibling in the committed
-/// prefix so a record remnant cannot sit beside the shortened row (`201956` Hide;
-/// `123236` Shorten 63@768 len 95 vs 576). Only pitch+starts named by those
-/// transforms are touched — not a general shortest-wins rule (`150650` long sealed
-/// hold must not lose to a shorter stale row).
+/// After Hide or Shorten apply, drop a longer same-pitch+start closed sibling so a
+/// snapshot/sealed-preview remnant cannot sit beside the shortened row (`201956`
+/// Hide; `123236` Shorten; `000402` later occupy still painted short by NoteId
+/// while the longer suffix remnant stayed visible). Only pitch+starts named by
+/// those transforms are touched. Open capture holds are kept so playhead tails
+/// can grow. Occupying Adds start at hold, not at the shortened source start.
 LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
-    size_t liveCaptureBegin) {
+    size_t /*liveCaptureBegin*/) {
   if (notes.size() < 2) {
     return;
   }
@@ -226,24 +227,24 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
   if (!anyNamedTransform) {
     return;
   }
-  const size_t committedEnd = liveCaptureBegin < notes.size() ? liveCaptureBegin : notes.size();
-  if (committedEnd < 2) {
-    return;
-  }
+  auto isClosedLinear = [](const NoteUtils::DisplayNote& note) {
+    return note.endTick >= note.startTick &&
+           !DisplayWindowUtils::capturePreviewNoteIsOpenHold(note.startTick, note.endTick);
+  };
   NoteUtils::DisplayNoteVec kept;
   kept.reserve(notes.size());
   for (size_t i = 0; i < notes.size(); ++i) {
     const NoteUtils::DisplayNote& note = notes[i];
-    if (i >= committedEnd || note.endTick < note.startTick ||
+    if (!isClosedLinear(note) ||
         !sourceTransformMarksPitchStart(transforms, note.note, note.startTick)) {
       kept.push_back(note);
       continue;
     }
     bool dominated = false;
-    for (size_t j = 0; j < committedEnd; ++j) {
+    for (size_t j = 0; j < notes.size(); ++j) {
       const NoteUtils::DisplayNote& other = notes[j];
-      if (other.note != note.note || other.startTick != note.startTick ||
-          other.endTick < other.startTick) {
+      if (!isClosedLinear(other) || other.note != note.note ||
+          other.startTick != note.startTick) {
         continue;
       }
       if (other.endTick < note.endTick || (other.endTick == note.endTick && j < i)) {
