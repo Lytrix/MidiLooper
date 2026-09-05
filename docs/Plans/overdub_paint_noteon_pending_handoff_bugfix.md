@@ -1,6 +1,6 @@
 # Overdub paint — NoteOn pending handoff and stale-cache source guard
 
-**Status:** Stage 1 and Stage 2 host shipped. Device recapture open.  
+**Status:** Stage 1 and Stage 2 host shipped. Stage 3 Shorten source recovery is a sibling plan. Device recapture open.  
 **Date:** 2026-09-05  
 **Kind:** bugfix (display handoff / cache source identity)  
 **Evidence:** [`202821`](../../captures/session_20260905_202821.log) Shorten only after stop; [`203406`](../../captures/session_20260905_203406.log) one-frame old passes / duplicate bars  
@@ -57,6 +57,10 @@ only then permit incremental append
 `applyDeferredVisualCacheWrapAppend` must not append an earlier pass onto a cache whose `builtFromRevision` / playback revision no longer matches the deferred source.
 
 Owner: `Loop::applyDeferredVisualCacheWrapAppend`. Stores `deferredVisualCacheWrapAppendFromRevision_` when wrap-append is first deferred. Helpers: `shouldApplyDeferredVisualCacheWrapAppend`, `visualCacheIsCurrentSourceRevision`. Mismatch emits `VCACHE,append_skip` and rebuilds from current passes unless the cache already is the current-source revision.
+
+## Stage 3 — pending Shorten source recovery
+
+Sibling: [`overdub_paint_shorten_source_recovery_bugfix.md`](overdub_paint_shorten_source_recovery_bugfix.md). Recaptures after Stage 1+2 showed Hide can look correct from absence, while Shorten needs the committed source row. Do not reopen Stage 1 paint-copy or Stage 2 wrap-append.
 
 ## Host verification
 

@@ -1302,6 +1302,53 @@ void test_deferred_wrap_append_source_identity() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentSourceRevision(4, 5));
 }
 
+void test_pending_shorten_source_classify_and_recover_212700() {
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::NotNeeded),
+      static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(true, true, true)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::NotNeeded),
+      static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(false, false, true)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative),
+      static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(false, true, true)));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::PendingShortenSourceKind::AuthoritativeAbsence),
+      static_cast<int>(DisplayWindowUtils::classifyPendingShortenSource(false, true, false)));
+
+  NoteUtils::DisplayNoteVec compose;
+  NoteUtils::DisplayNoteVec visual;
+  visual.push_back({84, 84, 100, 4560, 4608});
+  NoteUtils::DisplayNoteVec authoritative;
+  authoritative.push_back({84, 84, 100, 4560, 4608});
+  const NoteId shortenIds[] = {84};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts recovered =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(compose, visual, shortenIds, 1,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, recovered.recovered);
+  TEST_ASSERT_EQUAL_UINT32(0u, recovered.authoritativeAbsence);
+  TEST_ASSERT_EQUAL(1u, compose.size());
+  TEST_ASSERT_EQUAL(84, compose[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(4560u, compose[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(4608u, compose[0].endTick);
+
+  NoteUtils::DisplayNoteVec absentCompose;
+  NoteUtils::DisplayNoteVec emptyAuthoritative;
+  const DisplayWindowUtils::PendingShortenRecoveryCounts absence =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(absentCompose, visual, shortenIds, 1,
+                                                           emptyAuthoritative);
+  TEST_ASSERT_EQUAL_UINT32(0u, absence.recovered);
+  TEST_ASSERT_EQUAL_UINT32(1u, absence.authoritativeAbsence);
+  TEST_ASSERT_TRUE(absentCompose.empty());
+
+  NoteUtils::DisplayNoteVec hideCompose;
+  const DisplayWindowUtils::PendingShortenRecoveryCounts hideCounts =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(hideCompose, visual, nullptr, 0,
+                                                           authoritative);
+  TEST_ASSERT_EQUAL_UINT32(0u, hideCounts.recovered);
+  TEST_ASSERT_TRUE(hideCompose.empty());
+}
+
 void test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const uint32_t loopLength = 32u * bar;
@@ -1523,6 +1570,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_reuse_committed_draw_source_when_only_overlay_keys_change);
   RUN_TEST(test_pending_paint_representation_and_overview_source);
   RUN_TEST(test_deferred_wrap_append_source_identity);
+  RUN_TEST(test_pending_shorten_source_classify_and_recover_212700);
   RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
   RUN_TEST(test_display_frame_admission_sequences);
   RUN_TEST(test_display_frame_note_edit_request_uses_same_phases);

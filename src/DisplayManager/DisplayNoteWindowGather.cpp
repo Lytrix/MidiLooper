@@ -307,6 +307,98 @@ void applyPendingDrawSourceTransforms(const Loop& loop, NoteUtils::DisplayNoteVe
 }
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+DISP_CAPTURE_MEM void emitPendingShortenSourceKind(NoteId noteId,
+                                                   DisplayWindowUtils::PendingShortenSourceKind kind) {
+    const char* kindName = "not_needed";
+    if (kind == DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative) {
+        kindName = "stale_visual_source";
+    } else if (kind == DisplayWindowUtils::PendingShortenSourceKind::AuthoritativeAbsence) {
+        kindName = "authoritative_absence";
+    }
+    char line[160];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,draw_src,shorten_src,id,%u,kind,%s",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), kindName);
+    DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
+DISP_CAPTURE_MEM bool lookupAuthoritativeCommittedShortenRow(
+    const Loop& loop, NoteId noteId, uint8_t pitch, const NoteUtils::DisplayNote* visualHint,
+    NoteUtils::DisplayNote& out) {
+    if (noteId == kInvalidNoteId) {
+        return false;
+    }
+    if (const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot()) {
+        if (const LoopSnapshotNoteRef reference = snapshot->findNote(noteId, pitch)) {
+            out = displayNoteFromSnapshotNote(*reference);
+            return true;
+        }
+    }
+    for (const NoteUtils::DisplayNote& note : loop.overdubSourceViewNotes()) {
+        if (note.noteId == noteId) {
+            out = note;
+            return true;
+        }
+    }
+    if (visualHint == nullptr || loop.loopLengthTicks == 0 || Config::TICKS_PER_BAR == 0) {
+        return false;
+    }
+    const uint32_t barTicks = Config::TICKS_PER_BAR;
+    const uint32_t barStart = (visualHint->startTick / barTicks) * barTicks;
+    SessionMidiEventVec flat;
+    loop.gatherCommittedEventsInWindow(flat, barStart, barTicks * 2u, true);
+    const NoteUtils::DisplayNoteVec reconstructed =
+        NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
+    if (const NoteUtils::DisplayNote* found =
+            DisplayWindowUtils::findDisplayNoteByNoteId(reconstructed, noteId)) {
+        out = *found;
+        return true;
+    }
+    return false;
+}
+
+DISP_CAPTURE_MEM bool recoverMissingPendingShortenSources(const Loop& loop,
+                                                          NoteUtils::DisplayNoteVec& compose,
+                                                          size_t& committedEnd) {
+    if (!loop.hasPendingNoteChanges()) {
+        return false;
+    }
+    bool recoveredAny = false;
+    for (const PendingNoteChange& change : loop.pendingNoteChanges()) {
+        if (change.kind != PendingNoteChangeKind::Shorten || change.noteId == kInvalidNoteId) {
+            continue;
+        }
+        const bool composeHasTarget =
+            DisplayWindowUtils::displayNotesContainNoteId(compose, change.noteId);
+        const NoteUtils::DisplayNote* visualHint =
+            DisplayWindowUtils::findDisplayNoteByNoteId(loop.visualCache.notes, change.noteId);
+        NoteUtils::DisplayNote authoritative{};
+        const bool authoritativeHasTarget =
+            lookupAuthoritativeCommittedShortenRow(loop, change.noteId, change.pitch, visualHint,
+                                                   authoritative);
+        const DisplayWindowUtils::PendingShortenSourceKind kind =
+            DisplayWindowUtils::classifyPendingShortenSource(composeHasTarget, visualHint != nullptr,
+                                                             authoritativeHasTarget);
+        if (kind == DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative) {
+            if (!DisplayWindowUtils::displayNotesContainNoteId(compose, change.noteId)) {
+                compose.push_back(authoritative);
+            }
+            recoveredAny = true;
+        }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        if (kind != DisplayWindowUtils::PendingShortenSourceKind::NotNeeded) {
+            emitPendingShortenSourceKind(change.noteId, kind);
+        }
+#endif
+    }
+    if (recoveredAny) {
+        committedEnd = compose.size();
+    }
+    return recoveredAny;
+}
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
 DISP_CAPTURE_MEM void emitPaintedOccupy193815Row(const char* stage,
                                                  const Loop& loop,
                                                  const NoteUtils::DisplayNoteVec& notes) {
@@ -472,6 +564,11 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         }
     }
     DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
+
+    if (recoverMissingPendingShortenSources(loop, liveDisplayNotes, committedDisplayEnd)) {
+        storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+                                       liveDisplayCommittedPrefix_);
+    }
 
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), false, false,

@@ -3841,6 +3841,60 @@ void seedOccupyIdentityTriple(Loop& loop) {
   plantVisualGeometry(loop, 1, 60, 10, 200);
 }
 
+/// `212700`: current snapshot membership omits NoteId 84 while VisualCache
+/// still has it. Gather reports old→0. Recovery uses committed geometry, then
+/// pending Shorten paints the shortened end. Hide is not recovered here.
+void test_draw_source_snapshot_miss_recovers_pending_shorten_212700() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 32;
+  plantVisualGeometry(loop, 84, 84, 4560, 4608);
+  loop.storePublishedSnapshotForTest(
+      LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick, 1, 1),
+      loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.openOverdubSession(0);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+      static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(), loop.hasOverdubSession(),
+      !loop.visualCache.notes.empty(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent()));
+
+  NoteUtils::DisplayNoteVec compose;
+  const uint32_t bar = 4560u / Config::TICKS_PER_BAR;
+  gatherDrawSourcePrefix(loop, bar, bar, 84, 84, compose);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::displayNotesContainNoteId(compose, 84));
+
+  NoteUtils::DisplayNoteVec authoritative;
+  NoteUtils::DisplayNote committed{};
+  committed.noteId = 84;
+  committed.note = 84;
+  committed.velocity = 100;
+  committed.startTick = 4560;
+  committed.endTick = 4608;
+  authoritative.push_back(committed);
+  const NoteId shortenIds[] = {84};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts recovered =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(
+          compose, loop.visualCache.notes, shortenIds, 1, authoritative);
+  TEST_ASSERT_EQUAL_UINT32(1u, recovered.recovered);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNotesContainNoteId(compose, 84));
+  TEST_ASSERT_EQUAL_UINT32(4608u, compose[0].endTick);
+
+  PendingNoteChange shorten{};
+  shorten.kind = PendingNoteChangeKind::Shorten;
+  shorten.noteId = 84;
+  shorten.pitch = 84;
+  shorten.startTick = 4560;
+  shorten.endTick = 4575;
+  loop.pushPendingNoteChangeForTest(shorten);
+  loop.applyPendingNoteChangesToDisplayNotes(compose, compose.size());
+  TEST_ASSERT_EQUAL(1u, compose.size());
+  TEST_ASSERT_EQUAL(84, compose[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(4560u, compose[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(4575u, compose[0].endTick);
+}
+
 void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4250,6 +4304,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_without_snapshot_uses_fallback);
   RUN_TEST(test_idle_slice_incomplete_fallback_budget_keeps_dirty);
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
+  RUN_TEST(test_draw_source_snapshot_miss_recovers_pending_shorten_212700);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
