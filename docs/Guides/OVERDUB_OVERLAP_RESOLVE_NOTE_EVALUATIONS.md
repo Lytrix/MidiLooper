@@ -266,6 +266,8 @@ Across later notes constraining the same A, upsert is monotonically restrictive.
 
 RC2b (closed same-`NoteId` must not become wrap-held) is **parked** after `204043`. Reopen only if a later capture shows wrap-held rewrite or the `79@240` dual-Off row above. Host tails pin `test_same_pass_playhead_tails_keep_closed_bar_four_end` stays red; do not patch `applyCapturePlayheadTails` from that pin. See [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
 
+[`175026`](../../captures/session_20260905_175026.log) `52@664` is the same class: reconstruct LIFO-pairs this-pass `N@664` (`id=26`) with source `F@808` (`id=11`) so E/R=144, while frame paints occupy Shorten of `id=26` to 1027. Tagged Offs pair by `NoteId`; untagged Offs keep LIFO. Do not paint 144 to match E. Host `test_reconstruct_175026_tagged_off_does_not_steal_this_pass_on`.
+
 ---
 
 ## Add is not pending persistence
