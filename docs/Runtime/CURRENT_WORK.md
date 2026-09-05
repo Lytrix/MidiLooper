@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (RC1c occupy HITL recapture 153848)
+Last updated: 2026-09-05 (RC1d pin: 52@2172 not a/not b)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,11 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — RC1c occupy HITL recapture [`153848`](../../captures/session_20260905_153848.log):**
-Flashed `565b87cb` `teensy41-capture-serial`. Occupy holds PASS: OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22, GUS 2/2. Dumps reconstruct 39 / effective 28 / frame 26. No two-length. No `F == R` remnant (`48@666` E=F=396 vs R=744). HITL FAIL is one 1-tick key: `52@2172` f=58 e=59. First run [`153705`](../../captures/session_20260905_153705.log) dropped USB before dumps. Extra-short hold-1 keys (268 / 164) are absent. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+**Now — RC1d pin (investigation only, [`153848`](../../captures/session_20260905_153848.log) `52@2172`):**
+Host `test_occupy_153848_52_2172_first_inclusive_2230_pin` PASS. Effective Off@2231 / dump 59. Draw-source prefix, sealed union, and companion overlay stay inclusive 2231. No pending/Length companion on the Add at 2230. **Not RC1d-a. Not RC1d-b.** First 2230 is not host-reachable without a new firmware hook — missing seam. Do not invent a third owner. Do not change events so E becomes 58. Firmware / HITL recapture stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+
+**Prior — RC1c occupy HITL recapture [`153848`](../../captures/session_20260905_153848.log):**
+Flashed `565b87cb` `teensy41-capture-serial`. Occupy holds PASS: OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22, GUS 2/2. Dumps reconstruct 39 / effective 28 / frame 26. No two-length. No `F == R` remnant (`48@666` E=F=396 vs R=744). HITL FAIL is one 1-tick key: `52@2172` f=58 e=59. First run [`153705`](../../captures/session_20260905_153705.log) dropped USB before dumps. Extra-short hold-1 keys (268 / 164) are absent. RC2 / RC3 stay gated.
 
 **Prior — RC1c window gather per-layer apply ([`144743`](../../captures/session_20260905_144743.log) / [`152012`](../../captures/session_20260905_152012.log)):**
 `copyEffectiveCommittedEventsInRange` applies Active Note rows on each committed chunk list, then merges. Host `test_occupy_144743_48_616_materialize_vs_window_vs_pending` expects window gather **400**, On@885 absent, Off@1016 kept. `teensy41-capture-serial` RAM1 locals **6848**. Native **1644/1646** — pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end` (does not call window gather).
