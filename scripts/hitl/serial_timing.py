@@ -56,8 +56,8 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
     }
     record_sessions: list[tuple[int, int]] = []
     open_record_start: Optional[int] = None
-    overdub_sessions: list[tuple[int, int]] = []
-    open_overdub_start: Optional[int] = None
+    st_overdub_starts: list[int] = []
+    st_overdub_stops: list[int] = []
     for line in lines:
         if ",ST,Track," not in line:
             continue
@@ -80,14 +80,9 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
             record_sessions.append((open_record_start, ts))
             open_record_start = None
         elif from_state == "PLAYING" and to_state == "OVERDUBBING":
-            open_overdub_start = ts
-        elif (
-            from_state == "OVERDUBBING"
-            and to_state in ("PLAYING", "STOPPED")
-            and open_overdub_start is not None
-        ):
-            overdub_sessions.append((open_overdub_start, ts))
-            open_overdub_start = None
+            st_overdub_starts.append(ts)
+        elif from_state == "OVERDUBBING" and to_state in ("PLAYING", "STOPPED"):
+            st_overdub_stops.append(ts)
 
     human_record_starts: list[int] = []
     human_record_stops: list[int] = []
@@ -132,14 +127,15 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
         boundaries["record_start_ts"] = record_sessions[-1][0]
         boundaries["record_stop_ts"] = record_sessions[-1][1]
 
-    overdub_stops = sorted(set(human_overdub_stops + odub_enter_stops))
-    used_overdub_stops = {stop_ts for _start_ts, stop_ts in overdub_sessions}
-    if open_overdub_start is not None:
-        stop_ts = _next_unused_stop(open_overdub_start, overdub_stops, used_overdub_stops)
-        if stop_ts is not None:
-            overdub_sessions.append((open_overdub_start, stop_ts))
-            used_overdub_stops.add(stop_ts)
-            open_overdub_start = None
+    overdub_stops = sorted(set(st_overdub_stops + human_overdub_stops + odub_enter_stops))
+    overdub_sessions: list[tuple[int, int]] = []
+    used_overdub_stops: set[int] = set()
+    for start_ts in st_overdub_starts:
+        stop_ts = _next_unused_stop(start_ts, overdub_stops, used_overdub_stops)
+        if stop_ts is None:
+            continue
+        overdub_sessions.append((start_ts, stop_ts))
+        used_overdub_stops.add(stop_ts)
     for start_ts in human_overdub_starts:
         if _session_covers_start(start_ts, overdub_sessions):
             continue
@@ -148,6 +144,7 @@ def extract_phase_boundaries(lines: list[str]) -> dict[str, Optional[int]]:
             continue
         overdub_sessions.append((start_ts, stop_ts))
         used_overdub_stops.add(stop_ts)
+    overdub_sessions.sort(key=lambda session: session[0])
 
     if overdub_sessions:
         boundaries["overdub_start_ts"] = overdub_sessions[0][0]

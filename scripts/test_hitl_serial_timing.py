@@ -80,6 +80,23 @@ class ExtractPhaseBoundariesTests(unittest.TestCase):
         self.assertEqual(bounds["second_overdub_start_ts"], 5000)
         self.assertEqual(bounds["second_overdub_stop_ts"], 8000)
 
+    def test_first_overdub_stop_from_odub_enter_keeps_time_order(self) -> None:
+        # [`144036`]: OD1 sealed without OVERDUBBING→PLAYING; OD2 has ST stop.
+        lines = [
+            "#CAP,81814170,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,90544026,ODUB,stop,enter,26,0,4294967295,4294967295,36,2,entered",
+            "[90.546] [DEBUG] [TRACK] Overdubbing stopped @ tick 6469",
+            "#CAP,91173391,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,105954997,ODUB,stop,enter,38,0,4294967295,4294967295,78,5,entered",
+            "#CAP,105958326,ST,Track,OVERDUBBING,PLAYING",
+            "[105.958] [DEBUG] [TRACK] Overdubbing stopped @ tick 12378",
+        ]
+        bounds = extract_phase_boundaries(lines)
+        self.assertEqual(bounds["overdub_start_ts"], 81814170)
+        self.assertEqual(bounds["overdub_stop_ts"], 90544026)
+        self.assertEqual(bounds["second_overdub_start_ts"], 91173391)
+        self.assertEqual(bounds["second_overdub_stop_ts"], 105954997)
+
 
 class ExtractFirstNoteOffsetTests(unittest.TestCase):
     def test_offset_from_us_delta_at_120_bpm(self) -> None:

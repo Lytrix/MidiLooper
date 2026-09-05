@@ -261,7 +261,7 @@ def _cap_ts(line: str) -> Optional[int]:
 
 
 def _phase_windows(lines: list[str]) -> dict[str, Optional[int]]:
-    """OD1/OD2 windows. Close a missing OD2 ST stop from Overdubbing stopped / ODUB,stop,enter."""
+    """OD1/OD2 windows by start time. Close a missing ST stop from Overdubbing stopped / ODUB,stop,enter."""
     bounds = extract_phase_boundaries(lines)
     return {
         "od1_start": bounds.get("overdub_start_ts"),
