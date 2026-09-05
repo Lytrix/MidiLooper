@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-06 (`001145`: same-start Hide remnant drop)
+Last updated: 2026-09-06 (`002200`: pending Shorten wins over sealed Length)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Same-start Hide remnant ([`001145`](../../captures/session_20260906_001145.log)):**
+**Pending Shorten overwritten by sealed Length ([`002200`](../../captures/session_20260906_002200.log)):**
+After wrap 2, occupy of already-sealed `73@768–1247` at `hs=1056` writes
+pending `768–1055`. Paint applied pending first, then sealed Length
+`1247`, so `painted_pending_shorten` never logged 73 and OLED kept the
+older end until stop. Stop effective/frame already have `768–1055`.
+Sealed overlay now applies first; this-lap pending wins. Host pin
+`test_pending_shorten_wins_over_older_sealed_length_002200`. Device:
+after two wraps, a further occupy Shorten must show `holdStart-1` on the
+next `DISP` before the next `BAR`.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Same-start Hide remnant ([`001145`](../../captures/session_20260906_001145.log)):**
 After several occupy Shortens, a later same-start occupy Hides the
 previous Add (`63@1152–1440` `hs=1152`). Hide removes that NoteId, but
 the closed remnant stayed because the new occupy is an open hold and

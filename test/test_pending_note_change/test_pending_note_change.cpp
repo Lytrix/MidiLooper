@@ -4032,6 +4032,25 @@ void test_later_occupy_shorten_drops_suffix_remnant_000402() {
   TEST_ASSERT_NULL(findDisplayNoteById(paint, 173));
 }
 
+/// `002200`: after wrap 2, sealed Length is 73@768–1247. A later occupy writes
+/// pending 768–1055. Sealed must not win — paint is the pending end.
+void test_pending_shorten_wins_over_older_sealed_length_002200() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 73, 768, 1440, 63, 3072);
+  sealRecordedShortenCompanion(loop, 73, 63, 768, 1247, 9);
+  loop.pushPendingNoteChangeForTest(shortenChange(73, 63, 768, 1055));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(73, 63, 768, 1440));
+  loop.applyPendingNoteChangesToDisplayNotes(paint, 1);
+  TEST_ASSERT_EQUAL(1u, paint.size());
+  TEST_ASSERT_EQUAL(73, paint[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(768u, paint[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(1055u, paint[0].endTick);
+}
+
 /// `001145`: same-start Hide after earlier Shortens must drop the closed remnant
 /// at that pitch+start. The new occupy is an open hold and cannot dominate it.
 void test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145() {
@@ -4652,6 +4671,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_hide_does_not_recover_dropped_source_row);
   RUN_TEST(test_pending_shorten_drops_suffix_longer_remnant_000402);
   RUN_TEST(test_later_occupy_shorten_drops_suffix_remnant_000402);
+  RUN_TEST(test_pending_shorten_wins_over_older_sealed_length_002200);
   RUN_TEST(test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145);
   RUN_TEST(test_same_start_hide_drops_remnant_when_hold_present_001145);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);

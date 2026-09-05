@@ -1082,22 +1082,20 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
   const uint32_t loopLen = overdubSourceViewLoopLengthTicks_ != 0
                                ? overdubSourceViewLoopLengthTicks_
                                : loopLengthTicks;
+  // Sealed companions are the committed baseline. This-lap pending must apply
+  // after them so a further Shorten of the same NoteId is not overwritten
+  // (`002200` 73@768–1247 sealed, occupy hs=1056 pending 768–1055).
+  if (hasSealedCompanionOverlay()) {
+    PendingNoteChangeVec overlay;
+    appendSealedCompanionOverlay(*this, overlay);
+    if (!overlay.empty()) {
+      applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin, true);
+    }
+  }
   if (!pendingNoteChanges_.empty()) {
     applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin,
                                       true);
   }
-  if (!hasSealedCompanionOverlay()) {
-    return;
-  }
-  // Overlay ids persist across wraps (`140729`). Revision >= Rseal must not
-  // drop a Hide whose target is still in the painted prefix (`201956`
-  // draw_src id 71 63@768→1151 next to 768→864).
-  PendingNoteChangeVec overlay;
-  appendSealedCompanionOverlay(*this, overlay);
-  if (overlay.empty()) {
-    return;
-  }
-  applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin, true);
 }
 
 LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
