@@ -58,6 +58,8 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   if (wrapped) {
     const PassId passId = loop.lastCommittedPassId();
     loop.queueOverdubWrapSnapshotJournal(passId);
+    loop.recountOverlapHoldTotalsFromPending();
+    loop.emitOverlapHoldTotals();
 #if defined(SESSION_CAPTURE)
     const uint32_t wrapSealPendingStartUs = micros();
 #endif

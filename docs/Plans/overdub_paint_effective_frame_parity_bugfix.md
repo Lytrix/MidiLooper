@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC4 host next, then RC5 wrap `oh`. RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b / RC4 / RC5 host shipped. Device occupy recapture next. RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -169,7 +169,7 @@ ledger IDs
   → Shorten / Hide
 ```
 
-Host pin: `test_occupancy_ledger_id_not_present_at_hold_does_not_transform_134436`.
+Host pin: `test_occupancy_ledger_id_not_present_at_hold_does_not_transform_134436`. Host `a04e2bd5`.
 
 RC4 alone does not make stop `oh` shorten>=2. Lap-0 Shortens are wrap-cleared. RC5 next.
 
@@ -186,9 +186,20 @@ RC4 alone does not make stop `oh` shorten>=2. Lap-0 Shortens are wrap-cleared. R
 
 **Invariant:** every wrap that seals pending Shorten/Hide emits `oh` with the same occupancy classification semantics as stop-seal `oh`, from current `pendingNoteChanges_` before clear.
 
-`oh` is observational only. No selection, paint, playback, or publication path may consume it. Extract the existing On/Off `overlapHoldTotals_` recount into one helper; do not paste a third copy.
+`oh` is observational only. No selection, paint, playback, or publication path may consume it. On, Off, and wrap-before-seal call `recountOverlapHoldTotalsFromPending`. Do not paste a third copy.
+
+Host pin: `test_recount_overlap_hold_totals_follows_pending_after_seal`. Device occupy recapture next.
 
 Do not move +1/4 onto lap 1. Do not count `draw_src hidden=`.
+
+### Architecture checkpoint
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** |
+| State transition change? | **NO** |
+| Unbounded interval owner? | **NO** |
+| Reuse | **YES** — extract On/Off recount; `commitOverdubWrap` emits then seals |
 
 ## RC2 — gated on recapture
 

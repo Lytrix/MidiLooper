@@ -823,20 +823,7 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
   addChange.endTick = endTick;
   pendingNoteChanges_.push_back(addChange);
 
-#if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
-  overlapHoldTotals_.add = 0;
-  overlapHoldTotals_.shorten = 0;
-  overlapHoldTotals_.hide = 0;
-  for (const PendingNoteChange& change : pendingNoteChanges_) {
-    if (change.kind == PendingNoteChangeKind::Add) {
-      ++overlapHoldTotals_.add;
-    } else if (change.kind == PendingNoteChangeKind::Shorten) {
-      ++overlapHoldTotals_.shorten;
-    } else if (change.kind == PendingNoteChangeKind::Hide) {
-      ++overlapHoldTotals_.hide;
-    }
-  }
-#endif
+  recountOverlapHoldTotalsFromPending();
   return true;
 }
 
@@ -901,6 +888,10 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
       (void)occupancyResolvedNoteIds->insert(note.noteId);
     }
   }
+  recountOverlapHoldTotalsFromPending();
+}
+
+LOOP_COLD_MEM void Loop::recountOverlapHoldTotalsFromPending() {
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
   overlapHoldTotals_.add = 0;
   overlapHoldTotals_.shorten = 0;

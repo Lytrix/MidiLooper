@@ -700,6 +700,23 @@ void test_occupancy_ledger_id_not_present_at_hold_does_not_transform_134436() {
   TEST_ASSERT_FALSE(resolved.contains(1));
 }
 
+void test_recount_overlap_hold_totals_follows_pending_after_seal() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 0, 576, 60);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.resolveOccupancyAtNoteOn(1, 60, 90, overlapIds({1}), 192);
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().shorten);
+  TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
+  (void)loop.sealPendingNoteChangesToEditPasses();
+  TEST_ASSERT_EQUAL_UINT32(1, loop.overlapHoldTotals().shorten);
+  loop.recountOverlapHoldTotalsFromPending();
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().shorten);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().hide);
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().add);
+}
+
 void test_occupancy_hide_seals_as_delete() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3702,6 +3719,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_upsert_occupied_hides_empty_ledger_uses_hold_participants);
   RUN_TEST(test_upsert_occupied_hides_norowid_falls_back_to_hold_participants);
   RUN_TEST(test_occupancy_ledger_id_not_present_at_hold_does_not_transform_134436);
+  RUN_TEST(test_recount_overlap_hold_totals_follows_pending_after_seal);
   RUN_TEST(test_occupancy_hide_seals_as_delete);
   RUN_TEST(test_occupancy_five_sibling_convergence);
   RUN_TEST(test_occupancy_ordering_equivalence);
