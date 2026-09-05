@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (occupy RC4 + RC5 host shipped — recapture next)
+Last updated: 2026-09-05 (occupy RC4 + RC5 device PASS 141142)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,8 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — occupy RC4 + RC5 host shipped ([`134436`](../../captures/session_20260905_134436.log)):**
-RC4: ledger-selected occupy On transforms only when present at hold. RC5: wrap seal emits diagnostic `oh` from the same pending-kind recount before clear. Device: `overdub_occupy_paint` (wrap `oh` shorten>=2). Stay on the occupy slot for RC1b frame dump. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md). RAM1 locals **6848**. Full native **1643/1645** — pre-existing `test_same_pass_playhead_tails_keep_closed_bar_four_end` only.
+**Now — occupy RC4 + RC5 device PASS ([`141142`](../../captures/session_20260905_141142.log)):**
+Occupy-paint verifier **PASS** (`shorten=10 hide=11`, OD2 `from=snapshot`, visual 22). Wrap `oh` carried lap-0 Shorten before pending clear. Host `a04e2bd5` / `c41d03d9`. Baseline leftover `record_loop_length_mismatch` / `persistence_stage_missing:dispatch` is not an occupy gate. Next: stay on the occupy slot for RC1b first-STOPPED `src,frame`. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
 
 **Prior — occupy present-at-hold RC4 ([`134436`](../../captures/session_20260905_134436.log)):**
 `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. Filter before geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill. Host `a04e2bd5`.
