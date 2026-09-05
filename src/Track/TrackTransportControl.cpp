@@ -7,6 +7,7 @@
 #include "DisplayManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "TrackManager.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/IntervalProjection.h"
 
@@ -38,8 +39,12 @@ void Track::stopPlaying() {
   setState(TRACK_STOPPED);
   logger.logTrackEvent("Playback stopped", clockManager.getCurrentTick());
 #if defined(SESSION_CAPTURE)
-  rearmDeferredStoredMidiVerification();
-  displayManager.armStoppedFrameNoteDump();
+  // Transport stop hops every playing track. Re-arm only the selected track so leftover
+  // loops cannot replace the occupy first-STOPPED frame with a 352/1430-note dump.
+  if (trackManager.isSelectedTrack(*this)) {
+    rearmDeferredStoredMidiVerification();
+    displayManager.armStoppedFrameNoteDump();
+  }
 #endif
   displayManager.emitDisplayCaptureSnapshot(*this, activeLoopIndex, clockManager.getCurrentTick());
   HOT_PATH_TELEMETRY_REQUEST_DEFERRED_SUMMARY("playback_stop");
