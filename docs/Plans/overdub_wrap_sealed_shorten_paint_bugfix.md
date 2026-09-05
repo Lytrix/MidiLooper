@@ -1,9 +1,9 @@
 # Overdub wrap — sealed Shorten must keep the live paint end
 
-**Status:** Host shipped (`002708` long occupy hides inner shortened notes). Device recapture required.  
+**Status:** Host shipped (`003622` earlier remnant must not drop new long occupy). Device recapture required.  
 **Date:** 2026-09-06  
 **Kind:** bugfix (sealed-companion draw-source paint)  
-**Evidence:** [`002708`](../../captures/session_20260906_002708.log) (prior [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
+**Evidence:** [`003622`](../../captures/session_20260906_003622.log) (prior [`002708`](../../captures/session_20260906_002708.log), [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
 **Does not authorize:** occupy / wrap seal persist changes; VisualCache mutation on wrap; pending across wrap; Stage 1 wrap-held head occupy (`225200` device FAIL)
 
 ---
@@ -16,7 +16,8 @@ pending paint copy (painted_pending_shorten)     ← trust while pending exists
 commitOverdubWrap + sealPendingNoteChangesToEditPasses  ← trust persist
 recoverMissingPendingShortenSources              ← pending-only; empty after wrap
 gatherCommittedDrawSourceBars (snap=0 → VisualCache)  ← originals
-applyPendingNoteChangesToDisplayNotes (sealed then pending) + sibling drop  ← this slice
+applyPendingNoteChangesToDisplayNotes (sealed then pending) + sibling drop
+    (covering occupy = shortest keeper at its start)  ← this slice
 ```
 
 ## Root cause
@@ -55,6 +56,10 @@ Two gaps after wrap seal:
    frame kept the inners because same-start Hide drop treated `1296–1335`
    as a shorter keeper. An earlier same-pitch covering occupy now drops
    those inners. Hide absorbs a later Length of the same NoteId.
+8. **Earlier remnant drops the new long occupy (`003622`):** covering
+   used the older `768–1344` remnant, so paint kept `768–815` and removed
+   `816–1344`. An ungrown pitch-69 hold also dropped later A notes. The
+   covering row must be the shortest keeper at its start.
 
 Pin owners: sealed apply + sealed Length compose recovery + Length
 fallback + closed same-start remnant drop.
@@ -104,6 +109,10 @@ during capture is unchanged (`150650`).
 - `test_long_occupy_hides_inner_shortened_notes_002708` — long
   `864–1344` plus Hide of `1296–1440` / `1056–1200` drops those inners;
   `768–863` stays
+- `test_earlier_remnant_does_not_drop_new_long_occupy_003622` /
+  `test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622` —
+  remnant `768–1344` does not delete `816–1344`; ungrown `69@48` hold
+  does not drop `69@816–864`
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**

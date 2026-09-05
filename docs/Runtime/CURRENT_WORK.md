@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-06 (`002708`: long occupy hides inner shortened notes)
+Last updated: 2026-09-06 (`003622`: earlier remnant must not drop new long occupy)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,20 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Long occupy leaves inner shortened notes ([`002708`](../../captures/session_20260906_002708.log)):**
+**Earlier remnant dropped the new long occupy ([`003622`](../../captures/session_20260906_003622.log)):**
+`002708` covering-occupy drop treated the older longer remnant
+(`768–1344`) as the occupy that covers the new long Add (`816–1344`).
+Paint kept the short keeper and removed the long Add. An ungrown open
+hold on pitch 69 also dropped later A notes for a frame. Covering now
+requires the earliest row to be the shortest keeper at its start, and
+the hold must actually cover the inner. Host pins
+`test_earlier_remnant_does_not_drop_new_long_occupy_003622` and
+`test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622`.
+`002708` inners under a true long keeper still drop. Device: long occupy
+stays; record A notes do not vanish for a frame each bar.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Long occupy leaves inner shortened notes ([`002708`](../../captures/session_20260906_002708.log)):**
 After a second pass, a long occupy (`864–1344`) covers already-shortened
 inners (`1056–1200`, `1296–1335`). Stop effective hid them; the frame
 still painted them. Same-start Hide drop kept `1296–1335` as a shorter
