@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (Bug 2 occupy On paints Shorten in 202821)
+Last updated: 2026-09-05 (overdub paint NoteOn pending handoff + wrap-append source guard)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,26 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Bug 2 — occupy On paint named ([`202821`](../../captures/session_20260905_202821.log)):**
+**Overdub paint — NoteOn pending handoff + wrap-append source guard:**
+Stage 1 ([`202821`](../../captures/session_20260905_202821.log)): NoteOn
+`pendingNoteChanges_` advances the live paint representation. Compose stays
+untransformed; the next paint consumes a pending-painted copy. Overview does
+not read a clean VisualCache while pending/overlay exists. Resolver, ledger,
+and VisualCache publication stay unchanged.
+Stage 2 ([`203406`](../../captures/session_20260905_203406.log)):
+`applyDeferredVisualCacheWrapAppend` appends only when the deferred
+`playbackRevision` still matches. A mismatch obtains the current-source
+frame (`append_skip`, then `full` if the cache is not already current).
+Host: `teensy41-capture-serial` RAM1 locals **6848**; native **1660/1661**
+(pre-existing playhead-tails fail). Device recapture open.
+Plan: [`overdub_paint_noteon_pending_handoff_bugfix.md`](../Plans/overdub_paint_noteon_pending_handoff_bugfix.md).
+Do not start Bug 4, Bug 1, or Bug 3 until device recapture closes.
+
+**Prior — Bug 2 occupy On paint named ([`202821`](../../captures/session_20260905_202821.log)):**
 Occupy `#CAP,30465195` `63` `as=1536 ae=2208 hs=2016` → next draw-source
 `after_pending` and `after_tails` are `id=73` end **2015**. Forks A, B
 (at that On), and C are false. First-loop `id=0` + tails growth is the
-open-hold skip. Do not patch `applyCapturePlayheadTails`. Do not start
-Bug 4, Bug 1, or Bug 3 until the next named slice. Plan:
+open-hold skip. Do not patch `applyCapturePlayheadTails`. Plan:
 [`overdub_occupy_paint_191913_findings_bugfix.md`](../Plans/overdub_occupy_paint_191913_findings_bugfix.md).
 
 **Prior — Stage 0 RC3 NoteId Off pair reverted ([`191913`](../../captures/session_20260905_191913.log)):**

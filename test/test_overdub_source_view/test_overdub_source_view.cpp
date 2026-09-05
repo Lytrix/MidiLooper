@@ -36,6 +36,7 @@
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/SnapshotNoteConversion.h"
+#include "OverlapNoteIdObservation.h"
 #include "LoopSnapshot.h"
 
 #include <cstdio>
@@ -61,6 +62,18 @@ bool hasDisplayNote(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch, uint3
   for (const NoteUtils::DisplayNote& note : notes) {
     if (note.note == pitch && note.startTick == startTick) {
       return true;
+    }
+  }
+  return false;
+}
+
+bool hasDuplicatePitchStartNoteId(const NoteUtils::DisplayNoteVec& notes) {
+  for (size_t i = 0; i < notes.size(); ++i) {
+    for (size_t j = i + 1; j < notes.size(); ++j) {
+      if (notes[i].note == notes[j].note && notes[i].startTick == notes[j].startTick &&
+          notes[i].noteId == notes[j].noteId) {
+        return true;
+      }
     }
   }
   return false;
@@ -3671,6 +3684,71 @@ void test_budgeted_idle_slice_defers_wrap_append_then_resumes() {
   LoopContentResolution::deviceGateReset();
 }
 
+void drainBudgetedIdleSlicesUntilDeferredWrapAppend(Loop& loop) {
+  loop.markDisplayCachesStale();
+  uint8_t slices = 0;
+  while (loop.visualCacheDirty && slices < 16) {
+    loop.rebuildVisualCacheIdleSlice(4, 0, UINT32_MAX, false, false, 192);
+    ++slices;
+  }
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_TRUE(loop.hasDeferredVisualCacheWrapAppend());
+}
+
+void test_deferred_wrap_append_skips_when_current_source_already_built() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedWrapHeldOverdubLoop(loop);
+  drainBudgetedIdleSlicesUntilDeferredWrapAppend(loop);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+
+  loop.playbackRevision += 1;
+  NoteUtils::DisplayNote currentSource{};
+  currentSource.noteId = 99;
+  currentSource.note = 64;
+  currentSource.velocity = 100;
+  currentSource.startTick = 100;
+  currentSource.endTick = 200;
+  loop.visualCache.notes.clear();
+  loop.visualCache.notes.push_back(currentSource);
+  loop.visualCache.builtFromRevision = loop.playbackRevision;
+  loop.visualCacheDirty = false;
+
+  loop.applyDeferredVisualCacheWrapAppend();
+  TEST_ASSERT_FALSE(loop.hasDeferredVisualCacheWrapAppend());
+  TEST_ASSERT_EQUAL(1u, loop.visualCache.notes.size());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 64, 100));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+  TEST_ASSERT_FALSE(hasDuplicatePitchStartNoteId(loop.visualCache.notes));
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_deferred_wrap_append_rebuilds_when_source_revision_moved() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  seedWrapHeldOverdubLoop(loop);
+  drainBudgetedIdleSlicesUntilDeferredWrapAppend(loop);
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+
+  loop.playbackRevision += 1;
+  TEST_ASSERT_NOT_EQUAL(loop.playbackRevision, loop.visualCache.builtFromRevision);
+
+  loop.applyDeferredVisualCacheWrapAppend();
+  TEST_ASSERT_FALSE(loop.hasDeferredVisualCacheWrapAppend());
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 2976));
+  TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 12, 0));
+  TEST_ASSERT_FALSE(hasDuplicatePitchStartNoteId(loop.visualCache.notes));
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, loop.visualCache.builtFromRevision);
+  LoopContentResolution::deviceGateReset();
+}
+
 void test_undo_overdub_idle_refresh_restores_record_layer() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4147,6 +4225,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_retire_superseded_pitch_keeps_same_start_sibling_end);
   RUN_TEST(test_long_loop_pass_state_change_keeps_notes_and_stays_dirty);
   RUN_TEST(test_budgeted_idle_slice_defers_wrap_append_then_resumes);
+  RUN_TEST(test_deferred_wrap_append_skips_when_current_source_already_built);
+  RUN_TEST(test_deferred_wrap_append_rebuilds_when_source_revision_moved);
   RUN_TEST(test_undo_overdub_idle_refresh_restores_record_layer);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_after_same_pitch_wraps);
   RUN_TEST(test_prepared_hold_ids_pin_b_extras_at_tick64_after_wrap_undo);

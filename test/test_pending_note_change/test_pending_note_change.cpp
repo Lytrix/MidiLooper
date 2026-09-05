@@ -3672,8 +3672,8 @@ void seedOccupyOpenHoldPreview(Loop& loop, NoteId holdId) {
 
 /// `193815` Bug 2 compose pin. Live painted NoteId is not in the capture.
 /// Host stand-in ids label layer shapes only — not the device id.
-/// Sequence matches `resolveDisplayNotesByDrawSource`: prefix + overlays +
-/// `applyPendingNoteChangesToDisplayNotes` + overdub tails.
+/// Sequence matches `resolveDisplayNotesByDrawSource`: prefix + overlays stay
+/// on compose; pending paints a copy after overdub tails.
 void test_draw_source_compose_193815_63_1536_forks() {
   constexpr uint32_t kLoopLength = 3072;
   constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
@@ -3684,8 +3684,16 @@ void test_draw_source_compose_193815_63_1536_forks() {
   auto compose = [&](Loop& loop, NoteUtils::DisplayNoteVec prefix) -> NoteUtils::DisplayNoteVec {
     const size_t committedEnd = prefix.size();
     applyDrawSourceOverlaysForTest(loop, 0, kLastBar, prefix, committedEnd);
-    loop.applyPendingNoteChangesToDisplayNotes(prefix, committedEnd);
     return prefix;
+  };
+
+  auto paintPending = [&](Loop& loop, const NoteUtils::DisplayNoteVec& composeBase,
+                          size_t committedEnd, uint32_t closeTick) -> NoteUtils::DisplayNoteVec {
+    NoteUtils::DisplayNoteVec painted = composeBase;
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, closeTick,
+                                            committedEnd, painted);
+    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
+    return painted;
   };
 
   {
@@ -3697,13 +3705,12 @@ void test_draw_source_compose_193815_63_1536_forks() {
     loop.pushPendingNoteChangeForTest(shortenChange(kHostOccupyId, 63, 1536, 1919));
     seedOccupyOpenHoldPreview(loop, kHostHoldId);
 
-    NoteUtils::DisplayNoteVec afterPending = compose(loop, {});
-    TEST_ASSERT_NULL(findPaintAtPitchStart(afterPending, 63, 1536));
+    NoteUtils::DisplayNoteVec composeBase = compose(loop, {});
+    TEST_ASSERT_NULL(findPaintAtPitchStart(composeBase, 63, 1536));
 
-    NoteUtils::DisplayNoteVec afterTails = afterPending;
-    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 1920, 0, afterTails);
-    TEST_ASSERT_NULL(findPaintAtPitchStart(afterTails, 63, 1536));
-    const NoteUtils::DisplayNote* hold = findPaintAtPitchStart(afterTails, 63, 1920);
+    NoteUtils::DisplayNoteVec painted = paintPending(loop, composeBase, 0, 1920);
+    TEST_ASSERT_NULL(findPaintAtPitchStart(painted, 63, 1536));
+    const NoteUtils::DisplayNote* hold = findPaintAtPitchStart(painted, 63, 1920);
     TEST_ASSERT_NOT_NULL(hold);
     TEST_ASSERT_EQUAL_UINT32(1920u, hold->endTick);
   }
@@ -3719,18 +3726,26 @@ void test_draw_source_compose_193815_63_1536_forks() {
 
     NoteUtils::DisplayNoteVec prefix;
     prefix.push_back(displayNote(kInvalidNoteId, 63, 1536, 2208));
-    NoteUtils::DisplayNoteVec afterPending = compose(loop, prefix);
-    const NoteUtils::DisplayNote* painted = findPaintAtPitchStart(afterPending, 63, 1536);
+    NoteUtils::DisplayNoteVec composeBase = compose(loop, prefix);
+    const NoteUtils::DisplayNote* painted = findPaintAtPitchStart(composeBase, 63, 1536);
     TEST_ASSERT_NOT_NULL(painted);
     TEST_ASSERT_EQUAL(kInvalidNoteId, painted->noteId);
+    TEST_ASSERT_EQUAL_UINT32(2208u, painted->endTick);
+    NoteUtils::DisplayNoteVec paintedNotes = paintPending(loop, composeBase, 1, 1920);
+    painted = findPaintAtPitchStart(paintedNotes, 63, 1536);
+    TEST_ASSERT_NOT_NULL(painted);
     TEST_ASSERT_EQUAL_UINT32(2208u, painted->endTick);
 
     prefix.clear();
     prefix.push_back(displayNote(kHostOtherId, 63, 1536, 2208));
-    afterPending = compose(loop, prefix);
-    painted = findPaintAtPitchStart(afterPending, 63, 1536);
+    composeBase = compose(loop, prefix);
+    painted = findPaintAtPitchStart(composeBase, 63, 1536);
     TEST_ASSERT_NOT_NULL(painted);
     TEST_ASSERT_EQUAL(kHostOtherId, painted->noteId);
+    TEST_ASSERT_EQUAL_UINT32(2208u, painted->endTick);
+    paintedNotes = paintPending(loop, composeBase, 1, 1920);
+    painted = findPaintAtPitchStart(paintedNotes, 63, 1536);
+    TEST_ASSERT_NOT_NULL(painted);
     TEST_ASSERT_EQUAL_UINT32(2208u, painted->endTick);
   }
 
@@ -3745,21 +3760,51 @@ void test_draw_source_compose_193815_63_1536_forks() {
 
     NoteUtils::DisplayNoteVec prefix;
     prefix.push_back(displayNote(kHostOccupyId, 63, 1536, 2208));
-    NoteUtils::DisplayNoteVec afterPending = compose(loop, prefix);
-    const NoteUtils::DisplayNote* painted = findPaintAtPitchStart(afterPending, 63, 1536);
-    TEST_ASSERT_NOT_NULL(painted);
-    TEST_ASSERT_EQUAL(kHostOccupyId, painted->noteId);
-    TEST_ASSERT_EQUAL_UINT32(1919u, painted->endTick);
+    NoteUtils::DisplayNoteVec composeBase = compose(loop, prefix);
+    const NoteUtils::DisplayNote* composeNote = findPaintAtPitchStart(composeBase, 63, 1536);
+    TEST_ASSERT_NOT_NULL(composeNote);
+    TEST_ASSERT_EQUAL(kHostOccupyId, composeNote->noteId);
+    TEST_ASSERT_EQUAL_UINT32(2208u, composeNote->endTick);
 
-    NoteUtils::DisplayNoteVec afterTails = afterPending;
-    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 2365, 1, afterTails);
-    painted = findPaintAtPitchStart(afterTails, 63, 1536);
-    TEST_ASSERT_NOT_NULL(painted);
-    TEST_ASSERT_EQUAL_UINT32(1919u, painted->endTick);
-    const NoteUtils::DisplayNote* hold = findPaintAtPitchStart(afterTails, 63, 1920);
+    NoteUtils::DisplayNoteVec painted = paintPending(loop, composeBase, 1, 2365);
+    const NoteUtils::DisplayNote* paintedNote = findPaintAtPitchStart(painted, 63, 1536);
+    TEST_ASSERT_NOT_NULL(paintedNote);
+    TEST_ASSERT_EQUAL_UINT32(1919u, paintedNote->endTick);
+    composeNote = findPaintAtPitchStart(composeBase, 63, 1536);
+    TEST_ASSERT_NOT_NULL(composeNote);
+    TEST_ASSERT_EQUAL_UINT32(2208u, composeNote->endTick);
+    const NoteUtils::DisplayNote* hold = findPaintAtPitchStart(painted, 63, 1920);
     TEST_ASSERT_NOT_NULL(hold);
     TEST_ASSERT_EQUAL_UINT32(2365u, hold->endTick);
   }
+}
+
+/// `202821` Stage 1: NoteOn pending Shorten paints holdStart-1 on the next
+/// live frame. Compose / capture storage stay untransformed until seal.
+void test_noteon_pending_paint_copy_shortens_before_stop_202821() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(1536, 0, 63, 100, 73)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(2208, 0, 63, 0)));
+  const uint16_t captureRevision = loop.captureDisplayRevision;
+  const size_t captureEvents = loop.capture.store.size();
+  loop.pushPendingNoteChangeForTest(shortenChange(73, 63, 1536, 2015));
+
+  NoteUtils::DisplayNoteVec composeBase;
+  composeBase.push_back(displayNote(73, 63, 1536, 2208));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(
+      true, loop.hasPendingNoteChanges(), loop.hasSealedCompanionOverlay()));
+
+  NoteUtils::DisplayNoteVec painted = composeBase;
+  loop.applyPendingNoteChangesToDisplayNotes(painted, painted.size());
+  TEST_ASSERT_EQUAL_UINT32(2208u, composeBase[0].endTick);
+  TEST_ASSERT_EQUAL_UINT32(2015u, painted[0].endTick);
+  TEST_ASSERT_EQUAL(captureEvents, loop.capture.store.size());
+  TEST_ASSERT_EQUAL_UINT16(captureRevision, loop.captureDisplayRevision);
+  TEST_ASSERT_EQUAL(0, loop.passes.editPasses.size());
 }
 
 /// `150650`: a long sealed/preview suffix at the Shorten pitch+start is not dropped.
@@ -4094,6 +4139,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_172734_open_hold_eligibility_matrix);
   RUN_TEST(test_pending_shorten_193815_63_1536_hold_1919_matrix);
   RUN_TEST(test_draw_source_compose_193815_63_1536_forks);
+  RUN_TEST(test_noteon_pending_paint_copy_shortens_before_stop_202821);
   RUN_TEST(test_shorten_does_not_drop_suffix_same_start_hold);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
   RUN_TEST(test_sealed_overlay_survives_admit_receipt_clear);

@@ -340,6 +340,38 @@ inline bool shouldUnionSealedCapturePreviewForDrawSource(bool hasSealedCapturePr
            (captureActive || overdubSessionActive);
 }
 
+/// NoteOn pending/overlay must paint from a pending representation, not a
+/// reused compose frame that predates that change (`202821`). This is a
+/// display-source handoff only — it does not publish into VisualCache.
+inline bool shouldPaintPendingDrawSourceRepresentation(bool overdubbing,
+                                                       bool hasPendingNoteChanges,
+                                                       bool hasSealedCompanionOverlay) {
+    return overdubbing && (hasPendingNoteChanges || hasSealedCompanionOverlay);
+}
+
+/// A clean VisualCache is overview density only when it is still the current
+/// live paint source. Pending/overlay means the painted notes are the source.
+inline bool shouldUseCleanVisualCacheForOverview(bool visualCacheCleanNonempty,
+                                                 bool hasPendingPaintRepresentation) {
+    return visualCacheCleanNonempty && !hasPendingPaintRepresentation;
+}
+
+/// Incremental wrap-append is legal only when the deferred source is still
+/// the current playback revision (`203406`). A mismatch must obtain an
+/// authoritative current-source frame instead of appending the old last pass.
+inline bool shouldApplyDeferredVisualCacheWrapAppend(bool pending,
+                                                     uint32_t deferredFromRevision,
+                                                     uint32_t playbackRevision) {
+    return pending && deferredFromRevision == playbackRevision;
+}
+
+/// After a source mismatch, the cache is already the current-source frame
+/// when it was built at the current playback revision. Do not append.
+inline bool visualCacheIsCurrentSourceRevision(uint32_t builtFromRevision,
+                                               uint32_t playbackRevision) {
+    return builtFromRevision == playbackRevision;
+}
+
 /// Coverage contract (`153517` RC1): `builtFromRevision = R` only when the completed
 /// gather consumed committed content at R. Overlay-rejected fallback does not establish
 /// that coverage, even if a substitute gather ran while `playbackRevision` was R.
@@ -587,7 +619,8 @@ inline bool capturePreviewNoteIsOpenHold(uint32_t startTick, uint32_t endTick) {
 
 /// Committed-source decision for the next draw-source frame. Not a painted
 /// framebuffer. `ReuseCommittedDrawSource` means the gathered committed prefix
-/// remains valid; overlays, pending transforms, and tails still re-apply.
+/// remains valid; overlays still re-apply on compose. Pending transforms and
+/// tails still re-apply on the paint copy.
 enum class DrawSourceReuseKind : uint8_t {
     ReuseCommittedDrawSource = 0,
     SlideCommittedDrawSource = 1,

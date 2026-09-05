@@ -425,15 +425,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const uint32_t gatherStartUs = micros();
     if (reuseKind == DisplayWindowUtils::DrawSourceReuseKind::ReuseCommittedDrawSource &&
         canReuseCommittedPrefix) {
-        // Reuse the untransformed committed prefix. Overlays/pending on a copy.
+        // Reuse the untransformed committed prefix. Overlays stay on compose.
+        // Pending/overlay transforms paint on a copy so the next frame cannot
+        // reuse a compose source that predates the pending change.
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
         reuseCommittedDrawSourcePrefix(liveDisplayCommittedPrefix_, candidate);
         committedDisplayEnd = candidate.size();
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-        applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-        emitPaintedOccupy193815Row("after_pending", loop, candidate);
-#endif
         liveDisplayNotes.swap(candidate);
     } else if (canSlideCommittedPrefix) {
         DIAG_COUNTER_INC(DisplayIncrementalUpdate);
@@ -446,10 +444,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                                       resolvedPitchHigh, candidate, committedDisplayEnd);
         storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-        applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-        emitPaintedOccupy193815Row("after_pending", loop, candidate);
-#endif
         liveDisplayNotes.swap(candidate);
     } else {
         DIAG_COUNTER_INC(DisplayFullRebuild);
@@ -457,10 +451,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                                       candidate, committedDisplayEnd);
         storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-        applyPendingDrawSourceTransforms(loop, candidate, committedDisplayEnd);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-        emitPaintedOccupy193815Row("after_pending", loop, candidate);
-#endif
         const bool snapshotSelected =
             DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
                 static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(),
@@ -486,16 +476,27 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), false, false,
         !loop.capturePreview.openNoteIndices.empty());
+    const bool havePendingPaint = DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(
+        track.isOverdubbing(), loop.hasPendingNoteChanges(), loop.hasSealedCompanionOverlay());
     const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
-    if (applyLiveCaptureTails) {
+    if (applyLiveCaptureTails || havePendingPaint) {
         liveDisplayPendingPaintNotes_ = liveDisplayNotes;
-        const uint32_t playheadCloseTick =
-            resolvePlayheadInLoop(track, displaySlot, currentTick);
-        const bool allowWrapContinuation =
-            !track.isOverdubbing() && !(track.isRecording() && !track.isPlaying());
-        applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
-                                  committedDisplayEnd, liveDisplayPendingPaintNotes_,
-                                  allowWrapContinuation);
+        if (applyLiveCaptureTails) {
+            const uint32_t playheadCloseTick =
+                resolvePlayheadInLoop(track, displaySlot, currentTick);
+            const bool allowWrapContinuation =
+                !track.isOverdubbing() && !(track.isRecording() && !track.isPlaying());
+            applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
+                                      committedDisplayEnd, liveDisplayPendingPaintNotes_,
+                                      allowWrapContinuation);
+        }
+        if (havePendingPaint) {
+            applyPendingDrawSourceTransforms(loop, liveDisplayPendingPaintNotes_,
+                                             committedDisplayEnd);
+        }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+        emitPaintedOccupy193815Row("after_pending", loop, liveDisplayPendingPaintNotes_);
+#endif
         paintedNotes = &liveDisplayPendingPaintNotes_;
     }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
@@ -503,7 +504,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
 #endif
 
     liveDisplayCacheCommittedNoteCount_ = committedDisplayEnd;
-    liveDisplayCacheBaseNoteCount_ = paintedNotes->size();
+    liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     livePlaybackDisplaySlot_ = displaySlot;
     livePlaybackDisplayTrack_ = trackIndex;
     liveMergePlaybackRevision_ = loop.playbackRevision;

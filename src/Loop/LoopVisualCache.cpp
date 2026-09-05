@@ -97,6 +97,18 @@ void markAllVisualCacheBarsDirty(VisualCache& cache, uint32_t loopLengthTicks) {
   cache.dirtyBars.assign(totalBars, 1);
 }
 
+void clearDeferredVisualCacheWrapAppend(Loop& loop) {
+  loop.deferredVisualCacheWrapAppendPending_ = false;
+  loop.deferredVisualCacheWrapAppendFromRevision_ = 0;
+}
+
+void markDeferredVisualCacheWrapAppend(Loop& loop) {
+  if (!loop.deferredVisualCacheWrapAppendPending_) {
+    loop.deferredVisualCacheWrapAppendFromRevision_ = loop.playbackRevision;
+  }
+  loop.deferredVisualCacheWrapAppendPending_ = true;
+}
+
 bool displayNotePitchStartPresent(const NoteUtils::DisplayNoteVec& notes,
                                   const NoteUtils::DisplayNote& candidate) {
   for (const NoteUtils::DisplayNote& note : notes) {
@@ -406,9 +418,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (appendOverdub) {
     if (allowOverdubWrapAppend) {
       appendOverdubPassDisplayNotes(sliceNotes);
-      deferredVisualCacheWrapAppendPending_ = false;
+      clearDeferredVisualCacheWrapAppend(*this);
     } else {
-      deferredVisualCacheWrapAppendPending_ = true;
+      markDeferredVisualCacheWrapAppend(*this);
     }
   }
 #if defined(SESSION_CAPTURE)
@@ -496,7 +508,19 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
     return;
   }
   if (loopLengthTicks == 0) {
-    deferredVisualCacheWrapAppendPending_ = false;
+    clearDeferredVisualCacheWrapAppend(*this);
+    return;
+  }
+  if (!DisplayWindowUtils::shouldApplyDeferredVisualCacheWrapAppend(
+          deferredVisualCacheWrapAppendPending_, deferredVisualCacheWrapAppendFromRevision_,
+          playbackRevision)) {
+    emitVisualCacheState("append_skip", -1);
+    if (!DisplayWindowUtils::visualCacheIsCurrentSourceRevision(visualCache.builtFromRevision,
+                                                                playbackRevision)) {
+      rebuildVisualCacheFromPasses();
+    } else {
+      clearDeferredVisualCacheWrapAppend(*this);
+    }
     return;
   }
 #if defined(SESSION_CAPTURE)
@@ -507,7 +531,7 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
   RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(2, appendStartUs);
 #endif
   applyPendingNoteChangesToVisualCacheNotes();
-  deferredVisualCacheWrapAppendPending_ = false;
+  clearDeferredVisualCacheWrapAppend(*this);
   ++visualCache.revision;
   emitVisualCacheState("append_resume", -1);
 }
@@ -711,7 +735,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
       NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
   appendOverdubPassDisplayNotes(rebuiltNotes);
   resetFallbackGatherSession();
-  deferredVisualCacheWrapAppendPending_ = false;
+  clearDeferredVisualCacheWrapAppend(*this);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
   visualCache.dirtyBars.clear();
   for (const auto& n : visualCache.notes) {
@@ -797,7 +821,7 @@ LOOP_COLD_MEM void Loop::markDisplayCachesStale() {
   invalidatePlaybackCaches();
   visualCacheDirty = true;
   resetFallbackGatherSession();
-  deferredVisualCacheWrapAppendPending_ = false;
+  clearDeferredVisualCacheWrapAppend(*this);
   markAllVisualCacheBarsDirty(visualCache, loopLengthTicks);
   emitVisualCacheState("stale_all", -1);
 }
@@ -947,5 +971,5 @@ LOOP_COLD_MEM void Loop::invalidateDisplayCaches() {
   visualCache.notes.clear();
   visualCache.dirtyBars.clear();
   visualCacheDirty = true;
-  deferredVisualCacheWrapAppendPending_ = false;
+  clearDeferredVisualCacheWrapAppend(*this);
 }
