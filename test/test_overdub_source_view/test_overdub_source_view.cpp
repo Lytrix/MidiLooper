@@ -2457,6 +2457,71 @@ uint32_t noteEndAtPitchStart(const NoteUtils::DisplayNoteVec& notes, uint8_t pit
   return UINT32_MAX;
 }
 
+uint32_t displayNoteExclusiveLength(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                                    uint32_t startTick, uint32_t loopLength) {
+  const uint32_t endTick = noteEndAtPitchStart(notes, pitch, startTick);
+  if (endTick == UINT32_MAX || loopLength == 0 || endTick < startTick) {
+    return UINT32_MAX;
+  }
+  const uint32_t endExclusive = (endTick == loopLength - 1) ? loopLength : endTick;
+  return endExclusive > startTick ? (endExclusive - startTick) : 0;
+}
+
+void appendOnOff(Loop& loop, uint32_t onTick, uint32_t offTick, uint8_t pitch, NoteId noteId) {
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(noteOnWithNoteId(onTick, 1, pitch, 100, noteId)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
+}
+
+EditPassId saveHideCompanion(Loop& loop, NoteId targetNoteId, uint32_t startTick, uint32_t endTick) {
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.propertyType = EditPropertyType::None;
+  hide.targetNoteId = targetNoteId;
+  hide.pitch = 48;
+  hide.startTick = startTick;
+  hide.endTick = endTick;
+  const EditPassId id =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, id);
+  return id;
+}
+
+uint32_t countPitchOnsAtTick(const SessionMidiEventVec& events, uint8_t pitch, uint32_t tick) {
+  uint32_t count = 0;
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn() && evt.data.noteData.note == pitch && evt.tick == tick) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+uint32_t countPitchOffsAtTick(const SessionMidiEventVec& events, uint8_t pitch, uint32_t tick) {
+  uint32_t count = 0;
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOff() && evt.data.noteData.note == pitch && evt.tick == tick) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void seedCommittedOverdubPass(Loop& loop, LoopEventStore& store, PassId passId,
+                              uint32_t mergeSequence) {
+  OverdubPass pass{};
+  pass.id = passId;
+  pass.mergeSequence = mergeSequence;
+  pass.state = CapturePassState::Active;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(store, pass.committedChunkIds));
+  loop.passes.overdubPasses.push_back(std::move(pass));
+}
+
+bool pendingWritesExclusiveEnd(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                               uint32_t startTick, uint32_t exclusiveEnd) {
+  return noteEndAtPitchStart(notes, pitch, startTick) == exclusiveEnd;
+}
+
 void test_idle_slice_current_snapshot_is_accepted() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3683,6 +3748,123 @@ void test_occupy_follows_snapshot_change_while_visual_stale() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_occupy_144743_48_616_materialize_vs_window_vs_pending() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+
+  constexpr uint32_t kOccupyLoopLen = 3072;
+  constexpr uint8_t kPitch = 48;
+  constexpr NoteId kSource205 = 5;
+  constexpr NoteId kSource885 = 9;
+  constexpr NoteId kOccupy616 = 22;
+  constexpr NoteId kOccupy763 = 23;
+  constexpr NoteId kOccupy1061 = 25;
+  constexpr PassId kOd1PassId = 2;
+  constexpr PassId kOd2PassId = 3;
+
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = kOccupyLoopLen;
+
+  LoopEventStore recordStore;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(recordStore, 83, 1, 72, 100, 1));
+  TEST_ASSERT_TRUE(recordStore.append(MidiEvent::NoteOff(470, 1, 72, 0)));
+  loop.seedRecordPassFromStore(recordStore);
+  loop.loopLengthTicks = kOccupyLoopLen;
+
+  LoopEventStore od1Store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(od1Store, 205, 1, kPitch, 100, kSource205));
+  TEST_ASSERT_TRUE(od1Store.append(MidiEvent::NoteOff(584, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(od1Store, 885, 1, kPitch, 100, kSource885));
+  TEST_ASSERT_TRUE(od1Store.append(MidiEvent::NoteOff(1285, 1, kPitch, 0)));
+  seedCommittedOverdubPass(loop, od1Store, kOd1PassId, 1);
+
+  LoopEventStore od2Store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(od2Store, 616, 1, kPitch, 100, kOccupy616));
+  TEST_ASSERT_TRUE(od2Store.append(MidiEvent::NoteOff(1016, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(od2Store, 763, 1, kPitch, 100, kOccupy763));
+  TEST_ASSERT_TRUE(od2Store.append(MidiEvent::NoteOff(867, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(od2Store, 1061, 1, kPitch, 100, kOccupy1061));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(od2Store, 1399, 1, kPitch, 100, 28));
+  TEST_ASSERT_TRUE(od2Store.append(MidiEvent::NoteOff(1445, 1, kPitch, 0)));
+  TEST_ASSERT_TRUE(od2Store.append(MidiEvent::NoteOff(2908, 1, kPitch, 0)));
+  seedCommittedOverdubPass(loop, od2Store, kOd2PassId, 2);
+
+  SessionMidiEventVec rawEvents;
+  loop.mergeActiveCapturePasses(rawEvents);
+  TEST_ASSERT_EQUAL_UINT32(1u, countPitchOnsAtTick(rawEvents, kPitch, 885));
+  TEST_ASSERT_EQUAL_UINT32(1u, countPitchOnsAtTick(rawEvents, kPitch, 763));
+  const NoteUtils::DisplayNoteVec rawNotes =
+      NoteUtils::reconstructDisplayNotes(rawEvents, kOccupyLoopLen, false, false);
+  TEST_ASSERT_EQUAL_UINT32(2292u, displayNoteExclusiveLength(rawNotes, kPitch, 616, kOccupyLoopLen));
+
+  const EditPassId hide763 = saveHideCompanion(loop, kOccupy763, 763, 867);
+  const EditPassId hide885 = saveHideCompanion(loop, kSource885, 885, 1285);
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, kOccupy763));
+  TEST_ASSERT_TRUE(editPassesHideTarget(loop, kSource885));
+
+  SessionMidiEventVec materialized;
+  loop.passes.materializeToEventVector(materialized, kOccupyLoopLen);
+  TEST_ASSERT_EQUAL_UINT32(0u, countPitchOnsAtTick(materialized, kPitch, 885));
+  TEST_ASSERT_EQUAL_UINT32(0u, countPitchOnsAtTick(materialized, kPitch, 763));
+  TEST_ASSERT_EQUAL_UINT32(1u, countPitchOffsAtTick(materialized, kPitch, 1016));
+  const NoteUtils::DisplayNoteVec materializeNotes =
+      NoteUtils::reconstructDisplayNotes(materialized, kOccupyLoopLen, false, false);
+  TEST_ASSERT_EQUAL_UINT32(
+      400u, displayNoteExclusiveLength(materializeNotes, kPitch, 616, kOccupyLoopLen));
+
+  SessionMidiEventVec effectiveEvents;
+  loop.gatherCommittedEvents(effectiveEvents);
+  const NoteUtils::DisplayNoteVec effectiveNotes =
+      NoteUtils::reconstructDisplayNotes(effectiveEvents, kOccupyLoopLen, false, false);
+  TEST_ASSERT_EQUAL_UINT32(
+      400u, displayNoteExclusiveLength(effectiveNotes, kPitch, 616, kOccupyLoopLen));
+
+  SessionMidiEventVec windowEvents;
+  loop.gatherCommittedEventsInWindow(windowEvents, 0, kOccupyLoopLen, true);
+  TEST_ASSERT_EQUAL_UINT32(0u, countPitchOnsAtTick(windowEvents, kPitch, 885));
+  TEST_ASSERT_EQUAL_UINT32(0u, countPitchOffsAtTick(windowEvents, kPitch, 1016));
+  const NoteUtils::DisplayNoteVec windowNotes =
+      NoteUtils::reconstructDisplayNotes(windowEvents, kOccupyLoopLen, false, false);
+  const uint32_t windowLength =
+      displayNoteExclusiveLength(windowNotes, kPitch, 616, kOccupyLoopLen);
+  TEST_ASSERT_EQUAL_UINT32(2292u, windowLength);
+
+  loop.openOverdubSession(0);
+  EditPassIdList companions;
+  companions.push_back(hide763);
+  companions.push_back(hide885);
+  loop.recordLastOverdubSeal(kOd2PassId, companions, loop.playbackRevision);
+  loop.closeOverdubSession();
+
+  TEST_ASSERT_FALSE(loop.hasPendingNoteChanges());
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+
+  NoteUtils::DisplayNoteVec afterPending = materializeNotes;
+  loop.applyPendingNoteChangesToDisplayNotes(afterPending, afterPending.size());
+  const uint32_t afterPendingLength =
+      displayNoteExclusiveLength(afterPending, kPitch, 616, kOccupyLoopLen);
+  TEST_ASSERT_FALSE(pendingWritesExclusiveEnd(afterPending, kPitch, 616, 884));
+
+  NoteUtils::DisplayNoteVec rawAfterPending = rawNotes;
+  loop.applyPendingNoteChangesToDisplayNotes(rawAfterPending, rawAfterPending.size());
+  TEST_ASSERT_FALSE(pendingWritesExclusiveEnd(rawAfterPending, kPitch, 616, 884));
+
+  // Fixture table (144743 48@616): per-layer materialize and
+  // gatherCommittedEvents are 400 (Off@1016 kept). Window gather is 2292
+  // because copyEffectiveCommittedEventsInRange applies Delete on the merged
+  // stream, so findNoteOffForOnIndex pairs hidden On@885 with occupy Off@1016.
+  // After OD2 close, pending is empty and overlay apply does not write end 884.
+  // Owner: copyEffectiveCommittedEventsInRange vs per-layer materialize.
+  TEST_ASSERT_EQUAL_UINT32(2292u, windowLength);
+  TEST_ASSERT_EQUAL_UINT32(400u, afterPendingLength);
+  TEST_ASSERT_EQUAL_UINT32(
+      2292u, displayNoteExclusiveLength(rawAfterPending, kPitch, 616, kOccupyLoopLen));
+
+  LoopContentResolution::deviceGateReset();
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
@@ -3776,5 +3958,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
   RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);
+  RUN_TEST(test_occupy_144743_48_616_materialize_vs_window_vs_pending);
   return UNITY_END();
 }
