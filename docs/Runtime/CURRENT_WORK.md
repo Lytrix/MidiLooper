@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-05 (occupy RC1b selected-track dump re-arm)
+Last updated: 2026-09-05 (occupy HITL OD1/OD2 time-order windows)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -23,8 +23,8 @@ every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 **3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 back on when measuring 3.6.
 
-**Now — occupy HITL RC1b selected-track dump:**
-`stopPlaying` re-arms SESSION_CAPTURE dumps only on the selected track. HITL waits ≤8s for occupy-sized effective/frame (`<= 96` notes) after OD2. Leftover 352/1430 dumps are not a gate. [`142807`](../../captures/session_20260905_142807.log) was a clean occupy seed (3072, shorten=4 hide=7) that failed only `dumps_missing:frame` because transport-stop hop stole the dump. Recapture next. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
+**Now — occupy HITL OD1/OD2 time-order windows:**
+`extract_phase_boundaries` pairs each `PLAYING→OVERDUBBING` with the next unused stop (`ST`, `ODUB,stop,enter`, or `Overdubbing stopped`) and assigns OD1/OD2 by start time. Verify-only [`144036`](../../captures/session_20260905_144036.log): OD1 81814170–90544026 source (`shorten=0 hide=0`); OD2 91173391–105954997 occupy (`shorten=10 hide=12`, `from=snapshot`, visual 22). RC1b FAIL is `E != F` (10 mismatches, no two-length) — not the 154310 sealed-append class. RC2 / RC3 stay gated. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).
 
 **Prior — occupy present-at-hold RC4 ([`134436`](../../captures/session_20260905_134436.log)):**
 `resolveOccupancyAtNoteOn` may transform a ledger-selected note only when that note is present at the hold phase. Filter before geometric fallback. Do not change Hide-absorbs-Shorten. Do not retune snapshot fill. Host `a04e2bd5`.

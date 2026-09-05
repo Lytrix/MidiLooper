@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL now waits for reconstruct / effective / frame and scores RC1b. Device recapture next. RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL pairs OD1/OD2 by start time and scores occupy-sized first-STOPPED effective/frame. Verify-only [`144036`](../../captures/session_20260905_144036.log): occupy holds PASS; RC1b `E != F` (no two-length). RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -158,7 +158,9 @@ Host pins in `test_display_window_utils`: `test_stopped_sealed_upsert_skips_long
 
 RC1b scores occupy-loop first-STOPPED `src,effective` vs `src,frame` only. Reconstruct is diagnostic. Leftover hops (`frame,count,352`, reconstruct/effective 1430 on [`142807`](../../captures/session_20260905_142807.log)) are not a gate and must not be waited on.
 
-`Track::stopPlaying` re-arms stored-verify and `armStoppedFrameNoteDump` only when `trackManager.isSelectedTrack`. Occupy preset `--dnte-src-dump-drain-ms 8000` waits for occupy-sized (`<= 96`) effective + frame after OD2.
+`Track::stopPlaying` re-arms stored-verify and `armStoppedFrameNoteDump` only when `trackManager.isSelectedTrack`. Occupy preset `--dnte-src-dump-drain-ms 8000` waits for occupy-sized (`<= 96`) effective + frame after OD2. `extract_phase_boundaries` assigns OD1/OD2 by start time and closes an overdub on `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing.
+
+Verify-only [`144036`](../../captures/session_20260905_144036.log): OD1 source 81814170–90544026 (`shorten=0 hide=0`); OD2 occupy 91173391–105954997 (`shorten=10 hide=12`, `from=snapshot`, visual 22). RC1b scores 10 `E != F` mismatches and no two-length. That is not the 154310 sealed-append class.
 
 | Issue | Meaning |
 |-------|---------|
