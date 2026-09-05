@@ -1,9 +1,9 @@
 # Overdub wrap — sealed Shorten must keep the live paint end
 
-**Status:** Host shipped (`001145` Hide remnant drop). Device recapture required.  
+**Status:** Host shipped (`002200` pending wins over sealed Length). Device recapture required.  
 **Date:** 2026-09-06  
 **Kind:** bugfix (sealed-companion draw-source paint)  
-**Evidence:** [`001145`](../../captures/session_20260906_001145.log) (prior [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
+**Evidence:** [`002200`](../../captures/session_20260906_002200.log) (prior [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
 **Does not authorize:** occupy / wrap seal persist changes; VisualCache mutation on wrap; pending across wrap; Stage 1 wrap-held head occupy (`225200` device FAIL)
 
 ---
@@ -16,7 +16,7 @@ pending paint copy (painted_pending_shorten)     ← trust while pending exists
 commitOverdubWrap + sealPendingNoteChangesToEditPasses  ← trust persist
 recoverMissingPendingShortenSources              ← pending-only; empty after wrap
 gatherCommittedDrawSourceBars (snap=0 → VisualCache)  ← originals
-applyPendingNoteChangesToDisplayNotes + sibling drop  ← this slice
+applyPendingNoteChangesToDisplayNotes (sealed then pending) + sibling drop  ← this slice
 ```
 
 ## Root cause
@@ -46,6 +46,10 @@ Two gaps after wrap seal:
    dominates the closed remnant. Hide now drops closed rows whose end is
    at least the hidden source end; shorter keepers (`201956` 768–864) and
    open holds stay.
+6. **Sealed Length overwrites later pending (`002200`):** after wrap 2,
+   occupy of sealed `73@768–1247` at `hs=1056` writes pending `768–1055`.
+   Applying pending then sealed restored `1247`. Stop effective already
+   has `768–1055`. Sealed baseline now applies first.
 
 Pin owners: sealed apply + sealed Length compose recovery + Length
 fallback + closed same-start remnant drop.
@@ -90,6 +94,8 @@ during capture is unchanged (`150650`).
   `test_same_start_hide_drops_remnant_when_hold_present_001145` — Hide of
   `63@1152–1440` drops the closed remnant when an open hold or shorter
   keeper is present; RC3 mismatched NoteId without occupy stays
+- `test_pending_shorten_wins_over_older_sealed_length_002200` — sealed
+  `73@768–1247` plus pending `768–1055` paints `1055`
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**
