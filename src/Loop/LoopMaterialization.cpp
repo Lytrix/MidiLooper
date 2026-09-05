@@ -208,6 +208,9 @@ LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec
   uint32_t rangePhaseUs = rangeStartUs;
   uint32_t collectUs = 0;
   uint32_t appendUs = 0;
+  uint32_t sortUs = 0;
+  uint32_t editUs = 0;
+  uint32_t editRowCount = 0;
 #endif
   std::vector<const CommittedChunkIdList*> lists;
   collectActiveCommittedChunkLists(passes, lists);
@@ -219,38 +222,59 @@ LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec
   if (lists.empty()) {
     return;
   }
-  CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,
-                                windowLength)
-      .appendTo(out);
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-  appendUs = micros() - rangePhaseUs;
-  rangePhaseUs = micros();
-#endif
-  std::sort(out.begin(), out.end(),
-            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
-#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-  const uint32_t sortUs = micros() - rangePhaseUs;
-  rangePhaseUs = micros();
-  uint32_t editRowCount = 0;
-#endif
 
+  EditPassVec activeRows;
   if (includeActiveEditRows) {
-    EditPassVec activeRows;
     for (const EditPass& editPass : passes.editPasses) {
       if (editPass.state == EditPassState::Active && editPass.passType == EditPassType::Note) {
         activeRows.push_back(editPass);
       }
     }
+  }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-    editRowCount = static_cast<uint32_t>(activeRows.size());
+  editRowCount = static_cast<uint32_t>(activeRows.size());
 #endif
-    if (!activeRows.empty()) {
-      applyNoteEditPassSequence(out, activeRows, loopLengthTicks);
+  const auto tickLess = [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; };
+
+  if (activeRows.empty()) {
+    CommittedEventRange::inWindow(lists.data(), lists.size(), loopLengthTicks, windowStart,
+                                  windowLength)
+        .appendTo(out);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    appendUs = micros() - rangePhaseUs;
+    rangePhaseUs = micros();
+#endif
+    std::sort(out.begin(), out.end(), tickLess);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    sortUs = micros() - rangePhaseUs;
+    rangePhaseUs = micros();
+#endif
+  } else {
+    // Active Note edits are pass-layer scoped. Apply each committed list, then
+    // merge. Merged-then-apply lets LIFO Delete pair a hidden On with another
+    // pass's Off (144743 48@616 / Off@1016).
+    for (const CommittedChunkIdList* list : lists) {
+      if (list == nullptr || list->empty()) {
+        continue;
+      }
+      SessionMidiEventVec layer;
+      CommittedEventRange::inWindow(&list, 1, loopLengthTicks, windowStart, windowLength)
+          .appendTo(layer);
+      std::sort(layer.begin(), layer.end(), tickLess);
+      applyNoteEditPassSequence(layer, activeRows, loopLengthTicks);
+      mergeSortedLoopCaptureLayers(out, std::move(layer));
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
+    appendUs = micros() - rangePhaseUs;
+    rangePhaseUs = micros();
+    editUs = micros() - rangePhaseUs;
+#endif
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   {
-    const uint32_t editUs = micros() - rangePhaseUs;
+    if (activeRows.empty()) {
+      editUs = micros() - rangePhaseUs;
+    }
     const uint32_t rangeUs = micros() - rangeStartUs;
     if (rangeUs >= kRangeReportUs) {
       char line[224];

@@ -173,6 +173,7 @@ struct Loop {
   void ensureEffectiveEventStoreCurrent() const;
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
   /// Range query of committed content (chunk window + optional edit projection).
+  /// Active Note rows apply per committed pass layer, then layers merge.
   /// Does not flatten the loop. Companion fast path copies a ready Overdub
   /// projection cache only; a miss uses the windowed apply path. Full companion
   /// rebuild is not admitted from this gather.
