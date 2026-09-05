@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL pairs OD1/OD2 by start time and scores occupy-sized first-STOPPED effective/frame. Verify-only [`144036`](../../captures/session_20260905_144036.log): occupy holds PASS; RC1b `E != F` (no two-length). RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). Occupy HITL pairs OD1/OD2 by start time and scores occupy-sized first-STOPPED effective/frame. Device [`144743`](../../captures/session_20260905_144743.log): occupy holds PASS; `E != F` is **RC1c** (window-gather merged Delete), not RC1b two-length. Host pin `test_occupy_144743_48_616_materialize_vs_window_vs_pending`. Firmware not started. RC2 / RC3 stay gated.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -42,8 +42,12 @@ Display-frame walk stays a bounded id list, not a new interval owner, and not a 
 ## Debugging boundary
 
 ```text
-gatherCommittedEvents / src,effective     ← trust (product truth)
-reconstruct dump                          ← diagnostic only
+gatherCommittedEvents / src,effective     ← trust (48@616 = 400, Off@1016)
+materializeToEventVector (per layer)      ← trust (same 400)
+copyEffectiveCommittedEventsInRange       ← RC1c current (merged Delete steals Off@1016)
+reconstruct dump                          ← diagnostic only (2292)
+resolveOccupancyAtNoteOn hold-1           ← writes 884 when applied to display
+first STOPPED frame / visualCache         ← realizes the window-gather miss
 lastOverdubSealCompanionIds_ (admission)  ← last wrap only; do not union
 sealedCompanionOverlayIds_ (display)      ← RC1 kept
 stop-only sealed skip                     ← RC1b ([`154310`](../../captures/session_20260903_154310.log))
@@ -160,13 +164,72 @@ RC1b scores occupy-loop first-STOPPED `src,effective` vs `src,frame` only. Recon
 
 `Track::stopPlaying` re-arms stored-verify and `armStoppedFrameNoteDump` only when `trackManager.isSelectedTrack`. Occupy preset `--dnte-src-dump-drain-ms 8000` waits for occupy-sized (`<= 96`) effective + frame after OD2. `extract_phase_boundaries` assigns OD1/OD2 by start time and closes an overdub on `ODUB,stop,enter` when `ST,OVERDUBBING→PLAYING` is missing.
 
-Verify-only [`144036`](../../captures/session_20260905_144036.log): OD1 source 81814170–90544026 (`shorten=0 hide=0`); OD2 occupy 91173391–105954997 (`shorten=10 hide=12`, `from=snapshot`, visual 22). RC1b scores 10 `E != F` mismatches and no two-length. That is not the 154310 sealed-append class.
+Device [`144743`](../../captures/session_20260905_144743.log): OD1 source 509580888–518042419 (`shorten=0 hide=0`); OD2 occupy 518679360–533664815 (`shorten=11 hide=9`, `from=snapshot`, visual 22). Occupy-sized dumps reconstruct 39 / effective 30 / frame 28. HITL still labels those 11 `E != F` keys as `occupy_rc1b_frame_effective_mismatch`. They are **RC1c**, not the 154310 sealed-append class (no two-length). Verify-only [`144036`](../../captures/session_20260905_144036.log) is the same class after the OD1/OD2 time-order fix.
 
 | Issue | Meaning |
 |-------|---------|
 | `occupy_rc1b_dumps_missing` | occupy-sized effective/frame absent after OD2 |
 | `occupy_rc1b_two_length:p@s:a,b` | first STOPPED frame has two lengths at one pitch+start |
 | `occupy_rc1b_frame_effective_mismatch:p@s:f=…,e=…` | frame length ≠ effective at that pitch+start |
+
+## RC1c — window gather Delete on merged events ([`144743`](../../captures/session_20260905_144743.log) `48@616`)
+
+Host fixture `test_occupy_144743_48_616_materialize_vs_window_vs_pending` (144743 SEVT 48 stream + Active Hide of `48@885` / `48@763`):
+
+| Path | `48@616` length | Off@1016 |
+|------|-----------------|----------|
+| `mergeActiveCapturePasses` reconstruct | 2292 | present (Hide not applied) |
+| `LoopPasses::materializeToEventVector` | **400** | present |
+| `gatherCommittedEvents` (effective dump) | **400** | present |
+| `gatherCommittedEventsInWindow` | **2292** | **absent** |
+| pending after OD2 close | empty | — |
+| `applyPendingNoteChangesToDisplayNotes` | does not write end 884 | — |
+
+Per-layer materialize applies Hide of On@885 on the OD1 layer only, so LIFO Off is Off@1285. `copyEffectiveCommittedEventsInRange` merges chunks first, then `applyNoteEditPassSequence`. `applyDeleteNoteById` / `findNoteOffForOnIndex` pairs On@885 with occupy Off@1016. Reconstruct then leaves On@616 open until Off@2908 (2292). That is why first-STOPPED frame can keep reconstruct remnants (`F == R` on nine other `E != F` keys). `48@616` frame 268 is occupancy hold-1 against source 885 on top of that miss; leftover pending/overlay after session close does not write 884.
+
+**Intended invariant:**
+
+```text
+copyEffectiveCommittedEventsInRange realizes the same 48@616 length as
+per-layer materializeToEventVector (400, Off@1016 kept). Merged-stream
+Delete must not pair a hidden source On with a later pass's Off.
+```
+
+Owner to extend: `Loop::copyEffectiveCommittedEventsInRange`. Do not add gather `keepShortest`. Do not start RC2 / RC3. Do not treat this as RC1 overlay leftover or RC1b sealed-append.
+
+### Architecture checkpoint
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** — window gather still owns the merged apply; match per-layer pairing |
+| State transition change? | **NO** |
+| Unbounded interval owner? | **NO** — same windowed chunk walk + existing Delete apply |
+| Reuse | **YES** — extend `copyEffectiveCommittedEventsInRange` / the Delete it runs on the merged window |
+
+### Pre-implementation review (RC1c)
+
+### Ready
+
+- `Loop::copyEffectiveCommittedEventsInRange` in `LoopMaterialization.cpp`
+- Per-layer apply in `LoopPasses::materializeToEventVector`
+- Host pin `test_occupy_144743_48_616_materialize_vs_window_vs_pending`
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|-------|----------|
+| Effective dump | `gatherCommittedEvents` → per-layer materialize = 400 |
+| Window gather | merged Delete steals Off@1016 → 2292 |
+| Pending / overlay after close | empty pending; apply does not write 884 |
+| Owner | `copyEffectiveCommittedEventsInRange`, not RC1 overlay, not adopt_partial |
+
+### Open before coding
+
+None — firmware not started in this slice.
+
+### Proceed?
+
+YES — host pin only. Firmware when the next session extends the named owner.
 
 ## RC4 — occupy On only transforms notes present at hold ([`134436`](../../captures/session_20260905_134436.log))
 
