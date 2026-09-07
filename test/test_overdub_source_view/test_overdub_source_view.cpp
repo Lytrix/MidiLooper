@@ -40,6 +40,7 @@
 #include "LoopSnapshot.h"
 
 #include <cstdio>
+#include <cstring>
 #include <initializer_list>
 
 namespace {
@@ -3899,6 +3900,33 @@ void test_draw_source_snapshot_miss_recovers_pending_shorten_212700() {
   TEST_ASSERT_EQUAL_UINT32(4575u, described.paintEndTick);
 }
 
+void test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = 5376;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 720, 1, 69, 100, 16));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(768, 1, 69, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 5328, 1, 69, 100, 112));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(5375, 1, 69, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 113;
+  plantVisualGeometry(loop, 16, 69, 720, 768);
+  TEST_ASSERT_NULL(findSpanCacheNote(loop, 112));
+  loop.openOverdubSession(0);
+  const char* from = loop.rebuildOverdubSourceSpanCacheForTest();
+  TEST_ASSERT_TRUE(std::strcmp(from, "empty") != 0);
+  const NoteUtils::DisplayNote* omitted = findSpanCacheNote(loop, 112);
+  TEST_ASSERT_NOT_NULL_MESSAGE(omitted,
+                               "incomplete visualCache must not hide committed id=112");
+  TEST_ASSERT_EQUAL_UINT32(5328u, omitted->startTick);
+  TEST_ASSERT_EQUAL_UINT32(5375u, omitted->endTick);
+  TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 16));
+}
+
 void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4309,6 +4337,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_incomplete_fallback_budget_keeps_dirty);
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
   RUN_TEST(test_draw_source_snapshot_miss_recovers_pending_shorten_212700);
+  RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);

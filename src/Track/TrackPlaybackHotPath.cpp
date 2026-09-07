@@ -136,10 +136,10 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
   loop.armOverdubWrapAfterLeavingStart(frame.tickInLoop);
   bool mergedIntervalApplied = false;
   if (loop.shouldCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
-    (void)advancePlaybackCursor(mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
-                                playbackCursorAdvanceSend, &track, slotIndex,
-                                playbackCursorAdvanceJamFilter, &jamCtx, midiChannel,
-                                playbackCursorAdvanceApplyLedger);
+    (void)advancePlaybackCursorAcrossOverdubWrap(
+        mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
+        playbackCursorAdvanceSend, &track, slotIndex, playbackCursorAdvanceJamFilter, &jamCtx,
+        midiChannel, playbackCursorAdvanceApplyLedger);
     mergedIntervalApplied = true;
   }
 #if defined(SESSION_CAPTURE)

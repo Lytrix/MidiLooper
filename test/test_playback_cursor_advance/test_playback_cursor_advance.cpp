@@ -94,6 +94,49 @@ void test_playback_cursor_advance_loop_start_catch_up() {
   TEST_ASSERT_EQUAL_UINT16(3, cursor);
 }
 
+void test_wrap_cursor_offers_untagged_loop_end_off_to_ledger_174151() {
+  MidiEvent on5328 = MidiEvent::NoteOn(5328, 1, 69, 100);
+  on5328.noteId = 112;
+  MidiEvent off5375 = MidiEvent::NoteOff(5375, 1, 69, 0);
+  DirectPlaybackStreamCtx streamCtx{{on5328, off5375}};
+  ProjectionContext playbackContext{};
+  playbackContext.loopLength = 5376;
+  PlaybackTickFrame wrapFrame{&playbackContext, 48U, 5368U, true};
+  uint16_t cursor = 0;
+  PlaybackCursorAdvanceState advance{&cursor, nullptr};
+
+  struct LedgerSendLog {
+    ActiveNoteLedger ledger;
+  };
+  LedgerSendLog log;
+  log.ledger.noteOn(1, 69, 112, 5328, 100);
+  TEST_ASSERT_TRUE(log.ledger.isActive(1, 69));
+  TEST_ASSERT_EQUAL_UINT32(112, log.ledger.noteId(1, 69));
+
+  auto send = [](void* ctx, const MidiEvent& evt, uint8_t) {
+    auto* state = static_cast<LedgerSendLog*>(ctx);
+    (void)state->ledger.applyPlaybackEvent(1, evt);
+  };
+
+  const PlaybackEventStream stream{&streamCtx, directPlaybackStreamSize, nullptr,
+                                   directPlaybackStreamEventAt, directPlaybackStreamPhase};
+  const PlaybackAdvanceResult headOnly = advancePlaybackCursor(
+      advance, wrapFrame, PlaybackEmitPolicy::LayeredSlot, stream, send, &log, 0, nullptr, nullptr,
+      1);
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed, headOnly);
+  TEST_ASSERT_TRUE_MESSAGE(log.ledger.isActive(1, 69),
+                           "head-only wrap walk must not be treated as the closure owner");
+  TEST_ASSERT_EQUAL_UINT32(112, log.ledger.noteId(1, 69));
+
+  cursor = 0;
+  const PlaybackAdvanceResult wrapWalk = advancePlaybackCursorAcrossOverdubWrap(
+      advance, wrapFrame, PlaybackEmitPolicy::LayeredSlot, stream, send, &log, 0, nullptr, nullptr,
+      1);
+  TEST_ASSERT_EQUAL(PlaybackAdvanceResult::Completed, wrapWalk);
+  TEST_ASSERT_FALSE_MESSAGE(log.ledger.isActive(1, 69),
+                            "untagged Off@5375 must close id=112 through applyPlaybackEvent");
+}
+
 void test_active_committed_duplicate_off_applies_ledger_without_second_midi() {
   // session_20260819_103234 L6683: two Off@71. Wire keeps one Off; ledger must pop both.
   MidiEvent on24 = MidiEvent::NoteOn(24, 1, 24, 100);
@@ -140,6 +183,7 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_playback_cursor_advance_mid_interval);
   RUN_TEST(test_playback_cursor_advance_loop_start_catch_up);
+  RUN_TEST(test_wrap_cursor_offers_untagged_loop_end_off_to_ledger_174151);
   RUN_TEST(test_active_committed_duplicate_off_applies_ledger_without_second_midi);
   return UNITY_END();
 }

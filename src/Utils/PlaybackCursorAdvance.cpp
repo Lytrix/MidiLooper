@@ -76,3 +76,34 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
 
   return PlaybackAdvanceResult::Completed;
 }
+
+PlaybackAdvanceResult advancePlaybackCursorAcrossOverdubWrap(
+    PlaybackCursorAdvanceState cursorAdvance, const PlaybackTickFrame& wrapFrame,
+    PlaybackEmitPolicy policy, const PlaybackEventStream& stream, PlaybackSendFn send,
+    void* sendCtx, uint8_t playbackSlotIndex, PlaybackJamFilterFn jamFilter, void* jamCtx,
+    uint8_t trackMidiChannelForDedup, PlaybackSendFn applyLedgerOnly) {
+  if (wrapFrame.playbackContext == nullptr) {
+    return PlaybackAdvanceResult::Completed;
+  }
+  const uint32_t loopLength = wrapFrame.playbackContext->loopLength;
+  if (loopLength > 1 && wrapFrame.prevTickInLoop != UINT32_MAX &&
+      wrapFrame.prevTickInLoop < loopLength - 1) {
+    PlaybackTickFrame tailFrame = wrapFrame;
+    tailFrame.atLoopStart = false;
+    tailFrame.tickInLoop = loopLength - 1;
+    uint16_t tailCursor = 0;
+    PlaybackCursorAdvanceState tailAdvance{&tailCursor, cursorAdvance.playbackOrderDirty};
+    const PlaybackAdvanceResult tailResult = advancePlaybackCursor(
+        tailAdvance, tailFrame, policy, stream, send, sendCtx, playbackSlotIndex, jamFilter, jamCtx,
+        trackMidiChannelForDedup, applyLedgerOnly);
+    if (tailResult != PlaybackAdvanceResult::Completed) {
+      return tailResult;
+    }
+  }
+  if (cursorAdvance.cursor != nullptr) {
+    *cursorAdvance.cursor = 0;
+  }
+  return advancePlaybackCursor(cursorAdvance, wrapFrame, policy, stream, send, sendCtx,
+                               playbackSlotIndex, jamFilter, jamCtx, trackMidiChannelForDedup,
+                               applyLedgerOnly);
+}
