@@ -73,6 +73,10 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,oh,", 8) == 0 ||
          strncmp(tag, "DIAG,late_on,", 13) == 0 || strncmp(tag, "DIAG,late_off,", 14) == 0 ||
          strncmp(tag, "DIAG,late_clk,", 14) == 0 || strncmp(tag, "DIAG,late_event,", 16) == 0 ||
+         strncmp(tag, "DIAG,extclk_arrival,", 20) == 0 ||
+         strncmp(tag, "DIAG,extclk_dispatch,", 21) == 0 ||
+         strncmp(tag, "DIAG,clk_batch,", 15) == 0 ||
+         strncmp(tag, "DIAG,service_period,", 20) == 0 ||
          strncmp(tag, "DIAG,playback_build,", 20) == 0 ||
          strncmp(tag, "DIAG,playback_order,", 20) == 0 ||
          strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0

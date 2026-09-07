@@ -177,14 +177,15 @@ void ClockManager::updateInternalClock() {
 }
 
 void ClockManager::onMidiClockPulse() {
+#if RUNTIME_TIMING_ENABLED
+  const uint32_t clockDispatchStartUs = micros();
+  RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_DISPATCH_ENTER(clockDispatchStartUs);
+#endif
   if (!sequencerRunning) return;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   InvestigationAllocProbe::recordClockPulseEntry();
 #endif
 
-#if RUNTIME_TIMING_ENABLED
-  const uint32_t clockDispatchStartUs = micros();
-#endif
   RUNTIME_TIMING_NOTE_CLOCK_PULSE();
 
   requestTransitionTo(CLOCK_EXTERNAL);

@@ -179,14 +179,24 @@ void MidiHandler::handleMidiInput() {
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_BEGIN_USB_DEVICE_NESTED();
   uint32_t segmentStartUs = micros();
+  uint32_t usbClockCount = 0;
 #endif
   while (count < midiInputBatchMax && usbMIDI.read()) {
-    batch[count++] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
-                      usbMIDI.getData2(), SOURCE_USB};
+    batch[count] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
+                    usbMIDI.getData2(), SOURCE_USB};
+#if RUNTIME_TIMING_ENABLED
+    if (batch[count].type == midi::Clock) {
+      ++usbClockCount;
+    }
+#endif
+    ++count;
   }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_DEVICE_READ(micros() - segmentStartUs);
   const uint32_t dispatchStartUs = micros();
+  RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_BATCH(
+      dispatchStartUs, usbClockCount,
+      clockManager.getMicrosPerTick() * Config::TICKS_PER_CLOCK);
 #endif
   dispatchMidiBatch(batch, count);
 #if RUNTIME_TIMING_ENABLED

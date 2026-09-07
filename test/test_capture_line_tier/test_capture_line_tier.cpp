@@ -101,6 +101,10 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701476,DIAG,late_on,0,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701477,DIAG,late_off,1200,2"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,late_clk,4000,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,extclk_arrival,1200,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,extclk_dispatch,6100,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,clk_batch,8,3"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,service_period,20833,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701479,DIAG,late_event,on,5000,192"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine(

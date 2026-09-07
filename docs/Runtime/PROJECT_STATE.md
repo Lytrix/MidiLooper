@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-07 (`142336` / device PASS [`143701`](../../captures/session_20260907_143701.log))
+Last updated: 2026-09-07 (overdub MIDI boundary Stage 1 telemetry; prior paint PASS [`143701`](../../captures/session_20260907_143701.log))
 
 ---
 
