@@ -4945,6 +4945,50 @@ void test_closed_preview_survives_draw_source_compose_192322() {
   }
 }
 
+/// `195409`: sealed id 124 and current closed preview id 148 share `69@48–96`.
+/// Overlay must keep both valid IDs; Stage 3 remnant drop still removes only
+/// the reconstruct sibling, not the closed capture identities.
+void test_overlay_keeps_repeated_closed_ids_195409() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
+  constexpr NoteId kPrefixId = 32;
+  constexpr NoteId kSealedId = 124;
+  constexpr NoteId kPreviewId = 148;
+  constexpr uint32_t kStart = 48;
+  constexpr uint32_t kClosedEnd = 96;
+  constexpr uint32_t kPrefixEnd = 200;
+  constexpr uint32_t kShortenEnd = 70;
+
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.capturePreview.notes.push_back(displayNote(kSealedId, 69, kStart, kClosedEnd));
+  loop.retainCapturePreviewAtSeal();
+  loop.capturePreview.notes.clear();
+  loop.capturePreview.notes.push_back(displayNote(kPreviewId, 69, kStart, kClosedEnd));
+  loop.pushPendingNoteChangeForTest(shortenChange(kPrefixId, 69, kStart, kShortenEnd));
+
+  NoteUtils::DisplayNoteVec prefix;
+  prefix.push_back(displayNote(kPrefixId, 69, kStart, kPrefixEnd));
+  const size_t committedEnd = prefix.size();
+  applyDrawSourceOverlaysForTest(loop, 0, kLastBar, prefix, committedEnd);
+
+  TEST_ASSERT_EQUAL(3u, prefix.size());
+  TEST_ASSERT_EQUAL(kPrefixId, prefix[0].noteId);
+  TEST_ASSERT_EQUAL(kSealedId, prefix[1].noteId);
+  TEST_ASSERT_EQUAL(kPreviewId, prefix[2].noteId);
+  TEST_ASSERT_EQUAL_UINT32(kClosedEnd, prefix[1].endTick);
+  TEST_ASSERT_EQUAL_UINT32(kClosedEnd, prefix[2].endTick);
+
+  loop.applyPendingNoteChangesToDisplayNotes(prefix, committedEnd);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(prefix, kPrefixId));
+  TEST_ASSERT_EQUAL_UINT32(kShortenEnd, findDisplayNoteById(prefix, kPrefixId)->endTick);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(prefix, kPreviewId));
+  TEST_ASSERT_EQUAL_UINT32(kClosedEnd, findDisplayNoteById(prefix, kPreviewId)->endTick);
+}
+
 /// `185822`: remnant drop may still remove reconstruct id 99; closed incoming
 /// capturePreview id 168 at the same pitch+start must keep its capture Off.
 void test_closed_preview_survives_same_start_remnant_drop_185822() {
@@ -5127,6 +5171,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_closed_loop_end_identity_is_not_reshortened_after_wrap_off_174151);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
   RUN_TEST(test_closed_preview_survives_draw_source_compose_192322);
+  RUN_TEST(test_overlay_keeps_repeated_closed_ids_195409);
   RUN_TEST(test_closed_preview_survives_same_start_remnant_drop_185822);
   RUN_TEST(test_pending_shorten_does_not_delete_equal_geometry_sibling);
   return UNITY_END();

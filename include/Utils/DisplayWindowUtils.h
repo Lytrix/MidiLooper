@@ -751,6 +751,9 @@ inline void realizeClosedCaptureOffOnStopPlayheadTails(
 /// do not append a linear sealed row whose pitch+start already exists in the
 /// committed prefix (`154310` prefix 143 + sealed 576). Wrap-held rows still
 /// append. This is not gather `keepShortestEndAtPitchStart`.
+/// Distinct valid `NoteId`s at the same pitch+start coexist (`195409`); the
+/// same valid `NoteId` updates the existing suffix row. Invalid-ID rows still
+/// replace by pitch+start.
 inline void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes,
                                               size_t suffixBegin,
                                               const NoteUtils::DisplayNote& row,
@@ -766,11 +769,26 @@ inline void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes,
     }
   }
   if (row.endTick >= row.startTick) {
-    for (size_t i = suffixBegin; i < notes.size(); ++i) {
-      if (notes[i].note == row.note && notes[i].startTick == row.startTick) {
-        notes[i] = row;
-        return;
+    if (row.noteId != kInvalidNoteId) {
+      for (size_t i = suffixBegin; i < notes.size(); ++i) {
+        if (notes[i].noteId == row.noteId) {
+          notes[i] = row;
+          return;
+        }
       }
+    }
+    for (size_t i = suffixBegin; i < notes.size(); ++i) {
+      if (notes[i].note != row.note || notes[i].startTick != row.startTick) {
+        continue;
+      }
+      const bool bothValidDistinct =
+          row.noteId != kInvalidNoteId && notes[i].noteId != kInvalidNoteId &&
+          notes[i].noteId != row.noteId;
+      if (bothValidDistinct) {
+        continue;
+      }
+      notes[i] = row;
+      return;
     }
   }
   notes.push_back(row);

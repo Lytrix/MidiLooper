@@ -165,6 +165,12 @@ pending Shorten source recovery (`212700` / `215658` / `223435`): if
     `resolveDisplayNotesLiveCapture` may invoke it. Recover that committed
     row at the prefix cut (`admitRecoveredCommittedShortenRow`); overlay /
     closed `capturePreview` suffix rows stay after `committedEnd` (`192322`).
+    Sealed then current closed preview union via
+    `upsertDisplayNoteAtPitchStartFrom`: distinct valid `NoteId`s at the
+    same pitch+start coexist (`195409`); the same valid `NoteId` updates
+    the suffix row; invalid-ID rows still replace by pitch+start. After
+    stop, a linear sealed row whose pitch+start already exists in the
+    committed prefix still skips (`154310`).
     Then paint. If VisualCache still has the identity
     and the authoritative source lacks the target, keep it absent
     (`authoritative_absence`). Never copy VisualCache geometry. Hide
