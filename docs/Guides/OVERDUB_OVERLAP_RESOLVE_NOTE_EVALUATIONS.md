@@ -163,7 +163,9 @@ pending Shorten source recovery (`212700` / `215658` / `223435`): if
     VisualCache also lacks that `NoteId`. `recoverMissingPendingShortenSources`
     is the single owner; `resolveDisplayNotesByDrawSource` and
     `resolveDisplayNotesLiveCapture` may invoke it. Recover that committed
-    row into compose, then paint. If VisualCache still has the identity
+    row at the prefix cut (`admitRecoveredCommittedShortenRow`); overlay /
+    closed `capturePreview` suffix rows stay after `committedEnd` (`192322`).
+    Then paint. If VisualCache still has the identity
     and the authoritative source lacks the target, keep it absent
     (`authoritative_absence`). Never copy VisualCache geometry. Hide
     keeps the existing absence path.

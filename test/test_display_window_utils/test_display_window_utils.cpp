@@ -1582,6 +1582,34 @@ void test_pending_shorten_source_classify_and_recover_212700() {
   TEST_ASSERT_TRUE(hideCompose.empty());
 }
 
+void test_recovered_shorten_joins_prefix_not_overlay_suffix_192322() {
+  NoteUtils::DisplayNoteVec compose;
+  compose.push_back({150, 69, 90, 48, 96});
+  size_t committedEnd = 0;
+  DisplayWindowUtils::admitRecoveredCommittedShortenRow(compose, committedEnd,
+                                                        NoteUtils::DisplayNote{32, 69, 90, 48, 200});
+  TEST_ASSERT_EQUAL(2u, compose.size());
+  TEST_ASSERT_EQUAL(1u, committedEnd);
+  TEST_ASSERT_EQUAL(32, compose[0].noteId);
+  TEST_ASSERT_EQUAL(150, compose[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(96u, compose[1].endTick);
+
+  NoteUtils::DisplayNoteVec visual;
+  NoteUtils::DisplayNoteVec authoritative;
+  authoritative.push_back({84, 84, 100, 4560, 4608});
+  NoteUtils::DisplayNoteVec sealedCompose;
+  sealedCompose.push_back({150, 69, 90, 48, 96});
+  size_t sealedEnd = 0;
+  const NoteId shortenIds[] = {84};
+  const DisplayWindowUtils::PendingShortenRecoveryCounts recovered =
+      DisplayWindowUtils::recoverMissingPendingShortenRows(sealedCompose, visual, shortenIds, 1,
+                                                           authoritative, &sealedEnd);
+  TEST_ASSERT_EQUAL_UINT32(1u, recovered.recovered);
+  TEST_ASSERT_EQUAL(1u, sealedEnd);
+  TEST_ASSERT_EQUAL(84, sealedCompose[0].noteId);
+  TEST_ASSERT_EQUAL(150, sealedCompose[1].noteId);
+}
+
 void test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars() {
   const uint32_t bar = Config::TICKS_PER_BAR;
   const uint32_t loopLength = 32u * bar;
@@ -1817,6 +1845,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_noteon_shorten_authoritative_absence_omits_compose_and_paint);
   RUN_TEST(test_noteon_hide_absence_is_not_recovered);
   RUN_TEST(test_pending_shorten_source_classify_and_recover_212700);
+  RUN_TEST(test_recovered_shorten_joins_prefix_not_overlay_suffix_192322);
   RUN_TEST(test_one_bar_slide_keeps_spanning_note_and_swaps_edge_bars);
   RUN_TEST(test_display_frame_admission_sequences);
   RUN_TEST(test_display_frame_note_edit_request_uses_same_phases);
