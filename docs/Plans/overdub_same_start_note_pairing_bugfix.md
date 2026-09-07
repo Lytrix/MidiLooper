@@ -210,7 +210,7 @@ Open holds (`endTick == startTick`) are not this class; they already skip
 drop via `capturePreviewNoteIsOpenHold`. `sealedCapturePreviewNotes` is
 not an exemption source.
 
-#### Pipeline pin (do not change overlay yet)
+#### Pipeline pin (overlay identity shipped separately)
 
 **1. Overlay admission** — `applyDrawSourceOverlays` during capture:
 
@@ -219,11 +219,11 @@ not an exemption source.
 - That search starts at `committedEnd`. A prefix sealed/snapshot row X at
   the same pitch+start is **not** replaced. Closed preview Y **appends**.
   X and Y coexist after overlay.
-- Sealed union uses the same helper from index `0`, so a sealed row can
-  replace an earlier prefix row at that pitch+start before preview runs.
-- Two closed preview rows that share pitch+start replace in the suffix
-  (second wins). That is a separate overlay question; do not change it
-  in this pin.
+- Sealed union uses the same helper from index `0` during capture. Distinct
+  valid `NoteId`s at the same pitch+start now coexist (`195409`); the same
+  valid `NoteId` updates the suffix row. Invalid-ID rows still replace by
+  pitch+start. Stopped-path prefix skip (`154310`) is unchanged.
+  Plan: [`overdub_overlay_identity_bugfix.md`](overdub_overlay_identity_bugfix.md).
 
 So for `sealed 69@48 → X` then `preview 69@48 → Y` with distinct IDs,
 Y **coexists** with prefix X. Overlay is not the deletion owner for the
@@ -366,6 +366,9 @@ not combine their fixes:
   committed prefix cut so a closed `capturePreview` identity stays in the
   suffix. Stage 3 exemption unchanged. Plan:
   [`overdub_bar1_compose_miss_bugfix.md`](overdub_bar1_compose_miss_bugfix.md).
+- **Overlay identity:** host shipped. Distinct valid `NoteId`s survive
+  sealed/current suffix overlay at the same pitch+start (`195409`). Plan:
+  [`overdub_overlay_identity_bugfix.md`](overdub_overlay_identity_bugfix.md).
 - **RC-B — unmatched capture NoteOff:** independently test and then guard
   `Loop::appendCaptureEventWithResult` so a NoteOff is admitted only when the
   existing pairing rule identifies a currently open matching NoteOn. Do not

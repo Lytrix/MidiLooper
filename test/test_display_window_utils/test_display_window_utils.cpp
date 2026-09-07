@@ -672,6 +672,74 @@ void test_capture_sealed_upsert_keeps_longer_suffix_150650() {
   TEST_ASSERT_EQUAL(21, notes[1].noteId);
 }
 
+void test_overlay_keeps_distinct_valid_ids_at_same_pitch_start_195409() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({32, 69, 90, 48, 200});
+  const size_t committedEnd = notes.size();
+
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{124, 69, 90, 48, 96}, true);
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{148, 69, 90, 48, 96}, true);
+
+  TEST_ASSERT_EQUAL(3u, notes.size());
+  TEST_ASSERT_EQUAL(32, notes[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(200u, notes[0].endTick);
+  TEST_ASSERT_EQUAL(124, notes[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[1].endTick);
+  TEST_ASSERT_EQUAL(148, notes[2].noteId);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[2].endTick);
+}
+
+void test_overlay_same_id_replaces_suffix_row() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({32, 69, 90, 48, 200});
+  const size_t committedEnd = notes.size();
+  notes.push_back({148, 69, 90, 48, 88});
+
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{148, 69, 90, 48, 96}, true);
+
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  TEST_ASSERT_EQUAL(32, notes[0].noteId);
+  TEST_ASSERT_EQUAL(148, notes[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[1].endTick);
+}
+
+void test_overlay_invalid_id_still_replaces_pitch_start() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back({32, 69, 90, 48, 200});
+  const size_t committedEnd = notes.size();
+  notes.push_back({kInvalidNoteId, 69, 90, 48, 88});
+
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{kInvalidNoteId, 69, 90, 48, 96}, true);
+
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  TEST_ASSERT_EQUAL(32, notes[0].noteId);
+  TEST_ASSERT_EQUAL(kInvalidNoteId, notes[1].noteId);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[1].endTick);
+}
+
+void test_overlay_repeated_sealed_ids_keep_equal_geometry_195409() {
+  NoteUtils::DisplayNoteVec notes;
+  const size_t committedEnd = 0;
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{124, 69, 90, 48, 96}, true);
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{136, 69, 90, 48, 96}, true);
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{148, 69, 90, 48, 96}, true);
+
+  TEST_ASSERT_EQUAL(3u, notes.size());
+  TEST_ASSERT_EQUAL(124, notes[0].noteId);
+  TEST_ASSERT_EQUAL(136, notes[1].noteId);
+  TEST_ASSERT_EQUAL(148, notes[2].noteId);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[0].endTick);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[1].endTick);
+  TEST_ASSERT_EQUAL_UINT32(96u, notes[2].endTick);
+}
+
 void test_stopped_playhead_tail_takes_closed_capture_off_153848() {
   // Last OVERDUBBING paint left 52@2172 at playhead 2230. Sealed Off is 2231.
   // RC1b skip keeps 2230; this-pass suffix takes the closed Off (not stopPhase).
@@ -1824,6 +1892,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stopped_closed_off_takes_sealed_165050_52);
   RUN_TEST(test_stopped_closed_off_takes_sealed_165050_48);
   RUN_TEST(test_capture_sealed_upsert_keeps_longer_suffix_150650);
+  RUN_TEST(test_overlay_keeps_distinct_valid_ids_at_same_pitch_start_195409);
+  RUN_TEST(test_overlay_same_id_replaces_suffix_row);
+  RUN_TEST(test_overlay_invalid_id_still_replaces_pitch_start);
+  RUN_TEST(test_overlay_repeated_sealed_ids_keep_equal_geometry_195409);
   RUN_TEST(test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start);
   RUN_TEST(test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces);
   RUN_TEST(test_paint_window_inside_gather_tolerates_margin_slide);
