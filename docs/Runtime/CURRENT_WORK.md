@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (overlay compose holds; pending/tails miss [`204112`](../../captures/session_20260907_204112.log))
+Last updated: 2026-09-07 (pending paint keeps closed preview [`204112`](../../captures/session_20260907_204112.log); HITL open)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,23 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log) / [`192322`](../../captures/session_20260907_192322.log) / [`195409`](../../captures/session_20260907_195409.log)):**
-Stage 1–3 and RC-A host in tree. Overlay identity host in tree:
-`upsertDisplayNoteAtPitchStartFrom` keeps distinct valid `NoteId`s at
-the same pitch+start and still replaces same-ID / invalid-ID geometry
-rows. Stage 3 sibling-drop exemption is unchanged. `123236` / `000402`
-remnant drop is unchanged. RC-B unmatched NoteOff admission is not
-started. Focused native PASS (`test_pending_note_change`,
-`test_display_window_utils`). RAM1 locals **6848**. Full native
-**1722/1723** (1 skipped). HITL
-[`204112`](../../captures/session_20260907_204112.log) names the remaining
-owner: overlay compose keeps the closed A (`compose,1,107,96` then
-`116` / `126`); `compose_miss=0`; the painted frame has no `69@48` row
-(`frame,0,0,0`) while sealed still holds the prior-pass sibling.
-First wrap stays clean. Next slice is pending Hide/Shorten + Stage 3 /
-tails, not overlay admission. Plan:
-[`overdub_pending_paint_frame_drop_bugfix.md`](../Plans/overdub_pending_paint_frame_drop_bugfix.md).
-Plans: [`overdub_same_start_note_pairing_bugfix.md`](../Plans/overdub_same_start_note_pairing_bugfix.md),
+**Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log) / [`192322`](../../captures/session_20260907_192322.log) / [`195409`](../../captures/session_20260907_195409.log) / [`204112`](../../captures/session_20260907_204112.log)):**
+Stage 1–3, RC-A, and overlay identity host in tree. Pending-paint host
+in tree: prefix Hide-by-overlap does not inherit another `NoteId`'s Hide
+onto a current closed `capturePreview` identity (`204112` `69@48–96`).
+Occupy still Hides/Shortens the selected identity. Stage 3 remnant drop
+(`123236` / `000402` / `001145`) is unchanged. RC-B unmatched NoteOff
+admission is not started. Native pin
+`test_pending_hide_keeps_closed_preview_equal_geometry_204112`.
+`teensy41-capture-serial` RAM1 locals **6848**. Full native **1723/1724**
+(1 skipped). HITL recapture open. Plans:
+[`overdub_same_start_note_pairing_bugfix.md`](../Plans/overdub_same_start_note_pairing_bugfix.md),
 [`overdub_bar1_compose_miss_bugfix.md`](../Plans/overdub_bar1_compose_miss_bugfix.md),
 [`overdub_overlay_identity_bugfix.md`](../Plans/overdub_overlay_identity_bugfix.md),
 [`overdub_pending_paint_frame_drop_bugfix.md`](../Plans/overdub_pending_paint_frame_drop_bugfix.md).

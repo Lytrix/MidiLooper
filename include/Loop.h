@@ -383,8 +383,10 @@ struct Loop {
   /// not at the shortened source start. Sealed overlay applies first; this-lap
   /// pending then wins for the same NoteId (`002200`). Hide absorbs an earlier
   /// Length of the same NoteId. `liveCaptureBegin` remains Hide-by-overlap
-  /// prefix only. A current closed `capturePreview` identity is not remnant-
-  /// eligible (`185822`). Gather upsert during capture is unchanged (`150650`).
+  /// prefix only. Hide-by-overlap does not apply to a current closed
+  /// `capturePreview` identity (`204112`). A current closed `capturePreview`
+  /// identity is not remnant-eligible (`185822`). Gather upsert during
+  /// capture is unchanged (`150650`).
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;

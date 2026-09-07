@@ -372,13 +372,10 @@ not combine their fixes:
   All 17 overdub miss frames are `compose_miss=0` with
   `compose,1,<id>,96` for `69@48–96` (`id=107` / `116` / `126`). Plan:
   [`overdub_overlay_identity_bugfix.md`](overdub_overlay_identity_bugfix.md).
-- **Pending / tails frame drop:** next slice. After NoteOff@96 the painted
-  frame has no `69@48` row (`frame,0,0,0`) while sealed still holds the
-  prior-pass sibling. Occupy at that On selects ledger `69@48–96`. First
-  wrap stays clean. Do not reopen overlay admission. Owners to investigate:
-  `applyPendingHideAndShortenToNotes`,
-  `dropLongerSamePitchStartSiblingsMarkedBySourceTransform`, tails.
-  Plan:
+- **Pending / tails frame drop:** host in tree. Prefix Hide-by-overlap no
+  longer removes a current closed `capturePreview` identity when occupy
+  Hides a different `NoteId` at the same span (`204112`). HITL recapture
+  open. Plan:
   [`overdub_pending_paint_frame_drop_bugfix.md`](overdub_pending_paint_frame_drop_bugfix.md).
 - **RC-B — unmatched capture NoteOff:** independently test and then guard
   `Loop::appendCaptureEventWithResult` so a NoteOff is admitted only when the

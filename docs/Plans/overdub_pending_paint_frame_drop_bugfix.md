@@ -1,6 +1,6 @@
 # Overdub pending paint frame drop bugfix
 
-**Status:** investigation plan; implementation not started  
+**Status:** host in tree; HITL recapture open  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
 **Evidence:** [`session_20260907_204112.log`](../../captures/session_20260907_204112.log)  
@@ -80,6 +80,17 @@ selects the ledger span `69@48–96`.
    remaining stage is not already observable. Keep any new runtime
    logging behind `SESSION_CAPTURE_DRAW_SRC`.
 
+## Implemented
+
+Prefix Hide-by-overlap no longer applies to a current closed
+`capturePreview` identity. Occupy Hide still matches the selected
+`NoteId`. Stage 3 remnant drop for `123236` / `000402` / `001145` is
+unchanged. Tails are unchanged. No new capture diagnostics.
+
+Native: `test_pending_hide_keeps_closed_preview_equal_geometry_204112`
+traces overlay compose, pending, and tails for sealed `98` / preview
+`107` at `69@48–96`, including the prefix overlap-hide case.
+
 ## Native acceptance
 
 - `69@48–96` current closed preview survives pending paint.
@@ -105,6 +116,23 @@ HITL acceptance:
 - the current preview `NoteId` and any retained prior-pass sibling have
   the expected frame membership and endpoint;
 - no new currentTick tail replacement or `norowid` regression.
+
+## Pre-implementation review
+
+### Ready
+- Owners are `applyPendingHideAndShortenToNotes` and
+  `dropLongerSamePitchStartSiblingsMarkedBySourceTransform`.
+- Overlay admission stays frozen.
+
+### Resolved
+| Topic | Decision |
+|---|---|
+| Drop owner | Prefix Hide-by-overlap inherited the occupy Hide onto the current closed preview |
+| Fix | Skip overlap Hide for `displayNoteIsClosedCapturePreviewIdentity` |
+| Remnants | Leave `123236` / `000402` / `001145` and `test_pending_hide_applies_when_display_note_id_differs` on existing Stage 3 / overlap-hide rules |
+
+### Open before coding
+None.
 
 ## Out of scope
 

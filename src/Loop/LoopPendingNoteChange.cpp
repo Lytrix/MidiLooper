@@ -415,9 +415,11 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
     // A pending Hide/Shorten applies to any painted note carrying the
     // target NoteId, regardless of whether that note came from the
     // committed prefix or sealed/closed capture suffix.
-    // The only display note excluded from the pending transform is an
+    // The only display notes excluded from the pending transform are an
     // open capture hold whose end is intentionally extended by
-    // applyCapturePlayheadTails().
+    // applyCapturePlayheadTails(), and a current closed capture-preview
+    // identity that would otherwise inherit another NoteId's prefix Hide
+    // (`204112` 69@48–96).
     if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(note.startTick, note.endTick)) {
       updated.push_back(note);
       continue;
@@ -425,7 +427,9 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
     const PendingNoteChange* transform =
         findSourceTransformByNoteIdSorted(transforms, note.noteId);
     if (transform == nullptr && matchHideByOverlap && loopLength != 0 &&
-        i < liveCaptureBegin) {
+        i < liveCaptureBegin &&
+        !DisplayWindowUtils::displayNoteIsClosedCapturePreviewIdentity(note,
+                                                                      capturePreviewNotes)) {
       for (const PendingNoteChange& candidate : transforms) {
         if (candidate.kind == PendingNoteChangeKind::Hide &&
             hideMatchesDisplayNote(note, candidate, loopLength)) {
