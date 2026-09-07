@@ -1,7 +1,7 @@
 # Display visual-cache snapshot fill
 
-**Status:** Stage 2.1 host shipped (membership copy). Stage 2.0 load publish not started.  
-**Host:** `teensy41-capture-serial` RAM1 locals **6848**. Native **1727/1728** (1 skipped). Device recapture open (`idle_src,SnapshotNotes` when a current root exists).  
+**Status:** Stage 2.1 host shipped. Stage 2.0 load publish in progress.
+**Host:** Stage 2.1 `teensy41-capture-serial` RAM1 locals **6848**. Native **1727/1728** (1 skipped).
 **Kind:** refinement  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 2  
 **Parent:** [`display_visual_cache_snapshot_reuse_refinement.md`](display_visual_cache_snapshot_reuse_refinement.md)  
@@ -19,14 +19,41 @@ Paint already selects per bar (`DEC-050`). This slice makes the idle cache a thi
 
 ## Why two slices
 
-Boot `adoptPersistedSnapshot` still `markDisplayCachesStale()` and does **not** publish a `LoopSnapshot` (`root_rev=0` on T6/S0 in [`235930`](../../captures/session_20260907_235930.log)). Stage 2.1 copy cannot run there until a root exists.
+Boot `adoptPersistedSnapshot` used to `markDisplayCachesStale()` and **not** publish a `LoopSnapshot` (`root_rev=0` on T6/S0 in [`235930`](../../captures/session_20260907_235930.log)). Stage 2.1 copy cannot run there until a root exists.
 
 | Slice | Invariant | Transition change? |
 |---|---|---|
-| **2.1 membership copy** | When `publishedSnapshotIsCurrent()`, `rebuildVisualCacheIdleSlice` copies snapshot notes for the dirty bar range. Reconstruct is not taken. | NO |
-| **2.0 load enqueue** | After adopt/restore of a committed loop with no published root, queue the existing `Loop` publication owner so STOPPED Snapshot idle can build one. | YES — load starts publication. Confirm before firmware. |
+| **2.1 membership copy** | When `publishedSnapshotIsCurrent()`, `rebuildVisualCacheIdleSlice` copies snapshot notes for the dirty bar range. Reconstruct is not taken. | NO — shipped |
+| **2.0 load enqueue** | After adopt/restore of a committed loop with no published root, queue the existing `Loop` publication owner so STOPPED Snapshot idle can build one. | YES — load starts publication. Confirmed. |
 
-2.0 is the “save snapshots” step. It reuses `queueSessionExitSnapshot` / `stepPendingSnapshotPublish`. It does not persist snapshots to SD (OpenSpec later).
+2.0 is the “save snapshots” step. It queues on the existing owner. It does not persist snapshots to SD (OpenSpec later). It does not construct on the load path.
+
+---
+
+## Stage 2.0 change
+
+`adoptPersistedSnapshot` and `restorePassesSnapshot` call `queueLoadedSnapshotPublish` after the revision bump and stale mark.
+
+1. No-op when `publishedSnapshotIsCurrent()`.
+2. Empty / no committed passes: `clearPendingSnapshotPublish()` and do not queue.
+3. Discard a stale published root so `resolvePendingParent` does not apply loaded passes onto the previous loop.
+4. Queue the record pass first, then each active overdub pass, then active edit-pass companions.
+5. Set `sessionExitQueued` with `CommitReason::RecordStop` so the first record pass can start from `LoopSnapshot::createEmpty`.
+6. Idle `stepPendingSnapshotPublish` constructs. Load/restore only enqueue.
+7. STOPPED tracks do not step that work while another track is RECORDING /
+   PLAYING / OVERDUBBING. [`003555`](../../captures/session_20260908_003555.log)
+   rebooted (`CAPTURE_RECONNECT`) during T0 `RECORDING` while T6 loaded
+   construction was still climbing (`snapshot_alloc` `nodes=2083`).
+8. STOPPED VisualCache reconstruction is deferred for the active loop while
+   its snapshot publication is pending. [`005044`](../../captures/session_20260908_005044.log)
+   showed the 66-bar loop continuing snapshot allocation while pass-based
+   VisualCache maintenance was still taking 100–187 ms per turn.
+
+Native pins: `test_adopt_queues_loaded_snapshot_publish_until_idle`,
+`test_restore_empty_does_not_queue_loaded_snapshot_publish`,
+`test_stopped_track_snapshot_pauses_during_realtime`.
+
+Device gate: after boot STOPPED idle, T6/S0 `root_rev!=0` and VisualCache `idle_src,SnapshotNotes` before first record when idle had time.
 
 ---
 
@@ -48,10 +75,10 @@ Native pin: `test_visual_cache_idle_slice_copies_current_snapshot_notes`.
 ## Pre-implementation review
 
 ### Ready
-- Fill owner: `Loop::rebuildVisualCacheIdleSlice`
-- Conversion: `displayNoteFromSnapshotNote` / `forEachSnapshotMembershipReference`
-- Paint already copies the same membership per bar in `appendSnapshotNotesForBar`
-- Idle already prefers current-root Snapshot events, then reconstructs — 2.1 replaces that reconstruct
+- Fill owner: `Loop::rebuildVisualCacheIdleSlice` (2.1 shipped)
+- Publication owner: `queueSessionExitSnapshot` / `stepPendingSnapshotPublish`
+- Load owners: `adoptPersistedSnapshot` / `restorePassesSnapshot` (`applySnapshotToLoop` calls adopt)
+- 2.1 copy runs only when a current root exists
 
 ### Resolved
 | Topic | Decision |
@@ -60,18 +87,20 @@ Native pin: `test_visual_cache_idle_slice_copies_current_snapshot_notes`.
 | Copy vs events | Copy `LoopSnapshotNote` when root is current |
 | Stale root | Do not copy; Stage 1e prepared/Fallback |
 | Wrap append | Skip when membership copy ran |
-| Load publish | Not this slice |
+| Load publish | Queue only; `queueLoadedSnapshotPublish` lists every active committed pass |
+| Empty restore | No queue; pending cleared |
+| Construct on load | No — idle Snapshot owner only |
 
 ### Open before coding
-1. Stage 2.0 load enqueue — user confirm (state transition).
+None for 2.0. User confirmed the load transition.
 
 ### Proceed?
-YES for 2.1. NO for 2.0 until confirmed.
+YES for 2.0.
 
 ---
 
-## Architecture checkpoint (2.1)
+## Architecture checkpoint (2.0)
 
-1. Ownership change? **NO** — `Loop` still fills `visualCache`.
-2. State transition change? **NO** — idle fill source only.
-3. Unbounded MIDI-interval owner? **NO** — idle, existing `maxBarsPerSlice`.
+1. Ownership change? **NO** — same `Loop` publication owner.
+2. State transition change? **YES** — adopt/restore start publication. User confirmed.
+3. Unbounded MIDI-interval owner? **NO** — queue only; existing idle Snapshot unit caps.

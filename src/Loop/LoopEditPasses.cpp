@@ -84,6 +84,7 @@ void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
   ++playbackRevision;
   markDisplayCachesStale();
   notifyCommittedContentChanged();
+  queueLoadedSnapshotPublish();
 }
 
 void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
@@ -106,6 +107,7 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   ++playbackRevision;
   markDisplayCachesStale();
   notifyCommittedContentChanged();
+  queueLoadedSnapshotPublish();
 }
 
 EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType,

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (visual-cache Stage 2.1 snapshot membership copy)
+Last updated: 2026-09-08 (visual-cache Stage 2.0 load snapshot enqueue)
 
 ---
 
@@ -146,7 +146,7 @@ Native **1533/1533**. RAM1 locals **6848**. Device recapture required
 ([`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md),
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md)).
 Stage 2.1 (idle copies current `LoopSnapshotNote` membership) is in tree.
-Stage 2.0 load enqueue is not started.
+Stage 2.0 load enqueue (`queueLoadedSnapshotPublish` from adopt/restore) is in progress.
 Do not freeze `T_RT_reserve`.
 Do not check off OpenSpec `3.5`/`3.6`.
 No `step` rewrite is justified yet; and freezing the minimum observed
