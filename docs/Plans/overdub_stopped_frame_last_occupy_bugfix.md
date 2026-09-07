@@ -1,6 +1,6 @@
 # Overdub first STOPPED frame — last occupy, not next On
 
-**Status:** implemented; STOPPED preserved-handoff bypass added after recapture [`224901`]  
+**Status:** HITL PASS [`225234`]; STOPPED frame equals effective resolution  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
 **Evidence:** [`session_20260907_220319.log`](../../captures/session_20260907_220319.log), recapture [`session_20260907_222432.log`](../../captures/session_20260907_222432.log)  
@@ -46,6 +46,11 @@ handoff. The frame therefore remained first-occupy geometry (`768→1151`,
 `1536→1919`) while effective was (`768→911`, `1536→1679`). STOPPED
 finalization now runs before that preserved-handoff return.
 
+Recapture [`225234`](../../captures/session_20260907_225234.log) passes:
+`src,effective` and `src,frame` contain the same 11 D# rows and endpoints,
+including `3072→3648` and `3840→4223`. `DISP` also reports matching counts
+(`112` frame notes and `112` effective notes).
+
 ## Root cause
 
 First STOPPED committed display assigned `visualCache.notes` when the cache
@@ -88,7 +93,7 @@ from stale visual-cache content or the preserved overdub-stop handoff.
 
 Host verification: focused display/companion tests **232/232**; full native
 **1724/1725** (1 skipped); capture-serial RAM1 locals **6848**. HITL
-recapture after this implementation remains open.
+recapture [`225234`] PASS.
 
 ## Out of scope
 
