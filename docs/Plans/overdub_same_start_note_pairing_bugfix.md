@@ -1,9 +1,9 @@
 # Overdub same-start A loss and D# note-off pairing bugfix
 
-**Status:** Stage 1–3 host in tree; HITL recapture open  
+**Status:** Stage 1–3 + overlay compose in tree; remaining HITL miss is pending/tails [`204112`](../../captures/session_20260907_204112.log)  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
-**Evidence:** [`session_20260907_183043.log`](../../captures/session_20260907_183043.log) · [`session_20260907_185822.log`](../../captures/session_20260907_185822.log)  
+**Evidence:** [`session_20260907_183043.log`](../../captures/session_20260907_183043.log) · [`session_20260907_185822.log`](../../captures/session_20260907_185822.log) · [`session_20260907_204112.log`](../../captures/session_20260907_204112.log)  
 **Related RC:** [`overdub_occupy_wrap_norowid_noteoff_bugfix.md`](overdub_occupy_wrap_norowid_noteoff_bugfix.md)  
 **Evaluation catalogs:** [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) · [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](../Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md)
 
@@ -366,9 +366,20 @@ not combine their fixes:
   committed prefix cut so a closed `capturePreview` identity stays in the
   suffix. Stage 3 exemption unchanged. Plan:
   [`overdub_bar1_compose_miss_bugfix.md`](overdub_bar1_compose_miss_bugfix.md).
-- **Overlay identity:** host shipped. Distinct valid `NoteId`s survive
-  sealed/current suffix overlay at the same pitch+start (`195409`). Plan:
+- **Overlay identity:** host shipped; device compose **PASS**
+  [`204112`](../../captures/session_20260907_204112.log). Distinct valid
+  `NoteId`s survive sealed/current suffix overlay at the same pitch+start.
+  All 17 overdub miss frames are `compose_miss=0` with
+  `compose,1,<id>,96` for `69@48–96` (`id=107` / `116` / `126`). Plan:
   [`overdub_overlay_identity_bugfix.md`](overdub_overlay_identity_bugfix.md).
+- **Pending / tails frame drop:** next slice. After NoteOff@96 the painted
+  frame has no `69@48` row (`frame,0,0,0`) while sealed still holds the
+  prior-pass sibling. Occupy at that On selects ledger `69@48–96`. First
+  wrap stays clean. Do not reopen overlay admission. Owners to investigate:
+  `applyPendingHideAndShortenToNotes`,
+  `dropLongerSamePitchStartSiblingsMarkedBySourceTransform`, tails.
+  Plan:
+  [`overdub_pending_paint_frame_drop_bugfix.md`](overdub_pending_paint_frame_drop_bugfix.md).
 - **RC-B — unmatched capture NoteOff:** independently test and then guard
   `Loop::appendCaptureEventWithResult` so a NoteOff is admitted only when the
   existing pairing rule identifies a currently open matching NoteOn. Do not
