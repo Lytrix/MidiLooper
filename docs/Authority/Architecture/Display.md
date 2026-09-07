@@ -48,6 +48,26 @@ Display **does not** mutate passes or session store.
 
 Window move should adjust step 2 only when representation revision unchanged.
 
+## Overdub-stop handoff
+
+`Track::stopOverdubbing` publishes the sealed overdub pass before changing to
+`PLAYING`. `DisplayManager::refreshViewportAfterOverdubStop` then resolves the
+committed passes through `LoopContentResolution::resolveDisplayNotes` and uses
+that effective result as the live handoff. Cache adoption may still apply
+pending display transforms, so effective resolution is repeated after adoption;
+the final live vector is therefore not allowed to regain first-occupy geometry.
+
+The next `resolveDisplayNotesByDrawSource` call preserves this handoff when the
+track is no longer capturing, the committed-prefix handoff is still open, and
+the playback and capture revisions match. It does not rebuild from the
+draw-source snapshot or cache during this boundary. Deferred save and idle
+cache rebuilding may proceed afterward.
+
+The invariant is observable in `#CAP,DISP`: the first `OVERDUBBING → PLAYING`
+frame must have the same frame and effective counts as the settled frame.
+HITL [`session_20260907_230846.log`](../../captures/session_20260907_230846.log)
+passed this invariant (`98`/`98` on the first and settled PLAYING frames).
+
 ---
 
 ## Telemetry

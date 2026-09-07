@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (first STOPPED last-occupy frame; `220319`)
+Last updated: 2026-09-07 (overdub-stop PLAYING handoff parity PASS; `230846`)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**First STOPPED D# next-On flash — HITL PASS [`225234`](../../captures/session_20260907_225234.log) ([`220319`](../../captures/session_20260907_220319.log) /
+**Overdub-stop first PLAYING frame parity — HITL PASS [`230846`](../../captures/session_20260907_230846.log):**
+The first `OVERDUBBING → PLAYING` display frame now preserves the effective
+committed handoff while deferred save starts. `refreshViewportAfterOverdubStop`
+finalizes from `LoopContentResolution::resolveDisplayNotes` after cache
+adoption, and `resolveDisplayNotesByDrawSource` preserves that
+revision-matched handoff before normal source/cache rebuilding resumes. The
+cache is a reuse seed, not committed-content authority. RAM1 locals **6848**;
+focused native **162/162**; full native **1724/1725** (1 skipped). HITL
+`DISP` and `dnte` frame/effective counts match on the first and settled frames
+(`98`/`98`). RC closed.
+Plan: [`overdub_display_snapshot_handoff_bugfix.md`](../Plans/overdub_display_snapshot_handoff_bugfix.md).
+
+**Prior — First STOPPED D# next-On flash — HITL PASS [`225234`](../../captures/session_20260907_225234.log) ([`220319`](../../captures/session_20260907_220319.log) /
 [`222432`](../../captures/session_20260907_222432.log) /
 [`223121`](../../captures/session_20260907_223121.log)):**
 `src,effective` is correct while `src,frame` still uses stale cache geometry.
