@@ -15,6 +15,7 @@
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "Utils/SnapshotNoteConversion.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -234,7 +235,7 @@ LOOP_COLD_MEM void Loop::emitVisualCacheIdleGatherPath() const {
   const char* source = "None";
   switch (lastVisualCacheIdleGatherSource_) {
     case VisualCacheIdleGatherSource::Snapshot:
-      source = "Snapshot";
+      source = lastVisualCacheIdleCopiedSnapshotNotes_ ? "SnapshotNotes" : "Snapshot";
       break;
     case VisualCacheIdleGatherSource::Prepared:
       source = "Prepared";
@@ -347,33 +348,47 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   const uint32_t gatherStartUs = micros();
 #endif
   SnapshotWindowGatherPath snapshotPath = SnapshotWindowGatherPath::None;
-  bool usedSnapshot =
-      tryGatherPublishedSnapshotEventsInWindow(flat, windowStart, windowLength, &snapshotPath);
+  lastVisualCacheIdleCopiedSnapshotNotes_ = false;
   lastVisualCacheIdleOverlayRejected_ = false;
-  if (snapshotPath == SnapshotWindowGatherPath::Overlay) {
-    // Playback Overlay is not current committed content. Discard the vector only —
-    // tryGather is const and does not advance fallbackGatherSession.
-    flat.clear();
-    usedSnapshot = false;
-    lastVisualCacheIdleOverlayRejected_ = true;
-  }
+  NoteUtils::DisplayNoteVec sliceNotes;
+  bool usedSnapshot = false;
   bool usedPrepared = false;
-  if (!usedSnapshot) {
-    usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
-        passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
-        &windowCounters);
-  }
   bool fallbackGatherComplete = true;
-  if (usedSnapshot || usedPrepared) {
-    resetFallbackGatherSession();
-  } else {
-    const bool includeActiveEditRows = !constrainFallbackGather;
-    if (fallbackGatherEventBudget == 0) {
+  if (publishedSnapshotIsCurrent()) {
+    if (const ImmutableLoopSnapshotRef snapshot = publishedSnapshot()) {
+      appendSnapshotNotesForBarRange(*snapshot, startBar, endBar, sliceNotes);
+      usedSnapshot = true;
+      lastVisualCacheIdleCopiedSnapshotNotes_ = true;
+      lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Snapshot;
       resetFallbackGatherSession();
-      gatherCommittedEventsInWindow(flat, windowStart, windowLength, includeActiveEditRows);
+    }
+  }
+  if (!usedSnapshot) {
+    usedSnapshot =
+        tryGatherPublishedSnapshotEventsInWindow(flat, windowStart, windowLength, &snapshotPath);
+    if (snapshotPath == SnapshotWindowGatherPath::Overlay) {
+      // Playback Overlay is not current committed content. Discard the vector only —
+      // tryGather is const and does not advance fallbackGatherSession.
+      flat.clear();
+      usedSnapshot = false;
+      lastVisualCacheIdleOverlayRejected_ = true;
+    }
+    if (!usedSnapshot) {
+      usedPrepared = LoopContentResolution::tryResolvePreparedWindow(
+          passes.editPasses, loopLengthTicks, windowStart, windowLength, playbackRevision, flat,
+          &windowCounters);
+    }
+    if (usedSnapshot || usedPrepared) {
+      resetFallbackGatherSession();
     } else {
-      fallbackGatherComplete = advanceFallbackGatherSession(
-          fallbackGatherEventBudget, windowStart, windowLength, includeActiveEditRows, flat);
+      const bool includeActiveEditRows = !constrainFallbackGather;
+      if (fallbackGatherEventBudget == 0) {
+        resetFallbackGatherSession();
+        gatherCommittedEventsInWindow(flat, windowStart, windowLength, includeActiveEditRows);
+      } else {
+        fallbackGatherComplete = advanceFallbackGatherSession(
+            fallbackGatherEventBudget, windowStart, windowLength, includeActiveEditRows, flat);
+      }
     }
   }
   if (usedSnapshot) {
@@ -401,17 +416,18 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #if defined(SESSION_CAPTURE)
   const uint32_t reconstructStartUs = micros();
 #endif
-  NoteUtils::DisplayNoteVec sliceNotes;
-  if (usedSnapshot || usedPrepared) {
-    sliceNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
-  } else {
-    NoteUtils::DisplayNoteVec paired;
-    LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
-    sliceNotes.reserve(paired.size());
-    for (const NoteUtils::DisplayNote& note : paired) {
-      if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,
-                                                   windowLength, loopLengthTicks)) {
-        sliceNotes.push_back(note);
+  if (!lastVisualCacheIdleCopiedSnapshotNotes_) {
+    if (usedSnapshot || usedPrepared) {
+      sliceNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+    } else {
+      NoteUtils::DisplayNoteVec paired;
+      LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
+      sliceNotes.reserve(paired.size());
+      for (const NoteUtils::DisplayNote& note : paired) {
+        if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,
+                                                     windowLength, loopLengthTicks)) {
+          sliceNotes.push_back(note);
+        }
       }
     }
   }
@@ -427,7 +443,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   // (015618 stretches record). Fill that gap only on slices that keep bar 0 or
   // the last bar. Interior slices — prepared or unprepared — use the window only.
   const bool wrapEdgeSlice = (startBar == 0 || endBar + 1 >= totalBars);
-  const bool appendOverdub = wrapEdgeSlice && !usedPrepared;
+  const bool appendOverdub = wrapEdgeSlice && !usedPrepared && !lastVisualCacheIdleCopiedSnapshotNotes_;
 #if defined(SESSION_CAPTURE)
   const uint32_t appendStartUs = micros();
 #endif

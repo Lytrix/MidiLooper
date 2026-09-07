@@ -30,7 +30,7 @@
 | **1k — wrap compose hold** | First wrap OVERDUBBING `DISP` keeps the last composed `liveDisplayNotes` while cache is dirty. Idle may grow cache past `max(committedCount, composed size)`, not the pre-wrap prefix. | Grow-vs-compose hole in tree. Device wrap 1 recapture required after [`232910`](../../captures/session_20260831_232910.log) `89>63` dropped compose 104. Sibling: [`display_visual_cache_wrap_compose_hold_bugfix.md`](display_visual_cache_wrap_compose_hold_bugfix.md). |
 | **1l — Off@0 leftover tail pair** | Leftover `F@0` wrap-splits a leftover tail-window On (`exclusiveEndForLoopOff(L-1)`) before `finishCanonicalSpansOpenNotes`. Mid-loop linear pairs stay linear (1h). Do not call `tryPairWrappedTailOn` for leftover. | In tree. Device [`231953`](../../captures/session_20260831_231953.log): leftover-to-`loopLength` on 39/59. Sibling: [`display_visual_cache_off_zero_tail_pair_bugfix.md`](display_visual_cache_off_zero_tail_pair_bugfix.md). |
 | **1m — stop compose adopt** | Short-loop compose larger than `visualCache` is adopted onto that loop before hop-clear, on wrap-hold, and on RC5a. Full-loop idle must not replace a larger cache (`slice_keep`). | In tree. Device [`000013`](../../captures/session_20260901_000013.log): hop-clear 141→31; Prepared 95→80. Sibling: [`display_visual_cache_stop_compose_adopt_bugfix.md`](display_visual_cache_stop_compose_adopt_bugfix.md). |
-| **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | Unblocked. Not started. This is former 4b.1b. |
+| **2 — snapshot fill** | A VisualCache slice whose dirty bars are covered by the published snapshot copies those `LoopSnapshotNote`s. No `materializeToEventVector` / `reconstructDisplayNotes` / `from=passes` on that slice. | **2.1 in tree** (copy when current). **2.0 load enqueue** not started. Plan: [`display_visual_cache_snapshot_fill_refinement.md`](display_visual_cache_snapshot_fill_refinement.md). Former 4b.1b. |
 
 Stage 2 first would copy snapshot notes, then wrap would wipe them again.
 
@@ -86,7 +86,8 @@ Native: one dirty bar after a published root copies snapshot notes; reconstruct 
 12. Stage 1k wrap compose hold — grow compares to composed hold. Device wrap 1 recapture required ([`232910`](../../captures/session_20260831_232910.log) `104→92`).
 13. Stage 1l Off@0 leftover tail pair — in tree.
 14. Stage 1b same-start shortest end — in tree.
-15. Stage 1m stop compose adopt — in tree. Do not start Stage 2 until CURRENT_WORK says so. Do not check off OpenSpec `3.5` / `3.6`.
+15. Stage 1m stop compose adopt — in tree.
+16. Stage 2.1 membership copy — in tree. Do not start Stage 2.0 load enqueue without a confirmed load-transition. Do not check off OpenSpec `3.5` / `3.6`.
 
 ## Pre-implementation review
 

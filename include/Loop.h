@@ -498,6 +498,9 @@ struct Loop {
     return lastVisualCacheIdleGatherSource_;
   }
   bool lastVisualCacheIdleOverlayRejected() const { return lastVisualCacheIdleOverlayRejected_; }
+  bool lastVisualCacheIdleCopiedSnapshotNotes() const {
+    return lastVisualCacheIdleCopiedSnapshotNotes_;
+  }
 
   /// Fill `out` from published snapshot event membership in
   /// `[windowStart, windowStart + windowLength)`. A stale published root still
@@ -733,6 +736,7 @@ struct Loop {
   bool fallbackGatherSessionTraversalComplete_ = false;
   VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
   bool lastVisualCacheIdleOverlayRejected_ = false;
+  bool lastVisualCacheIdleCopiedSnapshotNotes_ = false;
   /// Set only while `refreshVisualCacheAfterPassStateChange` fills idle slices.
   bool visualCachePassStateRefreshActive_ = false;
   /// Non-owning. Null means the identity filter is inactive. Points at

@@ -29,3 +29,22 @@ inline void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out,
   }
   out.push_back(note);
 }
+
+inline void appendSnapshotNotesForBarRange(const LoopSnapshot& snapshot, uint32_t firstBar,
+                                           uint32_t lastBar, NoteUtils::DisplayNoteVec& out) {
+  if (firstBar > lastBar) {
+    return;
+  }
+  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+    for (uint16_t pitch = 0; pitch < kLoopSnapshotPitchCount; ++pitch) {
+      const auto membership = snapshot.noteMembership(static_cast<uint8_t>(pitch), bar);
+      forEachSnapshotMembershipReference(
+          membership.get(), [&out](const LoopSnapshotNoteRef& reference) {
+            if (!reference) {
+              return;
+            }
+            appendDisplayNoteUniqueById(out, displayNoteFromSnapshotNote(*reference));
+          });
+    }
+  }
+}
