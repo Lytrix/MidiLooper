@@ -15,11 +15,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 [`223121`](../../captures/session_20260907_223121.log)):**
 `src,effective` is correct while `src,frame` still uses stale cache geometry.
 The `f53cc59a` companion-replay workaround regressed to all-bars lengthening
-in [`223121`]. It is reverted. STOPPED committed display now calls
-`LoopContentResolution::resolveDisplayNotes` directly, reusing the same
-final-state code as `src,effective` rather than replaying edits onto cache
-rows. `af65a70e` remains because it fixed the deferred effective/rebuild
-pairing path. RAM1 locals **6848**. Focused native PASS; full native open.
+in [`223121`]. It is reverted. [`224901`] showed the preserved overdub-stop
+handoff still bypassed the direct resolver. STOPPED committed display now
+calls `LoopContentResolution::resolveDisplayNotes` before that handoff,
+reusing the same final-state code as `src,effective`. `af65a70e` remains
+because it fixed the deferred effective/rebuild pairing path. RAM1 locals
+**6848**. Focused native **232/232**; full native **1724/1725** (1 skipped).
+HITL recapture open.
 Plan: [`overdub_stopped_frame_last_occupy_bugfix.md`](../Plans/overdub_stopped_frame_last_occupy_bugfix.md).
 
 **Prior — Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log) / [`192322`](../../captures/session_20260907_192322.log) / [`195409`](../../captures/session_20260907_195409.log) / [`204112`](../../captures/session_20260907_204112.log) / [`211440`](../../captures/session_20260907_211440.log)):**

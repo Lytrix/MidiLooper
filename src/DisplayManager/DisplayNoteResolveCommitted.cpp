@@ -88,6 +88,21 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
+        // STOPPED must finalize from the effective committed representation before
+        // preserved overdub-stop handoff logic can return the stale first-occupy
+        // frame (`224901`: frame 768->1151 while effective is 768->911).
+        if (track.isStopped() && loop.hasCommittedPasses()) {
+            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+            LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
+                                                       liveDisplayNotes);
+            liveMergePlaybackRevision_ = loop.playbackRevision;
+            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+            livePlaybackDisplaySlot_ = displaySlot;
+            livePlaybackDisplayTrack_ = trackIndex;
+            liveWindowGatherValid_ = false;
+            return liveDisplayNotes;
+        }
         const bool visualCacheAuthoritative =
             DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(
                 loop.visualCacheDirty, !loop.visualCache.notes.empty());
@@ -103,13 +118,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
         if (visualCacheAuthoritative && !avoidFullVisualRebuild) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            if (track.isStopped() && loop.hasCommittedPasses()) {
-                LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
-                                                           liveDisplayNotes);
-            } else {
-                liveDisplayNotes.assign(loop.visualCache.notes.begin(),
-                                        loop.visualCache.notes.end());
-            }
+            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             liveMergePlaybackRevision_ = loop.playbackRevision;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
@@ -138,13 +147,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 loop.visualCacheDirty, !loop.visualCache.notes.empty(), incrementalCommittedDisplay,
                 preservedHandoffAuthority)) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            if (track.isStopped() && loop.hasCommittedPasses()) {
-                LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
-                                                           liveDisplayNotes);
-            } else {
-                liveDisplayNotes.assign(loop.visualCache.notes.begin(),
-                                        loop.visualCache.notes.end());
-            }
+            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             liveMergePlaybackRevision_ = loop.playbackRevision;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
@@ -167,13 +170,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             }
             if (visualCacheAuthoritative) {
                 DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-                if (track.isStopped() && loop.hasCommittedPasses()) {
-                    LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
-                                                               liveDisplayNotes);
-                } else {
-                    liveDisplayNotes.assign(loop.visualCache.notes.begin(),
-                                            loop.visualCache.notes.end());
-                }
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
                 liveMergePlaybackRevision_ = loop.playbackRevision;
                 liveWindowGatherValid_ = false;
                 livePlaybackDisplaySlot_ = displaySlot;

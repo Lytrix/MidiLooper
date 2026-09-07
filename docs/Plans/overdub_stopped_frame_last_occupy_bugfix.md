@@ -1,6 +1,6 @@
 # Overdub first STOPPED frame — last occupy, not next On
 
-**Status:** implemented; stale-cache companion workaround reverted in favor of effective-resolution STOPPED finalization  
+**Status:** implemented; STOPPED preserved-handoff bypass added after recapture [`224901`]  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
 **Evidence:** [`session_20260907_220319.log`](../../captures/session_20260907_220319.log), recapture [`session_20260907_222432.log`](../../captures/session_20260907_222432.log)  
@@ -40,6 +40,12 @@ Recapture [`222432`](../../captures/session_20260907_222432.log) after the overl
 | `3072` | `3215` | `3359` | next On `3360` |
 | `3840` | `3983` | `4127` | next On `4128` |
 
+Recapture [`224901`](../../captures/session_20260907_224901.log) showed the
+direct resolver branch was still reached after the preserved overdub-stop
+handoff. The frame therefore remained first-occupy geometry (`768→1151`,
+`1536→1919`) while effective was (`768→911`, `1536→1679`). STOPPED
+finalization now runs before that preserved-handoff return.
+
 ## Root cause
 
 First STOPPED committed display assigned `visualCache.notes` when the cache
@@ -66,7 +72,7 @@ The `f53cc59a` cache-overlay workaround was reverted. When the track is
 STOPPED and committed passes exist, `resolveDisplayNotesCommitted` now calls
 `LoopContentResolution::resolveDisplayNotes` directly. The STOPPED frame thus
 reuses the same final-state resolver as `src,effective`; it does not finalize
-from stale visual-cache content.
+from stale visual-cache content or the preserved overdub-stop handoff.
 
 ## Native acceptance
 
