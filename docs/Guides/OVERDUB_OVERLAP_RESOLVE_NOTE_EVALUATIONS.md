@@ -1,7 +1,7 @@
 # Overdub overlap-resolve note evaluations
 
 **Status:** Durable evaluation catalog. **Not architecture authority.** Update this file when overlap-resolve owners change.  
-**Date:** 2026-09-02  
+**Date:** 2026-09-07
 **Companion:** [`OVERDUB_LEDGER_NOTE_EVALUATIONS.md`](OVERDUB_LEDGER_NOTE_EVALUATIONS.md) · wrap display: [`NOTE_WRAPPING_LOGIC.md`](NOTE_WRAPPING_LOGIC.md)  
 **Closed (FROZEN):** [`../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md`](../Plans/overdub_occupy_source_view_keeps_resolver_geometry_bugfix.md) · [`../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md`](../Plans/overdub_wrap_source_view_display_drops_committed_bugfix.md) — HITL [`174246`](../../captures/session_20260819_174246.log)
 
@@ -213,6 +213,40 @@ persistent note event geometry (Off tick via shortenNoteEndById)
 `overdubSourceViewNotes_` is a cache. Source-view covering identities are read from it **without** applying pending. Firmware wrap/stop does **not** call `applyPendingNoteChangesToOverdubSourceView` (that function is used from native tests; wrap path seals then rebuilds). Display gather is per-bar `DrawSourcePath` routing (`resolveDisplayNotesByDrawSource`); pending Hide/Shorten apply after source selection. The old compose path remains for capture-only differential until that layer is deleted. Wrap-held populate collapses reconstruct split head+tail (same `NoteId`) into one `end < start` row so `displayNotePresentAtHold` unwraps at `hs=0`. A linear closed row (`2304→2496`) stays linear and is correctly absent at that hold.
 
 **Candidate selection.** `accumulatePendingNoteChangesForIncomingNote` builds `effectiveOverlapNoteIds`: occupy/playback ids plus geometric participants from `overdubSourceViewNotes_` that `existingNoteOverlapsIncomingHold` with each hold segment. Long loops call `ensureOverdubSourceNotesForHold` only when occupy ids lack source-view rows or empty ids need ahead-note materialization; hold hydration now reads `overdubSourceSpanCacheNotes_`. `Loop::rebuildOverdubSourceSpanCache` selects that committed fill with the same draw-source predicate as paint ([DEC-052](../DECISION_LOG.md#dec-052--occupy-consumes-the-draw-source-predicate)): exclusive published-`LoopSnapshot` membership when the predicate is true (`from=snapshot`); otherwise prepared → prior cache → covering visual → pass reconstruction. An incomplete `visualCache` (or reconstruct miss of a tail-window On closed by untagged Off@`L-1`) does not mean the committed identity is absent; omitted ids are merged via the same ledger Off-matching rule (`174151` `id=112`). Hold hydration then filters the cache by pitch/hold window before merge (`from=cache`). The cache is prewarmed from idle STOPPED maintenance (`Loop::prewarmOverdubSourceSpanCache`) on a later clean-cache turn after `boot_commit`, so first overdub entry does not pay the cold rebuild cost in `why=open`. Do not call it in the same turn as `slice_clean` (`160519`). Without that later call, session-open stamps an empty cache and occupy stays `norow` ([`162928`](../../captures/session_20260821_162928.log)). Device PASS [`165107`](../../captures/session_20260821_165107.log): open `notes` 1319–1394, `idsel>0`. STOPPED idle visual-cache slices use a budgeted gather and defer wrap-append so undo / track-switch do not pay unbounded `idle_append` in the same turn. `applyDeferredVisualCacheWrapAppend` resumes that append only when the deferred `playbackRevision` still matches; a mismatch obtains the current-source frame (`VCACHE,append_skip` then `full` if the cache is not already current) instead of appending an earlier last pass (`203406`). Candidates come from `appendNotesForIds` only. Plans: [`../Plans/overdub_consume_id_resolution_completeness_bugfix.md`](../Plans/overdub_consume_id_resolution_completeness_bugfix.md), [`../Plans/overdub_ledger_completion_enhancement.md`](../Plans/overdub_ledger_completion_enhancement.md).
+
+### Overdub-stop display finalization
+
+At overdub stop, the sealed pass is the storage authority and
+`LoopContentResolution::resolveDisplayNotes` is the display finalization
+authority. `DisplayManager::refreshViewportAfterOverdubStop` resolves the
+committed passes into the live handoff after cache invalidation and repeats
+that resolution after `adoptComposedDisplayNotesIfAuthoritative`, because cache
+adoption can replay pending transforms onto the composed vector.
+
+The following PLAYING paint must preserve that handoff when capture is no longer
+active, the committed-prefix handoff is still open, and playback/capture
+revisions match. `resolveDisplayNotesByDrawSource` therefore does not rebuild
+from the snapshot/cache at that boundary. This is required even when the cache
+is already marked clean: a source rebuild can otherwise reintroduce first-
+occupy geometry while deferred save is running.
+
+The handoff sequence is:
+
+```text
+seal overdub pass
+  → publish committed pass and companion Length/Hide rows
+  → resolve committed passes to effective DisplayNotes
+  → adopt cache without making it authoritative
+  → resolve effective DisplayNotes again
+  → preserve the revision-matched live handoff for first PLAYING paint
+  → allow deferred save and idle cache maintenance
+```
+
+The first post-stop frame is valid only when it matches effective geometry,
+not merely when a later settled frame matches. HITL
+[`session_20260907_230846.log`](../../captures/session_20260907_230846.log)
+shows the first and settled PLAYING frames both at `98` notes, with the
+effective and frame dumps also at `98`.
 
 **Candidate attribution (observability).** Counters `scanOnlyCandidates`, `lateNoteCandidates`, and `idsWithoutNotes` remain on `OverlapHoldTotals`. After id-resolution completeness, attributed holds should show `scan=0`, `late=0`, `norow=0` on `DIAG,consume,select`. Prior attribution-only plan: [`../Plans/overdub_consume_ledger_merge_enhancement.md`](../Plans/overdub_consume_ledger_merge_enhancement.md) (FROZEN).
 
