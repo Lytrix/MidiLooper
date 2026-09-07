@@ -703,6 +703,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
     if (applyLiveCaptureTails || havePendingPaint) {
         liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        if (havePendingPaint) {
+            // Match live resolve ordering: apply pending first, then grow tails.
+            // This keeps incoming open holds from being swallowed by a same-start
+            // committed row that gets transformed away on the same frame (`004710`).
+            applyPendingDrawSourceTransforms(loop, liveDisplayPendingPaintNotes_,
+                                             committedDisplayEnd);
+            emitPaintedPendingShortenDiagnostics(loop, liveDisplayNotes,
+                                                 liveDisplayPendingPaintNotes_);
+        }
         if (applyLiveCaptureTails) {
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
@@ -711,12 +720,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
-        }
-        if (havePendingPaint) {
-            applyPendingDrawSourceTransforms(loop, liveDisplayPendingPaintNotes_,
-                                             committedDisplayEnd);
-            emitPaintedPendingShortenDiagnostics(loop, liveDisplayNotes,
-                                                 liveDisplayPendingPaintNotes_);
         }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
         emitPaintedOccupy193815Row("after_pending", loop, liveDisplayPendingPaintNotes_);
