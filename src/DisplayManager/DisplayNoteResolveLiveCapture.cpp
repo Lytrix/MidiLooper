@@ -817,6 +817,16 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
     if (haveOpenPlayheadTails || havePendingPaint) {
         liveDisplayPendingPaintNotes_ = liveDisplayNotes;
+        if (havePendingPaint) {
+            // Pending transforms must run before tail growth. Otherwise a closed
+            // committed row at the same pitch+start can absorb the incoming open
+            // hold update and then be removed by Hide/Shorten on the same frame
+            // (`004710`: long incoming note appears only after NoteOff).
+            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_,
+                                                       committedDisplayEnd);
+            emitPaintedPendingShortenDiagnostics(loop, liveDisplayNotes,
+                                                 liveDisplayPendingPaintNotes_);
+        }
         if (haveOpenPlayheadTails) {
             const uint32_t tailsStartUs = micros();
             const uint32_t playheadCloseTick =
@@ -831,12 +841,6 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
             DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);
-        }
-        if (havePendingPaint) {
-            loop.applyPendingNoteChangesToDisplayNotes(liveDisplayPendingPaintNotes_,
-                                                       committedDisplayEnd);
-            emitPaintedPendingShortenDiagnostics(loop, liveDisplayNotes,
-                                                 liveDisplayPendingPaintNotes_);
         }
         paintedNotes = &liveDisplayPendingPaintNotes_;
     }

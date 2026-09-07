@@ -1,9 +1,9 @@
 # Overdub wrap — sealed Shorten must keep the live paint end
 
-**Status:** Host shipped (`003622` earlier remnant must not drop new long occupy). Device recapture required.  
+**Status:** Host shipped (`004710` incoming long note visible from NoteOn). Device recapture required.  
 **Date:** 2026-09-06  
 **Kind:** bugfix (sealed-companion draw-source paint)  
-**Evidence:** [`003622`](../../captures/session_20260906_003622.log) (prior [`002708`](../../captures/session_20260906_002708.log), [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
+**Evidence:** [`004710`](../../captures/session_20260906_004710.log) (prior [`003622`](../../captures/session_20260906_003622.log), [`002708`](../../captures/session_20260906_002708.log), [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
 **Does not authorize:** occupy / wrap seal persist changes; VisualCache mutation on wrap; pending across wrap; Stage 1 wrap-held head occupy (`225200` device FAIL)
 
 ---
@@ -18,6 +18,7 @@ recoverMissingPendingShortenSources              ← pending-only; empty after w
 gatherCommittedDrawSourceBars (snap=0 → VisualCache)  ← originals
 applyPendingNoteChangesToDisplayNotes (sealed then pending) + sibling drop
     (covering occupy = shortest keeper at its start)  ← this slice
+applyCapturePlayheadTails ordering vs pending transforms             ← this slice
 ```
 
 ## Root cause
@@ -60,9 +61,13 @@ Two gaps after wrap seal:
    used the older `768–1344` remnant, so paint kept `768–815` and removed
    `816–1344`. An ungrown pitch-69 hold also dropped later A notes. The
    covering row must be the shortest keeper at its start.
+9. **Incoming long note hidden until NoteOff (`004710`):** paint grew
+   capture tails before pending transforms. A same-start closed row
+   absorbed the incoming open-hold update, then pending Hide/Shorten
+   removed that row on the same frame. Pending must apply before tails.
 
 Pin owners: sealed apply + sealed Length compose recovery + Length
-fallback + closed same-start remnant drop.
+fallback + closed same-start remnant drop + live paint order.
 
 ## Invariant
 
@@ -83,10 +88,10 @@ during capture is unchanged (`150650`).
 
 | Question | Answer |
 |----------|--------|
-| Ownership change? | **NO** — extend `applyPendingHideAndShortenToNotes` |
+| Ownership change? | **NO** — extend `DisplayNoteResolveLiveCapture` and `DisplayNoteWindowGather` ordering |
 | State transition change? | **NO** — pending still clears on wrap seal |
 | Unbounded interval owner? | **NO** |
-| Reuse | **YES** — sealed overlay path unchanged |
+| Reuse | **YES** — pending/tails helpers unchanged, call order only |
 
 ## Host pins
 
@@ -113,6 +118,9 @@ during capture is unchanged (`150650`).
   `test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622` —
   remnant `768–1344` does not delete `816–1344`; ungrown `69@48` hold
   does not drop `69@816–864`
+- `test_pending_then_tails_keeps_incoming_long_same_start_004710` —
+  pending Hide drops old `63@912–1008`; tails then paint the incoming
+  open hold at `63@912` through `currentTick`
 - Focused: `test_pending_note_change`, `test_overdub_source_view`,
   `test_display_window_utils` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**
@@ -122,10 +130,11 @@ during capture is unchanged (`150650`).
 ## Device recapture
 
 Every occupy Shorten — not only the first — must show `holdStart-1` on
-the next `DISP` before the next `BAR`, before and after wrap. Later
-occupies already emit `painted_pending_shorten`; the remnant must not
-remain beside that short row. Already-sealed NoteIds will not emit
-pending paint.
+the next `DISP` before the next `BAR`, before and after wrap. Incoming
+long notes that overlap earlier shorter rows must be visible from NoteOn
+and grow with `currentTick` until NoteOff. Later occupies already emit
+`painted_pending_shorten`; the remnant must not remain beside that short
+row. Already-sealed NoteIds will not emit pending paint.
 
 Separate: Stage 1 wrap-held head occupy device FAIL (`69@hs=48`
 `n=1,a=0`) — [`overdub_wrap_head_occupy_shorten_bugfix.md`](overdub_wrap_head_occupy_shorten_bugfix.md).

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-06 (`003622`: earlier remnant must not drop new long occupy)
+Last updated: 2026-09-06 (`004710`: incoming long note hidden until NoteOff)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Earlier remnant dropped the new long occupy ([`003622`](../../captures/session_20260906_003622.log)):**
+**Incoming long note hidden until NoteOff ([`004710`](../../captures/session_20260906_004710.log)):**
+Overlap resolve writes pending transforms on NoteOn, but paint applied tails
+before pending. A same-start closed row absorbed the open-hold tail update,
+then pending Hide/Shorten removed that row, so the long incoming note was
+missing until NoteOff. Paint now applies pending first and tails second in
+both live resolve and draw-source gather. Host pin
+`test_pending_then_tails_keeps_incoming_long_same_start_004710`.
+Device: incoming long notes must appear at NoteOn and grow to `currentTick`
+while overlapping earlier shorter notes.
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Earlier remnant dropped the new long occupy ([`003622`](../../captures/session_20260906_003622.log)):**
 `002708` covering-occupy drop treated the older longer remnant
 (`768–1344`) as the occupy that covers the new long Add (`816–1344`).
 Paint kept the short keeper and removed the long Add. An ungrown open

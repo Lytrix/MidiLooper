@@ -3673,7 +3673,7 @@ void seedOccupyOpenHoldPreview(Loop& loop, NoteId holdId) {
 /// `193815` Bug 2 compose pin. Live painted NoteId is not in the capture.
 /// Host stand-in ids label layer shapes only — not the device id.
 /// Sequence matches `resolveDisplayNotesByDrawSource`: prefix + overlays stay
-/// on compose; pending paints a copy after overdub tails.
+/// on compose; pending paints a copy before overdub tails.
 void test_draw_source_compose_193815_63_1536_forks() {
   constexpr uint32_t kLoopLength = 3072;
   constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
@@ -3690,9 +3690,9 @@ void test_draw_source_compose_193815_63_1536_forks() {
   auto paintPending = [&](Loop& loop, const NoteUtils::DisplayNoteVec& composeBase,
                           size_t committedEnd, uint32_t closeTick) -> NoteUtils::DisplayNoteVec {
     NoteUtils::DisplayNoteVec painted = composeBase;
+    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
     applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, closeTick,
                                             committedEnd, painted);
-    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
     return painted;
   };
 
@@ -4130,6 +4130,42 @@ void test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622() {
   TEST_ASSERT_EQUAL_UINT32(768u, findDisplayNoteById(paint, 70)->endTick);
   TEST_ASSERT_EQUAL_UINT32(816u, findDisplayNoteById(paint, 80)->startTick);
   TEST_ASSERT_EQUAL_UINT32(864u, findDisplayNoteById(paint, 80)->endTick);
+}
+
+/// `004710`: incoming long note at a same-start lane must appear from NoteOn.
+/// Pending Hide removes the old closed row first; tails then append/grow the open hold.
+void test_pending_then_tails_keeps_incoming_long_same_start_004710() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(hideChange(80, 63, 912, 1008));
+
+  NoteUtils::DisplayNoteVec painted;
+  painted.push_back(displayNote(80, 63, 912, 1008));
+  const size_t committedEnd = painted.size();
+
+  NoteUtils::DisplayNote incoming{};
+  incoming.noteId = 180;
+  incoming.note = 63;
+  incoming.velocity = 90;
+  incoming.startTick = 912;
+  incoming.endTick = 912;
+  loop.capturePreview.notes.push_back(incoming);
+  CapturePreviewNoteState state{};
+  state.open = true;
+  loop.capturePreview.noteStates.push_back(state);
+  loop.capturePreview.openNoteIndices.push_back(0);
+
+  loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
+  applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, loop.loopLengthTicks, 960,
+                                          committedEnd, painted);
+
+  const NoteUtils::DisplayNote* incomingPaint = findPaintAtPitchStart(painted, 63, 912);
+  TEST_ASSERT_NOT_NULL(incomingPaint);
+  TEST_ASSERT_EQUAL_UINT32(960u, incomingPaint->endTick);
+  TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(painted, 63, 912));
 }
 
 /// `001145`: same-start Hide after earlier Shortens must drop the closed remnant
@@ -4756,6 +4792,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_long_occupy_hides_inner_shortened_notes_002708);
   RUN_TEST(test_earlier_remnant_does_not_drop_new_long_occupy_003622);
   RUN_TEST(test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622);
+  RUN_TEST(test_pending_then_tails_keeps_incoming_long_same_start_004710);
   RUN_TEST(test_same_start_hide_drops_closed_remnant_keeps_open_hold_001145);
   RUN_TEST(test_same_start_hide_drops_remnant_when_hold_present_001145);
   RUN_TEST(test_sealed_overlay_leaves_unresolved_bar_two_note);
