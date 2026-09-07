@@ -223,7 +223,8 @@ private:
                                                           uint8_t pitchLow = 0,
                                                           uint8_t pitchHigh = 127);
 #if defined(SESSION_CAPTURE) && SESSION_CAPTURE_DRAW_SRC
-    /// Paint vs visual/preview (not compose). Compose-rerun DRAW_SRC overflows RAM1.
+    /// Paint vs visual/preview. Uses the already-built compose in
+    /// `liveDisplayNotes` — do not re-run gather (RAM1 overflow).
     void logDrawSourceComposeDifferential(const Track& track, uint8_t displaySlot,
                                           uint32_t currentTick, const DisplayNoteVec& drawnNotes);
 #endif
