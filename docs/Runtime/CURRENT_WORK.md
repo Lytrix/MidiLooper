@@ -10,7 +10,7 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**First STOPPED D# next-On flash ([`220319`](../../captures/session_20260907_220319.log) /
+**First STOPPED D# next-On flash — HITL PASS [`225234`](../../captures/session_20260907_225234.log) ([`220319`](../../captures/session_20260907_220319.log) /
 [`222432`](../../captures/session_20260907_222432.log) /
 [`223121`](../../captures/session_20260907_223121.log)):**
 `src,effective` is correct while `src,frame` still uses stale cache geometry.
@@ -21,7 +21,8 @@ calls `LoopContentResolution::resolveDisplayNotes` before that handoff,
 reusing the same final-state code as `src,effective`. `af65a70e` remains
 because it fixed the deferred effective/rebuild pairing path. RAM1 locals
 **6848**. Focused native **232/232**; full native **1724/1725** (1 skipped).
-HITL recapture open.
+HITL [`225234`] passes: `src,effective` and `src,frame` have matching
+11-row D# geometry and `DISP` counts. RC closed.
 Plan: [`overdub_stopped_frame_last_occupy_bugfix.md`](../Plans/overdub_stopped_frame_last_occupy_bugfix.md).
 
 **Prior — Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log) / [`192322`](../../captures/session_20260907_192322.log) / [`195409`](../../captures/session_20260907_195409.log) / [`204112`](../../captures/session_20260907_204112.log) / [`211440`](../../captures/session_20260907_211440.log)):**
