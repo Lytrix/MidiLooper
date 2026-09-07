@@ -4153,6 +4153,69 @@ void test_pending_shorten_wins_over_older_sealed_length_002200() {
   TEST_ASSERT_EQUAL_UINT32(1055u, paint[0].endTick);
 }
 
+/// `220319`: first occupy Length is in the overlay list (768–1151 = next On − 1).
+/// Later occupy Length is sealed into editPasses only (768–863). A first-STOPPED
+/// visual-cache assign still holding 1151 must apply the last Length.
+void test_first_stopped_frame_uses_last_occupy_not_next_on_220319() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 105, 768, 1384, 63, 4608);
+  sealRecordedShortenCompanion(loop, 105, 63, 768, 1151, 9);
+  TEST_ASSERT_EQUAL(1u, loop.sealedCompanionOverlayIdsForTest().size());
+
+  loop.pushPendingNoteChangeForTest(shortenChange(105, 63, 768, 863));
+  const EditPassIdList laterIds = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(1u, laterIds.size());
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+  TEST_ASSERT_EQUAL(1u, loop.sealedCompanionOverlayIdsForTest().size());
+  const EditPass* laterRow = findEditPassById(loop, laterIds[0]);
+  TEST_ASSERT_NOT_NULL(laterRow);
+  TEST_ASSERT_EQUAL(static_cast<int>(EditActionType::Update),
+                    static_cast<int>(laterRow->actionType));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditPropertyType::Length),
+                    static_cast<int>(laterRow->propertyType));
+  TEST_ASSERT_EQUAL_UINT32(863u, laterRow->endTick);
+
+  NoteUtils::DisplayNoteVec firstStopped;
+  firstStopped.push_back(displayNote(105, 63, 768, 1151));
+  loop.applyPendingNoteChangesToDisplayNotes(firstStopped);
+  TEST_ASSERT_EQUAL(1u, firstStopped.size());
+  TEST_ASSERT_EQUAL(105, firstStopped[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(768u, firstStopped[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(863u, firstStopped[0].endTick);
+}
+
+/// `222432`: last two bars still flashed to first occupy. Overlay IDs have the
+/// later Length (3072–3215); an older Active first occupy (3072–3359) is not
+/// in the overlay list. Apply must keep last occupy, not reapply first occupy
+/// after it.
+void test_first_stopped_frame_keeps_last_occupy_when_first_length_is_leftover_222432() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 111, 3072, 3648, 63, 4608);
+  loop.beginCapture(CapturePhase::Overdub);
+  loop.pushPendingNoteChangeForTest(shortenChange(111, 63, 3072, 3359));
+  const EditPassIdList firstIds = loop.sealPendingNoteChangesToEditPasses(false);
+  TEST_ASSERT_EQUAL(1u, firstIds.size());
+  TEST_ASSERT_TRUE(loop.sealedCompanionOverlayIdsForTest().empty());
+
+  sealRecordedShortenCompanion(loop, 111, 63, 3072, 3215, 11);
+  TEST_ASSERT_EQUAL(1u, loop.sealedCompanionOverlayIdsForTest().size());
+  TEST_ASSERT_EQUAL(loop.sealedCompanionOverlayIdsForTest()[0],
+                    loop.lastOverdubSealCompanionIdsForTest()[0]);
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+
+  NoteUtils::DisplayNoteVec firstStopped;
+  firstStopped.push_back(displayNote(111, 63, 3072, 3359));
+  loop.applyPendingNoteChangesToDisplayNotes(firstStopped);
+  TEST_ASSERT_EQUAL(1u, firstStopped.size());
+  TEST_ASSERT_EQUAL(111, firstStopped[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(3072u, firstStopped[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(3215u, firstStopped[0].endTick);
+}
+
 /// `002708`: a long occupy that starts earlier and covers already-shortened
 /// inners must drop those inners. Same-start shorter keepers stay (`201956`).
 void test_long_occupy_hides_inner_shortened_notes_002708() {
@@ -5247,6 +5310,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_pending_shorten_drops_suffix_longer_remnant_000402);
   RUN_TEST(test_later_occupy_shorten_drops_suffix_remnant_000402);
   RUN_TEST(test_pending_shorten_wins_over_older_sealed_length_002200);
+  RUN_TEST(test_first_stopped_frame_uses_last_occupy_not_next_on_220319);
+  RUN_TEST(test_first_stopped_frame_keeps_last_occupy_when_first_length_is_leftover_222432);
   RUN_TEST(test_long_occupy_hides_inner_shortened_notes_002708);
   RUN_TEST(test_earlier_remnant_does_not_drop_new_long_occupy_003622);
   RUN_TEST(test_ungrown_earlier_hold_does_not_drop_later_same_pitch_003622);

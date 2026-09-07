@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (stop D# Off pairing host in tree; HITL recapture open)
+Last updated: 2026-09-07 (first STOPPED last-occupy frame; `220319`)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log) / [`192322`](../../captures/session_20260907_192322.log) / [`195409`](../../captures/session_20260907_195409.log) / [`204112`](../../captures/session_20260907_204112.log) / [`211440`](../../captures/session_20260907_211440.log)):**
+**First STOPPED D# next-On flash ([`220319`](../../captures/session_20260907_220319.log) / [`222432`](../../captures/session_20260907_222432.log)):**
+[`222432`] earlier bars match effective. Last two bars still flash
+first occupy (`3072→3359`, `3840→4127`) while effective is last occupy
+(`3215`, `3983`). Post-seal apply walks Active companions in
+`editPasses` order so a leftover first Length cannot replace later
+Length. Native pins
+`test_first_stopped_frame_uses_last_occupy_not_next_on_220319` and
+`test_first_stopped_frame_keeps_last_occupy_when_first_length_is_leftover_222432`.
+`teensy41-capture-serial` RAM1 locals **6848**. Native **1726/1727**
+(1 skipped). HITL recapture open.
+Plan: [`overdub_stopped_frame_last_occupy_bugfix.md`](../Plans/overdub_stopped_frame_last_occupy_bugfix.md).
+
+**Prior — Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log) / [`192322`](../../captures/session_20260907_192322.log) / [`195409`](../../captures/session_20260907_195409.log) / [`204112`](../../captures/session_20260907_204112.log) / [`211440`](../../captures/session_20260907_211440.log)):**
 Stage 1–3, RC-A, overlay, and pending-paint device PASS [`211440`].
 Stop D# Off pairing host in tree: deferred visual-cache fallback/full
 rebuild, last-resort committed/window reconstruct (capture inactive), and
