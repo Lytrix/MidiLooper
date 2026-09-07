@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (occupy wrap `norowid` [`174151`](../../captures/session_20260907_174151.log))
+Last updated: 2026-09-07 (same-start A / D# pairing Stage 3 [`185822`](../../captures/session_20260907_185822.log))
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub occupy wrap `norowid` / currentTick temp Off ([`174151`](../../captures/session_20260907_174151.log)):**
+**Overdub same-start A loss and D# Off pairing ([`183043`](../../captures/session_20260907_183043.log) / [`185822`](../../captures/session_20260907_185822.log)):**
+Stage 1–3 host in tree. Sibling drop exempts only a current closed
+`capturePreview` identity (`displayNoteIsClosedCapturePreviewIdentity`).
+`123236` / `000402` remnant drop is unchanged. Overlay admission is
+unchanged. Focused native PASS (`test_pending_note_change`,
+`test_display_window_utils`, `test_overdub_source_view`,
+`test_loop_content_resolution`). RAM1 locals **6848**. HITL recapture
+open. Plan:
+[`overdub_same_start_note_pairing_bugfix.md`](../Plans/overdub_same_start_note_pairing_bugfix.md).
+
+**Prior — Overdub occupy wrap `norowid` / currentTick temp Off ([`174151`](../../captures/session_20260907_174151.log)):**
 Wrap cursor walk offers `(prev, L-1]` then `[0, S]` to
 `applyPlaybackEvent`. Occupy span cache / last-pass merge recover
 omitted committed NoteOn identities with that same untagged-Off / LIFO
@@ -19,20 +29,35 @@ cache miss, not absence. Paint tails stay downstream. Host pins PASS.
 Native **1704/1705** (1 skipped). RAM1 locals **6848**. HITL recapture
 open. Plan: [`overdub_occupy_wrap_norowid_noteoff_bugfix.md`](../Plans/overdub_occupy_wrap_norowid_noteoff_bugfix.md).
 
-**Prior — Overdub MIDI boundary timing — Stage 1 (clock attribution):**
-Capture-gated window tags on `RuntimeTimingTelemetry`: `extclk_arrival`,
-`extclk_dispatch`, `clk_batch`, `service_period`. USB-device batch read
-records clock cardinality and arrival vs expected external-clock instant.
-`onMidiClockPulse` records dispatch delay from that batch arrival.
-`late_clk` stays outgoing master-clock send lateness. Note deadline still
-uses `late_on` / `late_off` vs `service_period`. Native
-`test_runtime_timing_telemetry` covers cadence reset, batch attribution,
-and note-lateness classification. Native **1686/1687** (1 skipped).
-`teensy41-capture-serial` RAM1 locals **6848**. Device recapture must
-show those four tags beside `clk` /
-`usbclk` / `tracks` / `late_event` without treating `midi_gap` as C15.
-Stages 2–4 not started.
+**Prior — Overdub display snapshot handoff ([`170537`](../../captures/session_20260907_170537.log)):**
+Compose the paint window from a complete sealed committed source, then
+cache for reuse. `visualCache.notes` is not committed-content authority.
+Just-sealed overdub rows join the committed prefix before Hide/Shorten.
+A smaller current snapshot must not replace a complete handoff (`id=112`).
+MIDI-boundary Stage 3/4 stays out of scope.
+Focused native PASS (`test_display_window_utils`, `test_loop_take_survival`,
+`test_pending_note_change`, `test_overdub_source_view`). Full native PASS:
+1700 succeeded, 1 skipped.
+`teensy41-capture-serial` RAM1 locals **6848**. Full native + HITL open.
+Plan: [`overdub_display_snapshot_handoff_bugfix.md`](../Plans/overdub_display_snapshot_handoff_bugfix.md).
+
+**Prior — Overdub MIDI boundary timing — Stage 2 (USB batch composition):**
+`MidiBatchComposition` plus `RuntimeTimingTelemetry` window tags
+`usb_batch`, `usb_bkt_size`, `usb_bkt_clk`, `usb_bkt_disp`. Dispatch
+order is unchanged. Native **1689/1690** (1 skipped). RAM1 locals **6848**.
+Slave-clock [`170537`](../../captures/session_20260907_170537.log):
+`clockrate` 47–48, `service_period` ≈ 20824 µs, `late_clk` = 0.
+`usb_bkt_clk` all in 1–8; `clk_batch` max 3 (OD1/OD2 max 1); saturated 0.
+OD2 `usbclk`/`tracks` 26.3 ms; `extclk_arrival` 66.6 ms / overCount 240.
+Stage 3 FIFO is not authorized — no large clock batch. Internal-clock
+occupy [`170249`](../../captures/session_20260907_170249.log) HITL **FAIL**.
 Plan: [`overdub_midi_boundary_timing_refinement.md`](../Plans/overdub_midi_boundary_timing_refinement.md).
+
+**Prior — Stage 1 (clock attribution):**
+`extclk_arrival`, `extclk_dispatch`, `clk_batch`, `service_period` on
+`RuntimeTimingTelemetry`. Occupy HITL [`165045`](../../captures/session_20260907_165045.log)
+emits those tags (`service_period=2666`; clock-batch fields 0). Native
+**1686/1687**. RAM1 locals **6848**. Stages 3–4 not started.
 
 **Prior — One-frame drop after each next bar ([`142336`](../../captures/session_20260907_142336.log)) — device PASS [`143701`](../../captures/session_20260907_143701.log):**
 After `004710` pending-first ordering, `applyCapturePlayheadTails`

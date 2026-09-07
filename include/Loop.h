@@ -268,8 +268,8 @@ struct Loop {
   /// Wrap-held heads/tails stay on wrap-edge display append. Idle slice is
   /// the visualCache fill for new wrap body notes.
   void appendLastCommittedOverdubPassToSourceView();
-  /// Append candidates missing from `visualCache.notes` by pitch+start. Does not
-  /// replace an existing end and does not clear dirty bars.
+  /// Append candidates missing from `visualCache.notes` by valid `NoteId`
+  /// (pitch+start only for invalid-ID rows). Same-ID geometry is replaced.
   void mergeDisplayNotesIntoVisualCache(const NoteUtils::DisplayNoteVec& candidates);
   /// D2 note-off consume: just-in-time merge of this pitch from the source/hold
   /// cache (`overdubSourceSpanCacheNotes_`) into the session source view.
@@ -383,7 +383,8 @@ struct Loop {
   /// not at the shortened source start. Sealed overlay applies first; this-lap
   /// pending then wins for the same NoteId (`002200`). Hide absorbs an earlier
   /// Length of the same NoteId. `liveCaptureBegin` remains Hide-by-overlap
-  /// prefix only. Gather upsert during capture is unchanged (`150650`).
+  /// prefix only. A current closed `capturePreview` identity is not remnant-
+  /// eligible (`185822`). Gather upsert during capture is unchanged (`150650`).
   void applyPendingNoteChangesToDisplayNotes(
       NoteUtils::DisplayNoteVec& notes,
       size_t liveCaptureBegin = static_cast<size_t>(-1)) const;
@@ -464,8 +465,10 @@ struct Loop {
   /// Retains uncovered sealed rows, then merges this pass's closed preview before
   /// `capturePreview.clear()`. Release stays `releaseSealedCapturePreviewIfCovered`.
   void retainCapturePreviewAtSeal();
-  /// True when `visualCache` has consumed the sealed revision. A current published
-  /// snapshot is not membership proof (`012714` wrap 2: snap=1 dropped sealed=47).
+  /// True when `visualCache` has consumed the sealed revision and contains each
+  /// sealed row. A current published snapshot is not membership proof (`012714`
+  /// wrap 2: snap=1 dropped sealed=47). Revision without those rows is also not
+  /// coverage (`170537`).
   bool sealedCapturePreviewIsCovered() const;
   /// Drops the retained rows once `sealedCapturePreviewIsCovered()` holds. Paint reads the
   /// predicate directly, so a late release cannot show stale rows.
@@ -577,7 +580,7 @@ struct Loop {
   void rebuildVisualCacheFromPasses();
   /// Reconstruct each active overdub pass with `overdubPassWrapPairing` and
   /// append notes that merged record+overdub reconstruct omitted (015618).
-  /// Skip a candidate when pitch+start is already present. `wrapHeldOnly`
+  /// Skip a candidate when its valid `NoteId` is already present. `wrapHeldOnly`
   /// keeps wrap-held heads/tails and drops interior body notes (204132).
   /// Source view uses `wrapHeldOnly=false`. One pass at a time.
   void appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes,

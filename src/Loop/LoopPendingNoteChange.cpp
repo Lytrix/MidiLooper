@@ -231,21 +231,23 @@ LOOP_COLD_MEM bool hideSourceEndAtPitchStart(const PendingNoteChangeVec& transfo
 /// After Hide or Shorten apply, drop a longer same-pitch+start closed sibling so a
 /// snapshot/sealed-preview remnant cannot sit beside the shortened row (`201956`
 /// Hide; `123236` Shorten; `000402` later occupy still painted short by NoteId
-/// while the longer suffix remnant stayed visible). Hide also drops a closed
-/// remnant whose end is at least the hidden source end when an open occupy
-/// hold or a shorter closed keeper is already at that pitch+start (`001145`
-/// 63@1152). A later same-pitch occupy that starts earlier and covers the
-/// inner row also drops that inner (`002708` 1296–1335 under 864–1344).
-/// The covering row must be the shortest keeper at its start — a longer
-/// earlier remnant must not delete the new long occupy (`003622` 768–1344
-/// remnant vs 816–1344). An open hold that has not grown over the inner
-/// does not drop later same-pitch notes. A Hide whose target was never in
-/// the frame does not delete a different NoteId (`RC3`). Same-start shorter
-/// keepers stay (`201956` 768–864). Open capture holds are kept so
-/// playhead tails can grow.
+/// while the longer suffix remnant stayed visible). A current closed
+/// `capturePreview` identity is not this class (`185822`) — it is exempt
+/// when its valid NoteId matches a closed `capturePreview.notes` row.
+/// Hide also drops a closed remnant whose end is at least the hidden source
+/// end when an open occupy hold or a shorter closed keeper is already at
+/// that pitch+start (`001145` 63@1152). A later same-pitch occupy that
+/// starts earlier and covers the inner row also drops that inner (`002708`
+/// 1296–1335 under 864–1344). The covering row must be the shortest keeper
+/// at its start — a longer earlier remnant must not delete the new long
+/// occupy (`003622` 768–1344 remnant vs 816–1344). An open hold that has
+/// not grown over the inner does not drop later same-pitch notes. A Hide
+/// whose target was never in the frame does not delete a different NoteId
+/// (`RC3`). Same-start shorter keepers stay (`201956` 768–864). Open
+/// capture holds are kept so playhead tails can grow.
 LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
     NoteUtils::DisplayNoteVec& notes, const PendingNoteChangeVec& transforms,
-    size_t /*liveCaptureBegin*/) {
+    size_t /*liveCaptureBegin*/, const NoteUtils::DisplayNoteVec& capturePreviewNotes) {
   if (notes.empty()) {
     return;
   }
@@ -321,6 +323,10 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
       kept.push_back(note);
       continue;
     }
+    if (DisplayWindowUtils::displayNoteIsClosedCapturePreviewIdentity(note, capturePreviewNotes)) {
+      kept.push_back(note);
+      continue;
+    }
     const bool coveredByEarlierOccupy = earlierStartOccupyCovers(note);
     if (hideSourceEndAtPitchStart(transforms, note.note, note.startTick, hideEndTick)) {
       if (coveredByEarlierOccupy) {
@@ -361,9 +367,18 @@ LOOP_COLD_MEM void dropLongerSamePitchStartSiblingsMarkedBySourceTransform(
           other.startTick != note.startTick) {
         continue;
       }
-      if (other.endTick < note.endTick || (other.endTick == note.endTick && j < i)) {
+      if (other.endTick < note.endTick) {
         dominated = true;
         break;
+      }
+      if (other.endTick == note.endTick && j < i) {
+        const bool distinctValidIds = note.noteId != kInvalidNoteId &&
+                                      other.noteId != kInvalidNoteId &&
+                                      note.noteId != other.noteId;
+        if (!distinctValidIds) {
+          dominated = true;
+          break;
+        }
       }
     }
     if (!dominated) {
@@ -378,7 +393,8 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
                                                      uint32_t loopLength,
                                                      bool matchHideByOverlap,
                                                      size_t liveCaptureBegin,
-                                                     bool dropSameStartLongerAfterSourceTransform) {
+                                                     bool dropSameStartLongerAfterSourceTransform,
+                                                     const NoteUtils::DisplayNoteVec& capturePreviewNotes) {
   PendingNoteChangeVec transforms;
   for (const PendingNoteChange& change : pending) {
     if ((change.kind == PendingNoteChangeKind::Shorten ||
@@ -432,7 +448,8 @@ LOOP_COLD_MEM void applyPendingHideAndShortenToNotes(NoteUtils::DisplayNoteVec& 
   }
   notes.swap(updated);
   if (dropSameStartLongerAfterSourceTransform) {
-    dropLongerSamePitchStartSiblingsMarkedBySourceTransform(notes, transforms, liveCaptureBegin);
+    dropLongerSamePitchStartSiblingsMarkedBySourceTransform(notes, transforms, liveCaptureBegin,
+                                                           capturePreviewNotes);
   }
 }
 
@@ -1082,10 +1099,10 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
     }
   }
   applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, pendingNoteChanges_, loopLen, false,
-                                    static_cast<size_t>(-1), false);
+                                    static_cast<size_t>(-1), false, capturePreview.notes);
   if (overdubSourceSpanCacheValid_) {
     applyPendingHideAndShortenToNotes(overdubSourceSpanCacheNotes_, pendingNoteChanges_, loopLen,
-                                      false, static_cast<size_t>(-1), false);
+                                      false, static_cast<size_t>(-1), false, capturePreview.notes);
   }
 }
 
@@ -1125,6 +1142,59 @@ void appendSealedCompanionOverlay(const Loop& loop, PendingNoteChangeVec& overla
   }
 }
 
+bool sealedPreviewHasReplacementAtPitch(const Loop& loop, uint8_t pitch, NoteId hiddenNoteId) {
+  for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+    if (sealedRow.note == pitch && sealedRow.noteId != hiddenNoteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool notesHaveReplacementAtPitch(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                                 NoteId hiddenNoteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == pitch && note.noteId != hiddenNoteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool sealedCompanionShortenAlreadyApplied(const NoteUtils::DisplayNoteVec& notes,
+                                          const PendingNoteChange& change) {
+  if (change.kind != PendingNoteChangeKind::Shorten) {
+    return false;
+  }
+  const NoteUtils::DisplayNote* existing =
+      DisplayWindowUtils::findDisplayNoteByNoteId(notes, change.noteId);
+  return DisplayWindowUtils::sealedCompanionTransformAlreadyRepresented(
+      false, existing != nullptr && existing->startTick == change.startTick &&
+                 existing->endTick == change.endTick);
+}
+
+void filterSealedCompanionOverlayForSource(const Loop& loop, const NoteUtils::DisplayNoteVec& notes,
+                                           PendingNoteChangeVec& overlay) {
+  const bool uncoveredSealed =
+      (loop.captureActive() || loop.hasOverdubSession()) && loop.hasSealedCapturePreview() &&
+      !loop.sealedCapturePreviewIsCovered();
+  PendingNoteChangeVec kept;
+  kept.reserve(overlay.size());
+  for (const PendingNoteChange& change : overlay) {
+    if (sealedCompanionShortenAlreadyApplied(notes, change)) {
+      continue;
+    }
+    if (change.kind == PendingNoteChangeKind::Hide &&
+        DisplayWindowUtils::sealedCompanionHideShouldWaitForReplacement(
+            uncoveredSealed, sealedPreviewHasReplacementAtPitch(loop, change.pitch, change.noteId),
+            notesHaveReplacementAtPitch(notes, change.pitch, change.noteId))) {
+      continue;
+    }
+    kept.push_back(change);
+  }
+  overlay.swap(kept);
+}
+
 }  // namespace
 
 LOOP_COLD_MEM bool Loop::hasSealedCompanionOverlay() const {
@@ -1139,9 +1209,17 @@ LOOP_COLD_MEM bool Loop::sealedCompanionOverlayRequired() const {
   if (!hasSealedCompanionOverlay() || lastOverdubSealPlaybackRevision_ == 0) {
     return false;
   }
-  const uint32_t selectedRevision = publishedSnapshotIsCurrent()
-                                        ? publishedSnapshotRevision()
-                                        : visualCache.builtFromRevision;
+  const bool uncoveredSealed =
+      (captureActive() || hasOverdubSession()) && hasSealedCapturePreview() &&
+      !sealedCapturePreviewIsCovered();
+  const bool cacheReusable = DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      visualCacheDirty, !visualCache.notes.empty(), true, uncoveredSealed);
+  const uint32_t selectedRevision =
+      publishedSnapshotIsCurrent()
+          ? publishedSnapshotRevision()
+          : (cacheReusable ? visualCache.builtFromRevision
+                           : (publishedSnapshot() ? publishedSnapshotRevision()
+                                                  : visualCache.builtFromRevision));
   return selectedRevision < lastOverdubSealPlaybackRevision_;
 }
 
@@ -1156,13 +1234,15 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToDisplayNotes(
   if (hasSealedCompanionOverlay()) {
     PendingNoteChangeVec overlay;
     appendSealedCompanionOverlay(*this, overlay);
+    filterSealedCompanionOverlayForSource(*this, notes, overlay);
     if (!overlay.empty()) {
-      applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin, true);
+      applyPendingHideAndShortenToNotes(notes, overlay, loopLen, false, liveCaptureBegin, true,
+                                        capturePreview.notes);
     }
   }
   if (!pendingNoteChanges_.empty()) {
     applyPendingHideAndShortenToNotes(notes, pendingNoteChanges_, loopLen, true, liveCaptureBegin,
-                                      true);
+                                      true, capturePreview.notes);
   }
 }
 

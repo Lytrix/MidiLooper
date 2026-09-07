@@ -178,7 +178,8 @@ paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     prefix or sealed/closed suffix; open holds `endTick == startTick` skip
     so playhead tails can grow; Hide-by-overlap stays prefix-only via
     `liveCaptureBegin`; same-start sibling drop removes closed remnants at
-    named Hide/Shorten pitch+starts including suffix (`000402`); Hide also
+    named Hide/Shorten pitch+starts including suffix (`000402`) unless the
+    row is the current closed `capturePreview` identity (`185822`); Hide also
     drops a closed remnant whose end is at least the hidden source end
     when the new occupy is still an open hold (`001145`))
     A reused compose frame that predates the pending change is not the
@@ -361,7 +362,8 @@ When `tryResolvePreparedWindow` misses (`from=win`, pin `prep=0`), gather consum
 2. per layer: `applyActiveEdits` → `applyNoteEditPassSequence` (Length/Delete on **that layer only**)
 3. `mergeSortedMidiVectors` — **tick-only**; equal tick keeps the earlier pass first. This is not `resolvedEventLess`
 4. `reconstructDisplayNotes` (`overdubPassWrapPairing` false) — walks **vector order**; does not call `sortMidiEventsChronologically`
-5. `appendOverdubPassWrapPairedNotes` (per-pass reconstruct with wrap pairing; skip when pitch+start is already present, not `noteId`)
+5. `appendOverdubPassWrapPairedNotes` (per-pass reconstruct with wrap pairing; wrap-held skip is pitch+start so a linear sibling of the same ID cannot block the wrap gap. Body/source admit uses valid `NoteId`. Invalid-ID compatibility rows still use pitch+start)
+6. Display/source fallback pairing is `LoopContentResolution::resolveDisplayNotes`: each capture pass is paired through `NoteUtils` before rows are merged by `NoteId`. Merged-stream LIFO is not the display geometry owner when two passes share a pitch. Playback `resolveNotes` / `resolveState` stay on the merged event stream.
 
 `uniqueIdentifiedResolvedEvents` is TickIndex / `from=prep` only. Untagged Offs are never unique-dropped on `from=win`.
 

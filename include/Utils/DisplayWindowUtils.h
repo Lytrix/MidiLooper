@@ -264,9 +264,79 @@ inline bool shouldAssignGrownVisualCacheOverOverdubHold(size_t visualCacheNoteCo
                                                      heldCommittedNoteCount);
 }
 
+/// `visualCache` is a reuse/handoff seed only. An uncovered sealed preview means
+/// the cache predates the just-sealed pass and is not committed-content authority
+/// (`170537` wrap hide-without-replacement). Dirty, empty, or uncovered cache is
+/// not reusable.
+inline bool visualCacheReusableAsCommittedDrawSource(bool visualCacheDirty,
+                                                     bool visualCacheNonempty,
+                                                     bool visualCacheCoversRequestedWindow,
+                                                     bool uncoveredSealedPreview) {
+    return !visualCacheDirty && visualCacheNonempty && visualCacheCoversRequestedWindow &&
+           !uncoveredSealedPreview;
+}
+
+/// Current snapshot is complete for the requested window when it is not smaller
+/// than the existing complete handoff (`170537` first-overdub `id=112`).
+inline bool publishedSnapshotIsCompleteDrawSource(bool hasPublishedSnapshot,
+                                                  bool publishedSnapshotIsCurrent,
+                                                  size_t snapshotWindowNoteCount,
+                                                  size_t completeHandoffNoteCount) {
+    if (!hasPublishedSnapshot || !publishedSnapshotIsCurrent) {
+        return false;
+    }
+    return snapshotWindowNoteCount >= completeHandoffNoteCount;
+}
+
+/// Display committed-prefix selection. Occupy still uses
+/// `shouldGatherPublishedSnapshotForDrawSource` (DEC-052).
+/// A reusable cache is the complete prepared handoff — do not replace it with a
+/// current snapshot (`170537` id=112, `010217` adopted linear ends). When the
+/// cache is not reusable, use the current snapshot, else the last snapshot
+/// while a session is active.
+inline bool shouldGatherPublishedSnapshotForCompleteDrawSource(bool hasPublishedSnapshot,
+                                                               bool captureActive,
+                                                               bool overdubSessionActive,
+                                                               bool publishedSnapshotIsCurrent,
+                                                               bool visualCacheReusable,
+                                                               bool snapshotCompleteVersusHandoff) {
+    (void)snapshotCompleteVersusHandoff;
+    if (!hasPublishedSnapshot) {
+        return false;
+    }
+    if (visualCacheReusable) {
+        return false;
+    }
+    if (publishedSnapshotIsCurrent) {
+        return true;
+    }
+    return captureActive || overdubSessionActive;
+}
+
+/// Sealed Hide waits when the just-sealed pass has a replacement that is not
+/// yet in the composed prefix (`170537` `123→58` / `hidden=66`).
+inline bool sealedCompanionHideShouldWaitForReplacement(bool hasUncoveredSealedPreview,
+                                                        bool sealedPreviewHasReplacementAtPitch,
+                                                        bool replacementAlreadyInNotes) {
+    return hasUncoveredSealedPreview && sealedPreviewHasReplacementAtPitch &&
+           !replacementAlreadyInNotes;
+}
+
+/// Sealed overlay is already in the selected source when Hide's target is gone
+/// or Shorten already has the overlay end.
+inline bool sealedCompanionTransformAlreadyRepresented(bool hideTargetAbsent,
+                                                       bool shortenAlreadyApplied) {
+    return hideTargetAbsent || shortenAlreadyApplied;
+}
+
 /// Draw-source committed prefix: Snapshot vs VisualCache.
 /// `visualCacheDirty` is `Loop::visualCacheDirty` (adopt/stale paint authority),
 /// not `pendingNoteChanges_`. `hasPublishedSnapshot` is a hard gate.
+///
+/// Occupy / DEC-052 consume this predicate. Display composition uses
+/// `shouldGatherPublishedSnapshotForCompleteDrawSource` so a complete handoff
+/// is not replaced by a smaller current snapshot and an incomplete cache is
+/// not committed-content authority.
 ///
 /// Capture/session active:
 ///   current snapshot → snapshot
@@ -397,6 +467,22 @@ inline bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, No
     return findDisplayNoteByNoteId(notes, noteId) != nullptr;
 }
 
+/// Every sealed preview row must be present in `visualCache` before coverage
+/// may release the handoff. Revision alone is not membership.
+inline bool sealedCapturePreviewRowCoveredByVisualCache(NoteId noteId, uint8_t pitch,
+                                                        uint32_t startTick, uint32_t endTick,
+                                                        const NoteUtils::DisplayNoteVec& cache) {
+    if (noteId != kInvalidNoteId) {
+        return displayNotesContainNoteId(cache, noteId);
+    }
+    for (const NoteUtils::DisplayNote& note : cache) {
+        if (note.note == pitch && note.startTick == startTick && note.endTick == endTick) {
+            return true;
+        }
+    }
+    return false;
+}
+
 inline PendingShortenSourceKind classifyPendingShortenSource(bool composeHasTarget,
                                                              bool visualCacheHasSameIdentity,
                                                              bool authoritativeHasTarget) {
@@ -496,9 +582,51 @@ inline bool visualCacheGatherCoversPlaybackRevision(bool overlayRejected, bool u
   return usedCurrentSnapshot || usedPrepared || fallbackComplete;
 }
 
-/// Display-only: one row per pitch+start, shortest exclusive end. Reconstruct
-/// keeps every noteId so occupy can Hide a longer same-start sibling (`002145`
-/// norow 75/76). Wrap-held (`endTick < startTick`) rows are left untouched.
+/// True when `candidate` is already represented: valid `NoteId` match, else
+/// pitch+start for invalid-ID compatibility rows.
+inline bool displayNoteIdentityPresent(const NoteUtils::DisplayNoteVec& notes,
+                                       const NoteUtils::DisplayNote& candidate) {
+  if (candidate.noteId != kInvalidNoteId) {
+    for (const NoteUtils::DisplayNote& note : notes) {
+      if (note.noteId == candidate.noteId) {
+        return true;
+      }
+    }
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.note == candidate.note && note.startTick == candidate.startTick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Replace same valid `NoteId`; append a new valid ID. Invalid-ID rows keep
+/// pitch+start uniqueness.
+inline void upsertDisplayNoteByNoteId(NoteUtils::DisplayNoteVec& notes,
+                                      const NoteUtils::DisplayNote& candidate) {
+  if (candidate.noteId != kInvalidNoteId) {
+    for (NoteUtils::DisplayNote& existing : notes) {
+      if (existing.noteId == candidate.noteId) {
+        existing = candidate;
+        return;
+      }
+    }
+    notes.push_back(candidate);
+    return;
+  }
+  for (const NoteUtils::DisplayNote& existing : notes) {
+    if (existing.note == candidate.note && existing.startTick == candidate.startTick) {
+      return;
+    }
+  }
+  notes.push_back(candidate);
+}
+
+/// Display-only: invalid-ID rows keep one shortest exclusive end per pitch+start.
+/// Distinct valid `NoteId`s may share pitch, start, and end. Wrap-held
+/// (`endTick < startTick`) rows are left untouched.
 inline void keepShortestEndAtPitchStart(NoteUtils::DisplayNoteVec& notes) {
   if (notes.size() < 2) {
     return;
@@ -511,12 +639,20 @@ inline void keepShortestEndAtPitchStart(NoteUtils::DisplayNoteVec& notes) {
       kept.push_back(note);
       continue;
     }
+    if (note.noteId != kInvalidNoteId) {
+      kept.push_back(note);
+      continue;
+    }
     bool dominated = false;
     for (size_t j = 0; j < notes.size(); ++j) {
       const NoteUtils::DisplayNote& other = notes[j];
       if (other.note != note.note || other.startTick != note.startTick ||
           other.endTick < other.startTick) {
         continue;
+      }
+      if (other.noteId != kInvalidNoteId) {
+        dominated = true;
+        break;
       }
       if (other.endTick < note.endTick || (other.endTick == note.endTick && j < i)) {
         dominated = true;
@@ -548,35 +684,38 @@ inline void upsertDisplayNoteAtPitchStart(NoteUtils::DisplayNoteVec& notes,
   notes.push_back(sealedRow);
 }
 
-/// RC1d-c: first STOPPED frame. A paint-only playhead tail at stop (end ==
-/// stopPhase or stopPhase-1) takes the closed capture-preview Off for the same
-/// linear pitch+start (`153848` 52@2172 live 2230 / sealed 2231). Does not
-/// append. Does not rewrite notes whose end is not the stop playhead tail
-/// (`154310` prefix 143 vs sealed 576). Wrap-held rows are skipped.
+/// RC1d-d: first STOPPED frame. This-pass rows take the already-resolved
+/// sealed closed Off for the same linear pitch+start (`165050` 52@2179 live
+/// tail 2192 / sealed Off 2193). `thisPassBegin` is the committed-prefix end
+/// — RC1b remnants stay (`154310` prefix 143 vs sealed 576). Same nonzero
+/// noteId also takes sealed Off so wrap-promoted this-pass rows still match.
+/// Does not append. Does not invent end+1. Wrap-held rows are skipped.
 inline void realizeClosedCaptureOffOnStopPlayheadTails(
     NoteUtils::DisplayNoteVec& notes,
-    const NoteUtils::DisplayNoteVec& closedCapturePreviewNotes, uint32_t stopPhaseTick) {
+    const NoteUtils::DisplayNoteVec& closedCapturePreviewNotes, size_t thisPassBegin) {
   if (notes.empty() || closedCapturePreviewNotes.empty()) {
     return;
   }
-  for (NoteUtils::DisplayNote& note : notes) {
+  for (size_t noteIndex = 0; noteIndex < notes.size(); ++noteIndex) {
+    NoteUtils::DisplayNote& note = notes[noteIndex];
     if (note.endTick < note.startTick) {
-      continue;
-    }
-    const bool isStopPlayheadTail =
-        (note.endTick == stopPhaseTick) ||
-        (stopPhaseTick > 0 && note.endTick == stopPhaseTick - 1);
-    if (!isStopPlayheadTail) {
       continue;
     }
     for (const NoteUtils::DisplayNote& closed : closedCapturePreviewNotes) {
       if (closed.endTick < closed.startTick) {
         continue;
       }
-      if (closed.note == note.note && closed.startTick == note.startTick) {
-        note.endTick = closed.endTick;
-        break;
+      if (closed.note != note.note || closed.startTick != note.startTick) {
+        continue;
       }
+      const bool thisPassSuffix = noteIndex >= thisPassBegin;
+      const bool sameThisPassIdentity =
+          note.noteId != kInvalidNoteId && note.noteId == closed.noteId;
+      if (!thisPassSuffix && !sameThisPassIdentity) {
+        continue;
+      }
+      note.endTick = closed.endTick;
+      break;
     }
   }
 }
@@ -728,6 +867,24 @@ inline DrawSourcePath selectDrawSourceForBar(bool captureActive, bool barIsLiveC
 /// the sealed-handoff supersede.
 inline bool capturePreviewNoteIsOpenHold(uint32_t startTick, uint32_t endTick) {
     return endTick == startTick;
+}
+
+/// True when `note` is the current closed incoming capture-preview identity.
+/// Valid `NoteId` must match a `capturePreview.notes` row whose end is not an
+/// open hold. Absence from that container is not a remnant proof — callers
+/// keep existing sibling-drop eligibility in that case.
+inline bool displayNoteIsClosedCapturePreviewIdentity(
+    const NoteUtils::DisplayNote& note, const NoteUtils::DisplayNoteVec& capturePreviewNotes) {
+    if (note.noteId == kInvalidNoteId) {
+        return false;
+    }
+    for (const NoteUtils::DisplayNote& preview : capturePreviewNotes) {
+        if (preview.noteId != note.noteId) {
+            continue;
+        }
+        return !capturePreviewNoteIsOpenHold(preview.startTick, preview.endTick);
+    }
+    return false;
 }
 
 /// Committed-source decision for the next draw-source frame. Not a painted

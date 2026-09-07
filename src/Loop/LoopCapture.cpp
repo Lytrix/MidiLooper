@@ -1042,10 +1042,8 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   } else {
     // An uncovered visual cache is not a valid overlap source. Reconstruct from
     // committed passes so overlap resolution never receives a partial span.
-    SessionMidiEventVec fullResolvedEvents;
-    passes.materializeToEventVector(fullResolvedEvents, loopLengthTicks);
-    overdubSourceSpanCacheNotes_ =
-        NoteUtils::reconstructDisplayNotes(fullResolvedEvents, loopLengthTicks, false, false);
+    LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks,
+                                               overdubSourceSpanCacheNotes_);
     appendOverdubPassWrapPairedNotes(overdubSourceSpanCacheNotes_);
     overdubSourceSpanCacheFullLoop_ = true;
     sourceOrigin = "passes";
@@ -1363,7 +1361,19 @@ LOOP_COLD_MEM bool Loop::sealedCapturePreviewIsCovered() const {
   }
   // A current snapshot is not membership proof. `012714` wrap 2: snap=1 released
   // sealed=47 and the frame dropped 148→129; bars 2–3 had no draw_src diff.
-  return !visualCacheDirty && visualCache.builtFromRevision >= sealedCapturePreviewRevision_;
+  // Revision alone is also not membership: a clean cache that predates the
+  // sealed rows must keep the handoff (`170537`).
+  if (visualCacheDirty || visualCache.builtFromRevision < sealedCapturePreviewRevision_) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& sealedRow : sealedCapturePreviewNotes_) {
+    if (!DisplayWindowUtils::sealedCapturePreviewRowCoveredByVisualCache(
+            sealedRow.noteId, sealedRow.note, sealedRow.startTick, sealedRow.endTick,
+            visualCache.notes)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 LOOP_COLD_MEM void Loop::releaseSealedCapturePreviewIfCovered() {
