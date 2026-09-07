@@ -1,6 +1,6 @@
 # Overdub pending paint frame drop bugfix
 
-**Status:** host in tree; HITL recapture open  
+**Status:** device PASS [`211440`](../../captures/session_20260907_211440.log)  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
 **Evidence:** [`session_20260907_204112.log`](../../captures/session_20260907_204112.log)  
@@ -116,6 +116,14 @@ HITL acceptance:
 - the current preview `NoteId` and any retained prior-pass sibling have
   the expected frame membership and endpoint;
 - no new currentTick tail replacement or `norowid` regression.
+
+Device [`211440`](../../captures/session_20260907_211440.log) **PASS**.
+Every OVERDUBBING `draw_src,layers` row is `missed_preview=0` /
+`compose_miss=0` through sealed `16` / `24` / `31` / `35`. Zero
+`69@48` `preview_miss`. Later wraps occupy ledger `69@48–96`
+(`as=48,ae=96`) and still keep the closed A. No `norowid`. Record-phase
+`compose_miss` rows (`visual=0`, before first overdub) are outside this
+slice.
 
 ## Pre-implementation review
 

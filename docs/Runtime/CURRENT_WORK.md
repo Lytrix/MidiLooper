@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (pending paint keeps closed preview [`204112`](../../captures/session_20260907_204112.log); HITL open)
+Last updated: 2026-09-07 (pending-paint HITL PASS [`211440`](../../captures/session_20260907_211440.log))
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -19,7 +19,9 @@ Occupy still Hides/Shortens the selected identity. Stage 3 remnant drop
 admission is not started. Native pin
 `test_pending_hide_keeps_closed_preview_equal_geometry_204112`.
 `teensy41-capture-serial` RAM1 locals **6848**. Full native **1723/1724**
-(1 skipped). HITL recapture open. Plans:
+(1 skipped). HITL **PASS** [`211440`](../../captures/session_20260907_211440.log):
+overdub `missed_preview=0` / `compose_miss=0` through sealed `35`; no
+`69@48` miss; no `norowid`. Plans:
 [`overdub_same_start_note_pairing_bugfix.md`](../Plans/overdub_same_start_note_pairing_bugfix.md),
 [`overdub_bar1_compose_miss_bugfix.md`](../Plans/overdub_bar1_compose_miss_bugfix.md),
 [`overdub_overlay_identity_bugfix.md`](../Plans/overdub_overlay_identity_bugfix.md),

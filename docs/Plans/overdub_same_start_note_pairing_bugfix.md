@@ -1,6 +1,6 @@
 # Overdub same-start A loss and D# note-off pairing bugfix
 
-**Status:** Stage 1–3 + overlay compose in tree; remaining HITL miss is pending/tails [`204112`](../../captures/session_20260907_204112.log)  
+**Status:** Stage 1–3 + overlay compose + pending-paint device PASS [`211440`](../../captures/session_20260907_211440.log)  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
 **Evidence:** [`session_20260907_183043.log`](../../captures/session_20260907_183043.log) · [`session_20260907_185822.log`](../../captures/session_20260907_185822.log) · [`session_20260907_204112.log`](../../captures/session_20260907_204112.log)  
@@ -372,10 +372,11 @@ not combine their fixes:
   All 17 overdub miss frames are `compose_miss=0` with
   `compose,1,<id>,96` for `69@48–96` (`id=107` / `116` / `126`). Plan:
   [`overdub_overlay_identity_bugfix.md`](overdub_overlay_identity_bugfix.md).
-- **Pending / tails frame drop:** host in tree. Prefix Hide-by-overlap no
-  longer removes a current closed `capturePreview` identity when occupy
-  Hides a different `NoteId` at the same span (`204112`). HITL recapture
-  open. Plan:
+- **Pending / tails frame drop:** device PASS
+  [`211440`](../../captures/session_20260907_211440.log). Prefix
+  Hide-by-overlap no longer removes a current closed `capturePreview`
+  identity when occupy Hides a different `NoteId` at the same span.
+  Plan:
   [`overdub_pending_paint_frame_drop_bugfix.md`](overdub_pending_paint_frame_drop_bugfix.md).
 - **RC-B — unmatched capture NoteOff:** independently test and then guard
   `Loop::appendCaptureEventWithResult` so a NoteOff is admitted only when the

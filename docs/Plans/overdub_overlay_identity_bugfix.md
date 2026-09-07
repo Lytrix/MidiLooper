@@ -1,9 +1,9 @@
 # Overdub overlay identity bugfix
 
-**Status:** host in tree; HITL recapture **FAIL** [`203007`](../../captures/session_20260907_203007.log)  
+**Status:** overlay slice **device PASS** (compose [`204112`](../../captures/session_20260907_204112.log)); pending-paint follow-up **PASS** [`211440`](../../captures/session_20260907_211440.log)  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
-**Evidence:** [`session_20260907_195409.log`](../../captures/session_20260907_195409.log)  
+**Evidence:** [`session_20260907_195409.log`](../../captures/session_20260907_195409.log) · [`session_20260907_203007.log`](../../captures/session_20260907_203007.log) · [`session_20260907_204112.log`](../../captures/session_20260907_204112.log)  
 **Parent:** [`overdub_same_start_note_pairing_bugfix.md`](overdub_same_start_note_pairing_bugfix.md)
 
 ## Scope and boundary
@@ -62,7 +62,9 @@ Native:
 - `test_overlay_keeps_repeated_closed_ids_195409`
 
 Focused native PASS. RAM1 locals **6848**. Full native **1722/1723**
-(1 skipped).
+(1 skipped). Device [`204112`](../../captures/session_20260907_204112.log):
+compose keeps the closed current-preview A at `69@48–96`. Do not reopen
+this helper.
 
 ## HITL recapture [`203007`](../../captures/session_20260907_203007.log)
 
@@ -86,10 +88,11 @@ NoteOff@96 closes `id=126`. Same `69@48–96` miss as
 `id=148`). This capture did not emit the `63@144–384` miss from that
 session.
 
-The helper change is not sufficient for the live painted frame after
-the second wrap. Do not reopen RC-A recover cut from this log.
+This capture could not name compose vs pending: `missed_preview` only
+compared `capturePreview` to the returned frame. Do not reopen RC-A
+recover cut from this log.
 
-## Observability (next recapture)
+## Observability (shipped `ac5fc79e`)
 
 `logDrawSourceComposeDifferential` now names the stage on each closed
 preview miss. Gated by `SESSION_CAPTURE_DRAW_SRC`. Does not re-run
@@ -106,6 +109,42 @@ a different end, `0` = id absent (`CID`/`FID` then name the pitch+start
 sibling). `compose_miss` counts closed preview rows that are already
 absent from `liveDisplayNotes` (overlay + recover). `missed_preview` with
 `compose_miss=0` means the row left after compose, during pending/tails.
+
+## HITL recapture [`204112`](../../captures/session_20260907_204112.log)
+
+Overlay-identity helper **holds** on device. Remaining miss is after
+compose.
+
+All 17 overdub miss frames: `compose_miss=0` and
+
+```text
+preview_miss id=107/116/126 p=69 s=48 e=96 compose,1,<id>,96 frame,0,0,0 sealed,<prior>,96
+```
+
+| Wrap | Current preview | Compose | Frame | Sealed sibling |
+|---|---|---|---|---|
+| 2 (`sealed=16`) | `id=107` | `1,107,96` | `0,0,0` | `98@96` |
+| 3 (`sealed=18`) | `id=116` | `1,116,96` | `0,0,0` | `107@96` |
+| 4 (`sealed=23`) | `id=126` | `1,126,96` | `0,0,0` | `116@96` |
+
+First wrap (`sealed=9`) stays `missed_preview=0`. Open-hold frame at
+`hs=48` is clean; the miss starts after NoteOff@96. Occupy at that On
+selects ledger `69@48–96`. The painted frame has no `69@48` row at all
+— not the current preview and not the sealed sibling.
+
+## Debugging boundary (overlay frozen)
+
+```text
+sealed / current overlay / recover     ← trust; compose match=1 on 204112
+    → pending Hide/Shorten + Stage 3   ← next slice
+    → playhead tails
+    → painted frame                    ← frame,0,0,0 at 69@48
+```
+
+Do not change `upsertDisplayNoteAtPitchStartFrom`, RC-A recover
+placement, or Stage 1/2 pairing to chase this miss. The next plan owns
+pending Hide/Shorten and
+`dropLongerSamePitchStartSiblingsMarkedBySourceTransform` / tails only.
 
 ## Out of scope
 
