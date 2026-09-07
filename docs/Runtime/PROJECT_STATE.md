@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-07 (stop D# Off pairing host in tree; HITL recapture open)
+Last updated: 2026-09-07 (first STOPPED last-occupy frame; `220319`)
 
 ---
 

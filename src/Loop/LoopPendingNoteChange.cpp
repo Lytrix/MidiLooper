@@ -1121,28 +1121,50 @@ const EditPass* findActiveSealedCompanionRow(const Loop& loop, EditPassId id) {
   return nullptr;
 }
 
+bool appendCompanionChangeFromEditPass(const EditPass& row, PendingNoteChangeVec& overlay) {
+  if (row.targetNoteId == kInvalidNoteId) {
+    return false;
+  }
+  PendingNoteChange change{};
+  change.noteId = row.targetNoteId;
+  change.pitch = row.pitch;
+  change.velocity = row.velocity;
+  change.startTick = row.startTick;
+  change.endTick = row.endTick;
+  if (row.actionType == EditActionType::Delete) {
+    change.kind = PendingNoteChangeKind::Hide;
+  } else if (row.actionType == EditActionType::Update &&
+             row.propertyType == EditPropertyType::Length) {
+    change.kind = PendingNoteChangeKind::Shorten;
+  } else {
+    return false;
+  }
+  overlay.push_back(change);
+  return true;
+}
+
 void appendSealedCompanionOverlay(const Loop& loop, PendingNoteChangeVec& overlay) {
-  overlay.reserve(loop.sealedCompanionOverlayIds_.size());
-  for (const EditPassId id : loop.sealedCompanionOverlayIds_) {
-    const EditPass* row = findActiveSealedCompanionRow(loop, id);
-    if (row == nullptr || row->targetNoteId == kInvalidNoteId) {
+  if (!loop.pendingNoteChanges().empty()) {
+    overlay.reserve(loop.sealedCompanionOverlayIds_.size());
+    for (const EditPassId id : loop.sealedCompanionOverlayIds_) {
+      const EditPass* row = findActiveSealedCompanionRow(loop, id);
+      if (row == nullptr) {
+        continue;
+      }
+      appendCompanionChangeFromEditPass(*row, overlay);
+    }
+    return;
+  }
+  // Post-seal / first STOPPED: apply Active companions in editPasses order so
+  // last Length wins, matching resolveDisplayNotes. Overlay-IDs-then-leftovers
+  // reapplied an older first occupy after a later Length (`222432` 3072–3359
+  // over 3072–3215; `220319` later Length missing from overlay IDs).
+  for (const EditPass& row : loop.passes.editPasses) {
+    if (row.state != EditPassState::Active ||
+        row.editPassIndex != kOverdubCompanionEditPassIndex) {
       continue;
     }
-    PendingNoteChange change{};
-    change.noteId = row->targetNoteId;
-    change.pitch = row->pitch;
-    change.velocity = row->velocity;
-    change.startTick = row->startTick;
-    change.endTick = row->endTick;
-    if (row->actionType == EditActionType::Delete) {
-      change.kind = PendingNoteChangeKind::Hide;
-    } else if (row->actionType == EditActionType::Update &&
-               row->propertyType == EditPropertyType::Length) {
-      change.kind = PendingNoteChangeKind::Shorten;
-    } else {
-      continue;
-    }
-    overlay.push_back(change);
+    appendCompanionChangeFromEditPass(row, overlay);
   }
 }
 
