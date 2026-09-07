@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (overdub-stop PLAYING handoff parity PASS; `230846`)
+Last updated: 2026-09-08 (visual-cache Stage 2.1 snapshot membership copy)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,28 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub-stop first PLAYING frame parity — HITL PASS [`230846`](../../captures/session_20260907_230846.log):**
+**Visual-cache Stage 2.1 — snapshot membership copy:**
+When `publishedSnapshotIsCurrent()`, `rebuildVisualCacheIdleSlice` copies
+`LoopSnapshotNote` membership for the dirty bar range. It does not gather
+snapshot events or run `reconstructDisplayNotes`. `visualCache.notes` stays
+the piano-roll list. Fallback / prepared fill stays when no current root
+exists. Stage 2.0 (queue publication after `adoptPersistedSnapshot`) is
+**not** started — that is a load transition. First-bar RECORDING stall from
+T6/S0 Fallback reconstruct ([`235930`](../../captures/session_20260907_235930.log))
+stays until a root exists on that slot.
+`teensy41-capture-serial` RAM1 locals **6848**. Native **1727/1728** (1 skipped).
+Plan: [`display_visual_cache_snapshot_fill_refinement.md`](../Plans/display_visual_cache_snapshot_fill_refinement.md).
+Parent: [`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md) [#41](https://github.com/Lytrix/MidiLooper/issues/41).
+
+**Prior — Overdub MIDI boundary — Stage 4a device attribution [`235930`](../../captures/session_20260907_235930.log):**
+Tags emit. Residual ≤ 24 µs; slot ≤ 26 µs. `tracks` ≈ `clk` ≈ `usbclk`.
+OD1 peak `tracks` 13149 µs (T4 9007 + T6 3932) under `service_period`
+20824. Dominant attributed span on that peak is `track_order` 7974 µs,
+not rebuild multiplicity. Ring A is not authorized from this log.
+`playCommittedLoopMidi` stays consumer, not optimization owner. Plan:
+[`overdub_midi_boundary_timing_refinement.md`](../Plans/overdub_midi_boundary_timing_refinement.md).
+
+**Prior — Overdub-stop first PLAYING frame parity — HITL PASS [`230846`](../../captures/session_20260907_230846.log):**
 The first `OVERDUBBING → PLAYING` display frame now preserves the effective
 committed handoff while deferred save starts. `refreshViewportAfterOverdubStop`
 finalizes from `LoopContentResolution::resolveDisplayNotes` after cache
