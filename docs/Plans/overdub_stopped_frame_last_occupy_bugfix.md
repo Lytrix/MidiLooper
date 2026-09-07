@@ -1,6 +1,6 @@
 # Overdub first STOPPED frame — last occupy, not next On
 
-**Status:** host in tree; RAM1 PASS (6848 locals); native **1726/1727** (1 skipped); HITL recapture open  
+**Status:** implemented; stale-cache companion workaround reverted in favor of effective-resolution STOPPED finalization  
 **Date:** 2026-09-07  
 **Kind:** bugfix  
 **Evidence:** [`session_20260907_220319.log`](../../captures/session_20260907_220319.log), recapture [`session_20260907_222432.log`](../../captures/session_20260907_222432.log)  
@@ -42,9 +42,11 @@ Recapture [`222432`](../../captures/session_20260907_222432.log) after the overl
 
 ## Root cause
 
-First STOPPED committed display assigns `visualCache.notes` when the cache is clean. That cache still has the **first** occupy. Later Length companions exist in `passes.editPasses` (effective last-wins).
-
-Walking overlay IDs first, then leftover Active companions, reapplies an older first occupy *after* a later Length when that first Length is still Active but no longer in the overlay list (`222432` `3072–3359` over `3072–3215`). Post-seal apply must walk Active `kOverdubCompanionEditPassIndex` rows in `editPasses` order so last Length wins, matching `resolveDisplayNotes`.
+First STOPPED committed display assigned `visualCache.notes` when the cache
+was clean. That cache could still contain the first occupy. Replaying
+companion rows onto that cache was not equivalent to effective resolution:
+cached rows and effective rows can have different identities, and applying
+all Active companion rows could reapply older geometry after later geometry.
 
 ## Architecture checkpoint
 
@@ -60,15 +62,15 @@ First STOPPED frame ends for a repeatedly occupied `NoteId` match `resolveDispla
 
 ## Implementation
 
-1. Native pin from `220319`: first occupy Length sealed into overlay; later occupy Length sealed into `editPasses` only; cache still at first occupy; apply must yield last occupy.
-2. When pending is empty, `appendSealedCompanionOverlay` walks Active `kOverdubCompanionEditPassIndex` Length/Hide rows in `editPasses` order only. Overlay IDs and last-wrap admission stay unchanged.
-3. `resolveDisplayNotesCommitted` applies companions after a STOPPED visual-cache assign so a first-occupy cache cannot ship as the first STOPPED frame.
+The `f53cc59a` cache-overlay workaround was reverted. When the track is
+STOPPED and committed passes exist, `resolveDisplayNotesCommitted` now calls
+`LoopContentResolution::resolveDisplayNotes` directly. The STOPPED frame thus
+reuses the same final-state resolver as `src,effective`; it does not finalize
+from stale visual-cache content.
 
 ## Native acceptance
 
-- `768–1384` + first Length `1151` + later Length `863` → applied display end `863`.
-- Overlay IDs may still list only the first Length; effective / applied frame must not.
-- Overlay IDs list only later `3072–3215` while an older Active `3072–3359` remains in `editPasses` → applied end `3215`.
+- STOPPED display geometry equals `LoopContentResolution::resolveDisplayNotes`.
 - Existing `002200` pending-over-sealed and prior-wrap Hide overlay tests stay unchanged.
 
 ## Verification gates
@@ -77,6 +79,10 @@ First STOPPED frame ends for a repeatedly occupied `NoteId` match `resolveDispla
 2. `pio run -e teensy41-capture-serial`; RAM1 locals >= 4000.
 3. `pio test -e native`.
 4. Flash only after user confirmation. HITL: same repeated D# overdub; first STOPPED `src,frame` matches `src,effective` last occupy; no next-On flash during SAVE.
+
+Host verification: focused display/companion tests **232/232**; full native
+**1724/1725** (1 skipped); capture-serial RAM1 locals **6848**. HITL
+recapture after this implementation remains open.
 
 ## Out of scope
 
