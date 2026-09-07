@@ -373,7 +373,7 @@ When `tryResolvePreparedWindow` misses (`from=win`, pin `prep=0`), gather consum
 3. `mergeSortedMidiVectors` — **tick-only**; equal tick keeps the earlier pass first. This is not `resolvedEventLess`
 4. `reconstructDisplayNotes` (`overdubPassWrapPairing` false) — walks **vector order**; does not call `sortMidiEventsChronologically`
 5. `appendOverdubPassWrapPairedNotes` (per-pass reconstruct with wrap pairing; wrap-held skip is pitch+start so a linear sibling of the same ID cannot block the wrap gap. Body/source admit uses valid `NoteId`. Invalid-ID compatibility rows still use pitch+start)
-6. Display/source fallback pairing is `LoopContentResolution::resolveDisplayNotes`: each capture pass is paired through `NoteUtils` before rows are merged by `NoteId`. Merged-stream LIFO is not the display geometry owner when two passes share a pitch. Playback `resolveNotes` / `resolveState` stay on the merged event stream.
+6. Display/source fallback pairing is `LoopContentResolution::resolveDisplayNotes`: each capture pass is paired through `NoteUtils` before rows are merged by `NoteId`. Merged-stream LIFO is not the display geometry owner when two passes share a pitch. Playback `resolveNotes` / `resolveState` stay on the merged event stream. Deferred visual-cache fallback/full rebuild, last-resort committed/window reconstruct when capture is inactive, and the `dnte,src,effective` dump use the same per-pass pairing (`211440`).
 
 `uniqueIdentifiedResolvedEvents` is TickIndex / `from=prep` only. Untagged Offs are never unique-dropped on `from=win`.
 

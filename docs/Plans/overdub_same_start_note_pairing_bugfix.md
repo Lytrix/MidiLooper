@@ -378,6 +378,10 @@ not combine their fixes:
   identity when occupy Hides a different `NoteId` at the same span.
   Plan:
   [`overdub_pending_paint_frame_drop_bugfix.md`](overdub_pending_paint_frame_drop_bugfix.md).
+- **Stop D# Off pairing:** host in tree. Deferred visual-cache / effective
+  rebuild pairs each capture pass before merging rows so committed D# Offs
+  `768→1440`, `1536→2208`, `2304→2976` survive flatten (`211440`). Plan:
+  [`overdub_stop_dsharp_noteoff_pairing_bugfix.md`](overdub_stop_dsharp_noteoff_pairing_bugfix.md).
 - **RC-B — unmatched capture NoteOff:** independently test and then guard
   `Loop::appendCaptureEventWithResult` so a NoteOff is admitted only when the
   existing pairing rule identifies a currently open matching NoteOn. Do not

@@ -717,13 +717,12 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
   if (deferredStoredVerificationPhase == kStoredVerificationEffectiveNotes) {
     if (deferredStoredVerificationNotes.empty() && deferredStoredVerificationCursor == 0) {
       // Raw reconstruct used mergeActiveCapturePasses (no EditPass replay).
-      // Effective dump applies companions via gatherCommittedEvents /
-      // materializeToEventVector so occupancy convergence is observable.
+      // Effective dump pairs each capture pass, then applies companions, so
+      // occupancy convergence does not LIFO-steal another pass's Off (`211440`).
       deferredStoredVerificationEvents.clear();
       loop.gatherCommittedEvents(deferredStoredVerificationEvents);
-      deferredStoredVerificationNotes =
-          NoteUtils::reconstructDisplayNotes(deferredStoredVerificationEvents, loop.loopLengthTicks,
-                                             false);
+      LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks,
+                                                 deferredStoredVerificationNotes);
       char header[128];
       snprintf(header, sizeof(header),
                "#CAP,%lu,DIAG,dnte,src,effective,count,%u",
