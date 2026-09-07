@@ -32,18 +32,6 @@
 
 using namespace DisplayManagerInternal;
 
-namespace {
-
-DISP_COLD_MEM void applyStoppedSealedCompanionOverlay(const Track& track, const Loop& loop,
-                                                      DisplayNoteVec& notes) {
-    if (!track.isStopped() || notes.empty()) {
-        return;
-    }
-    loop.applyPendingNoteChangesToDisplayNotes(notes, notes.size());
-}
-
-}  // namespace
-
 DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommitted(const Track& track, uint8_t displaySlot, uint32_t currentTick) {
     const Loop& loop = track.getLoop(displaySlot);
     const uint32_t loopLength = resolveDisplayLoopLength(track, displaySlot, currentTick);
@@ -115,8 +103,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
         if (visualCacheAuthoritative && !avoidFullVisualRebuild) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-            applyStoppedSealedCompanionOverlay(track, loop, liveDisplayNotes);
+            if (track.isStopped() && loop.hasCommittedPasses()) {
+                LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
+                                                           liveDisplayNotes);
+            } else {
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(),
+                                        loop.visualCache.notes.end());
+            }
             liveMergePlaybackRevision_ = loop.playbackRevision;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
@@ -145,8 +138,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 loop.visualCacheDirty, !loop.visualCache.notes.empty(), incrementalCommittedDisplay,
                 preservedHandoffAuthority)) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-            applyStoppedSealedCompanionOverlay(track, loop, liveDisplayNotes);
+            if (track.isStopped() && loop.hasCommittedPasses()) {
+                LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
+                                                           liveDisplayNotes);
+            } else {
+                liveDisplayNotes.assign(loop.visualCache.notes.begin(),
+                                        loop.visualCache.notes.end());
+            }
             liveMergePlaybackRevision_ = loop.playbackRevision;
             livePlaybackDisplaySlot_ = displaySlot;
             livePlaybackDisplayTrack_ = trackIndex;
@@ -169,8 +167,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             }
             if (visualCacheAuthoritative) {
                 DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-                liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-                applyStoppedSealedCompanionOverlay(track, loop, liveDisplayNotes);
+                if (track.isStopped() && loop.hasCommittedPasses()) {
+                    LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
+                                                               liveDisplayNotes);
+                } else {
+                    liveDisplayNotes.assign(loop.visualCache.notes.begin(),
+                                            loop.visualCache.notes.end());
+                }
                 liveMergePlaybackRevision_ = loop.playbackRevision;
                 liveWindowGatherValid_ = false;
                 livePlaybackDisplaySlot_ = displaySlot;
