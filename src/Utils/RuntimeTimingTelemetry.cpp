@@ -108,6 +108,16 @@ struct State {
   Accumulator lateOn;
   Accumulator lateOff;
   Accumulator lateClk;
+  Accumulator extclkArr;
+  Accumulator extclkDisp;
+  uint32_t clkBatchMax = 0;
+  uint32_t clkBatchCount = 0;
+  uint32_t windowServicePeriodUs = 0;
+  uint32_t extclkArrivalDueUs = 0;
+  uint32_t extclkArrivalPeriodUs = 0;
+  bool extclkArrivalCadenceActive = false;
+  uint32_t extclkBatchArrivalUs = 0;
+  uint32_t extclkBatchRemaining = 0;
   uint32_t usbNestedCaptureUs = 0;
   uint32_t usbNestedThruUs = 0;
   uint32_t usbNestedClockUs = 0;
@@ -223,6 +233,11 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.lateOn = Accumulator{};
   s.lateOff = Accumulator{};
   s.lateClk = Accumulator{};
+  s.extclkArr = Accumulator{};
+  s.extclkDisp = Accumulator{};
+  s.clkBatchMax = 0;
+  s.clkBatchCount = 0;
+  s.windowServicePeriodUs = 0;
   s.clockPulses = 0;
 }
 
@@ -260,6 +275,10 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("late_on", s.lateOn.maxUs, s.lateOn.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_off", s.lateOff.maxUs, s.lateOff.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("late_clk", s.lateClk.maxUs, s.lateClk.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("extclk_arrival", s.extclkArr.maxUs, s.extclkArr.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("extclk_dispatch", s.extclkDisp.maxUs, s.extclkDisp.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("clk_batch", s.clkBatchMax, s.clkBatchCount);
+  DebugSessionCapture::runtimeTimingTelemetry("service_period", s.windowServicePeriodUs, 0);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -438,9 +457,54 @@ void noteClockPulse() {
   ++s.clockPulses;
 }
 
+void noteExternalClockBatch(uint32_t arrivalUs, uint32_t clockCount, uint32_t clockPeriodUs) {
+  if (clockCount == 0) {
+    return;
+  }
+  State& s = state();
+  s.extclkBatchArrivalUs = arrivalUs;
+  s.extclkBatchRemaining = clockCount;
+  if (clockCount > s.clkBatchMax) {
+    s.clkBatchMax = clockCount;
+  }
+  ++s.clkBatchCount;
+  if (clockPeriodUs == 0) {
+    return;
+  }
+  if (!s.extclkArrivalCadenceActive) {
+    s.extclkArrivalDueUs = arrivalUs;
+    s.extclkArrivalPeriodUs = clockPeriodUs;
+    s.extclkArrivalCadenceActive = true;
+    recordLateness(s.extclkArr, 0);
+  } else {
+    s.extclkArrivalPeriodUs = clockPeriodUs;
+    s.extclkArrivalDueUs += clockPeriodUs;
+    uint32_t latenessUs = 0;
+    if (static_cast<int32_t>(arrivalUs - s.extclkArrivalDueUs) > 0) {
+      latenessUs = arrivalUs - s.extclkArrivalDueUs;
+    }
+    recordLateness(s.extclkArr, latenessUs);
+  }
+  if (clockCount > 1) {
+    s.extclkArrivalDueUs += clockPeriodUs * (clockCount - 1);
+  }
+}
+
+void noteExternalClockDispatchEnter(uint32_t nowUs) {
+  State& s = state();
+  if (s.extclkBatchRemaining == 0) {
+    return;
+  }
+  --s.extclkBatchRemaining;
+  recordSample(s.extclkDisp, nowUs - s.extclkBatchArrivalUs);
+}
+
 void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs) {
   State& s = state();
   s.servicePeriodUs = tickPeriodUs;
+  if (tickPeriodUs != 0) {
+    s.windowServicePeriodUs = tickPeriodUs;
+  }
   if (!s.serviceCadenceActive || tickPeriodUs == 0) {
     s.serviceDueUs = nowUs;
     s.serviceCadenceActive = tickPeriodUs != 0;
@@ -457,6 +521,11 @@ RT_FLASHMEM_FN void resetPlaybackDeadlineCadence() {
   s.clockDueUs = 0;
   s.clockPeriodUs = 0;
   s.clockCadenceActive = false;
+  s.extclkArrivalDueUs = 0;
+  s.extclkArrivalPeriodUs = 0;
+  s.extclkArrivalCadenceActive = false;
+  s.extclkBatchArrivalUs = 0;
+  s.extclkBatchRemaining = 0;
 }
 
 void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick) {
@@ -724,6 +793,13 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.lateOffCount = s.lateOff.overCount;
   out.lateClkMaxUs = s.lateClk.maxUs;
   out.lateClkCount = s.lateClk.overCount;
+  out.extclkArrivalMaxUs = s.extclkArr.maxUs;
+  out.extclkArrivalCount = s.extclkArr.overCount;
+  out.extclkDispatchMaxUs = s.extclkDisp.maxUs;
+  out.extclkDispatchOverCount = s.extclkDisp.overCount;
+  out.clkBatchMax = s.clkBatchMax;
+  out.clkBatchCount = s.clkBatchCount;
+  out.servicePeriodUs = s.windowServicePeriodUs;
   out.lateOneShotArmed = s.lateOneShotArmed;
   out.pendingLateEvent = s.pendingLateEvent;
   out.pendingPlaybackRebuild = s.pendingPlaybackRebuild;

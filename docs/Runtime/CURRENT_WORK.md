@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (`142336` / device PASS [`143701`](../../captures/session_20260907_143701.log))
+Last updated: 2026-09-07 (overdub MIDI boundary Stage 1 telemetry; prior paint PASS [`143701`](../../captures/session_20260907_143701.log))
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**One-frame drop after each next bar ([`142336`](../../captures/session_20260907_142336.log)) — device PASS [`143701`](../../captures/session_20260907_143701.log):**
+**Overdub MIDI boundary timing — Stage 1 (clock attribution):**
+Capture-gated window tags on `RuntimeTimingTelemetry`: `extclk_arrival`,
+`extclk_dispatch`, `clk_batch`, `service_period`. USB-device batch read
+records clock cardinality and arrival vs expected external-clock instant.
+`onMidiClockPulse` records dispatch delay from that batch arrival.
+`late_clk` stays outgoing master-clock send lateness. Note deadline still
+uses `late_on` / `late_off` vs `service_period`. Native
+`test_runtime_timing_telemetry` covers cadence reset, batch attribution,
+and note-lateness classification. Native **1686/1687** (1 skipped).
+`teensy41-capture-serial` RAM1 locals **6848**. Device recapture must
+show those four tags beside `clk` /
+`usbclk` / `tracks` / `late_event` without treating `midi_gap` as C15.
+Stages 2–4 not started.
+Plan: [`overdub_midi_boundary_timing_refinement.md`](../Plans/overdub_midi_boundary_timing_refinement.md).
+
+**Prior — One-frame drop after each next bar ([`142336`](../../captures/session_20260907_142336.log)) — device PASS [`143701`](../../captures/session_20260907_143701.log):**
 After `004710` pending-first ordering, `applyCapturePlayheadTails`
 still matched open holds by pitch+start only and rewrote a closed
 same-start sibling. Capture preview also dropped assigned `NoteId`s

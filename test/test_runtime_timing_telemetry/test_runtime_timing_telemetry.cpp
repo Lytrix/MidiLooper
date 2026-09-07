@@ -153,11 +153,16 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   RuntimeTimingTelemetry::noteClockDispatch(9000);
   RuntimeTimingTelemetry::noteUsbDeviceDrain(221000);
   RuntimeTimingTelemetry::noteUsbDeviceDispatch(154000);
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 4, 20833);
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 20833);
   TEST_ASSERT_FALSE(RuntimeTimingTelemetry::maybeEmit(1000));  // first call arms window
 
   RuntimeTimingTelemetry::noteClockDispatch(9000);
   RuntimeTimingTelemetry::noteUsbDeviceDrain(221000);
   RuntimeTimingTelemetry::noteUsbDeviceDispatch(154000);
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000 + 4 * 20833 + 100, 4, 20833);
+  RuntimeTimingTelemetry::noteExternalClockDispatchEnter(1000 + 4 * 20833 + 6100);
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000 + 4 * 20833 + 100, 20833);
   TEST_ASSERT_FALSE(
       RuntimeTimingTelemetry::maybeEmit(1000 + RuntimeTimingTelemetry::kEmitIntervalUs - 1));
 
@@ -194,6 +199,13 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.lateOffCount);
   TEST_ASSERT_EQUAL_UINT32(0, after.lateClkMaxUs);
   TEST_ASSERT_EQUAL_UINT32(0, after.lateClkCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.extclkArrivalMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.extclkArrivalCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.extclkDispatchMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.extclkDispatchOverCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.clkBatchMax);
+  TEST_ASSERT_EQUAL_UINT32(0, after.clkBatchCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.servicePeriodUs);
   TEST_ASSERT_TRUE(after.lateOneShotArmed);
 }
 
@@ -336,6 +348,72 @@ void test_reset_playback_deadline_cadence_clears_late_clock_baseline() {
   TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().lateClkCount);
 }
 
+void test_external_clock_batch_records_cardinality_and_service_period() {
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 0, 20833);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().clkBatchMax);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().clkBatchCount);
+
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 3, 20833);
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000 + 3 * 20833, 8, 20833);
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 20833);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(8, snap.clkBatchMax);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.clkBatchCount);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.extclkArrivalMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.extclkArrivalCount);
+  TEST_ASSERT_EQUAL_UINT32(20833, snap.servicePeriodUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOnMaxUs);
+}
+
+void test_external_clock_batch_arrival_late_is_not_outgoing_clock() {
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 1, 20833);
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000 + 20833 + 5000, 1, 20833);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(5000, snap.extclkArrivalMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.extclkArrivalCount);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateClkMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateClkCount);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOnMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOffMaxUs);
+  TEST_ASSERT_FALSE(snap.pendingLateEvent);
+}
+
+void test_external_clock_dispatch_delay_from_batch_arrival() {
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 2, 20833);
+  RuntimeTimingTelemetry::noteExternalClockDispatchEnter(1010);
+  RuntimeTimingTelemetry::noteExternalClockDispatchEnter(1000 + 7000);
+  RuntimeTimingTelemetry::noteExternalClockDispatchEnter(1000 + 20000);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(7000, snap.extclkDispatchMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.extclkDispatchOverCount);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.clkBatchMax);
+}
+
+void test_reset_playback_deadline_cadence_clears_external_clock_arrival() {
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 1, 20833);
+  RuntimeTimingTelemetry::resetPlaybackDeadlineCadence();
+  RuntimeTimingTelemetry::noteExternalClockBatch(100000, 1, 20833);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().extclkArrivalMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().extclkArrivalCount);
+}
+
+void test_note_lateness_independent_of_external_clock_arrival() {
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 2604);
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000, 1, 20833);
+  RuntimeTimingTelemetry::noteExternalClockBatch(1000 + 20833 + 4000, 1, 20833);
+  RuntimeTimingTelemetry::recordNoteSendLateness(true, 1100, 8);
+  RuntimeTimingTelemetry::recordNoteSendLateness(false, 1000 + 2604 + 50, 16);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOnMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateOnCount);
+  TEST_ASSERT_EQUAL_UINT32(50, snap.lateOffMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.lateOffCount);
+  TEST_ASSERT_EQUAL_UINT32(4000, snap.extclkArrivalMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.extclkArrivalCount);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.lateClkMaxUs);
+}
+
 void test_emit_interval_constant() {
   TEST_ASSERT_EQUAL_UINT32(5000000u, RuntimeTimingTelemetry::kEmitIntervalUs);
   TEST_ASSERT_EQUAL_UINT32(5000u, RuntimeTimingTelemetry::kObservationalSoftCeilingUs);
@@ -365,5 +443,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_playback_rebuild_queues_one_shot_without_lateness);
   RUN_TEST(test_playback_rebuild_keeps_maximum_and_counts_destinations);
   RUN_TEST(test_reset_playback_deadline_cadence_clears_late_clock_baseline);
+  RUN_TEST(test_external_clock_batch_records_cardinality_and_service_period);
+  RUN_TEST(test_external_clock_batch_arrival_late_is_not_outgoing_clock);
+  RUN_TEST(test_external_clock_dispatch_delay_from_batch_arrival);
+  RUN_TEST(test_reset_playback_deadline_cadence_clears_external_clock_arrival);
+  RUN_TEST(test_note_lateness_independent_of_external_clock_arrival);
   return UNITY_END();
 }

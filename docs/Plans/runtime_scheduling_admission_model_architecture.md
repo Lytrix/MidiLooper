@@ -336,7 +336,7 @@ Allocation (`assign`, `resize`, `push_back`, sort) is part of unit cost. O(loop)
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries | `midi_gap` (historical captures: `msi`) |
 | **`handleMidiInput()` duration** | Time spent inside `handleMidiInput()` | `midi_input` (historical captures: `midisvc`) |
 
-Playback gather Stage 1 hooks exist on this owner: 5 s `DIAG,late_on` / `late_off` / `late_clk` plus `DIAG,late_event` / `DIAG,playback_build` one-shots. C15 still needs a device window (`late_event_count == 0`, `max_lateness_us <= 0`). Until Stage 3 scores those lines, `clockrate` is not the musical pass criterion.
+Playback gather Stage 1 hooks exist on this owner: 5 s `DIAG,late_on` / `late_off` / `late_clk` plus `DIAG,late_event` / `DIAG,playback_build` one-shots. Overdub boundary Stage 1 adds `DIAG,extclk_arrival` / `extclk_dispatch` / `clk_batch` / `service_period` so a capture can separate USB-device clock-batch arrival, in-batch dispatch delay, track-update duration, and output-send lateness. `late_clk` remains outgoing master-clock send lateness only. C15 still needs a device window (`late_event_count == 0`, `max_lateness_us <= 0`). Do not claim C15 from `midi_gap` alone. Until deadline lines are scored, `clockrate` is not the musical pass criterion.
 
 S0b–S0e attributed PLAYING/OVERDUB `handleMidiInput()` duration (`midisvc` in those captures) as `usbdev` → `usbdisp` → `usbnote` → `notechg`. RC-K1–K3 moved reconstruct off the note-off path (`noterecon` 0 on that path after [`225803`](../../captures/session_20260812_225803.log)). `DIAG,noterecon` remains a probe; after RC-K3 it reads 0 on the production note-off path and must not be treated as an active cost owner.
 
@@ -365,6 +365,7 @@ Chronological narrative: [investigation log](archive/refinements/runtime_schedul
 | PLAYING overdub-stop dump | **Open** — deferred `LoopUndoHistory` bundle | [`105505`](../../captures/session_20260813_105505.log), [`112104`](../../captures/session_20260813_112104.log) |
 | `begin_capture` | **Open** — sibling source-view plan | 77–83 ms clean ([`225803`](../../captures/session_20260812_225803.log)); multi-second later entries ([`105505`](../../captures/session_20260813_105505.log), [`112104`](../../captures/session_20260813_112104.log)) |
 | Interval reservation | **Not authorized** | Requires Owner-Boundary Gate + OpenSpec + DEC |
+| Overdub boundary Stage 1 `extclk_*` / `clk_batch` / `service_period` | **In tree** | Observation only. Plan: [`overdub_midi_boundary_timing_refinement.md`](overdub_midi_boundary_timing_refinement.md). Device recapture open. |
 | First-record idle `LoopSnapshotConstruction::step(1)` vs `MI`/`MO` | **Measured** | [`233308`](../../captures/session_20260825_233308.log) — PLAYING p50 **2.825 ms** (max 7.273 ms); OD1-to-publish p50 **3.333 ms** (max 7.649 ms); **0** note-timestamp overlaps; no `snapshot_idle` after first publish until STOPPED. Full table: [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) § `LoopSnapshotConstruction::step`, [`loop_pass_snapshot_effective_state_refinement.md`](loop_pass_snapshot_effective_state_refinement.md) § Device measurement. Contrast [`232329`](../../captures/session_20260825_232329.log) |
 
 S0 exit is **partial**: MIDI-path attribution is complete; telemetry trust (Tier-A delivery, remainder coverage, post-stop windows) and an evidence-based MIDI Input Gap ceiling are not.
@@ -381,7 +382,7 @@ RC-C remains narrow. Shipped: A (MIDI ordering), B (incremental display), C (opt
 
 ## 16. What this architecture does not propose
 
-This document does **not** authorize: moving MIDI Clock to an ISR; timestamping USB arrival; changing MIDI transport semantics; changing capture/Loop/Track/persistence **ownership** without the ownership-transfer protocol; a new global scheduler; replacing `DeferredJobScheduler`; parallel execution; Stage 5b SyncDrain redesign; Clear/SavedSet persistence redesign; note-edit geometry changes; broad display architecture replacement; widening `timingCriticalTrackActive` as a symptom patch.
+This document does **not** authorize: moving MIDI Clock to an ISR; using USB arrival timestamps to change dispatch or transport semantics (capture-gated `extclk_arrival` / `clk_batch` attribution is observation only); changing MIDI transport semantics; changing capture/Loop/Track/persistence **ownership** without the ownership-transfer protocol; a new global scheduler; replacing `DeferredJobScheduler`; parallel execution; Stage 5b SyncDrain redesign; Clear/SavedSet persistence redesign; note-edit geometry changes; broad display architecture replacement; widening `timingCriticalTrackActive` as a symptom patch.
 
 ---
 

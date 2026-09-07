@@ -7,7 +7,8 @@
  *
  * Measures the MIDI Input Gap between handleMidiInput() entries, the duration
  * of handleMidiInput(), Clock/track durations, USB/DIN drain segments, nested
- * dispatch sums, and (Stage 1) MIDI deadline lateness. Hot-path hooks only
+ * dispatch sums, MIDI deadline lateness, and (overdub boundary Stage 1)
+ * external-clock arrival / batch / dispatch attribution. Hot-path hooks only
  * accumulate integers. `#CAP` for lateness is a 5 s window plus rare one-shots
  * drained from the main loop — never a line per MIDI event. Does not admit work,
  * add handleMidiInput() call sites, or drive any scheduling decision.
@@ -99,6 +100,13 @@ struct Snapshot {
   uint32_t lateOffCount = 0;
   uint32_t lateClkMaxUs = 0;
   uint32_t lateClkCount = 0;
+  uint32_t extclkArrivalMaxUs = 0;
+  uint32_t extclkArrivalCount = 0;
+  uint32_t extclkDispatchMaxUs = 0;
+  uint32_t extclkDispatchOverCount = 0;
+  uint32_t clkBatchMax = 0;
+  uint32_t clkBatchCount = 0;
+  uint32_t servicePeriodUs = 0;
   bool lateOneShotArmed = true;
   bool pendingLateEvent = false;
   bool pendingPlaybackRebuild = false;
@@ -182,6 +190,20 @@ void commitUsbDeviceNested();
 
 /** Count one external MIDI Clock pulse for clockrate. */
 void noteClockPulse();
+
+/**
+ * USB-device input batch that contained MIDI Clock. `arrivalUs` is read-complete
+ * (dispatch start). Records clock cardinality and arrival lateness vs the
+ * expected external-clock instant. `clockPeriodUs` is one MIDI-clock period.
+ * clockCount == 0 is a no-op.
+ */
+void noteExternalClockBatch(uint32_t arrivalUs, uint32_t clockCount, uint32_t clockPeriodUs);
+
+/**
+ * Entry to ClockManager::onMidiClockPulse. Records µs since the current USB-device
+ * batch arrival for each remaining clock in that batch. No-op when no batch remains.
+ */
+void noteExternalClockDispatchEnter(uint32_t nowUs);
 
 /**
  * Mark the start of one playback service interval (internal tick ISR or external
@@ -298,6 +320,10 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_ADD_NOTE_PAIR(durationUs) RuntimeTimingTelemetry::addNotePair(durationUs)
 #define RUNTIME_TIMING_COMMIT_USB_DEVICE_NESTED() RuntimeTimingTelemetry::commitUsbDeviceNested()
 #define RUNTIME_TIMING_NOTE_CLOCK_PULSE() RuntimeTimingTelemetry::noteClockPulse()
+#define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_BATCH(arrivalUs, clockCount, clockPeriodUs) \
+  RuntimeTimingTelemetry::noteExternalClockBatch(arrivalUs, clockCount, clockPeriodUs)
+#define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_DISPATCH_ENTER(nowUs) \
+  RuntimeTimingTelemetry::noteExternalClockDispatchEnter(nowUs)
 #define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) \
   RuntimeTimingTelemetry::notePlaybackServiceEnter(nowUs, tickPeriodUs)
 #define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() \
@@ -347,6 +373,8 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_ADD_NOTE_PAIR(durationUs) ((void)0)
 #define RUNTIME_TIMING_COMMIT_USB_DEVICE_NESTED() ((void)0)
 #define RUNTIME_TIMING_NOTE_CLOCK_PULSE() ((void)0)
+#define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_BATCH(arrivalUs, clockCount, clockPeriodUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_DISPATCH_ENTER(nowUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) ((void)0)
 #define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() ((void)0)
 #define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) ((void)0)

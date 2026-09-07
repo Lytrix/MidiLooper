@@ -130,7 +130,7 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
-/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. */
+/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. */
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
 /** Per-track S0 timing telemetry: DIAG,track_update,<track>,<maxUs>,<overCount> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
