@@ -1885,6 +1885,45 @@ bool shouldSplitLiveWrapOpenNoteDisplay(const NoteUtils::OpenNoteOn& open, uint3
                                                       extendHeldNotesToPlayhead);
 }
 
+int findCaptureTailTargetIndex(const NoteUtils::DisplayNoteVec& notes, size_t regionStart,
+                               const NoteUtils::DisplayNote& previewNote) {
+  if (regionStart >= notes.size()) {
+    return -1;
+  }
+  if (previewNote.noteId != kInvalidNoteId) {
+    for (size_t i = regionStart; i < notes.size(); ++i) {
+      if (notes[i].noteId == previewNote.noteId) {
+        return static_cast<int>(i);
+      }
+    }
+  }
+  int openHoldMatch = -1;
+  int invalidIdMatch = -1;
+  int anyMatch = -1;
+  for (size_t i = regionStart; i < notes.size(); ++i) {
+    if (notes[i].note != previewNote.note || notes[i].startTick != previewNote.startTick) {
+      continue;
+    }
+    if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(notes[i].startTick, notes[i].endTick)) {
+      openHoldMatch = static_cast<int>(i);
+      break;
+    }
+    if (invalidIdMatch < 0 && notes[i].noteId == kInvalidNoteId) {
+      invalidIdMatch = static_cast<int>(i);
+    }
+    if (anyMatch < 0) {
+      anyMatch = static_cast<int>(i);
+    }
+  }
+  if (openHoldMatch >= 0) {
+    return openHoldMatch;
+  }
+  if (invalidIdMatch >= 0) {
+    return invalidIdMatch;
+  }
+  return anyMatch;
+}
+
 /// Same body as `DisplayManagerInternal::applyCapturePlayheadTails`. Overdub paint passes
 /// `allowWrapContinuation=false`.
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
@@ -1918,17 +1957,13 @@ void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLengt
     uint32_t noteStartTick = open.tick;
     uint32_t playheadEndTick = std::max(noteStartTick, clampedCloseTick);
     DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(noteStartTick, playheadEndTick, loopLength);
-    bool updated = false;
-    for (size_t i = captureRegionStart; i < notes.size(); ++i) {
-      if (notes[i].note == open.note && notes[i].startTick == open.tick) {
-        notes[i].startTick = noteStartTick;
-        notes[i].endTick = playheadEndTick;
-        updated = true;
-        break;
-      }
-    }
-    if (!updated) {
+    const int targetIndex = findCaptureTailTargetIndex(notes, captureRegionStart, previewNote);
+    if (targetIndex >= 0) {
+      notes[static_cast<size_t>(targetIndex)].startTick = noteStartTick;
+      notes[static_cast<size_t>(targetIndex)].endTick = playheadEndTick;
+    } else {
       NoteUtils::DisplayNote liveNote;
+      liveNote.noteId = previewNote.noteId;
       liveNote.note = open.note;
       liveNote.velocity = open.velocity;
       liveNote.startTick = noteStartTick;

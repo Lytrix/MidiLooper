@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-06 (`004710`: incoming long note hidden until NoteOff)
+Last updated: 2026-09-07 (`142336` / device PASS [`143701`](../../captures/session_20260907_143701.log))
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Incoming long note hidden until NoteOff ([`004710`](../../captures/session_20260906_004710.log)):**
+**One-frame drop after each next bar ([`142336`](../../captures/session_20260907_142336.log)) — device PASS [`143701`](../../captures/session_20260907_143701.log):**
+After `004710` pending-first ordering, `applyCapturePlayheadTails`
+still matched open holds by pitch+start only and rewrote a closed
+same-start sibling. Capture preview also dropped assigned `NoteId`s
+because append fed the raw input event into `applyCaptureEventToPreview`.
+Tails now prefer `NoteId`; append feeds the stored `toAppend` event.
+Host pins `test_same_pass_playhead_tails_keep_closed_bar_four_end` and
+`test_append_capture_preview_keeps_assigned_note_id`. Device
+[`143701`](../../captures/session_20260907_143701.log): shortened long
+rows stay painted across each next `BAR` (`hidden,0`).
+Plan: [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+**Prior — Incoming long note hidden until NoteOff ([`004710`](../../captures/session_20260906_004710.log)):**
 Overlap resolve writes pending transforms on NoteOn, but paint applied tails
 before pending. A same-start closed row absorbed the open-hold tail update,
 then pending Hide/Shorten removed that row, so the long incoming note was

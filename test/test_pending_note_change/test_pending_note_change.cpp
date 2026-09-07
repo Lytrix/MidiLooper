@@ -3615,6 +3615,44 @@ void applyDrawSourceOverlaysForTest(const Loop& loop, uint32_t firstBar, uint32_
 void applyOverdubCapturePlayheadTailsForTest(const CapturePreview& preview, uint32_t loopLength,
                                              uint32_t closeTick, size_t captureRegionStart,
                                              NoteUtils::DisplayNoteVec& notes) {
+  auto findCaptureTailTargetIndex = [&](const NoteUtils::DisplayNote& previewNote) -> int {
+    if (captureRegionStart >= notes.size()) {
+      return -1;
+    }
+    if (previewNote.noteId != kInvalidNoteId) {
+      for (size_t i = captureRegionStart; i < notes.size(); ++i) {
+        if (notes[i].noteId == previewNote.noteId) {
+          return static_cast<int>(i);
+        }
+      }
+    }
+    int openHoldMatch = -1;
+    int invalidIdMatch = -1;
+    int anyMatch = -1;
+    for (size_t i = captureRegionStart; i < notes.size(); ++i) {
+      if (notes[i].note != previewNote.note || notes[i].startTick != previewNote.startTick) {
+        continue;
+      }
+      if (DisplayWindowUtils::capturePreviewNoteIsOpenHold(notes[i].startTick, notes[i].endTick)) {
+        openHoldMatch = static_cast<int>(i);
+        break;
+      }
+      if (invalidIdMatch < 0 && notes[i].noteId == kInvalidNoteId) {
+        invalidIdMatch = static_cast<int>(i);
+      }
+      if (anyMatch < 0) {
+        anyMatch = static_cast<int>(i);
+      }
+    }
+    if (openHoldMatch >= 0) {
+      return openHoldMatch;
+    }
+    if (invalidIdMatch >= 0) {
+      return invalidIdMatch;
+    }
+    return anyMatch;
+  };
+
   const uint32_t clampedCloseTick =
       (loopLength == 0) ? 0u : (closeTick >= loopLength ? (loopLength - 1u) : closeTick);
   for (const uint32_t previewNoteIndex : preview.openNoteIndices) {
@@ -3631,17 +3669,13 @@ void applyOverdubCapturePlayheadTailsForTest(const CapturePreview& preview, uint
     uint32_t playheadEndTick =
         noteStartTick > clampedCloseTick ? noteStartTick : clampedCloseTick;
     DisplayWindowUtils::clampNonWrapDisplayNoteBarTicks(noteStartTick, playheadEndTick, loopLength);
-    bool updated = false;
-    for (size_t i = captureRegionStart; i < notes.size(); ++i) {
-      if (notes[i].note == previewNote.note && notes[i].startTick == previewNote.startTick) {
-        notes[i].startTick = noteStartTick;
-        notes[i].endTick = playheadEndTick;
-        updated = true;
-        break;
-      }
-    }
-    if (!updated) {
+    const int targetIndex = findCaptureTailTargetIndex(previewNote);
+    if (targetIndex >= 0) {
+      notes[static_cast<size_t>(targetIndex)].startTick = noteStartTick;
+      notes[static_cast<size_t>(targetIndex)].endTick = playheadEndTick;
+    } else {
       NoteUtils::DisplayNote liveNote{};
+      liveNote.noteId = previewNote.noteId;
       liveNote.note = previewNote.note;
       liveNote.velocity = previewNote.velocity;
       liveNote.startTick = noteStartTick;

@@ -159,6 +159,7 @@ LOOP_INTERNAL_MEM void applyCaptureEventToPreview(CapturePreview& preview, const
                                                   uint32_t loopLength) {
   if (evt.isNoteOn()) {
     NoteUtils::DisplayNote note{};
+    note.noteId = evt.noteId;
     note.note = evt.data.noteData.note;
     note.velocity = evt.data.noteData.velocity;
     note.startTick = evt.tick;
@@ -198,6 +199,7 @@ LOOP_INTERNAL_MEM void applyCaptureEventToPreview(CapturePreview& preview, const
         loopLength, evt.tick, NoteUtils::WrapHeadSegmentContext::CommittedHeadOff);
     if (head.visible) {
       NoteUtils::DisplayNote headNote{};
+      headNote.noteId = note.noteId;
       headNote.note = note.note;
       headNote.velocity = note.velocity;
       headNote.startTick = head.startTick;
