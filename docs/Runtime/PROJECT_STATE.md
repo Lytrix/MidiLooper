@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-07 (overlay miss stage log after [`203007`](../../captures/session_20260907_203007.log))
+Last updated: 2026-09-07 (pending paint keeps closed preview [`204112`](../../captures/session_20260907_204112.log); HITL open)
 
 ---
 

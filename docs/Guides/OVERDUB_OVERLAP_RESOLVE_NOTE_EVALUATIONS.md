@@ -185,11 +185,13 @@ paint copy: tails, then applyPendingNoteChangesToDisplayNotes
     (pending + sealed Hide/Shorten by NoteId on any closed painted row —
     prefix or sealed/closed suffix; open holds `endTick == startTick` skip
     so playhead tails can grow; Hide-by-overlap stays prefix-only via
-    `liveCaptureBegin`; same-start sibling drop removes closed remnants at
-    named Hide/Shorten pitch+starts including suffix (`000402`) unless the
-    row is the current closed `capturePreview` identity (`185822`); Hide also
-    drops a closed remnant whose end is at least the hidden source end
-    when the new occupy is still an open hold (`001145`))
+    `liveCaptureBegin` and does not apply to a current closed
+    `capturePreview` identity (`204112`); same-start sibling drop removes
+    closed remnants at named Hide/Shorten pitch+starts including suffix
+    (`000402`) unless the row is the current closed `capturePreview`
+    identity (`185822`); Hide also drops a closed remnant whose end is at
+    least the hidden source end when the new occupy is still an open hold
+    (`001145`))
     A reused compose frame that predates the pending change is not the
     painted source (`202821`). Overview density uses that paint copy while
     pending/overlay exists — it does not read a clean VisualCache that

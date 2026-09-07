@@ -5043,6 +5043,100 @@ void test_pending_shorten_does_not_delete_equal_geometry_sibling() {
   TEST_ASSERT_EQUAL_UINT32(88u, sibling->endTick);
 }
 
+/// `204112`: compose already holds sealed prior-pass `98` and current closed
+/// preview `107` at `69@48–96`. Occupy Hide targets only `98`. Pending paint
+/// and tails must keep `107` at capture Off `96`.
+void test_pending_hide_keeps_closed_preview_equal_geometry_204112() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
+  constexpr NoteId kSealedId = 98;
+  constexpr NoteId kPreviewId = 107;
+  constexpr NoteId kHoldId = 200;
+  constexpr uint32_t kStart = 48;
+  constexpr uint32_t kClosedEnd = 96;
+
+  auto seedClosedPreviewLayers = [&](Loop& loop) {
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.capturePreview.notes.push_back(displayNote(kSealedId, 69, kStart, kClosedEnd));
+    loop.retainCapturePreviewAtSeal();
+    loop.capturePreview.notes.clear();
+    loop.capturePreview.notes.push_back(displayNote(kPreviewId, 69, kStart, kClosedEnd));
+    loop.pushPendingNoteChangeForTest(hideChange(kSealedId, 69, kStart, kClosedEnd));
+  };
+
+  auto composeOverlay = [&](Loop& loop, NoteUtils::DisplayNoteVec prefix) {
+    const size_t committedEnd = prefix.size();
+    applyDrawSourceOverlaysForTest(loop, 0, kLastBar, prefix, committedEnd);
+    return prefix;
+  };
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    seedClosedPreviewLayers(loop);
+
+    NoteUtils::DisplayNoteVec composeBase = composeOverlay(loop, {});
+    const size_t committedEnd = 0;
+    TEST_ASSERT_NOT_NULL(findDisplayNoteById(composeBase, kSealedId));
+    TEST_ASSERT_NOT_NULL(findDisplayNoteById(composeBase, kPreviewId));
+    TEST_ASSERT_EQUAL_UINT32(kClosedEnd, findDisplayNoteById(composeBase, kSealedId)->endTick);
+    TEST_ASSERT_EQUAL_UINT32(kClosedEnd, findDisplayNoteById(composeBase, kPreviewId)->endTick);
+
+    NoteUtils::DisplayNoteVec afterPending = composeBase;
+    loop.applyPendingNoteChangesToDisplayNotes(afterPending, committedEnd);
+    TEST_ASSERT_NULL(findDisplayNoteById(afterPending, kSealedId));
+    assertClosedPreviewAtCaptureOff(afterPending, kPreviewId, kStart, kClosedEnd);
+
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, kClosedEnd,
+                                            committedEnd, afterPending);
+    assertClosedPreviewAtCaptureOff(afterPending, kPreviewId, kStart, kClosedEnd);
+    TEST_ASSERT_NULL(findDisplayNoteById(afterPending, kSealedId));
+  }
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    seedClosedPreviewLayers(loop);
+
+    NoteUtils::DisplayNoteVec prefixPaint;
+    prefixPaint.push_back(displayNote(kSealedId, 69, kStart, kClosedEnd));
+    prefixPaint.push_back(displayNote(kPreviewId, 69, kStart, kClosedEnd));
+    loop.applyPendingNoteChangesToDisplayNotes(prefixPaint, prefixPaint.size());
+    TEST_ASSERT_NULL(findDisplayNoteById(prefixPaint, kSealedId));
+    assertClosedPreviewAtCaptureOff(prefixPaint, kPreviewId, kStart, kClosedEnd);
+  }
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    seedClosedPreviewLayers(loop);
+    loop.capturePreview.notes.push_back(displayNote(kHoldId, 63, 144, 144));
+    CapturePreviewNoteState closedState{};
+    loop.capturePreview.noteStates.push_back(closedState);
+    CapturePreviewNoteState holdState{};
+    holdState.open = true;
+    loop.capturePreview.noteStates.push_back(holdState);
+    loop.capturePreview.openNoteIndices.push_back(1);
+
+    NoteUtils::DisplayNoteVec composeBase = composeOverlay(loop, {});
+    const size_t committedEnd = 0;
+    NoteUtils::DisplayNoteVec painted = composeBase;
+    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 160, committedEnd,
+                                            painted);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kClosedEnd);
+    TEST_ASSERT_NULL(findDisplayNoteById(painted, kSealedId));
+    const NoteUtils::DisplayNote* hold = findDisplayNoteById(painted, kHoldId);
+    TEST_ASSERT_NOT_NULL(hold);
+    TEST_ASSERT_EQUAL_UINT32(144u, hold->startTick);
+    TEST_ASSERT_EQUAL_UINT32(160u, hold->endTick);
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -5174,5 +5268,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overlay_keeps_repeated_closed_ids_195409);
   RUN_TEST(test_closed_preview_survives_same_start_remnant_drop_185822);
   RUN_TEST(test_pending_shorten_does_not_delete_equal_geometry_sibling);
+  RUN_TEST(test_pending_hide_keeps_closed_preview_equal_geometry_204112);
   return UNITY_END();
 }
