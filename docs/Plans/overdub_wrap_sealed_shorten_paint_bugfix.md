@@ -1,9 +1,9 @@
 # Overdub wrap — sealed Shorten must keep the live paint end
 
-**Status:** Host shipped (`004710` incoming long note visible from NoteOn). Device recapture required.  
-**Date:** 2026-09-06  
+**Status:** Host shipped (`142336` / device PASS [`143701`](../../captures/session_20260907_143701.log)).  
+**Date:** 2026-09-07  
 **Kind:** bugfix (sealed-companion draw-source paint)  
-**Evidence:** [`004710`](../../captures/session_20260906_004710.log) (prior [`003622`](../../captures/session_20260906_003622.log), [`002708`](../../captures/session_20260906_002708.log), [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
+**Evidence:** [`143701`](../../captures/session_20260907_143701.log) (report [`142336`](../../captures/session_20260907_142336.log); prior [`004710`](../../captures/session_20260906_004710.log), [`003622`](../../captures/session_20260906_003622.log), [`002708`](../../captures/session_20260906_002708.log), [`002200`](../../captures/session_20260906_002200.log), [`001145`](../../captures/session_20260906_001145.log), [`000402`](../../captures/session_20260906_000402.log), [`235546`](../../captures/session_20260905_235546.log), [`233150`](../../captures/session_20260905_233150.log))  
 **Does not authorize:** occupy / wrap seal persist changes; VisualCache mutation on wrap; pending across wrap; Stage 1 wrap-held head occupy (`225200` device FAIL)
 
 ---
@@ -17,8 +17,9 @@ commitOverdubWrap + sealPendingNoteChangesToEditPasses  ← trust persist
 recoverMissingPendingShortenSources              ← pending-only; empty after wrap
 gatherCommittedDrawSourceBars (snap=0 → VisualCache)  ← originals
 applyPendingNoteChangesToDisplayNotes (sealed then pending) + sibling drop
-    (covering occupy = shortest keeper at its start)  ← this slice
-applyCapturePlayheadTails ordering vs pending transforms             ← this slice
+    (covering occupy = shortest keeper at its start)  ← trust
+applyCapturePlayheadTails ordering vs pending transforms             ← trust
+applyCapturePlayheadTails target by NoteId (+ preview identity)     ← this slice
 ```
 
 ## Root cause
@@ -65,9 +66,16 @@ Two gaps after wrap seal:
    capture tails before pending transforms. A same-start closed row
    absorbed the incoming open-hold update, then pending Hide/Shorten
    removed that row on the same frame. Pending must apply before tails.
+10. **One-frame drop after each next bar (`142336`):** after pending-first
+    ordering, `applyCapturePlayheadTails` still matched open holds by
+    pitch+start only and rewrote the first same-start closed sibling.
+    Capture preview also dropped assigned `NoteId`s because append fed
+    the raw input event into `applyCaptureEventToPreview`. Tail growth
+    now prefers `NoteId`, and append feeds the stored `toAppend` event.
 
 Pin owners: sealed apply + sealed Length compose recovery + Length
-fallback + closed same-start remnant drop + live paint order.
+fallback + closed same-start remnant drop + live paint order +
+NoteId-targeted tails.
 
 ## Invariant
 
@@ -88,10 +96,10 @@ during capture is unchanged (`150650`).
 
 | Question | Answer |
 |----------|--------|
-| Ownership change? | **NO** — extend `DisplayNoteResolveLiveCapture` and `DisplayNoteWindowGather` ordering |
+| Ownership change? | **NO** — extend `applyCapturePlayheadTails` and capture-preview append |
 | State transition change? | **NO** — pending still clears on wrap seal |
 | Unbounded interval owner? | **NO** |
-| Reuse | **YES** — pending/tails helpers unchanged, call order only |
+| Reuse | **YES** — same owners; NoteId targeting + stored-event identity |
 
 ## Host pins
 
@@ -121,20 +129,22 @@ during capture is unchanged (`150650`).
 - `test_pending_then_tails_keeps_incoming_long_same_start_004710` —
   pending Hide drops old `63@912–1008`; tails then paint the incoming
   open hold at `63@912` through `currentTick`
-- Focused: `test_pending_note_change`, `test_overdub_source_view`,
-  `test_display_window_utils` **PASS**
+- `test_same_pass_playhead_tails_keep_closed_bar_four_end` — open same-
+  start C must not rewrite closed A end (`2296→2976`)
+- `test_append_capture_preview_keeps_assigned_note_id` — append stores
+  the assigned NoteOn `NoteId` into capture preview
+- Focused: `test_pending_note_change`, `test_loop_take_survival`,
+  `test_capture_append_deny` **PASS**
 - `teensy41-capture-serial` RAM1 locals **6848**
-- `pio test -e native` **1674/1675** — pre-existing
-  `test_same_pass_playhead_tails_keep_closed_bar_four_end`
+- `pio test -e native` **1681/1681** (1 skipped)
 
 ## Device recapture
 
-Every occupy Shorten — not only the first — must show `holdStart-1` on
-the next `DISP` before the next `BAR`, before and after wrap. Incoming
-long notes that overlap earlier shorter rows must be visible from NoteOn
-and grow with `currentTick` until NoteOff. Later occupies already emit
-`painted_pending_shorten`; the remnant must not remain beside that short
-row. Already-sealed NoteIds will not emit pending paint.
+Device PASS [`143701`](../../captures/session_20260907_143701.log): after
+each next `BAR`, `painted_pending_shorten` stays present and the next
+`draw_src,layers` / `DISP` keep `hidden,0` for the shortened long rows
+(for example id 72 `768–1151` across bar 6). Incoming long notes remain
+visible from NoteOn through NoteOff and across wraps.
 
 Separate: Stage 1 wrap-held head occupy device FAIL (`69@hs=48`
 `n=1,a=0`) — [`overdub_wrap_head_occupy_shorten_bugfix.md`](overdub_wrap_head_occupy_shorten_bugfix.md).

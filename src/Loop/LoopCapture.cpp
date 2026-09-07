@@ -1384,7 +1384,10 @@ CaptureAppendResult Loop::appendCaptureEventWithResult(const MidiEvent& evt) {
     captureHasLastAppendTick_ = true;
   }
   captureLastAppendTick_ = evt.tick;
-  applyCaptureEventToPreview(capturePreview, evt, Config::TICKS_PER_BAR, loopLengthTicks);
+  // Preview identity must mirror the stored capture event. `toAppend` carries
+  // assigned NoteIds for NoteOn/NoteOff; using the raw input event drops that
+  // identity and lets same-start siblings collide in tail growth.
+  applyCaptureEventToPreview(capturePreview, toAppend, Config::TICKS_PER_BAR, loopLengthTicks);
   ++captureDisplayRevision;
   overdubSessionLiveUndoEvents_.clear();
   result.accepted = true;

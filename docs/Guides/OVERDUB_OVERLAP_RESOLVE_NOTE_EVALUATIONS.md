@@ -303,7 +303,19 @@ Across later notes constraining the same A, upsert is monotonically restrictive.
 | Reconstruct keeps several same-start lengths; frame/effective keep one | Last B + Shorten/Hide. Shorten when A starts before B (`end = B.start − 1`); Hide when A starts at/after B. [`204043`](../../captures/session_20260901_204043.log) `63@0→335` is last `0→576` shortened by later `336→576` | Keep-shortest / force the short reconstruct sibling |
 | Drawn or frame **longer** than compose / effective / pending | Impossible — Shorten never lengthens | [`204043`](../../captures/session_20260901_204043.log) `79@240` compose/effective end **272**, drawn/frame end **288**. Store has `SEVT` `N@240` `F@272` `F@288`. No overdub `MI`/`COORD` for 79. Playhead tails (`applyCapturePlayheadTails`) are a later gather step, not this upsert |
 
-RC2b (closed same-`NoteId` must not become wrap-held) is **parked** after `204043`. Reopen only if a later capture shows wrap-held rewrite or the `79@240` dual-Off row above. Host tails pin `test_same_pass_playhead_tails_keep_closed_bar_four_end` stays red; do not patch `applyCapturePlayheadTails` from that pin. See [`overdub_wrap_companion_and_pairing_bugfix.md`](../Plans/overdub_wrap_companion_and_pairing_bugfix.md).
+RC2b (closed same-`NoteId` must not become wrap-held) is **closed** by NoteId-
+targeted tails plus capture-preview identity on append
+([`142336`](../../captures/session_20260907_142336.log) report; device PASS
+[`143701`](../../captures/session_20260907_143701.log)).
+`applyCapturePlayheadTails` prefers the open preview `NoteId` over the first
+same-start sibling. `Loop::appendCaptureEventWithResult` feeds the stored
+`toAppend` event into `applyCaptureEventToPreview` so assigned NoteIds land in
+preview. Host pin `test_same_pass_playhead_tails_keep_closed_bar_four_end`
+**PASS**. See [`overdub_wrap_sealed_shorten_paint_bugfix.md`](../Plans/overdub_wrap_sealed_shorten_paint_bugfix.md).
+
+Pending transforms apply before overdub playhead tails (`004710`) so a same-start
+closed row cannot absorb an incoming open hold and then be removed on the same
+frame.
 
 [`175026`](../../captures/session_20260905_175026.log) `52@664` is the same class: reconstruct LIFO-pairs this-pass `N@664` (`id=26`) with source `F@808` (`id=11`) so E/R=144, while frame paints occupy Shorten of `id=26` to 1027. NoteId Off pairing (`44f47e94`) fixed that one mismatch and was **reverted** — the pairing contract is not understood (`191913`). Do not paint 144 to match E. Parked diagnostic `diagnostic_only_reconstruct_175026_tagged_off_pairing` (not an invariant). Next work: [`overdub_occupy_paint_191913_findings_bugfix.md`](../Plans/overdub_occupy_paint_191913_findings_bugfix.md).
 

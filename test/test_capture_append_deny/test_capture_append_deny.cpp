@@ -112,6 +112,29 @@ void test_append_accepted() {
                     static_cast<int>(result.reason));
 }
 
+void test_append_capture_preview_keeps_assigned_note_id() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  beginOverdubCapture(loop);
+
+  const CaptureAppendResult noteOnResult =
+      loop.appendCaptureEventWithResult(MidiEvent::NoteOn(120, 1, 60, 100));
+  TEST_ASSERT_TRUE(noteOnResult.accepted);
+  TEST_ASSERT_EQUAL(1u, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(1u, loop.capturePreview.notes.size());
+  const MidiEvent& storedNoteOn = loop.capture.store.at(0);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, storedNoteOn.noteId);
+  TEST_ASSERT_EQUAL(storedNoteOn.noteId, loop.capturePreview.notes[0].noteId);
+
+  const CaptureAppendResult noteOffResult =
+      loop.appendCaptureEventWithResult(MidiEvent::NoteOff(240, 1, 60, 0));
+  TEST_ASSERT_TRUE(noteOffResult.accepted);
+  TEST_ASSERT_EQUAL(2u, loop.capture.store.size());
+  TEST_ASSERT_FALSE(loop.capturePreview.noteStates[0].open);
+  TEST_ASSERT_EQUAL(storedNoteOn.noteId, loop.capturePreview.notes[0].noteId);
+}
+
 void test_deny_reason_labels() {
   TEST_ASSERT_EQUAL_STRING("phase_none",
                            captureAppendDenyReasonLabel(CaptureAppendDenyReason::PhaseNone));
@@ -129,6 +152,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_overdub_source_view_skips_capture_duplicate_deny);
   RUN_TEST(test_append_deny_pool_alloc);
   RUN_TEST(test_append_accepted);
+  RUN_TEST(test_append_capture_preview_keeps_assigned_note_id);
   RUN_TEST(test_deny_reason_labels);
   return UNITY_END();
 }
