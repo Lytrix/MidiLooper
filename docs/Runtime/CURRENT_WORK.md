@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (overlay identity [`195409`](../../captures/session_20260907_195409.log))
+Last updated: 2026-09-07 (overlay miss stage log; recapture [`203007`](../../captures/session_20260907_203007.log))
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -18,7 +18,17 @@ rows. Stage 3 sibling-drop exemption is unchanged. `123236` / `000402`
 remnant drop is unchanged. RC-B unmatched NoteOff admission is not
 started. Focused native PASS (`test_pending_note_change`,
 `test_display_window_utils`). RAM1 locals **6848**. Full native
-**1722/1723** (1 skipped). HITL recapture open.
+**1722/1723** (1 skipped). HITL
+[`203007`](../../captures/session_20260907_203007.log) **FAIL**: after
+wrap 2, closed current-preview `id=126` `69@48–96` is `draw_src,diff new`
+and absent from the frame (`missed_preview=1`; wrap 3 repeats as
+`id=138`). First wrap `sealed=9` is clean. Same A geometry miss as
+[`195409`](../../captures/session_20260907_195409.log). The remaining
+owner is not named by [`203007`](../../captures/session_20260907_203007.log).
+Next recapture reads `draw_src,preview_miss` / `compose_miss`: compose
+match `0` is overlay+recover; `compose_miss=0` with `missed_preview>0`
+is pending/tails. `diff old` is now the painted sibling, not
+`visualCache`.
 Plans: [`overdub_same_start_note_pairing_bugfix.md`](../Plans/overdub_same_start_note_pairing_bugfix.md),
 [`overdub_bar1_compose_miss_bugfix.md`](../Plans/overdub_bar1_compose_miss_bugfix.md),
 [`overdub_overlay_identity_bugfix.md`](../Plans/overdub_overlay_identity_bugfix.md).

@@ -268,11 +268,34 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
                  newNote != nullptr ? static_cast<unsigned>(newNote->endTick) : 0u);
         DebugSessionCapture::appendCaptureTextLine(line);
     };
+    auto describeStage = [&](const DisplayNoteVec& notes, const DisplayNote& preview,
+                             uint32_t& match, uint32_t& rowId, uint32_t& rowEnd) {
+        match = 0;
+        rowId = 0;
+        rowEnd = 0;
+        const DisplayNote* byId = findByNoteId(notes, preview.noteId);
+        if (byId != nullptr) {
+            match = (byId->note == preview.note && byId->startTick == preview.startTick &&
+                     byId->endTick == preview.endTick)
+                        ? 1u
+                        : 2u;
+            rowId = static_cast<uint32_t>(byId->noteId);
+            rowEnd = byId->endTick;
+            return;
+        }
+        const DisplayNote* sibling = findByPitchStart(notes, preview.note, preview.startTick);
+        if (sibling != nullptr) {
+            rowId = static_cast<uint32_t>(sibling->noteId);
+            rowEnd = sibling->endTick;
+        }
+    };
 
     uint32_t mismatchCount = 0;
     uint32_t hiddenCount = 0;
     uint32_t missedPreviewCount = 0;
+    uint32_t composeMissCount = 0;
     uint32_t logged = 0;
+    uint32_t loggedPreviewMiss = 0;
     constexpr uint32_t kMaxLoggedDiffs = 8;
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
 
@@ -322,26 +345,62 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         }
         ++mismatchCount;
         ++missedPreviewCount;
+        uint32_t composeMatch = 0;
+        uint32_t composeId = 0;
+        uint32_t composeEnd = 0;
+        describeStage(liveDisplayNotes, preview, composeMatch, composeId, composeEnd);
+        if (composeMatch != 1u) {
+            ++composeMissCount;
+        }
         if (logged < kMaxLoggedDiffs) {
             const uint32_t bar = ticksPerBar > 0 ? preview.startTick / ticksPerBar : 0;
-            emitDiff(bar, preview.noteId, findByPitchStart(loop.visualCache.notes, preview.note,
-                                                           preview.startTick),
-                     &preview);
+            emitDiff(bar, preview.noteId, byPitchStart, &preview);
             ++logged;
         }
+        if (loggedPreviewMiss >= kMaxLoggedDiffs) {
+            continue;
+        }
+        uint32_t frameMatch = 0;
+        uint32_t frameId = 0;
+        uint32_t frameEnd = 0;
+        describeStage(drawnNotes, preview, frameMatch, frameId, frameEnd);
+        uint32_t sealedId = 0;
+        uint32_t sealedEnd = 0;
+        const DisplayNote* sealed =
+            findByPitchStart(loop.sealedCapturePreviewNotes(), preview.note, preview.startTick);
+        if (sealed != nullptr) {
+            sealedId = static_cast<uint32_t>(sealed->noteId);
+            sealedEnd = sealed->endTick;
+        }
+        char miss[240];
+        snprintf(miss, sizeof(miss),
+                 "#CAP,%lu,DIAG,draw_src,preview_miss,id,%u,p,%u,s,%u,e,%u,"
+                 "compose,%u,%u,%u,frame,%u,%u,%u,sealed,%u,%u",
+                 static_cast<unsigned long>(micros()),
+                 static_cast<unsigned>(preview.noteId),
+                 static_cast<unsigned>(preview.note),
+                 static_cast<unsigned>(preview.startTick),
+                 static_cast<unsigned>(preview.endTick),
+                 static_cast<unsigned>(composeMatch), static_cast<unsigned>(composeId),
+                 static_cast<unsigned>(composeEnd), static_cast<unsigned>(frameMatch),
+                 static_cast<unsigned>(frameId), static_cast<unsigned>(frameEnd),
+                 static_cast<unsigned>(sealedId), static_cast<unsigned>(sealedEnd));
+        DebugSessionCapture::appendCaptureTextLine(miss);
+        ++loggedPreviewMiss;
     }
 
-    char layers[192];
+    char layers[208];
     snprintf(layers, sizeof(layers),
              "#CAP,%lu,DIAG,draw_src,layers,visual,%u,preview,%u,sealed,%u,snap,%u,frame,%u,"
-             "hidden,%u,missed_preview,%u",
+             "hidden,%u,missed_preview,%u,compose_miss,%u",
              static_cast<unsigned long>(micros()),
              static_cast<unsigned>(loop.visualCache.notes.size()),
              static_cast<unsigned>(loop.capturePreview.notes.size()),
              static_cast<unsigned>(loop.sealedCapturePreviewNotes().size()),
              loop.publishedSnapshotIsCurrent() ? 1u : 0u,
              static_cast<unsigned>(drawnNotes.size()), static_cast<unsigned>(hiddenCount),
-             static_cast<unsigned>(missedPreviewCount));
+             static_cast<unsigned>(missedPreviewCount),
+             static_cast<unsigned>(composeMissCount));
     DebugSessionCapture::appendCaptureTextLine(layers);
 
     if (mismatchCount > 0) {
