@@ -46,3 +46,12 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
                                             PlaybackJamFilterFn jamFilter, void* jamCtx,
                                             uint8_t trackMidiChannelForDedup,
                                             PlaybackSendFn applyLedgerOnly = nullptr);
+
+/// Overdub wrap clock walk: offer `(prev, L-1]` then `[0, S]` to the same
+/// `advancePlaybackCursor` → `applyPlaybackEvent` path. Head-only
+/// `atLoopStart` does not reach an untagged loop-end Off (`174151` id=112).
+PlaybackAdvanceResult advancePlaybackCursorAcrossOverdubWrap(
+    PlaybackCursorAdvanceState cursorAdvance, const PlaybackTickFrame& wrapFrame,
+    PlaybackEmitPolicy policy, const PlaybackEventStream& stream, PlaybackSendFn send,
+    void* sendCtx, uint8_t playbackSlotIndex, PlaybackJamFilterFn jamFilter, void* jamCtx,
+    uint8_t trackMidiChannelForDedup, PlaybackSendFn applyLedgerOnly = nullptr);

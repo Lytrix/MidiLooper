@@ -4658,6 +4658,64 @@ void test_wrap_held_record_row_occupies_head_225200() {
   TEST_ASSERT_EQUAL_UINT32(47u, shorten->endTick);
 }
 
+void test_consume_finds_loop_end_identity_when_visual_cache_omits_it_174151() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLen = 5376;
+  loop.loopLengthTicks = kLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 720, 1, 69, 100, 16));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(768, 1, 69, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 5328, 1, 69, 100, 112));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(5375, 1, 69, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 113;
+  loop.visualCache.notes.clear();
+  NoteUtils::DisplayNote kept{};
+  kept.noteId = 16;
+  kept.note = 69;
+  kept.velocity = 100;
+  kept.startTick = 720;
+  kept.endTick = 768;
+  loop.visualCache.notes.push_back(kept);
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+  loop.openOverdubSession(48);
+  loop.establishOverdubSourceView(48);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.overdubSourceViewNotes(), 112));
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 69, 90, 48, 96, 174,
+                                                                   overlapIds({112})));
+  TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
+}
+
+void test_closed_loop_end_identity_is_not_reshortened_after_wrap_off_174151() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLen = 5376;
+  loop.loopLengthTicks = kLen;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 5328, 1, 69, 100, 112));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(5375, 1, 69, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 113;
+  loop.openOverdubSession(48);
+  loop.establishOverdubSourceView(48);
+  ActiveNoteLedger ledger;
+  ledger.noteOn(1, 69, 112, 5328, 100);
+  MidiEvent off5375 = MidiEvent::NoteOff(5375, 1, 69, 0);
+  TEST_ASSERT_TRUE(ledger.applyPlaybackEvent(1, off5375));
+  TEST_ASSERT_FALSE(ledger.isActive(1, 69));
+  OverlapNoteIdSet occupyIds;
+  loop.collectOverdubNoteOnParticipantIds(69, 1, ledger, occupyIds);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(occupyIds.size()));
+  TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 69, 90, 48, 96, 174,
+                                                                   occupyIds));
+  TEST_ASSERT_NULL(findTransform(loop.pendingNoteChanges(), 112));
+}
+
 /// RC5: record pass stays out of session wrap ids; slot stack is two kinds.
 void test_record_then_session_wraps_are_two_slot_undo_entries() {
   LoopEventStore::resetPoolForTests();
@@ -4837,6 +4895,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_seal_keeps_painted_shorten_233150);
   RUN_TEST(test_wrap_seal_keeps_later_painted_shorten_235546);
   RUN_TEST(test_wrap_held_record_row_occupies_head_225200);
+  RUN_TEST(test_consume_finds_loop_end_identity_when_visual_cache_omits_it_174151);
+  RUN_TEST(test_closed_loop_end_identity_is_not_reshortened_after_wrap_off_174151);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
   return UNITY_END();
 }

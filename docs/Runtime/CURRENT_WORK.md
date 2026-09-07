@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-07 (overdub MIDI boundary Stage 1 telemetry; prior paint PASS [`143701`](../../captures/session_20260907_143701.log))
+Last updated: 2026-09-07 (occupy wrap `norowid` [`174151`](../../captures/session_20260907_174151.log))
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Overdub MIDI boundary timing — Stage 1 (clock attribution):**
+**Overdub occupy wrap `norowid` / currentTick temp Off ([`174151`](../../captures/session_20260907_174151.log)):**
+Wrap cursor walk offers `(prev, L-1]` then `[0, S]` to
+`applyPlaybackEvent`. Occupy span cache / last-pass merge recover
+omitted committed NoteOn identities with that same untagged-Off / LIFO
+rule (reconstruct can defer Off@`L-1`). Incomplete `visualCache` is a
+cache miss, not absence. Paint tails stay downstream. Host pins PASS.
+Native **1704/1705** (1 skipped). RAM1 locals **6848**. HITL recapture
+open. Plan: [`overdub_occupy_wrap_norowid_noteoff_bugfix.md`](../Plans/overdub_occupy_wrap_norowid_noteoff_bugfix.md).
+
+**Prior — Overdub MIDI boundary timing — Stage 1 (clock attribution):**
 Capture-gated window tags on `RuntimeTimingTelemetry`: `extclk_arrival`,
 `extclk_dispatch`, `clk_batch`, `service_period`. USB-device batch read
 records clock cardinality and arrival vs expected external-clock instant.

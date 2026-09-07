@@ -763,6 +763,64 @@ LOOP_COLD_MEM void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
   }
 }
 
+LOOP_COLD_MEM bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Reconstruct (`finishOpenNotes=false`) defers an untagged Off at `L-1` for a
+/// tail-window On (`174151` id=112 Off@5375). That is a projection miss, not
+/// committed-content absence. Pair with the same untagged-Off / LIFO owner as
+/// playback (`ActiveNoteLedger::applyPlaybackEvent`) and add the omitted row.
+LOOP_COLD_MEM void mergeOmittedCommittedNoteOnIdentities(NoteUtils::DisplayNoteVec& dest,
+                                                         const SessionMidiEventVec& events) {
+  ActiveNoteLedger pairing;
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOn()) {
+      pairing.applyPlaybackEvent(evt.channel, evt);
+      continue;
+    }
+    if (!evt.isNoteOff()) {
+      continue;
+    }
+    const uint8_t pitch = evt.data.noteData.note;
+    NoteId closedId = kInvalidNoteId;
+    uint32_t startTick = 0;
+    uint8_t velocity = 0;
+    pairing.forEachActive([&](uint8_t channel, uint8_t note, const ActiveNoteLedger::Entry& entry) {
+      if (channel != evt.channel || note != pitch) {
+        return;
+      }
+      if (evt.noteId != kInvalidNoteId && entry.noteId != evt.noteId) {
+        return;
+      }
+      closedId = entry.noteId;
+      startTick = entry.startTick;
+      velocity = entry.velocity;
+    });
+    if (!pairing.applyPlaybackEvent(evt.channel, evt)) {
+      continue;
+    }
+    if (closedId == kInvalidNoteId || displayNotesContainNoteId(dest, closedId)) {
+      continue;
+    }
+    NoteUtils::DisplayNote note{};
+    note.noteId = closedId;
+    note.note = pitch;
+    note.velocity = velocity;
+    note.startTick = startTick;
+    note.endTick = evt.tick;
+    dest.push_back(note);
+  }
+}
+
 }  // namespace
 
 LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
@@ -787,6 +845,7 @@ LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   }
   NoteUtils::DisplayNoteVec passNotes =
       NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
+  mergeOmittedCommittedNoteOnIdentities(passNotes, passEvents);
   collapseSplitHeadTailToWrapHeld(passNotes, loopLengthTicks);
   mergeDisplayNotesIntoOverdubSourceView(passNotes);
   // Do not merge this pass's isolated reconstruct into visualCache. Per-pass
@@ -991,6 +1050,23 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     overdubSourceSpanCacheFullLoop_ = true;
     sourceOrigin = "passes";
   }
+  }
+  if (loopLengthTicks > 0) {
+    // Cache/snapshot/prepared/reconstruct miss is not committed-content absence
+    // (`174151` id=112). Reconstruct can omit a tail-window On closed by an
+    // untagged Off at L-1; ledger pairing still sees that identity.
+    SessionMidiEventVec committedEvents;
+    passes.materializeToEventVector(committedEvents, loopLengthTicks);
+    if (std::strcmp(sourceOrigin, "passes") != 0) {
+      NoteUtils::DisplayNoteVec committedNotes =
+          NoteUtils::reconstructDisplayNotes(committedEvents, loopLengthTicks, false, false);
+      appendOverdubPassWrapPairedNotes(committedNotes);
+      mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
+    }
+    mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
+    if (!overdubSourceSpanCacheNotes_.empty()) {
+      overdubSourceSpanCacheFullLoop_ = true;
+    }
   }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
