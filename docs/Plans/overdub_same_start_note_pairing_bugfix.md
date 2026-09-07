@@ -356,3 +356,20 @@ matches `Loop::capturePreview.notes`. Remnant drop for `123236` /
 
 **Not in this commit:** HITL recapture of [`183043`](../../captures/session_20260907_183043.log)
 / [`185822`](../../captures/session_20260907_185822.log).
+
+## Follow-up: capture pairing and bar-1 composition
+
+The next investigation is split into two independent root-cause slices; do
+not combine their fixes:
+
+- **RC-A — draw-source admission:** host shipped. Recover inserts at the
+  committed prefix cut so a closed `capturePreview` identity stays in the
+  suffix. Stage 3 exemption unchanged. Plan:
+  [`overdub_bar1_compose_miss_bugfix.md`](overdub_bar1_compose_miss_bugfix.md).
+- **RC-B — unmatched capture NoteOff:** independently test and then guard
+  `Loop::appendCaptureEventWithResult` so a NoteOff is admitted only when the
+  existing pairing rule identifies a currently open matching NoteOn. Do not
+  alter existing LIFO/channel semantics for valid overlapping NoteOns.
+
+Evidence and execution plan:
+[`overdub_capture_pairing_followup_4089eaed.plan.md`](../../.cursor/plans/overdub_capture_pairing_followup_4089eaed.plan.md).

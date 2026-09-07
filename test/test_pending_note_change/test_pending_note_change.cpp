@@ -3729,6 +3729,40 @@ const NoteUtils::DisplayNote* findPaintAtPitchStart(const NoteUtils::DisplayNote
   return nullptr;
 }
 
+int findDisplayNoteIndexById(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (notes[i].noteId == noteId) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+/// Matches `recoverMissingPendingShortenSources`: recovered rows join the
+/// committed prefix; overlay preview rows stay after `committedEnd`.
+void recoverMissingShortenSourcesAsDrawSource(NoteUtils::DisplayNoteVec& compose,
+                                              size_t& committedEnd,
+                                              const NoteUtils::DisplayNote& authoritative) {
+  DisplayWindowUtils::admitRecoveredCommittedShortenRow(compose, committedEnd, authoritative);
+}
+
+void assertClosedPreviewAtCaptureOff(const NoteUtils::DisplayNoteVec& notes, NoteId previewId,
+                                     uint32_t startTick, uint32_t endTick) {
+  const NoteUtils::DisplayNote* preview = findDisplayNoteById(notes, previewId);
+  TEST_ASSERT_NOT_NULL(preview);
+  TEST_ASSERT_EQUAL_UINT32(startTick, preview->startTick);
+  TEST_ASSERT_EQUAL_UINT32(endTick, preview->endTick);
+}
+
+void assertClosedPreviewStaysAfterCommittedCut(const NoteUtils::DisplayNoteVec& notes,
+                                               size_t committedEnd, NoteId previewId,
+                                               uint32_t startTick, uint32_t endTick) {
+  assertClosedPreviewAtCaptureOff(notes, previewId, startTick, endTick);
+  const int previewIndex = findDisplayNoteIndexById(notes, previewId);
+  TEST_ASSERT_GREATER_OR_EQUAL(0, previewIndex);
+  TEST_ASSERT_GREATER_OR_EQUAL(static_cast<int>(committedEnd), previewIndex);
+}
+
 void seedOccupyOpenHoldPreview(Loop& loop, NoteId holdId) {
   NoteUtils::DisplayNote hold = displayNote(holdId, 63, 1920, 1920);
   loop.capturePreview.notes.push_back(hold);
@@ -4806,6 +4840,111 @@ void test_record_then_session_wraps_are_two_slot_undo_entries() {
   TEST_ASSERT_NOT_EQUAL(recordPassId, stack.entries[1].passId);
 }
 
+/// `192322`: closed preview id 150 `69@48–96` must survive the full draw-source
+/// sequence, including recover that currently assigns `committedEnd = size`.
+void test_closed_preview_survives_draw_source_compose_192322() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr uint32_t kLastBar = (kLoopLength / Config::TICKS_PER_BAR) - 1u;
+  constexpr NoteId kPrefixId = 32;
+  constexpr NoteId kPreviewId = 150;
+  constexpr uint32_t kStart = 48;
+  constexpr uint32_t kPreviewEnd = 96;
+  constexpr uint32_t kPrefixEnd = 200;
+  constexpr uint32_t kShortenEnd = 70;
+
+  auto composeWithOverlay = [&](Loop& loop,
+                                NoteUtils::DisplayNoteVec prefix) -> NoteUtils::DisplayNoteVec {
+    const size_t committedEnd = prefix.size();
+    applyDrawSourceOverlaysForTest(loop, 0, kLastBar, prefix, committedEnd);
+    return prefix;
+  };
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.capturePreview.notes.push_back(displayNote(kPreviewId, 69, kStart, kPreviewEnd));
+    loop.pushPendingNoteChangeForTest(shortenChange(kPrefixId, 69, kStart, kShortenEnd));
+
+    NoteUtils::DisplayNoteVec prefix;
+    prefix.push_back(displayNote(kPrefixId, 69, kStart, kPrefixEnd));
+    size_t committedEnd = prefix.size();
+    NoteUtils::DisplayNoteVec composeBase = composeWithOverlay(loop, prefix);
+    assertClosedPreviewStaysAfterCommittedCut(composeBase, committedEnd, kPreviewId, kStart,
+                                              kPreviewEnd);
+
+    NoteUtils::DisplayNoteVec painted = composeBase;
+    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kPreviewEnd);
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 96, committedEnd,
+                                            painted);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kPreviewEnd);
+    TEST_ASSERT_NOT_NULL(findDisplayNoteById(painted, kPrefixId));
+    TEST_ASSERT_EQUAL_UINT32(kShortenEnd, findDisplayNoteById(painted, kPrefixId)->endTick);
+  }
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.capturePreview.notes.push_back(displayNote(kPreviewId, 69, kStart, kPreviewEnd));
+    loop.pushPendingNoteChangeForTest(shortenChange(kPrefixId, 69, kStart, kShortenEnd));
+
+    NoteUtils::DisplayNoteVec prefix;
+    size_t committedEnd = prefix.size();
+    NoteUtils::DisplayNoteVec composeBase = composeWithOverlay(loop, prefix);
+    assertClosedPreviewStaysAfterCommittedCut(composeBase, committedEnd, kPreviewId, kStart,
+                                              kPreviewEnd);
+
+    recoverMissingShortenSourcesAsDrawSource(composeBase, committedEnd,
+                                             displayNote(kPrefixId, 69, kStart, kPrefixEnd));
+    assertClosedPreviewStaysAfterCommittedCut(composeBase, committedEnd, kPreviewId, kStart,
+                                              kPreviewEnd);
+
+    NoteUtils::DisplayNoteVec painted = composeBase;
+    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kPreviewEnd);
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 96, committedEnd,
+                                            painted);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kPreviewEnd);
+    TEST_ASSERT_NOT_NULL(findDisplayNoteById(painted, kPrefixId));
+    TEST_ASSERT_EQUAL_UINT32(kShortenEnd, findDisplayNoteById(painted, kPrefixId)->endTick);
+  }
+
+  {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopLengthTicks = kLoopLength;
+    loop.beginCapture(CapturePhase::Overdub);
+    loop.capturePreview.notes.push_back(displayNote(kPreviewId, 69, kStart, kPreviewEnd));
+    loop.pushPendingNoteChangeForTest(hideChange(kPrefixId, 69, kStart, kPrefixEnd));
+
+    NoteUtils::DisplayNoteVec prefix;
+    size_t committedEnd = prefix.size();
+    NoteUtils::DisplayNoteVec composeBase = composeWithOverlay(loop, prefix);
+    assertClosedPreviewStaysAfterCommittedCut(composeBase, committedEnd, kPreviewId, kStart,
+                                              kPreviewEnd);
+
+    recoverMissingShortenSourcesAsDrawSource(composeBase, committedEnd,
+                                             displayNote(kPrefixId, 69, kStart, kPrefixEnd));
+    assertClosedPreviewStaysAfterCommittedCut(composeBase, committedEnd, kPreviewId, kStart,
+                                              kPreviewEnd);
+
+    NoteUtils::DisplayNoteVec painted = composeBase;
+    loop.applyPendingNoteChangesToDisplayNotes(painted, committedEnd);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kPreviewEnd);
+    applyOverdubCapturePlayheadTailsForTest(loop.capturePreview, kLoopLength, 96, committedEnd,
+                                            painted);
+    assertClosedPreviewAtCaptureOff(painted, kPreviewId, kStart, kPreviewEnd);
+    TEST_ASSERT_NULL(findDisplayNoteById(painted, kPrefixId));
+  }
+}
+
 /// `185822`: remnant drop may still remove reconstruct id 99; closed incoming
 /// capturePreview id 168 at the same pitch+start must keep its capture Off.
 void test_closed_preview_survives_same_start_remnant_drop_185822() {
@@ -4987,6 +5126,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_consume_finds_loop_end_identity_when_visual_cache_omits_it_174151);
   RUN_TEST(test_closed_loop_end_identity_is_not_reshortened_after_wrap_off_174151);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
+  RUN_TEST(test_closed_preview_survives_draw_source_compose_192322);
   RUN_TEST(test_closed_preview_survives_same_start_remnant_drop_185822);
   RUN_TEST(test_pending_shorten_does_not_delete_equal_geometry_sibling);
   return UNITY_END();

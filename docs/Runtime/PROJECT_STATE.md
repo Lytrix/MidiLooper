@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-07 (same-start A / D# pairing Stage 3 host; HITL open on [`185822`](../../captures/session_20260907_185822.log))
+Last updated: 2026-09-07 (RC-A bar-1 compose miss host; HITL open on [`192322`](../../captures/session_20260907_192322.log))
 
 ---
 

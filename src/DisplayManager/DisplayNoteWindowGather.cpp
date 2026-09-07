@@ -403,7 +403,8 @@ DISP_CAPTURE_MEM bool recoverMissingPendingShortenSources(const Loop& loop,
                                                              authoritativeHasTarget);
         if (kind == DisplayWindowUtils::PendingShortenSourceKind::RecoverAuthoritative) {
             if (!DisplayWindowUtils::displayNotesContainNoteId(compose, change.noteId)) {
-                compose.push_back(authoritative);
+                DisplayWindowUtils::admitRecoveredCommittedShortenRow(compose, committedEnd,
+                                                                      authoritative);
             }
             recoveredAny = true;
         }
@@ -413,9 +414,6 @@ DISP_CAPTURE_MEM bool recoverMissingPendingShortenSources(const Loop& loop,
                                          authoritativeHasTarget ? &authoritative : nullptr);
         }
 #endif
-    }
-    if (recoveredAny) {
-        committedEnd = compose.size();
     }
     return recoveredAny;
 }
@@ -464,11 +462,10 @@ DISP_CAPTURE_MEM bool recoverMissingSealedShortenSources(const Loop& loop,
     const DisplayWindowUtils::PendingShortenRecoveryCounts counts =
         DisplayWindowUtils::recoverMissingPendingShortenRows(compose, loop.visualCache.notes,
                                                              shortenIds.data(), shortenIds.size(),
-                                                             authoritative);
+                                                             authoritative, &committedEnd);
     if (counts.recovered == 0) {
         return false;
     }
-    committedEnd = compose.size();
     return true;
 }
 

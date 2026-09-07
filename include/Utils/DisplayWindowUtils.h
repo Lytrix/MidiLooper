@@ -503,15 +503,16 @@ struct PendingShortenRecoveryCounts {
     uint32_t authoritativeAbsence = 0;
 };
 
-/// Append authoritative committed geometry for pending Shorten targets that
+/// Admit authoritative committed geometry for pending Shorten targets that
 /// compose dropped. VisualCache identity is mismatch evidence for
 /// `authoritative_absence` only — never the geometry to copy (`212700`).
 /// Post-wrap compose may miss a row while VisualCache is also dirty
 /// (`223435` id 70 `1536–2208`). Recover from snapshot / source-view /
-/// windowed gather when that identity is authoritative. Hide is not a
-/// recovery input. First paint after NoteOn: compose keeps original
-/// geometry; paint has the pending Shorten end. Absence stays absence
-/// (`215658`).
+/// windowed gather when that identity is authoritative. When `committedEnd`
+/// is provided, recovered rows join that prefix; overlay / capturePreview
+/// suffix rows stay after the cut (`192322`). Hide is not a recovery
+/// input. First paint after NoteOn: compose keeps original geometry; paint
+/// has the pending Shorten end. Absence stays absence (`215658`).
 struct PaintedPendingShorten {
     NoteId noteId = kInvalidNoteId;
     uint32_t composeStartTick = 0;
@@ -522,6 +523,31 @@ struct PaintedPendingShorten {
     bool paintHasTarget = false;
     bool paintHasShortenedEnd = false;
 };
+
+/// Insert a recovered committed Shorten row at the prefix cut. Overlay /
+/// capturePreview suffix rows stay after `committedEnd` (`192322`). A
+/// duplicate identity is left unchanged. Passing no cut (`nullptr`) appends.
+inline void admitRecoveredCommittedShortenRow(NoteUtils::DisplayNoteVec& compose,
+                                              size_t* committedEnd,
+                                              const NoteUtils::DisplayNote& row) {
+    if (displayNotesContainNoteId(compose, row.noteId)) {
+        return;
+    }
+    size_t insertAt = compose.size();
+    if (committedEnd != nullptr) {
+        insertAt = *committedEnd <= compose.size() ? *committedEnd : compose.size();
+    }
+    compose.insert(compose.begin() + static_cast<std::ptrdiff_t>(insertAt), row);
+    if (committedEnd != nullptr) {
+        *committedEnd = insertAt + 1;
+    }
+}
+
+inline void admitRecoveredCommittedShortenRow(NoteUtils::DisplayNoteVec& compose,
+                                              size_t& committedEnd,
+                                              const NoteUtils::DisplayNote& row) {
+    admitRecoveredCommittedShortenRow(compose, &committedEnd, row);
+}
 
 inline PaintedPendingShorten describePaintedPendingShorten(const NoteUtils::DisplayNoteVec& compose,
                                                            const NoteUtils::DisplayNoteVec& paint,
@@ -546,7 +572,7 @@ inline PaintedPendingShorten describePaintedPendingShorten(const NoteUtils::Disp
 inline PendingShortenRecoveryCounts recoverMissingPendingShortenRows(
     NoteUtils::DisplayNoteVec& compose, const NoteUtils::DisplayNoteVec& visualCache,
     const NoteId* pendingShortenIds, size_t pendingShortenCount,
-    const NoteUtils::DisplayNoteVec& authoritativeCommitted) {
+    const NoteUtils::DisplayNoteVec& authoritativeCommitted, size_t* committedEnd = nullptr) {
     PendingShortenRecoveryCounts counts{};
     if (pendingShortenIds == nullptr || pendingShortenCount == 0) {
         return counts;
@@ -561,7 +587,7 @@ inline PendingShortenRecoveryCounts recoverMissingPendingShortenRows(
             composeHasTarget, visualCacheHasSameIdentity, authoritative != nullptr);
         if (kind == PendingShortenSourceKind::RecoverAuthoritative && authoritative != nullptr) {
             if (!displayNotesContainNoteId(compose, noteId)) {
-                compose.push_back(*authoritative);
+                admitRecoveredCommittedShortenRow(compose, committedEnd, *authoritative);
             }
             ++counts.recovered;
         } else if (kind == PendingShortenSourceKind::AuthoritativeAbsence) {
