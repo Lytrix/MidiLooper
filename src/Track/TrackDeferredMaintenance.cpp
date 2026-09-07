@@ -937,6 +937,16 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     appendSnapshotIdleCaptureLine(snapshotLoop, snapshotIdleStartUs);
 #endif
   }
+
+  // Snapshot publication is the committed source for the following visual-cache
+  // fill. Do not reconstruct the same loaded loop from passes while its root is
+  // still being built; on long boot loops this creates competing maintenance
+  // latency and can starve the device service interval.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
+      activeLoop.hasPendingSnapshotPublish()) {
+    return;
+  }
+
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
   // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).

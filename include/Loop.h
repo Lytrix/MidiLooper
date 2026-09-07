@@ -523,6 +523,9 @@ struct Loop {
                                      const EditPassIdList& companionIds = {});
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
+  /// Queue publication of every active committed pass. Adopt/restore only.
+  /// Does not construct. Empty loops clear pending and do not queue.
+  bool queueLoadedSnapshotPublish();
   /// Queue bounded wrap-journal fragments from settled pending mutations. Wrap path only.
   bool queueOverdubWrapSnapshotJournal(PassId wrapPassId);
   /// Record the `playbackRevision` a queued wrap journal will represent once complete.

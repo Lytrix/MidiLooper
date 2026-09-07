@@ -175,6 +175,13 @@ void test_first_record_snapshot_idle_matches_overdub_playing_start() {
       false, false, false, true, false, false));
 }
 
+void test_stopped_track_snapshot_pauses_during_realtime() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(true, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(false, true));
+}
+
 void test_stopped_clock_snapshot_requires_pending_work() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(false, true, false));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, false, false));
@@ -220,6 +227,7 @@ int main() {
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
+  RUN_TEST(test_stopped_track_snapshot_pauses_during_realtime);
   RUN_TEST(test_stopped_clock_snapshot_requires_pending_work);
   RUN_TEST(test_stopped_snapshot_track_prefers_pending_slot);
   RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);

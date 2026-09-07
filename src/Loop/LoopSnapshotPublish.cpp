@@ -1393,6 +1393,47 @@ LOOP_COLD_MEM bool Loop::liveRecordCanApplyCompletedTicks(uint32_t completedTick
   return pendingSnapshotPublishBox_->unpublishedCandidate->loopLengthTicks() >= completedTicks;
 }
 
+LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
+  if (publishedSnapshotIsCurrent()) {
+    return false;
+  }
+  if (loopLengthTicks == 0 || !hasCommittedPasses()) {
+    clearPendingSnapshotPublish();
+    return false;
+  }
+  if (publishedSnapshot()) {
+    publishedSnapshotBox_.reset();
+  }
+  clearPendingSnapshotPublish();
+  pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  box.sessionExitQueued = true;
+  box.sessionExitReason = CommitReason::RecordStop;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty() &&
+      passes.recordPass.id != kInvalidPassId) {
+    box.queuedPassIds.push_back(passes.recordPass.id);
+  }
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty() ||
+        pass.id == kInvalidPassId) {
+      continue;
+    }
+    box.queuedPassIds.push_back(pass.id);
+  }
+  for (const EditPass& edit : passes.editPasses) {
+    if (edit.state == EditPassState::Active && edit.id != kInvalidEditPassId) {
+      box.companionIds.push_back(edit.id);
+    }
+  }
+  box.companionsApplied = box.companionIds.empty();
+  if (box.queuedPassIds.empty() && box.companionIds.empty()) {
+    clearPendingSnapshotPublish();
+    return false;
+  }
+  return true;
+}
+
 LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
                                                   const EditPassIdList& companionIds) {
   if (!isSessionExit(reason) || loopLengthTicks == 0) {

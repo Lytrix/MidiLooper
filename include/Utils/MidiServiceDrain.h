@@ -141,6 +141,14 @@ inline bool allowStoppedClockSnapshotStep(bool allTracksStopped, bool clockRunni
   return !allTracksStopped || !clockRunning || anyPendingSnapshotWork;
 }
 
+/// A STOPPED track must not construct snapshot work on another track's live
+/// MIDI interval. session_20260908_003555 rebooted when T6 loaded
+/// session-exit construction continued during T0 RECORDING.
+inline bool allowStoppedTrackSnapshotDuringRealtime(bool trackIsRealtime,
+                                                    bool anyRealtimeTrackActive) {
+  return !anyRealtimeTrackActive || trackIsRealtime;
+}
+
 /// Prefer a track with pending snapshot work on a STOPPED Snapshot turn.
 /// Walks from `cursor`. Returns `cursor` when no pending flag is set.
 inline uint8_t selectStoppedSnapshotTrack(uint8_t cursor, uint8_t trackCount,

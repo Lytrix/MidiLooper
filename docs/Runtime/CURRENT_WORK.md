@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (visual-cache Stage 2.1 snapshot membership copy)
+Last updated: 2026-09-08 (visual-cache Stage 2.0 load snapshot enqueue)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,18 +10,29 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Visual-cache Stage 2.1 — snapshot membership copy:**
-When `publishedSnapshotIsCurrent()`, `rebuildVisualCacheIdleSlice` copies
-`LoopSnapshotNote` membership for the dirty bar range. It does not gather
-snapshot events or run `reconstructDisplayNotes`. `visualCache.notes` stays
-the piano-roll list. Fallback / prepared fill stays when no current root
-exists. Stage 2.0 (queue publication after `adoptPersistedSnapshot`) is
-**not** started — that is a load transition. First-bar RECORDING stall from
-T6/S0 Fallback reconstruct ([`235930`](../../captures/session_20260907_235930.log))
-stays until a root exists on that slot.
-`teensy41-capture-serial` RAM1 locals **6848**. Native **1727/1728** (1 skipped).
+**Visual-cache Stage 2.0 — load snapshot enqueue:**
+`adoptPersistedSnapshot` and `restorePassesSnapshot` call
+`queueLoadedSnapshotPublish` after the revision bump. A committed loaded
+loop queues every active record/overdub pass (and active edit companions)
+on the existing `Loop` publication owner. Idle `stepPendingSnapshotPublish`
+builds the root. Empty restore clears pending and does not queue. No
+construct on the load path. Stage 2.1 copy then runs once the root is
+current. Device: [`003555`](../../captures/session_20260908_003555.log) rebooted
+during T0 RECORDING while T6 loaded construction continued
+(`snapshot_alloc` `nodes=2083`, then `CAPTURE_RECONNECT`). Snapshot idle
+on STOPPED tracks is withheld while any track is live. Drain stays on
+STOPPED Snapshot turns. First-bar T6 Fallback reconstruct is unchanged.
+STOPPED VisualCache reconstruction is deferred for the active loop while
+its snapshot publication is pending; Stage 2.1 snapshot-note copying starts
+after the root is current.
 Plan: [`display_visual_cache_snapshot_fill_refinement.md`](../Plans/display_visual_cache_snapshot_fill_refinement.md).
 Parent: [`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md) [#41](https://github.com/Lytrix/MidiLooper/issues/41).
+
+**Prior — Visual-cache Stage 2.1 — snapshot membership copy:**
+When `publishedSnapshotIsCurrent()`, `rebuildVisualCacheIdleSlice` copies
+`LoopSnapshotNote` membership for the dirty bar range. Fallback / prepared
+fill stays when no current root exists. Host: RAM1 locals **6848**. Native
+**1727/1728** (1 skipped).
 
 **Prior — Overdub MIDI boundary — Stage 4a device attribution [`235930`](../../captures/session_20260907_235930.log):**
 Tags emit. Residual ≤ 24 µs; slot ≤ 26 µs. `tracks` ≈ `clk` ≈ `usbclk`.
