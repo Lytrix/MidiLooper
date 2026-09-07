@@ -1450,6 +1450,7 @@ void test_visual_cache_keeps_overdub_wrap_held_without_stretching_record() {
   TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2400, 4, 12, 100, 2));
   TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2500, 4, 12, 0)));
   loop.seedRecordPassFromStore(record);
+  loop.nextNoteId_ = 3;
   loop.openOverdubSession(1152);
   loop.beginCapture(CapturePhase::Overdub, 1152);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2976, 4, 12, 100)));
@@ -2270,6 +2271,7 @@ void seedWrapHeldOverdubLoop(Loop& loop) {
   TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2400, 4, 12, 100, 2));
   TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2500, 4, 12, 0)));
   loop.seedRecordPassFromStore(record);
+  loop.nextNoteId_ = 3;
   loop.openOverdubSession(1152);
   loop.beginCapture(CapturePhase::Overdub, 1152);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2976, 4, 12, 100)));
@@ -2383,6 +2385,7 @@ void test_idle_slice_unprepared_interior_keeps_mid_loop_overdub() {
   TEST_ASSERT_TRUE(storeAppendNoteOn(record, 10, 1, 60, 100, 1));
   TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(58, 1, 60, 0)));
   loop.seedRecordPassFromStore(record);
+  loop.nextNoteId_ = 2;
   const uint32_t midOn = Config::TICKS_PER_BAR * 8 + 20;
   const uint32_t midOff = midOn + 80;
   loop.openOverdubSession(0);
@@ -2845,6 +2848,7 @@ void test_idle_slice_keeps_untouched_next_bar_note() {
   TEST_ASSERT_TRUE(storeAppendNoteOn(record, bar9On, 1, 60, 100, 2));
   TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(bar9On + 80, 1, 60, 0)));
   loop.seedRecordPassFromStore(record);
+  loop.nextNoteId_ = 3;
   TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, bar9On));
   const uint32_t midOn = Config::TICKS_PER_BAR * 8 + 200;
   const uint32_t midOff = midOn + 80;
@@ -4388,6 +4392,66 @@ void test_source_view_keeps_dsharp_committed_offs_before_pending_183043() {
   TEST_ASSERT_EQUAL_UINT32(2976u, third->endTick);
 }
 
+void test_visual_cache_keeps_dsharp_committed_offs_after_rebuild_211440() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLength = 4608;
+  loop.loopLengthTicks = kLoopLength;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 0, 1, 63, 100, 50));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 768, 1, 63, 100, 107));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(1440, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 1536, 1, 63, 100, 109));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2208, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2304, 1, 63, 100, 111));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2976, 1, 63, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopEventStore overdub;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(overdub, 1152, 1, 63, 100, 200));
+  TEST_ASSERT_TRUE(overdub.append(MidiEvent::NoteOff(1872, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(overdub, 1920, 1, 63, 100, 201));
+  TEST_ASSERT_TRUE(overdub.append(MidiEvent::NoteOff(2639, 1, 63, 0)));
+  seedCommittedOverdubPass(loop, overdub, 2, 1);
+  loop.loopLengthTicks = kLoopLength;
+
+  loop.rebuildVisualCacheFromPasses();
+  const NoteUtils::DisplayNote* first = findDisplayNoteById(loop.visualCache.notes, 107);
+  const NoteUtils::DisplayNote* second = findDisplayNoteById(loop.visualCache.notes, 109);
+  const NoteUtils::DisplayNote* third = findDisplayNoteById(loop.visualCache.notes, 111);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_NOT_NULL(third);
+  TEST_ASSERT_EQUAL_UINT32(768u, first->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1440u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(1536u, second->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, second->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2304u, third->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2976u, third->endTick);
+  const NoteUtils::DisplayNote* orphan = findDisplayNoteById(loop.visualCache.notes, 50);
+  if (orphan != nullptr) {
+    TEST_ASSERT_TRUE(orphan->endTick == orphan->startTick || orphan->endTick != 1440u);
+    TEST_ASSERT_TRUE((orphan->endTick - orphan->startTick) != kLoopLength);
+  }
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    TEST_ASSERT_FALSE(note.note == 63 && note.startTick == 0 &&
+                      note.endTick >= kLoopLength);
+  }
+
+  loop.markDisplayCachesStale();
+  loop.rebuildVisualCacheIdleSlice(4, 0);
+  loop.rebuildVisualCacheIdleSlice(4, 0);
+  const NoteUtils::DisplayNote* idleFirst = findDisplayNoteById(loop.visualCache.notes, 107);
+  const NoteUtils::DisplayNote* idleSecond = findDisplayNoteById(loop.visualCache.notes, 109);
+  const NoteUtils::DisplayNote* idleThird = findDisplayNoteById(loop.visualCache.notes, 111);
+  TEST_ASSERT_NOT_NULL(idleFirst);
+  TEST_ASSERT_NOT_NULL(idleSecond);
+  TEST_ASSERT_NOT_NULL(idleThird);
+  TEST_ASSERT_EQUAL_UINT32(1440u, idleFirst->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, idleSecond->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2976u, idleThird->endTick);
+}
+
 void test_visual_cache_keeps_same_start_a_identities_183043() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4518,6 +4582,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_nonzero_start_loop_shortens_at_storage_hold);
   RUN_TEST(test_source_view_keeps_same_start_a_identities_183043);
   RUN_TEST(test_source_view_keeps_dsharp_committed_offs_before_pending_183043);
+  RUN_TEST(test_visual_cache_keeps_dsharp_committed_offs_after_rebuild_211440);
   RUN_TEST(test_visual_cache_keeps_same_start_a_identities_183043);
   return UNITY_END();
 }

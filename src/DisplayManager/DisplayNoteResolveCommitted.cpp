@@ -5,6 +5,7 @@
 #include "DisplayManagerInternal.h"
 
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
@@ -253,19 +254,24 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         DIAG_TIMING_RECORD(DisplayBuild, micros() - displayBuildStartUs);
     }
 
-    // Prefer visualCache when fresh — after invalidation fall through to merged events.
+    // Prefer visualCache when fresh — after invalidation fall through to
+    // per-pass paired notes. Do not reconstruct the merged event stream
+    // (`211440` D# Offs).
     if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
-    } else if (!liveDisplayEventBuffer.empty()) {
+    } else if (loop.captureActive() && !liveDisplayEventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
-            NoteUtils::reconstructDisplayNotes(liveDisplayEventBuffer, loopLength, false);
+            NoteUtils::reconstructDisplayNotes(liveDisplayEventBuffer, loopLength, false, false);
         liveDisplayNotes.assign(reconstructed.begin(), reconstructed.end());
+        mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
+    } else if (loop.hasCommittedPasses()) {
+        LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength, liveDisplayNotes);
         mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
     } else {
         liveDisplayNotes.clear();
     }
 
-    if (!liveDisplayEventBuffer.empty()) {
+    if (loop.captureActive() && !liveDisplayEventBuffer.empty()) {
         const std::vector<NoteUtils::OpenNoteOn> openNotes =
             NoteUtils::findOpenNoteOns(liveDisplayEventBuffer, loopLength);
         if (!openNotes.empty()) {

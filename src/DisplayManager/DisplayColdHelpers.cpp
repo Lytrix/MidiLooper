@@ -6,6 +6,7 @@
 #include "DisplayManagerInternal.h"
 
 #include "Loop.h"
+#include "LoopContentResolution.h"
 #include "StorageManager.h"
 #include "Track.h"
 #include "TrackManager.h"
@@ -78,10 +79,12 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
             mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
         }
     }
-    if (!eventBuffer.empty()) {
+    if (includeActiveCapture && loop.captureActive() && !eventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
-            NoteUtils::reconstructDisplayNotes(eventBuffer, loopLength, false);
+            NoteUtils::reconstructDisplayNotes(eventBuffer, loopLength, false, false);
         outNotes.assign(reconstructed.begin(), reconstructed.end());
+    } else if (loop.hasCommittedPasses()) {
+        LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength, outNotes);
     } else {
         outNotes.clear();
     }

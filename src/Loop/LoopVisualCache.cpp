@@ -401,8 +401,20 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
 #if defined(SESSION_CAPTURE)
   const uint32_t reconstructStartUs = micros();
 #endif
-  NoteUtils::DisplayNoteVec sliceNotes =
-      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  NoteUtils::DisplayNoteVec sliceNotes;
+  if (usedSnapshot || usedPrepared) {
+    sliceNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  } else {
+    NoteUtils::DisplayNoteVec paired;
+    LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
+    sliceNotes.reserve(paired.size());
+    for (const NoteUtils::DisplayNote& note : paired) {
+      if (DisplayWindowUtils::noteIntersectsWindow(note.startTick, note.endTick, windowStart,
+                                                   windowLength, loopLengthTicks)) {
+        sliceNotes.push_back(note);
+      }
+    }
+  }
 #if defined(SESSION_CAPTURE)
   RUNTIME_TIMING_RECORD_IDLE_MAINT_CHILD_REM(1, reconstructStartUs);
 #endif
@@ -672,6 +684,51 @@ LOOP_COLD_MEM __attribute__((noinline)) bool Loop::advanceFallbackGatherSession(
   return true;
 }
 
+LOOP_COLD_MEM static void appendWrapPairedPassNotes(NoteUtils::DisplayNoteVec& notes,
+                                                    const CommittedChunkIdList& chunks,
+                                                    const EditPassVec& activeEdits,
+                                                    uint32_t loopLengthTicks, bool wrapHeldOnly) {
+  if (chunks.empty() || loopLengthTicks == 0) {
+    return;
+  }
+  SessionMidiEventVec passEvents;
+  LoopEventStore::appendChunkRefEvents(chunks, passEvents);
+  if (!activeEdits.empty()) {
+    applyNoteEditPassSequence(passEvents, activeEdits, loopLengthTicks);
+  }
+  const NoteUtils::DisplayNoteVec passNotes =
+      NoteUtils::reconstructDisplayNotes(passEvents, loopLengthTicks, false, false, true);
+  for (const NoteUtils::DisplayNote& note : passNotes) {
+    // Wrap-held fill is a geometry gap (015618). Body/source rows use NoteId
+    // so two passes may share pitch+start (`183043`). A linear same-start
+    // remnant from non-wrap pairing is replaced, not skipped (`225200`).
+    if (wrapHeldOnly) {
+      if (!isWrapHeldDisplayNote(note, loopLengthTicks)) {
+        continue;
+      }
+      bool replaced = false;
+      for (NoteUtils::DisplayNote& existing : notes) {
+        if (existing.note != note.note || existing.startTick != note.startTick) {
+          continue;
+        }
+        if (!isWrapHeldDisplayNote(existing, loopLengthTicks)) {
+          existing = note;
+        }
+        replaced = true;
+        break;
+      }
+      if (!replaced) {
+        notes.push_back(note);
+      }
+      continue;
+    }
+    if (DisplayWindowUtils::displayNoteIdentityPresent(notes, note)) {
+      continue;
+    }
+    notes.push_back(note);
+  }
+}
+
 LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes,
                                                           bool wrapHeldOnly) const {
   if (loopLengthTicks == 0) {
@@ -683,32 +740,16 @@ LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNote
       activeEdits.push_back(editPass);
     }
   }
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active) {
+    appendWrapPairedPassNotes(notes, passes.recordPass.committedChunkIds, activeEdits,
+                              loopLengthTicks, wrapHeldOnly);
+  }
   for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty()) {
+    if (pass.state != CapturePassState::Active) {
       continue;
     }
-    SessionMidiEventVec overdubEvents;
-    LoopEventStore::appendChunkRefEvents(pass.committedChunkIds, overdubEvents);
-    if (!activeEdits.empty()) {
-      applyNoteEditPassSequence(overdubEvents, activeEdits, loopLengthTicks);
-    }
-    const NoteUtils::DisplayNoteVec overdubNotes = NoteUtils::reconstructDisplayNotes(
-        overdubEvents, loopLengthTicks, false, false, true);
-    for (const NoteUtils::DisplayNote& note : overdubNotes) {
-      // Wrap-held fill is a geometry gap (015618). Body/source rows use NoteId
-      // so two passes may share pitch+start (`183043`).
-      if (wrapHeldOnly) {
-        if (displayNotePitchStartPresent(notes, note)) {
-          continue;
-        }
-      } else if (DisplayWindowUtils::displayNoteIdentityPresent(notes, note)) {
-        continue;
-      }
-      if (wrapHeldOnly && !isWrapHeldDisplayNote(note, loopLengthTicks)) {
-        continue;
-      }
-      notes.push_back(note);
-    }
+    appendWrapPairedPassNotes(notes, pass.committedChunkIds, activeEdits, loopLengthTicks,
+                              wrapHeldOnly);
   }
 }
 
@@ -741,8 +782,12 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
     gatherCommittedEvents(flat);
   }
   materializedEventCount_ = flat.size();
-  NoteUtils::DisplayNoteVec rebuiltNotes =
-      NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  NoteUtils::DisplayNoteVec rebuiltNotes;
+  if (usedSnapshot) {
+    rebuiltNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+  } else {
+    LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, rebuiltNotes);
+  }
   appendOverdubPassDisplayNotes(rebuiltNotes);
   resetFallbackGatherSession();
   clearDeferredVisualCacheWrapAppend(*this);

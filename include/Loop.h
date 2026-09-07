@@ -579,11 +579,14 @@ struct Loop {
   bool ensureCaptureEventsSorted();
   void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
   void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
+  /// Fallback/full rebuild pairs each capture pass (`resolveDisplayNotes`)
+  /// before merging rows. Snapshot gather still reconstructs that event vector.
   void rebuildVisualCacheFromPasses();
-  /// Reconstruct each active overdub pass with `overdubPassWrapPairing` and
+  /// Reconstruct each active record/overdub pass with `overdubPassWrapPairing` and
   /// append notes that merged record+overdub reconstruct omitted (015618).
   /// Skip a candidate when its valid `NoteId` is already present. `wrapHeldOnly`
   /// keeps wrap-held heads/tails and drops interior body notes (204132).
+  /// A linear same-start remnant is replaced by wrap-held geometry (`225200`).
   /// Source view uses `wrapHeldOnly=false`. One pass at a time.
   void appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNoteVec& notes,
                                         bool wrapHeldOnly = false) const;
