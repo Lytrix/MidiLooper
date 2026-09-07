@@ -239,6 +239,10 @@ struct LoopContentResolution {
     /// Idle-slice 2: reconstruct display notes into spans.
     bool finishRebuildSpansFromEvents(const SessionMidiEventVec& resolved,
                                       ResolutionCostCounters* counters = nullptr);
+    /// Same span rebuild using pass-local paired rows (not merged-stream LIFO).
+    bool finishRebuildSpansFromEvents(const SessionMidiEventVec& resolved,
+                                      const NoteUtils::DisplayNoteVec& pairedNotes,
+                                      ResolutionCostCounters* counters);
     /// Sliced span + boundary append after reconstruct. `[begin, endExclusive)` notes.
     /// Reserves `spans` to `notes.size()` and `spanBoundaries` to `2 * notes.size()` (5.7a).
     /// Channel comes from `channelByNoteId` (5.7c). Fill that index before this call.
@@ -313,6 +317,20 @@ struct LoopContentResolution {
   static void resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t windowStart,
                            uint32_t windowLength, NoteUtils::DisplayNoteVec& out,
                            ResolutionCostCounters* counters = nullptr);
+
+  /// Pair each active capture pass through `NoteUtils`, then merge rows by `NoteId`.
+  /// Display/source geometry owner — does not change playback event merge.
+  /// A later pass's Off cannot close an earlier pass's On.
+  static void resolveDisplayNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
+                                  NoteUtils::DisplayNoteVec& out,
+                                  ResolutionCostCounters* counters = nullptr);
+  static void resolveDisplayNotes(const TickIndex& index, const EditPassVec& editPasses,
+                                  uint32_t loopLengthTicks, NoteUtils::DisplayNoteVec& out,
+                                  ResolutionCostCounters* counters = nullptr);
+  /// Replace same valid `NoteId` with pass-local geometry; append new valid IDs.
+  /// Invalid-ID rows keep pitch+start uniqueness.
+  static void upsertResolvedDisplayNotes(NoteUtils::DisplayNoteVec& dest,
+                                         const NoteUtils::DisplayNoteVec& passLocalNotes);
 
   struct DeviceGateSample {
     ResolutionCostCounters indexCommit;

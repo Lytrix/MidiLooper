@@ -3369,6 +3369,40 @@ void test_sealed_hide_keeps_short_overdub_after_snapshot_current() {
   TEST_ASSERT_EQUAL_UINT32(864u, paint[0].endTick);
 }
 
+/// [`170537`] Hide of the old cache row waits until the sealed replacement is in the frame.
+void test_sealed_hide_waits_until_replacement_in_frame_170537() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 71, 768, 1151, 63, 3072);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 63, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(864, 1, 63, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 864));
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  sealRecordedHideCompanion(loop, 71, 63, 768, 1151, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  NoteUtils::DisplayNoteVec onlyOld;
+  onlyOld.push_back(displayNote(71, 63, 768, 1151));
+  loop.applyPendingNoteChangesToDisplayNotes(onlyOld);
+  TEST_ASSERT_EQUAL(1u, onlyOld.size());
+  TEST_ASSERT_EQUAL(71, onlyOld[0].noteId);
+
+  NoteUtils::DisplayNoteVec withReplacement;
+  withReplacement.push_back(displayNote(71, 63, 768, 1151));
+  withReplacement.push_back(displayNote(95, 63, 768, 864));
+  loop.applyPendingNoteChangesToDisplayNotes(withReplacement);
+  TEST_ASSERT_EQUAL(1u, withReplacement.size());
+  TEST_ASSERT_EQUAL(95, withReplacement[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(864u, withReplacement[0].endTick);
+}
+
 /// RC1: wrap 2 must not replace wrap-1 overlay Hide. Admission list stays last wrap.
 void test_sealed_companion_overlay_retains_prior_wrap_hide() {
   LoopEventStore::resetPoolForTests();
@@ -4772,6 +4806,60 @@ void test_record_then_session_wraps_are_two_slot_undo_entries() {
   TEST_ASSERT_NOT_EQUAL(recordPassId, stack.entries[1].passId);
 }
 
+/// `185822`: remnant drop may still remove reconstruct id 99; closed incoming
+/// capturePreview id 168 at the same pitch+start must keep its capture Off.
+void test_closed_preview_survives_same_start_remnant_drop_185822() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.pushPendingNoteChangeForTest(shortenChange(32, 69, 48, 70));
+  loop.capturePreview.notes.push_back(displayNote(168, 69, 48, 88));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(32, 69, 48, 88));
+  paint.push_back(displayNote(99, 69, 48, 200));
+  paint.push_back(displayNote(168, 69, 48, 88));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 32));
+  TEST_ASSERT_EQUAL_UINT32(48u, findDisplayNoteById(paint, 32)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(70u, findDisplayNoteById(paint, 32)->endTick);
+  TEST_ASSERT_NULL(findDisplayNoteById(paint, 99));
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(paint, 168));
+  TEST_ASSERT_EQUAL_UINT32(48u, findDisplayNoteById(paint, 168)->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, findDisplayNoteById(paint, 168)->endTick);
+}
+
+void test_pending_shorten_does_not_delete_equal_geometry_sibling() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  loop.pushPendingNoteChangeForTest(shortenChange(32, 69, 48, 88));
+
+  NoteUtils::DisplayNoteVec paint;
+  paint.push_back(displayNote(32, 69, 48, 88));
+  paint.push_back(displayNote(86, 69, 48, 88));
+  loop.applyPendingNoteChangesToDisplayNotes(paint);
+  TEST_ASSERT_EQUAL(2u, paint.size());
+  const NoteUtils::DisplayNote* shortened = nullptr;
+  const NoteUtils::DisplayNote* sibling = nullptr;
+  for (const NoteUtils::DisplayNote& note : paint) {
+    if (note.noteId == 32) {
+      shortened = &note;
+    } else if (note.noteId == 86) {
+      sibling = &note;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(shortened);
+  TEST_ASSERT_NOT_NULL(sibling);
+  TEST_ASSERT_EQUAL_UINT32(48u, shortened->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, shortened->endTick);
+  TEST_ASSERT_EQUAL_UINT32(48u, sibling->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, sibling->endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pending_requires_source_view);
@@ -4865,6 +4953,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_companion_overlay_hide_is_idempotent);
   RUN_TEST(test_seal_revision_implies_cumulative_companion_coverage);
   RUN_TEST(test_sealed_hide_keeps_short_overdub_after_snapshot_current);
+  RUN_TEST(test_sealed_hide_waits_until_replacement_in_frame_170537);
   RUN_TEST(test_sealed_companion_overlay_retains_prior_wrap_hide);
   RUN_TEST(test_sealed_hide_drops_same_start_longer_when_note_id_differs);
   RUN_TEST(test_sealed_shorten_drops_same_start_longer_sibling);
@@ -4898,5 +4987,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_consume_finds_loop_end_identity_when_visual_cache_omits_it_174151);
   RUN_TEST(test_closed_loop_end_identity_is_not_reshortened_after_wrap_off_174151);
   RUN_TEST(test_record_then_session_wraps_are_two_slot_undo_entries);
+  RUN_TEST(test_closed_preview_survives_same_start_remnant_drop_185822);
+  RUN_TEST(test_pending_shorten_does_not_delete_equal_geometry_sibling);
   return UNITY_END();
 }

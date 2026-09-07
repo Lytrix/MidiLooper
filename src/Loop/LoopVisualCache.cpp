@@ -273,6 +273,10 @@ LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNote
   emitVisualCacheState("adopt_partial", -1);
 }
 
+// Idle cache fill is reuse optimization only. A delayed or skipped wrap-append
+// may slow the next cache-reuse frame; it must not decide whether committed
+// notes exist. Display composition reads the sealed/prepared source when this
+// cache predates the last seal (`170537`).
 LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, uint32_t priorityBar,
                                                      uint32_t maxBarDistanceFromPriority,
                                                      bool allowOverdubWrapAppend,
@@ -503,6 +507,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   }
 }
 
+// Deferred wrap-append completes cache reuse. Missing append is latency, not
+// an empty committed representation — paint must keep sealed/prepared content.
 LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
   if (!deferredVisualCacheWrapAppendPending_) {
     return;
@@ -689,9 +695,13 @@ LOOP_COLD_MEM void Loop::appendOverdubPassWrapPairedNotes(NoteUtils::DisplayNote
     const NoteUtils::DisplayNoteVec overdubNotes = NoteUtils::reconstructDisplayNotes(
         overdubEvents, loopLengthTicks, false, false, true);
     for (const NoteUtils::DisplayNote& note : overdubNotes) {
-      // Same pitch+start already has the merged-reconstruct end. Visual-cache
-      // callers also drop interior body notes (204132: 192–592 beside 192–16).
-      if (displayNotePitchStartPresent(notes, note)) {
+      // Wrap-held fill is a geometry gap (015618). Body/source rows use NoteId
+      // so two passes may share pitch+start (`183043`).
+      if (wrapHeldOnly) {
+        if (displayNotePitchStartPresent(notes, note)) {
+          continue;
+        }
+      } else if (DisplayWindowUtils::displayNoteIdentityPresent(notes, note)) {
         continue;
       }
       if (wrapHeldOnly && !isWrapHeldDisplayNote(note, loopLengthTicks)) {
@@ -709,7 +719,7 @@ LOOP_COLD_MEM void Loop::appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec
 LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
     const NoteUtils::DisplayNoteVec& candidates) {
   for (const NoteUtils::DisplayNote& candidate : candidates) {
-    if (!displayNotePitchStartPresent(visualCache.notes, candidate)) {
+    if (!DisplayWindowUtils::displayNoteIdentityPresent(visualCache.notes, candidate)) {
       visualCache.notes.push_back(candidate);
     }
   }

@@ -111,6 +111,75 @@ TRACK_COLD_MEM void appendCapturePassLayer(const CommittedChunkIdList& chunks, b
       .appendTo(layer);
 }
 
+TRACK_COLD_MEM void upsertResolvedDisplayNote(NoteUtils::DisplayNoteVec& dest,
+                                              const NoteUtils::DisplayNote& note) {
+  if (note.noteId != kInvalidNoteId) {
+    for (NoteUtils::DisplayNote& existing : dest) {
+      if (existing.noteId == note.noteId) {
+        existing = note;
+        return;
+      }
+    }
+    dest.push_back(note);
+    return;
+  }
+  for (const NoteUtils::DisplayNote& existing : dest) {
+    if (existing.note == note.note && existing.startTick == note.startTick) {
+      return;
+    }
+  }
+  dest.push_back(note);
+}
+
+TRACK_COLD_MEM void appendPassLocalDisplayNotes(const SessionMidiEventVec& layer,
+                                                uint32_t loopLengthTicks,
+                                                bool overdubPassWrapPairing,
+                                                NoteUtils::DisplayNoteVec& dest) {
+  if (layer.empty() || loopLengthTicks == 0) {
+    return;
+  }
+  const NoteUtils::DisplayNoteVec notes = NoteUtils::reconstructDisplayNotes(
+      layer, loopLengthTicks, false, false, overdubPassWrapPairing);
+  for (const NoteUtils::DisplayNote& note : notes) {
+    upsertResolvedDisplayNote(dest, note);
+  }
+}
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+TRACK_COLD_MEM void logResolvedDisplayNoteMerge(const char* at, uint32_t count,
+                                                uint32_t duplicateGeometryDistinctIds) {
+  if (at == nullptr || at[0] == '\0') {
+    return;
+  }
+  char line[160];
+  snprintf_P(line, sizeof(line),
+             PSTR("#CAP,%lu,DIAG,lcr,pairrows,at=%s,count=%u,dupgeom=%u"),
+             static_cast<unsigned long>(micros()), at, count, duplicateGeometryDistinctIds);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
+TRACK_COLD_MEM uint32_t countDuplicateGeometryDistinctNoteIds(
+    const NoteUtils::DisplayNoteVec& notes) {
+  uint32_t duplicates = 0;
+  for (size_t i = 0; i < notes.size(); ++i) {
+    const NoteUtils::DisplayNote& a = notes[i];
+    if (a.noteId == kInvalidNoteId) {
+      continue;
+    }
+    for (size_t j = i + 1; j < notes.size(); ++j) {
+      const NoteUtils::DisplayNote& b = notes[j];
+      if (b.noteId == kInvalidNoteId || b.noteId == a.noteId) {
+        continue;
+      }
+      if (a.note == b.note && a.startTick == b.startTick && a.endTick == b.endTick) {
+        duplicates += 1;
+      }
+    }
+  }
+  return duplicates;
+}
+
 TRACK_COLD_MEM void applyActiveEdits(SessionMidiEventVec& events, const LoopPasses& passes,
                       uint32_t loopLengthTicks) {
   EditPassVec activeRows;
@@ -1102,7 +1171,8 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::sortChannelByNoteId
 }
 
 TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
-    const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
+    const SessionMidiEventVec& resolved, const NoteUtils::DisplayNoteVec& pairedNotes,
+    ResolutionCostCounters* counters) {
   spans.clear();
   spanBoundaries.clear();
   presentAt.clear();
@@ -1114,9 +1184,8 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
     return false;
   }
   sortChannelByNoteId(counters);
-  const NoteUtils::DisplayNoteVec notes =
-      NoteUtils::reconstructDisplayNotes(resolved, loopLengthTicks, false);
-  if (!appendSpansFromNotes(resolved, notes, 0, static_cast<uint32_t>(notes.size()), counters)) {
+  if (!appendSpansFromNotes(resolved, pairedNotes, 0, static_cast<uint32_t>(pairedNotes.size()),
+                            counters)) {
     return false;
   }
   sortSpanBoundaries(counters);
@@ -1131,6 +1200,13 @@ TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansF
     counters->eventsInHistory = static_cast<uint32_t>(resolved.size());
   }
   return true;
+}
+
+TRACK_COLD_MEM bool LoopContentResolution::StateCheckpoints::finishRebuildSpansFromEvents(
+    const SessionMidiEventVec& resolved, ResolutionCostCounters* counters) {
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(resolved, loopLengthTicks, false);
+  return finishRebuildSpansFromEvents(resolved, notes, counters);
 }
 
 TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::prepareRebuildSpans(
@@ -1504,6 +1580,97 @@ TRACK_COLD_MEM void LoopContentResolution::StateCheckpoints::resolveStateFromSpa
 TRACK_COLD_MEM void LoopContentResolution::resolveState(const StateCheckpoints& checkpoints, uint32_t tick,
                                          PresentNoteVec& out, ResolutionCostCounters* counters) {
   checkpoints.resolveState(tick, out, counters);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::upsertResolvedDisplayNotes(
+    NoteUtils::DisplayNoteVec& dest, const NoteUtils::DisplayNoteVec& passLocalNotes) {
+  for (const NoteUtils::DisplayNote& note : passLocalNotes) {
+    upsertResolvedDisplayNote(dest, note);
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const LoopPasses& passes,
+                                                               uint32_t loopLengthTicks,
+                                                               NoteUtils::DisplayNoteVec& out,
+                                                               ResolutionCostCounters* counters) {
+  out.clear();
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  uint32_t layerCount = 0;
+  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
+      !passes.recordPass.committedChunkIds.empty()) {
+    SessionMidiEventVec layer;
+    LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, layer);
+    applyActiveEdits(layer, passes, loopLengthTicks);
+    appendPassLocalDisplayNotes(layer, loopLengthTicks, false, out);
+    layerCount += 1;
+  }
+  std::vector<const OverdubPass*> activeOverdubs;
+  for (const OverdubPass& pass : passes.overdubPasses) {
+    if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) {
+      activeOverdubs.push_back(&pass);
+    }
+  }
+  std::sort(activeOverdubs.begin(), activeOverdubs.end(),
+            [](const OverdubPass* a, const OverdubPass* b) {
+              return a->mergeSequence < b->mergeSequence;
+            });
+  for (const OverdubPass* pass : activeOverdubs) {
+    SessionMidiEventVec layer;
+    LoopEventStore::appendChunkRefEvents(pass->committedChunkIds, layer);
+    applyActiveEdits(layer, passes, loopLengthTicks);
+    appendPassLocalDisplayNotes(layer, loopLengthTicks, false, out);
+    layerCount += 1;
+  }
+  bumpOps(counters, static_cast<uint32_t>(out.size() + layerCount));
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  logResolvedDisplayNoteMerge(PSTR("passes"), static_cast<uint32_t>(out.size()),
+                              countDuplicateGeometryDistinctNoteIds(out));
+#endif
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const TickIndex& index,
+                                                               const EditPassVec& editPasses,
+                                                               uint32_t loopLengthTicks,
+                                                               NoteUtils::DisplayNoteVec& out,
+                                                               ResolutionCostCounters* counters) {
+  out.clear();
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  EditPassVec activeRows;
+  collectActiveEditRows(editPasses, activeRows);
+  std::vector<const TickIndex::CapturePassEntry*> ordered;
+  index.collectActiveMaterializePasses(ordered);
+  uint32_t layerCount = 0;
+  for (const TickIndex::CapturePassEntry* pass : ordered) {
+    if (pass == nullptr) {
+      continue;
+    }
+    SessionMidiEventVec layer = pass->events;
+    for (const EditPass& editPass : activeRows) {
+      if (workingHasNoteOnId(layer, editPass.targetNoteId)) {
+        continue;
+      }
+      const auto* found = index.findByNoteId(editPass.targetNoteId);
+      if (found != nullptr && found->loc.passId == pass->id) {
+        index.appendNoteEvents(editPass.targetNoteId, layer);
+      }
+    }
+    sortResolvedEvents(layer);
+    uniqueIdentifiedResolvedEvents(layer);
+    if (!activeRows.empty()) {
+      applyNoteEditPassSequence(layer, activeRows, loopLengthTicks);
+    }
+    appendPassLocalDisplayNotes(layer, loopLengthTicks, false, out);
+    layerCount += 1;
+  }
+  bumpOps(counters, static_cast<uint32_t>(out.size() + layerCount));
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  logResolvedDisplayNoteMerge(PSTR("index"), static_cast<uint32_t>(out.size()),
+                              countDuplicateGeometryDistinctNoteIds(out));
+#endif
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks,

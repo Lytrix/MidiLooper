@@ -6,6 +6,7 @@
 #include "MidiEvent.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/NoteUtils.h"
 #include "VisualCache.h"
 
 #include "../../src/Logger.cpp"
@@ -343,6 +344,77 @@ void test_should_gather_published_snapshot_for_draw_source() {
   TEST_ASSERT_FALSE(gather(true, false, false, false, false, false));
 }
 
+void test_visual_cache_reusable_as_committed_draw_source() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      false, true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      true, true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      false, false, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      false, true, false, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      false, true, true, true));
+}
+
+void test_published_snapshot_is_complete_draw_source() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::publishedSnapshotIsCompleteDrawSource(true, true, 58u, 58u));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::publishedSnapshotIsCompleteDrawSource(true, true, 123u, 58u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::publishedSnapshotIsCompleteDrawSource(true, true, 58u, 123u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::publishedSnapshotIsCompleteDrawSource(true, false, 123u, 58u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::publishedSnapshotIsCompleteDrawSource(false, true, 123u, 58u));
+}
+
+void test_should_gather_published_snapshot_for_complete_draw_source() {
+  auto gather = [](bool hasSnapshot, bool capture, bool session, bool current, bool reusable,
+                   bool complete) {
+    return DisplayWindowUtils::shouldGatherPublishedSnapshotForCompleteDrawSource(
+        hasSnapshot, capture, session, current, reusable, complete);
+  };
+
+  TEST_ASSERT_FALSE(gather(false, true, true, false, true, true));
+  TEST_ASSERT_FALSE(gather(true, true, true, true, true, true));
+  TEST_ASSERT_FALSE(gather(true, true, true, true, true, false));
+  TEST_ASSERT_FALSE(gather(true, true, true, false, true, false));
+  TEST_ASSERT_TRUE(gather(true, true, true, false, false, false));
+  TEST_ASSERT_TRUE(gather(true, true, true, true, false, true));
+  TEST_ASSERT_TRUE(gather(true, false, false, true, false, true));
+  TEST_ASSERT_FALSE(gather(true, false, false, false, false, false));
+}
+
+void test_sealed_companion_hide_waits_for_replacement() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::sealedCompanionHideShouldWaitForReplacement(
+      true, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::sealedCompanionHideShouldWaitForReplacement(
+      true, true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::sealedCompanionHideShouldWaitForReplacement(
+      false, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::sealedCompanionHideShouldWaitForReplacement(
+      true, false, false));
+}
+
+void test_sealed_companion_transform_already_represented() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::sealedCompanionTransformAlreadyRepresented(true, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::sealedCompanionTransformAlreadyRepresented(false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::sealedCompanionTransformAlreadyRepresented(false, false));
+}
+
+void test_sealed_capture_preview_row_covered_by_visual_cache() {
+  NoteUtils::DisplayNoteVec cache;
+  NoteUtils::DisplayNote row{};
+  row.noteId = 112;
+  row.note = 72;
+  row.startTick = 768;
+  row.endTick = 900;
+  TEST_ASSERT_FALSE(DisplayWindowUtils::sealedCapturePreviewRowCoveredByVisualCache(
+      112, 72, 768, 900, cache));
+  cache.push_back(row);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::sealedCapturePreviewRowCoveredByVisualCache(
+      112, 72, 768, 900, cache));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::sealedCapturePreviewRowCoveredByVisualCache(
+      kInvalidNoteId, 60, 100, 200, cache));
+}
+
 void test_should_retain_record_stop_handoff_seed() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(false, false));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(true, false));
@@ -377,6 +449,61 @@ void test_should_adopt_composed_notes_over_visual_cache() {
       DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(95u, 95u, 4u));
   TEST_ASSERT_FALSE(
       DisplayWindowUtils::shouldAdoptComposedNotesOverVisualCache(0u, 95u, 4u));
+}
+
+void test_closed_capture_preview_identity_requires_closed_preview_row() {
+  NoteUtils::DisplayNote painted{};
+  painted.noteId = 168;
+  painted.note = 69;
+  painted.startTick = 48;
+  painted.endTick = 88;
+  NoteUtils::DisplayNoteVec preview;
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::displayNoteIsClosedCapturePreviewIdentity(painted, preview));
+
+  NoteUtils::DisplayNote openHold{};
+  openHold.noteId = 168;
+  openHold.note = 69;
+  openHold.startTick = 48;
+  openHold.endTick = 48;
+  preview.push_back(openHold);
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::displayNoteIsClosedCapturePreviewIdentity(painted, preview));
+
+  preview[0].endTick = 88;
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::displayNoteIsClosedCapturePreviewIdentity(painted, preview));
+
+  painted.noteId = kInvalidNoteId;
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::displayNoteIsClosedCapturePreviewIdentity(painted, preview));
+}
+
+void test_keep_shortest_preserves_distinct_valid_note_ids() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote first{};
+  first.noteId = 32;
+  first.note = 69;
+  first.startTick = 48;
+  first.endTick = 88;
+  NoteUtils::DisplayNote second{};
+  second.noteId = 86;
+  second.note = 69;
+  second.startTick = 48;
+  second.endTick = 88;
+  NoteUtils::DisplayNote longer{};
+  longer.noteId = 87;
+  longer.note = 69;
+  longer.startTick = 48;
+  longer.endTick = 96;
+  notes.push_back(first);
+  notes.push_back(second);
+  notes.push_back(longer);
+  DisplayWindowUtils::keepShortestEndAtPitchStart(notes);
+  TEST_ASSERT_EQUAL(3u, notes.size());
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNoteIdentityPresent(notes, first));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNoteIdentityPresent(notes, second));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNoteIdentityPresent(notes, longer));
 }
 
 void test_keep_shortest_end_at_pitch_start() {
@@ -594,6 +721,51 @@ void test_stopped_playhead_tail_does_not_take_sealed_remnant_154310() {
   TEST_ASSERT_EQUAL(1u, notes.size());
   TEST_ASSERT_EQUAL_UINT32(143u, notes[0].endTick);
   TEST_ASSERT_EQUAL(1, notes[0].noteId);
+}
+
+void test_stopped_closed_off_takes_sealed_165050_52() {
+  // Mid-pass close: live tail 2192 is not stopPhase. Sealed Off 2193 is product.
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote live{};
+  live.noteId = 11;
+  live.note = 52;
+  live.startTick = 2179;
+  live.endTick = 2192;
+  notes.push_back(live);
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 11;
+  sealed.note = 52;
+  sealed.startTick = 2179;
+  sealed.endTick = 2193;
+  NoteUtils::DisplayNoteVec closedPreview;
+  closedPreview.push_back(sealed);
+  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 0);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(2179u, notes[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2193u, notes[0].endTick);
+}
+
+void test_stopped_closed_off_takes_sealed_165050_48() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote live{};
+  live.noteId = 12;
+  live.note = 48;
+  live.startTick = 2564;
+  live.endTick = 2607;
+  notes.push_back(live);
+
+  NoteUtils::DisplayNote sealed{};
+  sealed.noteId = 12;
+  sealed.note = 48;
+  sealed.startTick = 2564;
+  sealed.endTick = 2608;
+  NoteUtils::DisplayNoteVec closedPreview;
+  closedPreview.push_back(sealed);
+  DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(notes, closedPreview, 0);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(2564u, notes[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(2608u, notes[0].endTick);
 }
 
 void test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start() {
@@ -1582,10 +1754,18 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
   RUN_TEST(test_should_gather_published_snapshot_for_draw_source);
+  RUN_TEST(test_visual_cache_reusable_as_committed_draw_source);
+  RUN_TEST(test_published_snapshot_is_complete_draw_source);
+  RUN_TEST(test_should_gather_published_snapshot_for_complete_draw_source);
+  RUN_TEST(test_sealed_companion_hide_waits_for_replacement);
+  RUN_TEST(test_sealed_companion_transform_already_represented);
+  RUN_TEST(test_sealed_capture_preview_row_covered_by_visual_cache);
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);
+  RUN_TEST(test_closed_capture_preview_identity_requires_closed_preview_row);
+  RUN_TEST(test_keep_shortest_preserves_distinct_valid_note_ids);
   RUN_TEST(test_clamp_display_note_resize_never_grows);
   RUN_TEST(test_sync_live_display_compose_counts_clamps_stale_layers);
   RUN_TEST(test_keep_shortest_end_on_committed_prefix_preserves_capture_suffix);
@@ -1613,6 +1793,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stopped_sealed_upsert_skips_longer_same_pitch_start_154310);
   RUN_TEST(test_stopped_playhead_tail_takes_closed_capture_off_153848);
   RUN_TEST(test_stopped_playhead_tail_does_not_take_sealed_remnant_154310);
+  RUN_TEST(test_stopped_closed_off_takes_sealed_165050_52);
+  RUN_TEST(test_stopped_closed_off_takes_sealed_165050_48);
   RUN_TEST(test_capture_sealed_upsert_keeps_longer_suffix_150650);
   RUN_TEST(test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start);
   RUN_TEST(test_upsert_display_note_at_pitch_start_wrap_held_sealed_row_never_replaces);

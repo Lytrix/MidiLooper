@@ -2577,12 +2577,24 @@ void gatherDrawSourcePrefix(const Loop& loop, uint32_t firstBar, uint32_t lastBa
     return;
   }
   const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
-  const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-      static_cast<bool>(snapshot), loop.captureActive(), loop.hasOverdubSession(),
-      !loop.visualCache.notes.empty(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent());
+  const uint32_t windowStart = firstBar * Config::TICKS_PER_BAR;
+  const uint32_t windowEnd = (lastBar + 1u) * Config::TICKS_PER_BAR;
+  const uint32_t windowLength = windowEnd > windowStart ? windowEnd - windowStart : 0;
+  const bool coversWindow =
+      visualCacheCoversWindow(loop.visualCacheDirty, loop.visualCache.dirtyBars, windowStart,
+                              windowLength, loopLength, Config::TICKS_PER_BAR);
+  const bool uncoveredSealed =
+      (loop.captureActive() || loop.hasOverdubSession()) && loop.hasSealedCapturePreview() &&
+      !loop.sealedCapturePreviewIsCovered();
+  const bool cacheReusable = DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+      loop.visualCacheDirty, !loop.visualCache.notes.empty(), coversWindow, uncoveredSealed);
+  const bool usePublishedSnapshot =
+      DisplayWindowUtils::shouldGatherPublishedSnapshotForCompleteDrawSource(
+          static_cast<bool>(snapshot), loop.captureActive(), loop.hasOverdubSession(),
+          loop.publishedSnapshotIsCurrent(), cacheReusable, true);
   const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
   for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    if (usePublishedSnapshot) {
+    if (usePublishedSnapshot && snapshot) {
       appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
     } else {
       appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
@@ -2602,8 +2614,7 @@ void applyDrawSourceSealedAndPreview(const Loop& loop, uint32_t firstBar, uint32
         if (!noteIntersectsBar(sealedRow, bar, loopLength)) {
           continue;
         }
-        DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, sealedRow,
-                                                             captureActive);
+        DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, 0, sealedRow, captureActive);
         break;
       }
     }
@@ -3852,6 +3863,9 @@ void test_draw_source_snapshot_miss_recovers_pending_shorten_212700() {
   loop.loopId = 1;
   loop.loopLengthTicks = Config::TICKS_PER_BAR * 32;
   plantVisualGeometry(loop, 84, 84, 4560, 4608);
+  // Dirty cache is not a reusable draw source, so gather still selects the
+  // current empty snapshot and recovery must restore NoteId 84.
+  loop.visualCacheDirty = true;
   loop.storePublishedSnapshotForTest(
       LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick, 1, 1),
       loop.playbackRevision);
@@ -4245,6 +4259,163 @@ void test_occupy_153848_52_2172_first_inclusive_2230_pin() {
   LoopContentResolution::deviceGateReset();
 }
 
+/// session_20260905_162652: startLoopTick=247, loopLength=3072.
+/// Occupy On must resolve at storage phase (`capturePhaseTick`), not origin 0.
+/// Source 56@1339–1745 covers storage hold 1360; Shorten lands at 1359.
+/// Origin-0 hold 1607 covers the same row but Shortens to 1606 (wrong frame).
+/// Track call-site correction is HITL-gated; this pins the Loop geometry contract.
+void test_occupy_nonzero_start_loop_shortens_at_storage_hold() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopContentResolution::deviceGateReset();
+
+  constexpr uint32_t kOccupyLoopLen = 3072;
+  constexpr uint32_t kStartLoopTick = 247;
+  constexpr uint8_t kPitch = 56;
+  constexpr NoteId kSourceId = 10;
+  constexpr uint32_t kSourceStart = 1339;
+  constexpr uint32_t kSourceEnd = 1745;
+  constexpr uint32_t kStorageHold = 1360;
+  constexpr uint32_t kOriginZeroHold = 1607;
+
+  TEST_ASSERT_EQUAL_UINT32(kStartLoopTick, kOriginZeroHold - kStorageHold);
+  TEST_ASSERT_TRUE(OverlapNoteIdObservation::displayNotePresentAtHold(
+      kSourceStart, kSourceEnd, kStorageHold, kOccupyLoopLen));
+  TEST_ASSERT_TRUE(OverlapNoteIdObservation::displayNotePresentAtHold(
+      kSourceStart, kSourceEnd, kOriginZeroHold, kOccupyLoopLen));
+  TEST_ASSERT_TRUE(
+      OverlapNoteIdObservation::displayNotePresentAtHold(83, 469, 296, kOccupyLoopLen));
+  TEST_ASSERT_FALSE(
+      OverlapNoteIdObservation::displayNotePresentAtHold(83, 469, 543, kOccupyLoopLen));
+
+  auto seedOccupiedSource = [&](Loop& loop) {
+    loop.loopId = 1;
+    loop.loopLengthTicks = kOccupyLoopLen;
+    loop.startLoopTick = kStartLoopTick;
+    LoopEventStore recordStore;
+    TEST_ASSERT_TRUE(storeAppendNoteOn(recordStore, kSourceStart, 1, kPitch, 100, kSourceId));
+    TEST_ASSERT_TRUE(recordStore.append(MidiEvent::NoteOff(kSourceEnd, 1, kPitch, 0)));
+    loop.seedRecordPassFromStore(recordStore);
+    loop.loopLengthTicks = kOccupyLoopLen;
+    loop.startLoopTick = kStartLoopTick;
+    loop.rebuildVisualCacheFromPasses();
+    loop.openOverdubSession(0);
+    loop.beginCapture(CapturePhase::Overdub, 0);
+    loop.rebuildOverdubSourceView(0);
+    TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), kPitch, kSourceStart));
+  };
+
+  {
+    Loop loop;
+    seedOccupiedSource(loop);
+    OverlapNoteIdSet ledger = overlapIds({kSourceId});
+    OverlapNoteIdSet resolved;
+    loop.resolveOccupancyAtNoteOn(1, kPitch, 100, ledger, kStorageHold, &resolved);
+    TEST_ASSERT_TRUE(pendingShortenTargetsEnd(loop, kSourceId, kStorageHold - 1u));
+    TEST_ASSERT_FALSE(pendingShortenTargetsEnd(loop, kSourceId, kOriginZeroHold - 1u));
+  }
+
+  {
+    Loop loop;
+    seedOccupiedSource(loop);
+    OverlapNoteIdSet ledger = overlapIds({kSourceId});
+    OverlapNoteIdSet resolved;
+    loop.resolveOccupancyAtNoteOn(1, kPitch, 100, ledger, kOriginZeroHold, &resolved);
+    TEST_ASSERT_TRUE(pendingShortenTargetsEnd(loop, kSourceId, kOriginZeroHold - 1u));
+    TEST_ASSERT_FALSE(pendingShortenTargetsEnd(loop, kSourceId, kStorageHold - 1u));
+  }
+
+  LoopContentResolution::deviceGateReset();
+}
+
+void test_source_view_keeps_same_start_a_identities_183043() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 48, 1, 69, 100, 32));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(88, 1, 69, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopEventStore overdub;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(overdub, 48, 1, 69, 100, 86));
+  TEST_ASSERT_TRUE(overdub.append(MidiEvent::NoteOff(88, 1, 69, 0)));
+  seedCommittedOverdubPass(loop, overdub, 2, 1);
+  loop.nextNoteId_ = 87;
+  loop.openOverdubSession(48);
+  loop.establishOverdubSourceView(48);
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 32));
+  TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 86));
+  const NoteUtils::DisplayNote* first = findDisplayNoteById(loop.overdubSourceViewNotes(), 32);
+  const NoteUtils::DisplayNote* second = findDisplayNoteById(loop.overdubSourceViewNotes(), 86);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_EQUAL_UINT32(48u, first->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(48u, second->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, second->endTick);
+}
+
+void test_source_view_keeps_dsharp_committed_offs_before_pending_183043() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = 3072;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 768, 1, 63, 100, 107));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(1440, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 1536, 1, 63, 100, 109));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2208, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2304, 1, 63, 100, 111));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2976, 1, 63, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopEventStore overdub;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(overdub, 1152, 1, 63, 100, 200));
+  TEST_ASSERT_TRUE(overdub.append(MidiEvent::NoteOff(1872, 1, 63, 0)));
+  seedCommittedOverdubPass(loop, overdub, 2, 1);
+  loop.loopLengthTicks = 3072;
+  loop.nextNoteId_ = 201;
+  loop.openOverdubSession(48);
+  loop.establishOverdubSourceView(48);
+  const NoteUtils::DisplayNote* first = findDisplayNoteById(loop.overdubSourceViewNotes(), 107);
+  const NoteUtils::DisplayNote* second = findDisplayNoteById(loop.overdubSourceViewNotes(), 109);
+  const NoteUtils::DisplayNote* third = findDisplayNoteById(loop.overdubSourceViewNotes(), 111);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_NOT_NULL(third);
+  TEST_ASSERT_EQUAL_UINT32(1440u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, second->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2976u, third->endTick);
+}
+
+void test_visual_cache_keeps_same_start_a_identities_183043() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = kLoopLen;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 1488, 1, 69, 100, 32));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(1528, 1, 69, 0)));
+  loop.seedRecordPassFromStore(record);
+  LoopEventStore overdub;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(overdub, 1488, 1, 69, 100, 86));
+  TEST_ASSERT_TRUE(overdub.append(MidiEvent::NoteOff(1528, 1, 69, 0)));
+  seedCommittedOverdubPass(loop, overdub, 2, 1);
+  loop.rebuildVisualCacheFromPasses();
+  NoteUtils::DisplayNoteVec paired;
+  LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks, paired);
+  loop.mergeDisplayNotesIntoVisualCache(paired);
+  DisplayWindowUtils::keepShortestEndAtPitchStart(loop.visualCache.notes);
+  const NoteUtils::DisplayNote* first = findDisplayNoteById(loop.visualCache.notes, 32);
+  const NoteUtils::DisplayNote* second = findDisplayNoteById(loop.visualCache.notes, 86);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_EQUAL_UINT32(1488u, first->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1528u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(1488u, second->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1528u, second->endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_pitch_edit_rebuild_shows_only_new_pitch_at_tick);
@@ -4344,5 +4515,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);
   RUN_TEST(test_occupy_144743_48_616_materialize_vs_window_vs_pending);
   RUN_TEST(test_occupy_153848_52_2172_first_inclusive_2230_pin);
+  RUN_TEST(test_occupy_nonzero_start_loop_shortens_at_storage_hold);
+  RUN_TEST(test_source_view_keeps_same_start_a_identities_183043);
+  RUN_TEST(test_source_view_keeps_dsharp_committed_offs_before_pending_183043);
+  RUN_TEST(test_visual_cache_keeps_same_start_a_identities_183043);
   return UNITY_END();
 }

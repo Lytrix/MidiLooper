@@ -4306,6 +4306,135 @@ void test_stage6d4_publish_restamps_without_device_gate_complete() {
   TEST_ASSERT_TRUE(unprepared.empty());
 }
 
+const NoteUtils::DisplayNote* findResolvedNote(const NoteUtils::DisplayNoteVec& notes,
+                                               NoteId noteId) {
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+void test_resolve_display_notes_keeps_same_start_same_end_ids() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kLoopLength = 768;
+  constexpr NoteId kFirst = 32;
+  constexpr NoteId kSecond = 86;
+
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = makeNoteSpan(48, 88, 1, 69, kFirst);
+  passes.overdubPasses.push_back(makeOverdub(2, 1, 48, 88, 1, 69, kSecond));
+
+  NoteUtils::DisplayNoteVec notes;
+  LoopContentResolution::resolveDisplayNotes(passes, kLoopLength, notes);
+  const NoteUtils::DisplayNote* first = findResolvedNote(notes, kFirst);
+  const NoteUtils::DisplayNote* second = findResolvedNote(notes, kSecond);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_EQUAL_UINT32(48u, first->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(48u, second->startTick);
+  TEST_ASSERT_EQUAL_UINT32(88u, second->endTick);
+}
+
+void test_resolve_display_notes_keeps_same_start_different_off_ids() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kLoopLength = 768;
+  constexpr NoteId kFirst = 32;
+  constexpr NoteId kSecond = 86;
+
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = makeNoteSpan(48, 88, 1, 69, kFirst);
+  passes.overdubPasses.push_back(makeOverdub(2, 1, 48, 96, 1, 69, kSecond));
+
+  NoteUtils::DisplayNoteVec notes;
+  LoopContentResolution::resolveDisplayNotes(passes, kLoopLength, notes);
+  const NoteUtils::DisplayNote* first = findResolvedNote(notes, kFirst);
+  const NoteUtils::DisplayNote* second = findResolvedNote(notes, kSecond);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_EQUAL_UINT32(88u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(96u, second->endTick);
+}
+
+void test_resolve_display_notes_later_pass_off_does_not_lengthen_earlier() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kEarlier = 107;
+  constexpr NoteId kLater = 200;
+
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  passes.recordPass.committedChunkIds = makeNoteSpan(768, 1440, 1, 63, kEarlier);
+  passes.overdubPasses.push_back(makeOverdub(2, 1, 1152, 1872, 1, 63, kLater));
+
+  SessionMidiEventVec merged;
+  passes.materializeToEventVector(merged, kLoopLength);
+  const NoteUtils::DisplayNoteVec mergedNotes =
+      NoteUtils::reconstructDisplayNotes(merged, kLoopLength, false, false);
+  const NoteUtils::DisplayNote* mergedEarlier = findResolvedNote(mergedNotes, kEarlier);
+  TEST_ASSERT_NOT_NULL(mergedEarlier);
+  TEST_ASSERT_TRUE(mergedEarlier->endTick != 1440u);
+
+  NoteUtils::DisplayNoteVec notes;
+  LoopContentResolution::resolveDisplayNotes(passes, kLoopLength, notes);
+  const NoteUtils::DisplayNote* earlier = findResolvedNote(notes, kEarlier);
+  const NoteUtils::DisplayNote* later = findResolvedNote(notes, kLater);
+  TEST_ASSERT_NOT_NULL(earlier);
+  TEST_ASSERT_NOT_NULL(later);
+  TEST_ASSERT_EQUAL_UINT32(768u, earlier->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1440u, earlier->endTick);
+  TEST_ASSERT_EQUAL_UINT32(1152u, later->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1872u, later->endTick);
+}
+
+void test_resolve_display_notes_keeps_capture_dsharp_committed_offs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  constexpr uint32_t kLoopLength = 3072;
+  LoopPasses passes;
+  passes.recordPass.id = 1;
+  passes.recordPass.state = CapturePassState::Active;
+  LoopEventStore record;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 768, 1, 63, 100, 107));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(1440, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 1536, 1, 63, 100, 109));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2208, 1, 63, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(record, 2304, 1, 63, 100, 111));
+  TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(2976, 1, 63, 0)));
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(record, passes.recordPass.committedChunkIds));
+  passes.overdubPasses.push_back(makeOverdub(2, 1, 1152, 1872, 1, 63, 200));
+  passes.overdubPasses.push_back(makeOverdub(3, 2, 1920, 2639, 1, 63, 201));
+
+  NoteUtils::DisplayNoteVec notes;
+  LoopContentResolution::resolveDisplayNotes(passes, kLoopLength, notes);
+  const NoteUtils::DisplayNote* first = findResolvedNote(notes, 107);
+  const NoteUtils::DisplayNote* second = findResolvedNote(notes, 109);
+  const NoteUtils::DisplayNote* third = findResolvedNote(notes, 111);
+  TEST_ASSERT_NOT_NULL(first);
+  TEST_ASSERT_NOT_NULL(second);
+  TEST_ASSERT_NOT_NULL(third);
+  TEST_ASSERT_EQUAL_UINT32(768u, first->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1440u, first->endTick);
+  TEST_ASSERT_EQUAL_UINT32(1536u, second->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2208u, second->endTick);
+  TEST_ASSERT_EQUAL_UINT32(2304u, third->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2976u, third->endTick);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_canonical_fixture_inventory);
@@ -4391,5 +4520,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stage6e4_disabled_companion_restores_hidden_source);
   RUN_TEST(test_stage6e4_disabled_companion_restores_shortened_tail);
   RUN_TEST(test_stage6e5_held_note_across_session_start_does_not_seal_add);
+  RUN_TEST(test_resolve_display_notes_keeps_same_start_same_end_ids);
+  RUN_TEST(test_resolve_display_notes_keeps_same_start_different_off_ids);
+  RUN_TEST(test_resolve_display_notes_later_pass_off_does_not_lengthen_earlier);
+  RUN_TEST(test_resolve_display_notes_keeps_capture_dsharp_committed_offs);
   return UNITY_END();
 }
