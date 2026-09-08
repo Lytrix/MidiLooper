@@ -202,6 +202,11 @@ cursors rather than treating that locality as an execution bound.
         fallback order, pending overlays, and compatibility identity recovery.
         Native `test_overdub_source_view` and full native suite pass;
         capture-serial build has RAM1 locals **6848**.
+  - [x] 4.4b Migrate committed display window reconstruction and current-root
+        stopped-display fallback to use gathered `LoopSnapshot` content.
+        Preserve pass replay for stale, absent, or overlay-rejected roots.
+        Capture-serial build has RAM1 locals **6848**; full native suite:
+        **1755 succeeded, 1 skipped**.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
 

@@ -93,8 +93,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         // frame (`224901`: frame 768->1151 while effective is 768->911).
         if (track.isStopped() && loop.hasCommittedPasses()) {
             DIAG_COUNTER_INC(DisplayIncrementalUpdate);
-            LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
-                                                       liveDisplayNotes);
+            if (const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+                snapshot && loop.publishedSnapshotIsCurrent()) {
+                LoopContentResolution::resolveDisplayNotes(*snapshot, liveDisplayNotes);
+            } else {
+                LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
+                                                           liveDisplayNotes);
+            }
             liveMergePlaybackRevision_ = loop.playbackRevision;
             liveMergeCaptureRevision_ = loop.captureDisplayRevision;
             liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();

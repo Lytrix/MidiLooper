@@ -331,6 +331,21 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [ ] Full 4.4 caller migration remains open: display fallback/identity,
       NOTE_EDIT, overdub analysis, and validation callers are not completed.
 
+### Phase 4.4b implementation review — display snapshot fallback
+
+- [x] Architecture gate and ownership checkpoint posted in the session
+      transcript; no owner or transition changed.
+- [x] `rebuildDisplayNotesInWindow` reconstructs from gathered snapshot
+      events when the snapshot path succeeds.
+- [x] Current-root STOPPED committed display uses the explicit snapshot query;
+      stale, absent, and overlay-rejected roots retain pass replay.
+- [x] Existing `visualCache`, pending-overlay, capture, and display-window
+      ownership remain unchanged.
+- [x] Capture-serial build passes with RAM1 locals **6848**.
+- [x] Full `pio test -e native` passes: **1755 succeeded, 1 skipped**.
+- [ ] Remaining 4.4 caller migration remains open: NOTE_EDIT, overdub
+      analysis, validation, and other display identity/fallback paths.
+
 ### Phase 3 implementation review (3.5–3.6 wrap publication)
 
 Closed 2026-09-08. Remaining-interval yield device proof is parked

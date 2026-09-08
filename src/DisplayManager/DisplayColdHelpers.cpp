@@ -79,7 +79,7 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
             mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
         }
     }
-    if (includeActiveCapture && loop.captureActive() && !eventBuffer.empty()) {
+    if (usedSnapshot && !eventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
             NoteUtils::reconstructDisplayNotes(eventBuffer, loopLength, false, false);
         outNotes.assign(reconstructed.begin(), reconstructed.end());

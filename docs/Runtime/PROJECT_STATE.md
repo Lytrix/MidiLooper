@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.4a overdub source slice closed; 4.4 remainder next)
+Last updated: 2026-09-08 (4.4b display snapshot slice closed; 4.4 remainder next)
 
 ---
 
@@ -30,12 +30,12 @@ record construction with no queued successor passes. The final `pending=0`
 row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
 4b.2c is closed without amending `DEC-045`.
 Tasks `3.5`/`3.6` and 4.3 are closed. Remaining-interval yield proof is
-parked (`kSnapshotIdleReserveYieldEnabled` is false). OpenSpec 4.4a is also
-closed: selected-snapshot overdub source resolution now gathers only the
-bounded source-window memberships while preserving the existing source-cache
-owner and fallback policy. Remaining 4.4 caller migration (display
-fallback/identity, NOTE_EDIT, analysis, and validation), 4.5–4.6, persistence,
- and snapshot-identity undo remain later.
+parked (`kSnapshotIdleReserveYieldEnabled` is false). OpenSpec 4.4a and 4.4b
+are closed: selected-snapshot overdub source resolution gathers only bounded
+source-window memberships, and committed display reconstruction uses current
+snapshot content with stale/overlay fallback preserved. Remaining 4.4 caller
+migration (NOTE_EDIT, analysis, validation, and other display identity paths),
+4.5–4.6, persistence, and snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.
@@ -457,7 +457,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.3 closed (yield proof parked); 4.4a bounded overdub source resolution closed; remaining 4.4–4.6 caller migration not complete; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.3 closed (yield proof parked); 4.4a source resolution and 4.4b display fallback closed; remaining 4.4–4.6 caller migration not complete; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
