@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.5a device PASS 145633)
+Last updated: 2026-09-08 (4.4d closed; remaining 4.4 / 4.5 HITL)
 
 ---
 
@@ -33,9 +33,11 @@ Tasks `3.5`/`3.6` and 4.3 are closed. Remaining-interval yield proof is
 parked (`kSnapshotIdleReserveYieldEnabled` is false). OpenSpec 4.4a–4.4c
 are closed. 4.5a is closed: overdub stop holds the composed frame and
 elevates session-exit Snapshot idle until the successor root is current
-([`145633`](../../captures/session_20260908_145633.log)). Remaining 4.4
-caller migration (NOTE_EDIT, analysis, validation), 4.5 verify, 4.6,
-persistence, and snapshot-identity undo remain later.
+([`145633`](../../captures/session_20260908_145633.log)). 4.4d is closed:
+NOTE_EDIT dirty paint/select uses the current snapshot as committed base.
+Remaining 4.4 caller migration (analysis, validation, other NOTE_EDIT
+oracles), 4.5 verify, 4.6, persistence, and snapshot-identity undo remain
+later.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.

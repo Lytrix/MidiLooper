@@ -126,6 +126,13 @@ inline bool shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
                                             visualCacheDirty);
 }
 
+/// NOTE_EDIT paint/select dirty committed base. A current snapshot replaces
+/// pass materialize for that base only. Commit rematerialize stays on passes.
+inline bool shouldResolveNoteEditCommittedBaseFromSnapshot(bool visualCacheDirty,
+                                                           bool publishedSnapshotIsCurrent) {
+    return visualCacheDirty && publishedSnapshotIsCurrent;
+}
+
 /// `225243`: playhead tails (`endTick = currentTick`) are paint-only. RC5a
 /// STOPPED handoff reads `liveDisplayNotes`. In-place tails freeze those ends
 /// (D#2 ON@624 → stop phase 704). Compose base stays at capture-preview lengths.
