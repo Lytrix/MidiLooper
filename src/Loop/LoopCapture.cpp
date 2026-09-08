@@ -1112,9 +1112,100 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
       ++it;
     }
   }
+  if (!publishedSnapshotIsCurrent()) {
+    applyPendingSnapshotCompanionsToDisplayNotes(overdubSourceSpanCacheNotes_);
+  }
   overdubSourceSpanCachePublishedRevision_ =
       std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotRevision() : 0;
   return sourceOrigin;
+}
+
+LOOP_COLD_MEM void Loop::applyPendingSnapshotCompanionsToDisplayNotes(
+    NoteUtils::DisplayNoteVec& notes) const {
+  // Gather applies companionIds onto snapshot MIDI events. This cache is
+  // DisplayNotes and already overlays pending Hide/Shorten in place. Converting
+  // the cache to On/Off and reconstructing drops wrap-paired identities
+  // (test_wrap_rebuild_with_hide_companion_drops_record_from_source_view).
+  const EditPassIdList* companionIds = pendingSnapshotCompanionIds();
+  if (companionIds == nullptr || companionIds->empty()) {
+    return;
+  }
+  for (const EditPassId companionId : *companionIds) {
+    const EditPass* row = nullptr;
+    for (const EditPass& candidate : passes.editPasses) {
+      if (candidate.id == companionId && candidate.state == EditPassState::Active &&
+          candidate.passType == EditPassType::Note) {
+        row = &candidate;
+        break;
+      }
+    }
+    if (row == nullptr) {
+      continue;
+    }
+    switch (row->actionType) {
+      case EditActionType::Delete:
+        for (auto it = notes.begin(); it != notes.end();) {
+          if (it->noteId == row->targetNoteId) {
+            it = notes.erase(it);
+          } else {
+            ++it;
+          }
+        }
+        break;
+      case EditActionType::Update:
+        for (NoteUtils::DisplayNote& note : notes) {
+          if (note.noteId != row->targetNoteId) {
+            continue;
+          }
+          switch (row->propertyType) {
+            case EditPropertyType::Pitch:
+              note.note = row->pitch;
+              break;
+            case EditPropertyType::Velocity:
+              note.velocity = row->velocity;
+              break;
+            case EditPropertyType::NoteRange:
+              note.startTick = row->startTick;
+              note.endTick = row->endTick;
+              break;
+            case EditPropertyType::Length:
+              note.endTick = row->endTick;
+              break;
+            case EditPropertyType::Tick:
+              note.startTick = row->startTick;
+              break;
+            default:
+              break;
+          }
+        }
+        break;
+      case EditActionType::Create:
+        for (const MidiEvent& evt : row->addedEvents) {
+          if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId ||
+              displayNotesContainNoteId(notes, evt.noteId)) {
+            continue;
+          }
+          NoteUtils::DisplayNote created{};
+          created.noteId = evt.noteId;
+          created.note = evt.data.noteData.note;
+          created.velocity = evt.data.noteData.velocity;
+          created.startTick = evt.tick;
+          created.endTick = evt.tick;
+          for (const MidiEvent& off : row->addedEvents) {
+            if (!off.isNoteOff()) {
+              continue;
+            }
+            if (off.noteId == evt.noteId ||
+                (off.noteId == kInvalidNoteId && off.data.noteData.note == created.note)) {
+              created.endTick = off.tick;
+              break;
+            }
+          }
+          notes.push_back(created);
+        }
+        break;
+    }
+  }
 }
 
 LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why) {

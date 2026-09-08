@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (Hydrate 2–3 device functional PASS 231008)
+Last updated: 2026-09-08 (DEC-056 stale-root companion admission)
 
 ---
 
@@ -90,7 +90,13 @@ and first `push,e00` hold. Fast fader-2 / bar-sweep sluggishness is stacked
 Move `GEOM_APPLY` on `hostdrain`, not a neighborhood fail. Hydrate 2–3
 device functional PASS [`231008`](../../captures/session_20260908_231008.log):
 `candidates_hit` then `candidates_miss`; first `push,e00` holds.
-Do not start hydrate 4a–5.
+Hydrate 4a mover-only seed is in tree
+([`232826`](../../captures/session_20260908_232826.log) /
+[`233644`](../../captures/session_20260908_233644.log) Move/Pitch).
+DEC-056 admits stale-root NOTE_EDIT rows into existing
+`pendingSnapshotPublishBox.companionIds`. Gather overlays those ids on
+snapshot events; overdub source applies them in place on DisplayNotes.
+Do not start hydrate 4b–5.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),

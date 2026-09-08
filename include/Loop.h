@@ -585,6 +585,7 @@ struct Loop {
   uint32_t pendingSnapshotWrapParentRevision() const;
   bool pendingSnapshotSessionExitQueued() const;
   bool pendingSnapshotFromLoadedPasses() const;
+  const EditPassIdList* pendingSnapshotCompanionIds() const;
   LoadedSnapshotHydrationPhase loadedSnapshotHydrationPhase() const;
   uint32_t pendingSnapshotCandidateLengthTicks() const;
   /// Last idle-step child durations. Capture-serial only; 0 in normal builds.
@@ -818,6 +819,8 @@ struct Loop {
   void clearPendingSnapshotPublish();
   void discardUnpublishedSnapshotIfNotSessionExit();
   void enqueueLiveOverdubPasses();
+  void appendPendingSnapshotCompanionId(EditPassId id);
+  void applyPendingSnapshotCompanionsToDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
 };
 
 #endif  // LOOP_H

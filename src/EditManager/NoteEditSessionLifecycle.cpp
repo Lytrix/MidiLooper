@@ -16,6 +16,7 @@
 #include "Loop.h"
 #include "LoopEventStore.h"
 #include "NoteEditFocus.h"
+#include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
 #include "TrackManager.h"
 #include "TrackUndo.h"
@@ -199,9 +200,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     // Capture chunks are the rematerialize source for commitEditAction. Assign here so
     // session rematerialize and pass rematerialize share NoteId (145518 Layer B).
     loop.assignMissingNoteIdsInCommittedCapturePasses();
-    // NOTE_EDIT committed paint/select base must match passes.materialize — partial viewport
-    // adopt after overdub stop is not sufficient (session_20260814_020910 / 021959).
-    loop.rebuildVisualCacheFromPasses();
+    const bool snapshotCurrent = loop.publishedSnapshotIsCurrent();
+    // Hydrate 4a: current-root open does not rematerialize to analyze or paint.
+    // Miss keeps VCACHE,full + rematerialize + full current-state build.
+    if (noteEditOpenRematerializesLoop(snapshotCurrent)) {
+        loop.rebuildVisualCacheFromPasses();
+    }
     invalidateNoteEditDerivedCaches();
     editSession.sessionType = EditSessionType::Note;
     editSession.active = true;
@@ -216,37 +220,41 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     editSession.openedOnCurrentSnapshot = false;
     editSession.openedSnapshotRevision = 0;
     DIAG_EVENT(Diagnostics::Edit::NoteEditOpenEnter);
-    loop.rematerializeEditView(editSession.store.mutStore());
-    if (loop.publishedSnapshotIsCurrent()) {
+    if (noteEditOpenRematerializesLoop(snapshotCurrent)) {
+        loop.rematerializeEditView(editSession.store.mutStore());
+        DIAG_COUNTER_INC(Materialize);
+        DIAG_EVENT(Diagnostics::Edit::AfterRematerializeEditView);
+    } else {
         editSession.openedOnCurrentSnapshot = true;
         editSession.openedSnapshotRevision = loop.publishedSnapshotRevision();
     }
-    DIAG_COUNTER_INC(Materialize);
-    DIAG_EVENT(Diagnostics::Edit::AfterRematerializeEditView);
 #if defined(SESSION_CAPTURE)
-    logger.info("#CAP,NOTE_EDIT_OPEN,sync,visual_notes,%u,session_events,%zu",
+    logger.info("#CAP,NOTE_EDIT_OPEN,sync,visual_notes,%u,session_events,%zu,current_state,%u",
                 static_cast<unsigned>(loop.visualCache.notes.size()),
-                editSession.store.readStore().size());
+                editSession.store.readStore().size(),
+                static_cast<unsigned>(editSession.noteEditCurrentState.size()));
 #endif
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 0
     return;
 #endif
-    loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
+    if (noteEditOpenRematerializesLoop(snapshotCurrent)) {
+        loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
 #if defined(SESSION_CAPTURE)
-    logNoteEditOpenQ3(loop, editSession.store.readStore());
+        logNoteEditOpenQ3(loop, editSession.store.readStore());
 #endif
-    // Current-root open already loaded span events (4.4e). Do not flatten
-    // passes through midiEvents() for leftover identity assign (4.4f).
-    if (!loop.publishedSnapshotIsCurrent()) {
         loop.assignMissingNoteIds(loop.midiEvents());
+        loop.assignMissingNoteIds(editSession.store.mutEvents());
+        stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
+        editSession.noteEditCurrentState =
+            NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(),
+                                                        track.getMidiChannel());
+        ensureCurrentStateVisibleRowsFromVisualCache(track);
+        DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
+    } else {
+#if defined(SESSION_CAPTURE)
+        logNoteEditOpenQ3(loop, editSession.store.readStore());
+#endif
     }
-    loop.assignMissingNoteIds(editSession.store.mutEvents());
-    stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
-    editSession.noteEditCurrentState =
-        NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(),
-                                                    track.getMidiChannel());
-    ensureCurrentStateVisibleRowsFromVisualCache(track);
-    DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
 #if NOTE_EDIT_OPEN_BISECT_STAGE <= 1
     return;
 #endif
@@ -303,7 +311,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditPass(Track& track) {
                                                    editSession.durableCheckpointedEditPassIds);
     if (!editSession.editPassIds.empty()) {
         Loop& loop = trackManager.getSelectedLoop(track);
-        loop.tryPublishNoteEditSnapshot(editSession.editPassIds);
+        // DEC-056: do not publish NOTE_EDIT rows onto a predecessor-stale parent.
+        // Opened-current (or now-current) close keeps today's synchronous publish.
+        if (editSession.openedOnCurrentSnapshot || loop.publishedSnapshotIsCurrent()) {
+            loop.tryPublishNoteEditSnapshot(editSession.editPassIds);
+        } else {
+            logger.log(CAT_TRACK, LOG_INFO,
+                       "NoteEditPass close skip stale-parent publish rows=%u",
+                       static_cast<unsigned>(editSession.editPassIds.size()));
+        }
         if (loop.publishedSnapshotIsCurrent()) {
             editSession.openedOnCurrentSnapshot = true;
             editSession.openedSnapshotRevision = loop.publishedSnapshotRevision();
