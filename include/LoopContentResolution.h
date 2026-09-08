@@ -7,6 +7,7 @@
 
 #include "EditPass.h"
 #include "LoopPasses.h"
+#include "LoopSnapshot.h"
 #include "MidiEvent.h"
 #include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
@@ -292,6 +293,11 @@ struct LoopContentResolution {
                             uint32_t windowStart, uint32_t windowLength, SessionMidiEventVec& out,
                             ResolutionCostCounters* counters = nullptr);
 
+  /// Stateless effective-event query over one complete immutable snapshot.
+  static void resolveWindow(const LoopSnapshot& snapshot, uint32_t windowStart,
+                            uint32_t windowLength, SessionMidiEventVec& out,
+                            ResolutionCostCounters* counters = nullptr);
+
   /// Apply note edits on each capture pass, then merge (same order as
   /// `LoopPasses::materializeToEventVector`). Hide of a shorter same-start Add
   /// must not LIFO-pair a later pass's Off (003204).
@@ -311,6 +317,10 @@ struct LoopContentResolution {
   static void resolveState(const LoopPasses& passes, uint32_t loopLengthTicks, uint32_t tick,
                            PresentNoteVec& out, ResolutionCostCounters* counters = nullptr);
 
+  /// Stateless present-at query over one complete immutable snapshot.
+  static void resolveState(const LoopSnapshot& snapshot, uint32_t tick, PresentNoteVec& out,
+                           ResolutionCostCounters* counters = nullptr);
+
   static void resolveState(const StateCheckpoints& checkpoints, uint32_t tick, PresentNoteVec& out,
                            ResolutionCostCounters* counters = nullptr);
 
@@ -318,10 +328,19 @@ struct LoopContentResolution {
                            uint32_t windowLength, NoteUtils::DisplayNoteVec& out,
                            ResolutionCostCounters* counters = nullptr);
 
+  /// Stateless display-note query over one complete immutable snapshot.
+  static void resolveNotes(const LoopSnapshot& snapshot, uint32_t windowStart,
+                           uint32_t windowLength, NoteUtils::DisplayNoteVec& out,
+                           ResolutionCostCounters* counters = nullptr);
+
   /// Pair each active capture pass through `NoteUtils`, then merge rows by `NoteId`.
   /// Display/source geometry owner — does not change playback event merge.
   /// A later pass's Off cannot close an earlier pass's On.
   static void resolveDisplayNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
+                                  NoteUtils::DisplayNoteVec& out,
+                                  ResolutionCostCounters* counters = nullptr);
+  /// Stateless full-content display-note query over one complete immutable snapshot.
+  static void resolveDisplayNotes(const LoopSnapshot& snapshot,
                                   NoteUtils::DisplayNoteVec& out,
                                   ResolutionCostCounters* counters = nullptr);
   static void resolveDisplayNotes(const TickIndex& index, const EditPassVec& editPasses,

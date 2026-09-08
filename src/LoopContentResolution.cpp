@@ -978,6 +978,28 @@ TRACK_COLD_MEM void finishResolveWindow(const LoopContentResolution::TickIndex& 
   }
 }
 
+TRACK_COLD_MEM void appendSnapshotEvents(const LoopSnapshot& snapshot,
+                                         SessionMidiEventVec& out) {
+  out.clear();
+  const uint32_t loopLengthTicks = snapshot.loopLengthTicks();
+  if (loopLengthTicks == 0 || Config::TICKS_PER_BAR == 0) {
+    return;
+  }
+  const uint32_t barCount =
+      (loopLengthTicks + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  for (uint32_t barIndex = 0; barIndex < barCount; ++barIndex) {
+    const SnapshotMembershipRef<LoopSnapshotEventRef> membership =
+        snapshot.eventMembership(barIndex);
+    forEachSnapshotMembershipReference(
+        membership.get(), [&out](const LoopSnapshotEventRef& reference) {
+          if (reference) {
+            out.push_back(reference->value);
+          }
+        });
+  }
+  sortResolvedEvents(out);
+}
+
 TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const TickIndex& index, const EditPassVec& editPasses,
                                           uint32_t loopLengthTicks, uint32_t windowStart,
                                           uint32_t windowLength, SessionMidiEventVec& out,
@@ -1041,6 +1063,25 @@ TRACK_COLD_MEM void LoopContentResolution::resolveWindow(const LoopPasses& passe
   }
 }
 
+TRACK_COLD_MEM void LoopContentResolution::resolveWindow(
+    const LoopSnapshot& snapshot, uint32_t windowStart, uint32_t windowLength,
+    SessionMidiEventVec& out, ResolutionCostCounters* counters) {
+  ElapsedTimer timer;
+  SessionMidiEventVec events;
+  appendSnapshotEvents(snapshot, events);
+  DisplayWindowUtils::filterMidiEventsToWindow(
+      events, out, windowStart, windowLength, snapshot.loopLengthTicks());
+  sortResolvedEvents(out);
+  if (counters != nullptr) {
+    counters->eventsInHistory = static_cast<uint32_t>(events.size());
+    counters->passesInHistory = 0;
+    counters->candidateEvents = static_cast<uint32_t>(events.size());
+    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
+    counters->passChunkListsWalked = 0;
+    counters->elapsedMicros = timer.elapsed();
+  }
+}
+
 TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes, uint32_t loopLengthTicks,
                                          uint32_t tick, PresentNoteVec& out,
                                          ResolutionCostCounters* counters) {
@@ -1060,6 +1101,41 @@ TRACK_COLD_MEM void LoopContentResolution::resolveState(const LoopPasses& passes
     presentNote.noteId = note.noteId;
     presentNote.onTick = note.startTick;
     out.push_back(presentNote);
+  }
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveState(
+    const LoopSnapshot& snapshot, uint32_t tick, PresentNoteVec& out,
+    ResolutionCostCounters* counters) {
+  out.clear();
+  const uint32_t loopLengthTicks = snapshot.loopLengthTicks();
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  SessionMidiEventVec events;
+  appendSnapshotEvents(snapshot, events);
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
+  bumpOps(counters, static_cast<uint32_t>(notes.size()));
+  std::set<NoteId> emitted;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (note.noteId == kInvalidNoteId || !emitted.insert(note.noteId).second ||
+        !notePresentAt(note, tick, loopLengthTicks)) {
+      continue;
+    }
+    PresentNote presentNote{};
+    presentNote.channel = channelForNoteId(events, note.noteId);
+    presentNote.pitch = note.note;
+    presentNote.noteId = note.noteId;
+    presentNote.onTick = note.startTick;
+    out.push_back(presentNote);
+  }
+  if (counters != nullptr) {
+    counters->eventsInHistory = static_cast<uint32_t>(events.size());
+    counters->passesInHistory = 0;
+    counters->candidateEvents = static_cast<uint32_t>(notes.size());
+    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
+    counters->passChunkListsWalked = 0;
   }
 }
 
@@ -1673,6 +1749,22 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const TickIndex& 
 #endif
 }
 
+TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(
+    const LoopSnapshot& snapshot, NoteUtils::DisplayNoteVec& out,
+    ResolutionCostCounters* counters) {
+  SessionMidiEventVec events;
+  appendSnapshotEvents(snapshot, events);
+  out = NoteUtils::reconstructDisplayNotes(events, snapshot.loopLengthTicks(), false);
+  bumpOps(counters, static_cast<uint32_t>(out.size()));
+  if (counters != nullptr) {
+    counters->eventsInHistory = static_cast<uint32_t>(events.size());
+    counters->passesInHistory = 0;
+    counters->candidateEvents = static_cast<uint32_t>(events.size());
+    counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
+    counters->passChunkListsWalked = 0;
+  }
+}
+
 TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
                                          uint32_t windowStart, uint32_t windowLength,
                                          NoteUtils::DisplayNoteVec& out,
@@ -1680,6 +1772,15 @@ TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes
   SessionMidiEventVec events;
   gatherActiveResolvedEvents(passes, loopLengthTicks, windowStart, windowLength, events, counters);
   out = NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
+}
+
+TRACK_COLD_MEM void LoopContentResolution::resolveNotes(
+    const LoopSnapshot& snapshot, uint32_t windowStart, uint32_t windowLength,
+    NoteUtils::DisplayNoteVec& out, ResolutionCostCounters* counters) {
+  SessionMidiEventVec events;
+  resolveWindow(snapshot, windowStart, windowLength, events, counters);
+  out = NoteUtils::reconstructDisplayNotes(events, snapshot.loopLengthTicks(), false);
+  bumpOps(counters, static_cast<uint32_t>(out.size()));
 }
 
 namespace {

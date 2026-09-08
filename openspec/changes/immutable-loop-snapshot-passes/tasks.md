@@ -176,7 +176,7 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
       [`202654`](../../../captures/session_20260826_202654.log) validates 82
       samples: 74 `compatibility`, 8 `snapshot`, and no `note_edit`.
 - [x] 4.2 Preserve `Track` / `LoopPlaybackRuntime` ownership of cursor, order, ledger, and horizon state; verify output with existing playback gates.
-- [ ] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
+- [x] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
 - [ ] 4.4 Migrate overdub source resolution, display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates. Source resolution reads selected pitch/bar `NoteRef`s, deduplicates by `NoteId`, and derives immutable geometry. Select bounded canonical span ranges before `IntervalProjection`; define long-span `k` limits or empirical overrun policies as consumer bounds, not snapshot-architecture units.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.

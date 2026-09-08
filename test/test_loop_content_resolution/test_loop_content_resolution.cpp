@@ -19,6 +19,7 @@
 #include "../../src/LoopEventStore.cpp"
 #include "../../src/EditManager/EditApply.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
+#include "../../src/Loop/LoopSnapshot.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/CommittedEventRange.cpp"
@@ -364,6 +365,53 @@ void countWindowEvents(const SessionMidiEventVec& events, uint32_t loopLengthTic
                                                loopLengthTicks);
   counters.eventsInQueryWindow = static_cast<uint32_t>(window.size());
   counters.candidateEvents = counters.eventsInQueryWindow;
+}
+
+ImmutableLoopSnapshotRef buildSnapshotQueryFixture() {
+  const uint32_t loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  auto snapshot = LoopSnapshot::createEmpty(1, loopLengthTicks, 0, 8, 4);
+  LoopSnapshotChangeSet changes;
+
+  MidiEvent noteOn = MidiEvent::NoteOn(100, 2, 60, 100);
+  noteOn.noteId = 7;
+  SnapshotEventChange noteOnChange{};
+  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.next = {1, 1, 0, noteOn};
+  changes.events.push_back(noteOnChange);
+
+  MidiEvent noteOff = MidiEvent::NoteOff(200, 2, 60);
+  noteOff.noteId = 7;
+  SnapshotEventChange noteOffChange{};
+  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.next = {1, 2, 1, noteOff};
+  changes.events.push_back(noteOffChange);
+
+  LoopSnapshotConstruction construction(snapshot, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  return construction.freeze();
+}
+
+void test_snapshot_queries_are_explicit_and_self_contained() {
+  const ImmutableLoopSnapshotRef snapshot = buildSnapshotQueryFixture();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  SessionMidiEventVec events;
+  LoopContentResolution::resolveWindow(*snapshot, 0, 300, events);
+  TEST_ASSERT_EQUAL_UINT32(2u, events.size());
+
+  PresentNoteVec present;
+  LoopContentResolution::resolveState(*snapshot, 150, present);
+  TEST_ASSERT_EQUAL_UINT32(1u, present.size());
+  TEST_ASSERT_EQUAL_UINT32(7u, present.front().noteId);
+  TEST_ASSERT_EQUAL_UINT8(2u, present.front().channel);
+
+  NoteUtils::DisplayNoteVec notes;
+  LoopContentResolution::resolveDisplayNotes(*snapshot, notes);
+  TEST_ASSERT_EQUAL_UINT32(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(100u, notes.front().startTick);
+  TEST_ASSERT_EQUAL_UINT32(200u, notes.front().endTick);
 }
 
 void test_canonical_fixture_inventory() {
@@ -4437,6 +4485,7 @@ void test_resolve_display_notes_keeps_capture_dsharp_committed_offs() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_snapshot_queries_are_explicit_and_self_contained);
   RUN_TEST(test_canonical_fixture_inventory);
   RUN_TEST(test_canonical_fixture_oracle_materialize);
   RUN_TEST(test_canonical_fixture_wrap_and_edits_in_oracle);
