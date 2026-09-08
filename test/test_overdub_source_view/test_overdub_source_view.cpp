@@ -42,6 +42,7 @@
 #include <cstdio>
 #include <cstring>
 #include <initializer_list>
+#include <array>
 
 namespace {
 
@@ -3967,6 +3968,46 @@ void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
   LoopContentResolution::deviceGateReset();
 }
 
+void test_snapshot_source_uses_bounded_overdub_window() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 32u;
+
+  auto empty =
+      std::make_shared<const LoopSnapshot>(
+          LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 100, 100));
+  LoopSnapshotChangeSet changes;
+  for (const auto& geometry : {
+           std::array<uint32_t, 3>{1u, 100u, 140u},
+           std::array<uint32_t, 3>{2u, Config::TICKS_PER_BAR * 20u + 100u,
+                                   Config::TICKS_PER_BAR * 20u + 140u},
+       }) {
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = geometry[0];
+    add.next.pitch = 60;
+    add.next.velocity = 100;
+    add.next.startTick = geometry[1];
+    add.next.endTick = geometry[2];
+    changes.notes.push_back(add);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
+  loop.storePublishedSnapshotForTest(construction.freeze(), loop.playbackRevision);
+  loop.openOverdubSession(0);
+
+  const uint32_t sourceWindowLength = Config::TICKS_PER_BAR * 16u;
+  TEST_ASSERT_EQUAL_STRING(
+      "snapshot",
+      loop.rebuildOverdubSourceSpanCacheForTest(0, sourceWindowLength));
+  TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 1));
+  TEST_ASSERT_NULL(findSpanCacheNote(loop, 2));
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
+}
+
 void test_occupy_predicate_false_uses_prepared_not_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4574,6 +4615,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_snapshot_miss_recovers_pending_shorten_212700);
   RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
+  RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);
   RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
   RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);

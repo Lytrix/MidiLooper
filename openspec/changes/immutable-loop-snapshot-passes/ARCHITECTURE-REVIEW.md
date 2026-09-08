@@ -315,6 +315,22 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [x] Full `pio test -e native` passes.
 - [x] No new owner, transition, or interval-path execution-bound owner added.
 
+### Phase 4.4a implementation review — bounded overdub source resolution
+
+- [x] Architecture gate and ownership checkpoint posted in the session
+      transcript; no owner or transition changed.
+- [x] `Loop::rebuildOverdubSourceSpanCache` gathers selected snapshot
+      memberships only for the bounded overdub source window.
+- [x] Existing source-cache ownership, fallback order, pending-note overlays,
+      and compatibility fallback behavior remain intact.
+- [x] Snapshot-backed source resolution does not re-materialize compatibility
+      passes for omitted identities; complete snapshot content is authoritative.
+- [x] Focused `test_overdub_source_view` passes.
+- [x] Capture-serial build passes with RAM1 locals **6848**.
+- [x] Full `pio test -e native` passes: **1755 succeeded, 1 skipped**.
+- [ ] Full 4.4 caller migration remains open: display fallback/identity,
+      NOTE_EDIT, overdub analysis, and validation callers are not completed.
+
 ### Phase 3 implementation review (3.5–3.6 wrap publication)
 
 Closed 2026-09-08. Remaining-interval yield device proof is parked
