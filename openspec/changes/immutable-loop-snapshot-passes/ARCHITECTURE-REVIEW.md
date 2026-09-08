@@ -417,7 +417,9 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       **1772 succeeded, 1 skipped**.
 - [x] Device [`191346`](../../../captures/session_20260908_191346.log):
       both `current=1` opens `only_visual=0` `only_store=0` (120 then 119).
-      No leftover store-only NoteId. `take_only` unchanged.
+      [`192155`](../../../captures/session_20260908_192155.log): `current=0`
+      keeps pass rematerialize (`only_store=5`); three `current=1`
+      `root_rev=41` opens are **141** / `only_*=0`. `take_only` unchanged.
 
 ### Close-publish NoteRange pitch reuse
 

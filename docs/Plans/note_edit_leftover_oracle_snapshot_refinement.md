@@ -83,11 +83,11 @@ Thread `openedOnCurrentSnapshot` / `openedSnapshotRevision` from
 | Native Stage 1 | Existing open / rematerialize fixtures stay green |
 | Native Stage 2 | `test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids`, `test_session_rows_fallback_uses_opened_snapshot_span_note_ids` |
 | RAM1 | `teensy41-capture-serial` locals **6848**. Full native **1772 succeeded, 1 skipped** |
-| Device | [`191346`](../../captures/session_20260908_191346.log): first open
-  `current=1` `root_rev=7` notes **120**; reopen `current=1` `root_rev=14`
-  notes **119**; both `only_visual=0` `only_store=0`. No leftover store-only
-  id. No `live capture baked`. `take_only` still logs (unchanged). E: rows
-  fallback not hit — undo pushes used `UNDO_WARM` / current-state entries. |
+| Device | [`191346`](../../captures/session_20260908_191346.log): both
+  `current=1` opens `only_*=0` (120 then 119).
+  [`192155`](../../captures/session_20260908_192155.log): `current=0`
+  `root_rev=27` uses pass rematerialize (`only_store=5` ids `1,2,3,100,96`).
+  Three later `current=1` `root_rev=41` opens are **141** / `only_*=0`. |
 
 ## Pre-implementation review
 
