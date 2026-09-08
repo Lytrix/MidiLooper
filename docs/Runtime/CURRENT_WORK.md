@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4f leftover NOTE_EDIT oracles shipped)
+Last updated: 2026-09-08 (4.4g idle-validate snapshot oracle)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-Do not start hydrate Stage 4a, analysis/validation oracles, 4.5, or 4.6.
+**OpenSpec 4.4g — analysis/validation leftover oracles — shipped.**
+`validateAndCleanupMidiEvents` uses `Loop::copyIdleValidateEvents`
+(current-root span-filtered snapshot events). Overdub analysis
+current-root gather already skips pass flatten (4.4a). SEVT / `take_only`
+unchanged. RAM1 locals **6848**; native **1773 succeeded, 1 skipped**.
+Do not start hydrate Stage 4a, Overlay-as-display, raise `N`, 4.5, or 4.6.
+Plan:
+[`analysis_validation_oracle_snapshot_refinement.md`](../Plans/analysis_validation_oracle_snapshot_refinement.md).
 
 **Prior — OpenSpec 4.4f — leftover NOTE_EDIT oracles.** Current-root open
 skips `assignMissingNoteIds(loop.midiEvents())`. E: rows undo/redo fallback

@@ -421,6 +421,18 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       keeps pass rematerialize (`only_store=5`); three `current=1`
       `root_rev=41` opens are **141** / `only_*=0`. `take_only` unchanged.
 
+### Phase 4.4g implementation review — analysis/validation leftover oracles
+
+- [x] Architecture gate posted: idle validate copies current-root
+      span-filtered snapshot events. Overdub analysis current-root gather
+      already skips pass flatten (4.4a). No owner or transition change.
+      SEVT / `take_only` unchanged.
+- [x] Stage 1: `Track::validateAndCleanupMidiEvents` uses
+      `Loop::copyIdleValidateEvents`. Native
+      `test_copy_idle_validate_events_uses_snapshot_span_note_ids`.
+- [x] Capture-serial RAM1 locals **6848**. Full native suite:
+      **1773 succeeded, 1 skipped**.
+
 ### Close-publish NoteRange pitch reuse
 
 - [x] Architecture checkpoint: `appendEditRowChange` only; no owner or

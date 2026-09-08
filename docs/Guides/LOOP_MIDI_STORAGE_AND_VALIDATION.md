@@ -207,7 +207,9 @@ Live capture is append-only + incremental `capturePreview`. **Do not** mutate `c
 
 **Files:** `Track::validateAndCleanupMidiEvents`, `Track::processDeferredIdleMaintenance`
 
-Full-loop pass over merged active capture passes (materialized flat):
+Full-loop pass over `Loop::copyIdleValidateEvents`: current published
+`LoopSnapshot` span-filtered events, or `mergeActiveCapturePasses` when
+no current root:
 
 - Uses **`LoopEventValidation::repairOrphanNoteEvents`** (wrap-aware) on a probe copy.
 - **v1 log-only:** reports orphan count; does **not** write back or call **`commitStopFinalizeFromStore`** (undo-safe).

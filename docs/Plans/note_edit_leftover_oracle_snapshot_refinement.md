@@ -71,7 +71,7 @@ Thread `openedOnCurrentSnapshot` / `openedSnapshotRevision` from
 ## Out of scope
 
 - Hydrate Stage 4a
-- Overlap analysis / validation callers
+- Overlap analysis / validation callers (closed in 4.4g)
 - Display identity/fallback outside NOTE_EDIT
 - Removing `materializeExcludingEditPassIds`
 - Changing `take_only`

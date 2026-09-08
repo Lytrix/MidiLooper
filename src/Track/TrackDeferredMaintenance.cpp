@@ -269,7 +269,7 @@ void Track::validateAndCleanupMidiEvents(uint32_t openTailCloseTick) {
     (void)openTailCloseTick;
     Loop& loop = getActiveLoop();
     MidiEventVec materializedEvents;
-    loop.mergeActiveCapturePasses(materializedEvents);
+    loop.copyIdleValidateEvents(materializedEvents);
     if (materializedEvents.empty()) return;
 
     const LoopEventValidation::LoopEventValidationResult invariantResult =

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.4f leftover NOTE_EDIT oracles)
+Last updated: 2026-09-08 (4.4g idle-validate snapshot oracle)
 
 ---
 
@@ -60,9 +60,12 @@ Wrap-head vs last-Off pairing RC1–RC3 is accepted (native shipped;
 174646 recapture waived).
 Close publish: `NoteRange` reuses the current snapshot pitch
 ([`note_edit_snapshot_note_range_pitch_bugfix.md`](../Plans/note_edit_snapshot_note_range_pitch_bugfix.md)).
-Remaining 4.4 caller migration (analysis, validation, other NOTE_EDIT
-oracles), 4.5 verify, 4.6, persistence, and snapshot-identity undo remain
-later.
+4.4g is closed: `validateAndCleanupMidiEvents` copies
+`copyIdleValidateEvents` (current-root span-filtered snapshot events).
+Overdub analysis current-root gather already skips pass flatten (4.4a).
+RAM1 locals **6848**; native **1773 succeeded, 1 skipped**.
+Remaining 4.4 display fallback/identity, 4.5 verify, 4.6, persistence,
+and snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.

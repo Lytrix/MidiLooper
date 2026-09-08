@@ -190,6 +190,9 @@ struct Loop {
 
   void rematerializeEditView(LoopEventStore& store) const;
   bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
+  /// Idle validate source: current-root span-filtered snapshot events, else
+  /// `mergeActiveCapturePasses`.
+  void copyIdleValidateEvents(MidiEventVec& out) const;
   bool tryCopyNoteEditOpenedSnapshotEvents(bool openedOnCurrentSnapshot,
                                            uint32_t openedSnapshotRevision,
                                            SessionMidiEventVec& out) const;
