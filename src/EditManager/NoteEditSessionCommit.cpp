@@ -209,7 +209,9 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
     }
 
     MidiEventVec baselineStoreEvents;
-    materializePassesExcludingEditPasses(loop, editSession.editPassIds, baselineStoreEvents);
+    loop.copyNoteEditCommitBase(editSession.editPassIds, baselineStoreEvents,
+                                editSession.openedOnCurrentSnapshot,
+                                editSession.openedSnapshotRevision);
     EditPassVec replacementRows =
         buildSessionStoreEditPasses(baselineStoreEvents, editSession.store.readEvents(),
                                     track.getMidiChannel(), noteEditLoopLengthTicks(track));

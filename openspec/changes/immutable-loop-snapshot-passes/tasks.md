@@ -245,8 +245,12 @@ cursors rather than treating that locality as an execution bound.
         Stage 3: `commitEditAction` rematerialize uses
         `copyNoteEditCommitBase` (pinned open root + session edit rows).
         Device PASS [`173531`](../../../captures/session_20260908_173531.log).
-        Plan:
-        [`note_edit_committed_oracle_snapshot_bugfix.md`](../../../docs/Plans/note_edit_committed_oracle_snapshot_bugfix.md).
+        Close bake follow-up: `bakeNoteEditSessionStoreToPasses` uses
+        `copyNoteEditCommitBase` so an empty-id second exit does not
+        invent `NoteEditPassClosed`. Device PASS
+        [`174646`](../../../captures/session_20260908_174646.log). Plans:
+        [`note_edit_committed_oracle_snapshot_bugfix.md`](../../../docs/Plans/note_edit_committed_oracle_snapshot_bugfix.md),
+        [`note_edit_close_bake_snapshot_bugfix.md`](../../../docs/Plans/note_edit_close_bake_snapshot_bugfix.md).
   - [x] Close publish: `appendEditRowChange` reuses the current snapshot
         pitch for `NoteRange` (does not write unset `row.pitch` 0). Same
         close set rebases on an earlier same-`NoteId` change.
