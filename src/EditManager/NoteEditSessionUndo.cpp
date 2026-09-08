@@ -137,7 +137,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::restoreSessionUndoEntry(Track& track,
     } else {
         Loop& loop = trackManager.getSelectedLoop(track);
         applySessionUndoEntry(loop, editSession.store, entry, noteEditLoopLengthTicks(track),
-                              channel, editSession.editPassIds);
+                              channel, editSession.editPassIds,
+                              editSession.openedOnCurrentSnapshot,
+                              editSession.openedSnapshotRevision);
     }
     editSession.focus = entry.focus;
     sessionState.selection = entry.selection;
@@ -264,7 +266,9 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::sessionRedo(Track& track) {
         refreshNoteEditSessionProjection(channel);
     } else {
         applySessionRedoEntry(loop, editSession.store, *entry, noteEditLoopLengthTicks(track),
-                              channel, editSession.editPassIds);
+                              channel, editSession.editPassIds,
+                              editSession.openedOnCurrentSnapshot,
+                              editSession.openedSnapshotRevision);
     }
     editSession.focus = entry->redoFocus;
     sessionState.selection = entry->redoSelection;

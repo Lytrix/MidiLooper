@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (wrap-head last-Off pairing native)
+Last updated: 2026-09-08 (4.4f leftover NOTE_EDIT oracles)
 
 ---
 
@@ -46,9 +46,13 @@ current-root opens share the span NoteId set. Stage 3 device PASS
 uses `copyNoteEditCommitBase`. Close bake PASS
 [`174646`](../../captures/session_20260908_174646.log): empty-id exit does
 not invent `NoteEditPassClosed`.
-Wrap-head vs last-Off pairing RC1–RC3 is native-shipped (reconstruct linear
-closer veto, shared-head-Off shorten, record-stop overflow NoteOn remap).
-Device recapture remains open.
+4.4f leftover NOTE_EDIT oracles are closed: current-root open skips
+`assignMissingNoteIds(loop.midiEvents())`; E: rows undo/redo fallback
+copies the opened snapshot root (`tryCopyNoteEditOpenedSnapshotEvents`).
+RAM1 locals **6848**; native **1772 succeeded, 1 skipped**.
+Wrap-head vs last-Off pairing RC1–RC3 is accepted (native shipped;
+[`185428`](../../captures/session_20260908_185428.log) RC3 analog PASS;
+174646 recapture waived).
 Close publish: `NoteRange` reuses the current snapshot pitch
 ([`note_edit_snapshot_note_range_pitch_bugfix.md`](../Plans/note_edit_snapshot_note_range_pitch_bugfix.md)).
 Remaining 4.4 caller migration (analysis, validation, other NOTE_EDIT

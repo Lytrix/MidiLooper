@@ -406,11 +406,15 @@ EditPassIdList editPassIdsCommittedAfterBaseline(const EditPassIdList& currentId
 
 void applySessionEditRows(Loop& loop, CowLoopEventStore& store, const EditPassVec& rows,
                         uint32_t loopLength, const EditPassIdList& currentEditPassIds,
-                        const EditPassIdList& baselineEditPassIds) {
-  const EditPassIdList passesToExclude =
-      editPassIdsCommittedAfterBaseline(currentEditPassIds, baselineEditPassIds);
+                        const EditPassIdList& baselineEditPassIds, bool openedOnCurrentSnapshot,
+                        uint32_t openedSnapshotRevision) {
   MidiEventVec flat;
-  loop.materializeExcludingEditPassIds(passesToExclude, flat);
+  if (!loop.tryCopyNoteEditOpenedSnapshotEvents(openedOnCurrentSnapshot, openedSnapshotRevision,
+                                                flat)) {
+    const EditPassIdList passesToExclude =
+        editPassIdsCommittedAfterBaseline(currentEditPassIds, baselineEditPassIds);
+    loop.materializeExcludingEditPassIds(passesToExclude, flat);
+  }
   store.mutStore().loadFromEvents(flat);
   store.discardEventsCache();
   applyNoteEditPassSequence(store.mutEvents(), rows, loopLength);
@@ -429,18 +433,20 @@ void restoreSessionStoreFromCurrentState(CowLoopEventStore& store,
 
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, uint8_t channel,
-                           const EditPassIdList& currentEditPassIds) {
+                           const EditPassIdList& currentEditPassIds, bool openedOnCurrentSnapshot,
+                           uint32_t openedSnapshotRevision) {
   if (entry.hasUndoCurrentState) {
     restoreSessionStoreFromCurrentState(store, entry.undoCurrentState, channel);
     return;
   }
   applySessionEditRows(loop, store, entry.editRows, loopLength, currentEditPassIds,
-                       entry.editPassIdsAtPush);
+                       entry.editPassIdsAtPush, openedOnCurrentSnapshot, openedSnapshotRevision);
 }
 
 void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, uint8_t channel,
-                           const EditPassIdList& currentEditPassIds) {
+                           const EditPassIdList& currentEditPassIds, bool openedOnCurrentSnapshot,
+                           uint32_t openedSnapshotRevision) {
   if (!entry.hasRedoPayload) {
     return;
   }
@@ -449,7 +455,7 @@ void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUn
     return;
   }
   applySessionEditRows(loop, store, entry.redoEditRows, loopLength, currentEditPassIds,
-                       entry.redoEditPassIds);
+                       entry.redoEditPassIds, openedOnCurrentSnapshot, openedSnapshotRevision);
 }
 
 bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b) {

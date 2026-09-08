@@ -367,6 +367,30 @@ LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVe
   return copyPublishedSnapshotEditViewEvents(*this, out);
 }
 
+LOOP_COLD_MEM bool Loop::tryCopyNoteEditOpenedSnapshotEvents(bool openedOnCurrentSnapshot,
+                                                            uint32_t openedSnapshotRevision,
+                                                            SessionMidiEventVec& out) const {
+  if (!shouldUsePublishedSnapshotForNoteEditCommit(*this, openedOnCurrentSnapshot,
+                                                   openedSnapshotRevision)) {
+    out.clear();
+    return false;
+  }
+  return copyPublishedSnapshotEditViewEvents(*this, out);
+}
+
+LOOP_COLD_MEM bool Loop::tryCopyNoteEditOpenedSnapshotEvents(bool openedOnCurrentSnapshot,
+                                                            uint32_t openedSnapshotRevision,
+                                                            MidiEventVec& out) const {
+  SessionMidiEventVec sessionEvents;
+  if (!tryCopyNoteEditOpenedSnapshotEvents(openedOnCurrentSnapshot, openedSnapshotRevision,
+                                           sessionEvents)) {
+    out.clear();
+    return false;
+  }
+  out.assign(sessionEvents.begin(), sessionEvents.end());
+  return true;
+}
+
 LOOP_COLD_MEM void Loop::copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds,
                                                SessionMidiEventVec& out,
                                                bool openedOnCurrentSnapshot,
