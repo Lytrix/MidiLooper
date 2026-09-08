@@ -231,12 +231,14 @@ cursors rather than treating that locality as an execution bound.
         or `materializedLoopEventsForNoteEditFocus`. Plan:
         [`note_edit_committed_base_snapshot_refinement.md`](../../../docs/Plans/note_edit_committed_base_snapshot_refinement.md).
         Capture-serial RAM1 locals **6848**; native **1760 succeeded, 1 skipped**.
-  - [ ] 4.4e Stage 1: `rebuildVisualCacheFromPasses` on a current published
+  - [x] 4.4e Stage 1: `rebuildVisualCacheFromPasses` on a current published
         `LoopSnapshot` uses `resolveDisplayNotes(*snapshot)` for
         `visualCache.notes`. That query copies note-span membership
         (`appendSnapshotNotesForBarRange`). Do not event-flat reconstruct.
-        Recapture [`155257`](../../../captures/session_20260908_155257.log)
-        before Stage 2/3. Plan:
+        Current-root rebuild skips wrap-held append after spans.
+        Device PASS [`162207`](../../../captures/session_20260908_162207.log)
+        questions 1–2. Do not start Stage 2/3.
+        Plan:
         [`note_edit_committed_oracle_snapshot_bugfix.md`](../../../docs/Plans/note_edit_committed_oracle_snapshot_bugfix.md).
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
