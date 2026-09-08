@@ -339,7 +339,8 @@ struct LoopContentResolution {
   static void resolveDisplayNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
                                   NoteUtils::DisplayNoteVec& out,
                                   ResolutionCostCounters* counters = nullptr);
-  /// Stateless full-content display-note query over one complete immutable snapshot.
+  /// Full-content display notes from snapshot note-span membership
+  /// (`appendSnapshotNotesForBarRange`). Not event-flat reconstruct.
   static void resolveDisplayNotes(const LoopSnapshot& snapshot,
                                   NoteUtils::DisplayNoteVec& out,
                                   ResolutionCostCounters* counters = nullptr);

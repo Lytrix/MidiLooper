@@ -13,6 +13,7 @@
 #include "OverlapNoteIdObservation.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
+#include "Utils/SnapshotNoteConversion.h"
 #include "Utils/TrackMem.h"
 
 #if defined(ARDUINO)
@@ -1752,17 +1753,36 @@ TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(const TickIndex& 
 TRACK_COLD_MEM void LoopContentResolution::resolveDisplayNotes(
     const LoopSnapshot& snapshot, NoteUtils::DisplayNoteVec& out,
     ResolutionCostCounters* counters) {
-  SessionMidiEventVec events;
-  appendSnapshotEvents(snapshot, events);
-  out = NoteUtils::reconstructDisplayNotes(events, snapshot.loopLengthTicks(), false);
+  out.clear();
+  const uint32_t loopLengthTicks = snapshot.loopLengthTicks();
+  if (loopLengthTicks == 0 || Config::TICKS_PER_BAR == 0) {
+    bumpOps(counters, 0);
+    if (counters != nullptr) {
+      counters->eventsInHistory = 0;
+      counters->passesInHistory = 0;
+      counters->candidateEvents = 0;
+      counters->eventsInQueryWindow = 0;
+      counters->passChunkListsWalked = 0;
+    }
+    return;
+  }
+  const uint32_t barCount =
+      (loopLengthTicks + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  if (barCount > 0) {
+    appendSnapshotNotesForBarRange(snapshot, 0, barCount - 1u, out);
+  }
   bumpOps(counters, static_cast<uint32_t>(out.size()));
   if (counters != nullptr) {
-    counters->eventsInHistory = static_cast<uint32_t>(events.size());
+    counters->eventsInHistory = static_cast<uint32_t>(out.size());
     counters->passesInHistory = 0;
-    counters->candidateEvents = static_cast<uint32_t>(events.size());
+    counters->candidateEvents = static_cast<uint32_t>(out.size());
     counters->eventsInQueryWindow = static_cast<uint32_t>(out.size());
     counters->passChunkListsWalked = 0;
   }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  logResolvedDisplayNoteMerge(PSTR("spans"), static_cast<uint32_t>(out.size()),
+                              countDuplicateGeometryDistinctNoteIds(out));
+#endif
 }
 
 TRACK_COLD_MEM void LoopContentResolution::resolveNotes(const LoopPasses& passes, uint32_t loopLengthTicks,
