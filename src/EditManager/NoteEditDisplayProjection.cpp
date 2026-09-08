@@ -7,10 +7,12 @@
 
 #include "EditManager.h"
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "TrackManager.h"
+#include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
 
 using DisplayNote = NoteUtils::DisplayNote;
@@ -61,20 +63,29 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         return;
     }
 
-    // B2a: when visualCache is stale, committed base is reconstruct(materialize(active
-    // passes)) — same oracle as commitEditAction. Do not call getVisualNotesForSlot while
-    // dirty (that is VCACHE,full / B2b). Reuse this projection cache until playbackRevision
-    // or the existing fingerprint changes. After E: undo, editPassIds is empty but dirty is
-    // set by disableEditPasses; materialize then drops Disabled rows.
+    // B2a: when visualCache is stale, committed base is the current snapshot
+    // when that root is current (4.4d). Otherwise reconstruct(materialize(active
+    // passes)) — same oracle as commitEditAction. Do not call getVisualNotesForSlot
+    // while dirty (that is VCACHE,full / B2b). Reuse this projection cache until
+    // playbackRevision or the existing fingerprint changes. After E: undo,
+    // editPassIds is empty but dirty is set by disableEditPasses; materialize
+    // then drops Disabled rows.
     NoteUtils::DisplayNoteVec materializedCommittedBase;
     const NoteUtils::DisplayNoteVec* committedBase = nullptr;
-    if (loop.visualCacheDirty) {
+    if (DisplayWindowUtils::shouldResolveNoteEditCommittedBaseFromSnapshot(
+            loop.visualCacheDirty, loop.publishedSnapshotIsCurrent())) {
+        if (const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot()) {
+            LoopContentResolution::resolveDisplayNotes(*snapshot, materializedCommittedBase);
+            committedBase = &materializedCommittedBase;
+        }
+    }
+    if (committedBase == nullptr && loop.visualCacheDirty) {
         MidiEventVec flat;
         loop.passes.materializeToEventVector(flat, loopLength);
         materializedCommittedBase =
             NoteUtils::reconstructDisplayNotes(flat, loopLength, false, false);
         committedBase = &materializedCommittedBase;
-    } else {
+    } else if (committedBase == nullptr) {
         committedBase = &track.getVisualNotesForSlot(slot);
     }
 

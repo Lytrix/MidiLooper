@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.5a device PASS 145633)
+Last updated: 2026-09-08 (4.4d closed; remaining 4.4 / 4.5 HITL)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.5 verify / remaining 4.4 caller migration:**
-4.5a is closed. Overdub stop holds compose; session-exit publishes on idle
-`N=2`. Device PASS
-[`145633`](../../captures/session_20260908_145633.log). OpenSpec 4.5 HITL
-verify and remaining 4.4 NOTE_EDIT / analysis / validation callers stay
-open. Each sub-slice keeps its own phase gate.
+**OpenSpec 4.4 remaining callers / 4.5 HITL verify:**
+4.4d is closed. Dirty NOTE_EDIT paint/select uses the current snapshot
+as committed base. Commit rematerialize and
+`materializedLoopEventsForNoteEditFocus` stay on passes. RAM1 locals
+**6848**; native **1760 succeeded, 1 skipped**. Remaining 4.4 analysis /
+validation / other NOTE_EDIT oracles, and OpenSpec 4.5 HITL verify, stay
+open. Each sub-slice keeps its own phase gate. Plan:
+[`note_edit_committed_base_snapshot_refinement.md`](../Plans/note_edit_committed_base_snapshot_refinement.md).
 
 **Prior — OpenSpec 4.5a — post-stop snapshot publication convergence:**
 Closed. `refreshViewportAfterOverdubStop` holds the last OVERDUBBING

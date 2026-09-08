@@ -361,8 +361,17 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       snapshot-stamp reuse.
 - [x] Capture-serial build passes with RAM1 locals **6848**. Full native
       suite: **1757 succeeded, 1 skipped**.
-- [ ] Remaining 4.4 caller migration remains open: NOTE_EDIT, analysis,
-      validation, and other display identity paths.
+- [ ] Remaining 4.4 caller migration remains open: analysis, validation,
+      other NOTE_EDIT oracles, and remaining display identity paths.
+
+### Phase 4.4d implementation review — NOTE_EDIT committed-base snapshot
+
+- [x] Architecture gate posted: paint/select dirty base only; commit
+      rematerialize unchanged; no owner or transition change.
+- [x] Dirty + current root uses `resolveDisplayNotes(*snapshot)`.
+- [x] No-current-root keeps `passes.materializeToEventVector`.
+- [x] Capture-serial RAM1 locals **6848**. Full native suite:
+      **1760 succeeded, 1 skipped**.
 
 ### Phase 4.5a implementation review — post-stop snapshot convergence
 
