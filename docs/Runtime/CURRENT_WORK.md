@@ -19,6 +19,9 @@ event-only 64). Pass rematerialize stays the no-current-root fallback.
 `take_only` unchanged. RAM1 locals **6848**; native **1772 succeeded, 1 skipped**.
 Device [`191346`](../../captures/session_20260908_191346.log): both
 `current=1` opens `only_*=0` (120 then 119).
+[`192155`](../../captures/session_20260908_192155.log): `current=0` open
+keeps pass rematerialize (`only_store=5`); three `current=1` `root_rev=41`
+opens are **141** / `only_*=0`.
 Plan:
 [`note_edit_leftover_oracle_snapshot_refinement.md`](../Plans/note_edit_leftover_oracle_snapshot_refinement.md).
 
