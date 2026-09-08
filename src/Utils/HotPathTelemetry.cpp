@@ -40,7 +40,11 @@ struct TelemetryState {
   bool deferredSummaryPending = false;
 };
 
+#if defined(__IMXRT1062__)
+EXTMEM TelemetryState telemetryState;
+#else
 TelemetryState telemetryState;
+#endif
 
 void updateMetric(Metric& metric, uint32_t elapsedUs, uint32_t budgetUs) {
   metric.samples++;

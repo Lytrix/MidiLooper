@@ -5,6 +5,7 @@
 
 #include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/MidiBatchComposition.h"
 
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
@@ -180,8 +181,19 @@ struct State {
 };
 
 State& state() {
+#if defined(__IMXRT1062__) && EXTMEM_AVAILABLE
+  // FLASHMEM emitters read this; PSRAM is legal, DMAMEM is not.
+  static EXTMEM State s;
+  static bool initialized = false;
+  if (!initialized) {
+    s = State{};
+    initialized = true;
+  }
+  return s;
+#else
   static State s;
   return s;
+#endif
 }
 
 void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t tick) {
