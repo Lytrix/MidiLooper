@@ -18,6 +18,7 @@
 #include "SetRevisionCatalog.h"
 #include "StorageManagerInternal.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/InvestigationCaptureLog.h"
 
 #if defined(__IMXRT1062__)
 #define CAPTURE_HITL_MEM FLASHMEM
@@ -449,6 +450,10 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 confirmRevisionLoadDiscardWorkspaceForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_CANCEL") == 0) {
                 cancelRevisionLoadRequestForHitl();
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!SNAPSHOT_YIELD") == 0) {
+#if SESSION_CAPTURE_SNAPSHOT_IDLE
+                InvestigationCaptureLog::armSnapshotIdleForcedYield();
+#endif
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_SAVE") == 0) {
                 HitlDisplayBridge::confirmLoadSaveFocusedRow();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!OVERLAY_CONFIRM") == 0) {

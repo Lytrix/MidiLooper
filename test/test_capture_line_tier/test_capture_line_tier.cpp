@@ -105,6 +105,16 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,extclk_dispatch,6100,1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,clk_batch,8,3"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,service_period,20833,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,usb_batch,12,1,8,5"));
+  TEST_ASSERT_TRUE(
+      CaptureLineTier::isTierALine("#CAP,6701478,DIAG,usb_bkt_size,10,2,0,0,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,usb_bkt_clk,3,1,0,0,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,usb_bkt_disp,0,6100,0,0,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,track_rebuild,4466,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,track_order,1200,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,track_send,800,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,track_slot,2100,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701478,DIAG,track_resid,400,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701479,DIAG,late_event,on,5000,192"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine(
@@ -115,6 +125,12 @@ void test_timing_telemetry_lines_are_tier_a() {
       CaptureLineTier::isTierALine("#CAP,57711324,DIAG,playback_order,2100,512"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,6701481,DIAG,snapshot_alloc,nodes=163,bytes=22000,slabs=1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701482,DIAG,snapshot_unit,kind=finish,ph=2,ld=1,p=1,q=1,a=0,"
+      "if=1,hb=12000,ha=11800,psram=4294967295,n=1754,b=360000,s=12"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,6701483,DIAG,snapshot_slab_fail,site=slab_open,bytes=32768,nodes=1754,slabs=12"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,boot_reset,crash=1"));
 #if SESSION_CAPTURE_SNAPSHOT_IDLE
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"
@@ -126,6 +142,12 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,inner,refill=200,event_scan=800,"
       "note_lookup=18000,change_build=400,construct=300"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,195718100,DIAG,snapshot_idle,reserve,start=195638831,enter=195718100,"
+      "reserve_us=79269"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
+      "#CAP,195718200,DIAG,snapshot_idle,yield,remaining=0,margin=1000,admitted=0,"
+      "cost=8000,crit=1,pending=1,root_rev=3"));
 #else
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,us=79169,pending=1,root=0x0,root_rev=0,"
@@ -144,7 +166,8 @@ void test_snapshot_idle_lines_fit_capture_text_budget() {
   // DebugSessionCapture kMaxCaptureTextBytes is 192; payload is 191 + NUL.
   // Parent uses observed-class maxima plus 10-digit micros. Child uses 6-digit
   // durations (above observed leftover) so nine fields still fit. Inner uses
-  // the same 6-digit ceiling on a third line. Teensy %p is 0x + 8 hex digits.
+  // the same 6-digit ceiling on a third line. Reserve is a fourth line paired at
+  // the next `handleMidiInput()` enter (DEC-053); child stays inside 191 bytes.
   constexpr size_t kMaxCaptureTextPayload = 191;
   char parent[256];
   char child[256];
@@ -167,12 +190,53 @@ void test_snapshot_idle_lines_fit_capture_text_budget() {
       "#CAP,%lu,DIAG,snapshot_idle,inner,refill=%lu,event_scan=%lu,"
       "note_lookup=%lu,change_build=%lu,construct=%lu",
       4294967295ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul);
+  char reserve[256];
+  const int reserveLen = snprintf(
+      reserve, sizeof(reserve),
+      "#CAP,%lu,DIAG,snapshot_idle,reserve,start=%lu,enter=%lu,reserve_us=%lu",
+      4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul);
   TEST_ASSERT_GREATER_THAN(0, parentLen);
   TEST_ASSERT_GREATER_THAN(0, childLen);
   TEST_ASSERT_GREATER_THAN(0, innerLen);
+  TEST_ASSERT_GREATER_THAN(0, reserveLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), parentLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), childLen);
   TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), innerLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), reserveLen);
+  char yieldLine[256];
+  const int yieldLen = snprintf(
+      yieldLine, sizeof(yieldLine),
+      "#CAP,%lu,DIAG,snapshot_idle,yield,remaining=%lu,margin=%lu,admitted=%lu,"
+      "cost=%lu,crit=%u,pending=%u,root_rev=%lu",
+      4294967295ul, 4294967295ul, 1000ul, 10000ul, 8000ul, 1u, 1u, 10ul);
+  TEST_ASSERT_GREATER_THAN(0, yieldLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), yieldLen);
+}
+
+void test_snapshot_unit_lines_fit_capture_text_budget() {
+  constexpr size_t kMaxCaptureTextPayload = 191;
+  char unit[256];
+  char fail[256];
+  char reset[64];
+  const int unitLen = snprintf(
+      unit, sizeof(unit),
+      "#CAP,%lu,DIAG,snapshot_unit,kind=%s,ph=%u,ld=%u,p=%u,q=%lu,a=%lu,"
+      "if=%u,hb=%lu,ha=%lu,psram=%lu,n=%lu,b=%lu,s=%lu",
+      4294967295ul, "publish", 2u, 1u, 1u, 4294967295ul, 4294967295ul, 1u,
+      4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul, 4294967295ul,
+      4294967295ul);
+  const int failLen = snprintf(
+      fail, sizeof(fail),
+      "#CAP,%lu,DIAG,snapshot_slab_fail,site=%s,bytes=%lu,nodes=%lu,slabs=%lu",
+      4294967295ul, "slab_allocate", 4294967295ul, 4294967295ul, 4294967295ul);
+  const int resetLen = snprintf(reset, sizeof(reset), "#CAP,%lu,DIAG,boot_reset,crash=%u",
+                                4294967295ul, 1u);
+  TEST_ASSERT_GREATER_THAN(0, unitLen);
+  TEST_ASSERT_GREATER_THAN(0, failLen);
+  TEST_ASSERT_GREATER_THAN(0, resetLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), unitLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), failLen);
+  TEST_ASSERT_LESS_OR_EQUAL(static_cast<int>(kMaxCaptureTextPayload), resetLen);
 }
 
 void test_transport_and_persistence_lines_are_tier_a() {
@@ -223,6 +287,7 @@ int main() {
   RUN_TEST(test_tag_is_the_field_after_micros);
   RUN_TEST(test_timing_telemetry_lines_are_tier_a);
   RUN_TEST(test_snapshot_idle_lines_fit_capture_text_budget);
+  RUN_TEST(test_snapshot_unit_lines_fit_capture_text_budget);
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);
   RUN_TEST(test_note_and_display_traffic_is_not_tier_a);
   RUN_TEST(test_other_diag_subtags_are_not_tier_a);

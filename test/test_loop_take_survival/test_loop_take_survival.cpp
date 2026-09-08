@@ -313,6 +313,32 @@ void pushClosedPendingAdd(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t sta
   loop.pushPendingNoteChangeForTest(add);
 }
 
+void pushClosedPendingShorten(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                               uint32_t endTick) {
+  PendingNoteChange shorten{};
+  shorten.kind = PendingNoteChangeKind::Shorten;
+  shorten.noteId = noteId;
+  shorten.channel = 1;
+  shorten.pitch = pitch;
+  shorten.velocity = 90;
+  shorten.startTick = startTick;
+  shorten.endTick = endTick;
+  loop.pushPendingNoteChangeForTest(shorten);
+}
+
+void pushClosedPendingHide(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                            uint32_t endTick) {
+  PendingNoteChange hide{};
+  hide.kind = PendingNoteChangeKind::Hide;
+  hide.noteId = noteId;
+  hide.channel = 1;
+  hide.pitch = pitch;
+  hide.velocity = 90;
+  hide.startTick = startTick;
+  hide.endTick = endTick;
+  loop.pushPendingNoteChangeForTest(hide);
+}
+
 void commitOverdubWrapLikeDevice(Loop& loop, uint32_t sealedAtTick, bool requireWrapJournal) {
   const uint32_t prior = loop.playbackRevision;
   TEST_ASSERT_EQUAL(CommitResult::Committed,
@@ -328,6 +354,16 @@ void commitOverdubWrapLikeDevice(Loop& loop, uint32_t sealedAtTick, bool require
   loop.pushOverdubSessionPass(passId, {});
   loop.recordLastOverdubSeal(passId, {}, prior);
   loop.beginCapture(CapturePhase::Overdub);
+}
+
+void drainWrapJournalsUntilCurrent(Loop& loop) {
+  size_t steps = 0;
+  while ((loop.hasPendingWrapJournal() || loop.hasPendingSnapshotPublish()) && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 }
 
 void assertClosedNotesDidNotPairAcrossPasses(const Loop& loop, NoteId idA, NoteId idB,
@@ -1058,6 +1094,9 @@ void test_session_exit_pass_change_skips_note_already_on_parent() {
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::RecordStop, 200));
   TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_FALSE(loop.pendingSnapshotFromLoadedPasses());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadedSnapshotHydrationPhase::None),
+                    static_cast<int>(loop.loadedSnapshotHydrationPhase()));
   loop.stepPendingSnapshotPublish(1, true);
   const LoopSnapshotChangeSet* changes = loop.pendingSnapshotConstructionChanges();
   if (changes != nullptr) {
@@ -1188,6 +1227,9 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   loop.invalidateDisplayCaches();
   TEST_ASSERT_TRUE(loop.visualCacheDirty);
   loop.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_TRUE(loop.lastVisualCacheIdleCopiedSnapshotNotes());
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::Snapshot),
+                    static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
   TEST_ASSERT_EQUAL(expected.size(), loop.visualCache.notes.size());
   TEST_ASSERT_EQUAL(expected[0].note, loop.visualCache.notes[0].note);
   TEST_ASSERT_EQUAL(expected[0].startTick, loop.visualCache.notes[0].startTick);
@@ -1205,7 +1247,55 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_FALSE(noSnapshot.tryGatherPublishedSnapshotEventsInWindow(missing, 0, kLoopLen));
   noSnapshot.invalidateDisplayCaches();
   noSnapshot.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_FALSE(noSnapshot.lastVisualCacheIdleCopiedSnapshotNotes());
   TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
+}
+
+void test_visual_cache_idle_slice_copies_current_snapshot_notes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  NoteUtils::DisplayNoteVec fromSnapshot;
+  appendSnapshotNotesForBarRange(*snapshot, 0, 3, fromSnapshot);
+  TEST_ASSERT_EQUAL(1u, fromSnapshot.size());
+
+  loop.invalidateDisplayCaches();
+  TEST_ASSERT_TRUE(loop.visualCacheDirty);
+  loop.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_TRUE(loop.lastVisualCacheIdleCopiedSnapshotNotes());
+  TEST_ASSERT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::Snapshot),
+                    static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_EQUAL(fromSnapshot.size(), loop.visualCache.notes.size());
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+}
+
+void test_loaded_visual_cache_falls_back_until_current_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop source;
+  source.loopId = 7;
+  source.loopLengthTicks = 3072;
+  recordLinearNote(source, 100, 200, 60);
+  TEST_ASSERT_TRUE(source.publishedSnapshotIsCurrent());
+  LoopSnapshotRef shared = source.sharePassesSnapshot();
+  TEST_ASSERT_NOT_NULL(shared.get());
+
+  Loop dest;
+  dest.adoptPersistedSnapshot(*shared);
+  TEST_ASSERT_FALSE(dest.pendingSnapshotFromLoadedPasses());
+  dest.invalidateDisplayCaches();
+  dest.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_FALSE(dest.lastVisualCacheIdleCopiedSnapshotNotes());
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::None),
+                        static_cast<int>(dest.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::Snapshot),
+                        static_cast<int>(dest.lastVisualCacheIdleGatherSource()));
 }
 
 /// Task 3.5: a settled wrap with no session exit queued publishes its candidate and
@@ -1256,6 +1346,54 @@ void test_settled_overdub_wrap_publishes_current_snapshot() {
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
 }
 
+/// Yield skips `stepPendingSnapshotPublish`; the previous complete root stays
+/// selected and wrap work remains. Retry then publishes only when complete.
+void test_snapshot_yield_retains_then_retries_to_publish() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  const uint32_t afterRecordRev = loop.publishedSnapshotRevision();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterRecord));
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 72;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_EQUAL_UINT32(afterRecordRev, loop.publishedSnapshotRevision());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  drainWrapJournalsUntilCurrent(loop);
+  TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_NOT_EQUAL(afterRecordRev, loop.publishedSnapshotRevision());
+  TEST_ASSERT_NOT_EQUAL(afterRecord.get(), loop.publishedSnapshot().get());
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
+}
+
 /// The candidate must not be selectable for a revision it does not contain: without
 /// the post-seal stamp the wrap journal drains but the snapshot stays unselected.
 void test_unstamped_wrap_journal_leaves_snapshot_unselected() {
@@ -1292,6 +1430,285 @@ void test_unstamped_wrap_journal_leaves_snapshot_unselected() {
   }
   TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+}
+
+/// Task 3.6: two wrap Shortens of the same NoteId publish one latest geometry each time.
+/// Older published roots keep the previous end.
+void test_wrap_journal_repeated_same_note_id_replace() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterRecord));
+  const NoteId recordId = afterRecord->noteMembership(60, 0)->references[0]->noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, recordId);
+  TEST_ASSERT_EQUAL_UINT32(200u, afterRecord->findNote(recordId, 60)->endTick);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  pushClosedPendingShorten(loop, recordId, 60, 100, 160);
+  pushClosedPendingAdd(loop, 10, 72, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  drainWrapJournalsUntilCurrent(loop);
+
+  const auto afterFirst = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterFirst));
+  TEST_ASSERT_TRUE(afterFirst.get() != afterRecord.get());
+  TEST_ASSERT_EQUAL_UINT32(200u, afterRecord->findNote(recordId, 60)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(160u, afterFirst->findNote(recordId, 60)->endTick);
+  TEST_ASSERT_EQUAL(recordId, afterFirst->findNote(recordId, 60)->noteId);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(800, 1, 67, 80)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(860, 1, 67, 0)));
+  pushClosedPendingShorten(loop, recordId, 60, 100, 140);
+  pushClosedPendingAdd(loop, 11, 67, 800, 860);
+  commitOverdubWrapLikeDevice(loop, 860, true);
+  drainWrapJournalsUntilCurrent(loop);
+
+  const auto afterSecond = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterSecond));
+  TEST_ASSERT_EQUAL_UINT32(200u, afterRecord->findNote(recordId, 60)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(160u, afterFirst->findNote(recordId, 60)->endTick);
+  TEST_ASSERT_EQUAL_UINT32(140u, afterSecond->findNote(recordId, 60)->endTick);
+  TEST_ASSERT_EQUAL(recordId, afterSecond->findNote(recordId, 60)->noteId);
+}
+
+/// Task 3.6: wrap-journal Shorten replaces wrap NoteOn/NoteOff objects and keeps NoteId.
+void test_wrap_journal_replaces_wrap_note_on_off_pair() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2800, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(100, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 100));
+  drainPendingSnapshotPublish(loop);
+
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterRecord));
+  const LoopSnapshotNoteRef parentNote = afterRecord->findNote(
+      afterRecord->noteMembership(60, 3)->references[0]->noteId, 60);
+  TEST_ASSERT_TRUE(static_cast<bool>(parentNote));
+  const NoteId wrapId = parentNote->noteId;
+  TEST_ASSERT_TRUE(parentNote->isWrap(3072));
+  TEST_ASSERT_EQUAL_UINT32(2800u, parentNote->startTick);
+  TEST_ASSERT_EQUAL_UINT32(100u, parentNote->endTick);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  pushClosedPendingShorten(loop, wrapId, 60, 2800, 50);
+  pushClosedPendingAdd(loop, 10, 72, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  drainWrapJournalsUntilCurrent(loop);
+
+  const auto afterWrap = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterWrap));
+  const LoopSnapshotNoteRef replaced = afterWrap->findNote(wrapId, 60);
+  TEST_ASSERT_TRUE(static_cast<bool>(replaced));
+  TEST_ASSERT_TRUE(replaced.get() != parentNote.get());
+  TEST_ASSERT_EQUAL(wrapId, replaced->noteId);
+  TEST_ASSERT_EQUAL_UINT32(2800u, replaced->startTick);
+  TEST_ASSERT_EQUAL_UINT32(50u, replaced->endTick);
+  TEST_ASSERT_TRUE(replaced->isWrap(3072));
+  TEST_ASSERT_EQUAL_PTR(afterWrap->noteMembership(60, 3)->references[0].get(),
+                        afterWrap->noteMembership(60, 0)->references[0].get());
+  TEST_ASSERT_EQUAL_UINT32(100u, afterRecord->findNote(wrapId, 60)->endTick);
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  int onCount = 0;
+  int offCount = 0;
+  for (const MidiEvent& evt : gathered) {
+    if (evt.noteId != wrapId || evt.data.noteData.note != 60) {
+      continue;
+    }
+    if (evt.isNoteOn()) {
+      TEST_ASSERT_EQUAL_UINT32(2800u, evt.tick);
+      ++onCount;
+    }
+    if (evt.isNoteOff()) {
+      TEST_ASSERT_EQUAL_UINT32(50u, evt.tick);
+      ++offCount;
+    }
+  }
+  TEST_ASSERT_EQUAL(1, onCount);
+  TEST_ASSERT_EQUAL(1, offCount);
+}
+
+/// Task 3.6: wrap-journal Hide removes the NoteId from the successor and keeps the parent.
+void test_wrap_journal_hide_removes_published_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterRecord));
+  const NoteId recordId = afterRecord->noteMembership(60, 0)->references[0]->noteId;
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  pushClosedPendingHide(loop, recordId, 60, 100, 200);
+  pushClosedPendingAdd(loop, 10, 72, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  drainWrapJournalsUntilCurrent(loop);
+
+  const auto afterHide = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(afterHide));
+  TEST_ASSERT_TRUE(static_cast<bool>(afterRecord->findNote(recordId, 60)));
+  TEST_ASSERT_FALSE(static_cast<bool>(afterHide->findNote(recordId, 60)));
+  TEST_ASSERT_TRUE(static_cast<bool>(afterHide->findNote(10, 72)));
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  TEST_ASSERT_EQUAL(0, countNoteOns(gathered, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
+}
+
+/// Task 3.6: wrap-journal non-note events keep EventId and equal-tick canonical order.
+void test_wrap_journal_equal_tick_non_note_event_order() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(400, 1, 7, 64)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  pushClosedPendingAdd(loop, 10, 72, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  drainWrapJournalsUntilCurrent(loop);
+
+  const auto snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
+  const auto membership = snapshot->eventMembership(0);
+  TEST_ASSERT_NOT_NULL(membership.get());
+  uint32_t noteOnOrder = 0;
+  uint32_t ccOrder = 0;
+  EventId ccEventId = kInvalidEventId;
+  uint32_t prevOrder = 0;
+  bool sawPrev = false;
+  forEachSnapshotMembershipReference(membership.get(), [&](const LoopSnapshotEventRef& ref) {
+    if (!ref) {
+      return;
+    }
+    if (sawPrev) {
+      TEST_ASSERT_TRUE(prevOrder <= ref->canonicalOrder);
+    }
+    prevOrder = ref->canonicalOrder;
+    sawPrev = true;
+    if (ref->value.isNoteOn() && ref->value.tick == 400 &&
+        ref->value.data.noteData.note == 72) {
+      noteOnOrder = ref->canonicalOrder;
+    }
+    if (ref->value.type == midi::ControlChange && ref->value.tick == 400) {
+      ccOrder = ref->canonicalOrder;
+      ccEventId = ref->eventId;
+    }
+  });
+  TEST_ASSERT_TRUE(noteOnOrder != 0);
+  TEST_ASSERT_TRUE(ccOrder != 0);
+  TEST_ASSERT_TRUE(noteOnOrder < ccOrder);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEventId, ccEventId);
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  int ccAtOnTick = 0;
+  bool sawNoteOnAt400 = false;
+  for (const MidiEvent& evt : gathered) {
+    if (evt.tick != 400) {
+      continue;
+    }
+    if (evt.isNoteOn() && evt.data.noteData.note == 72) {
+      TEST_ASSERT_EQUAL(0, ccAtOnTick);
+      sawNoteOnAt400 = true;
+    }
+    if (evt.type == midi::ControlChange) {
+      TEST_ASSERT_TRUE(sawNoteOnAt400);
+      ++ccAtOnTick;
+    }
+  }
+  TEST_ASSERT_EQUAL(1, ccAtOnTick);
+}
+
+/// [`094930`] skipped overdub stop closed the session without queueing session-exit, which
+/// discarded in-flight wrap journals and left `root_rev` at the first record.
+void test_skipped_overdub_stop_retains_in_flight_wrap_journals() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const uint32_t recordRevision = loop.publishedSnapshotRevision();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  pushClosedPendingAdd(loop, 10, 72, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_EQUAL(recordRevision, loop.publishedSnapshotRevision());
+
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+
+  drainWrapJournalsUntilCurrent(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotRevision() > recordRevision);
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
+}
+
+/// Wrap pass is already journaled, so session-exit has no new pass id. Keep-alive must
+/// retain the journals instead of clearing the box.
+void test_queue_session_exit_keeps_wrap_journals_without_new_pass() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  pushClosedPendingAdd(loop, 10, 72, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  loop.closeOverdubSession();
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  drainWrapJournalsUntilCurrent(loop);
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
 }
 
 /// 150650 ordering: the sealed pass reached neither committed tier when the frame was painted,
@@ -1461,7 +1878,12 @@ void test_stale_snapshot_release_requires_visual_cache_coverage() {
   loop.visualCacheDirty = true;
   TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
 
+  // Clean + matching revision is still not coverage until the sealed rows are present.
   loop.visualCacheDirty = false;
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+  for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+    loop.visualCache.notes.push_back(sealedRow);
+  }
   TEST_ASSERT_TRUE(loop.sealedCapturePreviewIsCovered());
   loop.releaseSealedCapturePreviewIfCovered();
   TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
@@ -1735,7 +2157,7 @@ void applyDrawSourceDisplayOverlays(const Loop& loop, uint32_t firstBar, uint32_
         if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
           continue;
         }
-        upsertDisplayNoteAtPitchStartFrom(out, prefixEnd, sealedRow, captureActive);
+        upsertDisplayNoteAtPitchStartFrom(out, 0, sealedRow, captureActive);
         break;
       }
     }
@@ -1790,17 +2212,41 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
     out.clear();
     const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
     const bool captureActive = loop.captureActive();
-    const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-        static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
-        !loop.visualCache.notes.empty(), loop.visualCacheDirty,
-        loop.publishedSnapshotIsCurrent());
+    const uint32_t windowStart = firstBar * Config::TICKS_PER_BAR;
+    const uint32_t windowEnd = (lastBar + 1u) * Config::TICKS_PER_BAR;
+    const uint32_t windowLength = windowEnd > windowStart ? windowEnd - windowStart : 0;
+    const bool coversWindow =
+        visualCacheCoversWindow(loop.visualCacheDirty, loop.visualCache.dirtyBars, windowStart,
+                                windowLength, loopLength, Config::TICKS_PER_BAR);
+    const bool uncoveredSealed =
+        (loop.captureActive() || loop.hasOverdubSession()) &&
+        loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered();
+    const bool cacheReusable = DisplayWindowUtils::visualCacheReusableAsCommittedDrawSource(
+        loop.visualCacheDirty, !loop.visualCache.notes.empty(), coversWindow, uncoveredSealed);
+    const bool usePublishedSnapshot =
+        DisplayWindowUtils::shouldGatherPublishedSnapshotForCompleteDrawSource(
+            static_cast<bool>(snapshot), captureActive, loop.hasOverdubSession(),
+            loop.publishedSnapshotIsCurrent(), cacheReusable, true);
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     uint32_t* committedWalks = walks != nullptr ? &walks->committedWalks : nullptr;
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-      if (usePublishedSnapshot) {
+      if (usePublishedSnapshot && snapshot) {
         appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out, committedWalks);
       } else {
         appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out, committedWalks);
+      }
+    }
+    if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+            loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(), captureActive,
+            loop.hasOverdubSession())) {
+      for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+        for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+          if (!previewNoteIntersectsBar(sealedRow, bar, loopLength)) {
+            continue;
+          }
+          upsertDisplayNoteAtPitchStartFrom(out, 0, sealedRow);
+          break;
+        }
       }
     }
     prefixEnd = out.size();
@@ -2255,7 +2701,8 @@ void test_draw_source_unions_sealed_preview_after_wrap_before_snapshot() {
   TEST_ASSERT_EQUAL(visualBefore, loop.visualCache.notes.size());
 }
 
-/// [`003558`] wrap 2/3: sealed sits after committedEnd so prefix Hide cannot drop it.
+/// [`003558`] / [`170537`]: sealed replacement joins the committed prefix. Hide of the
+/// old record id must not drop that replacement.
 void test_draw_source_sealed_row_survives_prefix_hide() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -2282,14 +2729,14 @@ void test_draw_source_sealed_row_survives_prefix_hide() {
   NoteUtils::DisplayNoteVec drawn;
   size_t committedEnd = 0;
   gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn, &committedEnd);
-  bool sealedAfterPrefix = false;
-  for (size_t i = 0; i < drawn.size(); ++i) {
+  bool sealedInPrefix = false;
+  for (size_t i = 0; i < committedEnd; ++i) {
     if (drawn[i].note == 64 && drawn[i].startTick == 768 && drawn[i].endTick == 900) {
-      TEST_ASSERT_TRUE(i >= committedEnd);
-      sealedAfterPrefix = true;
+      TEST_ASSERT_TRUE(drawn[i].noteId != recordId);
+      sealedInPrefix = true;
     }
   }
-  TEST_ASSERT_TRUE(sealedAfterPrefix);
+  TEST_ASSERT_TRUE(sealedInPrefix);
 
   NoteUtils::DisplayNoteVec afterHide;
   for (size_t i = 0; i < drawn.size(); ++i) {
@@ -3289,6 +3736,176 @@ void test_reclaim_disabled_overdub_releases_committed_chunks() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
+/// [`170537`] first overdub: a smaller current snapshot must not drop complete handoff id 112.
+void test_draw_source_keeps_complete_handoff_over_smaller_snapshot_170537() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec handoff;
+  handoff.push_back(makeAdoptedNote(1, 60, 100, 200));
+  handoff.push_back(makeAdoptedNote(112, 72, 768, 900));
+  handoff.push_back(makeAdoptedNote(3, 60, 1536, 1568));
+  handoff.push_back(makeAdoptedNote(4, 39, 2976, 3055));
+  loop.adoptComposedDisplayNotesFromViewport(handoff);
+  loop.visualCache.builtFromRevision = loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundHandoffId = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.noteId == 112 && note.note == 72 && note.startTick == 768 && note.endTick == 900) {
+      foundHandoffId = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundHandoffId);
+}
+
+/// [`170537`] wrap: sealed replacement is in the committed prefix before Hide can drop the old row.
+void test_draw_source_sealed_replacement_before_companion_hide_170537() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 768, 1151, 63);
+  const NoteId recordId = 71;
+
+  NoteUtils::DisplayNoteVec staleCache;
+  staleCache.push_back(makeAdoptedNote(recordId, 63, 768, 1151));
+  for (uint32_t i = 0; i < 65; ++i) {
+    staleCache.push_back(makeAdoptedNote(static_cast<NoteId>(200 + i), static_cast<uint8_t>(40 + (i % 20)),
+                                         (i % 4) * 768u, (i % 4) * 768u + 48u));
+  }
+  loop.adoptComposedDisplayNotesFromViewport(staleCache);
+  loop.visualCacheDirty = false;
+  const size_t staleCount = loop.visualCache.notes.size();
+  TEST_ASSERT_TRUE(staleCount > 58u);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 63, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(864, 1, 63, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 864));
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  NoteUtils::DisplayNoteVec drawn;
+  size_t committedEnd = 0;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn, &committedEnd);
+  bool replacementInPrefix = false;
+  for (size_t i = 0; i < committedEnd; ++i) {
+    if (drawn[i].note == 63 && drawn[i].startTick == 768 && drawn[i].endTick == 864) {
+      replacementInPrefix = true;
+    }
+  }
+  TEST_ASSERT_TRUE(replacementInPrefix);
+
+  NoteUtils::DisplayNoteVec afterHide;
+  for (size_t i = 0; i < drawn.size(); ++i) {
+    if (i < committedEnd && recordId != kInvalidNoteId && drawn[i].noteId == recordId &&
+        drawn[i].endTick == 1151) {
+      continue;
+    }
+    afterHide.push_back(drawn[i]);
+  }
+  bool replacementRemains = false;
+  for (const NoteUtils::DisplayNote& note : afterHide) {
+    if (note.note == 63 && note.startTick == 768 && note.endTick == 864) {
+      replacementRemains = true;
+    }
+  }
+  TEST_ASSERT_TRUE(replacementRemains);
+  TEST_ASSERT_TRUE(afterHide.size() >= committedEnd - 1u);
+}
+
+/// Cache built before the seal is not committed-content authority; last snapshot plus
+/// sealed preview still paint the new pass.
+void test_draw_source_cache_revision_mismatch_uses_sealed_prepared_170537() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const size_t recordVisual = loop.visualCache.notes.size();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(900, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 900));
+  loop.beginCapture(CapturePhase::Overdub);
+
+  loop.visualCacheDirty = false;
+  loop.visualCache.builtFromRevision = loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+  TEST_ASSERT_EQUAL(recordVisual, loop.visualCache.notes.size());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundSealed = false;
+  bool foundRecord = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 64 && note.startTick == 768 && note.endTick == 900) {
+      foundSealed = true;
+    }
+    if (note.note == 60 && note.startTick == 100 && note.endTick == 200) {
+      foundRecord = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundSealed);
+  TEST_ASSERT_TRUE(foundRecord);
+}
+
+/// Matching revision and membership reuses visualCache.
+void test_draw_source_reuses_visual_cache_when_revision_and_coverage_match() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(768, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(900, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 900));
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+
+  for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+    loop.visualCache.notes.push_back(sealedRow);
+  }
+  loop.visualCache.builtFromRevision = loop.playbackRevision;
+  loop.visualCacheDirty = false;
+  TEST_ASSERT_TRUE(loop.sealedCapturePreviewIsCovered());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, drawn);
+  bool foundSealed = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.note == 64 && note.startTick == 768 && note.endTick == 900) {
+      foundSealed = true;
+    }
+  }
+  TEST_ASSERT_TRUE(foundSealed);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
@@ -3310,6 +3927,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
+  RUN_TEST(test_visual_cache_idle_slice_copies_current_snapshot_notes);
+  RUN_TEST(test_loaded_visual_cache_falls_back_until_current_snapshot);
   RUN_TEST(test_stale_published_snapshot_gathers_window_without_full_compatibility);
   RUN_TEST(test_stale_snapshot_overlays_unpublished_overdub_pass);
   RUN_TEST(test_stale_snapshot_applies_unpublished_hide_companion);
@@ -3329,7 +3948,14 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
   RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
+  RUN_TEST(test_snapshot_yield_retains_then_retries_to_publish);
   RUN_TEST(test_unstamped_wrap_journal_leaves_snapshot_unselected);
+  RUN_TEST(test_wrap_journal_repeated_same_note_id_replace);
+  RUN_TEST(test_wrap_journal_replaces_wrap_note_on_off_pair);
+  RUN_TEST(test_wrap_journal_hide_removes_published_note);
+  RUN_TEST(test_wrap_journal_equal_tick_non_note_event_order);
+  RUN_TEST(test_skipped_overdub_stop_retains_in_flight_wrap_journals);
+  RUN_TEST(test_queue_session_exit_keeps_wrap_journals_without_new_pass);
   RUN_TEST(test_seal_retains_capture_rows_until_snapshot_covers_revision);
   RUN_TEST(test_retain_at_seal_merges_uncovered_laps);
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
@@ -3353,6 +3979,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_after_stop_keeps_adopted_linear_ends);
   RUN_TEST(test_draw_source_keeps_snapshot_when_wrap_clears_capture);
   RUN_TEST(test_draw_source_sealed_survives_current_snapshot);
+  RUN_TEST(test_draw_source_keeps_complete_handoff_over_smaller_snapshot_170537);
+  RUN_TEST(test_draw_source_sealed_replacement_before_companion_hide_170537);
+  RUN_TEST(test_draw_source_cache_revision_mismatch_uses_sealed_prepared_170537);
+  RUN_TEST(test_draw_source_reuses_visual_cache_when_revision_and_coverage_match);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);

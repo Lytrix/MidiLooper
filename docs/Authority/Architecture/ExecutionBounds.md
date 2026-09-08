@@ -102,7 +102,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
 | 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One admitted step applies at most one persistent-cursor bar and copies at most 8 membership pages of 16 refs. It does not rebuild a snapshot, enumerate a pass, or publish. An incomplete step leaves the candidate unpublished and resumable. | **Structurally bounded** |
-| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap and session-exit queue at their commit/stop owners; idle publishes from `stepPendingSnapshotPublish` | Queue only journal-capped fragments with exact parent identity. One idle turn admits at most one fragment start or one row-21 step. `storePublishedSnapshot` runs only after every queued wrap fragment, session-exit pass, and companion change is complete. Failure keeps the previous published root and does not publish a prefix. | **Structurally bounded** |
+| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap and session-exit queue at their commit/stop owners; idle publishes from `stepPendingSnapshotPublish` | Queue only journal-capped fragments with exact parent identity. One idle turn admits two units (`kSnapshotIdleConstructionUnitsPerTurn` = 2). Each unit is one fragment start or one row-21 step. `storePublishedSnapshot` runs only after every queued wrap fragment, session-exit pass, and companion change is complete. Failure keeps the previous published root and does not publish a prefix. | **Structurally bounded** |
 
 Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
 
@@ -116,12 +116,13 @@ a pass, or call `storePublishedSnapshot`.
 
 **Row 22 goal:** Separate queue from publish. Wrap and session-exit only
 enqueue bounded work (journal fragments with exact parent identity, or a
-session-exit pass list) at stop / wrap commit. Idle then admits at most one
-of: start the next journal-capped fragment, or one row-21 step. Live-record
+session-exit pass list) at stop / wrap commit. Idle then admits two units
+(`kSnapshotIdleConstructionUnitsPerTurn` = 2). Each unit is one
+journal-capped fragment start or one row-21 step. Live-record
 start walks `capture.store` from the persisted store index through
 `tick < includeUntil` and emits at most one journal-capped changeset (32
 changes). It does not copy or scan the historical store. Admission
-cardinality is unchanged. Publication is atomic and only when wrap journals,
+cardinality is two units per Snapshot idle turn. Publication is atomic and only when wrap journals,
 queued session-exit passes, construction, and companion changes are all
 complete. A failed or incomplete candidate is never selected; the previous
 published root stays authoritative.
@@ -132,7 +133,7 @@ stop (`queueSessionExitSnapshot`) and construct from
 `Track::processDeferredIdleMaintenance`. Phase 3 wrap publication queues
 bounded journal fragments from `Track::commitOverdubWrapAtSessionStart` and
 steps them during PLAYING/OVERDUBBING after the first root (`DEC-047`). An idle
-turn that applies one snapshot unit does not also run a visual-cache slice.
+turn that applies Snapshot construction does not also run a visual-cache slice.
 `STOPPED` first-paint (`visualCacheNeedsFirstPaint`) does not suppress that
 Snapshot turn when session-exit, in-flight, or wrap-journal work is pending.
 First-record construction uses the overdub live-enqueue setup (`DEC-045` 4b.2):
@@ -155,15 +156,24 @@ Selected structural caps:
 
 | Property | Row 21 goal (`step`) | Row 22 goal (queue / idle publish) |
 |----------|---------------|----------------|
-| **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: journal-capped fragments with exact parent identity. Idle: one fragment start or one row-21 step |
+| **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: journal-capped fragments with exact parent identity. Idle: two units per turn; each unit is one fragment start or one row-21 step |
 | **Maximum indivisible step** | Select/update or copy/sort one membership page (≤ 16 refs) and advance the cursor. No full-span walk, pass reconstruction, or publish | Start at most one journal-capped fragment (32 changes). Live-record start consumes only unconsumed `capture.store` events from the persisted index. Session-exit length mismatch first clones one snapshot header when applied live-record ticks fit the sealed length. Non-fit discard remains a content-sized destructor |
 | **Progress** | Persistent bar / membership cursor, `complete()`, `failed()` | Ordered fragments and pass-change cursor; previous published root stays selected until `freeze()` succeeds |
 | **Completion** | All admitted changes applied and `failed()` is false | Idle stores a complete root only after wrap journals, session-exit passes, construction, and companions are done |
 | **Overrun / failure** | `failed_`; `freeze()` returns null; retain the fragment and resume | Keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay committed |
 
 `T_RT_reserve` remains the 3.6 device gate for construction-attributable MIDI
-gap and deadline lateness. These structural caps admit the 3.5 firmware path;
-they do not close that device measurement. Capture-serial `snapshot_idle` now
+gap and deadline lateness ([DEC-053](../../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)).
+`T_RT_reserve_ceiling` is the 10,000 µs policy cap. Per-turn `reserve_us` is
+the measured interval from snapshot-idle start to the next timing-critical
+`handleMidiInput()` entry. Admission compares the classified two-unit cost
+to `min(T_RT_reserve_ceiling, remaining_us − T_RT_safety_margin)` and yields
+when the cost does not fit. `60% × T_clock` is a diagnostic proxy only. STOPPED
+samples are excluded from this gate. These
+structural caps admit the 3.5 firmware path; they do not close that device
+measurement. Do not freeze an observed unit as the ceiling.
+
+Capture-serial `snapshot_idle` now
 emits child durations for `startNextPendingConstruction`, nested
 `startNextPassChangeFragment`, `LoopSnapshotConstruction::step`,
 `finishPendingConstruction`, and `storePublishedSnapshot`, plus a `probe_us`

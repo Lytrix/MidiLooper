@@ -20,8 +20,40 @@ enum class DeferredIdleOwner : uint8_t {
 
 constexpr uint8_t kDeferredIdleOwnerCount = 5;
 
-/// Device test matrix: N=2, pages=16. Revert N to 1 after the recapture.
+/// Snapshot idle admits two construction units per turn (DEC-053). Each unit
+/// remains one row-21 step or one journal-capped fragment start.
 constexpr uint8_t kSnapshotIdleConstructionUnitsPerTurn = 2;
+
+/// Policy ceiling on construction-attributable work per Snapshot idle turn.
+constexpr uint32_t kSnapshotIdleReserveCeilingUs = 10000u;
+
+/// Working hypothesis only; DEC-053 leaves T_RT_safety_margin unfrozen.
+constexpr uint32_t kSnapshotIdleSafetyMarginUs = 1000u;
+
+/// Classified cost of one Snapshot construction unit. Not an observed freeze.
+constexpr uint32_t kSnapshotIdleConstructionUnitCostUs = 4000u;
+
+inline uint32_t snapshotIdleConstructionCostUs(uint8_t units) {
+  return static_cast<uint32_t>(units) * kSnapshotIdleConstructionUnitCostUs;
+}
+
+inline uint32_t admittedSnapshotIdleUs(uint32_t remainingUs) {
+  const uint32_t afterMargin = remainingUs > kSnapshotIdleSafetyMarginUs
+                                   ? remainingUs - kSnapshotIdleSafetyMarginUs
+                                   : 0u;
+  return afterMargin < kSnapshotIdleReserveCeilingUs ? afterMargin
+                                                     : kSnapshotIdleReserveCeilingUs;
+}
+
+/// Timing-critical Snapshot idle admits only when the classified N-unit cost
+/// fits the remaining interval. STOPPED / non-critical turns always admit.
+inline bool allowSnapshotIdleReserve(uint32_t remainingUs, bool timingCritical,
+                                     uint8_t units = kSnapshotIdleConstructionUnitsPerTurn) {
+  if (!timingCritical) {
+    return true;
+  }
+  return snapshotIdleConstructionCostUs(units) <= admittedSnapshotIdleUs(remainingUs);
+}
 
 inline DeferredIdleOwner nextDeferredIdleOwner(DeferredIdleOwner owner) {
   const uint8_t next =
@@ -149,6 +181,27 @@ inline bool allowStoppedTrackSnapshotDuringRealtime(bool trackIsRealtime,
   return !anyRealtimeTrackActive || trackIsRealtime;
 }
 
+/// Title drain keeps LoadLoopJob on the load-frame owner. Loaded snapshot
+/// construction starts after title exit (`020111` stayed on title for 112 s
+/// while focus T0/S5 climbed to 36k snapshot nodes).
+inline bool allowSnapshotIdleDuringBootTitleDrain(bool bootTitleLoadDrain,
+                                                  bool bootRestoreComplete = false) {
+  (void)bootRestoreComplete;
+  return !bootTitleLoadDrain;
+}
+
+/// Automatic loaded snapshot construction is off (`023222` reboot on loaded
+/// `start`). Session-exit publication is unchanged. Explicit selected-slot
+/// hydration is a later slice.
+inline bool allowLoadedSnapshotHydration(bool anyRealtimeTrackActive,
+                                         bool bootTitleLoadDrain,
+                                         bool bootRestoreComplete) {
+  (void)anyRealtimeTrackActive;
+  (void)bootTitleLoadDrain;
+  (void)bootRestoreComplete;
+  return false;
+}
+
 /// Prefer a track with pending snapshot work on a STOPPED Snapshot turn.
 /// Walks from `cursor`. Returns `cursor` when no pending flag is set.
 inline uint8_t selectStoppedSnapshotTrack(uint8_t cursor, uint8_t trackCount,
@@ -166,6 +219,36 @@ inline uint8_t selectStoppedSnapshotTrack(uint8_t cursor, uint8_t trackCount,
     }
   }
   return cursor;
+}
+
+/// Title drain constructs only the focus loop. Neighbor loaded publication
+/// (66-bar T6 in session_20260908_015331) resets the device before boot_commit.
+inline uint8_t selectBootTitleSnapshotTrack(bool bootTitleLoadDrain, uint8_t focusTrack,
+                                            uint8_t cursor, uint8_t trackCount,
+                                            const bool* pendingByTrack) {
+  if (bootTitleLoadDrain) {
+    return focusTrack;
+  }
+  return selectStoppedSnapshotTrack(cursor, trackCount, pendingByTrack);
+}
+
+/// After title: hydrate only the selected track. `022447` published the new
+/// record loop, then a neighbor loaded construction (`ld=1`, `n=8337`)
+/// reconnects. `pendingByTrack` / `inFlightByTrack` stay for the caller scan.
+inline uint8_t selectStoppedLoadedSnapshotTrack(uint8_t focusTrack, uint8_t cursor,
+                                               uint8_t trackCount,
+                                               const bool* pendingByTrack,
+                                               const bool* inFlightByTrack) {
+  (void)cursor;
+  (void)pendingByTrack;
+  (void)inFlightByTrack;
+  if (trackCount == 0) {
+    return 0;
+  }
+  if (focusTrack < trackCount) {
+    return focusTrack;
+  }
+  return 0;
 }
 
 /// First-record live construction waits until `currentTick` has left bar 1.

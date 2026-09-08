@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (visual-cache Stage 2.0 load snapshot enqueue)
+Last updated: 2026-09-08 (DEC-053 remaining-interval admission in tree)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,23 +10,53 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Visual-cache Stage 2.0 — load snapshot enqueue:**
-`adoptPersistedSnapshot` and `restorePassesSnapshot` call
-`queueLoadedSnapshotPublish` after the revision bump. A committed loaded
-loop queues every active record/overdub pass (and active edit companions)
-on the existing `Loop` publication owner. Idle `stepPendingSnapshotPublish`
-builds the root. Empty restore clears pending and does not queue. No
-construct on the load path. Stage 2.1 copy then runs once the root is
-current. Device: [`003555`](../../captures/session_20260908_003555.log) rebooted
-during T0 RECORDING while T6 loaded construction continued
-(`snapshot_alloc` `nodes=2083`, then `CAPTURE_RECONNECT`). Snapshot idle
-on STOPPED tracks is withheld while any track is live. Drain stays on
-STOPPED Snapshot turns. First-bar T6 Fallback reconstruct is unchanged.
-STOPPED VisualCache reconstruction is deferred for the active loop while
-its snapshot publication is pending; Stage 2.1 snapshot-note copying starts
-after the root is current.
-Plan: [`display_visual_cache_snapshot_fill_refinement.md`](../Plans/display_visual_cache_snapshot_fill_refinement.md).
-Parent: [`display_visual_cache_snapshot_reuse_refinement.md`](../Plans/display_visual_cache_snapshot_reuse_refinement.md) [#41](https://github.com/Lytrix/MidiLooper/issues/41).
+**OpenSpec 3.5 / 3.6 — incremental wrap publication:**
+3.5 firmware is in tree: settled wraps queue bounded mutation journals;
+session-exit starts at most one journal-capped fragment; publication waits
+until journals, queued passes, construction, and companions complete.
+`queueLoadedSnapshotPublish()` stays off after restore (`023222` /
+[`024731`](../../captures/session_20260908_024731.log)). This slice does
+**not** reconstruct a root from every loaded pass. Task 3.6 native wrap-journal
+parity is in tree. Device wrap-retain recapture
+[`101815`](../../captures/session_20260908_101815.log): both overdub stops
+were still `seal=skipped`, but journals were kept (`exit=1`), `fragment`
+advanced (`0/3→2/3`, `0/2→1/2`), and `root_rev` caught `playback_rev`
+(`pending=0` `root_rev=3` `playback_rev=3`). Prior fail class
+[`094930`](../../captures/session_20260908_094930.log)/`094228` discarded
+in-flight wrap journals and left `root_rev` at 1. Host HITL overall still
+FAIL for known non-wrap issues (`dispatch`, 2304-vs-1536, SEVT window,
+second-overdub first-note). Focused native **83/83**. `T_RT_reserve` policy
+is [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+(`T_RT_reserve_ceiling` 10,000 µs; per-turn `reserve_us`; margin not
+frozen). Capture-gated `DIAG,snapshot_idle,reserve` is in
+`InvestigationCaptureLog` (FLASHMEM): child emit arms one pending start;
+`handleMidiInput()` enter pairs `reserve_us`. Unpaired overwrite emits
+`reserve_us=0`. Device recapture
+[`104353`](../../captures/session_20260908_104353.log): 1864 `reserve`
+lines, `reserve_us` 102–4779 µs (none above the 10 ms ceiling), wrap
+`pending=0` `root_rev=3`, both overdub `seal=skipped` still captured with
+full `seal_fx_*` sequence. Serial close drain 309 trailing lines. Remaining-
+interval admission is now in tree on `MidiServiceDrain` /
+`Track::processDeferredIdleMaintenance`: two-unit cost must fit
+`min(10000, remaining − margin)` or the turn yields. Capture-gated
+`DIAG,snapshot_idle,yield` plus `!SNAPSHOT_YIELD` one-shot inject.
+`SESSION_CAPTURE_SNAPSHOT_IDLE=1` is on `teensy41-capture-serial` for this
+gate. Snapshot idle cardinality is **N = 2**; do not revert to 1. STOPPED
+timings are excluded from the 3.6 ceiling. [`110034`](../../captures/session_20260908_110034.log)
+live `reserve_us` max 5871 µs (zero over 10 ms); the 36 / 42 / 95 ms
+samples are after `PLAYING → STOPPED`. Host: RAM1 locals **6848**; focused admission/yield native PASS;
+full native **1753/1754** (1 skipped). Device yield HITL is blocked until
+the Teensy USB port is present. Do not check off 3.5/3.6.
+OpenSpec: [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
+3.5–3.6. Plan:
+[`snapshot_publication_reserve_admission_refinement.md`](../Plans/snapshot_publication_reserve_admission_refinement.md).
+`DEC-047`. `DEC-053`.
+
+**Prior — Loaded hydration stability — device PASS [`024731`](../../captures/session_20260908_024731.log):**
+Title exit waits for boot restore only. Adopt/restore do not auto-queue
+loaded snapshot publication. After title, Stage 2.1 fallback fills from
+passes (`root_rev,0`). Zero `ld=1`. Session-exit publication unchanged.
+Plan: [`loaded_hydration_stability_bugfix.md`](../Plans/loaded_hydration_stability_bugfix.md).
 
 **Prior — Visual-cache Stage 2.1 — snapshot membership copy:**
 When `publishedSnapshotIsCurrent()`, `rebuildVisualCacheIdleSlice` copies
@@ -343,9 +373,8 @@ Re-enable independently or via `teensy41-capture-serial-investigation-diag`.
 `Overdub undone` (and the other `UndoEntryKind` names) instead of calling
 every non-clear apply `Overdub undone`. HITL still matches `Overdub undone`
 / `Overdub redone` for `OverdubPassAdded`. Not this slice: undo paint
-(RC5b keep-larger) or OD1-stop `stale_range` visual shrink. **4b.3** and
-**3.6 `T_RT_reserve`** stay open; turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
-back on when measuring 3.6.
+(RC5b keep-larger) or OD1-stop `stale_range` visual shrink. **3.6 `T_RT_reserve`** stays open under [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary);
+turn `SESSION_CAPTURE_SNAPSHOT_IDLE=1` back on when emitting `reserve_us`.
 
 **Prior — RC1 occupy-paint closed; RC2 / RC3 withdrawn ([`172213`](../../captures/session_20260905_172213.log)):**
 RC1d-d sealed closed Off shipped. Occupy-paint verifier **PASS** [`172322`](../../captures/host_midi_hitl_occupy_paint_20260905_172322.json): `rc1b.mismatches=[]`. **RC2 / RC3 withdrawn** — [`140729`](../../captures/session_20260903_140729.log) `77@336` / `69@5328` cannot be remade. Do not start sealed upsert or admission-miss from occupy-paint. Plan: [`overdub_paint_effective_frame_parity_bugfix.md`](../Plans/overdub_paint_effective_frame_parity_bugfix.md).

@@ -5,11 +5,16 @@
 
 #include "Globals.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/MidiBatchComposition.h"
 
 #if defined(SESSION_CAPTURE) || defined(PIO_UNIT_TEST_NATIVE)
 
 #if defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
 #include <Arduino.h>
+#endif
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+#include "Utils/InvestigationCaptureLog.h"
 #endif
 
 #if defined(__IMXRT1062__)
@@ -113,6 +118,23 @@ struct State {
   uint32_t clkBatchMax = 0;
   uint32_t clkBatchCount = 0;
   uint32_t windowServicePeriodUs = 0;
+  uint32_t usbBatchMax = 0;
+  uint32_t usbBatchSaturatedCount = 0;
+  uint32_t usbBatchClockMax = 0;
+  uint32_t usbBatchConsecutiveClockMax = 0;
+  uint32_t usbBatchSizeBuckets[MidiBatchComposition::kBucketCount] = {};
+  uint32_t usbBatchClockBuckets[MidiBatchComposition::kBucketCount] = {};
+  uint32_t usbBatchClockDispatchMaxUs[MidiBatchComposition::kBucketCount] = {};
+  Accumulator trackRebuild;
+  Accumulator trackOrder;
+  Accumulator trackSend;
+  Accumulator trackSlot;
+  Accumulator trackResid;
+  uint32_t trackPathRebuildUs = 0;
+  uint32_t trackPathOrderUs = 0;
+  uint32_t trackPathSendUs = 0;
+  uint32_t trackPathSlotUs = 0;
+  bool trackPathNestedActive = false;
   uint32_t extclkArrivalDueUs = 0;
   uint32_t extclkArrivalPeriodUs = 0;
   bool extclkArrivalCadenceActive = false;
@@ -238,6 +260,20 @@ RT_FLASHMEM_FN void clearWindow(State& s) {
   s.clkBatchMax = 0;
   s.clkBatchCount = 0;
   s.windowServicePeriodUs = 0;
+  s.usbBatchMax = 0;
+  s.usbBatchSaturatedCount = 0;
+  s.usbBatchClockMax = 0;
+  s.usbBatchConsecutiveClockMax = 0;
+  for (uint8_t i = 0; i < MidiBatchComposition::kBucketCount; ++i) {
+    s.usbBatchSizeBuckets[i] = 0;
+    s.usbBatchClockBuckets[i] = 0;
+    s.usbBatchClockDispatchMaxUs[i] = 0;
+  }
+  s.trackRebuild = Accumulator{};
+  s.trackOrder = Accumulator{};
+  s.trackSend = Accumulator{};
+  s.trackSlot = Accumulator{};
+  s.trackResid = Accumulator{};
   s.clockPulses = 0;
 }
 
@@ -279,6 +315,21 @@ RT_FLASHMEM_FN void emitWindow(const State& s, uint32_t nowUs, uint32_t windowEl
   DebugSessionCapture::runtimeTimingTelemetry("extclk_dispatch", s.extclkDisp.maxUs, s.extclkDisp.overCount);
   DebugSessionCapture::runtimeTimingTelemetry("clk_batch", s.clkBatchMax, s.clkBatchCount);
   DebugSessionCapture::runtimeTimingTelemetry("service_period", s.windowServicePeriodUs, 0);
+  DebugSessionCapture::runtimeTimingUsbBatch(s.usbBatchMax, s.usbBatchSaturatedCount,
+                                            s.usbBatchClockMax, s.usbBatchConsecutiveClockMax);
+  DebugSessionCapture::runtimeTimingUsbBatchBuckets("usb_bkt_size", s.usbBatchSizeBuckets);
+  DebugSessionCapture::runtimeTimingUsbBatchBuckets("usb_bkt_clk", s.usbBatchClockBuckets);
+  DebugSessionCapture::runtimeTimingUsbBatchBuckets("usb_bkt_disp", s.usbBatchClockDispatchMaxUs);
+  DebugSessionCapture::runtimeTimingTelemetry("track_rebuild", s.trackRebuild.maxUs,
+                                             s.trackRebuild.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("track_order", s.trackOrder.maxUs,
+                                             s.trackOrder.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("track_send", s.trackSend.maxUs,
+                                             s.trackSend.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("track_slot", s.trackSlot.maxUs,
+                                             s.trackSlot.overCount);
+  DebugSessionCapture::runtimeTimingTelemetry("track_resid", s.trackResid.maxUs,
+                                             s.trackResid.overCount);
   uint32_t pulsesPerSecond = 0;
   if (windowElapsedUs > 0) {
     pulsesPerSecond = static_cast<uint32_t>(
@@ -311,6 +362,9 @@ void noteMidiInputEnter(uint32_t nowUs) {
   }
   s.inputEnterUs = nowUs;
   s.inputActive = true;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+  InvestigationCaptureLog::appendSnapshotIdleReserveOnMidiEnter(nowUs);
+#endif
 }
 
 void noteMidiInputExit(uint32_t nowUs) {
@@ -334,6 +388,83 @@ RT_FLASHMEM_FN void noteTrackUpdate(uint8_t trackIndex, uint32_t durationUs) {
   if (trackIndex < Config::NUM_TRACKS) {
     recordSample(trackUpdateAt(trackIndex), durationUs);
   }
+}
+
+namespace {
+
+uint32_t saturatingSub(uint32_t lhs, uint32_t rhs) {
+  return lhs > rhs ? lhs - rhs : 0;
+}
+
+}  // namespace
+
+RT_FLASHMEM_FN void beginTrackPathNested() {
+  State& s = state();
+  s.trackPathRebuildUs = 0;
+  s.trackPathOrderUs = 0;
+  s.trackPathSendUs = 0;
+  s.trackPathSlotUs = 0;
+  s.trackPathNestedActive = true;
+}
+
+RT_FLASHMEM_FN void addTrackPathRebuild(uint32_t durationUs) {
+  State& s = state();
+  if (s.trackPathNestedActive) {
+    s.trackPathRebuildUs += durationUs;
+  }
+}
+
+RT_FLASHMEM_FN void addTrackPathOrder(uint32_t durationUs) {
+  State& s = state();
+  if (s.trackPathNestedActive) {
+    s.trackPathOrderUs += durationUs;
+  }
+}
+
+RT_FLASHMEM_FN void addTrackPathSend(uint32_t durationUs) {
+  State& s = state();
+  if (s.trackPathNestedActive) {
+    s.trackPathSendUs += durationUs;
+  }
+}
+
+RT_FLASHMEM_FN void addTrackPathSlot(uint32_t durationUs) {
+  State& s = state();
+  if (s.trackPathNestedActive) {
+    s.trackPathSlotUs += durationUs;
+  }
+}
+
+RT_FLASHMEM_FN uint32_t trackPathSendUs() {
+  const State& s = state();
+  return s.trackPathNestedActive ? s.trackPathSendUs : 0;
+}
+
+RT_FLASHMEM_FN uint32_t trackPathExclusiveUs(uint32_t wallUs, uint32_t sendBeforeUs) {
+  const State& s = state();
+  if (!s.trackPathNestedActive) {
+    return 0;
+  }
+  return saturatingSub(wallUs, saturatingSub(s.trackPathSendUs, sendBeforeUs));
+}
+
+RT_FLASHMEM_FN void commitTrackPathNested(uint32_t trackDurationUs) {
+  State& s = state();
+  if (!s.trackPathNestedActive) {
+    return;
+  }
+  recordSample(s.trackRebuild, s.trackPathRebuildUs);
+  recordSample(s.trackOrder, s.trackPathOrderUs);
+  recordSample(s.trackSend, s.trackPathSendUs);
+  recordSample(s.trackSlot, s.trackPathSlotUs);
+  const uint32_t attributed = s.trackPathRebuildUs + s.trackPathOrderUs + s.trackPathSendUs +
+                              s.trackPathSlotUs;
+  recordSample(s.trackResid, saturatingSub(trackDurationUs, attributed));
+  s.trackPathRebuildUs = 0;
+  s.trackPathOrderUs = 0;
+  s.trackPathSendUs = 0;
+  s.trackPathSlotUs = 0;
+  s.trackPathNestedActive = false;
 }
 
 void noteUsbDeviceDrain(uint32_t durationUs) {
@@ -499,6 +630,37 @@ void noteExternalClockDispatchEnter(uint32_t nowUs) {
   recordSample(s.extclkDisp, nowUs - s.extclkBatchArrivalUs);
 }
 
+void noteUsbDeviceBatchComposition(uint32_t size, uint32_t clockCount, uint32_t nonClockCount,
+                                   uint32_t maxConsecutiveClocks, bool saturated,
+                                   uint32_t dispatchUs) {
+  if (size == 0) {
+    return;
+  }
+  (void)nonClockCount;
+  State& s = state();
+  if (size > s.usbBatchMax) {
+    s.usbBatchMax = size;
+  }
+  if (saturated) {
+    ++s.usbBatchSaturatedCount;
+  }
+  ++s.usbBatchSizeBuckets[MidiBatchComposition::countBucket(size)];
+  if (clockCount > s.usbBatchClockMax) {
+    s.usbBatchClockMax = clockCount;
+  }
+  if (maxConsecutiveClocks > s.usbBatchConsecutiveClockMax) {
+    s.usbBatchConsecutiveClockMax = maxConsecutiveClocks;
+  }
+  if (clockCount == 0) {
+    return;
+  }
+  const uint8_t clockBucket = MidiBatchComposition::countBucket(clockCount);
+  ++s.usbBatchClockBuckets[clockBucket];
+  if (dispatchUs > s.usbBatchClockDispatchMaxUs[clockBucket]) {
+    s.usbBatchClockDispatchMaxUs[clockBucket] = dispatchUs;
+  }
+}
+
 void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs) {
   State& s = state();
   s.servicePeriodUs = tickPeriodUs;
@@ -526,6 +688,18 @@ RT_FLASHMEM_FN void resetPlaybackDeadlineCadence() {
   s.extclkArrivalCadenceActive = false;
   s.extclkBatchArrivalUs = 0;
   s.extclkBatchRemaining = 0;
+}
+
+uint32_t remainingUntilNextPlaybackServiceUs(uint32_t nowUs) {
+  const State& s = state();
+  if (!s.serviceCadenceActive || s.servicePeriodUs == 0) {
+    return 0xFFFFFFFFu;
+  }
+  const uint32_t deadlineUs = s.serviceDueUs + s.servicePeriodUs;
+  if (static_cast<int32_t>(nowUs - deadlineUs) >= 0) {
+    return 0;
+  }
+  return deadlineUs - nowUs;
 }
 
 void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick) {
@@ -800,6 +974,25 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   out.clkBatchMax = s.clkBatchMax;
   out.clkBatchCount = s.clkBatchCount;
   out.servicePeriodUs = s.windowServicePeriodUs;
+  out.usbBatchMax = s.usbBatchMax;
+  out.usbBatchSaturatedCount = s.usbBatchSaturatedCount;
+  out.usbBatchClockMax = s.usbBatchClockMax;
+  out.usbBatchConsecutiveClockMax = s.usbBatchConsecutiveClockMax;
+  out.trackRebuildMaxUs = s.trackRebuild.maxUs;
+  out.trackRebuildOverCount = s.trackRebuild.overCount;
+  out.trackOrderMaxUs = s.trackOrder.maxUs;
+  out.trackOrderOverCount = s.trackOrder.overCount;
+  out.trackSendMaxUs = s.trackSend.maxUs;
+  out.trackSendOverCount = s.trackSend.overCount;
+  out.trackSlotMaxUs = s.trackSlot.maxUs;
+  out.trackSlotOverCount = s.trackSlot.overCount;
+  out.trackResidMaxUs = s.trackResid.maxUs;
+  out.trackResidOverCount = s.trackResid.overCount;
+  for (uint8_t i = 0; i < MidiBatchComposition::kBucketCount; ++i) {
+    out.usbBatchSizeBuckets[i] = s.usbBatchSizeBuckets[i];
+    out.usbBatchClockBuckets[i] = s.usbBatchClockBuckets[i];
+    out.usbBatchClockDispatchMaxUs[i] = s.usbBatchClockDispatchMaxUs[i];
+  }
   out.lateOneShotArmed = s.lateOneShotArmed;
   out.pendingLateEvent = s.pendingLateEvent;
   out.pendingPlaybackRebuild = s.pendingPlaybackRebuild;

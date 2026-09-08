@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (visual-cache Stage 2.0 load snapshot enqueue)
+Last updated: 2026-09-08 (DEC-053 remaining-interval admission; 3.6 HITL open)
 
 ---
 
@@ -32,7 +32,7 @@ row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
 The activated next slice is OpenSpec tasks `3.5`/`3.6`, recorded in
 `DEC-047`: bounded overdub-wrap mutation journals, fixed-capacity immutable
 membership pages, persistent bar cursors, incremental pair-`NoteId` assignment,
-effective event-index updates, retry retention, and the measured
+effective event-index updates, retry retention, and the [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
 `T_RT_reserve` device gate. This phase supersedes `DEC-045` only for ordered
 successor construction during `PLAYING`/`OVERDUBBING` after the first root;
 direct consumer migration, persistence, and snapshot-identity undo remain
@@ -146,12 +146,20 @@ Native **1533/1533**. RAM1 locals **6848**. Device recapture required
 ([`display_visual_cache_wrap_compose_hold_bugfix.md`](../Plans/display_visual_cache_wrap_compose_hold_bugfix.md),
 [`display_visual_cache_off_zero_tail_pair_bugfix.md`](../Plans/display_visual_cache_off_zero_tail_pair_bugfix.md)).
 Stage 2.1 (idle copies current `LoopSnapshotNote` membership) is in tree.
-Stage 2.0 load enqueue (`queueLoadedSnapshotPublish` from adopt/restore) is in progress.
-Do not freeze `T_RT_reserve`.
+Stage 2.0 load enqueue is disabled after restore/adopt
+([`023222`](../../captures/session_20260908_023222.log) rebooted on a loaded
+`start` with `ld=1`). Title still exits on restore completion only
+([`020111`](../../captures/session_20260908_020111.log)). After `boot_commit`,
+VisualCache Stage 2.1 fallback fills from passes until a current root
+exists. Session-exit snapshot publication is unchanged. Device stability
+PASS [`024731`](../../captures/session_20260908_024731.log)
+([`loaded_hydration_stability_bugfix.md`](../Plans/loaded_hydration_stability_bugfix.md)).
+Do not freeze an observed unit or the minimum observed `reserve_us` as the
+`T_RT_reserve` guarantee. [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+records the 10,000 µs policy ceiling. Remaining-interval admission for the
+two-unit Snapshot turn is in tree; the 3.6 device yield HITL remains open.
 Do not check off OpenSpec `3.5`/`3.6`.
-No `step` rewrite is justified yet; and freezing the minimum observed
-`T_RT_reserve` is rejected as a guarantee. Construction bounds stay
-unchanged.
+Construction bounds stay unchanged.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.
