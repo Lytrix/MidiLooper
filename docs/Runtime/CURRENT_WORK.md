@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4g idle-validate snapshot oracle)
+Last updated: 2026-09-08 (4.4h display fallback identity)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.4g — analysis/validation leftover oracles — shipped.**
+**OpenSpec 4.4h — display fallback/identity — Stage 1 shipped.**
+`rebuildDisplayNotesInWindow` on a current root copies span notes
+(`tryCopyCurrentSnapshotDisplayNotesInWindow`). Overlay gather is
+rejected. Live-capture merge keeps the existing gather. RAM1 locals
+**6848**; native **1774 succeeded, 1 skipped**. Do not start hydrate
+Stage 4a, raise `N`, 4.5, or 4.6.
+Plan:
+[`display_fallback_identity_snapshot_refinement.md`](../Plans/display_fallback_identity_snapshot_refinement.md).
+
+**Prior — OpenSpec 4.4g — analysis/validation leftover oracles — shipped.**
 `validateAndCleanupMidiEvents` uses `Loop::copyIdleValidateEvents`
 (current-root span-filtered snapshot events). Overdub analysis
 current-root gather already skips pass flatten (4.4a). SEVT / `take_only`
@@ -24,7 +33,6 @@ NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`. Close
 validate at 600.015 s on current `root_rev=1` (record-to-STOPPED + 60 s).
 Log-only 2 orphans, 116 events remaining; `DFRAME` **58**. Both overdub
 opens `from=snapshot` on a current root.
-Do not start hydrate Stage 4a, Overlay-as-display, raise `N`, 4.5, or 4.6.
 Plan:
 [`analysis_validation_oracle_snapshot_refinement.md`](../Plans/analysis_validation_oracle_snapshot_refinement.md).
 

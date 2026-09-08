@@ -190,6 +190,11 @@ struct Loop {
 
   void rematerializeEditView(LoopEventStore& store) const;
   bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
+  /// Windowed display fallback: current-root span notes in `[windowStart,
+  /// windowStart + windowLength)`, else false.
+  bool tryCopyCurrentSnapshotDisplayNotesInWindow(NoteUtils::DisplayNoteVec& out,
+                                                  uint32_t windowStart,
+                                                  uint32_t windowLength) const;
   /// Idle validate source: current-root span-filtered snapshot events, else
   /// `mergeActiveCapturePasses`.
   void copyIdleValidateEvents(MidiEventVec& out) const;

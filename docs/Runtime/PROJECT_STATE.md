@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.4g idle-validate snapshot oracle)
+Last updated: 2026-09-08 (4.4h display fallback identity)
 
 ---
 
@@ -71,8 +71,10 @@ overdub open `from=snapshot` at `root_rev=7` `play_rev=7`.
 [`194438`](../../captures/session_20260908_194438.log): Stage 1 idle
 validate at 600.015 s on current `root_rev=1`; both overdub opens
 `from=snapshot`.
-Remaining 4.4 display fallback/identity, 4.5 verify, 4.6, persistence,
-and snapshot-identity undo remain later.
+4.4h Stage 1 shipped: `rebuildDisplayNotesInWindow` copies
+`tryCopyCurrentSnapshotDisplayNotesInWindow` on a current root.
+Remaining 4.4 hydrate / raise `N`, 4.5 verify, 4.6, persistence, and
+snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.
