@@ -1,8 +1,9 @@
 # NOTE_EDIT committed oracles vs current snapshot
 
-**Status:** Stage 1 device PASS
-[`162207`](../../captures/session_20260908_162207.log) questions 1–2.
-Do not start Stage 2/3.
+**Status:** Stage 3 device PASS
+[`173531`](../../captures/session_20260908_173531.log).
+Stage 2 device PASS
+[`171444`](../../captures/session_20260908_171444.log).
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.4e`
 **Parent:** 4.4d closed
 ([`note_edit_committed_base_snapshot_refinement.md`](note_edit_committed_base_snapshot_refinement.md)).
@@ -209,6 +210,38 @@ identity and geometry, not only `size()`.
 3. Does NOTE_EDIT subsequently still reconstruct a different NoteId set
    (`session_events` / current-state vs those 75 notes)?
 
+`NOTE_EDIT_OPEN,q3` answers question 3. It compares unique `NoteId`s in
+`visualCache.notes` vs rematerialize `NoteOn`s after
+`assignMissingNoteIdsInStore`, before `ensureCurrentStateVisibleRowsFromVisualCache`.
+`session_events` is event count and is not this proof.
+`only_visual=0` and `only_store=0` dismisses Stage 2. A non-zero side
+earns Stage 2. Sample ids (max 8) emit only on a miss.
+
+**Device recapture [`170211`](../../captures/session_20260908_170211.log)
+(4-bar / 3072-tick loop; Q3 CAP on device):**
+
+| Clock | Fact |
+|---|---|
+| 47.800 s | `why=stop,from=hold,notes=78,root_rev=5,play_rev=7` |
+| 47.800 s | STOPPED `DISP` **78** (`3072,78,78,78,78`) |
+| 48.433 s | `post_stop` `old_root=5,new_root=7` then `pending=0` `root_rev=7` `playback_rev=7` |
+| 50.762 s | first open `visual_notes,78,session_events,159` |
+| 50.763 s | `q3,current=1,root_rev=7,visual_ids=78,store_ids=79,shared=78,only_visual=0,only_store=1,store_invalid=0` |
+| 50.763 s | `q3,only_store,64` |
+| 50.758 s | `pairrows,at=spans,count=78` then `VCACHE,full,ev,163,notes,78` |
+| 107.219 s | reopen `visual_notes,76,session_events,155` |
+| 107.220 s | `q3,current=1,root_rev=14,visual_ids=76,store_ids=77,shared=76,only_visual=0,only_store=1` |
+| 107.220 s | `q3,only_store,64` |
+| 107.215 s | `pairrows,at=spans,count=76` then `VCACHE,full,ev,163,notes,76` |
+
+| Question | Result |
+|---|---|
+| 1. `visual_notes` equals last STOPPED paint | **PASS** — first open **78** |
+| 2. `VCACHE,full` notes stay that STOPPED count | **PASS** — notes **78**, `pairrows` at spans **78** |
+| 3. rematerialize NoteId set equals visual | **FAIL** — `only_store=1` NoteId `64` on both opens. Stage 2 is **earned**. |
+
+`session_events` (159 / 155) remains event count and is not this proof.
+
 If #1 and #2 pass and #3 fails, Stage 2 has earned its existence.
 Do not start Stage 2/3 in the same implementation session as Stage 1.
 
@@ -359,18 +392,48 @@ query exists to forbid.
 
 **Owner:** `EditManager::openNoteEditSession` / `Loop::rematerializeEditView`
 
-Conditional. Only after Stage 1 recapture shows membership divergence
-(question 3).
+Earned by [`170211`](../../captures/session_20260908_170211.log) Q3
+(`only_store=1`, NoteId `64`).
 
-Load `EditSession.store` from the **same** `publishedSnapshot()` identity
-Stage 1 used. Do not chain `LoopSnapshot → visualCache → EditSession`.
-Do not switch `passes.materialize()` to a generic gather that reconstructs
-a different NoteId set.
+When `publishedSnapshotIsCurrent()`, `rematerializeEditView` loads
+`EditSession.store` from that root: `resolveWindow(*snapshot)` event
+objects whose `NoteId` is in `resolveDisplayNotes(*snapshot)` span
+membership. Channel and pairing stay on the snapshot event objects.
+Event-only ids are dropped. Non-note events are kept.
 
-No-current-root keeps `rematerializeEditView` → `passes.materialize`.
+Do not chain `LoopSnapshot → visualCache → EditSession`.
+Do not load the unfiltered event flatten (`170211` store 79 vs visual 78).
+
+No-current-root keeps `passes.materialize`. `commitEditAction` still uses
+`passes.materializeToEventVector` (Stage 3).
 
 **Invariant:** `NOTE_EDIT_OPEN` event membership and `visual_notes` share
-that root’s NoteId set.
+that root’s NoteId set (`only_visual=0` and `only_store=0`).
+
+**Device recapture [`171444`](../../captures/session_20260908_171444.log)
+(6-bar / 4608-tick loop):**
+
+| Clock | Fact |
+|---|---|
+| 38.834 s | `why=stop,from=hold,notes=116,root_rev=3,play_rev=5` |
+| 38.835 s | STOPPED `DISP` **116** (`4608,116,116,116,116`) |
+| 39.962 s | `post_stop` `old_root=3,new_root=5` |
+| 40.647 s | first open `visual_notes,116,session_events,232` |
+| 40.649 s | `q3,current=1,root_rev=5,visual_ids=116,store_ids=116,shared=116,only_visual=0,only_store=0` |
+| 40.638 s | `pairrows,at=spans,count=116` then `VCACHE,full,notes,116` |
+| 85.647 s | reopen `q3,current=1,root_rev=11,visual_ids=114,store_ids=114,shared=114,only_visual=0,only_store=0` |
+| 88.067 s | `VCACHE,idle_src,OverlayRejected` `root_rev,11,playback_rev,16` |
+| 98.377 s | later open `q3,current=0,root_rev=11,visual_ids=114,store_ids=115,only_store=1` id `96` |
+
+| Question | Result |
+|---|---|
+| 1. `visual_notes` equals last STOPPED paint | **PASS** — first open **116** |
+| 2. `VCACHE,full` notes stay that count | **PASS** — notes **116**, spans **116** |
+| 3. rematerialize NoteId set equals visual | **PASS** — both `current=1` opens `only_visual=0` `only_store=0` |
+
+`session_events` 232 is event count (On+Off), not a miss. The `current=0`
+opens after `playback_rev=16` vs `root_rev=11` use `passes.materialize`
+and are not this gate.
 
 Do not redesign `EditSession.store`. Do not start hydrate Stage 4a.
 
@@ -380,9 +443,17 @@ Do not redesign `EditSession.store`. Do not start hydrate Stage 4a.
 
 Conditional. Follows Stage 2 if that stage ran.
 
-`replay_flat` and the session-store reload after save use the same current
-snapshot root. `loop_materialized` / `materializedLoopEventsForNoteEditFocus`
-follow that same source. `take_only` stays `mergeActiveCapturePasses`.
+`replay_flat` and the session-store reload after save use
+`Loop::copyNoteEditCommitBase`: the published snapshot opened as current
+(span-filtered events) plus this session’s Active edit rows.
+`loop_materialized` / `materializedLoopEventsForNoteEditFocus` follow that
+same source. `take_only` stays `mergeActiveCapturePasses`.
+
+`saveNoteEditPass` bumps `playbackRevision`, so
+`publishedSnapshotIsCurrent()` is false after the first save.
+`EditSession.openedOnCurrentSnapshot` / `openedSnapshotRevision` pin the
+open root across those bumps. After `closeNoteEditPass` publish, the pin
+refreshes to the new current root or clears.
 
 **Invariant:** The NOTE_EDIT baseline and the committed-base reconstruction
 originate from the same current snapshot root.
@@ -390,7 +461,9 @@ originate from the same current snapshot root.
 Consequence / recapture check: a pre-open `stored_notes` identity is not
 emitted as `overlap_baseline_diff` Delete unless that `NoteId` exists on
 that root. `153320` edit 18 (`Delete noteId=39`) is that check, not a
-separate overlap-seal RC.
+separate overlap-seal RC. Device [`173531`](../../captures/session_20260908_173531.log)
+Deletes noteId=56 and noteId=11 are on the open root (Q3 99=99; 11 on
+record `srcspan`; 56 occupied in-session).
 
 ---
 
@@ -413,8 +486,8 @@ separate overlap-seal RC.
 | Gate | Pass |
 |---|---|
 | Capture-serial RAM1 | locals **6848** (span interpreter) |
-| Native | **1762 succeeded, 1 skipped.** `resolveDisplayNotes(*snapshot)` equals `appendSnapshotNotesForBarRange`; event reconstruct of the same root may be larger (`test_snapshot_display_notes_use_span_membership_not_event_reconstruct`). |
-| Device | [`162207`](../../captures/session_20260908_162207.log) questions 1–2 **PASS** (98). Stage 2 not earned. |
+| Native | **1767 succeeded, 1 skipped.** Stage 3 fixture `test_copy_note_edit_commit_base_uses_snapshot_span_note_ids` drops event-only NoteId `64` and keeps a session Pitch apply after the revision bump. |
+| Device | [`162207`](../../captures/session_20260908_162207.log) questions 1–2 **PASS** (98). [`170211`](../../captures/session_20260908_170211.log) Q3 **earned Stage 2**. [`171444`](../../captures/session_20260908_171444.log) Stage 2 **PASS**. [`173531`](../../captures/session_20260908_173531.log) Stage 3 **PASS**: current-root `only_*=0`; Deletes 56 and 11 on that root. |
 
 4.5 HITL known non-wrap FAILs do not close this plan.
 

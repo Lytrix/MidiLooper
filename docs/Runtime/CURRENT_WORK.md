@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (NOTE_EDIT close NoteRange snapshot pitch)
+Last updated: 2026-09-08 (4.4e Stage 3 device PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,31 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT close — NoteRange snapshot reuses pitch:**
+**4.4e Stage 3 closed.** Next 4.4 slice requires selection. Do not start
+hydrate Stage 4a.
+
+**Prior — OpenSpec 4.4e Stage 3 — commit rematerialize from the same root:**
+`commitEditAction` persist/replay/session-store reload and
+`materializedLoopEventsForNoteEditFocus` use `Loop::copyNoteEditCommitBase`:
+pinned open-root span-filtered snapshot events plus this session’s edit
+rows. Device PASS
+[`173531`](../../captures/session_20260908_173531.log): both `current=1`
+opens `only_*=0` (99 then 97). `overlap_baseline_diff` Delete noteId=56
+and noteId=11 are on that root. `take_only` 227 vs rematerialize 196 is
+capture-only. `current=0` `only_store=1` id `80` is not this gate.
+RAM1 locals **6848**; native **1767 succeeded, 1 skipped**.
+
+**Prior — OpenSpec 4.4e Stage 2 — NOTE_EDIT event membership (same root):**
+`Loop::rematerializeEditView` on a current published root loads
+`EditSession.store` from that root’s event objects whose `NoteId`s are in
+`resolveDisplayNotes(*snapshot)` span membership. Device PASS
+[`171444`](../../captures/session_20260908_171444.log): both `current=1`
+opens `only_visual=0` `only_store=0` (116 then 114). `current=0` opens
+after `playback_rev=16` vs `root_rev=11` stay on `passes.materialize`.
+Plan:
+[`note_edit_committed_oracle_snapshot_bugfix.md`](../Plans/note_edit_committed_oracle_snapshot_bugfix.md).
+
+**Prior — NOTE_EDIT close — NoteRange snapshot reuses pitch:**
 `appendEditRowChange` does not write `row.pitch` for `NoteRange`.
 Close publish reuses the parent pitch, or the earlier same-`NoteId`
 change when Pitch then NoteRange share one `tryPublishNoteEditSnapshot`.
@@ -19,7 +43,6 @@ RAM1 locals **6848**; native **1765 succeeded, 1 skipped**. Device PASS
 `DNTE,63,1584,1584,287`; no pitch-0 `DNTE`; reopen **95**.
 Plan:
 [`note_edit_snapshot_note_range_pitch_bugfix.md`](../Plans/note_edit_snapshot_note_range_pitch_bugfix.md).
-Do not start 4.4e Stage 2/3.
 
 **Prior — OpenSpec 4.4e Stage 1 — NOTE_EDIT visual baseline from current snapshot:**
 `resolveDisplayNotes(*snapshot)` copies note-span membership

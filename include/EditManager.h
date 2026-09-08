@@ -300,7 +300,8 @@ public:
     size_t getDisplayUndoCount(const Track& track, const Loop& loop) const;
     bool isSessionUndoDisplayActive() const;
 
-    /// Committed loop MIDI (passes materialized), cached for note-edit baseline discovery (D21).
+    /// Committed loop MIDI for note-edit baseline discovery (D21). Current snapshot
+    /// root plus this session's edit rows; pass rematerialize when no current root.
     const MidiEventVec& materializedLoopEventsForNoteEditFocus(Track& track);
 
 private:

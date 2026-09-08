@@ -237,7 +237,14 @@ cursors rather than treating that locality as an execution bound.
         (`appendSnapshotNotesForBarRange`). Do not event-flat reconstruct.
         Current-root rebuild skips wrap-held append after spans.
         Device PASS [`162207`](../../../captures/session_20260908_162207.log)
-        questions 1–2. Do not start Stage 2/3.
+        questions 1–2.
+        Q3 [`170211`](../../../captures/session_20260908_170211.log) earned
+        Stage 2 (`only_store=1`, NoteId `64`).
+        Stage 2: `rematerializeEditView` on a current root keeps snapshot
+        events whose `NoteId`s are in span membership.
+        Stage 3: `commitEditAction` rematerialize uses
+        `copyNoteEditCommitBase` (pinned open root + session edit rows).
+        Device PASS [`173531`](../../../captures/session_20260908_173531.log).
         Plan:
         [`note_edit_committed_oracle_snapshot_bugfix.md`](../../../docs/Plans/note_edit_committed_oracle_snapshot_bugfix.md).
   - [x] Close publish: `appendEditRowChange` reuses the current snapshot

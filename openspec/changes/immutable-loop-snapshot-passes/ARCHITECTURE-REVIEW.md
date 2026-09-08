@@ -383,7 +383,19 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [x] Current-root `rebuildVisualCacheFromPasses` skips wrap-held append
       after span resolve (`161433` 114→115).
 - [x] Device recapture [`162207`](../../../captures/session_20260908_162207.log)
-      questions 1–2 PASS (STOPPED/spans/open visual 98). Do not start Stage 2/3.
+      questions 1–2 PASS (STOPPED/spans/open visual 98).
+- [x] Q3 [`170211`](../../../captures/session_20260908_170211.log) earned
+      Stage 2 (`only_store=1`, NoteId `64`).
+- [x] Stage 2: `rematerializeEditView` on a current root loads events whose
+      `NoteId`s are in `resolveDisplayNotes(*snapshot)` span membership.
+      Device [`171444`](../../../captures/session_20260908_171444.log) both
+      `current=1` opens `only_visual=0` `only_store=0`.
+- [x] Stage 3 host-verified: `commitEditAction` persist/replay and
+      `materializedLoopEventsForNoteEditFocus` use
+      `Loop::copyNoteEditCommitBase`. Pin survives `saveNoteEditPass`
+      revision bumps. Native **1767 succeeded, 1 skipped**. Device PASS
+      [`173531`](../../../captures/session_20260908_173531.log): both
+      `current=1` opens `only_*=0`; Deletes 56 and 11 on that root.
 
 ### Close-publish NoteRange pitch reuse
 

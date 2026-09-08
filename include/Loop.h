@@ -189,6 +189,13 @@ struct Loop {
   const SessionMidiEventVec& midiEvents() const;
 
   void rematerializeEditView(LoopEventStore& store) const;
+  bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
+  void copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds, SessionMidiEventVec& out,
+                              bool openedOnCurrentSnapshot = false,
+                              uint32_t openedSnapshotRevision = 0) const;
+  void copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds, MidiEventVec& out,
+                              bool openedOnCurrentSnapshot = false,
+                              uint32_t openedSnapshotRevision = 0) const;
 
   EditPassId saveNoteEditPass(uint8_t editPassIndex, EditPass row,
                               EditPassType passType = EditPassType::Note,
@@ -535,8 +542,9 @@ struct Loop {
                                      const EditPassIdList& companionIds = {});
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
-  /// Queue publication of every active committed pass. Adopt/restore only.
-  /// Does not construct. Empty loops clear pending and do not queue.
+  /// Queue publication of every active committed pass. Explicit selected-slot
+  /// hydration only — adopt/restore do not call this (`023222`). Does not
+  /// construct. Empty loops clear pending and do not queue.
   bool queueLoadedSnapshotPublish();
   /// Queue bounded wrap-journal fragments from settled pending mutations. Wrap path only.
   bool queueOverdubWrapSnapshotJournal(PassId wrapPassId);
@@ -562,6 +570,8 @@ struct Loop {
   uint8_t pendingSnapshotWrapFragmentCount() const;
   uint32_t pendingSnapshotWrapParentRevision() const;
   bool pendingSnapshotSessionExitQueued() const;
+  bool pendingSnapshotFromLoadedPasses() const;
+  LoadedSnapshotHydrationPhase loadedSnapshotHydrationPhase() const;
   uint32_t pendingSnapshotCandidateLengthTicks() const;
   /// Last idle-step child durations. Capture-serial only; 0 in normal builds.
   uint32_t lastSnapshotIdleStartUs() const;
