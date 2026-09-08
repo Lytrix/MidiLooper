@@ -1,8 +1,8 @@
 # NOTE_EDIT committed oracles vs current snapshot
 
-**Status:** Stage 1 interpreter corrected (span membership). Recapture
-[`155257`](../../captures/session_20260908_155257.log) shape before
-Stage 2/3.
+**Status:** Stage 1 device PASS
+[`162207`](../../captures/session_20260908_162207.log) questions 1–2.
+Do not start Stage 2/3.
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.4e`
 **Parent:** 4.4d closed
 ([`note_edit_committed_base_snapshot_refinement.md`](note_edit_committed_base_snapshot_refinement.md)).
@@ -289,7 +289,64 @@ in the session.
 
 Do not start Stage 2. The Stage 1 interpreter is now snapshot note-span
 membership (`appendSnapshotNotesForBarRange`). Event-flat reconstruct
-is not the display query. Recapture the `155257` shape.
+is not the display query.
+
+**Device recapture [`161433`](../../captures/session_20260908_161433.log)
+(6-bar / 4608-tick loop):**
+
+| Clock | Fact |
+|---|---|
+| 73.380 s | `from=hold,notes=114` / `adopt_partial` **114** |
+| 74.246 s | `post_stop` `old_root=3,new_root=5` then `pending=0` `root_rev=5` |
+| 76.548–76.651 s | STOPPED `DISP` **114** |
+| 76.661 s | `stored_notes,track,4,slot,0,notes,114` |
+| 77.182 s | reconstruct **117** |
+| 77.275 s | `pairrows,at=passes,count=114` / `dnte,src,effective,count,114` |
+| 77.351 s | `dnte,src,frame,count,114` |
+| 78.117 s | `pairrows,at=spans,count=114` — span query matches STOPPED |
+| 78.134 s | `VCACHE,full,ev,245,notes,115` |
+| 78.137 s | `NOTE_EDIT_OPEN,visual_notes,115,session_events,231` |
+| 137.264 s | later open: spans **112**, visual **113** (same +1 after edits) |
+
+| Question | Result |
+|---|---|
+| 1. `visual_notes` equals last STOPPED / `stored_notes` | **FAIL** — **115** vs **114** |
+| 2. `VCACHE,full` notes stay that count | **FAIL** — notes **115** |
+| 3. session still a different NoteId set | `session_events=231` vs visual **115**. Stage 2 is **not** earned. |
+
+`resolveDisplayNotes(*snapshot)` is **114** (`pairrows,at=spans`). The +1
+was after that return: `rebuildVisualCacheFromPasses` called
+`appendOverdubPassDisplayNotes` → `appendOverdubPassWrapPairedNotes(wrapHeldOnly=true)`,
+which also walks an **Active record** pass. Count grew, so that path
+`push_back`’d a wrap-held row not already in the span set.
+
+Current-root span fill now skips that append (same as idle
+`SnapshotNotes`). Pass-resolve and flat-reconstruct fallback still append.
+
+**Device recapture [`162207`](../../captures/session_20260908_162207.log)
+(5-bar / 3840-tick loop):**
+
+| Clock | Fact |
+|---|---|
+| 51.755 s | `from=hold,notes=98` / `adopt_partial` **98** |
+| 52.998 s | `post_stop` `old_root=4,new_root=6` then `pending=0` `root_rev=6` |
+| 51.755–51.849 s | STOPPED `DISP` **98** (hold frame before publish) |
+| 53.011 s | `stored_notes,track,4,slot,0,notes,98` |
+| 52.007 s | reconstruct **103** |
+| 52.070 s | `pairrows,at=passes,count=98` / effective **98** / frame **98** |
+| 54.496 s | `pairrows,at=spans,count=98` |
+| 54.496 s | `VCACHE,full,ev,215,notes,98` |
+| 54.500 s | `NOTE_EDIT_OPEN,visual_notes,98,session_events,199` |
+
+| Question | Result |
+|---|---|
+| 1. `visual_notes` equals last STOPPED / `stored_notes` | **PASS** — **98** |
+| 2. `VCACHE,full` notes stay that count | **PASS** — notes **98** |
+| 3. session still a different NoteId set | `session_events=199` is rematerialize **event** count, not a NoteId-set proof. Stage 2 is **not** earned. |
+
+`missing in recon` on later Pitch/NoteRange commits is still the parked
+`commitBaseline` home lookup, not Stage 2. Close-path `VCACHE,full`
+notes **99** vs `pairrows,at=passes` **98** is after edit, not this open.
 
 `finishOpenNotes=false` on the old event query alone does not close this:
 the 3120/3408 extras are cross-pass LIFO on a flat list, which the passes
@@ -354,7 +411,7 @@ separate overlap-seal RC.
 |---|---|
 | Capture-serial RAM1 | locals **6848** (span interpreter) |
 | Native | **1762 succeeded, 1 skipped.** `resolveDisplayNotes(*snapshot)` equals `appendSnapshotNotesForBarRange`; event reconstruct of the same root may be larger (`test_snapshot_display_notes_use_span_membership_not_event_reconstruct`). |
-| Device | Recapture `155257` questions 1–2 (STOPPED 97 vs open visual). Stage 2 not earned until those pass. |
+| Device | [`162207`](../../captures/session_20260908_162207.log) questions 1–2 **PASS** (98). Stage 2 not earned. |
 
 4.5 HITL known non-wrap FAILs do not close this plan.
 

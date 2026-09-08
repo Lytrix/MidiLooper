@@ -380,8 +380,10 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       or transition change.
 - [x] Native: rebuild stamps `builtFromRevision == publishedSnapshotRevision()`
       and notes equal `resolveDisplayNotes(*snapshot)` span membership.
-- [ ] Device recapture of [`155257`](../../../captures/session_20260908_155257.log)
-      questions 1–2 after span interpreter. Do not start Stage 2/3.
+- [x] Current-root `rebuildVisualCacheFromPasses` skips wrap-held append
+      after span resolve (`161433` 114→115).
+- [x] Device recapture [`162207`](../../../captures/session_20260908_162207.log)
+      questions 1–2 PASS (STOPPED/spans/open visual 98). Do not start Stage 2/3.
 
 ### Phase 4.5a implementation review — post-stop snapshot convergence
 

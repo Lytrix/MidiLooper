@@ -1292,6 +1292,39 @@ void test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes() {
   TEST_ASSERT_EQUAL(resolved[0].endTick, loop.visualCache.notes[0].endTick);
 }
 
+void test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(2800, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(100, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 100));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  NoteUtils::DisplayNoteVec spans;
+  LoopContentResolution::resolveDisplayNotes(*snapshot, spans);
+  TEST_ASSERT_EQUAL(1u, spans.size());
+  TEST_ASSERT_TRUE(spans[0].endTick < spans[0].startTick);
+
+  NoteUtils::DisplayNoteVec withWrapHeld = spans;
+  loop.appendOverdubPassDisplayNotes(withWrapHeld);
+  TEST_ASSERT_GREATER_THAN(spans.size(), withWrapHeld.size());
+
+  loop.invalidateDisplayCaches();
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_EQUAL(spans.size(), loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(spans[0].noteId, loop.visualCache.notes[0].noteId);
+  TEST_ASSERT_EQUAL(spans[0].startTick, loop.visualCache.notes[0].startTick);
+  TEST_ASSERT_EQUAL(spans[0].endTick, loop.visualCache.notes[0].endTick);
+}
+
 void test_visual_cache_idle_slice_copies_current_snapshot_notes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -3969,6 +4002,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
   RUN_TEST(test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes);
+  RUN_TEST(test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans);
   RUN_TEST(test_visual_cache_idle_slice_copies_current_snapshot_notes);
   RUN_TEST(test_loaded_visual_cache_falls_back_until_current_snapshot);
   RUN_TEST(test_stale_published_snapshot_gathers_window_without_full_compatibility);

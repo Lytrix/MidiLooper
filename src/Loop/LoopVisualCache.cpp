@@ -811,7 +811,11 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   } else {
     LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, rebuiltNotes);
   }
-  appendOverdubPassDisplayNotes(rebuiltNotes);
+  // Idle SnapshotNotes skips wrap-held append. Current-root spans already
+  // include wrap geometry (`161433`: spans 114 → visual 115 after this call).
+  if (!(usedSnapshot && publishedSnapshot())) {
+    appendOverdubPassDisplayNotes(rebuiltNotes);
+  }
   resetFallbackGatherSession();
   clearDeferredVisualCacheWrapAppend(*this);
   visualCache.notes.assign(rebuiltNotes.begin(), rebuiltNotes.end());
