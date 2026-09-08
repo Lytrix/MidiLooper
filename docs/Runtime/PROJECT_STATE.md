@@ -93,10 +93,11 @@ device functional PASS [`231008`](../../captures/session_20260908_231008.log):
 Hydrate 4a mover-only seed is in tree
 ([`232826`](../../captures/session_20260908_232826.log) /
 [`233644`](../../captures/session_20260908_233644.log) Move/Pitch).
-DEC-056 admits stale-root NOTE_EDIT rows into existing
-`pendingSnapshotPublishBox.companionIds`. Gather overlays those ids on
-snapshot events; overdub source applies them in place on DisplayNotes.
-Do not start hydrate 4b–5.
+DEC-056 miss-path device PASS
+[`000740`](../../captures/session_20260909_000740.log): close skips
+stale-parent publish; overdub source shows `id=93 p=85`. Current-root
+close [`000237`](../../captures/session_20260909_000237.log) `root_rev`
+4→6. Do not start hydrate 4b–5.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),

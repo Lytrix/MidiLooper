@@ -1,9 +1,9 @@
 # NOTE_EDIT stale-root unpublished companion admission
 
-**Status:** firmware in tree — unpublished-content admission only; device recapture open  
+**Status:** shipped — unpublished-content admission; miss-path device PASS [`000740`](../../captures/session_20260909_000740.log)  
 **Kind:** bugfix  
 **Date:** 2026-09-08  
-**Evidence:** [`session_20260908_233644.log`](../../captures/session_20260908_233644.log)  
+**Evidence:** [`session_20260908_233644.log`](../../captures/session_20260908_233644.log), [`session_20260909_000237.log`](../../captures/session_20260909_000237.log), [`session_20260909_000740.log`](../../captures/session_20260909_000740.log)  
 **Decision:** [DEC-056](../DECISION_LOG.md#dec-056--note-edit-rows-enter-the-existing-pending-companion-set-when-the-published-root-is-stale)  
 **Does not start:** hydrate 4b–5, B/C/D from the design session, STOPPED idle `pending=1` repair, close-NOTE_EDIT-before-overdub, a new snapshot-publication owner
 
@@ -101,4 +101,5 @@ Native in `test_loop_take_survival`:
 
 ## Device gate
 
-Recapture after flash: after miss-path NOTE_EDIT commits, `root_rev` may stay behind; gather / overdub source must show the committed mover (e.g. pitch 90 at 1296 in [`233644`](../../captures/session_20260908_233644.log)), not the pre-edit grid.
+- Current-root close publish PASS [`000237`](../../captures/session_20260909_000237.log): open `current=1` `root_rev=4`; close `rows=2`; `root_rev` 4→6; no `skip stale-parent publish`.
+- Miss-path companion overlay PASS [`000740`](../../captures/session_20260909_000740.log): open `current=0` `root_rev=8`; close `skip stale-parent publish rows=3`; after save `root_rev=12` `playback_rev=14`; overdub source `id=93 p=85 s=1728 e=2016` while `root_rev=16` `play_rev=19`. No `pending=0` from that close.
