@@ -66,7 +66,11 @@ The architectural idea is small. Later sections keep integration and migration c
 
 - Affects `Loop` / `LoopPasses`, playback preparation, `TrackUndo`, `StorageManager`, NOTE_EDIT and display consumers, and `LoopContentResolution`.
 - Implementation plan: [`overdub_wrap_source_snapshot_migration_refinement.md`](../../../docs/Plans/overdub_wrap_source_snapshot_migration_refinement.md).
-- Phase 0 remains architecture and specification only. The logical indexes are selected and the formal reassessment is approved. The activated implementation slice is Phase 3 tasks `3.5`/`3.6`: bounded overdub-wrap mutation-journal publication, runtime pair `NoteId` / non-note `EventId` handling, fixed-capacity membership construction, parity, and device gates. Firmware remains gated by the phase review and `ExecutionBounds.md` admission. Direct consumer migration, persistence, and snapshot-identity undo remain later phases.
+- Phase 0 is complete. Tasks `3.5`/`3.6` and 4.1–4.3 are implemented and
+  reviewed: bounded overdub-wrap publication, playback snapshot preparation,
+  and stateless explicit-snapshot queries. Direct caller migration (4.4–4.6),
+  snapshot-identity undo, persistence, and compatibility retirement remain
+  separately gated future work.
 - Verification for later phases is limited to existing gates plus invariant-protecting checks: old snapshot unchanged, new snapshot complete, unchanged objects shared, changed objects replaced, selection identity, and declared construction bounds. This change does not add a new test architecture.
 - Open decisions: measured page capacity and reclamation implementation, storage layout/version and migration, optional disposable indexes, bounded consumer span access, long-span projection candidate limits, and later-phase overrun behavior. The Phase 3 construction policy is fixed by bounded mutation journals, fixed-capacity membership pages, persistent bar cursors, exact parent identity, and retry retention.
 - No change is authorized here to horizon size, projection math, cursor or ledger semantics, capture finalization, overlap ownership, NOTE_EDIT geometry ownership, or interval reservation.

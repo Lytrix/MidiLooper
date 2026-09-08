@@ -2,6 +2,16 @@
 
 At the selected base commit, `LoopPasses` stores chunk-backed capture passes and edit rows, and `LoopPasses::materializeToEventVector()` derives effective MIDI. `PersistedLoopSnapshot` exists, but `Loop::sharePassesSnapshot()` uses `deepClonePasses()`; it is not a structurally shared immutable effective-state snapshot. The maintained-LCR lifecycle added after this base is deliberately not carried into this feature branch.
 
+## Current implementation status
+
+The snapshot model, capture/publication work (3.5/3.6), playback preparation
+(4.1/4.2), and stateless explicit-snapshot `LoopContentResolution` queries
+(4.3) are implemented and reviewed. Compatibility pass/index/replay paths
+remain because caller migration (4.4–4.6), snapshot-identity undo, and
+content-only persistence are not complete. Historical amendments below retain
+their investigation evidence; their “selected”, “parked”, or “not authorized”
+wording describes the state at that date, not the current task queue.
+
 The target is a complete immutable `LoopSnapshot` at each published state boundary. A snapshot contains an immutable reference root over immutable note and non-note event objects through loop-scoped stable handles. Playback retains mutable cursor, execution order, ledger, and horizon ownership. Existing capture finalization, overlap/pairing, NOTE_EDIT geometry, and deferred persistence owners remain unchanged until separately approved migration phases.
 
 `LoopPass` remains the historical/compatibility operation record (`RecordPass`, `OverdubPass`, `EditPass`). It is not the effective-state object.
@@ -605,8 +615,9 @@ Rollback keeps the prior representation active and discards any failed candidate
 
 ## Design-grilling outcomes — 2026-08-25
 
-These outcomes sharpen the proposed Phase 0 model. They remain pending the formal
-architecture reassessment and approval recorded in `ARCHITECTURE-REVIEW.md`.
+These outcomes sharpened the proposed Phase 0 model. They are retained as
+historical design evidence; formal reassessment and approval are recorded in
+`ARCHITECTURE-REVIEW.md`.
 
 ### Complete content and LCR role
 
@@ -728,6 +739,10 @@ maintenance reservation, and not a snapshot-architecture unit:
 - At 170 BPM, one MIDI clock interval is `14.71 ms` (`60 / (170 × 24)`).
 - The runtime scheduling plan uses `8.82 ms` (`60%` of that interval) as an
   experimental operating target until `T_RT_reserve` is measured.
+  **Amended 2026-09-08 ([DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)):**
+  that 60% figure remains a diagnostic proxy only. The device contract is
+  `T_RT_reserve_ceiling` = 10,000 µs plus per-turn `reserve_us` to the next
+  timing-critical `handleMidiInput()` entry.
 - The earlier `2 ms` target and `5 ms` ceiling are withdrawn as established
   scheduling contracts.
 - Post-RC-K1–K3 overdub note-change accumulation measured `0.75–2.0 ms`
@@ -754,10 +769,11 @@ display hold is PASS (`ODUB,stop,display` 8.8 / 12.2 ms). PLAYING after first
 publish is 7.4–8.4 ms. **Device PASS:** `4b.0` wrap/hold —
 [`092755`](../../../captures/session_20260826_092755.log) last
 `ODUB,stop,display` **11.1 ms** after wrap (`011829` was 155.6 ms).
-**Selected now:** `4b.2` first-take length updates during RECORDING with
+**Historical selection:** `4b.2` first-take length updates during RECORDING with
 record-stop bar quantize; snapshot idle starts after the playhead has
 left bar 1 and appends later completed bars when the parent has tick
-room (host implement; device verify open). Live RECORDING does not
+room (host implementation; later device verification is recorded in the
+closed task history). Live RECORDING does not
 rebuild the settled prefix. OVERDUBBING only
 advances an in-flight candidate. [`114012`](../../../captures/session_20260826_114012.log)
 started `snapshot_idle` at `record_length=768` while bar 1 was still
@@ -777,11 +793,11 @@ PLAYING stalls with first-PLAYING stacked idle/snapshot/persist and later
 unpublished visual constraint to all pending unpublished work and caps
 live-record append-start range to one completed bar per start.
 
-Parked until selected:
+Historical parked/open items from this investigation:
 
-- `4b.1` persist / first-record snapshot same-turn exclusion (in tree; not closed)
+- `4b.1` persist / first-record snapshot same-turn exclusion (closed under Ring B)
 - `4b.3` post-overdub-stop PLAYING `usbdisp` / `load_frame` / `late_on`
-- `4b.4` OVERDUBBING `DisplayResolveLiveCapture` (58 ms on `004934`)
+- `4b.4` OVERDUBBING `DisplayResolveLiveCapture` (closed; later bounded captures)
 
 ## Implementation amendment — 2026-08-27
 
@@ -860,11 +876,27 @@ complete, frozen, and atomically published.
 
 The native parity surface is the existing snapshot/take-survival tests,
 extended for repeated same-`NoteId` updates, wrap NoteOn/NoteOff replacement,
-Hide, equal-tick ordering, and non-note events. The device gate must measure
-construction-attributable MIDI gap, maintenance time per slice, and total
-construction wall time. It passes only when MIDI gap and deadline lateness
-remain within the measured `T_RT_reserve` contract and an overrun produces
-the documented retry result.
+Hide, equal-tick ordering, and non-note events.
+
+**T_RT_reserve contract (DEC-053):** Snapshot-idle construction is admitted
+against the per-turn interval from `snapshot_idle` start to the next
+timing-critical `handleMidiInput()` entry. The existing `snapshot_idle,child`
+telemetry records this interval as capture-gated `reserve_us`.
+`T_RT_reserve_ceiling` is a fixed upper bound on construction-attributable work
+per snapshot-idle turn. The initial ceiling is **10,000 µs**. Admission must
+not assume the nominal `60% × T_clock` operating proxy. A turn may consume no
+more than the lesser of the configured ceiling and the measured available
+interval after `T_RT_safety_margin`. If the next MIDI boundary cannot
+accommodate completion of the current indivisible construction unit,
+construction yields and retries on a subsequent eligible idle turn. The
+previously published complete snapshot remains authoritative; no incomplete
+prefix or partially constructed candidate is published. Acceptance requires
+that construction-attributable MIDI gaps and deadline lateness remain within
+this contract across the capture-gated recapture, including record, overdub,
+and STOPPED hold through `pending=0`. The observed `snapshot_idle` parent
+wall time is not itself an acceptance metric. The 10,000 µs value is not
+justified by an observed unit; it must not be replaced by the minimum observed
+reserve.
 
 ## Open Questions
 

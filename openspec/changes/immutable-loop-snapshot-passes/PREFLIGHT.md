@@ -5,6 +5,11 @@
 **Decision:** [`DEC-044`](../../../docs/DECISION_LOG.md#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction), as amended by the formal reassessment
 **Reassessment:** [`ARCHITECTURE-REASSESSMENT.md`](ARCHITECTURE-REASSESSMENT.md)
 
+**Status amendment (2026-09-08):** This preflight records the approved
+architecture and phase gates; its original Phase 0 “not authorized” statements
+are historical. Tasks 3.5/3.6 and 4.1–4.3 have since been implemented and
+reviewed. Tasks 4.4–4.6, 4b.3, 5.1–5.6, and 6.1–6.5 remain future scope.
+
 ## Problem
 
 The target replaces historical pass replay as the normal effective-state
@@ -208,7 +213,8 @@ horizon stay on `Track` / `LoopPlaybackRuntime`. `playbackEventPhase`
 remains the hot-path scalar. Row 2 stays unbounded; this slice does not
 convert it.
 
-Tasks 4.3–4.6 are not authorized by this result.
+Task 4.3 was subsequently completed as the stateless explicit-snapshot query
+slice. Caller migration tasks 4.4–4.6 remain separately gated.
 
 ### Phase 3 display result (4.4 display only)
 
@@ -219,10 +225,11 @@ published snapshot event membership through
 `tryGatherPublishedSnapshotEventsInWindowWithCapture` when live capture is
 in the paint path). Reconstruction stays on `reconstructDisplayNotes`.
 `visualCache` remains the display list owner. Compatibility gather and LCR
-prepared windows remain only when no published root exists. Task 4.3 is
-now the selected slice in `CURRENT_WORK.md`. NOTE_EDIT paint still uses
+prepared windows remain only when no published root exists. The display slice
+is historical; task 4.3 is complete and task 4.4 requires a new selection.
+NOTE_EDIT paint still uses
 `projectedNoteEditDisplayNotes`.
-Analysis, validation, 4.5, and 4.6 identity recording are not authorized.
+Analysis, validation, 4.5, and 4.6 identity recording remain future scope.
 Live overdub paint holds the PLAYING committed handoff only while the
 paint window stays inside the last gather. Follow exit or wrap
 invalidate snapshot-gathers once. Per-frame snapshot gather during
@@ -236,11 +243,11 @@ paint holds the composed frame; `ODUB,stop,display` must not snapshot-gather
 ([`003459`](../../../captures/session_20260826_003459.log) display 97–154 ms).
 `4b.0` wrap/hold is device PASS
 ([`092755`](../../../captures/session_20260826_092755.log) last display
-11.1 ms). Selected: `4b.2` first-record live enqueue + PLAYING start.
+11.1 ms). Historical selection: `4b.2` first-record live enqueue + PLAYING start.
 RECORDING may start from `capture.store` after the playhead has left
 bar 1. OVERDUBBING only advances an in-flight candidate. 4b.1 same-turn
-lane stays in tree and is not closed. Parked: 4b.3 post-stop `usbdisp` /
-`load_frame` / `late_on`; 4b.4 OVERDUBBING `DisplayResolveLiveCapture`.
+lane is closed under Ring B. Parked: 4b.3 post-stop `usbdisp` /
+`load_frame` / `late_on`; 4b.4 `DisplayResolveLiveCapture` is closed.
 
 ## Amendment (2026-08-25) — overdub publish is idle-stepped
 
@@ -377,8 +384,8 @@ implicitly authorized by this preflight.
 
 ## Context summary
 
-- Active change: `immutable-loop-snapshot-passes`, Phase 3 tasks `3.5`/`3.6`
-  wrap publication only.
+- Active change: `immutable-loop-snapshot-passes`; tasks 3.5/3.6 and 4.1–4.3
+  are complete. The next implementation selection is task 4.4.
 - Approved logical model: pitch → 768-tick bar → `NoteRef` membership lists;
   bar → `EventRef` membership lists in existing event-stream order.
 - `LoopSnapshot` is self-contained; parent-snapshot traversal is forbidden.
