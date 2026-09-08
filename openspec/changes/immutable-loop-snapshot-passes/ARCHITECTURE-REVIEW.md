@@ -432,6 +432,10 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       `test_copy_idle_validate_events_uses_snapshot_span_note_ids`.
 - [x] Capture-serial RAM1 locals **6848**. Full native suite:
       **1773 succeeded, 1 skipped**.
+- [x] Device [`193700`](../../../captures/session_20260908_193700.log):
+      second overdub open `from=snapshot` `root_rev=7` `play_rev=7`
+      `notes=159`. Idle validate not exercised (60 s defer). First
+      overdub open `from=visual` is before `pending=0` `root_rev=1`.
 
 ### Close-publish NoteRange pitch reuse
 

@@ -64,6 +64,9 @@ Close publish: `NoteRange` reuses the current snapshot pitch
 `copyIdleValidateEvents` (current-root span-filtered snapshot events).
 Overdub analysis current-root gather already skips pass flatten (4.4a).
 RAM1 locals **6848**; native **1773 succeeded, 1 skipped**.
+Device [`193700`](../../captures/session_20260908_193700.log): second
+overdub open `from=snapshot` at `root_rev=7` `play_rev=7`. Idle validate
+not exercised.
 Remaining 4.4 display fallback/identity, 4.5 verify, 4.6, persistence,
 and snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate
