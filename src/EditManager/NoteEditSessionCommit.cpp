@@ -207,6 +207,11 @@ EDIT_MANAGER_IMPL_MEM size_t EditManager::bakeNoteEditSessionStoreToPasses(Track
     if (editSession.store.isEventsDirty()) {
         editSession.store.syncEventsToStore();
     }
+    if (noteEditEmptyApplyScratchBakeIsNoOp(editSession.editPassIds.empty(),
+                                            editSession.store.readEvents().empty())) {
+        logger.log(CAT_TRACK, LOG_INFO, "NoteEditPass close skip empty-store bake");
+        return 0;
+    }
 
     MidiEventVec baselineStoreEvents;
     loop.copyNoteEditCommitBase(editSession.editPassIds, baselineStoreEvents,

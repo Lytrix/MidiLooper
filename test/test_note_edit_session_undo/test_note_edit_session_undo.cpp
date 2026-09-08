@@ -738,6 +738,30 @@ void test_overdub_survives_exit_bake_after_note_range_commit() {
   TEST_ASSERT_TRUE(hasDisplayNote(materialized, loop.loopLengthTicks, 91, 240, 288));
 }
 
+void test_empty_store_vs_snapshot_baseline_does_not_keep_unrequested_deletes() {
+  // 001857: Hydrate 4a empty apply scratch vs published notes must not bake Deletes.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopLengthTicks = 1536;
+  loop.passes.recordPass = makeRecordPassWithNote(5, 10);
+  loop.passes.overdubPasses.push_back(makeOverdubPassWithNote(5, 240, 91, 2));
+  loop.nextPassId_ = 3;
+
+  MidiEventVec fullBaseline;
+  loop.passes.materializeToEventVector(fullBaseline, loop.loopLengthTicks);
+  const MidiEventVec emptyStore;
+  TEST_ASSERT_TRUE(noteEditEmptyApplyScratchBakeIsNoOp(true, emptyStore.empty()));
+
+  EditPassVec bakeRows =
+      buildSessionStoreEditPasses(fullBaseline, emptyStore, 5, loop.loopLengthTicks);
+  TEST_ASSERT_FALSE(bakeRows.empty());
+  const NoteEditCurrentState emptyCurrentState;
+  dropUnrequestedSessionStoreDeletes(bakeRows, emptyCurrentState);
+  TEST_ASSERT_TRUE(bakeRows.empty());
+}
+
 void test_stale_record_only_session_bake_must_not_delete_overdub() {
   // 014553 destroy path: session store is record-only; bake vs full baseline emits Deletes.
   LoopEventStore::resetPoolForTests();
@@ -1334,6 +1358,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_session_undo_entry_trims_baseline_map_to_overlap_closure);
   RUN_TEST(test_undo_warm_143144_focus_snap_copies_full_baseline_then_trims);
   RUN_TEST(test_overdub_survives_exit_bake_after_note_range_commit);
+  RUN_TEST(test_empty_store_vs_snapshot_baseline_does_not_keep_unrequested_deletes);
   RUN_TEST(test_stale_record_only_session_bake_must_not_delete_overdub);
   RUN_TEST(test_live_capture_baked_on_close_without_prior_edit_passes);
   RUN_TEST(test_current_state_undo_restore_parity_with_clone);

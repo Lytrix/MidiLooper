@@ -142,6 +142,13 @@ inline bool noteEditFocusRebuildFillsCurrentStateFromVisualCache() {
   return false;
 }
 
+/// Hydrate 4a close: empty apply scratch with no saved rows is not a
+/// delete-all. Bake must not rematerialize the published loop to discover that.
+inline bool noteEditEmptyApplyScratchBakeIsNoOp(bool sessionEditPassIdsEmpty,
+                                                bool sessionStoreEmpty) {
+  return sessionEditPassIdsEmpty && sessionStoreEmpty;
+}
+
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation
 /// SHALL push a fresh session undo step even when kind stays Move.
 inline bool shouldResetGeometryKindUndoOnSelectChange(const EditorSelection& prior,

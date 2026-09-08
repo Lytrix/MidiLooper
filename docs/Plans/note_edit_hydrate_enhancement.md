@@ -76,7 +76,10 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 | 6E overlap query | native PASS; not wired to Track |
 | Wrap-move persist | **parked** — current-structure issue; not a start gate |
 
-Hydrate 1–3 shipped. Hydrate 4a is named in CURRENT_WORK § Now implementing. Do not start 4b–5.
+Hydrate 1–4a shipped. 4a empty apply scratch made no-edit close rematerialize
+and bake Deletes ([`001857`](../../captures/session_20260909_001857.log)).
+Fix: [`note_edit_close_empty_store_bake_bugfix.md`](note_edit_close_empty_store_bake_bugfix.md).
+Do not start 4b–5.
 
 ---
 

@@ -48,3 +48,7 @@ Reuse: YES — `Loop::copyNoteEditCommitBase`.
 - Skip bake on all empty-`editPassIds` closes (live-capture fold still bakes)
 - Treat Overlay as the bake baseline
 - Start hydrate Stage 4a
+
+Hydrate 4a later left the apply scratch empty, so the same close rematerialized
+and baked Deletes. Sibling:
+[`note_edit_close_empty_store_bake_bugfix.md`](note_edit_close_empty_store_bake_bugfix.md).
