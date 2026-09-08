@@ -60,6 +60,9 @@ commitEditAction rematerialize            ← Stage 3 (conditional)
 `M63@1536` means the home left that pitch. `take_only` still showing `M63`
 is capture-only. After NoteRange `1248–1728`, rematerialize missing
 `M78@1536` means the home left that start. Those lines are **not** this RC.
+Pitch 0 on NOTE_EDIT exit is
+[`note_edit_snapshot_note_range_pitch_bugfix.md`](note_edit_snapshot_note_range_pitch_bugfix.md)
+(`appendEditRowChange` wrote `NoteRange` `row.pitch`).
 
 ---
 

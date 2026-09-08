@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.4e Stage 1 device PASS 162207)
+Last updated: 2026-09-08 (NOTE_EDIT close NoteRange snapshot pitch)
 
 ---
 
@@ -39,6 +39,8 @@ NOTE_EDIT dirty paint/select uses the current snapshot as committed base.
 note-span membership. Device
 Device PASS [`162207`](../../captures/session_20260908_162207.log)
 questions 1–2 (open visual **98**). Do not start Stage 2/3.
+Close publish: `NoteRange` reuses the current snapshot pitch
+([`note_edit_snapshot_note_range_pitch_bugfix.md`](../Plans/note_edit_snapshot_note_range_pitch_bugfix.md)).
 Remaining 4.4 caller migration (analysis, validation, other NOTE_EDIT
 oracles), 4.5 verify, 4.6, persistence, and snapshot-identity undo remain
 later.

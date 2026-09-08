@@ -138,17 +138,36 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
   if (row.targetNoteId == kInvalidNoteId) {
     return false;
   }
+  const SnapshotNoteChange* earlierSameNote = nullptr;
+  for (const SnapshotNoteChange& existing : changes.notes) {
+    if (existing.next.noteId != row.targetNoteId ||
+        row.targetNoteId == kInvalidNoteId) {
+      continue;
+    }
+    if (existing.kind == SnapshotChangeKind::Replace ||
+        existing.kind == SnapshotChangeKind::Add) {
+      earlierSameNote = &existing;
+    }
+  }
+
   SnapshotNoteChange change{};
   change.kind = SnapshotChangeKind::Replace;
-  change.previous = previous;
-  if (previous) {
-    change.next = *previous;
+  if (earlierSameNote != nullptr) {
+    // Prior row in this close set already replaced the note (Pitch then
+    // NoteRange). Construction finds that candidate; do not restart from parent.
+    change.next = earlierSameNote->next;
+  } else {
+    change.previous = previous;
+    if (previous) {
+      change.next = *previous;
+    }
   }
   change.next.loopId = loopId;
   change.next.noteId = row.targetNoteId;
+  // NoteRange/Length move ticks only (`applyMoveNoteById`). row.pitch is
+  // unset (0) on those rows — do not publish MIDI pitch 0 (162207 close).
   if (row.propertyType == EditPropertyType::Pitch ||
       row.propertyType == EditPropertyType::None ||
-      row.propertyType == EditPropertyType::NoteRange ||
       row.actionType == EditActionType::Create) {
     change.next.pitch = row.pitch;
   }

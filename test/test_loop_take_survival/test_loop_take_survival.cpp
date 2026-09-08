@@ -58,6 +58,17 @@ EditPass makePitchRow(NoteId targetNoteId, uint32_t start, uint32_t end, uint8_t
   return row;
 }
 
+EditPass makeNoteRangeRow(NoteId targetNoteId, uint32_t newStart, uint32_t newEnd) {
+  EditPass row{};
+  row.passType = EditPassType::Note;
+  row.actionType = EditActionType::Update;
+  row.propertyType = EditPropertyType::NoteRange;
+  row.targetNoteId = targetNoteId;
+  row.startTick = newStart;
+  row.endTick = newEnd;
+  return row;
+}
+
 template <typename EventVec>
 int countNoteOns(const EventVec& flat, uint8_t pitch) {
   int count = 0;
@@ -545,6 +556,65 @@ void test_note_edit_close_replaces_published_note() {
   TEST_ASSERT_EQUAL(0u, oldPitchCount);
   TEST_ASSERT_EQUAL(1u, afterEdit->noteMembership(67, 0)->count);
   TEST_ASSERT_EQUAL(noteId, afterEdit->noteMembership(67, 0)->references[0]->noteId);
+}
+
+void test_note_edit_close_note_range_reuses_published_pitch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  const NoteId noteId = afterRecord->noteMembership(60, 0)->references[0]->noteId;
+
+  const EditPassId rowId = loop.saveNoteEditPass(0, makeNoteRangeRow(noteId, 400, 500));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, rowId);
+  EditPassIdList ids;
+  ids.push_back(rowId);
+  TEST_ASSERT_TRUE(loop.tryPublishNoteEditSnapshot(ids));
+
+  const auto afterEdit = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterEdit.get());
+  const auto pitchZero = afterEdit->noteMembership(0, 0);
+  TEST_ASSERT_EQUAL(0u, pitchZero ? pitchZero->count : 0);
+  const LoopSnapshotNoteRef moved = afterEdit->findNote(noteId, 60);
+  TEST_ASSERT_TRUE(static_cast<bool>(moved));
+  TEST_ASSERT_EQUAL_UINT8(60, moved->pitch);
+  TEST_ASSERT_EQUAL_UINT32(400u, moved->startTick);
+  TEST_ASSERT_EQUAL_UINT32(500u, moved->endTick);
+}
+
+void test_note_edit_close_pitch_then_note_range_keeps_updated_pitch() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  const NoteId noteId = afterRecord->noteMembership(60, 0)->references[0]->noteId;
+
+  const EditPassId pitchId = loop.saveNoteEditPass(0, makePitchRow(noteId, 100, 200, 67));
+  const EditPassId rangeId = loop.saveNoteEditPass(0, makeNoteRangeRow(noteId, 400, 500));
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, pitchId);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, rangeId);
+  EditPassIdList ids;
+  ids.push_back(pitchId);
+  ids.push_back(rangeId);
+  TEST_ASSERT_TRUE(loop.tryPublishNoteEditSnapshot(ids));
+
+  const auto afterEdit = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterEdit.get());
+  const auto pitchZero = afterEdit->noteMembership(0, 0);
+  TEST_ASSERT_EQUAL(0u, pitchZero ? pitchZero->count : 0);
+  const auto oldPitch = afterEdit->noteMembership(60, 0);
+  TEST_ASSERT_EQUAL(0u, oldPitch ? oldPitch->count : 0);
+  const LoopSnapshotNoteRef moved = afterEdit->findNote(noteId, 67);
+  TEST_ASSERT_TRUE(static_cast<bool>(moved));
+  TEST_ASSERT_EQUAL_UINT8(67, moved->pitch);
+  TEST_ASSERT_EQUAL_UINT32(400u, moved->startTick);
+  TEST_ASSERT_EQUAL_UINT32(500u, moved->endTick);
 }
 
 void test_failed_edit_publish_preserves_parent_snapshot() {
@@ -3998,6 +4068,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_wrap_does_not_publish_global_snapshot);
   RUN_TEST(test_overdub_stop_publishes_successor_from_parent);
   RUN_TEST(test_note_edit_close_replaces_published_note);
+  RUN_TEST(test_note_edit_close_note_range_reuses_published_pitch);
+  RUN_TEST(test_note_edit_close_pitch_then_note_range_keeps_updated_pitch);
   RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
