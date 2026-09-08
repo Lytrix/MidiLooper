@@ -56,6 +56,15 @@ inline bool displayNotePresentAtHold(uint32_t startTick, uint32_t endTick, uint3
   return direct || shifted;
 }
 
+struct OverlapCandidateQueryStats {
+    uint32_t candidateCount = 0;
+    uint32_t identityLookupCount = 0;
+    uint32_t identityLookupScanCount = 0;
+    uint32_t appendEventCount = 0;
+    uint32_t barsScanned = 0;
+    bool preparedHit = false;
+};
+
 inline bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t existingEnd,
                                              uint32_t incomingStart, uint32_t incomingEnd,
                                              uint32_t loopLength) {
@@ -77,6 +86,32 @@ inline bool existingNoteOverlapsIncomingHold(uint32_t existingStart, uint32_t ex
                                existingLinearEnd + loopLength > incomingLinearStart;
   const bool incomingShifted = existingLinearStart < incomingLinearEnd + loopLength &&
                                existingLinearEnd > incomingLinearStart + loopLength;
+  return direct || existingShifted || incomingShifted;
+}
+
+/// NOTE_EDIT analyze edges: abutting start/end still participate (packed Hide).
+/// Overdub keep `existingNoteOverlapsIncomingHold`.
+inline bool existingNoteOverlapsIncomingHoldInclusive(uint32_t existingStart, uint32_t existingEnd,
+                                                      uint32_t incomingStart, uint32_t incomingEnd,
+                                                      uint32_t loopLength) {
+  uint32_t existingLinearStart = 0;
+  uint32_t existingLinearEnd = 0;
+  uint32_t incomingLinearStart = 0;
+  uint32_t incomingLinearEnd = 0;
+  if (!linearSoundingSpan(existingStart, existingEnd, loopLength, existingLinearStart,
+                          existingLinearEnd)) {
+    return false;
+  }
+  if (!linearSoundingSpan(incomingStart, incomingEnd, loopLength, incomingLinearStart,
+                          incomingLinearEnd)) {
+    return false;
+  }
+  const bool direct =
+      existingLinearStart <= incomingLinearEnd && existingLinearEnd >= incomingLinearStart;
+  const bool existingShifted = existingLinearStart + loopLength <= incomingLinearEnd &&
+                               existingLinearEnd + loopLength >= incomingLinearStart;
+  const bool incomingShifted = existingLinearStart <= incomingLinearEnd + loopLength &&
+                               existingLinearEnd >= incomingLinearStart + loopLength;
   return direct || existingShifted || incomingShifted;
 }
 
@@ -127,6 +162,38 @@ inline void collectGeometryOverlapNoteIds(const NoteUtils::DisplayNoteVec& notes
                                          loopLength)) {
       (void)out.insert(note.noteId);
     }
+  }
+}
+
+/// NOTE_EDIT resolver candidates. Inclusive edges. Does not gather or reconstruct.
+inline void collectAnalyzeOverlapNoteIds(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                                         uint32_t startTick, uint32_t endTick, uint32_t loopLength,
+                                         NoteId excludeId, OverlapNoteIdSet& out,
+                                         OverlapCandidateQueryStats* stats = nullptr) {
+  out.clear();
+  uint32_t incomingLinearStart = 0;
+  uint32_t incomingLinearEnd = 0;
+  if (!linearSoundingSpan(startTick, endTick, loopLength, incomingLinearStart,
+                          incomingLinearEnd)) {
+    if (stats != nullptr) {
+      stats->candidateCount = 0;
+    }
+    return;
+  }
+  uint32_t scanned = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    ++scanned;
+    if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == excludeId) {
+      continue;
+    }
+    if (existingNoteOverlapsIncomingHoldInclusive(note.startTick, note.endTick, startTick, endTick,
+                                                  loopLength)) {
+      (void)out.insert(note.noteId);
+    }
+  }
+  if (stats != nullptr) {
+    stats->identityLookupScanCount += scanned;
+    stats->candidateCount = static_cast<uint32_t>(out.size());
   }
 }
 

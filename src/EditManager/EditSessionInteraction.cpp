@@ -161,7 +161,8 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
                                                       const MidiEventVec& liveStore,
                                                       NoteId movingNoteId,
                                                       std::optional<uint8_t> overlapPitchLane,
-                                                      const NoteEditCurrentState* currentState) {
+                                                      const NoteEditCurrentState* currentState,
+                                                      const OverlapNoteIdSet* holdCandidates) {
   NoteIdList scope;
   const auto inLane = [&](uint8_t pitch) {
     return !overlapPitchLane.has_value() || pitch == overlapPitchLane.value();
@@ -185,6 +186,28 @@ NOTE_EDIT_MEM NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transa
       scope.push_back(noteId);
     }
   };
+
+  if (holdCandidates != nullptr) {
+    for (size_t i = 0; i < holdCandidates->size(); ++i) {
+      const NoteId noteId = holdCandidates->at(i);
+      if (noteId == kInvalidNoteId || noteId == movingNoteId) {
+        continue;
+      }
+      if (std::find(scope.begin(), scope.end(), noteId) == scope.end()) {
+        scope.push_back(noteId);
+      }
+    }
+    if (currentState != nullptr) {
+      for (const auto& [noteId, row] : currentState->rows()) {
+        if (currentStateRowLifecycleIsDeleted(row)) {
+          continue;
+        }
+        addToScope(noteId, row.currentSpan.pitch);
+      }
+    }
+    sortNoteIdVector(scope);
+    return scope;
+  }
 
   for (const auto& [noteId, baseline] : transactionBaseline) {
     addToScope(noteId, baseline.pitch);
@@ -231,13 +254,19 @@ NOTE_EDIT_MEM BaselineMap projectTransactionBaselineForEvaluationScope(
 
 NOTE_EDIT_MEM void overlayUneditedBaselineMapFromDisplayNotes(
     NoteEditFocus& focus, const NoteEditCurrentState* currentState,
-    const NoteUtils::DisplayNoteVec& committedDisplayNotes) {
+    const NoteUtils::DisplayNoteVec& committedDisplayNotes, const NoteIdList* scopeNoteIds) {
   if (!focus.active) {
     return;
   }
   for (const NoteUtils::DisplayNote& dn : committedDisplayNotes) {
     if (dn.noteId == kInvalidNoteId || dn.endTick == dn.startTick) {
       continue;
+    }
+    if (scopeNoteIds != nullptr) {
+      if (std::find(scopeNoteIds->begin(), scopeNoteIds->end(), dn.noteId) ==
+          scopeNoteIds->end()) {
+        continue;
+      }
     }
     const NoteEditCurrentNoteState* row =
         currentState != nullptr ? currentState->find(dn.noteId) : nullptr;

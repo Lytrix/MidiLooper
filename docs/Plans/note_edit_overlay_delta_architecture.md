@@ -6,7 +6,7 @@
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Implementation:** [`note_edit_overlay_delta_refinement.md`](note_edit_overlay_delta_refinement.md)  
 **Evidence:** [`224533`](../../captures/session_20260908_224533.log) Hydrate 1 functional PASS; [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS; [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS; [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
-**Does not authorize:** hydrate 2–5 / 4a, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
+**Does not authorize:** hydrate 4a–5, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
 
 This session does **not** invent a second consume model. It binds already-approved plans to one north star and adds the missing **E:** restore contract.
 

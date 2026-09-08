@@ -6,8 +6,13 @@
 #include <unity.h>
 
 #include "OverlapCandidateLookup.h"
+#include "OverlapNoteIdObservation.h"
 #include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
+
+#include "../../src/Logger.cpp"
+#include "../../src/Utils/IntervalProjection.cpp"
+#include "../../src/Utils/NoteUtils.cpp"
 
 namespace {
 
@@ -77,11 +82,39 @@ void test_lookup_examines_through_last_match_not_candidates_times_loop() {
   TEST_ASSERT_TRUE(examined < kNoteCount * ids.size());
 }
 
+void test_analyze_overlap_excludes_far_same_pitch_keeps_abut() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 0, 48));
+  notes.push_back(makeNote(2, 96, 144));
+  notes.push_back(makeNote(3, 48, 96));
+  notes.push_back(makeNote(4, 400, 448));
+  OverlapNoteIdSet ids;
+  OverlapNoteIdObservation::OverlapCandidateQueryStats stats;
+  OverlapNoteIdObservation::collectAnalyzeOverlapNoteIds(notes, 60, 48, 96, 768, 99, ids, &stats);
+  TEST_ASSERT_TRUE(ids.contains(1));
+  TEST_ASSERT_TRUE(ids.contains(2));
+  TEST_ASSERT_TRUE(ids.contains(3));
+  TEST_ASSERT_FALSE(ids.contains(4));
+  TEST_ASSERT_EQUAL_UINT32(3, stats.candidateCount);
+  TEST_ASSERT_EQUAL_UINT32(4, stats.identityLookupScanCount);
+}
+
+void test_analyze_overlap_empty_hold_does_not_gather() {
+  NoteUtils::DisplayNoteVec notes;
+  notes.push_back(makeNote(1, 0, 48));
+  OverlapNoteIdSet ids;
+  OverlapNoteIdObservation::collectAnalyzeOverlapNoteIds(notes, 60, 48, 48, 768, 99, ids);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(ids.size()));
+  TEST_ASSERT_FALSE(OverlapCandidateLookup::shouldLookupSpans(ids));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_empty_candidates_do_not_lookup_spans);
   RUN_TEST(test_empty_candidates_append_no_notes);
   RUN_TEST(test_nonempty_candidates_copy_matching_notes_only);
   RUN_TEST(test_lookup_examines_through_last_match_not_candidates_times_loop);
+  RUN_TEST(test_analyze_overlap_excludes_far_same_pitch_keeps_abut);
+  RUN_TEST(test_analyze_overlap_empty_hold_does_not_gather);
   return UNITY_END();
 }

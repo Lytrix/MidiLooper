@@ -487,13 +487,13 @@ DEC-037 amendment 2026-08-16. Architecture PASS. This revision records implement
 ### Stage 2 — Overlap candidates = overdub hold (indexed identities)
 
 **Owner:** candidate collection feeding `NoteGeometryResolver`.  
-**Invariant:** selected note `[S, E)` produces the same Shorten/Hide target ids as `accumulatePendingNoteChangesFromSourceNotes` for that hold. Prepared hit: indexed query → bounded identities → `appendNoteEvents`. No reconstruct, no `DisplayNote` vector as the window result.  
-**Gate:** overdub overlap fixtures with the selected note as incoming hold; empty set does not gather (Gate 3). Counters: `candidate_count`, `identity_lookup_count`, `identity_lookup_scan_count`, `append_event_count`. Scan/append must not scale with total loop size. `appendNoteEvents(id)` is O(events of that id).
+**Invariant:** selected note `[S, E)` produces the same Shorten/Hide target ids as `accumulatePendingNoteChangesFromSourceNotes` for that hold. Prepared hit: `LoopSnapshot::noteMembership(pitch, bar)` for hold bars (±1 for analyze abut). No reconstruct, no `DisplayNote` vector as the window result. NOTE_EDIT analyze uses inclusive edges so packed abut Hide stays; overdub exclusive `existingNoteOverlapsIncomingHold` is unchanged.  
+**Gate:** overdub overlap fixtures with the selected note as incoming hold; empty set does not gather (Gate 3). Counters: `candidate_count`, `identity_lookup_count`, `identity_lookup_scan_count`. Scan must not scale with total loop size.
 
 ### Stage 3 — Resolver consume + legacy miss path
 
 **Owner:** `NoteGeometryResolver::resolve` candidate source.  
-**Invariant:** prepared **hit** is the analysis authority (LCR ∪ overlay). Prepared **miss** is a **legacy compatibility path** with today’s semantics — temporary, not a second authority. No `ensure*` LCR rebuild on the fader stack. Intra-action leave is `RestoreNote` per overlay lifecycle table.  
+**Invariant:** prepared **hit** is the analysis authority (`noteMembership` ∪ sticky current-state). Prepared **miss** is a **legacy compatibility path** (`collectAnalyzeOverlapNoteIds` on the already-built visual cache) — temporary, not a second authority. No `ensure*` LCR rebuild on the fader stack. Intra-action leave is `RestoreNote` per overlay lifecycle table.  
 **Test:** native overlap + move/length fixtures stay PASS; prepared-miss matches current behavior.
 
 ### Stage 4a — Open without full-loop analysis

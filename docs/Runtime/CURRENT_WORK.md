@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (Hydrate 1 device functional PASS 224533)
+Last updated: 2026-09-08 (Hydrate 2–3 firmware native PASS; device pending)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,16 +10,20 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log).**
-Select neighborhood works: fader advances `selectedTick` by 16ths
-(`slot=1` in the 3-step window). First Move
-`UNDO_WARM,push,e00,761,88,3`. Fast bar motion / fader 2 sluggishness is
-**not** a Hydrate 1 fail. Peak `hostdrain` **1.45 s** sits on stacked
-`GEOM_APPLY,resolve` kind=3 (**29 ms**, reconstruct/analyze/overlay).
-Select-only `DFRAME` gap **1465 / 1658 / 1931** ms matches Stage 3
-[`221906`](../../captures/session_20260908_221906.log). Later kind-boundary
-`focus_snap` **41–193 ms**. Do not start hydrate 2–5 / 4a, DEC-054 Stage 2,
-later **E:** overlay-delta entries, or rename `NoteEditCurrentState`.
+**Hydrate 2–3 — overlap candidates vs mover LinearSpan — firmware in tree,
+native PASS, device pending.**
+Prepared hit: `LoopSnapshot::noteMembership(pitch, bar)` for bars that
+intersect the mover hold. Miss: `collectAnalyzeOverlapNoteIds` on the
+already-built visual cache. Sticky current-state participants stay.
+`NoteGeometryResolver::resolve` consumes that set; it does not walk every
+same-pitch note into `baselineMap`. RAM1 locals **7008**. Native **1786
+succeeded, 1 skipped**. Device: PLAYING + NOTE_EDIT + fast fader 2.
+Expect `GEOM_APPLY,phase,candidates_hit` or `candidates_miss`. Stage 2
+`push,e00` stays. Reconstruct on apply may still be ~7 ms. Not hydrate
+4a–5. Hydrate 1 PASS
+[`224533`](../../captures/session_20260908_224533.log). Do not start
+DEC-054 Stage 2, later **E:** overlay-delta entries, or rename
+`NoteEditCurrentState`.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md),

@@ -11,6 +11,7 @@
 #include "EditSessionAction.h"
 #include "MidiEvent.h"
 #include "NoteEditFocus.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/IntervalProjection.h"
 
 class NoteEditCurrentState;
@@ -29,17 +30,15 @@ std::vector<NoteId, InternalHeapFirstAllocator<NoteId>> determineChangedCausingN
     const EditorSelection& selection, const EditedGeometry& editedGeometry,
     const std::unordered_map<NoteId, NoteBaseline, NoteIdHash>& priorLatchByNoteId);
 
-/// Single source of truth for which notes one geometry tick may evaluate: the mover's current
-/// pitch lane, plus every note the pipeline already hid or shortened under this edit driver.
-/// The sticky part matters after a pitch change — a note hidden on the source lane must stay in
-/// scope so it can still be restored, which is why the transaction baseline stays full-loop.
-/// Candidate pairing and baseline projection both consume this one sorted list, so the two
-/// cannot disagree about scope. Without a lane the scope is every note (pre-lane behaviour).
-/// Membership is NoteId + pitch lane; the track's output channel is not an identity key.
+/// Single source of truth for which notes one geometry tick may evaluate.
+/// When `holdCandidates` is set (Hydrate 2), scope is those ids plus sticky
+/// current-state participants — not every same-pitch note. Without a hold set,
+/// membership stays the pre-hydrate lane walk (tests / legacy miss helper).
 NoteIdList collectEvaluationScopeNoteIds(const BaselineMap& transactionBaseline,
                                          const MidiEventVec& liveStore, NoteId movingNoteId,
                                          std::optional<uint8_t> overlapPitchLane,
-                                         const NoteEditCurrentState* currentState = nullptr);
+                                         const NoteEditCurrentState* currentState = nullptr,
+                                         const OverlapNoteIdSet* holdCandidates = nullptr);
 
 /// Projects only the notes in `evaluationScope`, plus the mover, which resolve and build need.
 BaselineMap projectTransactionBaselineForEvaluationScope(const EditorSelection& selection,
@@ -64,7 +63,8 @@ bool displaySpanForNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId,
 /// committed display span so leave-restore cannot write a longer pairing (181114 note 45).
 void overlayUneditedBaselineMapFromDisplayNotes(
     NoteEditFocus& focus, const NoteEditCurrentState* currentState,
-    const NoteUtils::DisplayNoteVec& committedDisplayNotes);
+    const NoteUtils::DisplayNoteVec& committedDisplayNotes,
+    const NoteIdList* scopeNoteIds = nullptr);
 
 std::vector<CausingTargetPair, InternalHeapFirstAllocator<CausingTargetPair>>
 determineEligiblePairs(const EditorSelection& selection,

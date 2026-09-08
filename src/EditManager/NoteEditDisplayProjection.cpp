@@ -14,6 +14,7 @@
 #include "TrackManager.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SnapshotNoteConversion.h"
 
 using DisplayNote = NoteUtils::DisplayNote;
 
@@ -129,6 +130,24 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCaches() {
     noteEditFocusMaterializeLoopLength_ = 0;
     noteEditFocusMaterializedLoopEvents_.clear();
     invalidateProjectedNoteEditDisplayCache();
+}
+
+EDIT_MANAGER_IMPL_MEM bool EditManager::tryCollectPreparedOverlapHoldNoteIds(
+    const Track& track, uint8_t pitch, uint32_t startTick, uint32_t endTick, NoteId excludeId,
+    OverlapNoteIdSet& out, OverlapNoteIdObservation::OverlapCandidateQueryStats* stats) const {
+    out.clear();
+    const Loop& loop = trackManager.getSelectedLoop(track);
+    const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+    if (!loop.publishedSnapshotIsCurrent() || !snapshot) {
+        return false;
+    }
+    collectSnapshotAnalyzeOverlapNoteIds(*snapshot, pitch, startTick, endTick,
+                                         noteEditLoopLengthTicks(track), excludeId, out, stats);
+    if (stats != nullptr) {
+        ++stats->identityLookupCount;
+        stats->preparedHit = true;
+    }
+    return true;
 }
 
 EDIT_MANAGER_IMPL_MEM const NoteUtils::DisplayNoteVec& EditManager::visualCacheNotesForSelectedSlot(

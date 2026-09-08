@@ -1,6 +1,6 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log). Architecture PASS (overlap retarget 2026-08-17). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 2–5 / 4a.  
+**Status:** Hydrate 2–3 authorized in CURRENT_WORK. Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 4a–5.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
@@ -8,7 +8,7 @@
 **Sibling (overlap participants):** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) amendment 2026-08-16  
 **Overdub analog:** notes present vs incoming hold LinearSpan (same participant class). Select stays a `selectedTick` neighborhood.  
-**Does not authorize:** hydrate 2–5 / 4a firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
+**Does not authorize:** hydrate 4a–5 firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
 
 ---
 
@@ -42,7 +42,7 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 |-------|--------|--------------------|
 | 0 | docs | Pins recorded (done) |
 | 1 | `SelectNavigation` | Neighborhood select; not `resolveState` |
-| 2 | overlap candidate source | Indexed identities; `appendNoteEvents` identity-bounded |
+| 2 | overlap candidate source | Indexed identities vs mover hold; `noteMembership` hit, visual-cache miss |
 | 3 | `NoteGeometryResolver` | Prepared hit is analysis authority; miss is legacy |
 | 4a | `openNoteEditSession` | Open does not rematerialize the loop to analyze |
 | 4b | Stage 1 after 4a | First select uses the neighborhood query |
@@ -76,7 +76,7 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 | 6E overlap query | native PASS; not wired to Track |
 | Wrap-move persist | **parked** — current-structure issue; not a start gate |
 
-Hydrate 1 is named in CURRENT_WORK § Now implementing. Do not start 2–5 / 4a.
+Hydrate 1 shipped. Hydrate 2–3 are named in CURRENT_WORK § Now implementing. Do not start 4a–5.
 
 ---
 
@@ -111,6 +111,37 @@ YES — Hydrate 1 only.
 
 ---
 
+## Pre-implementation review (Hydrate 2–3)
+
+### Ready
+
+- `OverlapNoteIdObservation::collectAnalyzeOverlapNoteIds` / `LoopSnapshot::noteMembership`
+- `OverlapCandidateLookup::appendNotesForIds` empty-set gate
+- `collectEvaluationScopeNoteIds` sticky rule
+- `NoteGeometryResolver::resolve` is the consume owner
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Query origin | Mover LinearSpan, not `selectedTick` |
+| Prepared hit | `noteMembership(pitch, bar)` for hold bars |
+| Miss | `collectAnalyzeOverlapNoteIds` on visual cache |
+| Edges | Inclusive analyze (packed Hide). Overdub exclusive stays |
+| Sticky | Current-state participants stay in scope |
+| LCR | Do not construct / `ensure*` on the fader stack |
+| Hydrate 4a–5 | Not this stage |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — Hydrate 2–3 only.
+
+---
+
 ## When this work starts
 
 1. Pre-implementation review against the proposal (owners, stages 1→5, work-shape gates).
@@ -140,3 +171,23 @@ at **29 ms**. Select-only `DFRAME` gaps **1465 / 1658 / 1931** ms match
 Stage 3 [`221906`](../../captures/session_20260908_221906.log). Later
 `focus_snap` **41–193 ms** (`push,cache_miss`). Those are hydrate 2/3 /
 lossless-undo leftovers.
+
+---
+
+## Hydrate 2–3 native (in tree)
+
+**Invariant:** Resolver scope is mover-hold candidates plus sticky
+current-state participants. Not every same-pitch note.
+
+Prepared hit: `tryCollectPreparedOverlapHoldNoteIds` →
+`noteMembership(pitch, bar)` for hold bars ±1. Miss:
+`collectAnalyzeOverlapNoteIds` on the already-built visual cache.
+Inclusive analyze edges keep packed abut Hide. Overdub exclusive hold
+is unchanged. Empty hold does not gather.
+
+**Native:** `test_overlap_candidate_lookup` +
+`test_edit_session_interaction` hold-scope pin. Full suite **1786
+succeeded, 1 skipped**. RAM1 locals **7008**.
+
+**Device pending:** PLAYING + NOTE_EDIT + fast fader 2. Expect
+`candidates_hit` or `candidates_miss`. Do not start hydrate 4a–5.

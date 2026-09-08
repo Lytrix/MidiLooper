@@ -16,6 +16,8 @@
 #include "NoteEditSessionState.h"
 #include "MidiEvent.h"
 #include "MidiConfig.h"
+#include "OverlapNoteIdObservation.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/SelectNavigation.h"
 #include <vector>
 #include <map>
@@ -126,6 +128,11 @@ public:
         const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
     /// Map select-fader pitchbend onto a 16th in the select nav span.
     uint32_t selectTickFromSelectFaderPitchbend(const Track& track, int16_t pitchValue) const;
+    /// Prepared snapshot hold query. False is legacy visual-cache miss.
+    bool tryCollectPreparedOverlapHoldNoteIds(
+        const Track& track, uint8_t pitch, uint32_t startTick, uint32_t endTick, NoteId excludeId,
+        OverlapNoteIdSet& out, OverlapNoteIdObservation::OverlapCandidateQueryStats* stats = nullptr)
+        const;
     void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
     uint32_t getReferenceStep() const { return referenceStep_; }
     void setReferenceStep(uint32_t step) { referenceStep_ = step; }

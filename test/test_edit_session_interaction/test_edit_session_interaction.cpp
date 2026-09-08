@@ -10,6 +10,7 @@
 #include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
+#include "OverlapNoteIdSet.h"
 #include "ResolveConstrainedGeometry.h"
 
 #include "../../src/EditManager/EditSessionInteraction.cpp"
@@ -1119,6 +1120,33 @@ void test_evaluation_scope_excludes_sealed_deleted_022849() {
   TEST_ASSERT_TRUE(std::find(scope.begin(), scope.end(), kDeletedId) == scope.end());
 }
 
+void test_evaluation_scope_hold_candidates_drop_far_same_pitch_keep_sticky() {
+  constexpr NoteId kMoverId = 9;
+  constexpr NoteId kNearId = 2;
+  constexpr NoteId kFarId = 3;
+  constexpr NoteId kHiddenId = 4;
+
+  BaselineMap baseline;
+  baseline[kMoverId] = {13, 100, 480, 528};
+  baseline[kNearId] = {13, 100, 500, 540};
+  baseline[kFarId] = {13, 100, 144, 192};
+
+  MidiEventVec liveStore;
+  OverlapNoteIdSet hold;
+  TEST_ASSERT_TRUE(hold.insert(kNearId));
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kHiddenId, {16, 100, 192, 240}, {16, 100, 192, 240},
+                         NoteEditPresenceType::Hidden);
+
+  const NoteIdList scope = collectEvaluationScopeNoteIds(baseline, liveStore, kMoverId, 13,
+                                                         &currentState, &hold);
+  TEST_ASSERT_TRUE(scopeContains(scope, kNearId));
+  TEST_ASSERT_TRUE(scopeContains(scope, kHiddenId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kFarId));
+  TEST_ASSERT_FALSE(scopeContains(scope, kMoverId));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_orchestrator_skips_intra_selection_pair_when_co_moving);
@@ -1158,5 +1186,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overlay_unedited_row_uses_display_span_not_rematerialize_181114);
   RUN_TEST(test_evaluation_scope_excludes_ended_participation_even_with_stale_latch);
   RUN_TEST(test_evaluation_scope_excludes_sealed_deleted_022849);
+  RUN_TEST(test_evaluation_scope_hold_candidates_drop_far_same_pitch_keep_sticky);
   return UNITY_END();
 }
