@@ -4,6 +4,7 @@
 #include "EditManagerInternal.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <utility>
 
 #include "ClockManager.h"
@@ -12,6 +13,8 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "Loop.h"
+#include "LoopEventStore.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionUndo.h"
 #include "TrackManager.h"
@@ -19,9 +22,168 @@
 #include "Utils/Diagnostics.h"
 #include "Utils/DiagnosticsEvents.h"
 #include "Utils/MemoryMonitor.h"
+#include "Utils/NoteUtils.h"
 
 #ifndef NOTE_EDIT_OPEN_BISECT_STAGE
 #define NOTE_EDIT_OPEN_BISECT_STAGE 4
+#endif
+
+#if defined(SESSION_CAPTURE)
+#if defined(__IMXRT1062__)
+#include <Arduino.h>
+#define NOTE_EDIT_OPEN_Q3_FMT(literal) PSTR(literal)
+#define NOTE_EDIT_OPEN_Q3_SNPRINTF snprintf_P
+#else
+#define NOTE_EDIT_OPEN_Q3_FMT(literal) literal
+#define NOTE_EDIT_OPEN_Q3_SNPRINTF snprintf
+#endif
+namespace {
+
+constexpr size_t kNoteEditOpenQ3IdSample = 8;
+constexpr size_t kNoteEditOpenQ3LineBytes = 192;
+
+NOTE_EDIT_MEM bool displayNoteIdSeenEarlier(const NoteUtils::DisplayNoteVec& notes, size_t index,
+                                            NoteId noteId) {
+    for (size_t i = 0; i < index; ++i) {
+        if (notes[i].noteId == noteId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+NOTE_EDIT_MEM bool storeNoteOnIdSeenEarlier(const LoopEventStore& store, size_t index,
+                                            NoteId noteId) {
+    for (size_t i = 0; i < index; ++i) {
+        const MidiEvent& evt = store.at(i);
+        if (evt.isNoteOn() && evt.noteId == noteId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+NOTE_EDIT_MEM bool storeHasNoteOnId(const LoopEventStore& store, NoteId noteId) {
+    for (size_t i = 0; i < store.size(); ++i) {
+        const MidiEvent& evt = store.at(i);
+        if (evt.isNoteOn() && evt.noteId == noteId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+NOTE_EDIT_MEM bool displayHasNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
+    for (const NoteUtils::DisplayNote& note : notes) {
+        if (note.noteId == noteId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+NOTE_EDIT_MEM void appendNoteIdSample(char* line, size_t lineBytes, size_t& used,
+                                      const NoteId* ids, size_t idCount) {
+    if (line == nullptr || ids == nullptr || used >= lineBytes) {
+        return;
+    }
+    for (size_t i = 0; i < idCount && used + 12 < lineBytes; ++i) {
+        const int wrote = NOTE_EDIT_OPEN_Q3_SNPRINTF(line + used, lineBytes - used,
+                                                     NOTE_EDIT_OPEN_Q3_FMT(",%lu"),
+                                                     static_cast<unsigned long>(ids[i]));
+        if (wrote < 0) {
+            return;
+        }
+        used += static_cast<size_t>(wrote);
+    }
+}
+
+NOTE_EDIT_MEM void logNoteEditOpenQ3(const Loop& loop, const LoopEventStore& store) {
+    const NoteUtils::DisplayNoteVec& notes = loop.visualCache.notes;
+    NoteId onlyVisualSample[kNoteEditOpenQ3IdSample] = {};
+    NoteId onlyStoreSample[kNoteEditOpenQ3IdSample] = {};
+    uint32_t visualIds = 0;
+    uint32_t storeIds = 0;
+    uint32_t shared = 0;
+    uint32_t onlyVisual = 0;
+    uint32_t onlyStore = 0;
+    uint32_t storeInvalid = 0;
+    size_t onlyVisualSampleCount = 0;
+    size_t onlyStoreSampleCount = 0;
+
+    for (size_t i = 0; i < notes.size(); ++i) {
+        const NoteId noteId = notes[i].noteId;
+        if (noteId == kInvalidNoteId || displayNoteIdSeenEarlier(notes, i, noteId)) {
+            continue;
+        }
+        ++visualIds;
+        if (storeHasNoteOnId(store, noteId)) {
+            ++shared;
+        } else {
+            ++onlyVisual;
+            if (onlyVisualSampleCount < kNoteEditOpenQ3IdSample) {
+                onlyVisualSample[onlyVisualSampleCount++] = noteId;
+            }
+        }
+    }
+    for (size_t i = 0; i < store.size(); ++i) {
+        const MidiEvent& evt = store.at(i);
+        if (!evt.isNoteOn()) {
+            continue;
+        }
+        if (evt.noteId == kInvalidNoteId) {
+            ++storeInvalid;
+            continue;
+        }
+        if (storeNoteOnIdSeenEarlier(store, i, evt.noteId)) {
+            continue;
+        }
+        ++storeIds;
+        if (!displayHasNoteId(notes, evt.noteId)) {
+            ++onlyStore;
+            if (onlyStoreSampleCount < kNoteEditOpenQ3IdSample) {
+                onlyStoreSample[onlyStoreSampleCount++] = evt.noteId;
+            }
+        }
+    }
+
+    char summary[kNoteEditOpenQ3LineBytes];
+    NOTE_EDIT_OPEN_Q3_SNPRINTF(
+        summary, sizeof(summary),
+        NOTE_EDIT_OPEN_Q3_FMT(
+            "#CAP,NOTE_EDIT_OPEN,q3,current=%u,root_rev=%lu,visual_ids=%u,store_ids=%u,"
+            "shared=%u,only_visual=%u,only_store=%u,store_invalid=%u"),
+        loop.publishedSnapshotIsCurrent() ? 1u : 0u,
+        static_cast<unsigned long>(loop.publishedSnapshotRevision()),
+        static_cast<unsigned>(visualIds), static_cast<unsigned>(storeIds),
+        static_cast<unsigned>(shared), static_cast<unsigned>(onlyVisual),
+        static_cast<unsigned>(onlyStore), static_cast<unsigned>(storeInvalid));
+    logger.info("%s", summary);
+    if (onlyVisual > 0) {
+        char line[kNoteEditOpenQ3LineBytes];
+        size_t used = 0;
+        const int prefix = NOTE_EDIT_OPEN_Q3_SNPRINTF(
+            line, sizeof(line), NOTE_EDIT_OPEN_Q3_FMT("#CAP,NOTE_EDIT_OPEN,q3,only_visual"));
+        if (prefix > 0) {
+            used = static_cast<size_t>(prefix);
+            appendNoteIdSample(line, sizeof(line), used, onlyVisualSample, onlyVisualSampleCount);
+            logger.info("%s", line);
+        }
+    }
+    if (onlyStore > 0) {
+        char line[kNoteEditOpenQ3LineBytes];
+        size_t used = 0;
+        const int prefix = NOTE_EDIT_OPEN_Q3_SNPRINTF(
+            line, sizeof(line), NOTE_EDIT_OPEN_Q3_FMT("#CAP,NOTE_EDIT_OPEN,q3,only_store"));
+        if (prefix > 0) {
+            used = static_cast<size_t>(prefix);
+            appendNoteIdSample(line, sizeof(line), used, onlyStoreSample, onlyStoreSampleCount);
+            logger.info("%s", line);
+        }
+    }
+}
+
+}  // namespace
 #endif
 
 EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
@@ -51,8 +213,14 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     editSession.replaceEditPassOnClose = false;
     editSession.undoStack.clear();
     editSession.noteEditCurrentState.clear();
+    editSession.openedOnCurrentSnapshot = false;
+    editSession.openedSnapshotRevision = 0;
     DIAG_EVENT(Diagnostics::Edit::NoteEditOpenEnter);
     loop.rematerializeEditView(editSession.store.mutStore());
+    if (loop.publishedSnapshotIsCurrent()) {
+        editSession.openedOnCurrentSnapshot = true;
+        editSession.openedSnapshotRevision = loop.publishedSnapshotRevision();
+    }
     DIAG_COUNTER_INC(Materialize);
     DIAG_EVENT(Diagnostics::Edit::AfterRematerializeEditView);
 #if defined(SESSION_CAPTURE)
@@ -64,6 +232,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
     return;
 #endif
     loop.assignMissingNoteIdsInStore(editSession.store.mutStore());
+#if defined(SESSION_CAPTURE)
+    logNoteEditOpenQ3(loop, editSession.store.readStore());
+#endif
     loop.assignMissingNoteIds(loop.midiEvents());
     loop.assignMissingNoteIds(editSession.store.mutEvents());
     stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
@@ -100,6 +271,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::reopenNoteEditSession(Track& track) {
         editSession.undoStack.clear();
         editSession.editPassIds.clear();
         editSession.applyOwnedEditPassRows.clear();
+        editSession.openedOnCurrentSnapshot = false;
+        editSession.openedSnapshotRevision = 0;
         editSession.active = false;
         resetNoteEditSessionState();
         selectedNoteIdx = -1;
@@ -127,6 +300,13 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditPass(Track& track) {
     if (!editSession.editPassIds.empty()) {
         Loop& loop = trackManager.getSelectedLoop(track);
         loop.tryPublishNoteEditSnapshot(editSession.editPassIds);
+        if (loop.publishedSnapshotIsCurrent()) {
+            editSession.openedOnCurrentSnapshot = true;
+            editSession.openedSnapshotRevision = loop.publishedSnapshotRevision();
+        } else {
+            editSession.openedOnCurrentSnapshot = false;
+            editSession.openedSnapshotRevision = 0;
+        }
     }
     if (!idsToPush.empty()) {
         TrackUndo::pushNoteEditPassClosed(track, editSession.editPassIndex, idsToPush);
@@ -174,6 +354,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
     editSession.noteEditCurrentState.clear();
     editSession.focus.clear();
     editSession.applyOwnedEditPassRows.clear();
+    editSession.openedOnCurrentSnapshot = false;
+    editSession.openedSnapshotRevision = 0;
     editSession.active = false;
     editSession.sessionType = EditSessionType::Loop;
     editSession.editPassIndex = 0;
@@ -194,6 +376,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::revertNoteEditSessionForLoopClear(Track&
     editSession.durableCheckpointCreated = false;
     editSession.undoStack.clear();
     editSession.applyOwnedEditPassRows.clear();
+    editSession.openedOnCurrentSnapshot = false;
+    editSession.openedSnapshotRevision = 0;
     editSession.store.mutStore().clear();
     editSession.store.discardEventsCache();
     editSession.noteEditCurrentState.clear();
@@ -232,6 +416,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rematerializeNoteEditSessionAfterWorkspa
         editSession.editPassIds.clear();
         editSession.durableCheckpointedEditPassIds.clear();
         editSession.durableCheckpointCreated = false;
+        editSession.openedOnCurrentSnapshot = false;
+        editSession.openedSnapshotRevision = 0;
         editSession.active = false;
         resetNoteEditSessionState();
         selectedNoteIdx = -1;

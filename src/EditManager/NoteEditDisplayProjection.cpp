@@ -160,7 +160,9 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsFor
     noteEditFocusMaterializeSlot_ = slot;
     noteEditFocusMaterializeLoopLength_ = loopLength;
     noteEditFocusMaterializedLoopEvents_.clear();
-    loop.passes.materializeToEventVector(noteEditFocusMaterializedLoopEvents_, loopLength);
+    loop.copyNoteEditCommitBase(editSession.editPassIds, noteEditFocusMaterializedLoopEvents_,
+                                editSession.openedOnCurrentSnapshot,
+                                editSession.openedSnapshotRevision);
     return noteEditFocusMaterializedLoopEvents_;
 }
 

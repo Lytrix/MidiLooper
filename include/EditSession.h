@@ -199,6 +199,10 @@ struct EditSession {
   bool durableCheckpointCreated = false;
   /// Rows accumulated by applyEditSessionActions for the open noteEditPass batch.
   EditPassVec applyOwnedEditPassRows;
+  /// True when NOTE_EDIT opened on a current published root. Stays set across
+  /// in-session `saveNoteEditPass` revision bumps so commit rematerialize keeps that root.
+  bool openedOnCurrentSnapshot = false;
+  uint32_t openedSnapshotRevision = 0;
 
   bool isNote() const { return sessionType == EditSessionType::Note; }
 };

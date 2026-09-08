@@ -297,7 +297,9 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     const uint32_t loopLength = loop.loopLengthTicks;
 
     MidiEventVec persistIdentityFlat;
-    loop.passes.materializeToEventVector(persistIdentityFlat, loopLength);
+    loop.copyNoteEditCommitBase(editSession.editPassIds, persistIdentityFlat,
+                                editSession.openedOnCurrentSnapshot,
+                                editSession.openedSnapshotRevision);
     const PersistIdentityReconcileResult persistIdentity = reconcileMoverPersistIdentity(
         persistIdentityFlat, editSession.focus.movingNoteId, homePitch, homeStart, rows);
     bool hasMoverUpdateRow = false;
@@ -398,7 +400,9 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     const MidiEventVec sessionSnapshot = editSession.store.readEvents();
     editSession.store.discardEventsCache();
     SessionMidiEventVec loopMidiEventsFromPasses;
-    loop.passes.materializeToEventVector(loopMidiEventsFromPasses, loopLength);
+    loop.copyNoteEditCommitBase(editSession.editPassIds, loopMidiEventsFromPasses,
+                                editSession.openedOnCurrentSnapshot,
+                                editSession.openedSnapshotRevision);
     logChangeLengthCommitTrace("replay_flat", loopMidiEventsFromPasses, loopLength, homePitch,
                                homeStart);
 
@@ -420,7 +424,7 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     logChangeLengthCommitTrace("session_store", editSession.store.readEvents(), loopLength,
                                homePitch, homeStart);
 
-    logChangeLengthCommitTrace("loop_materialized", loop.midiEvents(), loopLength, homePitch,
+    logChangeLengthCommitTrace("loop_materialized", loopMidiEventsFromPasses, loopLength, homePitch,
                                homeStart);
     track.invalidateCaches();
     return lastId;

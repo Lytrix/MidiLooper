@@ -6,16 +6,18 @@
 #include "CommittedEventRange.h"
 #include "EditApply.h"
 #include "Globals.h"
+#include "LoopContentResolution.h"
 #include "LoopInternal.h"
 #include "Utils/Diagnostics.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/LoopMem.h"
+#include "Utils/NoteUtils.h"
 
 #include <algorithm>
 #include <vector>
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
-#include "Utils/DebugSessionCapture.h"
+#include "Utils/InvestigationCaptureLog.h"
 #include <Arduino.h>
 #endif
 
@@ -275,92 +277,134 @@ LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec
     if (activeRows.empty()) {
       editUs = micros() - rangePhaseUs;
     }
-    const uint32_t rangeUs = micros() - rangeStartUs;
-    if (rangeUs >= kRangeReportUs) {
-      char line[224];
-      snprintf(line, sizeof(line),
-               LOOP_DIAG_FMT("#CAP,%lu,DIAG,cer_range,us=%lu,collect=%lu,append=%lu,sort=%lu,"
-                             "edit=%lu,lists=%u,rows=%u,evout=%u"),
-               static_cast<unsigned long>(micros()), static_cast<unsigned long>(rangeUs),
-               static_cast<unsigned long>(collectUs), static_cast<unsigned long>(appendUs),
-               static_cast<unsigned long>(sortUs), static_cast<unsigned long>(editUs),
-               static_cast<unsigned>(lists.size()), static_cast<unsigned>(editRowCount),
-               static_cast<unsigned>(out.size()));
-      DebugSessionCapture::appendCaptureTextLine(line);
-
-      // Composition of the replayed population. planContiguousCollapsedRows only merges
-      // contiguous Pitch/Velocity updates, so this separates what it can fold from what it
-      // cannot (overdub Hide/Shorten companions at editPassIndex 255).
-      uint32_t activeRowsTotal = 0;
-      uint32_t disabledRows = 0;
-      uint32_t companionRows = 0;
-      uint32_t noteEditRows = 0;
-      uint32_t deleteRows = 0;
-      uint32_t createRows = 0;
-      uint32_t updateLengthRows = 0;
-      uint32_t updatePitchRows = 0;
-      uint32_t updateVelocityRows = 0;
-      uint32_t updateRangeRows = 0;
-      for (const EditPass& editPass : passes.editPasses) {
-        if (editPass.passType != EditPassType::Note) {
-          continue;
-        }
-        if (editPass.state != EditPassState::Active) {
-          ++disabledRows;
-          continue;
-        }
-        ++activeRowsTotal;
-        if (editPass.editPassIndex == kOverdubCompanionEditPassIndex) {
-          ++companionRows;
-        } else {
-          ++noteEditRows;
-        }
-        switch (editPass.actionType) {
-          case EditActionType::Delete:
-            ++deleteRows;
-            break;
-          case EditActionType::Create:
-            ++createRows;
-            break;
-          case EditActionType::Update:
-            switch (editPass.propertyType) {
-              case EditPropertyType::Length:
-                ++updateLengthRows;
-                break;
-              case EditPropertyType::Pitch:
-                ++updatePitchRows;
-                break;
-              case EditPropertyType::Velocity:
-                ++updateVelocityRows;
-                break;
-              case EditPropertyType::NoteRange:
-                ++updateRangeRows;
-                break;
-              default:
-                break;
-            }
-            break;
-        }
-      }
-      char rowsLine[256];
-      snprintf(rowsLine, sizeof(rowsLine),
-               LOOP_DIAG_FMT("#CAP,%lu,DIAG,cer_rows,active=%u,disabled=%u,comp=%u,ne=%u,del=%u,"
-                             "crt=%u,ulen=%u,upit=%u,uvel=%u,urng=%u"),
-               static_cast<unsigned long>(micros()), static_cast<unsigned>(activeRowsTotal),
-               static_cast<unsigned>(disabledRows), static_cast<unsigned>(companionRows),
-               static_cast<unsigned>(noteEditRows), static_cast<unsigned>(deleteRows),
-               static_cast<unsigned>(createRows), static_cast<unsigned>(updateLengthRows),
-               static_cast<unsigned>(updatePitchRows), static_cast<unsigned>(updateVelocityRows),
-               static_cast<unsigned>(updateRangeRows));
-      DebugSessionCapture::appendCaptureTextLine(rowsLine);
-    }
+    InvestigationCaptureLog::CommittedEventRangeDiagTiming rangeTiming{};
+    rangeTiming.rangeUs = micros() - rangeStartUs;
+    rangeTiming.collectUs = collectUs;
+    rangeTiming.appendUs = appendUs;
+    rangeTiming.sortUs = sortUs;
+    rangeTiming.editUs = editUs;
+    rangeTiming.listCount = static_cast<uint32_t>(lists.size());
+    rangeTiming.editRowCount = editRowCount;
+    rangeTiming.outCount = static_cast<uint32_t>(out.size());
+    InvestigationCaptureLog::maybeLogCommittedEventRangeDiag(rangeTiming, passes, kRangeReportUs);
   }
 #endif
 }
 
-void Loop::rematerializeEditView(LoopEventStore& store) const {
+namespace {
+
+LOOP_COLD_MEM bool snapshotSpanHasNoteId(const NoteUtils::DisplayNoteVec& spanNotes,
+                                         NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& note : spanNotes) {
+    if (note.noteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM void applySessionEditPassesToEvents(const Loop& loop,
+                                                 const EditPassIdList& sessionEditPassIds,
+                                                 SessionMidiEventVec& events) {
+  EditPassVec sessionRows;
+  for (const EditPassId id : sessionEditPassIds) {
+    for (const EditPass& row : loop.passes.editPasses) {
+      if (row.id == id && row.state == EditPassState::Active) {
+        sessionRows.push_back(row);
+        break;
+      }
+    }
+  }
+  if (!sessionRows.empty()) {
+    applyNoteEditPassSequence(events, sessionRows, loop.loopLengthTicks);
+  }
+}
+
+LOOP_COLD_MEM bool copyPublishedSnapshotEditViewEvents(const Loop& loop, SessionMidiEventVec& out) {
+  out.clear();
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  if (!snapshot) {
+    return false;
+  }
+  NoteUtils::DisplayNoteVec spanNotes;
+  LoopContentResolution::resolveDisplayNotes(*snapshot, spanNotes);
+  SessionMidiEventVec events;
+  LoopContentResolution::resolveWindow(*snapshot, 0, snapshot->loopLengthTicks(), events);
+  for (const MidiEvent& evt : events) {
+    if (!evt.isNoteOn() && !evt.isNoteOff()) {
+      out.push_back(evt);
+      continue;
+    }
+    if (snapshotSpanHasNoteId(spanNotes, evt.noteId)) {
+      out.push_back(evt);
+    }
+  }
+  return true;
+}
+
+LOOP_COLD_MEM bool shouldUsePublishedSnapshotForNoteEditCommit(
+    const Loop& loop, bool openedOnCurrentSnapshot, uint32_t openedSnapshotRevision) {
+  if (!loop.publishedSnapshot()) {
+    return false;
+  }
+  if (openedOnCurrentSnapshot &&
+      loop.publishedSnapshotRevision() == openedSnapshotRevision) {
+    return true;
+  }
+  return loop.publishedSnapshotIsCurrent();
+}
+
+}  // namespace
+
+LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const {
+  if (!publishedSnapshotIsCurrent()) {
+    out.clear();
+    return false;
+  }
+  return copyPublishedSnapshotEditViewEvents(*this, out);
+}
+
+LOOP_COLD_MEM void Loop::copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds,
+                                               SessionMidiEventVec& out,
+                                               bool openedOnCurrentSnapshot,
+                                               uint32_t openedSnapshotRevision) const {
+  if (shouldUsePublishedSnapshotForNoteEditCommit(*this, openedOnCurrentSnapshot,
+                                                  openedSnapshotRevision) &&
+      copyPublishedSnapshotEditViewEvents(*this, out)) {
+    applySessionEditPassesToEvents(*this, sessionEditPassIds, out);
+    return;
+  }
+  passes.materializeToEventVector(out, loopLengthTicks);
+}
+
+LOOP_COLD_MEM void Loop::copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds,
+                                               MidiEventVec& out, bool openedOnCurrentSnapshot,
+                                               uint32_t openedSnapshotRevision) const {
+  SessionMidiEventVec sessionEvents;
+  if (shouldUsePublishedSnapshotForNoteEditCommit(*this, openedOnCurrentSnapshot,
+                                                  openedSnapshotRevision) &&
+      copyPublishedSnapshotEditViewEvents(*this, sessionEvents)) {
+    applySessionEditPassesToEvents(*this, sessionEditPassIds, sessionEvents);
+    out.assign(sessionEvents.begin(), sessionEvents.end());
+    return;
+  }
+  passes.materializeToEventVector(out, loopLengthTicks);
+}
+
+LOOP_COLD_MEM void Loop::rematerializeEditView(LoopEventStore& store) const {
   LoopEventStore::enterEphemeralSeal();
-  passes.materialize(store, loopLengthTicks);
+  SessionMidiEventVec snapshotEvents;
+  if (tryCopyCurrentSnapshotEditViewEvents(snapshotEvents)) {
+    store.clear();
+    if (!snapshotEvents.empty()) {
+      store.loadFromEvents(snapshotEvents);
+    }
+  } else {
+    passes.materialize(store, loopLengthTicks);
+  }
   LoopEventStore::leaveEphemeralSeal();
 }
 
@@ -448,23 +492,20 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindowWithCapture(SessionMidiEve
   uint32_t mergeUs = 0;
   uint32_t captureFlatCount = 0;
   uint32_t captureWindowCount = 0;
-  const auto emitCaptureTailDiag = [&]() {
-    const uint32_t tailUs = micros() - tailStartUs;
-    if (tailUs < kCaptureTailReportUs) {
-      return;
-    }
-    char line[256];
-    snprintf(line, sizeof(line),
-             LOOP_DIAG_FMT("#CAP,%lu,DIAG,cer_cap,us=%lu,committed=%lu,sort=%lu,copy=%lu,"
-                           "filter=%lu,merge=%lu,capflat=%u,capwin=%u,evout=%u"),
-             static_cast<unsigned long>(micros()), static_cast<unsigned long>(tailUs),
-             static_cast<unsigned long>(committedUs), static_cast<unsigned long>(sortUs),
-             static_cast<unsigned long>(copyUs), static_cast<unsigned long>(filterUs),
-             static_cast<unsigned long>(mergeUs), static_cast<unsigned>(captureFlatCount),
-             static_cast<unsigned>(captureWindowCount), static_cast<unsigned>(out.size()));
-    DebugSessionCapture::appendCaptureTextLine(line);
-  };
-#define LOOP_EMIT_CAPTURE_TAIL() emitCaptureTailDiag()
+#define LOOP_EMIT_CAPTURE_TAIL()                                                                  \
+  do {                                                                                            \
+    InvestigationCaptureLog::CaptureTailDiagTiming tailTiming{};                                  \
+    tailTiming.tailUs = micros() - tailStartUs;                                                   \
+    tailTiming.committedUs = committedUs;                                                           \
+    tailTiming.sortUs = sortUs;                                                                   \
+    tailTiming.copyUs = copyUs;                                                                   \
+    tailTiming.filterUs = filterUs;                                                               \
+    tailTiming.mergeUs = mergeUs;                                                                 \
+    tailTiming.captureFlatCount = captureFlatCount;                                               \
+    tailTiming.captureWindowCount = captureWindowCount;                                             \
+    tailTiming.outCount = static_cast<uint32_t>(out.size());                                      \
+    InvestigationCaptureLog::maybeLogCaptureTailDiag(tailTiming, kCaptureTailReportUs);           \
+  } while (0)
 #else
 #define LOOP_EMIT_CAPTURE_TAIL() \
   do {                           \
