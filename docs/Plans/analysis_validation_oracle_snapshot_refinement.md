@@ -86,10 +86,13 @@ This stage records that fact only.
 | RAM1 | `teensy41-capture-serial` locals ≥ 4000 |
 | Device | [`193700`](../../captures/session_20260908_193700.log): Stage 2
   current-root open `from=snapshot` `root_rev=7` `play_rev=7` `notes=159`.
-  Stage 1 idle validate not exercised (no `MIDI idle validate` /
-  `MIDI validation complete`; last stop at 111.409 s, capture ends ~117 s;
-  defer is 60 s). First overdub open `from=visual` `root_rev=0`
-  `play_rev=1` at 66.025 s is before `pending=0` `root_rev=1` at 66.111 s. |
+  First overdub open `from=visual` `root_rev=0` `play_rev=1` at 66.025 s
+  is before `pending=0` `root_rev=1` at 66.111 s.
+  [`194039`](../../captures/session_20260908_194039.log): continuation
+  NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`. Close
+  `NoteEditPassClosed` `edits=3`, no `live capture baked`. Stage 1 idle
+  validate not exercised: overdub stop calls `finalizeLoopAtStop(..., false)`
+  and does not re-queue `deferredFullMidiValidate`. |
 
 ## Pre-implementation review
 
