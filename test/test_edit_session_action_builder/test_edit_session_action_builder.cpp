@@ -1067,6 +1067,33 @@ void test_builder_causing_skip_and_emit_follow_current_state_not_store() {
   TEST_ASSERT_EQUAL_UINT32(160u, moveActions[0].startTick);
 }
 
+void test_builder_empty_current_state_and_store_drops_causing_pitch_232826() {
+  constexpr NoteId kMover = 80;
+  const NoteBaseline committed{64, 100, 768, 1056};
+  const NoteBaseline pitched{72, 100, 768, 1056};
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMover;
+  focus.last = committed;
+  MidiEventVec emptyStore;
+  const EditedGeometry geometry = makeEditedGeometry(kMover, pitched);
+
+  const EditSessionActions dropped =
+      buildEditSessionActions({}, geometry, BaselineMap{}, BaselineMap{}, NoteIdList{}, emptyStore,
+                              kChannel, focus, kLoopLength);
+  TEST_ASSERT_EQUAL(0, static_cast<int>(dropped.size()));
+
+  NoteEditCurrentState moverOnly;
+  moverOnly.upsertRow(kMover, committed, committed, NoteEditPresenceType::Visible);
+  const EditSessionActions emitted =
+      buildEditSessionActions({}, geometry, BaselineMap{}, BaselineMap{}, NoteIdList{}, emptyStore,
+                              kChannel, focus, kLoopLength, &moverOnly);
+  TEST_ASSERT_EQUAL(1, static_cast<int>(emitted.size()));
+  TEST_ASSERT_EQUAL(static_cast<int>(EditSessionActionType::ChangePitch),
+                    static_cast<int>(emitted[0].type));
+  TEST_ASSERT_EQUAL_UINT32(kMover, emitted[0].targetNoteId);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_builder_emits_restore_when_live_differs_from_baseline);
@@ -1097,5 +1124,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_complete_cover_hides_two_shortened_stubs_022849);
   RUN_TEST(test_builder_skips_reinsert_for_sealed_deleted_022849);
   RUN_TEST(test_builder_causing_skip_and_emit_follow_current_state_not_store);
+  RUN_TEST(test_builder_empty_current_state_and_store_drops_causing_pitch_232826);
   return UNITY_END();
 }

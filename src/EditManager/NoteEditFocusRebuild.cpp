@@ -135,14 +135,28 @@ EDIT_MANAGER_IMPL_MEM void EditManager::rebuildNoteEditFocusForDisplayNote(Track
         return;
     }
 
-    ensureCurrentStateVisibleRowsFromVisualCache(track);
+    if (noteEditFocusRebuildFillsCurrentStateFromVisualCache()) {
+        ensureCurrentStateVisibleRowsFromVisualCache(track);
+    } else if (liveSelected.noteId != kInvalidNoteId &&
+               editSession.noteEditCurrentState.find(liveSelected.noteId) == nullptr) {
+        // Hydrate 4a: mover-only overlay. 232826: empty current state + empty
+        // session store dropped Move/Pitch in appendCausingNoteActions.
+        const NoteBaseline span = baselineFromDisplayNote(liveSelected);
+        editSession.noteEditCurrentState.upsertRow(liveSelected.noteId, span, span,
+                                                   NoteEditPresenceType::Visible);
+    }
 
     const NoteEditCurrentState* currentStatePtr =
         editSession.noteEditCurrentState.empty() ? nullptr : &editSession.noteEditCurrentState;
     noteEditFocusApplyDisplayNote(editSession.focus, liveSelected, currentStatePtr);
     evictOverlapScratchForSelectedNote(editSession.focus, editSession.focus.movingNoteId);
+    NoteIdList overlayScope;
+    if (editSession.focus.movingNoteId != kInvalidNoteId) {
+        overlayScope.push_back(editSession.focus.movingNoteId);
+    }
     overlayUneditedBaselineMapFromDisplayNotes(
-        editSession.focus, currentStatePtr, visualCacheNotesForSelectedSlot(track));
+        editSession.focus, currentStatePtr, visualCacheNotesForSelectedSlot(track),
+        overlayScope.empty() ? nullptr : &overlayScope);
 #if defined(SESSION_CAPTURE)
     const NoteId baselineNoteId = editSession.focus.movingNoteId;
     if (baselineNoteId != kInvalidNoteId) {
