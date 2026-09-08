@@ -14,6 +14,7 @@
 #include "EditStates/EditSelectNoteState.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "MidiConfig.h"
 #include "NoteEditSessionState.h"
 #include "TickPhase.h"
 #include "TrackManager.h"
@@ -257,6 +258,16 @@ EDIT_MANAGER_IMPL_MEM std::vector<NoteUtils::DisplayNote> EditManager::selectabl
         }
     }
     return std::vector<NoteUtils::DisplayNote>(notes.begin(), notes.end());
+}
+
+EDIT_MANAGER_IMPL_MEM uint32_t EditManager::selectTickFromSelectFaderPitchbend(
+    const Track& track, int16_t pitchValue) const {
+    uint32_t navLength = noteEditSelectNavigationLengthTicks(track);
+    if (navLength == 0) {
+        navLength = track.getLoopLength();
+    }
+    return SelectNavigation::selectTickFromPitchbend(
+        pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, navLength);
 }
 
 EDIT_MANAGER_IMPL_MEM std::vector<SelectNavigation::SelectNavSlot> EditManager::buildSelectNavigationSlots(

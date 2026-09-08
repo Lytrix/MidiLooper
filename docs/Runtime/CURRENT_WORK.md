@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (DEC-055 Stage 3 device PASS 221906)
+Last updated: 2026-09-08 (Hydrate 1 select neighborhood)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,17 +10,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**DEC-055 Stage 3 device PASS [`221906`](../../captures/session_20260908_221906.log).**
-`NoteGeometryResolver::resolve` does not fill current state from visual
-cache. First Move: `UNDO_WARM,push,e00,734,77,3` then
-`GEOM_APPLY,resolve,9669,1,3,0`. First-Move `phase,setup` **303–322** µs
-vs [`220445`](../../captures/session_20260908_220445.log) **478–726** µs.
-Select-only `DFRAME` before that Move: min **1561** ms, median **1648** ms,
-max **2268** ms (open window). Transport was `PLAYING -> STOPPED` before
-open. Later kind-boundaries still clone (`focus_snap` **37–137** ms). Do
-not start hydrate 1–5, DEC-054 Stage 2, later **E:** overlay-delta
-entries, or rename `NoteEditCurrentState`.
+**Hydrate 1 — select neighborhood around `selectedTick` (firmware in tree).**
+`SelectNavigation::buildSelectNavigationSlots` emits only the ±1 16th
+neighborhood (existing start-tick / pitch order). Fader maps pitchbend to
+a 16th in `navLength`, then queries that neighborhood. Native PASS
+(**1783** succeeded, **1** skipped). RAM1 locals **7008**. Device recapture
+not done. Not `resolveState`. Not hydrate 2–5 / 4a. DEC-055 Stage 3 PASS
+[`221906`](../../captures/session_20260908_221906.log). Do not start
+DEC-054 Stage 2, later **E:** overlay-delta entries, or rename
+`NoteEditCurrentState`.
 Plans:
+[`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
+[`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md),
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
 [`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
 

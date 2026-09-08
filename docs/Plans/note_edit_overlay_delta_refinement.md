@@ -7,7 +7,7 @@
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
 **Evidence:** [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS, [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
-Does **not** start: hydrate 1–5, DEC-054 Stage 2, Option B, rename
+Does **not** start: hydrate 2–5 / 4a, DEC-054 Stage 2, Option B, rename
 `NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
 entries, open / focus-rebuild fill removal.
 
@@ -24,8 +24,10 @@ NoteGeometryResolver visual-cache current-state fill
     ← Stage 3
 open / focus-rebuild ensureCurrentStateVisibleRowsFromVisualCache
     ← later
-open rematerialize / SelectNavigation neighborhood
-    ← hydrate
+SelectNavigation neighborhood / fader tick-linear
+    ← Hydrate 1
+open rematerialize
+    ← hydrate 4a
 ```
 
 ---
@@ -255,3 +257,28 @@ None.
 ### Proceed?
 
 YES — Stage 3 only.
+
+---
+
+## Pre-implementation review (Hydrate 1)
+
+### Ready
+
+- `SelectNavigation::buildSelectNavigationSlots` owns slot emission
+- Fader `resolveFader1SelectTarget` / `applyNoteSelectFromFader1Pitchbend` rebuild from pitchbend
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Neighborhood | ±1 16th around `selectedTick`, wrap |
+| Fader | Tick-linear over `navLength`, then neighborhood |
+| LCR / hydrate 2–5 | Not this stage |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — Hydrate 1 only.

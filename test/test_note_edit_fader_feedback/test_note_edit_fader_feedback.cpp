@@ -835,7 +835,7 @@ void test_window_filter_excludes_notes_outside_nav_inventory() {
     const NoteId insideId = windowed[0].noteId;
 
     const auto windowSlots = SelectNavigation::buildSelectNavigationSlots(
-        loopLength, 0, windowNavNotes, windowStart, false);
+        loopLength, 0, windowNavNotes, windowed[0].startTick, false);
 
     bool outsideNoteInWindowSlots = false;
     for (const SelectNavigation::SelectNavSlot& slot : windowSlots) {

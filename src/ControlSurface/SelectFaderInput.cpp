@@ -82,17 +82,8 @@ NOTE_EDIT_MEM void ControlSurfaceManager::logSelectMotorSyncDecision(int noteIdx
 #endif
 }
 NOTE_EDIT_MEM int ControlSurfaceManager::selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue) {
-    const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
-        return -1;
-    }
-    const std::vector<SelectNavigation::SelectNavSlot> slots =
-        editManager.buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
-    if (slots.empty()) {
-        return -1;
-    }
-    return map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0,
-               static_cast<int>(slots.size()) - 1);
+    const Fader1SelectTarget target = resolveFader1SelectTarget(track, pitchValue);
+    return target.valid ? target.slotIndex : -1;
 }
 NOTE_EDIT_MEM ControlSurfaceManager::Fader1SelectTarget ControlSurfaceManager::resolveFader1SelectTarget(Track& track,
                                                                                 int16_t pitchValue) {
@@ -101,13 +92,17 @@ NOTE_EDIT_MEM ControlSurfaceManager::Fader1SelectTarget ControlSurfaceManager::r
     if (loopLength == 0) {
         return target;
     }
+    const uint32_t targetTick = editManager.selectTickFromSelectFaderPitchbend(track, pitchValue);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        editManager.buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
+        editManager.buildSelectNavigationSlots(track, targetTick, true);
     if (slots.empty()) {
         return target;
     }
-    const int posIndex = map(pitchValue, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, 0,
-                             static_cast<int>(slots.size()) - 1);
+    int posIndex =
+        SelectNavigation::findSlotIndexForSelection(slots, -1, targetTick, loopLength);
+    if (posIndex < 0) {
+        posIndex = 0;
+    }
     const SelectNavigation::SelectNavSlot& slot = slots[static_cast<size_t>(posIndex)];
     target.slotIndex = posIndex;
     target.absoluteTargetTick = slot.relativeTick;
@@ -305,8 +300,9 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
         return false;
     }
 
+    const uint32_t targetTick = editManager.selectTickFromSelectFaderPitchbend(track, pitchValue);
     const std::vector<SelectNavigation::SelectNavSlot> slots =
-        editManager.buildSelectNavigationSlots(track, editManager.getSelectedTick(), true);
+        editManager.buildSelectNavigationSlots(track, targetTick, true);
 
     if (slots.empty() || posIndex < 0 || posIndex >= static_cast<int>(slots.size())) {
         return false;

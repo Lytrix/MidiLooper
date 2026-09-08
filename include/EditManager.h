@@ -124,6 +124,8 @@ public:
     std::vector<NoteUtils::DisplayNote> selectableDisplayNotesForEditUi(const Track& track) const;
     std::vector<SelectNavigation::SelectNavSlot> buildSelectNavigationSlots(
         const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
+    /// Map select-fader pitchbend onto a 16th in the select nav span.
+    uint32_t selectTickFromSelectFaderPitchbend(const Track& track, int16_t pitchValue) const;
     void syncReferenceStepFromSelectedTick(uint32_t selectedTick);
     uint32_t getReferenceStep() const { return referenceStep_; }
     void setReferenceStep(uint32_t step) { referenceStep_ = step; }

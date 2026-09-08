@@ -38,10 +38,12 @@ void test_same_step_three_notes_yield_three_nav_slots() {
     notes.push_back({kInvalidNoteId, 76, 100, chordTick, chordTick + 96});
     notes.push_back({kInvalidNoteId, 64, 100, 16 * 48, 16 * 48 + 96});
 
-    const auto slots =
-        SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, 0, false);
+    SelectNavigation::SelectNavigationBuildStats stats;
+    const auto slots = SelectNavigation::buildSelectNavigationSlots(
+        loopLength, 0, notes, chordTick, false, &stats);
 
-    TEST_ASSERT_EQUAL(32 + 2, (int)slots.size());
+    TEST_ASSERT_EQUAL(3, (int)stats.stepsScanned);
+    TEST_ASSERT_EQUAL(5, (int)slots.size());
     TEST_ASSERT_EQUAL(3, countNoteSlotsAtTick(slots, chordTick));
 
     std::vector<int> chordNoteIdx;
@@ -70,7 +72,7 @@ void test_find_slot_index_matches_selected_note() {
     const auto slots =
         SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, chordTick, false);
 
-    TEST_ASSERT_EQUAL(32 + 1, (int)slots.size());
+    TEST_ASSERT_EQUAL(4, (int)slots.size());
     const int slotIdx =
         SelectNavigation::findSlotIndexForSelection(slots, 1, chordTick, loopLength);
     TEST_ASSERT_TRUE(slotIdx >= 0);
@@ -85,7 +87,7 @@ void test_empty_step_single_slot() {
     const auto slots =
         SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, 0, false);
 
-    TEST_ASSERT_EQUAL(16, (int)slots.size());
+    TEST_ASSERT_EQUAL(3, (int)slots.size());
     TEST_ASSERT_EQUAL(0, slots[0].noteIdx);
     TEST_ASSERT_EQUAL(-1, slots[1].noteIdx);
 }
@@ -207,18 +209,67 @@ void test_trim_select_slots_to_committed_content_span() {
     std::vector<NoteUtils::DisplayNote> notes;
     notes.push_back({1, 60, 0, 0, 48});
     notes.push_back({2, 62, 0, 768, 816});
-    const auto fullSlots =
+    const auto wrapSlots =
         SelectNavigation::buildSelectNavigationSlots(fullLoop, 0, notes, 0, false);
-    const auto trimmedSlots = trimSelectSlotsToContentSpan(fullSlots, navLength);
+    const auto trimmedSlots = trimSelectSlotsToContentSpan(wrapSlots, navLength);
+    const auto midSlots =
+        SelectNavigation::buildSelectNavigationSlots(fullLoop, 0, notes, 768, false);
 
     TEST_ASSERT_EQUAL(64, fullLoop / 48);
     TEST_ASSERT_EQUAL(32, navLength / 48);
-    TEST_ASSERT_TRUE((int)fullSlots.size() > (int)trimmedSlots.size());
+    TEST_ASSERT_TRUE((int)wrapSlots.size() > (int)trimmedSlots.size());
     for (const SelectNavigation::SelectNavSlot& slot : trimmedSlots) {
         TEST_ASSERT_LESS_THAN(navLength, slot.relativeTick);
     }
     TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(trimmedSlots, 0));
-    TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(trimmedSlots, 768));
+    TEST_ASSERT_EQUAL(0, countNoteSlotsAtTick(trimmedSlots, 768));
+    TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(midSlots, 768));
+}
+
+void test_neighborhood_does_not_scale_with_loop_length() {
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({1, 60, 100, 0, 96});
+    notes.push_back({2, 62, 100, 768, 816});
+
+    SelectNavigation::SelectNavigationBuildStats shortStats;
+    SelectNavigation::SelectNavigationBuildStats longStats;
+    const auto shortSlots = SelectNavigation::buildSelectNavigationSlots(
+        1536, 0, notes, 0, false, &shortStats);
+    const auto longSlots = SelectNavigation::buildSelectNavigationSlots(
+        32u * Config::TICKS_PER_BAR, 0, notes, 0, false, &longStats);
+
+    TEST_ASSERT_EQUAL(3, (int)shortStats.stepsScanned);
+    TEST_ASSERT_EQUAL(3, (int)longStats.stepsScanned);
+    TEST_ASSERT_EQUAL((int)shortSlots.size(), (int)longSlots.size());
+    TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(shortSlots, 0));
+    TEST_ASSERT_EQUAL(0, countNoteSlotsAtTick(shortSlots, 768));
+}
+
+void test_neighborhood_skips_sounding_through_notes() {
+    const uint32_t loopLength = 1536;
+    const uint32_t selectedTick = 8 * 48;
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({1, 60, 100, 0, selectedTick + 96});
+    notes.push_back({2, 64, 100, selectedTick, selectedTick + 48});
+
+    const auto slots =
+        SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes, selectedTick, false);
+
+    TEST_ASSERT_EQUAL(0, countNoteSlotsAtTick(slots, 0));
+    TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(slots, selectedTick));
+}
+
+void test_select_tick_from_pitchbend_is_step_linear() {
+    const uint32_t navLength = 1536;
+    TEST_ASSERT_EQUAL(0, SelectNavigation::selectTickFromPitchbend(-8192, -8192, 8192, navLength));
+    TEST_ASSERT_EQUAL(1536 - 48,
+                      SelectNavigation::selectTickFromPitchbend(8192, -8192, 8192, navLength));
+    TEST_ASSERT_EQUAL(0, SelectNavigation::selectTickFromPitchbend(-8192, -8192, 8192, navLength) %
+                             Config::TICKS_PER_16TH_STEP);
+    const uint32_t midTick =
+        SelectNavigation::selectTickFromPitchbend(0, -8192, 8192, navLength);
+    TEST_ASSERT_EQUAL(0, midTick % Config::TICKS_PER_16TH_STEP);
+    TEST_ASSERT_TRUE(midTick < navLength);
 }
 
 int main(int argc, char** argv) {
@@ -233,5 +284,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_loop_start_offset_no_phantom_slot_at_selected_tick);
     RUN_TEST(test_build_select_slots_no_empty_duplicate_at_note_tick);
     RUN_TEST(test_trim_select_slots_to_committed_content_span);
+    RUN_TEST(test_neighborhood_does_not_scale_with_loop_length);
+    RUN_TEST(test_neighborhood_skips_sounding_through_notes);
+    RUN_TEST(test_select_tick_from_pitchbend_is_step_linear);
     return UNITY_END();
 }

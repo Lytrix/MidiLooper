@@ -1,12 +1,12 @@
 # NOTE_EDIT around `selectedTick` — LoopContentResolution consume
 
-**Status:** Architecture **PASS** — DEC-037 amendment 2026-08-16. Overlap retarget **2026-08-17**: participants vs selected/mover LinearSpan (overdub sibling), not a window around `selectedTick`. Implementation stages **PASS WITH AMENDMENTS**; firmware not authorized.  
+**Status:** Architecture **PASS** — DEC-037 amendment 2026-08-16. Overlap retarget **2026-08-17**. Hydrate 1 firmware authorized in CURRENT_WORK (select neighborhood). Do not start hydrate 2–5 / 4a.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** architecture  
 **Work identity:** [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md) — separate from LCR 6.x and wrap-move persist  
 **Sibling (overlap participants):** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling  
 **Parent:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) Editor consumer; [6E](loop_content_resolution_overdub_state_evaluation_refinement.md) overdub `resolveState(tick)` consume  
-**Does not authorize:** firmware; deleting `visualCache`; deleting `rematerializeEditView`; putting LCR construct on NOTE_EDIT open or fader; a new `*View` / `*Manager`; replacing `NoteGeometryResolver`; redesigning `EditSession.store` during this consumer migration; hydrate Stages 1–5 from “LCR × interval around `selectedTick`”
+**Does not authorize:** hydrate 2–5 / 4a firmware; deleting `visualCache`; deleting `rematerializeEditView`; putting LCR construct on NOTE_EDIT open or fader; a new `*View` / `*Manager`; replacing `NoteGeometryResolver`; redesigning `EditSession.store` during this consumer migration; hydrate Stages 1–5 from “LCR × interval around `selectedTick`”
 
 ---
 
@@ -479,8 +479,9 @@ DEC-037 amendment 2026-08-16. Architecture PASS. This revision records implement
 ### Stage 1 — Select neighborhood (navigation query)
 
 **Owner:** `EditSelectNoteState` / `SelectNavigation`.  
-**Invariant:** Select is a bounded `tickEvents` / `spanBoundaries` neighborhood around `selectedTick`. Not `resolveState`. Not a full-loop onset list.  
-**Gate:** `fullMaterializeCount == 0`; `visualCache` walk count == 0; `liveStore` walk count == 0; candidate enumeration bounded by the navigation neighborhood; wall time and allocation recorded on a 16-bar / ~1000-note fixture. Selection must not scale with loop-wide materialization.
+**Invariant:** Select is a bounded neighborhood around `selectedTick`. Not `resolveState`. Not a full-loop onset list.  
+**Hydrate 1 pin:** window is the 16th containing `selectedTick` ± 1 16th (wrap). Include notes whose **start** 16th is in that window. Simultaneous onsets keep existing order (relative start, then pitch). Fader maps pitchbend to a 16th in `navLength`, then queries that neighborhood.  
+**Gate:** `stepsScanned` ≤ 3; slot count does not scale with loop length. Prepared `tickEvents` / `spanBoundaries` consume is the later hit path; this stage ships neighborhood output. Miss/legacy still reads the already-built selectable list once (O(notes), not O(notes×steps)). `visualCache` walk == 0 remains the hit-path ideal, not a Hydrate 1 fail.
 
 ### Stage 2 — Overlap candidates = overdub hold (indexed identities)
 

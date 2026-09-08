@@ -94,7 +94,7 @@ Resolution. `DisplayManager` paints.
 [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
 [DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units).
 
-**Does not authorize:** hydrate Stages 1–5, DEC-054 Stage 2, Option B
+**Does not authorize:** hydrate 2–5 / 4a, DEC-054 Stage 2, Option B
 `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold,
 raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`.
 
