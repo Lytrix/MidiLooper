@@ -1,16 +1,18 @@
 # Architecture review — immutable-loop-snapshot-passes
 
-**Decision:** Approved for Phase 3 tasks `3.5`/`3.6` design/specification;
-firmware gated
+**Decision:** Approved through the completed snapshot model, publication,
+playback, and stateless-query slices; future consumer migration, undo, load,
+persistence, and compatibility-retirement slices remain separately gated.
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../../../docs/Plans/loop_pass_snapshot_effective_state_refinement.md)
 **Reassessment:** [`ARCHITECTURE-REASSESSMENT.md`](ARCHITECTURE-REASSESSMENT.md)
 **North star:** Each published `LoopSnapshot` is a complete immutable effective-state root indexed as pitch → bar → membership lists of `NoteRef`s and bar → membership lists of `EventRef`s. Its logical content is completely determined by its own reference root. `LoopPass` remains the historical/compatibility operation record. `Loop` publishes and selects snapshots; consumers read one selected snapshot directly; historical replay is compatibility-only.
 
-The change remains design-only outside the activated Phase 3 tasks `3.5`/`3.6`.
-Firmware for that slice is not authorized until its phase gate, fixed-capacity
-directory measurement, enforced construction bounds, and device gates pass.
-The logical indexes are selected; the fixed-capacity physical directory is a
-Phase 3 admission prerequisite.
+The change is no longer design-only: tasks 3.5/3.6 and 4.1–4.3 have
+implementation reviews and verification records below. Firmware for each
+future consumer or persistence slice remains unauthorized until its own phase
+gate, declared execution bounds, and required device gates pass. The logical
+indexes and fixed-capacity membership representation are implemented; later
+consumer bounds and storage layout remain separate decisions.
 
 ## Formal triggers
 
@@ -275,9 +277,10 @@ This does not add a new unbounded owner; idle uses
 - [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
-Tasks 4.3–4.6 remain open. LCR conversion, display/NOTE_EDIT/analysis
-migration, HITL, and identity recording on those remaining representations
-are not authorized by this slice.
+Tasks 4.4–4.6 remain open. The stateless LCR query slice (4.3) is complete;
+display/NOTE_EDIT/analysis caller migration, HITL coverage for those callers,
+and identity recording on the remaining representations require a separately
+selected migration slice.
 
 ### Phase 3 implementation review (4.4 display only)
 
@@ -294,8 +297,8 @@ are not authorized by this slice.
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
 Task 4.4 is not checked off. NOTE_EDIT, overdub analysis, and validation
-callers were not authorized by the 3.5/3.6 slice. Task 4.3 is now selected
-in `CURRENT_WORK.md`.
+callers remain outside the completed 4.3 query-adapter slice. Task 4.3 is
+complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 
 ### Phase 4.3 implementation review — stateless snapshot queries
 
@@ -319,20 +322,20 @@ Closed 2026-09-08. Remaining-interval yield device proof is parked
 
 - [x] Phase architecture gate and `DEC-047` supersession are recorded.
 - [x] `CURRENT_WORK.md` names task `4.3` as the active slice; `3.5`/`3.6` are prior.
-- [ ] Fixed-capacity membership representation is selected and measured.
-- [ ] Mutation count, affected-bar, membership-entry, and journal-byte caps
+- [x] Fixed-capacity membership representation is selected and measured.
+- [x] Mutation count, affected-bar, membership-entry, and journal-byte caps
       are enforced structurally.
-- [ ] Capture/pairing assigns `NoteId` to each logical NoteOn/NoteOff pair
+- [x] Capture/pairing assigns `NoteId` to each logical NoteOn/NoteOff pair
       before pass promotion without a promotion-time content scan; `EventId`
       remains for non-note events only.
-- [ ] Persistent bar-cursor progress replaces upfront changed-span
+- [x] Persistent bar-cursor progress replaces upfront changed-span
       enumeration; construction does not copy an unbounded membership list.
-- [ ] Ordered fragments retain exact parent identity and survive retry;
+- [x] Ordered fragments retain exact parent identity and survive retry;
       incomplete candidates are never selected.
-- [ ] Hide and geometry replacement update paired event references by
+- [x] Hide and geometry replacement update paired event references by
       `NoteId` while preserving pair identity and canonical order; non-note
       events retain `EventId`.
-- [ ] Global overdub undo remains pass-based while construction is pending.
+- [x] Global overdub undo remains pass-based while construction is pending.
 - [x] Native snapshot/take-survival parity fixtures pass.
 - [x] Capture-serial build passes with RAM1 locals **6848**.
 - [ ] The [DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
@@ -350,8 +353,9 @@ Closed 2026-09-08. Remaining-interval yield device proof is parked
       owner was added.
 - [x] Capture-serial build passes with RAM1 locals **7008**.
 - [x] Full native suite passes: **1484/1484** tests.
-- [ ] Device recapture must show the queued session-exit pass completing with
-      `pending=0`, then measure the remaining `T_RT_reserve` gate.
+- [x] Later device recapture showed the queued session-exit pass completing
+      with `pending=0` and closed the `T_RT_reserve` gate; the remaining-
+      interval yield proof is intentionally parked.
 
 ### Session-exit start fragment implementation review — 2026-08-27
 
@@ -362,8 +366,9 @@ Closed 2026-09-08. Remaining-interval yield device proof is parked
 - [x] Publication still waits until every queued fragment completes.
 - [x] Capture-serial build passes with RAM1 locals **7008**.
 - [x] Full native suite passes: **1485/1485** tests.
-- [ ] Device recapture must remeasure `T_RT_reserve` on
-      [`202635`](../../../captures/session_20260827_202635.log)-class content.
+- [x] Later device recapture remeasured the `T_RT_reserve` gate on the
+      session-exit path; the earlier [`202635`](../../../captures/session_20260827_202635.log)
+      result remains historical evidence.
 
 ### Wrap publication completeness implementation review — 2026-08-27
 
@@ -378,9 +383,9 @@ Closed 2026-09-08. Remaining-interval yield device proof is parked
       completes.
 - [x] Capture-serial build passes with RAM1 locals **7008**.
 - [x] Full native suite passes: **1486/1486** tests.
-- [ ] Device recapture must confirm first-record playback after wrap-journal
-      drain on [`204136`](../../../captures/session_20260827_204136.log)-class
-      content.
+- [x] Later device recapture confirmed first-record playback after
+      wrap-journal drain; [`204136`](../../../captures/session_20260827_204136.log)
+      remains historical evidence.
 
 ### Stage 1 STOPPED first-paint admission — 2026-08-27
 

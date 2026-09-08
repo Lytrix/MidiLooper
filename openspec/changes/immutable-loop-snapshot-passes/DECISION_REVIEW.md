@@ -4,6 +4,13 @@
 **Change:** Phase 0 approval and later-phase implementation gates
 **Decision:** [`DEC-044`](../../../docs/DECISION_LOG.md#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction)
 
+This is the historical Phase 0 decision review. Its statements that firmware,
+runtime publication, and physical directory implementation were not authorized
+describe the state on 2026-08-25. Subsequent gated slices implemented
+publication, playback preparation, and stateless snapshot queries; the
+remaining consumer, persistence, and compatibility-retirement slices still
+require their own gates.
+
 ## Historical review
 
 ### Searched

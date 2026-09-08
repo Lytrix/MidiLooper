@@ -3,38 +3,41 @@
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
 Progress checkpoint (2026-09-08): sections 1–3 are complete. Tasks 3.5/3.6
-closed: wrap-journal publication is in tree; remaining-interval yield proof
-is parked (`kSnapshotIdleReserveYieldEnabled` is false; yield logs stay).
-In section 4, 4.1 and 4.2 are complete. In section 4b,
+closed: wrap-journal publication is in tree; the remaining-interval yield
+proof is parked (`kSnapshotIdleReserveYieldEnabled` is false; yield logs
+stay). In section 4, 4.1, 4.2, and 4.3 are complete. In section 4b,
 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b, and 4b.4 are complete under
-Ring B round-robin. Open now: 4.3-4.6, 4b.3, 5.1-5.6, and 6.1-6.5.
+Ring B round-robin. Open now: 4.4–4.6, 4b.3, 5.1–5.6, and 6.1–6.5.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
-- [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes are approved; the fixed-capacity physical directory is a Phase 3 admission prerequisite and remains measurement-gated.
-- [x] 1.3 Keep this change selected in `docs/Runtime/CURRENT_WORK.md` and post the phase architecture gate before any firmware edits. Phase 0 is complete; tasks 3.5/3.6 are the activated wrap-publication slice and no firmware is authorized until their gates pass.
+- [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
+- [x] 1.3 Keep this change selected in `docs/Runtime/CURRENT_WORK.md` and post the phase architecture gate before any firmware edits. Phase 0 is complete; tasks 3.5/3.6 and 4.1–4.3 are closed, and every later firmware slice remains separately gated.
 - [x] 1.4 Complete `PREFLIGHT.md` / `DECISION_REVIEW.md` for each later ownership or stop-path implementation phase. Change-scoped artifacts cover Phases 1–5; no later phase is authorized by them.
 - [x] 1.5 Record the persistent reference-root invariant: successor snapshots reuse unchanged event-object references, allocate new objects only for added or modified content, and must not copy the complete reference set.
-- [x] 1.6 Select the logical reference structure: notes as pitch → bar → membership lists of `NoteRef`s (span index) and events as bar → membership lists of `EventRef`s (indexed view of existing event-stream order). Path-copy is rejected as the overlap model. The physical directory representation remains Phase 1 / measurement.
+- [x] 1.6 Select the logical reference structure: notes as pitch → bar → membership lists of `NoteRef`s (span index) and events as bar → membership lists of `EventRef`s (indexed view of existing event-stream order). Path-copy is rejected as the overlap model. The fixed-capacity physical directory is implemented under the selected representation.
 - [x] 1.7 Specify snapshot reachability/reclamation, provisional session snapshots versus global undo snapshots, redo-branch clearing, and latest-saved-snapshot reboot behavior.
 - [x] 1.8 Record the architectural construction contract (identify, replace, construct root, freeze, publish) and require an `ExecutionBounds.md` class before runtime publication. Treat any numeric N-candidate quantum as a measurement hypothesis only.
 
 ## 2. Immutable snapshot model
 
-Phase 1 is selected after section 1 completed. The logical indexes are
-selected; the physical directory is a hard measurement gate before its
-production implementation. Candidate construction remains native/offline.
+Phase 1 is complete. The logical indexes and fixed-capacity physical directory
+are implemented. Candidate construction and publication have since passed the
+activated runtime-bound gates in section 3; later consumer construction bounds
+remain separately gated.
 
 - [x] 2.1 Define immutable note and non-note event objects with loop-scoped stable references, a memory allocation contract, canonical span access for projection consumers, and a construction-unit measurement contract for later execution-bound classification.
   - Allocation contract: `allocateSnapshotShared` packs nodes into 32 KB bump
     slabs owned by `Loop` (`DEC-048`). Construction reuses one span root and
     one event root. Capture-serial logs `DIAG,snapshot_alloc`.
-- [x] 2.2 After the physical-directory measurement gate, implement the selected pitch/bar membership indexes and complete immutable `LoopSnapshot` records under `Loop` / `LoopPasses`. Allocate only the minimum directory structure required by the selected representation. Keep `LoopPass` as the compatibility operation record.
+- [x] 2.2 Implement the measured fixed-capacity pitch/bar membership indexes and complete immutable `LoopSnapshot` records under `Loop` / `LoopPasses`. Allocate only the minimum directory structure required by the selected representation. Keep `LoopPass` as the compatibility operation record.
 - [x] 2.3 Implement native/offline candidate construction from a const active snapshot and an existing semantic mutation with explicit resumable progress and measured units. Freeze, validate, and retain a complete candidate without making it active; preserve the active snapshot on failure.
 - [x] 2.4 Verify the architectural invariants with existing native gates plus narrowly scoped checks only: snapshot completeness and self-containment, unchanged-object sharing, changed-object replacement, non-note preservation and ordering, multi-bar/wrap membership, `NoteId` deduplication, snapshot identity stability, alias safety, older-snapshot stability, and failed-candidate preservation. Do not add a new test architecture.
 
 ## 3. Capture and edit publication
 
-Blocked until section 1 is complete and dirty-bar construction has a declared `ExecutionBounds.md` class. A long note can still touch every intersecting bar; this gate does not treat that as already bounded.
+The section 3 construction gate is complete. A long note can still touch every
+intersecting bar; the implementation uses bounded fragments and persistent
+cursors rather than treating that locality as an execution bound.
 
 - [x] 3.1 Adapt `Loop::commitCapturePass` at its existing boundary to publish one global `LoopSnapshot` per record or overdub session-exit without changing wrap boundaries. Intermediate record prefixes and overdub wraps remain provisional.
 - [x] 3.2 Adapt NOTE_EDIT close/commit to publish one global `LoopSnapshot` for a settled edit batch. In-session batch snapshots remain provisional `E:` revisions.
@@ -51,13 +54,20 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
   - The wrap path queues journal fragments only; ordered construction may step during `PLAYING`/`OVERDUBBING` after the first root under the replacement policy for `DEC-045`.
   - “Provisional `O:` snapshot” means a private, unselected candidate; the previous complete root remains active until atomic publication.
 - [x] 3.6 Complete the first implementation slice before consumer migration: verify snapshot correctness, copy-on-write sharing, bounded maintenance, atomic publication/previous-snapshot retention, parity, maximum MIDI gap attributable to snapshot construction, maintenance time per slice, and total construction wall time on native, firmware-size, and device gates.
+  - The chronological evidence below preserves intermediate failures and
+    recapture decisions. Any “remains open” or “recapture required” wording
+    refers to that historical checkpoint; the final task status is closed
+    unless a later residual is explicitly listed as parked or open.
   - Extend the existing snapshot/take-survival native tests for repeated same-`NoteId` updates, wrap NoteOn/NoteOff replacement, Hide, equal-tick ordering, and non-note events.
     Native wrap-journal fixtures in `test_loop_take_survival` (2026-09-08):
     `test_wrap_journal_repeated_same_note_id_replace`,
     `test_wrap_journal_replaces_wrap_note_on_off_pair`,
     `test_wrap_journal_hide_removes_published_note`,
     `test_wrap_journal_equal_tick_non_note_event_order`.
-    Focused native **81/81**. Device `T_RT_reserve` recapture remains open.
+    Focused native **81/81**. Device `T_RT_reserve` recapture closed by
+    [`101815`](../../../captures/session_20260908_101815.log) and
+    [`104353`](../../../captures/session_20260908_104353.log); the remaining-
+    interval yield proof is intentionally parked.
   - `T_RT_reserve` contract is [DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary):
     `T_RT_reserve_ceiling` = 10,000 µs (policy, independent of BPM);
     per-turn `reserve_us` from snapshot-idle start to the next timing-critical
@@ -83,12 +93,13 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     [`104353`](../../../captures/session_20260908_104353.log). Snapshot
     idle cardinality is **N = 2**
     (`kSnapshotIdleConstructionUnitsPerTurn`); do not revert to 1.
-  - Device `snapshot_idle` now includes `journals`, `fragment=i/n`, and
+  - Device `snapshot_idle` includes `journals`, `fragment=i/n`, and
     `parent_rev` so wrap-journal work is distinguishable from pass
-    reconstruction. Recapture after upload; [`173826`](../../../captures/session_20260827_173826.log)
-    cannot close this gate.
+    reconstruction. The earlier [`173826`](../../../captures/session_20260827_173826.log)
+    capture is historical; later captures closed this gate.
   - RAM1 build gate is restored on this tree (`teensy41-capture-serial`
-    locals **6848** with `SESSION_CAPTURE_SNAPSHOT_IDLE=1`), so device recapture can proceed.
+    locals **6848** with `SESSION_CAPTURE_SNAPSHOT_IDLE=1`); the device gate
+    is closed.
   - Capture [`194515`](../../../captures/session_20260827_194515.log) exposed
     admission starvation after `journals=0`: queued session-exit pass work was
     not admitted in PLAYING, and the stopped-track gate blocked it while the
@@ -98,8 +109,8 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     a 63.667 ms session-exit construction slice. Existing apply state now
     persists membership-copy, mutation, append, and event-sort progress so one
     admitted unit handles at most one 16-reference membership page. The
-    capture-serial build remains at **7008** RAM1 locals; device
-    `T_RT_reserve` verification remains open.
+    capture-serial build remained at **7008** RAM1 locals in this intermediate
+    measurement; later recapture closed the reserve gate.
   - Capture [`202635`](../../../captures/session_20260827_202635.log) confirms
     the 18-fragment journal drain and eventual `pending=0`, but still records
     79.169 ms and 74.453 ms `snapshot_idle` slices from whole-pass session-exit
@@ -177,7 +188,14 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
       samples: 74 `compatibility`, 8 `snapshot`, and no `note_edit`.
 - [x] 4.2 Preserve `Track` / `LoopPlaybackRuntime` ownership of cursor, order, ledger, and horizon state; verify output with existing playback gates.
 - [x] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
-- [ ] 4.4 Migrate overdub source resolution, display, NOTE_EDIT, overdub analysis, and validation callers independently with rollback gates. Source resolution reads selected pitch/bar `NoteRef`s, deduplicates by `NoteId`, and derives immutable geometry. Select bounded canonical span ranges before `IntervalProjection`; define long-span `k` limits or empirical overrun policies as consumer bounds, not snapshot-architecture units.
+- [ ] 4.4 Complete the remaining overdub source-resolution, display
+      fallback/identity, NOTE_EDIT, overdub-analysis, and validation caller
+      migrations independently with rollback gates. Existing display snapshot
+      reads are partial and do not close this task. Source resolution reads
+      selected pitch/bar `NoteRef`s, deduplicates by `NoteId`, and derives
+      immutable geometry. Select bounded canonical span ranges before
+      `IntervalProjection`; define long-span `k` limits or empirical overrun
+      policies as consumer bounds, not snapshot-architecture units.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
 
