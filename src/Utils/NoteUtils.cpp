@@ -110,10 +110,95 @@ NOTE_EDIT_MEM bool allLaterOnsInTailOrNone(const std::vector<MidiEvent, Alloc>& 
 }
 
 template <typename Alloc>
+NOTE_EDIT_MEM bool tailOnHasLinearCloser(const std::vector<MidiEvent, Alloc>& midiEvents,
+                                         uint32_t tailOnTick, uint8_t pitch, uint8_t channel,
+                                         uint32_t loopLength) {
+    if (loopLength == 0) {
+        return false;
+    }
+    for (const auto& off : midiEvents) {
+        if (!off.isNoteOff() || off.channel != channel || off.data.noteData.note != pitch) {
+            continue;
+        }
+        uint32_t offTick = off.tick;
+        if (offTick >= loopLength) {
+            offTick %= loopLength;
+        }
+        if (offTick <= tailOnTick || offTick == loopLength - 1) {
+            continue;
+        }
+        if (NoteUtils::isHeadTailWrappedPair(tailOnTick, offTick, loopLength)) {
+            continue;
+        }
+        bool interveningOn = false;
+        for (const auto& on : midiEvents) {
+            if (!on.isNoteOn() || on.channel != channel || on.data.noteData.note != pitch) {
+                continue;
+            }
+            if (on.tick > tailOnTick && on.tick < offTick && on.tick < loopLength) {
+                interveningOn = true;
+                break;
+            }
+        }
+        if (!interveningOn) {
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename Alloc>
+NOTE_EDIT_MEM uint32_t occupiedWrapHeadOffTick(const std::vector<MidiEvent, Alloc>& midiEvents,
+                                               uint32_t tailOnTick, uint32_t headOffTick,
+                                               uint8_t pitch, uint8_t channel,
+                                               uint32_t loopLength) {
+    uint32_t sameTickOffs = 0;
+    for (const auto& off : midiEvents) {
+        if (!off.isNoteOff() || off.channel != channel || off.data.noteData.note != pitch) {
+            continue;
+        }
+        uint32_t offTick = off.tick;
+        if (offTick >= loopLength) {
+            offTick %= loopLength;
+        }
+        if (offTick == headOffTick) {
+            ++sameTickOffs;
+        }
+    }
+    if (sameTickOffs < 2) {
+        return headOffTick;
+    }
+    uint32_t wrapHeadOff = headOffTick;
+    for (const auto& evt : midiEvents) {
+        if (!evt.isNoteOn() || evt.channel != channel || evt.data.noteData.note != pitch) {
+            continue;
+        }
+        const uint32_t onTick = evt.tick;
+        if (onTick == 0 || onTick >= loopLength) {
+            continue;
+        }
+        if (onTick > headOffTick || onTick >= tailOnTick) {
+            continue;
+        }
+        const uint32_t occupyEndInclusive = onTick - 1;
+        if (occupyEndInclusive < wrapHeadOff) {
+            wrapHeadOff = occupyEndInclusive;
+        }
+    }
+    return wrapHeadOff;
+}
+
+template <typename Alloc>
 NOTE_EDIT_MEM bool isPreferredWrapTailForHeadOffInSpanBuild(uint32_t tailOnTick, uint32_t headOffTick,
                           const std::vector<MidiEvent, Alloc>& midiEvents, uint8_t pitch,
                           uint8_t channel, uint32_t loopLength) {
     if (!NoteUtils::isHeadTailWrappedPair(tailOnTick, headOffTick, loopLength)) {
+        return false;
+    }
+    // Reconstruct only: a linear closer on this tail (174646 81@4752/4800) is not a wrap
+    // tail. Edit apply still uses isPreferredWrapTailForHeadOff so a wrap home with a
+    // leftover linear Off (201446 Off@2688) can still find the wrap Off.
+    if (tailOnHasLinearCloser(midiEvents, tailOnTick, pitch, channel, loopLength)) {
         return false;
     }
     for (const auto& evt : midiEvents) {
@@ -255,6 +340,11 @@ NOTE_EDIT_MEM bool isWrapHeldOpenNoteImpl(const std::vector<MidiEvent, Alloc>& m
 
     // Prefer explicit head-off pairing: a tail note-on with a head note-off (including tick 0)
     // should be treated as wrap-held even when no loop-end synthetic off exists yet.
+    // A linear closer on this tail (174646 81@4752/4800) is not wrap-held.
+    if (channelKnown &&
+        tailOnHasLinearCloser(midiEvents, open.tick, open.note, channel, loopLength)) {
+        return false;
+    }
     if (channelKnown) {
         for (const MidiEvent& evt : midiEvents) {
             if (!evt.isNoteOff() || evt.channel != channel ||
@@ -473,6 +563,23 @@ NOTE_EDIT_MEM void pushCanonicalSpan(CanonicalNoteSpanVec& spans, NoteId noteId,
     spans.push_back(span);
 }
 
+template <typename Alloc>
+NOTE_EDIT_MEM void pushWrapHeldCanonicalSpan(CanonicalNoteSpanVec& spans,
+                                             const std::vector<MidiEvent, Alloc>& midiEvents,
+                                             NoteId noteId, uint8_t pitch, uint8_t velocity,
+                                             uint8_t channel, uint32_t tailOnTick,
+                                             uint32_t headOffTick, uint32_t loopLength) {
+    const uint32_t wrapHeadOff = occupiedWrapHeadOffTick(midiEvents, tailOnTick, headOffTick,
+                                                         pitch, channel, loopLength);
+    if (wrapHeadOff == 0) {
+        pushCanonicalSpan(spans, noteId, pitch, velocity, static_cast<int32_t>(tailOnTick),
+                          exclusiveEndForLoopOff(loopLength - 1));
+        return;
+    }
+    pushCanonicalSpan(spans, noteId, pitch, velocity, static_cast<int32_t>(tailOnTick),
+                      exclusiveEndForWrappedHeadOff(wrapHeadOff, loopLength), false, true);
+}
+
 using ActiveCanonicalNoteVec =
     std::vector<ActiveCanonicalNote, ExternalMemoryFirstAllocator<ActiveCanonicalNote>>;
 using ActiveNoteStackMap = std::map<uint8_t, ActiveCanonicalNoteVec, std::less<uint8_t>,
@@ -586,10 +693,8 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                                          wrappedOnTick, wrappedVelocity, overdubPassWrapPairing)) {
                     const NoteId wrapId =
                         noteIdAtOnTick(midiEvents, evt.channel, pitch, wrappedOnTick);
-                    pushCanonicalSpan(spans, wrapId, pitch, wrappedVelocity,
-                                      static_cast<int32_t>(wrappedOnTick),
-                                      exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
-                                      true);
+                    pushWrapHeldCanonicalSpan(spans, midiEvents, wrapId, pitch, wrappedVelocity,
+                                              evt.channel, wrappedOnTick, noteOffTick, loopLength);
                     wrappedTailOnTicks.insert({pitch, wrappedOnTick});
                     if (noteOffTick == 0 && pitch < 128) {
                         ++offZeroPaired[pitch];
@@ -633,10 +738,8 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                     wrappedTailOnTicks.count({pitch, wrappedOnTick}) == 0) {
                     const NoteId wrapId =
                         noteIdAtOnTick(midiEvents, evt.channel, pitch, wrappedOnTick);
-                    pushCanonicalSpan(spans, wrapId, pitch, wrappedVelocity,
-                                      static_cast<int32_t>(wrappedOnTick),
-                                      exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
-                                      true);
+                    pushWrapHeldCanonicalSpan(spans, midiEvents, wrapId, pitch, wrappedVelocity,
+                                              evt.channel, wrappedOnTick, noteOffTick, loopLength);
                     wrappedTailOnTicks.insert({pitch, wrappedOnTick});
                     if (noteOffTick == 0 && pitch < 128) {
                         ++offZeroPaired[pitch];
@@ -683,10 +786,8 @@ NOTE_EDIT_MEM void appendCanonicalSpansFromMidiRange(
                     }
                     continue;
                 }
-                pushCanonicalSpan(spans, note.noteId, pitch, note.velocity,
-                                  static_cast<int32_t>(note.startTick),
-                                  exclusiveEndForWrappedHeadOff(noteOffTick, loopLength), false,
-                                  true);
+                pushWrapHeldCanonicalSpan(spans, midiEvents, note.noteId, pitch, note.velocity,
+                                          evt.channel, note.startTick, noteOffTick, loopLength);
                 stack.erase(stack.begin() + static_cast<std::ptrdiff_t>(pairIndex));
                 continue;
             }
