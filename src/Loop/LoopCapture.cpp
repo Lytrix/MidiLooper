@@ -993,23 +993,19 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
       static_cast<bool>(snapshot), captureActive(), hasOverdubSession(),
       !visualCache.notes.empty(), visualCacheDirty, publishedSnapshotIsCurrent());
   if (usePublishedSnapshot) {
-    const uint32_t barCount =
-        (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
-    const uint8_t lastPitch = static_cast<uint8_t>(kLoopSnapshotPitchCount - 1);
-    for (uint32_t bar = 0; bar < barCount; ++bar) {
-      for (uint16_t pitch = 0; pitch <= lastPitch; ++pitch) {
-        const auto membership = snapshot->noteMembership(static_cast<uint8_t>(pitch), bar);
-        forEachSnapshotMembershipReference(
-            membership.get(), [&](const LoopSnapshotNoteRef& reference) {
-              if (!reference) {
-                return;
-              }
-              appendDisplayNoteUniqueById(overdubSourceSpanCacheNotes_,
-                                          displayNoteFromSnapshotNote(*reference));
-            });
-      }
+    const uint32_t firstBar = requestedWindowStart / Config::TICKS_PER_BAR;
+    const uint32_t lastWindowTick = requestedWindowStart + requestedWindowLength - 1u;
+    const uint32_t lastBar = lastWindowTick / Config::TICKS_PER_BAR;
+    if (requestedWindowLength >= loopLengthTicks) {
+      const uint32_t barCount =
+          (loopLengthTicks + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+      appendSnapshotNotesForBarRange(*snapshot, 0, barCount - 1u,
+                                     overdubSourceSpanCacheNotes_);
+    } else {
+      appendSnapshotNotesForBarRange(*snapshot, firstBar, lastBar,
+                                     overdubSourceSpanCacheNotes_);
     }
-    overdubSourceSpanCacheFullLoop_ = true;
+    overdubSourceSpanCacheFullLoop_ = requestedWindowLength >= loopLengthTicks;
     sourceOrigin = "snapshot";
   } else {
     const bool copiedPreparedSpans = LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
@@ -1049,7 +1045,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     sourceOrigin = "passes";
   }
   }
-  if (loopLengthTicks > 0) {
+  if (loopLengthTicks > 0 && std::strcmp(sourceOrigin, "snapshot") != 0) {
     // Cache/snapshot/prepared/reconstruct miss is not committed-content absence
     // (`174151` id=112). Reconstruct can omit a tail-window On closed by an
     // untagged Off at L-1; ledger pairing still sees that identity.

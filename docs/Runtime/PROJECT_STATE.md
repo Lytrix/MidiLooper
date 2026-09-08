@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (3.5/3.6 and 4.3 closed; next 4.4 requires selection)
+Last updated: 2026-09-08 (4.4a overdub source slice closed; 4.4 remainder next)
 
 ---
 
@@ -29,11 +29,16 @@ that the PLAYING/OVERDUBBING rows before root publication were one in-flight
 record construction with no queued successor passes. The final `pending=0`
 row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
 4b.2c is closed without amending `DEC-045`.
-Tasks `3.5`/`3.6` are closed. Remaining-interval yield proof is parked
-(`kSnapshotIdleReserveYieldEnabled` is false). The activated next slice is
-OpenSpec task `4.3`: convert `LoopContentResolution` to stateless
-explicit-snapshot queries. Direct consumer migration (4.4–4.6), persistence,
-and snapshot-identity undo remain later.
+Tasks `3.5`/`3.6` and 4.3 are closed. Remaining-interval yield proof is
+parked (`kSnapshotIdleReserveYieldEnabled` is false). OpenSpec 4.4a is also
+closed: selected-snapshot overdub source resolution now gathers only the
+bounded source-window memberships while preserving the existing source-cache
+owner and fallback policy. Remaining 4.4 caller migration (display
+fallback/identity, NOTE_EDIT, analysis, and validation), 4.5–4.6, persistence,
+ and snapshot-identity undo remain later.
+The following publication-admission paragraphs retain historical intermediate
+captures; their earlier “recapture remains open” wording is superseded by the
+closed 3.5/3.6 evidence above.
 Latest `teensy41-capture-serial` build restored RAM1 locals to **7008**
 without USB-host ownership changes, so task `3.6` recapture is unblocked.
 The follow-up admission fix allows queued session-exit snapshot work after
@@ -242,7 +247,7 @@ unchanged. Ring A firmware is not authorized.
 rebuild.
 [`172802`](../../captures/session_20260826_172802.log) confirms first-clock
 recording and continued overdub/stop operation after removal.
-Task 4.3 stays skipped.
+Historical checkpoint: task 4.3 was still skipped at this capture.
 [`125527`](../../captures/session_20260826_125527.log) kept unpublished
 snapshot in-flight through OVERDUBBING/PLAYING with repeated
 `snapshot_idle` slices and `midi_gap` spikes before cadence alternation.
@@ -452,7 +457,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 closed (yield proof parked); 4.1–4.2 complete; 4.3 selected; snapshot nodes pack into 32 KB slabs (`DEC-048`); 4.4–4.6 not selected |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.3 closed (yield proof parked); 4.4a bounded overdub source resolution closed; remaining 4.4–4.6 caller migration not complete; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

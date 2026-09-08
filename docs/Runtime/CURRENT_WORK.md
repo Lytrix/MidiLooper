@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (3.5/3.6 and 4.3 closed; next 4.4 requires selection)
+Last updated: 2026-09-08 (4.4a overdub source slice closed; 4.4 remainder next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,16 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.3 — `LoopContentResolution` stateless snapshot queries:**
-Completed. `LoopContentResolution` now provides explicit `LoopSnapshot`
-overloads for window events, present-at state, display notes, and window
-notes. The compatibility pass/index/checkpoint paths remain for later caller
-migration; no 4.4–4.6 consumer was changed. OpenSpec:
+**OpenSpec 4.4a — bounded overdub source resolution:**
+Completed. `Loop::rebuildOverdubSourceSpanCache` now gathers selected
+`LoopSnapshot` memberships only for the bounded overdub source window. The
+existing source-cache owner, fallback order, pending overlays, and
+compatibility fallback remain intact. Focused `test_overdub_source_view`,
+full native, and capture-serial gates passed. OpenSpec:
 [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
-4.3. `DEC-037`. Native and capture-serial gates passed.
+4.4a. `DEC-037` / `DEC-052`. RAM1 locals **6848**; native **1755
+succeeded, 1 skipped**.
 
-**Next selection required:** OpenSpec 4.4 caller migration is not started in
-this stage. It requires a new phase gate before firmware edits.
+**Next within 4.4:** display fallback/identity, NOTE_EDIT, overdub analysis,
+and validation caller migration remain open. Each sub-slice requires the
+existing phase gate and its own rollback/verification evidence.
 
 **Prior — OpenSpec 3.5 / 3.6 closed (yield proof parked):**
 3.5 wrap-journal publication is in tree. 3.6 native wrap-journal parity and
@@ -1421,8 +1424,8 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
-**Active wrap slice:** [`overdub_wrap_source_snapshot_migration_refinement.md`](../Plans/overdub_wrap_source_snapshot_migration_refinement.md) — OpenSpec tasks `3.5`/`3.6` only.
-**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters are complete; overdub publish is idle-stepped (`DEC-045`). Phase 3 playback snapshot reads (4.1–4.2) are complete. Phase 3 display snapshot reads (4.4 display only) are in tree; 4.4 remainder is not selected. Tasks `3.5`/`3.6` are now the activated wrap-publication slice under `DEC-047`; direct consumer migration remains later.
+**Active wrap slice:** [`overdub_wrap_source_snapshot_migration_refinement.md`](../Plans/overdub_wrap_source_snapshot_migration_refinement.md) — OpenSpec tasks `3.5`/`3.6` are closed; the 4.4a bounded overdub source-resolution slice is now closed.
+**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters, Phase 3 playback snapshot reads (4.1–4.2), and stateless snapshot queries (4.3) are complete. The 4.4a source-resolution slice is complete; remaining display/NOTE_EDIT/analysis/validation caller migration remains next.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on
