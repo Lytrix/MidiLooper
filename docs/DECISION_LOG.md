@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 1: eliminate select clone / full-row warm |
+| [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 1 device PASS [`212850`](../captures/session_20260908_212850.log) |
 | [DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units) | 2026-09-08 | NOTE_EDIT playing display stall: coalesce/post-display undo warm and deferred open/close | Accepted — Stage 1 admission in tree; Option B rejected by DEC-055; Stage 2 still separate |
 | [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary) | 2026-09-08 | `T_RT_reserve` is a 10 ms policy ceiling plus per-turn MIDI-boundary `reserve_us`; not 60% of `T_clock` and not an observed unit | Accepted — yield device proof parked; 3.5/3.6 closed |
 | [DEC-052](#dec-052--occupy-consumes-the-draw-source-predicate) | 2026-09-02 | Occupy committed source uses the paint draw-source predicate; exclusive snapshot fill when true | Accepted |
@@ -75,8 +75,10 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-09-08
 
-**Status:** Accepted — Stage 1 authorized (eliminate select `clone()` /
-full-row warm). First kind-boundary E:00 restore is the next slice.
+**Status:** Accepted — Stage 1 device PASS
+[`212850`](../captures/session_20260908_212850.log) (eliminate select
+`clone()` / full-row warm). First kind-boundary E:00 restore is the next
+slice.
 
 **Owner:** `EditManager` (session, `NoteEditCurrentState`, **E:**).
 `Loop` owns the published snapshot. `NoteGeometryResolver` owns overlap

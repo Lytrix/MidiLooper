@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (DEC-055 accepted — Stage 1 select clone)
+Last updated: 2026-09-08 (DEC-055 Stage 1 device PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,10 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**DEC-055 accepted — Stage 1 firmware in tree (device recapture open).**
-`applySelectNav` does not schedule kind-boundary undo warm. RAM1 locals
-**6848**; native **1777 succeeded, 1 skipped**. First kind-boundary E:00
-restore is Stage 2. Option B rejected.
+**DEC-055 Stage 1 device PASS** [`212850`](../../captures/session_20260908_212850.log).
+PLAYING select-only: **0** `UNDO_WARM` / `focus_snap` / `GEOM_APPLY`.
+`DFRAME` 30-frame gaps during select: min **1237** ms, median **1251** ms,
+max **1789** ms (open window); paint **8.1–24.4** ms; **79** notes.
+[`204458`](../../captures/session_20260908_204458.log) after-open max was
+**4594** ms with **23** `warm,complete`. First kind-boundary E:00 restore
+is Stage 2 (not authorized). Option B rejected.
 Plans:
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
 [`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).

@@ -1,10 +1,10 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 accepted — Stage 1 firmware in tree, device recapture open  
+**Status:** DEC-055 Stage 1 device PASS  
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
-**Evidence:** [`204458`](../../captures/session_20260908_204458.log)
+**Evidence:** [`212850`](../../captures/session_20260908_212850.log) (PASS), [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
 Does **not** start: Stage 2 E:00 first-kind-boundary, hydrate 1–5, DEC-054
 Stage 2, Option B, rename `NoteEditCurrentState`, live-capture fold change.
@@ -52,6 +52,14 @@ identity change still resets geometry kind undo.
 30-frame gaps return to the pre-NOTE_EDIT band (~1.4–1.5 s). No
 `UNDO_WARM,warm,complete` in the select-only window. First Move may still
 clone once (Stage 2).
+
+**Device PASS [`212850`](../../captures/session_20260908_212850.log):**
+`NOTE_EDIT_OPEN` `current=1` `root_rev=4` **79** notes. Select pitchbend
+lines **462**. `UNDO_WARM` / `focus_snap` / `GEOM_APPLY` = **0**. `DFRAME`
+every 30 frames during select: min **1237** ms, median **1251** ms, max
+**1789** ms (session-open window `fidx` 660→690). Paint **8116–24401** µs.
+Compare [`204458`](../../captures/session_20260908_204458.log) after-open:
+median **1645** ms, max **4594** ms, **23** `warm,complete`.
 
 ---
 

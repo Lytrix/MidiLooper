@@ -1,8 +1,8 @@
 # NOTE_EDIT playing display stall — implementation
 
-**Status:** DEC-054 Stage 1 firmware in tree — device recapture open  
+**Status:** DEC-054 Stage 1 cadence FAIL [`204458`](../../captures/session_20260908_204458.log); select hitch closed by DEC-055 Stage 1 PASS [`212850`](../../captures/session_20260908_212850.log)  
 **Kind:** refinement  
-**Evidence:** [`201106`](../../captures/session_20260908_201106.log)  
+**Evidence:** [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log), [`212850`](../../captures/session_20260908_212850.log)  
 **Decision:** [DEC-054](../DECISION_LOG.md#dec-054--note-edit-playing-display-stall-remainder-units)  
 **Design:**
 [`note_edit_display_playing_stall_architecture.md`](note_edit_display_playing_stall_architecture.md)

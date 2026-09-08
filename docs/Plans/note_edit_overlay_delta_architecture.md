@@ -1,11 +1,11 @@
 # NOTE_EDIT overlay delta — eliminate full-loop session builds
 
-**Status:** DEC-055 accepted — Stage 1 authorized (select clone / full-row warm)  
+**Status:** DEC-055 accepted — Stage 1 device PASS (select clone / full-row warm)  
 **Kind:** architecture  
 **Date:** 2026-09-08  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Implementation:** [`note_edit_overlay_delta_refinement.md`](note_edit_overlay_delta_refinement.md)  
-**Evidence:** [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log)  
+**Evidence:** [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
 **Does not authorize:** hydrate Stages 1–5, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
 
 This session does **not** invent a second consume model. It binds already-approved plans to one north star and adds the missing **E:** restore contract.
