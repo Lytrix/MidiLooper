@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (Hydrate 2–3 firmware native PASS; device pending)
+Last updated: 2026-09-08 (Hydrate 2–3 device functional PASS 231008)
 
 ---
 
@@ -88,8 +88,9 @@ Hydrate 1 device functional PASS
 [`224533`](../../captures/session_20260908_224533.log): select neighborhood
 and first `push,e00` hold. Fast fader-2 / bar-sweep sluggishness is stacked
 Move `GEOM_APPLY` on `hostdrain`, not a neighborhood fail. Hydrate 2–3
-(overlap hold candidates) is the authorized leftover. Do not start
-hydrate 4a–5.
+device functional PASS [`231008`](../../captures/session_20260908_231008.log):
+`candidates_hit` then `candidates_miss`; first `push,e00` holds.
+Do not start hydrate 4a–5.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),

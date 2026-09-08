@@ -1,6 +1,6 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Hydrate 2–3 authorized in CURRENT_WORK. Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 4a–5.  
+**Status:** Hydrate 2–3 device functional PASS [`231008`](../../captures/session_20260908_231008.log). Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 4a–5.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
@@ -189,5 +189,11 @@ is unchanged. Empty hold does not gather.
 `test_edit_session_interaction` hold-scope pin. Full suite **1786
 succeeded, 1 skipped**. RAM1 locals **7008**.
 
-**Device pending:** PLAYING + NOTE_EDIT + fast fader 2. Expect
-`candidates_hit` or `candidates_miss`. Do not start hydrate 4a–5.
+**Device functional PASS [`231008`](../../captures/session_20260908_231008.log):**
+`NOTE_EDIT_OPEN` `current=1` `root_rev=4` **75**. First Move
+`UNDO_WARM,push,e00,621,75,3` then `candidates_hit,3,0,3`.
+72 hit / 258 miss. Hit resolve med **8743** µs (scope med **4**). Miss
+resolve med **22206** µs (scan **72–73**). Hit-window actions: Hide **7**,
+Shorten **10**, Restore **7**. Reconstruct med **6411** µs. Transport was
+STOPPED after 86.148 s. Fast-fader `hostdrain` peak **1443580** µs at
+160.038 s is miss-window leftover. Do not start hydrate 4a–5.
