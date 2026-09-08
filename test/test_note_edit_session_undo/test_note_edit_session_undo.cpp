@@ -50,11 +50,15 @@ bool pushKindBoundaryUndo(NoteEditSessionUndoStack& stack, KindBoundaryUndoState
   if (session.isEventsDirty()) {
     session.syncEventsToStore();
   }
-  const NoteEditCurrentState currentState =
-      NoteEditCurrentState::buildFromSessionStore(session.readEvents(), channel);
-  const SessionUndoEntry entry =
-      buildSessionUndoEntry(focus, selection, session.readEvents(), channel, loopLength,
-                            editPassIds, &currentState);
+  SessionUndoEntry entry;
+  if (firstKindBoundaryUsesOpenedSnapshotRestore(stack.undoCount())) {
+    entry = buildOpenedSnapshotKindBoundaryUndoEntry(focus, selection, editPassIds);
+  } else {
+    const NoteEditCurrentState currentState =
+        NoteEditCurrentState::buildFromSessionStore(session.readEvents(), channel);
+    entry = buildSessionUndoEntry(focus, selection, session.readEvents(), channel, loopLength,
+                                  editPassIds, &currentState);
+  }
   if (!stack.pushEntry(entry)) {
     return false;
   }
@@ -1212,6 +1216,103 @@ void test_session_rows_fallback_uses_opened_snapshot_span_note_ids() {
   TEST_ASSERT_EQUAL_UINT32(0u, missNoteOns);
 }
 
+void test_first_kind_boundary_opened_snapshot_entry_restores_without_clone() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  loop.playbackRevision = 1;
+
+  auto empty = LoopSnapshot::createEmpty(1, loop.loopLengthTicks, 0, 8, 8);
+  LoopSnapshotChangeSet changes;
+
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.next.loopId = 1;
+  noteChange.next.noteId = 7;
+  noteChange.next.pitch = 60;
+  noteChange.next.velocity = 100;
+  noteChange.next.startTick = 100;
+  noteChange.next.endTick = 200;
+  changes.notes.push_back(noteChange);
+
+  MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
+  noteOn.noteId = 7;
+  SnapshotEventChange noteOnChange{};
+  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.next = {1, 1, 0, noteOn};
+  changes.events.push_back(noteOnChange);
+
+  MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
+  noteOff.noteId = 7;
+  SnapshotEventChange noteOffChange{};
+  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.next = {1, 2, 1, noteOff};
+  changes.events.push_back(noteOffChange);
+
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef frozen = construction.freeze();
+  TEST_ASSERT_NOT_NULL(frozen.get());
+  loop.storePublishedSnapshotForTest(frozen, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const uint32_t openedSnapshotRevision = loop.publishedSnapshotRevision();
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = 7;
+  focus.last.startTick = 100;
+  focus.last.endTick = 200;
+  EditorSelection selection{};
+  selection.primaryNote = 7;
+  selection.selectedTick = 100;
+
+  const SessionUndoEntry entry =
+      buildOpenedSnapshotKindBoundaryUndoEntry(focus, selection, EditPassIdList{});
+  TEST_ASSERT_FALSE(entry.hasUndoCurrentState);
+  TEST_ASSERT_TRUE(entry.undoCurrentState.empty());
+  TEST_ASSERT_EQUAL(7u, entry.selection.primaryNote);
+  TEST_ASSERT_EQUAL(7u, entry.focus.movingNoteId);
+
+  CowLoopEventStore session;
+  MidiEvent movedOn = MidiEvent::NoteOn(140, 1, 60, 100);
+  movedOn.noteId = 7;
+  TEST_ASSERT_TRUE(session.mutStore().append(movedOn));
+  TEST_ASSERT_TRUE(session.mutStore().append(MidiEvent::NoteOff(240, 1, 60)));
+  session.discardEventsCache();
+
+  applySessionUndoEntry(loop, session, entry, loop.loopLengthTicks, 1, EditPassIdList{}, true,
+                        openedSnapshotRevision);
+
+  uint32_t undoNoteOns = 0;
+  uint32_t restoredStart = 0;
+  for (const MidiEvent& evt : session.readEvents()) {
+    if (!evt.isNoteOn()) {
+      continue;
+    }
+    ++undoNoteOns;
+    if (evt.noteId == 7) {
+      restoredStart = evt.tick;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, undoNoteOns);
+  TEST_ASSERT_EQUAL_UINT32(100u, restoredStart);
+
+  NoteEditSessionUndoStack stack;
+  KindBoundaryUndoState state;
+  CowLoopEventStore pushSession;
+  TEST_ASSERT_TRUE(pushKindBoundaryUndo(stack, state, focus, selection, pushSession, 1,
+                                        loop.loopLengthTicks, EditPassIdList{},
+                                        NoteEditKind::Move));
+  TEST_ASSERT_EQUAL(1u, stack.undoCount());
+  const SessionUndoEntry* pushed = stack.popUndoTarget();
+  TEST_ASSERT_NOT_NULL(pushed);
+  TEST_ASSERT_FALSE(pushed->hasUndoCurrentState);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
@@ -1239,5 +1340,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_current_state_live_capture_undo_redo);
   RUN_TEST(test_current_state_move_ab_undo_redo_chain);
   RUN_TEST(test_session_rows_fallback_uses_opened_snapshot_span_note_ids);
+  RUN_TEST(test_first_kind_boundary_opened_snapshot_entry_restores_without_clone);
   return UNITY_END();
 }

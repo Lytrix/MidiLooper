@@ -157,6 +157,17 @@ bool canHeapAdmitSessionUndoEntry(const SessionUndoEntry& entry) {
   return MemoryMonitor::getInternalHeapFreeBytes() >= internalNeeded;
 }
 
+NOTE_EDIT_MEM SessionUndoEntry buildOpenedSnapshotKindBoundaryUndoEntry(
+    const NoteEditFocus& focus, EditorSelection selection,
+    const EditPassIdList& editPassIdsAtPush) {
+  SessionUndoEntry entry;
+  entry.selection = selection;
+  entry.focus = snapshotFocusForSessionUndo(focus);
+  entry.editPassIdsAtPush = editPassIdsAtPush;
+  entry.hasUndoCurrentState = false;
+  return entry;
+}
+
 template <typename Alloc>
 NOTE_EDIT_MEM SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus,
                                                      EditorSelection selection,

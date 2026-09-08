@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (DEC-055 Stage 1 device PASS)
+Last updated: 2026-09-08 (DEC-055 Stage 2 first kind-boundary E:00)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,18 +10,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**DEC-055 Stage 1 device PASS** [`212850`](../../captures/session_20260908_212850.log).
-PLAYING select-only: **0** `UNDO_WARM` / `focus_snap` / `GEOM_APPLY`.
-`DFRAME` 30-frame gaps during select: min **1237** ms, median **1251** ms,
-max **1789** ms (open window); paint **8.1–24.4** ms; **79** notes.
-[`204458`](../../captures/session_20260908_204458.log) after-open max was
-**4594** ms with **23** `warm,complete`. First kind-boundary E:00 restore
-is Stage 2 (not authorized). Option B rejected.
+**DEC-055 Stage 2 firmware in tree — device recapture open.**
+First kind-boundary at `undoCount == 0` stores E:00
+(`hasUndoCurrentState == false`) and restores from the opened snapshot.
+Native session-state + session-undo pins passed; full native **1779
+succeeded, 1 skipped**. Working-tree capture-serial RAM1 locals **2752**
+(below 4000) — do not upload this hex. Stage 1 device PASS
+[`212850`](../../captures/session_20260908_212850.log). Later
+kind-boundaries still clone. Do not start hydrate 1–5, DEC-054 Stage 2,
+or rename `NoteEditCurrentState`.
 Plans:
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
 [`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
-Do not start Stage 2, hydrate 1–5, DEC-054 Stage 2, or rename
-`NoteEditCurrentState`.
 
 **Prior — DEC-054 Stage 1 firmware in tree — device recapture failed cadence.**
 Select undo warm coalesces, settles 80 ms, and runs after a completed

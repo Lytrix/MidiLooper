@@ -1,6 +1,6 @@
 # NOTE_EDIT overlay delta — eliminate full-loop session builds
 
-**Status:** DEC-055 accepted — Stage 1 device PASS (select clone / full-row warm)  
+**Status:** DEC-055 accepted — Stage 2 first kind-boundary E:00 (Stage 1 device PASS)  
 **Kind:** architecture  
 **Date:** 2026-09-08  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
@@ -204,12 +204,10 @@ DEC-054 identified and relocated the stall. DEC-055 removes its cause.
 
 Firmware only when CURRENT_WORK names the stage.
 
-1. **Stage 1 — eliminate select `clone()` / full-row warm** (authorized).
-   Select: neighborhood/focus update only. No **E:** push, no current-state
-   clone, no `scheduleKindBoundaryUndoWarm`. Do not change first
-   kind-boundary restore in this slice.
+1. **Stage 1 — eliminate select `clone()` / full-row warm** (device PASS
+   [`212850`](../../captures/session_20260908_212850.log)).
 2. **Stage 2 — first kind-boundary at undoCount 0** uses E:00 snapshot
-   restore (`hasUndoCurrentState == false`). Separate capture.
+   restore (`hasUndoCurrentState == false`). Authorized in CURRENT_WORK.
 3. **Stop full current-state fill** —
    `ensureCurrentStateVisibleRowsFromVisualCache` is not an analyze fill.
 4. **Hydrate 1 → 2 → 3** — select neighborhood query, indexed overlap,

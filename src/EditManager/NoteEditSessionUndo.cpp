@@ -11,6 +11,7 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "Logger.h"
+#include "NoteEditCurrentState.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
 #include "NoteEditSessionUndo.h"
@@ -33,8 +34,32 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::pushSessionUndoOnKindChange(Track& track
         return true;
     }
     SessionUndoEntry entry;
-    if (kindBoundaryUndoCacheValid_ &&
-        kindBoundaryUndoCacheRevision_ == sessionPreviewRevision_) {
+    if (firstKindBoundaryUsesOpenedSnapshotRestore(editSession.undoStack.undoCount())) {
+        if (kindBoundaryUndoCacheValid_ &&
+            kindBoundaryUndoCacheRevision_ == sessionPreviewRevision_ &&
+            !kindBoundaryUndoCache_.hasUndoCurrentState) {
+            kindBoundaryUndoCacheValid_ = false;
+            entry = std::move(kindBoundaryUndoCache_);
+#if defined(SESSION_CAPTURE)
+            logger.info("#CAP,%lu,UNDO_WARM,push,e00_cache,0,%zu,%u",
+                        static_cast<unsigned long>(micros()),
+                        editSession.focus.baselineMap.size(), static_cast<unsigned>(kind));
+#endif
+        } else {
+#if defined(SESSION_CAPTURE)
+            const uint32_t buildStartUs = micros();
+#endif
+            entry = buildOpenedSnapshotKindBoundaryUndoEntry(
+                editSession.focus, sessionState.selection, editSession.editPassIds);
+#if defined(SESSION_CAPTURE)
+            logger.info("#CAP,%lu,UNDO_WARM,push,e00,%lu,%zu,%u",
+                        static_cast<unsigned long>(micros()),
+                        static_cast<unsigned long>(micros() - buildStartUs),
+                        editSession.focus.baselineMap.size(), static_cast<unsigned>(kind));
+#endif
+        }
+    } else if (kindBoundaryUndoCacheValid_ &&
+               kindBoundaryUndoCacheRevision_ == sessionPreviewRevision_) {
         kindBoundaryUndoCacheValid_ = false;
 #if defined(SESSION_CAPTURE)
         logger.info("#CAP,%lu,UNDO_WARM,push,cache_hit,0,%zu,%u",
@@ -106,6 +131,19 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track
         kindBoundaryUndoWarmPending_ = false;
         return;
     }
+    if (firstKindBoundaryUsesOpenedSnapshotRestore(editSession.undoStack.undoCount())) {
+        kindBoundaryUndoCache_ = buildOpenedSnapshotKindBoundaryUndoEntry(
+            editSession.focus, sessionState.selection, editSession.editPassIds);
+        kindBoundaryUndoCacheValid_ = true;
+        kindBoundaryUndoCacheRevision_ = sessionPreviewRevision_;
+        kindBoundaryUndoWarmPending_ = false;
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,warm,e00,0,%zu,0,0",
+                    static_cast<unsigned long>(micros()),
+                    editSession.focus.baselineMap.size());
+#endif
+        return;
+    }
     const uint32_t warmStartUs = micros();
 #if defined(SESSION_CAPTURE)
     const uint32_t readStartUs = micros();
@@ -158,6 +196,8 @@ EDIT_MANAGER_IMPL_MEM void EditManager::restoreSessionUndoEntry(Track& track,
                               channel, editSession.editPassIds,
                               editSession.openedOnCurrentSnapshot,
                               editSession.openedSnapshotRevision);
+        editSession.noteEditCurrentState = NoteEditCurrentState::buildFromSessionStore(
+            editSession.store.readEvents(), channel);
     }
     editSession.focus = entry.focus;
     sessionState.selection = entry.selection;

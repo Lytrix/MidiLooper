@@ -36,6 +36,9 @@ void logUndoPushPhase(const char* phase, uint32_t phaseStartUs, size_t stackSize
                       size_t entryBaselineCount = 0);
 #endif
 
+SessionUndoEntry buildOpenedSnapshotKindBoundaryUndoEntry(const NoteEditFocus& focus,
+                                                          EditorSelection selection,
+                                                          const EditPassIdList& editPassIdsAtPush);
 template <typename Alloc>
 SessionUndoEntry buildSessionUndoEntry(const NoteEditFocus& focus, EditorSelection selection,
                                        const std::vector<MidiEvent, Alloc>& sessionFlat,

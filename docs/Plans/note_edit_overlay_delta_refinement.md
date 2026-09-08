@@ -1,13 +1,14 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 Stage 1 device PASS  
+**Status:** DEC-055 Stage 2 firmware in tree — device recapture open  
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
 **Evidence:** [`212850`](../../captures/session_20260908_212850.log) (PASS), [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
-Does **not** start: Stage 2 E:00 first-kind-boundary, hydrate 1–5, DEC-054
-Stage 2, Option B, rename `NoteEditCurrentState`, live-capture fold change.
+Does **not** start: hydrate 1–5, DEC-054 Stage 2, Option B, rename
+`NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
+entries.
 
 ---
 
@@ -63,10 +64,35 @@ median **1645** ms, max **4594** ms, **23** `warm,complete`.
 
 ---
 
-## Stage 2 — not authorized here
+## Stage 2 — first kind-boundary E:00 restore
 
-First kind-boundary at `undoCount == 0`: `hasUndoCurrentState == false`;
-restore uses opened snapshot. Separate capture.
+```text
+undoCount == 0
+  → first geometry kind-boundary
+  → buildOpenedSnapshotKindBoundaryUndoEntry
+  → hasUndoCurrentState == false
+  → no current-state clone
+  → no full-cache fill
+undo
+  → applySessionUndoEntry (opened snapshot + empty editRows)
+  → buildFromSessionStore from restored store
+```
+
+`undoCount > 0` still uses `buildSessionUndoEntry` + clone. Live-capture fold
+stays its existing entry. Select still does not schedule warm.
+
+**Invariant:** The first **E:** push after open does not call
+`NoteEditCurrentState::clone()`. Undo of that entry restores session store
+from `openedSnapshotRevision` without a stored current-state copy.
+
+**Native:** `firstKindBoundaryUsesOpenedSnapshotRestore(0)` is true.
+Opened-snapshot entry has `hasUndoCurrentState == false` and restores
+span NoteIds from the opened snapshot.
+
+**Device:** PLAYING + NOTE_EDIT + one first Move (or Pitch/Length). Pass:
+no `UNDO_WARM,phase,focus_snap` on that first kind-boundary; `push,e00`
+(or equivalent) with `hasUndoCurrentState` false. Select-only cadence from
+Stage 1 stays. Later kind-boundaries may still clone once.
 
 ---
 
@@ -77,7 +103,19 @@ restore uses opened snapshot. Separate capture.
 | `include/NoteEditSessionState.h` | `selectNavSchedulesKindBoundaryUndoWarm()` = false |
 | `src/EditManager/NoteEditSelection.cpp` | Do not schedule warm on select |
 | `test/test_note_edit_session_state/` | Pin the policy |
-| this plan + architecture + CURRENT_WORK | Stage 1 in tree / device open |
+| this plan + architecture + CURRENT_WORK | Stage 1 device PASS |
+
+### Files (Stage 2)
+
+| File | Change |
+|---|---|
+| `include/NoteEditSessionState.h` | `firstKindBoundaryUsesOpenedSnapshotRestore` |
+| `include/NoteEditSessionUndo.h` | `buildOpenedSnapshotKindBoundaryUndoEntry` |
+| `src/EditManager/NoteEditSessionUndoStack.cpp` | E:00 entry builder |
+| `src/EditManager/NoteEditSessionUndo.cpp` | First kind-boundary uses E:00; restore rebuilds current state from store |
+| `test/test_note_edit_session_state/` | Pin undoCount == 0 policy |
+| `test/test_note_edit_session_undo/` | Pin no-clone entry + snapshot restore |
+| this plan + CURRENT_WORK | Stage 2 authorized |
 
 ---
 
@@ -105,3 +143,33 @@ None for Stage 1.
 ### Proceed?
 
 YES — Stage 1 only.
+
+---
+
+## Pre-implementation review (Stage 2)
+
+### Ready
+
+- `applySessionUndoEntry` already restores from
+  `tryCopyNoteEditOpenedSnapshotEvents` when `hasUndoCurrentState == false`
+- `buildSessionUndoEntry` clones only when `currentStateAtPush` is non-empty
+- `snapshotFocusForSessionUndo` already trims to mover + overlap closure
+- Stage 1 select no longer schedules warm, so first Move is a cache-miss today
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Stage 2 scope | First kind-boundary at `undoCount == 0` only |
+| Later kind-boundaries | Still clone |
+| Live-capture fold | Unchanged |
+| Restore current state | Rebuild from restored store (`buildFromSessionStore`); not a push clone |
+| Legacy `openedOnCurrentSnapshot == false` | Existing rematerialize miss |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — Stage 2 only.
