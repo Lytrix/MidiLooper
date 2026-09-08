@@ -211,6 +211,7 @@ Firmware only when CURRENT_WORK names the stage.
    [`220445`](../../captures/session_20260908_220445.log).
 3. **Stop full current-state fill** —
    `ensureCurrentStateVisibleRowsFromVisualCache` is not an analyze fill.
+   Authorized in CURRENT_WORK.
 4. **Hydrate 1 → 2 → 3** — select neighborhood query, indexed overlap,
    resolver prepared-hit.
 5. **Hydrate 4a → 4b → 4c → 5** — open without rematerialize-to-analyze;

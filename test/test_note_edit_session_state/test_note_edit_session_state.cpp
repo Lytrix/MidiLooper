@@ -107,6 +107,10 @@ void test_first_kind_boundary_uses_opened_snapshot_restore() {
   TEST_ASSERT_FALSE(firstKindBoundaryUsesOpenedSnapshotRestore(1));
 }
 
+void test_analyze_does_not_fill_current_state_from_visual_cache() {
+  TEST_ASSERT_FALSE(analyzeFillsCurrentStateFromVisualCache());
+}
+
 void test_kind_boundary_undo_warm_overrun_does_not_publish() {
   TEST_ASSERT_FALSE(kindBoundaryUndoWarmMayPublish(false, 0, kKindBoundaryUndoWarmBoundUs));
   TEST_ASSERT_FALSE(kindBoundaryUndoWarmMayPublish(true, kKindBoundaryUndoWarmBoundUs + 1,
@@ -131,6 +135,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_kind_boundary_undo_warm_coalesce_and_settle);
   RUN_TEST(test_select_nav_does_not_schedule_kind_boundary_undo_warm);
   RUN_TEST(test_first_kind_boundary_uses_opened_snapshot_restore);
+  RUN_TEST(test_analyze_does_not_fill_current_state_from_visual_cache);
   RUN_TEST(test_kind_boundary_undo_warm_overrun_does_not_publish);
   return UNITY_END();
 }

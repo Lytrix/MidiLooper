@@ -83,7 +83,9 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         return false;
     }
 
-    manager.ensureCurrentStateVisibleRowsFromVisualCache(track);
+    if (analyzeFillsCurrentStateFromVisualCache()) {
+        manager.ensureCurrentStateVisibleRowsFromVisualCache(track);
+    }
     const NoteUtils::DisplayNoteVec& committedDisplayNotes =
         manager.visualCacheNotesForSelectedSlot(track);
     overlayUneditedBaselineMapFromDisplayNotes(focus, currentStateReader, committedDisplayNotes);
