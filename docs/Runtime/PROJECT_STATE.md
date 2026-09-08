@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.4h display fallback identity)
+Last updated: 2026-09-08 (DEC-055 accepted — Stage 1 select clone)
 
 ---
 
@@ -77,8 +77,14 @@ Device [`201106`](../../captures/session_20260908_201106.log): second
 overdub open `from=snapshot` `root_rev=5` `play_rev=5` `notes=114`.
 NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`. `DFRAME`
 **137** after second stop through session end.
-Remaining 4.4 hydrate / raise `N`, 4.5 verify, 4.6, persistence, and
-snapshot-identity undo remain later.
+DEC-055 accepted: NOTE_EDIT working set is overlay delta on the opened
+`LoopSnapshot`. Stage 1 eliminates select `clone()` / full-row warm.
+First kind-boundary E:00 restore is Stage 2. Option B rejected. Plans:
+[`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
+[`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
+DEC-054 Stage 1 admission remains in tree; [`204458`](../../captures/session_20260908_204458.log)
+failed the select-cadence gate. Remaining 4.4 hydrate / raise `N`, 4.5,
+4.6, persistence, and snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.

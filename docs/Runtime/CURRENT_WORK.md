@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4h display fallback identity)
+Last updated: 2026-09-08 (DEC-055 accepted — Stage 1 select clone)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,28 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.4h — display fallback/identity — Stage 1 shipped.**
+**DEC-055 accepted — Stage 1 firmware in tree (device recapture open).**
+`applySelectNav` does not schedule kind-boundary undo warm. RAM1 locals
+**6848**; native **1777 succeeded, 1 skipped**. First kind-boundary E:00
+restore is Stage 2. Option B rejected.
+Plans:
+[`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
+[`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
+Do not start Stage 2, hydrate 1–5, DEC-054 Stage 2, or rename
+`NoteEditCurrentState`.
+
+**Prior — DEC-054 Stage 1 firmware in tree — device recapture failed cadence.**
+Select undo warm coalesces, settles 80 ms, and runs after a completed
+display frame. [`204458`](../../captures/session_20260908_204458.log)
+early select `DFRAME` is in band; back-and-forth select is 3.1–4.6 s /
+30 frames (7 warms / 363 ms `focus_snap` in one window). Option B is
+not the proposed closeout if DEC-055 is accepted. Plans:
+[`note_edit_display_playing_stall_architecture.md`](../Plans/note_edit_display_playing_stall_architecture.md),
+[`note_edit_display_playing_stall_refinement.md`](../Plans/note_edit_display_playing_stall_refinement.md).
+Do not start Stage 2, hydrate Stage 4a, raise `N`, `T_RT_reserve`, 4.5,
+or 4.6.
+
+**Prior — OpenSpec 4.4h — display fallback/identity — Stage 1 shipped.**
 `rebuildDisplayNotesInWindow` on a current root copies span notes
 (`tryCopyCurrentSnapshotDisplayNotesInWindow`). Overlay gather is
 rejected. Live-capture merge keeps the existing gather. RAM1 locals

@@ -100,6 +100,26 @@ inline bool editorSelectionTargetChanged(const EditorSelection& prior, uint32_t 
   return false;
 }
 
+/// Seed bound from session_20260908_201106 (137 rows): 91.7–133.2 ms.
+inline constexpr uint32_t kKindBoundaryUndoWarmBoundUs = 133200;
+
+inline bool kindBoundaryUndoWarmSettled(bool pending, uint32_t nowMs, uint32_t armedAtMs,
+                                        uint32_t idleMs) {
+  return pending && (nowMs - armedAtMs) >= idleMs;
+}
+
+/// Incomplete or over-bound units stay unpublished. A complete unit at or under
+/// the measured bound may publish `kindBoundaryUndoCache_`.
+inline bool kindBoundaryUndoWarmMayPublish(bool unitComplete, uint32_t elapsedUs,
+                                           uint32_t boundUs) {
+  return unitComplete && elapsedUs <= boundUs;
+}
+
+/// DEC-055 Stage 1: select must not pre-build or clone kind-boundary undo.
+inline bool selectNavSchedulesKindBoundaryUndoWarm() {
+  return false;
+}
+
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation
 /// SHALL push a fresh session undo step even when kind stays Move.
 inline bool shouldResetGeometryKindUndoOnSelectChange(const EditorSelection& prior,

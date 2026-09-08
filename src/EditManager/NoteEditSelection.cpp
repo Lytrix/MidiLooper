@@ -49,6 +49,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::resetNoteEditSessionState() {
     deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
     kindBoundaryUndoCacheValid_ = false;
     kindBoundaryUndoWarmPending_ = false;
+    kindBoundaryUndoWarmArmedAtMs_ = 0;
     kindBoundaryUndoCacheRevision_ = UINT32_MAX;
     invalidateNoteEditDerivedCaches();
 }
@@ -97,7 +98,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::applySelectNav(Track& track, uint32_t se
     sessionState.selection.loopId = trackManager.getSelectedLoop(track).loopId;
     if (shouldResetGeometryKindUndoOnSelectChange(priorSelection, primaryNote)) {
         lastPushedGeometryKind_ = NoteEditKind::Select;
-        scheduleKindBoundaryUndoWarm();
+        if (selectNavSchedulesKindBoundaryUndoWarm()) {
+            scheduleKindBoundaryUndoWarm();
+        }
     }
     const bool selectionIdentityChanged =
         editorSelectionTargetChanged(priorSelection, selectedTick, primaryNote);
