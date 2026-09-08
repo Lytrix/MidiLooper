@@ -488,13 +488,15 @@ DEC-037 amendment 2026-08-16. Architecture PASS. This revision records implement
 
 **Owner:** candidate collection feeding `NoteGeometryResolver`.  
 **Invariant:** selected note `[S, E)` produces the same Shorten/Hide target ids as `accumulatePendingNoteChangesFromSourceNotes` for that hold. Prepared hit: `LoopSnapshot::noteMembership(pitch, bar)` for hold bars (±1 for analyze abut). No reconstruct, no `DisplayNote` vector as the window result. NOTE_EDIT analyze uses inclusive edges so packed abut Hide stays; overdub exclusive `existingNoteOverlapsIncomingHold` is unchanged.  
-**Gate:** overdub overlap fixtures with the selected note as incoming hold; empty set does not gather (Gate 3). Counters: `candidate_count`, `identity_lookup_count`, `identity_lookup_scan_count`. Scan must not scale with total loop size.
+**Gate:** overdub overlap fixtures with the selected note as incoming hold; empty set does not gather (Gate 3). Counters: `candidate_count`, `identity_lookup_count`, `identity_lookup_scan_count`. Scan must not scale with total loop size.  
+**Device functional PASS [`231008`](../../captures/session_20260908_231008.log):** 72 `candidates_hit` (scan med **2**, bars med **2**). Hide/Shorten/Restore on the hit path.
 
 ### Stage 3 — Resolver consume + legacy miss path
 
 **Owner:** `NoteGeometryResolver::resolve` candidate source.  
 **Invariant:** prepared **hit** is the analysis authority (`noteMembership` ∪ sticky current-state). Prepared **miss** is a **legacy compatibility path** (`collectAnalyzeOverlapNoteIds` on the already-built visual cache) — temporary, not a second authority. No `ensure*` LCR rebuild on the fader stack. Intra-action leave is `RestoreNote` per overlay lifecycle table.  
-**Test:** native overlap + move/length fixtures stay PASS; prepared-miss matches current behavior.
+**Test:** native overlap + move/length fixtures stay PASS; prepared-miss matches current behavior.  
+**Device functional PASS [`231008`](../../captures/session_20260908_231008.log):** 258 `candidates_miss` after the published snapshot is no longer current (scan **72–73**). Hide/Shorten/Restore continue on miss.
 
 ### Stage 4a — Open without full-loop analysis
 
