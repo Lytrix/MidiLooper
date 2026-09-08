@@ -50,6 +50,8 @@ not invent `NoteEditPassClosed`.
 `assignMissingNoteIds(loop.midiEvents())`; E: rows undo/redo fallback
 copies the opened snapshot root (`tryCopyNoteEditOpenedSnapshotEvents`).
 RAM1 locals **6848**; native **1772 succeeded, 1 skipped**.
+Device [`191346`](../../captures/session_20260908_191346.log): both
+`current=1` opens `only_*=0` (120 then 119).
 Wrap-head vs last-Off pairing RC1–RC3 is accepted (native shipped;
 [`185428`](../../captures/session_20260908_185428.log) RC3 analog PASS;
 174646 recapture waived).
