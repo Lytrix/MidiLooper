@@ -75,6 +75,10 @@ bool consumeSnapshotIdleForcedYield();
 void appendSnapshotIdleYieldLine(uint32_t remainingUs, uint32_t marginUs, uint32_t admittedUs,
                                  uint32_t costUs, bool timingCritical, bool pending,
                                  uint32_t rootRevision);
+
+void logOverdubStopHold(unsigned notes, uint32_t rootRevision, uint32_t playbackRevision);
+
+void logSessionExitPostStopPublish(uint32_t oldRoot, uint32_t newRoot, uint32_t playbackRevision);
 #endif
 
 #if SESSION_CAPTURE_INVESTIGATION_DIAG

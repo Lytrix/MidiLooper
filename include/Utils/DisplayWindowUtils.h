@@ -110,6 +110,22 @@ inline bool preferPreservedOverdubStopHandoff(bool incrementalCommittedDisplay,
     return incrementalCommittedDisplay && preservedHandoffAuthority && visualCacheDirty;
 }
 
+/// After overdub stop, hold the composed frame until the successor root is
+/// current. A current snapshot ends the hold so the first new committed paint
+/// is Snapshot, not passes (`141434` pairrows).
+inline bool shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+    bool incrementalCommittedDisplay, bool preservedHandoffAuthority, bool visualCacheDirty,
+    bool publishedSnapshotIsCurrent, bool sessionExitQueued) {
+    if (publishedSnapshotIsCurrent) {
+        return false;
+    }
+    if (sessionExitQueued && preservedHandoffAuthority) {
+        return true;
+    }
+    return preferPreservedOverdubStopHandoff(incrementalCommittedDisplay, preservedHandoffAuthority,
+                                            visualCacheDirty);
+}
+
 /// `225243`: playhead tails (`endTick = currentTick`) are paint-only. RC5a
 /// STOPPED handoff reads `liveDisplayNotes`. In-place tails freeze those ends
 /// (D#2 ON@624 → stop phase 704). Compose base stays at capture-preview lengths.
@@ -274,6 +290,14 @@ inline bool visualCacheReusableAsCommittedDrawSource(bool visualCacheDirty,
                                                      bool uncoveredSealedPreview) {
     return !visualCacheDirty && visualCacheNonempty && visualCacheCoversRequestedWindow &&
            !uncoveredSealedPreview;
+}
+
+/// Snapshot-backed display path. Empty committed content is ready. A loaded
+/// loop is ready when its published `LoopSnapshot` is current. This is not
+/// the title-exit gate (`020111` waited here for a 36k-node focus loop).
+inline bool snapshotBackedDisplayReady(bool hasCommittedPasses,
+                                       bool publishedSnapshotIsCurrent) {
+    return !hasCommittedPasses || publishedSnapshotIsCurrent;
 }
 
 /// Current snapshot is complete for the requested window when it is not smaller

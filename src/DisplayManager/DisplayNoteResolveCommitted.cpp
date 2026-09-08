@@ -88,37 +88,57 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     const bool needsLiveMergeForDisplay =
         loop.captureActive() || track.isRecording() || track.isOverdubbing();
     if (!needsLiveMergeForDisplay) {
-        // STOPPED must finalize from the effective committed representation before
-        // preserved overdub-stop handoff logic can return the stale first-occupy
-        // frame (`224901`: frame 768->1151 while effective is 768->911).
-        if (track.isStopped() && loop.hasCommittedPasses()) {
-            DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+        const bool preservedHandoffAuthority =
+            !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
+            trackIndex == livePlaybackDisplayTrack_;
+        const bool incrementalCommittedDisplay =
+            DisplayWindowUtils::preferIncrementalCommittedDisplay(deferVisualRebuild,
+                                                                  track.isStopped());
+        if (loop.hasCommittedPasses()) {
             if (const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
                 snapshot && loop.publishedSnapshotIsCurrent()) {
+                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
                 LoopContentResolution::resolveDisplayNotes(*snapshot, liveDisplayNotes);
-            } else {
+                liveMergePlaybackRevision_ = loop.playbackRevision;
+                liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                livePlaybackDisplaySlot_ = displaySlot;
+                livePlaybackDisplayTrack_ = trackIndex;
+                liveWindowGatherValid_ = false;
+                return liveDisplayNotes;
+            }
+            if (DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+                    incrementalCommittedDisplay, preservedHandoffAuthority, loop.visualCacheDirty,
+                    loop.publishedSnapshotIsCurrent(), loop.pendingSnapshotSessionExitQueued())) {
+                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+                livePlaybackDisplaySlot_ = displaySlot;
+                livePlaybackDisplayTrack_ = trackIndex;
+                liveMergePlaybackRevision_ = loop.playbackRevision;
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                if (!liveWindowGatherValid_) {
+                    liveWindowGatherValid_ = true;
+                    liveWindowGatherStart_ = 0;
+                    liveWindowGatherLength_ = loopLength;
+                    liveWindowGatherLoopLength_ = loopLength;
+                }
+                return liveDisplayNotes;
+            }
+            if (track.isStopped()) {
+                DIAG_COUNTER_INC(DisplayIncrementalUpdate);
                 LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
                                                            liveDisplayNotes);
+                liveMergePlaybackRevision_ = loop.playbackRevision;
+                liveMergeCaptureRevision_ = loop.captureDisplayRevision;
+                liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+                livePlaybackDisplaySlot_ = displaySlot;
+                livePlaybackDisplayTrack_ = trackIndex;
+                liveWindowGatherValid_ = false;
+                return liveDisplayNotes;
             }
-            liveMergePlaybackRevision_ = loop.playbackRevision;
-            liveMergeCaptureRevision_ = loop.captureDisplayRevision;
-            liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-            livePlaybackDisplaySlot_ = displaySlot;
-            livePlaybackDisplayTrack_ = trackIndex;
-            liveWindowGatherValid_ = false;
-            return liveDisplayNotes;
         }
         const bool visualCacheAuthoritative =
             DisplayWindowUtils::committedDisplayVisualCacheAuthoritative(
                 loop.visualCacheDirty, !loop.visualCache.notes.empty());
-        const bool preservedHandoffAuthority =
-            !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
-            trackIndex == livePlaybackDisplayTrack_;
-        // RC5f: STOPPED must use the same incremental paths as deferred PLAYING — otherwise
-        // transport/play stop falls into dirty-cache window gather (174742 ~0.9s DFRAME gap).
-        const bool incrementalCommittedDisplay =
-            DisplayWindowUtils::preferIncrementalCommittedDisplay(deferVisualRebuild,
-                                                                  track.isStopped());
         // RC5b: only a clean visualCache may authorize committed display after a revision bump.
         // Dirty/stale visualCache must not overwrite the RC5a overdub-stop composed frame.
         if (visualCacheAuthoritative && !avoidFullVisualRebuild) {
@@ -245,7 +265,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             liveDisplayEventBuffer.clear();
             usedSnapshot = false;
         }
-        if (!usedSnapshot) {
+        const bool holdUntilCurrentSnapshot = loop.pendingSnapshotSessionExitQueued() &&
+                                              !loop.publishedSnapshotIsCurrent();
+        if (!usedSnapshot && !holdUntilCurrentSnapshot) {
             if (loop.captureActive()) {
                 mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
             } else {
@@ -277,17 +299,19 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
     // Prefer visualCache when fresh — after invalidation fall through to
     // per-pass paired notes. Do not reconstruct the merged event stream
     // (`211440` D# Offs).
-    if (!loop.visualCacheDirty && !loop.visualCache.notes.empty()) {
+    if (!loop.visualCacheDirty && !loop.visualCache.notes.empty() &&
+        !(loop.pendingSnapshotSessionExitQueued() && !loop.publishedSnapshotIsCurrent())) {
         liveDisplayNotes.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
     } else if (loop.captureActive() && !liveDisplayEventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
             NoteUtils::reconstructDisplayNotes(liveDisplayEventBuffer, loopLength, false, false);
         liveDisplayNotes.assign(reconstructed.begin(), reconstructed.end());
         mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
-    } else if (loop.hasCommittedPasses()) {
+    } else if (loop.hasCommittedPasses() && !(loop.pendingSnapshotSessionExitQueued() &&
+                                             !loop.publishedSnapshotIsCurrent())) {
         LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength, liveDisplayNotes);
         mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
-    } else {
+    } else if (!(loop.pendingSnapshotSessionExitQueued() && !loop.publishedSnapshotIsCurrent())) {
         liveDisplayNotes.clear();
     }
 

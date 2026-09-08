@@ -214,6 +214,16 @@ cursors rather than treating that locality as an execution bound.
         Pass reconstruction remains the no-current-root fallback.
         Capture-serial build has RAM1 locals **6848**; full native suite:
         **1757 succeeded, 1 skipped**.
+  - [x] 4.5a After overdub stop, hold the composed `liveDisplayNotes` frame
+        (`refreshViewportAfterOverdubStop` does not pass-gather). Elevate
+        Snapshot idle turns while `postOverdubPlayingMidiDrain` and
+        `sessionExitQueued`. First new committed paint uses the current
+        published `LoopSnapshot` only. Plan:
+        [`overdub_stop_snapshot_publication_convergence_refinement.md`](../../../docs/Plans/overdub_stop_snapshot_publication_convergence_refinement.md).
+        Capture-serial RAM1 locals **6848**; native **1759 succeeded, 1 skipped**.
+        Device PASS [`145633`](../../../captures/session_20260908_145633.log):
+        both stops `from=hold`, display child 0, no stop-stack `pairrows`;
+        `post_stop` `root_rev == playback_rev`; next open `from=snapshot`.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
 

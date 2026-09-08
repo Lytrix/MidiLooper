@@ -9,8 +9,15 @@
 #include "ClockManager.h"
 #include "Globals.h"
 #include "Utils/DisplayWindowUtils.h"
+#include "Utils/InvestigationCaptureLog.h"
 #include "Utils/SlotFocusDisplay.h"
 #include <algorithm>
+
+#if defined(__IMXRT1062__)
+#define DISP_COLD_MEM FLASHMEM
+#else
+#define DISP_COLD_MEM
+#endif
 
 using namespace DisplayManagerInternal;
 
@@ -156,8 +163,9 @@ void DisplayManager::adoptComposedDisplayNotesIfAuthoritative(Loop& loop) {
     loop.adoptComposedDisplayNotesFromViewport(liveDisplayNotes);
 }
 
-void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displaySlot,
-                                                     uint32_t storagePhaseTickInLoop) {
+DISP_COLD_MEM void DisplayManager::refreshViewportAfterOverdubStop(Track& track,
+                                                                   uint8_t displaySlot,
+                                                                   uint32_t storagePhaseTickInLoop) {
     // RC5a: overdub stop must not use record-stop clamp. Composed frame is
     // committed display + capturePreview; stripping the suffix causes the record-only flash.
     // Drop temporary playhead-tail rows only (in-place currentTick ends never land on
@@ -166,11 +174,17 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     // RC5c: adopt that composed DisplayNote vector into visualCache — no gather/reconstruct.
     const size_t preserveCount = DisplayWindowUtils::preservedOverdubStopDisplayNoteCount(
         liveDisplayNotes.size(), liveDisplayCacheBaseNoteCount_);
+    const size_t thisPassBegin = !liveDisplayCommittedPrefix_.empty()
+                                     ? liveDisplayCommittedPrefix_.size()
+                                     : liveDisplayCacheCommittedNoteCount_;
     const uint8_t trackIndex = resolveTrackIndex(track);
     Loop& loop = track.getLoop(displaySlot);
     const uint32_t playbackRevision = loop.playbackRevision;
     const uint16_t captureDisplayRevision = loop.captureDisplayRevision;
     invalidateLiveDisplayCache(true);
+    // Hold the last OVERDUBBING composed vector. Do not pass-gather or
+    // snapshot-gather on this stack (`141434` pairrows 42–55 ms). First-occupy
+    // geometry (`225234`) stays until the successor root is current.
     if (preserveCount < liveDisplayNotes.size()) {
         resizeLiveDisplayNotesNoGrow(preserveCount);
     }
@@ -178,11 +192,12 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
     liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
     liveMergePlaybackRevision_ = playbackRevision;
     liveMergeCaptureRevision_ = captureDisplayRevision;
-    // RC1d-c: last OVERDUBBING playhead tails freeze inclusive ends on
-    // liveDisplayNotes. After commit, closed Off is in sealed preview only.
-    // Rewrite stop-phase tails from that Off before adopt; RC1b skip stays.
+    // RC1d-d: this-pass rows take sealed closed Off. Playhead tails stay on the
+    // paint copy (Stage 1j). Do not use stopPhase / end+1.
     DisplayWindowUtils::realizeClosedCaptureOffOnStopPlayheadTails(
-        liveDisplayNotes, loop.sealedCapturePreviewNotes(), storagePhaseTickInLoop);
+        liveDisplayNotes, loop.sealedCapturePreviewNotes(), thisPassBegin);
+    liveDisplayPendingPaintNotes_.clear();
+    resolvedPaintUsesPending_ = false;
     const uint32_t loopLength =
         resolveDisplayLoopLength(track, displaySlot, clockManager.getCurrentTick());
     // Do not rebuildVisualCacheFromPasses / ensureVisualCacheBuilt here — overdub
@@ -204,6 +219,11 @@ void DisplayManager::refreshViewportAfterOverdubStop(Track& track, uint8_t displ
         livePlaybackDisplaySlot_ = 255;
         livePlaybackDisplayTrack_ = 255;
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+    InvestigationCaptureLog::logOverdubStopHold(
+        static_cast<unsigned>(liveDisplayNotes.size()), loop.publishedSnapshotRevision(),
+        playbackRevision);
+#endif
     if (track.isJamming() || displaySlot >= kDisplaySlotCount) {
         return;
     }

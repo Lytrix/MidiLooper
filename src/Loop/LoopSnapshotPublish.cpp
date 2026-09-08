@@ -11,6 +11,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#include "Utils/InvestigationCaptureLog.h"
+#endif
+
 #if defined(SESSION_CAPTURE)
 #include <cstdint>
 
@@ -1631,7 +1635,14 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
 #endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+      const uint32_t oldRoot = publishedSnapshotRevision();
+#endif
       storePublishedSnapshot(box.unpublishedCandidate);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+      InvestigationCaptureLog::logSessionExitPostStopPublish(
+          oldRoot, publishedSnapshotRevision(), playbackRevision);
+#endif
     }
     clearPendingSnapshotPublish();
     return false;

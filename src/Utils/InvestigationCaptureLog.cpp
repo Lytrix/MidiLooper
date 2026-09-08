@@ -158,6 +158,27 @@ IC_LOG_MEM bool consumeSnapshotIdleForcedYield() {
   return true;
 }
 
+IC_LOG_MEM void logOverdubStopHold(unsigned notes, uint32_t rootRevision,
+                                   uint32_t playbackRevision) {
+  char line[kCaptureLineBytes];
+  snprintf(line, sizeof(line),
+           IC_LOG_FMT("#CAP,%lu,DIAG,lcr,src,why=stop,from=hold,notes=%u,root_rev=%lu,play_rev=%lu"),
+           static_cast<unsigned long>(micros()), notes,
+           static_cast<unsigned long>(rootRevision),
+           static_cast<unsigned long>(playbackRevision));
+  queueCaptureLine(line);
+}
+
+IC_LOG_MEM void logSessionExitPostStopPublish(uint32_t oldRoot, uint32_t newRoot,
+                                              uint32_t playbackRevision) {
+  char line[kCaptureLineBytes];
+  snprintf(line, sizeof(line),
+           IC_LOG_FMT("#CAP,%lu,DIAG,snapshot_idle,post_stop,old_root=%lu,new_root=%lu,play_rev=%lu"),
+           static_cast<unsigned long>(micros()), static_cast<unsigned long>(oldRoot),
+           static_cast<unsigned long>(newRoot), static_cast<unsigned long>(playbackRevision));
+  queueCaptureLine(line);
+}
+
 IC_LOG_MEM void appendSnapshotIdleYieldLine(uint32_t remainingUs, uint32_t marginUs,
                                             uint32_t admittedUs, uint32_t costUs,
                                             bool timingCritical, bool pending,

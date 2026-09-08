@@ -101,6 +101,18 @@ TRACK_COLD_MEM bool Track::hasSnapshotPublicationBacklogOnAnySlot() const {
   return false;
 }
 
+TRACK_COLD_MEM bool Track::hasPendingSessionExitSnapshotOnAnySlot() const {
+  if (!loopsAllocated()) {
+    return false;
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (getLoop(s).pendingSnapshotSessionExitQueued()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM Loop& Track::loopWithPendingSnapshotPublish() {
   Loop& active = getActiveLoop();
   if (active.hasPendingSnapshotPublish()) {

@@ -76,25 +76,31 @@ struct DeferredIdleOwnerCursor {
 /// Ordinary 5-owner identity, or the extra Snapshot after a completed cycle
 /// when `snapshotBacklogPending` is true. Boolean backlog-present only.
 inline DeferredIdleOwner selectDeferredIdleOwner(DeferredIdleOwnerCursor& cursor,
-                                                 bool snapshotBacklogPending) {
+                                                 bool snapshotBacklogPending,
+                                                 bool sessionExitDrainPending = false) {
   if (cursor.extraSnapshotPending) {
     cursor.extraSnapshotPending = false;
-    if (snapshotBacklogPending) {
+    if (snapshotBacklogPending || sessionExitDrainPending) {
       return DeferredIdleOwner::Snapshot;
     }
   }
   const DeferredIdleOwner selected = cursor.owner;
   cursor.owner = nextDeferredIdleOwner(cursor.owner);
-  cursor.extraSnapshotPending =
-      snapshotBacklogPending && selected == DeferredIdleOwner::LoadAndDisplay;
+  if (sessionExitDrainPending) {
+    cursor.extraSnapshotPending = selected != DeferredIdleOwner::Snapshot;
+  } else {
+    cursor.extraSnapshotPending =
+        snapshotBacklogPending && selected == DeferredIdleOwner::LoadAndDisplay;
+  }
   return selected;
 }
 
 inline DeferredIdleOwner selectDeferredIdleOwner(DeferredIdleOwner owner,
-                                                 bool snapshotBacklogPending) {
+                                                 bool snapshotBacklogPending,
+                                                 bool sessionExitDrainPending = false) {
   DeferredIdleOwnerCursor cursor;
   cursor.owner = owner;
-  return selectDeferredIdleOwner(cursor, snapshotBacklogPending);
+  return selectDeferredIdleOwner(cursor, snapshotBacklogPending, sessionExitDrainPending);
 }
 
 inline bool deferredIdleOwnerDependsOnVisualCacheWrap(

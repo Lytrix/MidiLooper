@@ -364,6 +364,22 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [ ] Remaining 4.4 caller migration remains open: NOTE_EDIT, analysis,
       validation, and other display identity paths.
 
+### Phase 4.5a implementation review — post-stop snapshot convergence
+
+- [x] Architecture gate posted: hold + elevated session-exit idle; no owner
+      or transition change; `N=2`; no `tryPublishSessionExitSnapshot` on
+      device stop.
+- [x] `refreshViewportAfterOverdubStop` holds compose (`from=hold`).
+- [x] Current-root paint uses `resolveDisplayNotes(*snapshot)`; session-exit
+      pending does not last-resort to passes or Overlay.
+- [x] `selectDeferredIdleOwner` extra Snapshot after each non-Snapshot owner
+      while `postOverdubPlayingMidiDrain && sessionExitQueued`.
+- [x] Capture-serial RAM1 locals **6848**. Full native suite: **1759 succeeded, 1 skipped**.
+- [x] Device [`145633`](../../../captures/session_20260908_145633.log): both
+      stops `from=hold` with display child 0 and no stop-stack `pairrows`;
+      `post_stop` then `pending=0` `root_rev == playback_rev` (7 and 13);
+      next overdub open is `from=snapshot` at rev 7.
+
 ### Phase 3 implementation review (3.5–3.6 wrap publication)
 
 Closed 2026-09-08. Remaining-interval yield device proof is parked

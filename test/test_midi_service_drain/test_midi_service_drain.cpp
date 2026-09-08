@@ -58,6 +58,25 @@ void test_select_deferred_idle_owner_absent_matches_five_owner_cycle() {
   }
 }
 
+void test_select_deferred_idle_owner_session_exit_drain_extra_snapshot() {
+  MidiServiceDrain::DeferredIdleOwnerCursor cursor;
+  const MidiServiceDrain::DeferredIdleOwner expected[] = {
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::VisualCache,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::VisualCacheWrapAppend,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::Persistence,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+      MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay,
+      MidiServiceDrain::DeferredIdleOwner::Snapshot,
+  };
+  for (const MidiServiceDrain::DeferredIdleOwner next : expected) {
+    TEST_ASSERT_EQUAL(static_cast<int>(next),
+                      static_cast<int>(MidiServiceDrain::selectDeferredIdleOwner(cursor, true, true)));
+  }
+}
+
 void test_select_deferred_idle_owner_backlog_snapshot_two_of_six() {
   MidiServiceDrain::DeferredIdleOwnerCursor cursor;
   const MidiServiceDrain::DeferredIdleOwner expected[] = {
@@ -307,6 +326,7 @@ int main() {
   RUN_TEST(test_deferred_idle_owner_rotates_unconditionally);
   RUN_TEST(test_select_deferred_idle_owner_absent_matches_five_owner_cycle);
   RUN_TEST(test_select_deferred_idle_owner_backlog_snapshot_two_of_six);
+  RUN_TEST(test_select_deferred_idle_owner_session_exit_drain_extra_snapshot);
   RUN_TEST(test_deferred_idle_owner_skips_only_visual_dependents_for_pending_wrap);
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);

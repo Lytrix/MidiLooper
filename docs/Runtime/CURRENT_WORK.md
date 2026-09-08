@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4c span-cache snapshot provenance closed)
+Last updated: 2026-09-08 (4.5a device PASS 145633)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,31 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.4c — span-cache snapshot provenance:**
+**OpenSpec 4.5 verify / remaining 4.4 caller migration:**
+4.5a is closed. Overdub stop holds compose; session-exit publishes on idle
+`N=2`. Device PASS
+[`145633`](../../captures/session_20260908_145633.log). OpenSpec 4.5 HITL
+verify and remaining 4.4 NOTE_EDIT / analysis / validation callers stay
+open. Each sub-slice keeps its own phase gate.
+
+**Prior — OpenSpec 4.5a — post-stop snapshot publication convergence:**
+Closed. `refreshViewportAfterOverdubStop` holds the last OVERDUBBING
+composed frame (`why=stop,from=hold`); no pass-gather on the stop stack.
+Drain + `sessionExitQueued` inserts an extra Snapshot turn after every
+non-Snapshot owner. First new committed source is the current published
+`LoopSnapshot`. Device
+[`145633`](../../captures/session_20260908_145633.log): display child 0,
+`post_stop` `root_rev == playback_rev`, next open `from=snapshot`.
+RAM1 locals **6848**; native **1759 succeeded, 1 skipped**. Plan:
+[`overdub_stop_snapshot_publication_convergence_refinement.md`](../Plans/overdub_stop_snapshot_publication_convergence_refinement.md).
+
+**Prior — OpenSpec 4.4c — span-cache snapshot provenance:**
 Closed. `overdubSourceSpanCacheReady()` stays a storage/coverage check.
 Reuse at open/hold/prewarm requires `overdubSourceSpanCacheReusable()`,
 which matches the current published revision when a root is current.
 Fallback prewarm at the same `playbackRevision` no longer hides that
-root (`135337`). Post-stop publication lag remains Bug B / 4.5.
-OpenSpec:
-[`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
-4.4c. `DEC-052`. RAM1 locals **6848**; native **1757 succeeded, 1 skipped**.
+root (`135337`). OpenSpec 4.4c. `DEC-052`. RAM1 locals **6848**; native
+**1757 succeeded, 1 skipped**.
 
 **Next within 4.4:** NOTE_EDIT, overdub analysis, validation, and remaining
 display identity/fallback caller migration remain open. Each sub-slice

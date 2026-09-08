@@ -47,10 +47,21 @@ FLASHMEM __attribute__((noinline)) static bool anySnapshotPublicationBacklog() {
   return false;
 }
 
+FLASHMEM __attribute__((noinline)) static bool anyPendingSessionExitSnapshot() {
+  const uint8_t trackCount = trackManager.getTrackCount();
+  for (uint8_t i = 0; i < trackCount; ++i) {
+    if (trackManager.getTrack(i).hasPendingSessionExitSnapshotOnAnySlot()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 FLASHMEM __attribute__((noinline)) static MidiServiceDrain::DeferredIdleOwner
-takeDeferredIdleOwnerTurn() {
-  return MidiServiceDrain::selectDeferredIdleOwner(sDeferredIdleOwnerCursor,
-                                                   anySnapshotPublicationBacklog());
+takeDeferredIdleOwnerTurn(bool postOverdubPlayingMidiDrain) {
+  return MidiServiceDrain::selectDeferredIdleOwner(
+      sDeferredIdleOwnerCursor, anySnapshotPublicationBacklog(),
+      postOverdubPlayingMidiDrain && anyPendingSessionExitSnapshot());
 }
 
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
@@ -608,7 +619,8 @@ void loop() {
     }
   }
   const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
-  const MidiServiceDrain::DeferredIdleOwner deferredIdleOwner = takeDeferredIdleOwnerTurn();
+  const MidiServiceDrain::DeferredIdleOwner deferredIdleOwner =
+      takeDeferredIdleOwnerTurn(postOverdubPlayingMidiDrain);
   bool visualCacheWrapAppendPending = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& track = trackManager.getTrack(i);
