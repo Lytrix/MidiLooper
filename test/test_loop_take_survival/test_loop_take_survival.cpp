@@ -1567,6 +1567,23 @@ void test_copy_note_edit_commit_base_uses_snapshot_span_note_ids() {
   TEST_ASSERT_TRUE(baseHasSpanId);
   TEST_ASSERT_FALSE(baseHasOnlyStore);
 
+  LoopEventStore store;
+  loop.rematerializeEditView(store);
+  uint32_t storeNoteOns = 0;
+  bool storeHasOnlyStore = false;
+  for (size_t i = 0; i < store.size(); ++i) {
+    const MidiEvent& evt = store.at(i);
+    if (!evt.isNoteOn()) {
+      continue;
+    }
+    ++storeNoteOns;
+    if (evt.noteId == 64) {
+      storeHasOnlyStore = true;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(baseNoteOns, storeNoteOns);
+  TEST_ASSERT_FALSE(storeHasOnlyStore);
+
   EditPass pitchRow;
   pitchRow.actionType = EditActionType::Update;
   pitchRow.propertyType = EditPropertyType::Pitch;

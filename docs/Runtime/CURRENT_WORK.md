@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4e Stage 3 device PASS)
+Last updated: 2026-09-08 (NOTE_EDIT close bake device PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,8 +10,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**4.4e Stage 3 closed.** Next 4.4 slice requires selection. Do not start
-hydrate Stage 4a.
+**4.4e Stage 3 + close bake closed.** Next 4.4 slice requires selection.
+Do not start hydrate Stage 4a.
+
+**Prior — NOTE_EDIT close bake — snapshot baseline:**
+Empty-id close no longer treats snapshot-store vs pass rematerialize as
+live-capture rows. Device PASS
+[`174646`](../../captures/session_20260908_174646.log): no
+`live capture baked`; empty third exit has no `NoteEditPassClosed`;
+reopen stays `current=1` `root_rev=13` notes **126**. Plan:
+[`note_edit_close_bake_snapshot_bugfix.md`](../Plans/note_edit_close_bake_snapshot_bugfix.md).
 
 **Prior — OpenSpec 4.4e Stage 3 — commit rematerialize from the same root:**
 `commitEditAction` persist/replay/session-store reload and

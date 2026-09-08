@@ -396,6 +396,10 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       revision bumps. Native **1767 succeeded, 1 skipped**. Device PASS
       [`173531`](../../../captures/session_20260908_173531.log): both
       `current=1` opens `only_*=0`; Deletes 56 and 11 on that root.
+- [x] Close bake: `bakeNoteEditSessionStoreToPasses` uses
+      `copyNoteEditCommitBase`. Device
+      [`174646`](../../../captures/session_20260908_174646.log): no
+      `live capture baked`; empty exit has no `NoteEditPassClosed`.
 
 ### Close-publish NoteRange pitch reuse
 

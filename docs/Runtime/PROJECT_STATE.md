@@ -43,7 +43,9 @@ Q3 [`170211`](../../captures/session_20260908_170211.log) earned Stage 2.
 Stage 2 device PASS [`171444`](../../captures/session_20260908_171444.log):
 current-root opens share the span NoteId set. Stage 3 device PASS
 [`173531`](../../captures/session_20260908_173531.log): commit rematerialize
-uses `copyNoteEditCommitBase`.
+uses `copyNoteEditCommitBase`. Close bake PASS
+[`174646`](../../captures/session_20260908_174646.log): empty-id exit does
+not invent `NoteEditPassClosed`.
 Close publish: `NoteRange` reuses the current snapshot pitch
 ([`note_edit_snapshot_note_range_pitch_bugfix.md`](../Plans/note_edit_snapshot_note_range_pitch_bugfix.md)).
 Remaining 4.4 caller migration (analysis, validation, other NOTE_EDIT
