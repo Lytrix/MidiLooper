@@ -14,8 +14,9 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 First kind-boundary at `undoCount == 0` stores E:00
 (`hasUndoCurrentState == false`) and restores from the opened snapshot.
 Native session-state + session-undo pins passed; full native **1779
-succeeded, 1 skipped**. Working-tree capture-serial RAM1 locals **2752**
-(below 4000) — do not upload this hex. Stage 1 device PASS
+succeeded, 1 skipped**. Capture-serial RAM1 locals **7008** (PASS).
+S0 / HotPath telemetry state is EXTMEM so FLASHMEM emitters can read it.
+Stage 1 device PASS
 [`212850`](../../captures/session_20260908_212850.log). Later
 kind-boundaries still clone. Do not start hydrate 1–5, DEC-054 Stage 2,
 or rename `NoteEditCurrentState`.

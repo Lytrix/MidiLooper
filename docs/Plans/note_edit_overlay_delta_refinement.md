@@ -1,6 +1,6 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 Stage 2 firmware in tree — device recapture open  
+**Status:** DEC-055 Stage 2 firmware in tree — device recapture open; RAM1 locals 7008  
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (DEC-055 Stage 2 first kind-boundary E:00)
+Last updated: 2026-09-08 (DEC-055 Stage 2 — RAM1 locals 7008)
 
 ---
 
