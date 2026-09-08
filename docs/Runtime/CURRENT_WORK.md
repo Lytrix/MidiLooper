@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4b display snapshot slice closed; 4.4 remainder next)
+Last updated: 2026-09-08 (4.4c span-cache snapshot provenance closed)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.4b — display snapshot fallback:**
-Completed. Committed display-window reconstruction now uses gathered
-`LoopSnapshot` events when the snapshot path succeeds, and current-root
-STOPPED display uses the explicit snapshot query. Stale, absent, and
-overlay-rejected roots retain pass replay. Full native and capture-serial
-gates passed. OpenSpec:
+**OpenSpec 4.4c — span-cache snapshot provenance:**
+Closed. `overdubSourceSpanCacheReady()` stays a storage/coverage check.
+Reuse at open/hold/prewarm requires `overdubSourceSpanCacheReusable()`,
+which matches the current published revision when a root is current.
+Fallback prewarm at the same `playbackRevision` no longer hides that
+root (`135337`). Post-stop publication lag remains Bug B / 4.5.
+OpenSpec:
 [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
-4.4b. `DEC-037`. RAM1 locals **6848**; native **1755
-succeeded, 1 skipped**.
+4.4c. `DEC-052`. RAM1 locals **6848**; native **1757 succeeded, 1 skipped**.
 
 **Next within 4.4:** NOTE_EDIT, overdub analysis, validation, and remaining
 display identity/fallback caller migration remain open. Each sub-slice

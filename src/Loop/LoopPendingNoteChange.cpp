@@ -472,7 +472,7 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   uint32_t windowStart = 0;
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(holdPhaseTick, windowStart, windowLength);
-  if (!overdubSourceSpanCacheReady()) {
+  if (!overdubSourceSpanCacheReusable()) {
     rebuildOverdubSourceSpanCache(windowStart, windowLength);
   }
   if (overdubSourceSpanCacheNotes_.empty()) {
