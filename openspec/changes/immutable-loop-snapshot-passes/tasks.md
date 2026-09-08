@@ -51,13 +51,35 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
   - “Provisional `O:` snapshot” means a private, unselected candidate; the previous complete root remains active until atomic publication.
 - [ ] 3.6 Complete the first implementation slice before consumer migration: verify snapshot correctness, copy-on-write sharing, bounded maintenance, atomic publication/previous-snapshot retention, parity, maximum MIDI gap attributable to snapshot construction, maintenance time per slice, and total construction wall time on native, firmware-size, and device gates.
   - Extend the existing snapshot/take-survival native tests for repeated same-`NoteId` updates, wrap NoteOn/NoteOff replacement, Hide, equal-tick ordering, and non-note events.
-  - Measure and freeze `T_RT_reserve` before device validation. Pass requires construction-attributable MIDI gap and deadline lateness to remain within that reserve, with the documented retry result on overrun.
+    Native wrap-journal fixtures in `test_loop_take_survival` (2026-09-08):
+    `test_wrap_journal_repeated_same_note_id_replace`,
+    `test_wrap_journal_replaces_wrap_note_on_off_pair`,
+    `test_wrap_journal_hide_removes_published_note`,
+    `test_wrap_journal_equal_tick_non_note_event_order`.
+    Focused native **81/81**. Device `T_RT_reserve` recapture remains open.
+  - `T_RT_reserve` contract is [DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary):
+    `T_RT_reserve_ceiling` = 10,000 µs (policy, independent of BPM);
+    per-turn `reserve_us` from snapshot-idle start to the next timing-critical
+    `handleMidiInput()` entry; `T_RT_safety_margin` not frozen.
+    `60% × T_clock` is diagnostic only. Pass requires construction-attributable
+    MIDI gap and deadline lateness inside
+    `min(ceiling, reserve_us − margin)` while `RECORDING` / `PLAYING` /
+    `OVERDUBBING`, with yield/retry on overrun. STOPPED samples are excluded.
+    Do not freeze an observed unit or the minimum observed reserve.
+    Capture-gated `reserve_us` telemetry is in tree on
+    `DIAG,snapshot_idle,reserve` (FLASHMEM). Device recapture
+    [`104353`](../../../captures/session_20260908_104353.log). Remaining-interval
+    admission is in tree: two-unit cost versus
+    `min(ceiling, remaining − margin)`, with `DIAG,snapshot_idle,yield` and
+    capture-only `!SNAPSHOT_YIELD`. Device yield HITL remains open. Snapshot
+    idle cardinality is **N = 2**
+    (`kSnapshotIdleConstructionUnitsPerTurn`); do not revert to 1.
   - Device `snapshot_idle` now includes `journals`, `fragment=i/n`, and
     `parent_rev` so wrap-journal work is distinguishable from pass
     reconstruction. Recapture after upload; [`173826`](../../../captures/session_20260827_173826.log)
     cannot close this gate.
   - RAM1 build gate is restored on this tree (`teensy41-capture-serial`
-    locals **7008**), so device recapture can proceed.
+    locals **6848** with `SESSION_CAPTURE_SNAPSHOT_IDLE=1`), so device recapture can proceed.
   - Capture [`194515`](../../../captures/session_20260827_194515.log) exposed
     admission starvation after `journals=0`: queued session-exit pass work was
     not admitted in PLAYING, and the stopped-track gate blocked it while the
@@ -122,6 +144,17 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     `test_settled_overdub_wrap_publishes_current_snapshot` and
     `test_unstamped_wrap_journal_leaves_snapshot_unselected`. Device
     recapture remains open.
+  - Captures [`094228`](../../../captures/session_20260908_094228.log) and
+    [`094930`](../../../captures/session_20260908_094930.log): wrap journals
+    started (`fragment=0/3`) then both overdub stops were `seal=skipped`.
+    Session-exit never queued; `closeOverdubSession` discarded the in-flight
+    journals and `root_rev` stayed 1. `discardUnpublishedSnapshotIfNotSessionExit`
+    now retains wrap journals / in-flight wrap construction. Session-exit
+    keep-alive includes wrap journals. Skipped overdub stop queues session-exit
+    when wrap work is pending. Native fixtures
+    `test_skipped_overdub_stop_retains_in_flight_wrap_journals` and
+    `test_queue_session_exit_keeps_wrap_journals_without_new_pass`. Focused
+    native **83/83**. Device recapture remains open.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
 ## 4. Direct consumers

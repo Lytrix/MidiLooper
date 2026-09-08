@@ -7,11 +7,12 @@
  *
  * Measures the MIDI Input Gap between handleMidiInput() entries, the duration
  * of handleMidiInput(), Clock/track durations, USB/DIN drain segments, nested
- * dispatch sums, MIDI deadline lateness, and (overdub boundary Stage 1)
- * external-clock arrival / batch / dispatch attribution. Hot-path hooks only
- * accumulate integers. `#CAP` for lateness is a 5 s window plus rare one-shots
- * drained from the main loop — never a line per MIDI event. Does not admit work,
- * add handleMidiInput() call sites, or drive any scheduling decision.
+ * dispatch sums, MIDI deadline lateness, external-clock arrival / batch /
+ * dispatch attribution, USB-device batch composition, and (Stage 4a) per-track
+ * clock-path spans inside `updateAllTracks` / `playCommittedLoopMidi`. Hot-path
+ * hooks only accumulate integers. `#CAP` for lateness is a 5 s window plus rare
+ * one-shots drained from the main loop — never a line per MIDI event. Does not
+ * admit work, add handleMidiInput() call sites, or drive any scheduling decision.
  *
  * See docs/Plans/runtime_scheduling_admission_model_architecture.md.
  */
@@ -107,6 +108,23 @@ struct Snapshot {
   uint32_t clkBatchMax = 0;
   uint32_t clkBatchCount = 0;
   uint32_t servicePeriodUs = 0;
+  uint32_t usbBatchMax = 0;
+  uint32_t usbBatchSaturatedCount = 0;
+  uint32_t usbBatchClockMax = 0;
+  uint32_t usbBatchConsecutiveClockMax = 0;
+  uint32_t usbBatchSizeBuckets[5] = {};
+  uint32_t usbBatchClockBuckets[5] = {};
+  uint32_t usbBatchClockDispatchMaxUs[5] = {};
+  uint32_t trackRebuildMaxUs = 0;
+  uint32_t trackRebuildOverCount = 0;
+  uint32_t trackOrderMaxUs = 0;
+  uint32_t trackOrderOverCount = 0;
+  uint32_t trackSendMaxUs = 0;
+  uint32_t trackSendOverCount = 0;
+  uint32_t trackSlotMaxUs = 0;
+  uint32_t trackSlotOverCount = 0;
+  uint32_t trackResidMaxUs = 0;
+  uint32_t trackResidOverCount = 0;
   bool lateOneShotArmed = true;
   bool pendingLateEvent = false;
   bool pendingPlaybackRebuild = false;
@@ -133,6 +151,29 @@ void noteTracksUpdate(uint32_t durationUs);
 
 /** Record duration of one TrackManager::updateAllTracks track iteration. */
 void noteTrackUpdate(uint8_t trackIndex, uint32_t durationUs);
+
+/**
+ * Stage 4a: start per-track nested spans for one `updateAllTracks` iteration.
+ * Rebuild / order / send / slot accumulate until `commitTrackPathNested`.
+ */
+void beginTrackPathNested();
+
+void addTrackPathRebuild(uint32_t durationUs);
+void addTrackPathOrder(uint32_t durationUs);
+void addTrackPathSend(uint32_t durationUs);
+void addTrackPathSlot(uint32_t durationUs);
+
+/** Nested send sum for the current track iteration. 0 when the nest is inactive. */
+uint32_t trackPathSendUs();
+
+/** Wall duration minus send accumulated since `sendBeforeUs`. 0 when nest is inactive. */
+uint32_t trackPathExclusiveUs(uint32_t wallUs, uint32_t sendBeforeUs);
+
+/**
+ * Record one sample each for rebuild / order / send / slot / residual.
+ * Residual is `trackDurationUs` minus the attributed nested sums (0 if they exceed).
+ */
+void commitTrackPathNested(uint32_t trackDurationUs);
 
 /** S0b: USB-device read loop + dispatchMidiBatch. */
 void noteUsbDeviceDrain(uint32_t durationUs);
@@ -206,6 +247,16 @@ void noteExternalClockBatch(uint32_t arrivalUs, uint32_t clockCount, uint32_t cl
 void noteExternalClockDispatchEnter(uint32_t nowUs);
 
 /**
+ * USB-device input-batch composition. size == 0 is a no-op. `saturated` is true
+ * when the read loop hit the per-call cap. `dispatchUs` is dispatchMidiBatch
+ * duration for this batch. Clock-count buckets and dispatch maxima record only
+ * batches with clockCount > 0.
+ */
+void noteUsbDeviceBatchComposition(uint32_t size, uint32_t clockCount, uint32_t nonClockCount,
+                                   uint32_t maxConsecutiveClocks, bool saturated,
+                                   uint32_t dispatchUs);
+
+/**
  * Mark the start of one playback service interval (internal tick ISR or external
  * clock pulse). ISR-safe ITCM integer stores — not FLASHMEM. `tickPeriodUs` is one
  * internal tick or one MIDI-clock period (`TICKS_PER_CLOCK` ticks).
@@ -214,6 +265,13 @@ void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs);
 
 /** Clear due-time cadence on transport stop/start so the next pulse is not scored late. */
 void resetPlaybackDeadlineCadence();
+
+/**
+ * Remaining microseconds until the next already-knowable playback-service
+ * deadline (`serviceDue + servicePeriod`). UINT32_MAX when cadence is unknown.
+ * 0 when that deadline is already due or past. Read of existing cadence only.
+ */
+uint32_t remainingUntilNextPlaybackServiceUs(uint32_t nowUs);
 
 /**
  * Note-on/off send lateness. ISR-safe ITCM stores. On time iff sent before the next
@@ -301,6 +359,20 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) RuntimeTimingTelemetry::noteTracksUpdate(durationUs)
 #define RUNTIME_TIMING_NOTE_TRACK_UPDATE(trackIndex, durationUs) \
   RuntimeTimingTelemetry::noteTrackUpdate(trackIndex, durationUs)
+#define RUNTIME_TIMING_BEGIN_TRACK_PATH_NESTED() RuntimeTimingTelemetry::beginTrackPathNested()
+#define RUNTIME_TIMING_ADD_TRACK_PATH_REBUILD(durationUs) \
+  RuntimeTimingTelemetry::addTrackPathRebuild(durationUs)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_ORDER(durationUs) \
+  RuntimeTimingTelemetry::addTrackPathOrder(durationUs)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_SEND(durationUs) \
+  RuntimeTimingTelemetry::addTrackPathSend(durationUs)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_SLOT(durationUs) \
+  RuntimeTimingTelemetry::addTrackPathSlot(durationUs)
+#define RUNTIME_TIMING_TRACK_PATH_SEND_US() RuntimeTimingTelemetry::trackPathSendUs()
+#define RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(wallUs, sendBeforeUs) \
+  RuntimeTimingTelemetry::trackPathExclusiveUs(wallUs, sendBeforeUs)
+#define RUNTIME_TIMING_COMMIT_TRACK_PATH_NESTED(trackDurationUs) \
+  RuntimeTimingTelemetry::commitTrackPathNested(trackDurationUs)
 #define RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(durationUs) RuntimeTimingTelemetry::noteUsbDeviceDrain(durationUs)
 #define RUNTIME_TIMING_NOTE_DIN_DRAIN(durationUs) RuntimeTimingTelemetry::noteDinDrain(durationUs)
 #define RUNTIME_TIMING_NOTE_USB_HOST_TASK(durationUs) RuntimeTimingTelemetry::noteUsbHostTask(durationUs)
@@ -324,10 +396,16 @@ Snapshot peek(uint32_t nowUs = 0);
   RuntimeTimingTelemetry::noteExternalClockBatch(arrivalUs, clockCount, clockPeriodUs)
 #define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_DISPATCH_ENTER(nowUs) \
   RuntimeTimingTelemetry::noteExternalClockDispatchEnter(nowUs)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_BATCH_COMPOSITION(size, clockCount, nonClockCount, \
+                                                         maxConsecutiveClocks, saturated, dispatchUs) \
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(size, clockCount, nonClockCount, \
+                                                        maxConsecutiveClocks, saturated, dispatchUs)
 #define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) \
   RuntimeTimingTelemetry::notePlaybackServiceEnter(nowUs, tickPeriodUs)
 #define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() \
   RuntimeTimingTelemetry::resetPlaybackDeadlineCadence()
+#define RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(nowUs) \
+  RuntimeTimingTelemetry::remainingUntilNextPlaybackServiceUs(nowUs)
 #define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) \
   RuntimeTimingTelemetry::recordNoteSendLateness(isNoteOn, nowUs, tick)
 #define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) \
@@ -354,6 +432,14 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_CLOCK_DISPATCH(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_TRACKS_UPDATE(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_TRACK_UPDATE(trackIndex, durationUs) ((void)0)
+#define RUNTIME_TIMING_BEGIN_TRACK_PATH_NESTED() ((void)0)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_REBUILD(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_ORDER(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_SEND(durationUs) ((void)0)
+#define RUNTIME_TIMING_ADD_TRACK_PATH_SLOT(durationUs) ((void)0)
+#define RUNTIME_TIMING_TRACK_PATH_SEND_US() (0u)
+#define RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(wallUs, sendBeforeUs) (0u)
+#define RUNTIME_TIMING_COMMIT_TRACK_PATH_NESTED(trackDurationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_DIN_DRAIN(durationUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_USB_HOST_TASK(durationUs) ((void)0)
@@ -375,8 +461,12 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_CLOCK_PULSE() ((void)0)
 #define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_BATCH(arrivalUs, clockCount, clockPeriodUs) ((void)0)
 #define RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_DISPATCH_ENTER(nowUs) ((void)0)
+#define RUNTIME_TIMING_NOTE_USB_DEVICE_BATCH_COMPOSITION(size, clockCount, nonClockCount, \
+                                                         maxConsecutiveClocks, saturated, dispatchUs) \
+  ((void)0)
 #define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) ((void)0)
 #define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() ((void)0)
+#define RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(nowUs) (0xFFFFFFFFu)
 #define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) ((void)0)
 #define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) ((void)0)
 #define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision, \

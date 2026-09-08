@@ -182,11 +182,47 @@ void test_stopped_track_snapshot_pauses_during_realtime() {
   TEST_ASSERT_FALSE(MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(false, true));
 }
 
+void test_snapshot_idle_pauses_during_boot_title_drain() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleDuringBootTitleDrain(false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleDuringBootTitleDrain(true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleDuringBootTitleDrain(true, true));
+}
+
+void test_loaded_snapshot_hydration_stays_off_after_boot() {
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowLoadedSnapshotHydration(true, false, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowLoadedSnapshotHydration(false, true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowLoadedSnapshotHydration(false, true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowLoadedSnapshotHydration(false, false, false));
+}
+
 void test_stopped_clock_snapshot_requires_pending_work() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(false, true, false));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, false, false));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, true, false));
   TEST_ASSERT_TRUE(MidiServiceDrain::allowStoppedClockSnapshotStep(true, true, true));
+}
+
+void test_boot_title_snapshot_stays_on_focus_track() {
+  const bool pending[] = {false, false, true, false};
+  TEST_ASSERT_EQUAL_UINT8(1, MidiServiceDrain::selectBootTitleSnapshotTrack(
+                                 true, 1, 0, 4, pending));
+  TEST_ASSERT_EQUAL_UINT8(2, MidiServiceDrain::selectBootTitleSnapshotTrack(
+                                 false, 1, 0, 4, pending));
+}
+
+void test_stopped_loaded_snapshot_prefers_focus_then_in_flight() {
+  const bool pending[] = {true, false, true, false};
+  const bool noneInFlight[] = {false, false, false, false};
+  TEST_ASSERT_EQUAL_UINT8(0, MidiServiceDrain::selectStoppedLoadedSnapshotTrack(
+                                 0, 2, 4, pending, noneInFlight));
+  TEST_ASSERT_EQUAL_UINT8(2, MidiServiceDrain::selectStoppedLoadedSnapshotTrack(
+                                 2, 0, 4, pending, noneInFlight));
+  const bool focusIdle[] = {false, false, true, false};
+  const bool inFlight[] = {true, false, false, false};
+  TEST_ASSERT_EQUAL_UINT8(1, MidiServiceDrain::selectStoppedLoadedSnapshotTrack(
+                                 1, 2, 4, focusIdle, inFlight));
+  TEST_ASSERT_EQUAL_UINT8(1, MidiServiceDrain::selectStoppedLoadedSnapshotTrack(
+                                 1, 0, 4, focusIdle, noneInFlight));
 }
 
 void test_stopped_snapshot_track_prefers_pending_slot() {
@@ -201,6 +237,53 @@ void test_stopped_snapshot_track_prefers_pending_slot() {
 void test_visual_cache_reconstruct_slice_off_during_overdub() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowVisualCacheReconstructSlice(false));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowVisualCacheReconstructSlice(true));
+}
+
+void test_snapshot_idle_reserve_admits_two_unit_fit() {
+  const uint32_t cost = MidiServiceDrain::snapshotIdleConstructionCostUs(
+      MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn);
+  TEST_ASSERT_EQUAL_UINT32(8000u, cost);
+  const uint32_t remaining = cost + MidiServiceDrain::kSnapshotIdleSafetyMarginUs + 1u;
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleReserve(remaining, true));
+}
+
+void test_snapshot_idle_reserve_admits_exact_two_unit_fit() {
+  const uint32_t remaining =
+      MidiServiceDrain::snapshotIdleConstructionCostUs(
+          MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn) +
+      MidiServiceDrain::kSnapshotIdleSafetyMarginUs;
+  TEST_ASSERT_EQUAL_UINT32(
+      MidiServiceDrain::snapshotIdleConstructionCostUs(2),
+      MidiServiceDrain::admittedSnapshotIdleUs(remaining));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleReserve(remaining, true));
+}
+
+void test_snapshot_idle_reserve_yields_when_two_units_do_not_fit() {
+  const uint32_t remaining =
+      MidiServiceDrain::snapshotIdleConstructionCostUs(
+          MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn) +
+      MidiServiceDrain::kSnapshotIdleSafetyMarginUs - 1u;
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleReserve(remaining, true));
+}
+
+void test_snapshot_idle_reserve_floors_margin_to_zero() {
+  TEST_ASSERT_EQUAL_UINT32(0u, MidiServiceDrain::admittedSnapshotIdleUs(0));
+  TEST_ASSERT_EQUAL_UINT32(
+      0u, MidiServiceDrain::admittedSnapshotIdleUs(MidiServiceDrain::kSnapshotIdleSafetyMarginUs));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleReserve(0, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleReserve(
+      MidiServiceDrain::kSnapshotIdleSafetyMarginUs, true));
+}
+
+void test_snapshot_idle_reserve_caps_at_ceiling() {
+  TEST_ASSERT_EQUAL_UINT32(MidiServiceDrain::kSnapshotIdleReserveCeilingUs,
+                           MidiServiceDrain::admittedSnapshotIdleUs(40000u));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleReserve(40000u, true));
+}
+
+void test_snapshot_idle_reserve_bypasses_when_not_timing_critical() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleReserve(0, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleReserve(1, false));
 }
 
 void test_stopped_pending_snapshot_wins_over_first_paint() {
@@ -228,8 +311,18 @@ int main() {
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
   RUN_TEST(test_stopped_track_snapshot_pauses_during_realtime);
+  RUN_TEST(test_snapshot_idle_pauses_during_boot_title_drain);
+  RUN_TEST(test_loaded_snapshot_hydration_stays_off_after_boot);
   RUN_TEST(test_stopped_clock_snapshot_requires_pending_work);
+  RUN_TEST(test_boot_title_snapshot_stays_on_focus_track);
+  RUN_TEST(test_stopped_loaded_snapshot_prefers_focus_then_in_flight);
   RUN_TEST(test_stopped_snapshot_track_prefers_pending_slot);
+  RUN_TEST(test_snapshot_idle_reserve_admits_two_unit_fit);
+  RUN_TEST(test_snapshot_idle_reserve_admits_exact_two_unit_fit);
+  RUN_TEST(test_snapshot_idle_reserve_yields_when_two_units_do_not_fit);
+  RUN_TEST(test_snapshot_idle_reserve_floors_margin_to_zero);
+  RUN_TEST(test_snapshot_idle_reserve_caps_at_ceiling);
+  RUN_TEST(test_snapshot_idle_reserve_bypasses_when_not_timing_critical);
   RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);
   RUN_TEST(test_visual_cache_reconstruct_slice_off_during_overdub);
   return UNITY_END();

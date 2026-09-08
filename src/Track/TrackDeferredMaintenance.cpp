@@ -16,7 +16,9 @@
 #include "StorageManager.h"
 #include "TrackManager.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/InvestigationCaptureLog.h"
 #include "Utils/MidiServiceDrain.h"
+#include "Utils/RuntimeTimingTelemetry.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopEventValidation.h"
@@ -66,63 +68,7 @@ void logContentResolutionDeviceGateIncomplete(const char* reason) {
   }
 }
 
-#if SESSION_CAPTURE_SNAPSHOT_IDLE
-TRACK_COLD_MEM __attribute__((noinline)) void appendSnapshotIdleCaptureLine(
-    Loop& snapshotLoop, uint32_t snapshotIdleStartUs) {
-  const unsigned long nowUs = static_cast<unsigned long>(micros());
-#if defined(SESSION_CAPTURE)
-  const uint32_t emitStartUs = micros();
-#endif
-  const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
-  char snapshotLine[192];
-  snprintf(snapshotLine, sizeof(snapshotLine),
-           "#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
-           "playback_rev=%lu,queued=%lu,applied=%lu,construction=%lu,exit=%u,inflight=%u,"
-           "journals=%lu,fragment=%u/%u,parent_rev=%lu",
-           nowUs, nowUs - static_cast<unsigned long>(snapshotIdleStartUs),
-           snapshotLoop.hasPendingSnapshotPublish() ? 1u : 0u, publishedSnapshot.get(),
-           static_cast<unsigned long>(snapshotLoop.publishedSnapshotRevision()),
-           static_cast<unsigned long>(snapshotLoop.playbackRevision),
-           static_cast<unsigned long>(snapshotLoop.pendingSnapshotQueuedPassCount()),
-           static_cast<unsigned long>(snapshotLoop.pendingSnapshotAppliedPassCount()),
-           static_cast<unsigned long>(snapshotLoop.pendingSnapshotConstructionPassId()),
-           snapshotLoop.pendingSnapshotSessionExitQueued() ? 1u : 0u,
-           snapshotLoop.hasInFlightSnapshotConstruction() ? 1u : 0u,
-           static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapJournalCount()),
-           snapshotLoop.pendingSnapshotWrapFragmentIndex(),
-           snapshotLoop.pendingSnapshotWrapFragmentCount(),
-           static_cast<unsigned long>(snapshotLoop.pendingSnapshotWrapParentRevision()));
-  DebugSessionCapture::appendCaptureTextLine(snapshotLine);
-#if defined(SESSION_CAPTURE)
-  snapshotLoop.addSnapshotIdleEmitUs(micros() - emitStartUs);
-#endif
-
-  char childLine[192];
-  snprintf(childLine, sizeof(childLine),
-           "#CAP,%lu,DIAG,snapshot_idle,child,start=%lu,pass_change=%lu,step=%lu,"
-           "finish=%lu,publish=%lu,probe=%lu,enqueue=%lu,discard=%lu,emit=%lu",
-           nowUs, static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleStartUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdlePassChangeUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleStepUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleFinishUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdlePublishUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleProbeUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEnqueueUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleDiscardUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEmitUs()));
-  DebugSessionCapture::appendCaptureTextLine(childLine);
-  snprintf(childLine, sizeof(childLine),
-           "#CAP,%lu,DIAG,snapshot_idle,inner,refill=%lu,event_scan=%lu,"
-           "note_lookup=%lu,change_build=%lu,construct=%lu",
-           nowUs, static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleRefillUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEventScanUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleNoteLookupUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleChangeBuildUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleConstructUs()));
-  DebugSessionCapture::appendCaptureTextLine(childLine);
-}
-#endif
-
+#include "Utils/InvestigationCaptureLog.h"
 TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
                                              const NoteUtils::DisplayNote& b) {
   return a.noteId == b.noteId && a.note == b.note && a.startTick == b.startTick &&
@@ -918,32 +864,66 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
           hasWrapJournal, snapshotPending) &&
       (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() ||
        hasWrapJournal);
-  const bool snapshotEligible = snapshotPending && snapshotIdleAllowed;
+  const bool snapshotEligible =
+      snapshotPending && snapshotIdleAllowed &&
+      !(snapshotLoop.pendingSnapshotFromLoadedPasses() &&
+        !MidiServiceDrain::allowLoadedSnapshotHydration(
+            false, StorageManager::isBootTitleLoadDrain(),
+            StorageManager::bootInteractiveReady()));
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
       snapshotEligible) {
-#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
-    const uint32_t snapshotIdleStartUs = micros();
+    const bool timingCritical =
+        isRecording() || isPlaying() || isOverdubbing() || isStoppedRecording() || isArmed();
+    uint32_t remainingUs = RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(
+#if defined(ARDUINO)
+        micros()
+#else
+        0u
 #endif
-    const uint32_t playheadPhaseTick =
-        snapshotLoop.loopLengthTicks == 0
-            ? 0
-            : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
-                              snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
-    snapshotLoop.stepPendingSnapshotPublish(
-        MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
-        (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
-        liveRecordCompletedTicks);
+    );
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
-    appendSnapshotIdleCaptureLine(snapshotLoop, snapshotIdleStartUs);
+    if (InvestigationCaptureLog::consumeSnapshotIdleForcedYield()) {
+      remainingUs = 0;
+    }
 #endif
+    if (!MidiServiceDrain::allowSnapshotIdleReserve(
+            remainingUs, timingCritical,
+            MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn)) {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+      InvestigationCaptureLog::appendSnapshotIdleYieldLine(
+          remainingUs, MidiServiceDrain::kSnapshotIdleSafetyMarginUs,
+          MidiServiceDrain::admittedSnapshotIdleUs(remainingUs),
+          MidiServiceDrain::snapshotIdleConstructionCostUs(
+              MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn),
+          timingCritical, snapshotLoop.hasPendingSnapshotPublish(),
+          snapshotLoop.publishedSnapshotRevision());
+#endif
+    } else {
+#if defined(SESSION_CAPTURE) && SESSION_CAPTURE_SNAPSHOT_IDLE
+      const uint32_t snapshotIdleStartUs = micros();
+#endif
+      const uint32_t playheadPhaseTick =
+          snapshotLoop.loopLengthTicks == 0
+              ? 0
+              : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
+                                snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
+      snapshotLoop.stepPendingSnapshotPublish(
+          MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+          (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
+          liveRecordCompletedTicks);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
+      InvestigationCaptureLog::appendSnapshotIdleLines(snapshotLoop, snapshotIdleStartUs);
+#endif
+    }
   }
 
-  // Snapshot publication is the committed source for the following visual-cache
-  // fill. Do not reconstruct the same loaded loop from passes while its root is
-  // still being built; on long boot loops this creates competing maintenance
-  // latency and can starve the device service interval.
+  // Title drain must not pass-gather a loaded loop (`015331`). After
+  // boot_commit, Stage 2.1 fallback may fill from passes until a current
+  // root exists (`022447` STOPPED `DISP` stayed at 0 notes). This gate
+  // does not depend on auto loaded hydration (`023222`).
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
-      activeLoop.hasPendingSnapshotPublish()) {
+      StorageManager::isBootTitleLoadDrain() &&
+      activeLoop.hasCommittedPasses() && !activeLoop.publishedSnapshotIsCurrent()) {
     return;
   }
 

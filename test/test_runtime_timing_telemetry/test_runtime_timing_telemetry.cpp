@@ -163,6 +163,7 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   RuntimeTimingTelemetry::noteExternalClockBatch(1000 + 4 * 20833 + 100, 4, 20833);
   RuntimeTimingTelemetry::noteExternalClockDispatchEnter(1000 + 4 * 20833 + 6100);
   RuntimeTimingTelemetry::notePlaybackServiceEnter(1000 + 4 * 20833 + 100, 20833);
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(12, 4, 8, 4, true, 6100);
   TEST_ASSERT_FALSE(
       RuntimeTimingTelemetry::maybeEmit(1000 + RuntimeTimingTelemetry::kEmitIntervalUs - 1));
 
@@ -206,6 +207,13 @@ void test_maybe_emit_rate_limits_and_resets_window() {
   TEST_ASSERT_EQUAL_UINT32(0, after.clkBatchMax);
   TEST_ASSERT_EQUAL_UINT32(0, after.clkBatchCount);
   TEST_ASSERT_EQUAL_UINT32(0, after.servicePeriodUs);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchMax);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchSaturatedCount);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchClockMax);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchConsecutiveClockMax);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchSizeBuckets[0]);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchClockBuckets[0]);
+  TEST_ASSERT_EQUAL_UINT32(0, after.usbBatchClockDispatchMaxUs[0]);
   TEST_ASSERT_TRUE(after.lateOneShotArmed);
 }
 
@@ -398,6 +406,84 @@ void test_reset_playback_deadline_cadence_clears_external_clock_arrival() {
   TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().extclkArrivalCount);
 }
 
+void test_usb_batch_composition_buckets_and_saturation() {
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(0, 0, 0, 0, true, 9000);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().usbBatchMax);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().usbBatchSaturatedCount);
+
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(3, 0, 3, 0, false, 400);
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(12, 2, 10, 1, false, 1500);
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(12, 9, 3, 8, true, 6100);
+  RuntimeTimingTelemetry::noteUsbDeviceBatchComposition(32, 20, 12, 20, false, 8000);
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(32, snap.usbBatchMax);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbBatchSaturatedCount);
+  TEST_ASSERT_EQUAL_UINT32(20, snap.usbBatchClockMax);
+  TEST_ASSERT_EQUAL_UINT32(20, snap.usbBatchConsecutiveClockMax);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbBatchSizeBuckets[0]);
+  TEST_ASSERT_EQUAL_UINT32(2, snap.usbBatchSizeBuckets[1]);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbBatchSizeBuckets[2]);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbBatchClockBuckets[0]);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbBatchClockBuckets[1]);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.usbBatchClockBuckets[2]);
+  TEST_ASSERT_EQUAL_UINT32(1500, snap.usbBatchClockDispatchMaxUs[0]);
+  TEST_ASSERT_EQUAL_UINT32(6100, snap.usbBatchClockDispatchMaxUs[1]);
+  TEST_ASSERT_EQUAL_UINT32(8000, snap.usbBatchClockDispatchMaxUs[2]);
+}
+
+void test_track_path_nested_spans_and_residual() {
+  RuntimeTimingTelemetry::addTrackPathRebuild(4000);
+  RuntimeTimingTelemetry::addTrackPathOrder(500);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().trackRebuildMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::peek().trackOrderMaxUs);
+
+  RuntimeTimingTelemetry::beginTrackPathNested();
+  RuntimeTimingTelemetry::addTrackPathRebuild(4000);
+  RuntimeTimingTelemetry::addTrackPathRebuild(200);
+  RuntimeTimingTelemetry::addTrackPathOrder(500);
+  RuntimeTimingTelemetry::addTrackPathSend(300);
+  RuntimeTimingTelemetry::addTrackPathSend(100);
+  RuntimeTimingTelemetry::addTrackPathSlot(800);
+  RuntimeTimingTelemetry::commitTrackPathNested(6000);
+
+  const auto first = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(4200, first.trackRebuildMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, first.trackRebuildOverCount);
+  TEST_ASSERT_EQUAL_UINT32(500, first.trackOrderMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(400, first.trackSendMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(800, first.trackSlotMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(100, first.trackResidMaxUs);
+
+  RuntimeTimingTelemetry::beginTrackPathNested();
+  RuntimeTimingTelemetry::addTrackPathRebuild(9000);
+  RuntimeTimingTelemetry::addTrackPathOrder(200);
+  RuntimeTimingTelemetry::addTrackPathSend(100);
+  RuntimeTimingTelemetry::addTrackPathSlot(50);
+  RuntimeTimingTelemetry::commitTrackPathNested(8000);
+
+  const auto snap = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(9000, snap.trackRebuildMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(1, snap.trackRebuildOverCount);
+  TEST_ASSERT_EQUAL_UINT32(500, snap.trackOrderMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(400, snap.trackSendMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(800, snap.trackSlotMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(100, snap.trackResidMaxUs);
+  TEST_ASSERT_EQUAL_UINT32(0, snap.trackResidOverCount);
+}
+
+void test_track_path_exclusive_subtracts_nested_send() {
+  RuntimeTimingTelemetry::beginTrackPathNested();
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::trackPathSendUs());
+  RuntimeTimingTelemetry::addTrackPathSend(250);
+  TEST_ASSERT_EQUAL_UINT32(250, RuntimeTimingTelemetry::trackPathSendUs());
+  TEST_ASSERT_EQUAL_UINT32(750, RuntimeTimingTelemetry::trackPathExclusiveUs(1000, 0));
+  RuntimeTimingTelemetry::addTrackPathSend(100);
+  TEST_ASSERT_EQUAL_UINT32(400, RuntimeTimingTelemetry::trackPathExclusiveUs(500, 250));
+  RuntimeTimingTelemetry::commitTrackPathNested(2000);
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::trackPathSendUs());
+  TEST_ASSERT_EQUAL_UINT32(0, RuntimeTimingTelemetry::trackPathExclusiveUs(1000, 0));
+}
+
 void test_note_lateness_independent_of_external_clock_arrival() {
   RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 2604);
   RuntimeTimingTelemetry::noteExternalClockBatch(1000, 1, 20833);
@@ -412,6 +498,21 @@ void test_note_lateness_independent_of_external_clock_arrival() {
   TEST_ASSERT_EQUAL_UINT32(4000, snap.extclkArrivalMaxUs);
   TEST_ASSERT_EQUAL_UINT32(1, snap.extclkArrivalCount);
   TEST_ASSERT_EQUAL_UINT32(0, snap.lateClkMaxUs);
+}
+
+void test_remaining_until_next_playback_service_unknown_without_cadence() {
+  TEST_ASSERT_EQUAL_UINT32(
+      0xFFFFFFFFu, RuntimeTimingTelemetry::remainingUntilNextPlaybackServiceUs(1000));
+}
+
+void test_remaining_until_next_playback_service_uses_due_plus_period() {
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 20000);
+  TEST_ASSERT_EQUAL_UINT32(
+      16000u, RuntimeTimingTelemetry::remainingUntilNextPlaybackServiceUs(5000));
+  TEST_ASSERT_EQUAL_UINT32(
+      0u, RuntimeTimingTelemetry::remainingUntilNextPlaybackServiceUs(21000));
+  TEST_ASSERT_EQUAL_UINT32(
+      0u, RuntimeTimingTelemetry::remainingUntilNextPlaybackServiceUs(22000));
 }
 
 void test_emit_interval_constant() {
@@ -434,6 +535,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_maybe_emit_rate_limits_and_resets_window);
   RUN_TEST(test_loop_remainder_spans_accumulate_independently);
   RUN_TEST(test_idle_maint_child_rem_is_callable);
+  RUN_TEST(test_remaining_until_next_playback_service_unknown_without_cadence);
+  RUN_TEST(test_remaining_until_next_playback_service_uses_due_plus_period);
   RUN_TEST(test_emit_interval_constant);
   RUN_TEST(test_note_send_within_tick_is_on_time);
   RUN_TEST(test_note_send_after_next_tick_is_late_and_queues_one_shot);
@@ -448,5 +551,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_external_clock_dispatch_delay_from_batch_arrival);
   RUN_TEST(test_reset_playback_deadline_cadence_clears_external_clock_arrival);
   RUN_TEST(test_note_lateness_independent_of_external_clock_arrival);
+  RUN_TEST(test_usb_batch_composition_buckets_and_saturation);
+  RUN_TEST(test_track_path_nested_spans_and_residual);
+  RUN_TEST(test_track_path_exclusive_subtracts_nested_send);
   return UNITY_END();
 }

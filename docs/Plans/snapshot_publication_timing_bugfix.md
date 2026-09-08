@@ -203,26 +203,33 @@ must not hide the construction execution cost.
 
 ## `T_RT_reserve` measurement procedure
 
-`T_RT_reserve` is the remaining runtime interval for deferred maintenance after
-the current MIDI scheduling boundary. It is not `T_clock`, not 60% of
-`T_clock`, and not an already-consumed maintenance interval. The 60% clock
-proxy stays an operating observation only.
+`T_RT_reserve` is the maximum construction-attributable time a snapshot-idle
+turn may consume before the next timing-critical `handleMidiInput()` entry,
+measured from that idle turn’s start ([DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)).
+It is not `T_clock`, not 60% of `T_clock`, and not an already-consumed
+maintenance interval. The 60% clock proxy stays an operating observation only.
+The construction budget is not a function of BPM.
 
 | Item | Definition |
 |---|---|
 | **Origin** | Start of the admitted Snapshot idle turn (`snapshot_idle` work-window start `t − us`). |
-| **Deadline** | Next timing-critical `handleMidiInput()` entry. |
-| **Observed interval** | A per-turn correlation from the Snapshot idle start to the next timing-critical `handleMidiInput()` entry. The existing `DIAG,midi_gap` line is a five-second maximum since the previous input exit and cannot serve as this per-turn value. |
+| **Deadline** | The actual next timing-critical `handleMidiInput()` entry, not the next MIDI-clock timestamp. |
+| **`reserve_us`** | Per-turn measured availability on `DIAG,snapshot_idle,child`: origin → deadline. When the next enter has not been seen yet, omit or emit `0` and pair on the following MIDI Input enter. `DIAG,midi_gap` cannot serve as this value. |
+| **`T_RT_reserve_ceiling`** | Policy cap **10,000 µs**. Independent of BPM. Not an observed unit. Not the minimum observed reserve. |
+| **`T_RT_safety_margin`** | Subtracted from `reserve_us` before comparing to the ceiling. **Not frozen.** 1,000 µs is a working hypothesis only. |
+| **Admitted interval** | `min(T_RT_reserve_ceiling, reserve_us − T_RT_safety_margin)`, floor zero. |
 | **Deadline lateness** | `DIAG,late_clk` / `DIAG,late_on` / `DIAG,late_off` in the same window, from `notePlaybackServiceEnter`. |
-| **Clock reference** | Nearest `#CAP,BPM` before the idle line: `T_clock_us = 1_000_000 × 60 / (BPM × 24)`. Use it only to name the scheduling period, not as the reserve. |
-| **Per-turn reserve** | Candidate definition: time from idle-turn start until the next timing-critical `handleMidiInput()` entry. This is an observation until the deadline, acceptance ceiling, and overrun policy are explicitly defined; it is not the full observed `midi_gap`. |
+| **Clock reference** | Nearest `#CAP,BPM` before the idle line: `T_clock_us = 1_000_000 × 60 / (BPM × 24)`. Names the scheduling period only. |
 | **Child attribution** | Exclusive children are `start_us`, `step_us`, `finish_us`, and `publish_us`. `pass_change_us` is nested inside `start_us`. `probe_us` is measurement overhead for one timestamp pair; five child timers cost about `5 × probe_us`. |
-| **Acceptance after freeze** | Not defined yet. It must specify an enforceable ceiling, the relation between the observed interval and admission, and the overrun action. An overrun must yield and retry without publishing an incomplete candidate. |
+| **Overrun** | Yield and retry on a later eligible idle turn. Keep the previous complete root. Do not publish an incomplete candidate. |
+| **Admission at turn start** | Remaining time until the next already-knowable timing-critical MIDI Input opportunity. This turn’s retrospective `reserve_us` is not available yet. A local elapsed-time timer is not the bound. |
+| **STOPPED exclusion** | Track `STOPPED` is not timing-critical. Exclude `reserve_us`, snapshot-idle duration, `late_*`, and `midi_gap` while `STOPPED`. Admission must not yield on STOPPED. |
 
-Do not freeze a numeric reserve until the per-turn correlation and acceptance
-policy are valid. The old 79 ms parent span is not a reserve. Rows 21 and 22
-stay target goals rather than verified implementation guarantees until their
-actual work units satisfy the declared caps.
+`reserve_us` telemetry and remaining-interval admission live in
+[`snapshot_publication_reserve_admission_refinement.md`](snapshot_publication_reserve_admission_refinement.md).
+Do not check off OpenSpec `3.5`/`3.6` until that device gate passes. The old
+79 ms parent span is not a reserve. Rows 21 and 22 stay target goals until
+their actual work units satisfy the declared caps.
 
 ## Stage 1 status
 
@@ -673,11 +680,14 @@ separate bounded-step design; do not assume that splitting
 **Problem:** Stage 2 cannot close the three contracts (admission within
 reserve, admitted unit bounded, overrun yields and resumes) without a
 numeric reserve. The 60% of `T_clock` value (12.5 ms at BPM 120) is an
-operating proxy, not the contract. [`225659`](../../captures/session_20260827_225659.log)
-has no per-idle remaining-interval field. `midi_gap` is a 5 s max since
-the previous `handleMidiInput()` **exit**, not the reserve.
+operating proxy, not the contract.
 
-**Proposed measurement**
+**Policy (2026-09-08):** [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+records `T_RT_reserve_ceiling` = 10,000 µs and per-turn `reserve_us`.
+Freezing the minimum observed reserve, or an observed unit such as 8.86 ms,
+as a timing guarantee remains rejected. `T_RT_safety_margin` is not frozen.
+
+**Telemetry still required**
 
 - Origin: `snapshotIdleStartUs` already taken in
   `Track::processDeferredIdleMaintenance` before
@@ -691,22 +701,9 @@ the previous `handleMidiInput()` **exit**, not the reserve.
 - Recapture the [`225659`](../../captures/session_20260827_225659.log)
   class (record, overdub, STOPPED hold through `pending=0`).
 
-**Falsification of the freeze rule**
-
-Freezing the minimum observed reserve as a timing guarantee is rejected.
-An observed minimum is not an enforced deadline or an overrun policy.
-The measurement remains necessary, but the acceptance ceiling and
-overrun behavior must be defined before a reserve can be frozen.
-
-Before adding or freezing `reserve_us`, define how the next
-`handleMidiInput()` correlation is recorded after the idle line has
-already been emitted. Keep the existing cursor-yield, unpublished
-candidate, and previous-root behavior while that contract is open.
-Do not freeze from the 12.5 ms proxy or use the old 79 ms parent span as
-the reserve.
-
-**Not this slice:** Changing discard, start, or `step` bounds. The
-measurement contract must be valid before any of those decisions.
+Before adding `reserve_us`, keep the existing cursor-yield, unpublished
+candidate, and previous-root behavior. Do not use the 12.5 ms proxy or the
+old 79 ms parent span as the reserve.
 
 ## ExecutionBounds rows 21–22 — goals versus implementation
 
@@ -722,7 +719,8 @@ candidate unpublished and resumable.
 
 **Row 22 goal:** Wrap and session-exit only **queue** journal-capped
 fragments (exact parent identity) at stop / wrap commit. One idle turn
-admits at most one fragment start **or** one row-21 step.
+admits two units (`kSnapshotIdleConstructionUnitsPerTurn` = 2). Each unit
+is one fragment start or one row-21 step.
 `storePublishedSnapshot` runs only when wrap journals, session-exit
 passes, construction, and companions are complete. Failure keeps the
 previous published root and never publishes a prefix.

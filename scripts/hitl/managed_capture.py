@@ -56,11 +56,13 @@ class ManagedCaptureSession:
         boot_wait_s: float = 0.0,
         out_dir: Path,
         python_executable: Optional[str] = None,
+        arm_snapshot_yield: bool = False,
     ) -> None:
         self._port = port
         self._boot_wait_s = max(boot_wait_s, 0.0)
         self._out_dir = out_dir
         self._python = python_executable or sys.executable
+        self._arm_snapshot_yield = arm_snapshot_yield
         self._process: subprocess.Popen[str] | None = None
         self._output_thread: threading.Thread | None = None
         self._session_log: Path | None = None
@@ -86,6 +88,8 @@ class ManagedCaptureSession:
             "--out-dir",
             str(self._out_dir),
         ]
+        if self._arm_snapshot_yield:
+            command.append("--arm-snapshot-yield")
         if self._boot_wait_s > 0:
             print(
                 f"[hitl-capture] starting capture_session.py on {self._port} "
@@ -149,6 +153,7 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         port=config.capture_serial_port,
         boot_wait_s=config.capture_boot_wait_s,
         out_dir=config.out_dir,
+        arm_snapshot_yield=config.arm_snapshot_yield,
     )
     try:
         log_path = session.start()

@@ -142,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not spawn capture_session.py (use --serial-port for built-in serial instead)",
     )
+    run_parser.add_argument(
+        "--arm-snapshot-yield",
+        action="store_true",
+        help="Ask managed capture to send !SNAPSHOT_YIELD after the first timing-critical ST line",
+    )
     return parser
 
 
@@ -187,6 +192,7 @@ def _run_with_optional_managed_capture(
         managed_capture=True,
         capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
+        arm_snapshot_yield=bool(getattr(args, "arm_snapshot_yield", False)),
     )
 
     def _legacy_run(_active: HitlConfig) -> int:

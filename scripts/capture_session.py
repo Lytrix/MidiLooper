@@ -53,6 +53,11 @@ def main() -> int:
         default=Path("captures"),
         help="Output directory (default: captures/)",
     )
+    parser.add_argument(
+        "--arm-snapshot-yield",
+        action="store_true",
+        help="Write !SNAPSHOT_YIELD once after the first timing-critical ST line",
+    )
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +74,32 @@ def main() -> int:
     boot_wait_done = False
     last_fsync_ms = 0.0
     fsync_interval_s = 0.25
+    yield_armed = False
+    line_buffer = b""
+    timing_critical_names = (
+        b",RECORDING",
+        b",PLAYING",
+        b",OVERDUBBING",
+        b",STOPPED_RECORDING",
+        b",ARMED",
+    )
+
+    def _arm_yield_from_chunk(chunk: bytes) -> None:
+        nonlocal yield_armed, line_buffer
+        if yield_armed or not args.arm_snapshot_yield or ser is None or not ser.is_open:
+            return
+        line_buffer += chunk
+        while b"\n" in line_buffer:
+            raw, line_buffer = line_buffer.split(b"\n", 1)
+            if b",ST," not in raw:
+                continue
+            if not any(name in raw for name in timing_critical_names):
+                continue
+            ser.write(b"!SNAPSHOT_YIELD\n")
+            ser.flush()
+            yield_armed = True
+            print("[capture] armed snapshot yield", flush=True)
+            return
 
     with out_path.open("ab") as log:
         try:
@@ -131,6 +162,7 @@ def main() -> int:
 
                 if chunk:
                     log.write(chunk)
+                    _arm_yield_from_chunk(chunk)
                     now_s = time.monotonic()
                     if now_s - last_fsync_ms >= fsync_interval_s:
                         _sync_log(log)
