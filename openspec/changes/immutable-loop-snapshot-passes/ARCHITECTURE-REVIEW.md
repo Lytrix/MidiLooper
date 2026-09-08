@@ -444,6 +444,17 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       orphans, 116 remaining; `DFRAME` **58**. Both overdub opens
       `from=snapshot`.
 
+### Phase 4.4h implementation review — display fallback identity
+
+- [x] Architecture gate posted: windowed fallback copies current-root
+      span notes. Overlay gather rejected. No owner or transition change.
+      Hydrate / raise `N` unchanged.
+- [x] Stage 1: `rebuildDisplayNotesInWindow` uses
+      `Loop::tryCopyCurrentSnapshotDisplayNotesInWindow`. Native
+      `test_try_copy_current_snapshot_display_notes_in_window_uses_span_note_ids`.
+- [x] Capture-serial RAM1 locals **6848**. Full native suite:
+      **1774 succeeded, 1 skipped** (4.4h files only).
+
 ### Close-publish NoteRange pitch reuse
 
 - [x] Architecture checkpoint: `appendEditRowChange` only; no owner or

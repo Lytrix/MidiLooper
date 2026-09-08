@@ -12,6 +12,7 @@
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/SnapshotNoteConversion.h"
 
 #include <algorithm>
 #include <vector>
@@ -365,6 +366,50 @@ LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVe
     return false;
   }
   return copyPublishedSnapshotEditViewEvents(*this, out);
+}
+
+LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotDisplayNotesInWindow(
+    NoteUtils::DisplayNoteVec& out, uint32_t windowStart, uint32_t windowLength) const {
+  out.clear();
+  if (!publishedSnapshotIsCurrent() || loopLengthTicks == 0 || windowLength == 0) {
+    return false;
+  }
+  const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
+  if (!snapshot) {
+    return false;
+  }
+  if (windowLength >= loopLengthTicks) {
+    windowStart = 0;
+    windowLength = loopLengthTicks;
+  }
+  const uint32_t barTicks = Config::TICKS_PER_BAR;
+  const uint32_t barCount =
+      (loopLengthTicks + barTicks - 1u) / barTicks;
+  if (barCount == 0) {
+    return true;
+  }
+  if (windowLength >= loopLengthTicks) {
+    appendSnapshotNotesForBarRange(*snapshot, 0, barCount - 1u, out);
+  } else if (windowStart + windowLength > loopLengthTicks) {
+    const uint32_t firstBar = windowStart / barTicks;
+    appendSnapshotNotesForBarRange(*snapshot, firstBar, barCount - 1u, out);
+    const uint32_t wrappedEnd = windowStart + windowLength - loopLengthTicks;
+    if (wrappedEnd > 0) {
+      const uint32_t lastHeadBar = (wrappedEnd - 1u) / barTicks;
+      appendSnapshotNotesForBarRange(*snapshot, 0, lastHeadBar, out);
+    }
+  } else {
+    const uint32_t firstBar = windowStart / barTicks;
+    const uint32_t lastBar = (windowStart + windowLength - 1u) / barTicks;
+    appendSnapshotNotesForBarRange(*snapshot, firstBar, lastBar, out);
+  }
+  const uint32_t windowEnd = windowStart + windowLength;
+  out.erase(std::remove_if(out.begin(), out.end(),
+                           [windowStart, windowEnd](const NoteUtils::DisplayNote& note) {
+                             return note.endTick < windowStart || note.startTick >= windowEnd;
+                           }),
+            out.end());
+  return true;
 }
 
 LOOP_COLD_MEM void Loop::copyIdleValidateEvents(MidiEventVec& out) const {
