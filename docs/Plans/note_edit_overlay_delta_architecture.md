@@ -6,7 +6,7 @@
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Implementation:** [`note_edit_overlay_delta_refinement.md`](note_edit_overlay_delta_refinement.md)  
 **Evidence:** [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS; [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS; [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
-**Does not authorize:** hydrate Stages 1–5, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
+**Does not authorize:** hydrate 2–5 / 4a, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
 
 This session does **not** invent a second consume model. It binds already-approved plans to one north star and adds the missing **E:** restore contract.
 
@@ -212,8 +212,8 @@ Firmware only when CURRENT_WORK names the stage.
 3. **Stop full current-state fill** —
    `ensureCurrentStateVisibleRowsFromVisualCache` is not an analyze fill.
    Device PASS [`221906`](../../captures/session_20260908_221906.log).
-4. **Hydrate 1 → 2 → 3** — select neighborhood query, indexed overlap,
-   resolver prepared-hit.
+4. **Hydrate 1** — select neighborhood around `selectedTick` (now
+   implementing). Then **2 → 3** — indexed overlap, resolver prepared-hit.
 5. **Hydrate 4a → 4b → 4c → 5** — open without rematerialize-to-analyze;
    playback overlay; 16-bar / ~1000-note device gate.
 

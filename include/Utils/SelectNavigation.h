@@ -18,6 +18,15 @@ struct SelectNavSlot {
     int noteIdx = -1;  // -1 = empty 16th step (no note)
 };
 
+/// Hydrate 1: slots cover this many 16ths on each side of `selectedTick`.
+constexpr uint32_t kSelectNavigationNeighborhoodRadiusSteps = 1;
+
+struct SelectNavigationBuildStats {
+    uint32_t notesExamined = 0;
+    uint32_t stepsScanned = 0;
+    uint32_t slotsEmitted = 0;
+};
+
 uint32_t noteRelativeTick(uint32_t absolutePos, uint32_t loopStartTick, uint32_t loopLength);
 uint32_t noteStorageTick(uint32_t relativeTick, uint32_t loopStartTick, uint32_t loopLength);
 
@@ -31,7 +40,12 @@ std::vector<SelectNavSlot> buildSelectNavigationSlots(
     uint32_t loopStartTick,
     const std::vector<NoteUtils::DisplayNote>& notes,
     uint32_t selectedTick,
-    bool includeSelectedTickIfMissing = true);
+    bool includeSelectedTickIfMissing = true,
+    SelectNavigationBuildStats* stats = nullptr);
+
+/// Map select-fader pitchbend onto a 16th in `[0, navLength)`.
+uint32_t selectTickFromPitchbend(int32_t pitchValue, int32_t pitchMin, int32_t pitchMax,
+                                 uint32_t navLength);
 
 int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
                               int selectedNoteIdx,

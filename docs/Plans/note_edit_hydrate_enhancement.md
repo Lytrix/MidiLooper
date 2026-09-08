@@ -1,6 +1,6 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Decided — not now. Architecture PASS (overlap retarget 2026-08-17); firmware not authorized. Bound to the 2026-09-08 overlay-delta design session ([`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md), proposed DEC-055) for **E:00** / no full-row clone.  
+**Status:** Hydrate 1 authorized in CURRENT_WORK — select neighborhood. Architecture PASS (overlap retarget 2026-08-17). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 2–5 / 4a.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
@@ -8,7 +8,7 @@
 **Sibling (overlap participants):** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) amendment 2026-08-16  
 **Overdub analog:** notes present vs incoming hold LinearSpan (same participant class). Select stays a `selectedTick` neighborhood.  
-**Does not authorize:** firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
+**Does not authorize:** hydrate 2–5 / 4a firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
 
 ---
 
@@ -76,7 +76,38 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 | 6E overlap query | native PASS; not wired to Track |
 | Wrap-move persist | **parked** — current-structure issue; not a start gate |
 
-Start firmware only when this file is in CURRENT_WORK § Now implementing.
+Hydrate 1 is named in CURRENT_WORK § Now implementing. Do not start 2–5 / 4a.
+
+---
+
+## Pre-implementation review (Hydrate 1)
+
+### Ready
+
+- `SelectNavigation::buildSelectNavigationSlots` is the slot owner
+- Encoder `stepSelectNavSlot` already rebuilds at `getSelectedTick()` then ±1
+- Existing note order is start 16th, then pitch
+- `includeSelectedTickIfMissing` stays
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Neighborhood | 16th containing `selectedTick` ± 1 16th (3 steps), wrap |
+| Sounding-through | Skip — same as today (onset 16th only) |
+| Fader | Pitchbend → 16th in `navLength`, then neighborhood at that tick |
+| Chords | Same 16th stays pitch-ordered; encoder steps through them; fader does not spend travel per chord note |
+| LCR consume | Not this stage. Miss/legacy still filters the already-built selectable list once |
+| `resolveState` | Not Select |
+| Hydrate 2–5 / 4a | Not this stage |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — Hydrate 1 only.
 
 ---
 
