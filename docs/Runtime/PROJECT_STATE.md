@@ -52,6 +52,9 @@ copies the opened snapshot root (`tryCopyNoteEditOpenedSnapshotEvents`).
 RAM1 locals **6848**; native **1772 succeeded, 1 skipped**.
 Device [`191346`](../../captures/session_20260908_191346.log): both
 `current=1` opens `only_*=0` (120 then 119).
+[`192155`](../../captures/session_20260908_192155.log): `current=0` open
+keeps pass rematerialize (`only_store=5`); three `current=1` `root_rev=41`
+opens are **141** / `only_*=0`.
 Wrap-head vs last-Off pairing RC1–RC3 is accepted (native shipped;
 [`185428`](../../captures/session_20260908_185428.log) RC3 analog PASS;
 174646 recapture waived).
