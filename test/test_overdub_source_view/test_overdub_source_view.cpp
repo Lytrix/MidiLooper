@@ -4008,6 +4008,59 @@ void test_snapshot_source_uses_bounded_overdub_window() {
   TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReadyForTest());
 }
 
+void test_ready_fallback_cache_does_not_override_current_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  seedRecordNote(loop, 10, 58, 60);
+  TEST_ASSERT_EQUAL_STRING("passes", loop.rebuildOverdubSourceSpanCacheForTest());
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_EQUAL_UINT32(0u, loop.overdubSourceSpanCachePublishedRevisionForTest());
+  const NoteUtils::DisplayNote* fallback = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(fallback);
+  TEST_ASSERT_EQUAL_UINT32(58u, fallback->endTick);
+
+  loop.storePublishedSnapshotForTest(
+      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128),
+      loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReusableForTest());
+
+  loop.openOverdubSession(0);
+  loop.establishOverdubSourceView(0);
+  const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(occupy);
+  TEST_ASSERT_EQUAL_UINT32(128u, occupy->endTick);
+  TEST_ASSERT_EQUAL_UINT32(loop.publishedSnapshotRevision(),
+                           loop.overdubSourceSpanCachePublishedRevisionForTest());
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReusableForTest());
+}
+
+void test_snapshot_stamped_span_cache_is_reused() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  seedRecordNote(loop, 10, 58, 60);
+  loop.storePublishedSnapshotForTest(
+      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128),
+      loop.playbackRevision);
+  TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReusableForTest());
+  TEST_ASSERT_EQUAL_UINT32(loop.publishedSnapshotRevision(),
+                           loop.overdubSourceSpanCachePublishedRevisionForTest());
+
+  loop.openOverdubSession(0);
+  loop.establishOverdubSourceView(0);
+  const NoteUtils::DisplayNote* occupy = findSpanCacheNote(loop, 1);
+  TEST_ASSERT_NOT_NULL(occupy);
+  TEST_ASSERT_EQUAL_UINT32(128u, occupy->endTick);
+  TEST_ASSERT_EQUAL_UINT32(loop.publishedSnapshotRevision(),
+                           loop.overdubSourceSpanCachePublishedRevisionForTest());
+}
+
 void test_occupy_predicate_false_uses_prepared_not_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4616,6 +4669,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);
+  RUN_TEST(test_ready_fallback_cache_does_not_override_current_snapshot);
+  RUN_TEST(test_snapshot_stamped_span_cache_is_reused);
   RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
   RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);

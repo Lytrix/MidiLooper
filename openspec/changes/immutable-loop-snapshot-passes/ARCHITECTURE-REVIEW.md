@@ -346,6 +346,24 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [ ] Remaining 4.4 caller migration remains open: NOTE_EDIT, overdub
       analysis, validation, and other display identity/fallback paths.
 
+### Phase 4.4c implementation review — span-cache snapshot provenance
+
+- [x] Architecture gate and ownership checkpoint posted in the session
+      transcript; no owner or transition changed. Post-stop publication lag
+      (Bug B, `rev=11`) is out of scope.
+- [x] `overdubSourceSpanCacheReady()` remains storage/coverage at the current
+      `playbackRevision`. Reuse uses `overdubSourceSpanCacheReusable()`.
+- [x] Snapshot fills stamp `publishedSnapshotRevision()`. Fallback fills stamp
+      `0`, so a STOPPED prewarm cannot hide a later current root.
+- [x] `rebuildOverdubSourceView`, hold hydration, and prewarm share that
+      reuse predicate.
+- [x] Native `test_overdub_source_view` pins fallback-cache override and
+      snapshot-stamp reuse.
+- [x] Capture-serial build passes with RAM1 locals **6848**. Full native
+      suite: **1757 succeeded, 1 skipped**.
+- [ ] Remaining 4.4 caller migration remains open: NOTE_EDIT, analysis,
+      validation, and other display identity paths.
+
 ### Phase 3 implementation review (3.5–3.6 wrap publication)
 
 Closed 2026-09-08. Remaining-interval yield device proof is parked

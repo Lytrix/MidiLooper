@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (4.4b display snapshot slice closed; 4.4 remainder next)
+Last updated: 2026-09-08 (4.4c span-cache snapshot provenance closed)
 
 ---
 
@@ -30,12 +30,14 @@ record construction with no queued successor passes. The final `pending=0`
 row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
 4b.2c is closed without amending `DEC-045`.
 Tasks `3.5`/`3.6` and 4.3 are closed. Remaining-interval yield proof is
-parked (`kSnapshotIdleReserveYieldEnabled` is false). OpenSpec 4.4a and 4.4b
+parked (`kSnapshotIdleReserveYieldEnabled` is false). OpenSpec 4.4a–4.4c
 are closed: selected-snapshot overdub source resolution gathers only bounded
-source-window memberships, and committed display reconstruction uses current
-snapshot content with stale/overlay fallback preserved. Remaining 4.4 caller
-migration (NOTE_EDIT, analysis, validation, and other display identity paths),
-4.5–4.6, persistence, and snapshot-identity undo remain later.
+source-window memberships, committed display reconstruction uses current
+snapshot content with stale/overlay fallback preserved, and the occupy
+span cache is reusable only as a stamped materialization of the current
+root. Remaining 4.4 caller migration (NOTE_EDIT, analysis, validation, and
+other display identity paths), 4.5–4.6, persistence, and snapshot-identity
+undo remain later.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.

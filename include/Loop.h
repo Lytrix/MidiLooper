@@ -256,10 +256,12 @@ struct Loop {
   /// value (1/2/4/8/16); a timing-passing length is evidence, not policy.
   static constexpr uint32_t kOverdubSourceWindowBars = 16;
   /// Rebuild source notes from the span cache (`overdubSourceSpanCacheNotes_`)
-  /// using the source window filter. Cache fill follows the paint draw-source
-  /// predicate (DEC-052): published snapshot when true; otherwise prepared →
-  /// prior → covering visual → passes. Not visual-cache ownership.
-  /// `why` is CAP `open` / `wrap` / `undo` / `redo` / `idle`.
+  /// using the source window filter. A current published `LoopSnapshot` is the
+  /// committed source; the span cache is a stamped materialization of that
+  /// root. Reuse requires `overdubSourceSpanCacheReusable()`. Without a current
+  /// root, fill stays prepared → prior → covering visual → passes (DEC-052
+  /// fallback). Not visual-cache ownership. `why` is CAP `open` / `wrap` /
+  /// `undo` / `redo` / `idle`.
   void rebuildOverdubSourceView(uint32_t playheadPhaseTick, const char* why = "wrap");
   /// Append display notes from `lastCommittedPassId()` chunks into the existing
   /// source view and restamp the span cache to the current `playbackRevision`.
@@ -298,7 +300,8 @@ struct Loop {
   /// Session end / discard. Wrap and stop commit keep the view while the session is open.
   void clearOverdubSourceView();
   /// Build source span cache outside overdub entry when the loop is idle/clean.
-  /// No-op when already ready or when capture/session state is active.
+  /// No-op when `overdubSourceSpanCacheReusable()` or when capture/session
+  /// state is active.
   void prewarmOverdubSourceSpanCache();
   bool hasOverdubSourceView() const { return overdubSourceViewEstablished_; }
   uint32_t overdubSourceViewLoopLengthTicks() const { return overdubSourceViewLoopLengthTicks_; }
@@ -311,10 +314,19 @@ struct Loop {
   void replaceCommittedPlaybackNoteOnIdentities(const PlaybackMergedMidiEvents& merged);
   void clearCommittedPlaybackNoteOnIdentities();
   bool overdubSourceSpanCacheReady() const;
+  /// Ready storage that may be reused for the current committed source.
+  /// A current published snapshot requires a matching published-revision stamp.
+  bool overdubSourceSpanCacheReusable() const;
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
   void pushPendingNoteChangeForTest(PendingNoteChange change);
   bool overdubSourceSpanCacheReadyForTest() const { return overdubSourceSpanCacheReady(); }
+  bool overdubSourceSpanCacheReusableForTest() const {
+    return overdubSourceSpanCacheReusable();
+  }
+  uint32_t overdubSourceSpanCachePublishedRevisionForTest() const {
+    return overdubSourceSpanCachePublishedRevision_;
+  }
   const char* rebuildOverdubSourceSpanCacheForTest(uint32_t requestedWindowStart = 0,
                                                    uint32_t requestedWindowLength = 0) {
     return rebuildOverdubSourceSpanCache(requestedWindowStart, requestedWindowLength);
@@ -725,6 +737,7 @@ struct Loop {
   NoteUtils::DisplayNoteVec overdubSourceSpanCacheNotes_;
   uint32_t overdubSourceSpanCacheLoopLengthTicks_ = 0;
   uint32_t overdubSourceSpanCachePlaybackRevision_ = 0;
+  uint32_t overdubSourceSpanCachePublishedRevision_ = 0;
   bool overdubSourceSpanCacheValid_ = false;
   bool overdubSourceSpanCacheFullLoop_ = false;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;

@@ -935,6 +935,7 @@ void Loop::replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes)
   overdubSourceSpanCacheNotes_ = overdubSourceViewNotes_;
   overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
   overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+  overdubSourceSpanCachePublishedRevision_ = 0;
   overdubSourceSpanCacheValid_ = true;
   overdubSourceSpanCacheFullLoop_ = false;
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
@@ -965,6 +966,16 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReady() const {
   return overdubSourceSpanCachePlaybackRevision_ == playbackRevision;
 }
 
+LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReusable() const {
+  if (!overdubSourceSpanCacheReady()) {
+    return false;
+  }
+  if (!publishedSnapshotIsCurrent()) {
+    return true;
+  }
+  return overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision();
+}
+
 LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart,
                                                               uint32_t requestedWindowLength) {
   NoteUtils::DisplayNoteVec priorSpanCacheNotes;
@@ -978,6 +989,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   overdubSourceSpanCacheNotes_.clear();
   overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
   overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
+  overdubSourceSpanCachePublishedRevision_ = 0;
   overdubSourceSpanCacheValid_ = true;
   overdubSourceSpanCacheFullLoop_ = false;
   if (loopLengthTicks == 0) {
@@ -989,9 +1001,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   }
   const char* sourceOrigin = "passes";
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
-  const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-      static_cast<bool>(snapshot), captureActive(), hasOverdubSession(),
-      !visualCache.notes.empty(), visualCacheDirty, publishedSnapshotIsCurrent());
+  const bool usePublishedSnapshot = snapshot && publishedSnapshotIsCurrent();
   if (usePublishedSnapshot) {
     const uint32_t firstBar = requestedWindowStart / Config::TICKS_PER_BAR;
     const uint32_t lastWindowTick = requestedWindowStart + requestedWindowLength - 1u;
@@ -1102,6 +1112,8 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
       ++it;
     }
   }
+  overdubSourceSpanCachePublishedRevision_ =
+      std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotRevision() : 0;
   return sourceOrigin;
 }
 
@@ -1143,7 +1155,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   uint32_t windowLength = 0;
   resolveOverdubSourceWindow(playheadPhaseTick, windowStart, windowLength);
   const char* from = "cache";
-  if (!overdubSourceSpanCacheReady()) {
+  if (!overdubSourceSpanCacheReusable()) {
     from = rebuildOverdubSourceSpanCache(windowStart, windowLength);
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
@@ -1262,14 +1274,19 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   char line[256];
   snprintf_P(line, sizeof(line),
              PSTR("#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=0,proj=%lu,tot=%lu,ev=%u,notes=%u,"
-                  "bars=%u,live=%lu,prep=%lu"),
+                  "bars=%u,live=%lu,prep=%lu,root_rev=%lu,cache_rev=%lu,play_rev=%lu,"
+                  "cache_play=%lu"),
            static_cast<unsigned long>(micros()), why, from,
            static_cast<unsigned long>(filterUs), static_cast<unsigned long>(filterUs),
            static_cast<unsigned>(overdubSourceViewEvents_.size()),
            static_cast<unsigned>(overdubSourceViewNotes_.size()),
            static_cast<unsigned>(kOverdubSourceWindowBars),
            static_cast<unsigned long>(loopLengthTicks),
-           static_cast<unsigned long>(LoopContentResolution::deviceGateLoopLengthTicks()));
+           static_cast<unsigned long>(LoopContentResolution::deviceGateLoopLengthTicks()),
+           static_cast<unsigned long>(publishedSnapshotRevision()),
+           static_cast<unsigned long>(overdubSourceSpanCachePublishedRevision_),
+           static_cast<unsigned long>(playbackRevision),
+           static_cast<unsigned long>(overdubSourceSpanCachePlaybackRevision_));
   DebugSessionCapture::appendCaptureTextLine(line);
   unsigned viewCount = 0;
   constexpr unsigned kPreparedSourceViewDumpLimit = 48;
@@ -1312,7 +1329,7 @@ LOOP_COLD_MEM void Loop::prewarmOverdubSourceSpanCache() {
   if (loopLengthTicks == 0 || !hasCommittedPasses()) {
     return;
   }
-  if (overdubSourceSpanCacheReady()) {
+  if (overdubSourceSpanCacheReusable()) {
     return;
   }
   // When the prepared gate is still building for this loop length, avoid a full
@@ -2012,6 +2029,7 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
   if (spanCacheRestampAttempted && !spanCacheCanRestamp) {
     // Do not reuse a stale pre-commit cache after a failed restamp.
     overdubSourceSpanCacheValid_ = false;
+    overdubSourceSpanCachePublishedRevision_ = 0;
   }
 #if defined(SESSION_CAPTURE)
   if (spanCacheCanRestamp && spanCacheRestampAttempted) {
