@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (Hydrate 1 select neighborhood)
+Last updated: 2026-09-08 (Hydrate 1 device functional PASS 224533)
 
 ---
 
@@ -84,8 +84,11 @@ DEC-055 Stage 3 device PASS
 `UNDO_WARM,push,e00` (1358 µs, 79 notes, kind=Move); `focus_snap` = 0.
 Stage 1 device PASS
 [`212850`](../../captures/session_20260908_212850.log). Option B rejected.
-Hydrate 1 (select neighborhood around `selectedTick`) is the named next
-slice. Do not start hydrate 2–5 / 4a.
+Hydrate 1 device functional PASS
+[`224533`](../../captures/session_20260908_224533.log): select neighborhood
+and first `push,e00` hold. Fast fader-2 / bar-sweep sluggishness is stacked
+Move `GEOM_APPLY` on `hostdrain`, not a neighborhood fail. Do not start
+hydrate 2–5 / 4a.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
