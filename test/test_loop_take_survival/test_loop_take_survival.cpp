@@ -1271,7 +1271,13 @@ void test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes() {
 
   NoteUtils::DisplayNoteVec resolved;
   LoopContentResolution::resolveDisplayNotes(*snapshot, resolved);
+  NoteUtils::DisplayNoteVec fromSpans;
+  appendSnapshotNotesForBarRange(*snapshot, 0, 3, fromSpans);
   TEST_ASSERT_EQUAL(1u, resolved.size());
+  TEST_ASSERT_EQUAL(fromSpans.size(), resolved.size());
+  TEST_ASSERT_EQUAL(fromSpans[0].noteId, resolved[0].noteId);
+  TEST_ASSERT_EQUAL(fromSpans[0].startTick, resolved[0].startTick);
+  TEST_ASSERT_EQUAL(fromSpans[0].endTick, resolved[0].endTick);
 
   loop.invalidateDisplayCaches();
   loop.rebuildVisualCacheFromPasses();

@@ -379,9 +379,9 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       current-root notes from `resolveDisplayNotes(*snapshot)`; no owner
       or transition change.
 - [x] Native: rebuild stamps `builtFromRevision == publishedSnapshotRevision()`
-      and notes equal `resolveDisplayNotes(*snapshot)`.
-- [ ] Device recapture of [`153320`](../../../captures/session_20260908_153320.log)
-      questions 1–3 before Stage 2/3.
+      and notes equal `resolveDisplayNotes(*snapshot)` span membership.
+- [ ] Device recapture of [`155257`](../../../captures/session_20260908_155257.log)
+      questions 1–2 after span interpreter. Do not start Stage 2/3.
 
 ### Phase 4.5a implementation review — post-stop snapshot convergence
 

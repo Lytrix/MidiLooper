@@ -194,7 +194,7 @@ Paint does **not** rebuild on window move: `resolveWindowedDisplayNotes` filters
 
 What is **not** per-bar yet:
 
-- `rebuildVisualCacheFromPasses` on a current published root fills `visualCache.notes` from `resolveDisplayNotes(*snapshot)` (4.4e Stage 1). No-current-root still pass-resolves. `visualCache` stays a cache.
+- `rebuildVisualCacheFromPasses` on a current published root fills `visualCache.notes` from `resolveDisplayNotes(*snapshot)`, which copies note-span membership (`appendSnapshotNotesForBarRange`). Event-flat reconstruct is not the display interpreter (`155257`). No-current-root still pass-resolves. `visualCache` stays a cache.
 - `markDisplayCachesStale` still marks every bar dirty.
 
 ---

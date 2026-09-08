@@ -386,6 +386,16 @@ ImmutableLoopSnapshotRef buildSnapshotQueryFixture() {
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.next.loopId = 1;
+  noteChange.next.noteId = 7;
+  noteChange.next.pitch = 60;
+  noteChange.next.velocity = 100;
+  noteChange.next.startTick = 100;
+  noteChange.next.endTick = 200;
+  changes.notes.push_back(noteChange);
+
   LoopSnapshotConstruction construction(snapshot, changes);
   while (!construction.complete()) {
     TEST_ASSERT_TRUE(construction.step(128));
@@ -410,8 +420,67 @@ void test_snapshot_queries_are_explicit_and_self_contained() {
   NoteUtils::DisplayNoteVec notes;
   LoopContentResolution::resolveDisplayNotes(*snapshot, notes);
   TEST_ASSERT_EQUAL_UINT32(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT32(7u, notes.front().noteId);
   TEST_ASSERT_EQUAL_UINT32(100u, notes.front().startTick);
   TEST_ASSERT_EQUAL_UINT32(200u, notes.front().endTick);
+}
+
+void test_snapshot_display_notes_use_span_membership_not_event_reconstruct() {
+  const uint32_t loopLengthTicks = Config::TICKS_PER_BAR;
+  auto snapshot = LoopSnapshot::createEmpty(1, loopLengthTicks, 0, 8, 8);
+  LoopSnapshotChangeSet changes;
+
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.next.loopId = 1;
+  noteChange.next.noteId = 7;
+  noteChange.next.pitch = 60;
+  noteChange.next.velocity = 100;
+  noteChange.next.startTick = 100;
+  noteChange.next.endTick = 200;
+  changes.notes.push_back(noteChange);
+
+  MidiEvent noteOn = MidiEvent::NoteOn(100, 2, 60, 100);
+  noteOn.noteId = 7;
+  SnapshotEventChange noteOnChange{};
+  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.next = {1, 1, 0, noteOn};
+  changes.events.push_back(noteOnChange);
+
+  MidiEvent noteOff = MidiEvent::NoteOff(200, 2, 60);
+  noteOff.noteId = 7;
+  SnapshotEventChange noteOffChange{};
+  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.next = {1, 2, 1, noteOff};
+  changes.events.push_back(noteOffChange);
+
+  MidiEvent unpairedOn = MidiEvent::NoteOn(400, 2, 69, 100);
+  unpairedOn.noteId = 8;
+  SnapshotEventChange unpairedOnChange{};
+  unpairedOnChange.kind = SnapshotChangeKind::Add;
+  unpairedOnChange.next = {1, 3, 2, unpairedOn};
+  changes.events.push_back(unpairedOnChange);
+
+  LoopSnapshotConstruction construction(snapshot, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef frozen = construction.freeze();
+  TEST_ASSERT_NOT_NULL(frozen.get());
+
+  NoteUtils::DisplayNoteVec spanNotes;
+  LoopContentResolution::resolveDisplayNotes(*frozen, spanNotes);
+  TEST_ASSERT_EQUAL_UINT32(1u, spanNotes.size());
+  TEST_ASSERT_EQUAL_UINT32(7u, spanNotes.front().noteId);
+  TEST_ASSERT_EQUAL_UINT8(60u, spanNotes.front().note);
+  TEST_ASSERT_EQUAL_UINT32(100u, spanNotes.front().startTick);
+  TEST_ASSERT_EQUAL_UINT32(200u, spanNotes.front().endTick);
+
+  SessionMidiEventVec events;
+  LoopContentResolution::resolveWindow(*frozen, 0, loopLengthTicks, events);
+  const NoteUtils::DisplayNoteVec reconstructed =
+      NoteUtils::reconstructDisplayNotes(events, loopLengthTicks, false);
+  TEST_ASSERT_EQUAL_UINT32(2u, reconstructed.size());
 }
 
 void test_canonical_fixture_inventory() {
@@ -4486,6 +4555,7 @@ void test_resolve_display_notes_keeps_capture_dsharp_committed_offs() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_snapshot_queries_are_explicit_and_self_contained);
+  RUN_TEST(test_snapshot_display_notes_use_span_membership_not_event_reconstruct);
   RUN_TEST(test_canonical_fixture_inventory);
   RUN_TEST(test_canonical_fixture_oracle_materialize);
   RUN_TEST(test_canonical_fixture_wrap_and_edits_in_oracle);

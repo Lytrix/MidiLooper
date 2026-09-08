@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4e Stage 1 NOTE_EDIT visual baseline)
+Last updated: 2026-09-08 (4.4e Stage 1 snapshot span display notes)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,11 +11,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **OpenSpec 4.4e Stage 1 — NOTE_EDIT visual baseline from current snapshot:**
-Host-verified. `rebuildVisualCacheFromPasses` on a current root uses
-`resolveDisplayNotes(*publishedSnapshot())`. Gather still names the root
-and Overlay reject; it does not reconstruct display notes from the flat.
-`visualCache` stays a cache. RAM1 locals **6848**; native **1761 succeeded,
-1 skipped**. Recapture the `153320` shape before Stage 2/3. Plan:
+`resolveDisplayNotes(*snapshot)` copies note-span membership
+(`appendSnapshotNotesForBarRange`). Event-flat reconstruct is not the
+display interpreter (`155257` 99 vs 97). RAM1 locals **6848**; native
+**1762 succeeded, 1 skipped**. Recapture before Stage 2/3.
+Plan:
 [`note_edit_committed_oracle_snapshot_bugfix.md`](../Plans/note_edit_committed_oracle_snapshot_bugfix.md).
 
 **Prior — OpenSpec 4.5a — post-stop snapshot publication convergence:**

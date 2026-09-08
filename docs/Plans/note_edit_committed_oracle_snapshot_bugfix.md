@@ -1,6 +1,8 @@
 # NOTE_EDIT committed oracles vs current snapshot
 
-**Status:** Stage 1 host-verified. Recapture required before Stage 2/3.
+**Status:** Stage 1 interpreter corrected (span membership). Recapture
+[`155257`](../../captures/session_20260908_155257.log) shape before
+Stage 2/3.
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.4e`
 **Parent:** 4.4d closed
 ([`note_edit_committed_base_snapshot_refinement.md`](note_edit_committed_base_snapshot_refinement.md)).
@@ -176,9 +178,10 @@ visualCache.notes
 When `tryGatherPublishedSnapshotEventsInWindow` succeeds and the path is
 `Snapshot` (current root, not Overlay), set `visualCache.notes` from
 `LoopContentResolution::resolveDisplayNotes(*publishedSnapshot())`.
-Do not `reconstructDisplayNotes` on the gathered flat for that current root.
-The gather still names the usable current root and Overlay reject; it is
-not the display interpreter.
+That query copies note-span membership via `appendSnapshotNotesForBarRange`
+(same helper as idle `SnapshotNotes`). It does not
+`reconstructDisplayNotes` on event membership. The gather still names the
+usable current root and Overlay reject; it is not the display interpreter.
 
 No-current-root and Overlay-rejected stay on `gatherCommittedEvents` +
 `resolveDisplayNotes(passes)`.
@@ -205,6 +208,92 @@ identity and geometry, not only `size()`.
 
 If #1 and #2 pass and #3 fails, Stage 2 has earned its existence.
 Do not start Stage 2/3 in the same implementation session as Stage 1.
+
+**Device recapture [`155257`](../../captures/session_20260908_155257.log)
+(5-bar / 3840-tick loop; same inflate class as `153320`):**
+
+| Clock | Fact |
+|---|---|
+| 45.635 s | `why=stop,from=hold,notes=97,root_rev=5,play_rev=7` |
+| 45.635 s | `VCACHE,adopt_partial,notes=97,dirty=0` |
+| 45.852 s | `post_stop` `old_root=5,new_root=7` then `pending=0` `root_rev=7` `playback_rev=7` |
+| 48.900–48.990 s | STOPPED `DISP` **97** (`3840,97,97,97,97`) |
+| 49.915 s | stored-verification `pairrows,at=passes,count=97` then `dnte,src,effective,count,97` |
+| 50.532 s | `NOTE_EDIT_OPEN,visual_notes,99,session_events,197` |
+| 50.528 s | `VCACHE,full,ev,201,notes,99,dirty=0` — no `pairrows` on this rebuild |
+| 51.140 s | first NOTE_EDIT `DISP` `3840,98,99,98,98` (visual **99**, frame **98**) |
+| 90.678 s / 101.839 s | later opens again `visual_notes,99,session_events,197` / `VCACHE,full,ev,201,notes,99` |
+
+This file has no `from=snapshot` / `paint_src` line. After publish, STOPPED
+kept painting the hold/adopt **97** frame.
+
+`resolveDisplayNotes(passes)` always emits `pairrows,at=passes`. The open
+`VCACHE,full` has none, so Stage 1 took the current-root branch:
+`resolveDisplayNotes(*publishedSnapshot())`. That query returned **99**.
+Passes resolve on the same current `root_rev=7` stayed **97**.
+
+| Question | Result |
+|---|---|
+| 1. `visual_notes` equals last STOPPED paint / `stored_notes` | **FAIL** — 99 vs STOPPED **97**. No post-overdub `stored_notes` for this track. |
+| 2. `VCACHE,full` notes stay that STOPPED count | **FAIL** — notes **99** (`ev=201` is gathered events) |
+| 3. session still a different NoteId set | `session_events=197` vs visual **99**. Stage 2 is **not** earned: questions 1 and 2 failed. |
+
+Later close-path `pairrows` at 64.970 s / 77.929 s / 115.824 s remain
+**97**. Do not treat Length/close rows in this file as Stage 1 pass/fail.
+
+### Investigation ([`155257`](../../captures/session_20260908_155257.log))
+
+The two queries are different algorithms. They are not two counts of the
+same interpretation.
+
+`resolveDisplayNotes(const LoopSnapshot&)` (`LoopContentResolution.cpp`):
+`appendSnapshotEvents` (every bar’s event membership) → one
+`reconstructDisplayNotes(events, L, false)` → **`finishOpenNotes=true`**.
+
+`resolveDisplayNotes(const LoopPasses&)` (header contract): pair each
+Active capture pass with `reconstructDisplayNotes(..., finishOpenNotes=false)`,
+`applyActiveEdits`, then upsert by `NoteId`. “A later pass’s Off cannot
+close an earlier pass’s On.”
+
+Committed wrap/display contract is `finishOpenNotes=false` (6E.5,
+`NoteUtils.h`). The snapshot display query does not follow it.
+
+Same loop, current `root_rev=7`, stored-verification dumps:
+
+| Query | Count | Log |
+|---|---|---|
+| `mergeActiveCapturePasses` + reconstruct (`finishOpenNotes=true`) | **100** | `dnte,src,reconstruct,count,100` |
+| `resolveDisplayNotes(passes)` | **97** | `pairrows,at=passes,count=97` / `dnte,src,effective,count,97` |
+| hold / STOPPED frame | **97** | `adopt_partial` / STOPPED `DISP` / `dnte,src,frame,count,97` |
+| `resolveDisplayNotes(*snapshot)` at NOTE_EDIT open | **99** | `NOTE_EDIT_OPEN visual_notes,99` / `VCACHE,full` notes=99 |
+
+Reconstruct-100 vs effective-97 is not three extra pitches. Pitch 63
+occupy is geometry only (`0`/`2304`/`3072`: length 480/472 → **143**).
+The three extra **notes** are pitch 69:
+
+| Extra vs effective | SEVT on the merge flatten |
+|---|---|
+| `69 @ 3120` length **40** (effective keeps `3120/48` only) | two `N@3120`, `F@3160` + `F@3168` |
+| `69 @ 3408` length **48** (effective keeps `3408/40` only) | two `N@3408`, `F@3448` + `F@3456` |
+| `69 @ 3792` length **48** (absent from effective) | `N@3792` + `F@3839` (`L-1`) |
+
+Open **99** is that snapshot event reconstruct: two of those three 69s.
+This file has no 99-row identity dump, so which two is not named.
+`153320` is the same class: reconstruct **81**, effective/STOPPED **75**,
+open flatten reconstruct **78**.
+
+STOPPED stayed **97** after publish because this file never logs
+`from=snapshot` / `paint_src`. Hold/adopt kept painting. Open
+`rebuildVisualCacheFromPasses` is the first `resolveDisplayNotes(*snapshot)`
+in the session.
+
+Do not start Stage 2. The Stage 1 interpreter is now snapshot note-span
+membership (`appendSnapshotNotesForBarRange`). Event-flat reconstruct
+is not the display query. Recapture the `155257` shape.
+
+`finishOpenNotes=false` on the old event query alone does not close this:
+the 3120/3408 extras are cross-pass LIFO on a flat list, which the passes
+query exists to forbid.
 
 ### Stage 2 — open session store from the same root
 
@@ -263,9 +352,9 @@ separate overlap-seal RC.
 
 | Gate | Pass |
 |---|---|
-| Capture-serial RAM1 | locals **6848** |
-| Native | **1761 succeeded, 1 skipped.** `rebuildVisualCacheFromPasses` with a current root stamps `builtFromRevision == publishedSnapshotRevision()` and notes equal `resolveDisplayNotes(*snapshot)` |
-| Device | Stage 1 recapture questions 1–3 above |
+| Capture-serial RAM1 | locals **6848** (span interpreter) |
+| Native | **1762 succeeded, 1 skipped.** `resolveDisplayNotes(*snapshot)` equals `appendSnapshotNotesForBarRange`; event reconstruct of the same root may be larger (`test_snapshot_display_notes_use_span_membership_not_event_reconstruct`). |
+| Device | Recapture `155257` questions 1–2 (STOPPED 97 vs open visual). Stage 2 not earned until those pass. |
 
 4.5 HITL known non-wrap FAILs do not close this plan.
 
@@ -286,7 +375,7 @@ separate overlap-seal RC.
 | Sequencing | Stage 1 only → recapture → Stage 2/3 only if #3 fails |
 | `missing in recon` on Pitch/NoteRange | Not this RC |
 | `take_only` | Capture-only; unchanged |
-| Open visual source when current | `resolveDisplayNotes(*publishedSnapshot())` |
+| Open visual source when current | `resolveDisplayNotes(*publishedSnapshot())` note-span membership |
 | `visualCache` | Cache only; Stage 2 reads the same root independently |
 | Hydrate | Parked; not this plan |
 
