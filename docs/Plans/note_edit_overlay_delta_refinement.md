@@ -1,6 +1,7 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 Stage 2 device PASS [`220445`](../../captures/session_20260908_220445.log)  
+**Status:** DEC-055 Stage 3 — stop analyze current-state fill  
+
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
@@ -8,7 +9,7 @@
 
 Does **not** start: hydrate 1–5, DEC-054 Stage 2, Option B, rename
 `NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
-entries.
+entries, open / focus-rebuild fill removal.
 
 ---
 
@@ -19,7 +20,9 @@ Select clone / UNDO_WARM on applySelectNav
     ← Stage 1
 First kind-boundary hasUndoCurrentState / E:00 restore
     ← Stage 2
-ensureCurrentStateVisibleRowsFromVisualCache
+NoteGeometryResolver visual-cache current-state fill
+    ← Stage 3
+open / focus-rebuild ensureCurrentStateVisibleRowsFromVisualCache
     ← later
 open rematerialize / SelectNavigation neighborhood
     ← hydrate
@@ -108,6 +111,28 @@ after-open max **4594** ms with **23** `warm,complete`.
 
 ---
 
+## Stage 3 — Analyze does not fill current state from visual cache
+
+```text
+NoteGeometryResolver::resolve
+  → overlay / evaluation scope from existing current state + visualCache
+  → no ensureCurrentStateVisibleRowsFromVisualCache
+```
+
+Paint still composes `visualCache` + overlay. Open, focus rebuild, delete
+empty-state fallback, and live-capture fold still call the fill.
+
+**Invariant:** Geometry resolve does not insert every visible cache note
+into `NoteEditCurrentState`.
+
+**Native:** `analyzeFillsCurrentStateFromVisualCache()` is false.
+
+**Device:** PLAYING + NOTE_EDIT + first Move. Stage 2 `push,e00` stays.
+`GEOM_APPLY,resolve` still `1,3,0` on a real Move. Select `DFRAME` stays
+in the Stage 1/2 band.
+
+---
+
 ## Files (Stage 1)
 
 | File | Change |
@@ -128,6 +153,15 @@ after-open max **4594** ms with **23** `warm,complete`.
 | `test/test_note_edit_session_state/` | Pin undoCount == 0 policy |
 | `test/test_note_edit_session_undo/` | Pin no-clone entry + snapshot restore |
 | this plan + CURRENT_WORK | Stage 2 authorized |
+
+### Files (Stage 3)
+
+| File | Change |
+|---|---|
+| `include/NoteEditSessionState.h` | `analyzeFillsCurrentStateFromVisualCache()` = false |
+| `src/EditManager/NoteGeometryResolver.cpp` | Skip visual-cache current-state fill |
+| `test/test_note_edit_session_state/` | Pin the policy |
+| this plan + CURRENT_WORK | Stage 3 authorized |
 
 ---
 
@@ -185,3 +219,30 @@ None.
 ### Proceed?
 
 YES — Stage 2 only.
+
+---
+
+## Pre-implementation review (Stage 3)
+
+### Ready
+
+- Analyze fill is one call in `NoteGeometryResolver::resolve`
+- `resolveForCausingNote` routes through `resolve`
+- Open / focus rebuild / delete / live-capture fold stay
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Stage 3 scope | Resolver does not fill current state from visual cache |
+| Open fill | Hydrate 4a |
+| Focus-rebuild fill | Display span align; stays |
+| Later **E:** overlay-delta | Not this stage |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — Stage 3 only.

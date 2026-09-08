@@ -125,6 +125,11 @@ inline bool firstKindBoundaryUsesOpenedSnapshotRestore(size_t undoCount) {
   return undoCount == 0;
 }
 
+/// DEC-055 Stage 3: Analyze must not fill current state from every visual-cache note.
+inline bool analyzeFillsCurrentStateFromVisualCache() {
+  return false;
+}
+
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation
 /// SHALL push a fresh session undo step even when kind stays Move.
 inline bool shouldResetGeometryKindUndoOnSelectChange(const EditorSelection& prior,
