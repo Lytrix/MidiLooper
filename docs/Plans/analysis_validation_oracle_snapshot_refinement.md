@@ -1,6 +1,6 @@
 # Analysis and validation leftover oracles vs current snapshot
 
-**Status:** Stage 1 shipped. Stage 2 recorded (no firmware).  
+**Status:** Stage 1 shipped (device [`194438`](../../captures/session_20260908_194438.log)). Stage 2 recorded (no firmware).  
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.4g`  
 **Parent:** 4.4f closed
 ([`note_edit_leftover_oracle_snapshot_refinement.md`](note_edit_leftover_oracle_snapshot_refinement.md)).
@@ -92,7 +92,12 @@ This stage records that fact only.
   NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`. Close
   `NoteEditPassClosed` `edits=3`, no `live capture baked`. Stage 1 idle
   validate not exercised: overdub stop calls `finalizeLoopAtStop(..., false)`
-  and does not re-queue `deferredFullMidiValidate`. |
+  and does not re-queue `deferredFullMidiValidate`.
+  [`194438`](../../captures/session_20260908_194438.log): Stage 1 ran at
+  600.015 s, 60 s after record-to-STOPPED. Root was current
+  (`pending=0` `root_rev=1` `playback_rev=1`). Log-only
+  `would remove 2 orphaned events`, 116 remaining; `DFRAME` **58**.
+  Both overdub opens in this file are `from=snapshot` on a current root. |
 
 ## Pre-implementation review
 

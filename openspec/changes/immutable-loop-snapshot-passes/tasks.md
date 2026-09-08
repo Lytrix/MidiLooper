@@ -272,7 +272,9 @@ cursors rather than treating that locality as an execution bound.
         second overdub open `from=snapshot` `root_rev=7` `play_rev=7`.
         [`194039`](../../../captures/session_20260908_194039.log):
         NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`.
-        Idle validate not exercised.
+        [`194438`](../../../captures/session_20260908_194438.log):
+        Stage 1 idle validate at 600.015 s on current `root_rev=1`.
+        Both overdub opens `from=snapshot`.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
 

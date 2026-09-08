@@ -438,8 +438,11 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       `pending=0` `root_rev=1`.
       [`194039`](../../../captures/session_20260908_194039.log):
       NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`.
-      Close `edits=3`, no `live capture baked`. Idle validate not
-      exercised (overdub stop does not queue it).
+      Close `edits=3`, no `live capture baked`.
+      [`194438`](../../../captures/session_20260908_194438.log): Stage 1
+      idle validate at 600.015 s on current `root_rev=1`. Log-only 2
+      orphans, 116 remaining; `DFRAME` **58**. Both overdub opens
+      `from=snapshot`.
 
 ### Close-publish NoteRange pitch reuse
 
