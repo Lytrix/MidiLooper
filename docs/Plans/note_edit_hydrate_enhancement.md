@@ -1,6 +1,6 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Hydrate 1 authorized in CURRENT_WORK — select neighborhood. Architecture PASS (overlap retarget 2026-08-17). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 2–5 / 4a.  
+**Status:** Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log). Architecture PASS (overlap retarget 2026-08-17). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 2–5 / 4a.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
@@ -123,3 +123,20 @@ YES — Hydrate 1 only.
 ## Files (when authorized)
 
 Listed in the proposal. Expected first owners: `SelectNavigation`, `EditSelectNoteState`, `NoteGeometryResolver`, `NoteEditSessionLifecycle`, `TrackPlaybackWindowBuild`.
+
+---
+
+## Hydrate 1 device ([`224533`](../../captures/session_20260908_224533.log))
+
+**Invariant holds.** Select emits a 3-step neighborhood. Fader maps pitchbend
+to a 16th (`selected_tick` steps of 48; `slot=1` for the in-window target).
+`NOTE_EDIT_OPEN` 88 notes. First Move `UNDO_WARM,push,e00,761,88,3`.
+
+**Not a Hydrate 1 fail — fast bars / fader 2.** 248 Move + 63 Pitch
+`GEOM_APPLY,resolve` (median **27731** µs, max **55965** µs). Phases:
+reconstruct med **7586**, analyze **6435**, overlay **6023**. Peak
+`hostdrain` **1448215** µs at 184.95 s sits on consecutive kind=3 resolves
+at **29 ms**. Select-only `DFRAME` gaps **1465 / 1658 / 1931** ms match
+Stage 3 [`221906`](../../captures/session_20260908_221906.log). Later
+`focus_snap` **41–193 ms** (`push,cache_miss`). Those are hydrate 2/3 /
+lossless-undo leftovers.

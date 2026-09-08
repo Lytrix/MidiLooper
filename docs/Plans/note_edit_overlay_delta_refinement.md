@@ -1,11 +1,11 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 Stage 3 device PASS [`221906`](../../captures/session_20260908_221906.log)  
+**Status:** Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log); DEC-055 Stage 3 device PASS [`221906`](../../captures/session_20260908_221906.log)  
 
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
-**Evidence:** [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS, [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
+**Evidence:** [`224533`](../../captures/session_20260908_224533.log) Hydrate 1 functional PASS, [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS, [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
 Does **not** start: hydrate 2–5 / 4a, DEC-054 Stage 2, Option B, rename
 `NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
@@ -282,3 +282,12 @@ None.
 ### Proceed?
 
 YES — Hydrate 1 only.
+
+---
+
+## Hydrate 1 device ([`224533`](../../captures/session_20260908_224533.log))
+
+Neighborhood select and first `push,e00,761,88,3` hold. Fast fader 2 / bar
+sweep leftover: `hostdrain` **1.45 s** on stacked Move `GEOM_APPLY,resolve`
+(**29 ms**; reconstruct/analyze/overlay). Select-only `DFRAME` stays in the
+Stage 3 band. Do not reopen Hydrate 1 for that leftover.

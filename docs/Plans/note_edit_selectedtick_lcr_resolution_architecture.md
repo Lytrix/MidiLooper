@@ -481,7 +481,8 @@ DEC-037 amendment 2026-08-16. Architecture PASS. This revision records implement
 **Owner:** `EditSelectNoteState` / `SelectNavigation`.  
 **Invariant:** Select is a bounded neighborhood around `selectedTick`. Not `resolveState`. Not a full-loop onset list.  
 **Hydrate 1 pin:** window is the 16th containing `selectedTick` ± 1 16th (wrap). Include notes whose **start** 16th is in that window. Simultaneous onsets keep existing order (relative start, then pitch). Fader maps pitchbend to a 16th in `navLength`, then queries that neighborhood.  
-**Gate:** `stepsScanned` ≤ 3; slot count does not scale with loop length. Prepared `tickEvents` / `spanBoundaries` consume is the later hit path; this stage ships neighborhood output. Miss/legacy still reads the already-built selectable list once (O(notes), not O(notes×steps)). `visualCache` walk == 0 remains the hit-path ideal, not a Hydrate 1 fail.
+**Gate:** `stepsScanned` ≤ 3; slot count does not scale with loop length. Prepared `tickEvents` / `spanBoundaries` consume is the later hit path; this stage ships neighborhood output. Miss/legacy still reads the already-built selectable list once (O(notes), not O(notes×steps)). `visualCache` walk == 0 remains the hit-path ideal, not a Hydrate 1 fail.  
+**Device functional PASS [`224533`](../../captures/session_20260908_224533.log):** fader advances `selectedTick` by 16ths. Fast fader-2 sluggishness is stacked Move `GEOM_APPLY` on `hostdrain`, not this gate.
 
 ### Stage 2 — Overlap candidates = overdub hold (indexed identities)
 
