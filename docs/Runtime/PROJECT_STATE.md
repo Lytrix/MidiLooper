@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (3.5/3.6 closed; yield proof parked; next 4.3)
+Last updated: 2026-09-08 (3.5/3.6 and 4.3 closed; next 4.4 requires selection)
 
 ---
 
@@ -155,8 +155,11 @@ Do not freeze an observed unit or the minimum observed `reserve_us` as the
 records the 10,000 µs policy ceiling. Remaining-interval yield proof is
 parked after [`115043`](../../captures/session_20260908_115043.log)
 (`remaining=0` until STOPPED). `kSnapshotIdleReserveYieldEnabled` is false;
-yield helpers stay compiled. OpenSpec `3.5`/`3.6` are closed. Next is `4.3`.
-Construction bounds stay unchanged.
+yield helpers stay compiled. OpenSpec `3.5`/`3.6` are closed. OpenSpec `4.3`
+is also closed: `LoopContentResolution` now exposes explicit stateless
+`LoopSnapshot` query overloads; compatibility pass/index/checkpoint paths
+remain until caller migration. Next is `4.4`, which requires a new phase
+selection and gate. Construction bounds stay unchanged.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
 the aggregate `tracks` timing; device recapture is required.

@@ -297,6 +297,21 @@ Task 4.4 is not checked off. NOTE_EDIT, overdub analysis, and validation
 callers were not authorized by the 3.5/3.6 slice. Task 4.3 is now selected
 in `CURRENT_WORK.md`.
 
+### Phase 4.3 implementation review — stateless snapshot queries
+
+- [x] Architecture gate posted in the session transcript.
+- [x] `LoopContentResolution` exposes explicit `LoopSnapshot` query overloads
+      for window events, present-at state, display notes, and window notes.
+- [x] Snapshot query paths read only the supplied complete snapshot and local
+      query buffers; they do not consult parent snapshots, `LoopPasses`,
+      `TickIndex`, or maintained checkpoint/replay state.
+- [x] Existing pass/index/checkpoint APIs remain compatibility paths for the
+      later 4.4 caller migration and are not treated as the new normal source.
+- [x] Capture-serial build passes with RAM1 locals **6848**.
+- [x] Focused `test_loop_content_resolution` passes.
+- [x] Full `pio test -e native` passes.
+- [x] No new owner, transition, or interval-path execution-bound owner added.
+
 ### Phase 3 implementation review (3.5–3.6 wrap publication)
 
 Closed 2026-09-08. Remaining-interval yield device proof is parked

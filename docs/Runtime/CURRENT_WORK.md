@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (3.5/3.6 closed; yield proof parked; next is 4.3)
+Last updated: 2026-09-08 (3.5/3.6 and 4.3 closed; next 4.4 requires selection)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,11 +11,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **OpenSpec 4.3 — `LoopContentResolution` stateless snapshot queries:**
-Convert `LoopContentResolution` to stateless explicit-snapshot queries
-without parent traversal or maintained replay. Do not begin 4.4–4.6 in
-this slice. OpenSpec:
+Completed. `LoopContentResolution` now provides explicit `LoopSnapshot`
+overloads for window events, present-at state, display notes, and window
+notes. The compatibility pass/index/checkpoint paths remain for later caller
+migration; no 4.4–4.6 consumer was changed. OpenSpec:
 [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
-4.3. `DEC-037`. Phase gate required before firmware.
+4.3. `DEC-037`. Native and capture-serial gates passed.
+
+**Next selection required:** OpenSpec 4.4 caller migration is not started in
+this stage. It requires a new phase gate before firmware edits.
 
 **Prior — OpenSpec 3.5 / 3.6 closed (yield proof parked):**
 3.5 wrap-journal publication is in tree. 3.6 native wrap-journal parity and
