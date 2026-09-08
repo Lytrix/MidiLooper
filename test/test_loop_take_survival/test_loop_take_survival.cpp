@@ -23,6 +23,7 @@
 #include "MidiEvent.h"
 #include "PassReclaim.h"
 #include "StorageLoopIo.h"
+#include "LoopContentResolution.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/SnapshotNoteConversion.h"
 
@@ -1235,11 +1236,16 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   TEST_ASSERT_EQUAL(expected[0].startTick, loop.visualCache.notes[0].startTick);
   TEST_ASSERT_EQUAL(expected[0].endTick, loop.visualCache.notes[0].endTick);
 
+  NoteUtils::DisplayNoteVec resolved;
+  LoopContentResolution::resolveDisplayNotes(*loop.publishedSnapshot(), resolved);
   loop.rebuildVisualCacheFromPasses();
-  TEST_ASSERT_EQUAL(expected.size(), loop.visualCache.notes.size());
-  TEST_ASSERT_EQUAL(expected[0].note, loop.visualCache.notes[0].note);
-  TEST_ASSERT_EQUAL(expected[0].startTick, loop.visualCache.notes[0].startTick);
-  TEST_ASSERT_EQUAL(expected[0].endTick, loop.visualCache.notes[0].endTick);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(loop.publishedSnapshotRevision(), loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL(resolved.size(), loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(resolved[0].note, loop.visualCache.notes[0].note);
+  TEST_ASSERT_EQUAL(resolved[0].startTick, loop.visualCache.notes[0].startTick);
+  TEST_ASSERT_EQUAL(resolved[0].endTick, loop.visualCache.notes[0].endTick);
+  TEST_ASSERT_EQUAL(resolved[0].noteId, loop.visualCache.notes[0].noteId);
 
   Loop noSnapshot;
   seedCommittedPair(noSnapshot);
@@ -1249,6 +1255,35 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   noSnapshot.rebuildVisualCacheIdleSlice(4, 0);
   TEST_ASSERT_FALSE(noSnapshot.lastVisualCacheIdleCopiedSnapshotNotes());
   TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
+}
+
+void test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(), snapshot.get());
+
+  NoteUtils::DisplayNoteVec resolved;
+  LoopContentResolution::resolveDisplayNotes(*snapshot, resolved);
+  TEST_ASSERT_EQUAL(1u, resolved.size());
+
+  loop.invalidateDisplayCaches();
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(), loop.publishedSnapshot().get());
+  TEST_ASSERT_EQUAL(loop.publishedSnapshotRevision(), loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL(resolved.size(), loop.visualCache.notes.size());
+  TEST_ASSERT_EQUAL(resolved[0].noteId, loop.visualCache.notes[0].noteId);
+  TEST_ASSERT_EQUAL(resolved[0].note, loop.visualCache.notes[0].note);
+  TEST_ASSERT_EQUAL(resolved[0].startTick, loop.visualCache.notes[0].startTick);
+  TEST_ASSERT_EQUAL(resolved[0].endTick, loop.visualCache.notes[0].endTick);
 }
 
 void test_visual_cache_idle_slice_copies_current_snapshot_notes() {
@@ -3927,6 +3962,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_failed_edit_publish_preserves_parent_snapshot);
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
+  RUN_TEST(test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes);
   RUN_TEST(test_visual_cache_idle_slice_copies_current_snapshot_notes);
   RUN_TEST(test_loaded_visual_cache_falls_back_until_current_snapshot);
   RUN_TEST(test_stale_published_snapshot_gathers_window_without_full_compatibility);

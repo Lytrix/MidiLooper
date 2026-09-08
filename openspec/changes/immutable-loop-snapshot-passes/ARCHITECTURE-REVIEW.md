@@ -373,6 +373,16 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [x] Capture-serial RAM1 locals **6848**. Full native suite:
       **1760 succeeded, 1 skipped**.
 
+### Phase 4.4e implementation review — NOTE_EDIT snapshot-root oracles
+
+- [x] Stage 1 architecture gate posted: `rebuildVisualCacheFromPasses`
+      current-root notes from `resolveDisplayNotes(*snapshot)`; no owner
+      or transition change.
+- [x] Native: rebuild stamps `builtFromRevision == publishedSnapshotRevision()`
+      and notes equal `resolveDisplayNotes(*snapshot)`.
+- [ ] Device recapture of [`153320`](../../../captures/session_20260908_153320.log)
+      questions 1–3 before Stage 2/3.
+
 ### Phase 4.5a implementation review — post-stop snapshot convergence
 
 - [x] Architecture gate posted: hold + elevated session-exit idle; no owner
