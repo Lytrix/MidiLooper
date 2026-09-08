@@ -19,9 +19,11 @@ Device [`193700`](../../captures/session_20260908_193700.log): second
 overdub open `from=snapshot` `root_rev=7` `play_rev=7` `notes=159`.
 [`194039`](../../captures/session_20260908_194039.log): continuation
 NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`. Close
-`edits=3`, no `live capture baked`. Idle validate not exercised
-(overdub stop does not queue it). First overdub open `from=visual` is
-before `pending=0` `root_rev=1`.
+`edits=3`, no `live capture baked`.
+[`194438`](../../captures/session_20260908_194438.log): Stage 1 idle
+validate at 600.015 s on current `root_rev=1` (record-to-STOPPED + 60 s).
+Log-only 2 orphans, 116 events remaining; `DFRAME` **58**. Both overdub
+opens `from=snapshot` on a current root.
 Do not start hydrate Stage 4a, Overlay-as-display, raise `N`, 4.5, or 4.6.
 Plan:
 [`analysis_validation_oracle_snapshot_refinement.md`](../Plans/analysis_validation_oracle_snapshot_refinement.md).
