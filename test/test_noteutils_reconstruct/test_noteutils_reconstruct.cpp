@@ -435,6 +435,81 @@ void test_reconstruct_closed_bar_four_keeps_linear_end_beside_bar_one_sibling() 
     }
 }
 
+void test_reconstruct_linear_off_vetoes_wrap_tail_174646_pitch81() {
+    constexpr uint32_t loopLength = 5376;
+    MidiEventVec ev;
+    ev.push_back(MidiEvent::NoteOn(144, 4, 81, 100));
+    ev.push_back(MidiEvent::NoteOff(168, 4, 81, 0));
+    ev.push_back(MidiEvent::NoteOff(192, 4, 81, 0));
+    ev.push_back(MidiEvent::NoteOn(4752, 4, 81, 100));
+    ev.push_back(MidiEvent::NoteOff(4800, 4, 81, 0));
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    bool wrapHead = false;
+    bool linearTail = false;
+    bool firstNote = false;
+    for (const auto& n : notes) {
+        if (n.note == 81 && n.startTick == 0u) {
+            wrapHead = true;
+        }
+        if (n.note == 81 && n.startTick == 4752u && n.endTick == 4800u) {
+            linearTail = true;
+        }
+        if (n.note == 81 && n.startTick == 144u && n.endTick == 168u) {
+            firstNote = true;
+        }
+    }
+    TEST_ASSERT_TRUE(firstNote);
+    TEST_ASSERT_TRUE(linearTail);
+    TEST_ASSERT_FALSE(wrapHead);
+    NoteUtils::OpenNoteOn open81{81, 100, 4752};
+    TEST_ASSERT_FALSE(NoteUtils::isWrapHeldOpenNote(ev, open81, loopLength));
+}
+
+void test_reconstruct_shared_head_off_shortens_wrap_head_174646_pitch63() {
+    constexpr uint32_t loopLength = 5376;
+    MidiEventVec ev;
+    MidiEvent onHead = MidiEvent::NoteOn(192, 4, 63, 100);
+    onHead.noteId = 2;
+    MidiEvent onTail = MidiEvent::NoteOn(5368, 4, 63, 100);
+    onTail.noteId = 1;
+    MidiEvent offA = MidiEvent::NoteOff(576, 4, 63, 0);
+    offA.noteId = 2;
+    MidiEvent offB = MidiEvent::NoteOff(576, 4, 63, 0);
+    offB.noteId = 1;
+    ev.push_back(onHead);
+    ev.push_back(onTail);
+    ev.push_back(offA);
+    ev.push_back(offB);
+    auto notes = NoteUtils::reconstructNotes(ev, loopLength, false);
+    bool wrapTail = false;
+    bool wrapHead191 = false;
+    bool wrapHead576 = false;
+    bool linear192 = false;
+    bool hidden192 = false;
+    for (const auto& n : notes) {
+        if (n.note == 63 && n.startTick == 5368u && n.endTick == loopLength - 1) {
+            wrapTail = true;
+        }
+        if (n.note == 63 && n.startTick == 0u && n.endTick == 191u) {
+            wrapHead191 = true;
+        }
+        if (n.note == 63 && n.startTick == 0u && n.endTick == 576u) {
+            wrapHead576 = true;
+        }
+        if (n.note == 63 && n.startTick == 192u && n.endTick == 576u) {
+            linear192 = true;
+        }
+        if (n.note == 63 && n.startTick == 192u && n.endTick == 192u) {
+            hidden192 = true;
+        }
+    }
+    TEST_ASSERT_TRUE(wrapTail);
+    TEST_ASSERT_TRUE(wrapHead191);
+    TEST_ASSERT_TRUE(linear192);
+    TEST_ASSERT_FALSE(wrapHead576);
+    TEST_ASSERT_FALSE(hidden192);
+}
+
 void test_reconstruct_wrap_pair_blocked_by_intervening_note_on() {
     constexpr uint32_t loopLength = 1536;
     MidiEventVec ev;
@@ -843,6 +918,8 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_reconstruct_merged_pairing_blocks_completed_body_on);
     RUN_TEST(test_reconstruct_overdub_pass_pairs_wrap_held_after_completed_body);
     RUN_TEST(test_reconstruct_closed_bar_four_keeps_linear_end_beside_bar_one_sibling);
+    RUN_TEST(test_reconstruct_linear_off_vetoes_wrap_tail_174646_pitch81);
+    RUN_TEST(test_reconstruct_shared_head_off_shortens_wrap_head_174646_pitch63);
     RUN_TEST(test_reconstruct_wrap_pair_blocked_by_intervening_note_on);
     RUN_TEST(test_reconstruct_adjacent_same_pitch_boundary_order);
     RUN_TEST(test_reconstruct_record_and_overdub_pitch_ranges);

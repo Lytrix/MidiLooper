@@ -61,6 +61,14 @@ auto key = std::make_tuple(note.note, note.startTick, note.endTick);
 
 A same-channel same-pitch NoteOn and NoteOff at the same tick is a completed zero-duration pair. Reconstruct consumes both events and does not emit a display span or finish the On open to loop end. Off-before-On chronological order (Gate 5A) is unchanged: an Off that closes an earlier open note at that tick still pairs with `startTick < offTick` first. See [`overdub_reconstruct_equal_tick_pair_not_open_bugfix.md`](../Plans/overdub_reconstruct_equal_tick_pair_not_open_bugfix.md).
 
+### 5. Linear closer vs wrap-head Off
+
+Reconstruct span build (`isPreferredWrapTailForHeadOffInSpanBuild`) does not wrap-pair a tail On that already has a linear Off. A leftover head Off must not lengthen that On into a tick-0 wrap head ([`174646`](../../captures/session_20260908_174646.log) `81@4752`/`4800` vs `F,192`). Edit apply still uses `isPreferredWrapTailForHeadOff` so a wrap home with a leftover linear Off can find the wrap Off ([`201446`](../../captures/session_20260816_201446.log)).
+
+When two same-pitch Offs share one head tick, reconstruct shortens the wrap head to the earliest head-window On minus one and keeps the incoming linear note (`174646` D# two `F,576` → head `0–191` + `192–576`). Pairing stays LIFO (DEC-023); each Off closes one On.
+
+See [`wrap_head_last_off_pairing_bugfix.md`](../Plans/wrap_head_last_off_pairing_bugfix.md).
+
 ## Examples
 
 ### Scenario 1: Loop Extension (3 bars → 5 bars)
