@@ -17,6 +17,8 @@ skips `assignMissingNoteIds(loop.midiEvents())`. E: rows undo/redo fallback
 uses `Loop::tryCopyNoteEditOpenedSnapshotEvents` (span NoteIds; drops
 event-only 64). Pass rematerialize stays the no-current-root fallback.
 `take_only` unchanged. RAM1 locals **6848**; native **1772 succeeded, 1 skipped**.
+Device [`191346`](../../captures/session_20260908_191346.log): both
+`current=1` opens `only_*=0` (120 then 119).
 Plan:
 [`note_edit_leftover_oracle_snapshot_refinement.md`](../Plans/note_edit_leftover_oracle_snapshot_refinement.md).
 

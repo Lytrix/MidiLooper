@@ -1,6 +1,7 @@
 # NOTE_EDIT leftover oracles vs current snapshot
 
-**Status:** Stage 1–2 shipped (native + RAM1). Device recapture not required.  
+**Status:** Stage 1–2 shipped. Device [`191346`](../../captures/session_20260908_191346.log)
+both `current=1` opens `only_*=0`.  
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.4f`  
 **Parent:** 4.4e closed
 ([`note_edit_committed_oracle_snapshot_bugfix.md`](note_edit_committed_oracle_snapshot_bugfix.md)).
@@ -82,7 +83,11 @@ Thread `openedOnCurrentSnapshot` / `openedSnapshotRevision` from
 | Native Stage 1 | Existing open / rematerialize fixtures stay green |
 | Native Stage 2 | `test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids`, `test_session_rows_fallback_uses_opened_snapshot_span_note_ids` |
 | RAM1 | `teensy41-capture-serial` locals **6848**. Full native **1772 succeeded, 1 skipped** |
-| Device | Not required; recapture only if a later open still logs pass-flatten identity |
+| Device | [`191346`](../../captures/session_20260908_191346.log): first open
+  `current=1` `root_rev=7` notes **120**; reopen `current=1` `root_rev=14`
+  notes **119**; both `only_visual=0` `only_store=0`. No leftover store-only
+  id. No `live capture baked`. `take_only` still logs (unchanged). E: rows
+  fallback not hit — undo pushes used `UNDO_WARM` / current-state entries. |
 
 ## Pre-implementation review
 
