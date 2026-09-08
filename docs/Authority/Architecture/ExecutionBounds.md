@@ -169,7 +169,9 @@ the measured interval from snapshot-idle start to the next timing-critical
 `handleMidiInput()` entry. Admission compares the classified two-unit cost
 to `min(T_RT_reserve_ceiling, remaining_us − T_RT_safety_margin)` and yields
 when the cost does not fit. `60% × T_clock` is a diagnostic proxy only. STOPPED
-samples are excluded from this gate. These
+samples are excluded from this gate. Device
+[`115043`](../../../captures/session_20260908_115043.log) yielded 6389 live
+turns with `remaining=0` and published `pending=0` only after STOPPED. These
 structural caps admit the 3.5 firmware path; they do not close that device
 measurement. Do not freeze an observed unit as the ceiling.
 

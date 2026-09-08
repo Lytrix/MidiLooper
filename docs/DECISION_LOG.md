@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary) | 2026-09-08 | `T_RT_reserve` is a 10 ms policy ceiling plus per-turn MIDI-boundary `reserve_us`; not 60% of `T_clock` and not an observed unit | Accepted — policy; 3.6 recapture still open |
 | [DEC-052](#dec-052--occupy-consumes-the-draw-source-predicate) | 2026-09-02 | Occupy committed source uses the paint draw-source predicate; exclusive snapshot fill when true | Accepted |
 | [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start) | 2026-09-01 | Overdub wrap persist seals at loop end (phase 0); S remains session identity | Accepted |
 | [DEC-050](#dec-050--occupancy-at-noteon-and-per-bar-draw-routing) | 2026-09-01 | Occupancy resolves at NoteOn into pending effective transforms; draw source is per-bar routing only | Accepted |
@@ -66,7 +67,121 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-053 -->
+<!-- Append new entries below (newest first). Next ID: DEC-054 -->
+
+## DEC-053 — T_RT_reserve is ceiling plus per-turn MIDI boundary
+
+**Date:** 2026-09-08
+
+**Status:** Accepted — policy for OpenSpec tasks `3.5`/`3.6`. Firmware
+admission is in tree. Device yield HITL
+[`115043`](../captures/session_20260908_115043.log) proves live yield then
+STOPPED complete publish; `pending=0` while timing-critical remains open.
+Tasks stay unchecked.
+
+**Scope:** `feature/overdub-wrap-snapshot-publication` / OpenSpec
+`immutable-loop-snapshot-passes` task `3.6`
+
+**Authority:** [`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md),
+[`NAMING.md`](Authority/NAMING.md) § Timing-critical MIDI Input,
+[`overdub_wrap_source_snapshot_migration_refinement.md`](Plans/overdub_wrap_source_snapshot_migration_refinement.md),
+[`snapshot_publication_timing_bugfix.md`](Plans/snapshot_publication_timing_bugfix.md).
+
+**Amends:** [DEC-047](#dec-047--bounded-overdub-wrap-snapshot-publication) item 9
+(how the `T_RT_reserve` device gate is defined). Does not supersede DEC-047
+wrap-journal publication, DEC-043 bound classification, or the rejection of
+`RuntimeWorkBudget::admit(WorkClass)`.
+
+**Does not freeze:** an observed construction-unit duration (including 8.86 ms),
+the minimum observed `reserve_us`, `T_RT_safety_margin`, or OpenSpec `3.5`/`3.6`.
+
+### Decision
+
+`T_RT_reserve` is the maximum time a snapshot-idle construction turn may consume
+before the next timing-critical MIDI Input entry, measured from that idle
+turn’s start. The deadline is the actual next `handleMidiInput()` entry, not
+the next MIDI-clock timestamp and not `60% × T_clock`.
+
+Three numbers:
+
+1. **`T_RT_reserve_ceiling`** — fixed policy upper bound on
+   construction-attributable work per snapshot-idle turn. Initial value:
+   **10,000 µs**. Independent of BPM. Not justified by an observed unit. Not
+   replaced by the minimum observed reserve.
+2. **`reserve_us`** — per-turn measured availability: snapshot-idle start to
+   the next timing-critical `handleMidiInput()` entry. Capture-gated field on
+   the existing `DIAG,snapshot_idle,child` line. When that enter has not been
+   seen yet, omit the field or emit `0` and pair on the following MIDI Input
+   enter sample. Do not add a second telemetry owner. `DIAG,midi_gap` remains
+   a five-second maximum since the previous input **exit** and is not this
+   value.
+3. **`T_RT_safety_margin`** — explicit margin for timestamp uncertainty,
+   MIDI-entry/dispatch overhead, and uninstrumented work. **Not frozen.**
+   1,000 µs is a working hypothesis only.
+
+Admitted construction interval:
+
+```text
+min(T_RT_reserve_ceiling, reserve_us - T_RT_safety_margin)
+```
+
+with a floor of zero. A turn whose next MIDI boundary is 7.2 ms away does not
+receive 10 ms.
+
+Admission at turn start cannot wait for this turn’s retrospective `reserve_us`.
+Remaining time is the interval until the next already-knowable timing-critical
+MIDI Input opportunity. Recapture scores the **actual** next enter. A local
+elapsed-time timer is not the bound. A Snapshot idle turn admits two
+construction units (`kSnapshotIdleConstructionUnitsPerTurn` = 2). The turn
+starts only when the classified worst-case for those two units fits the
+admitted interval; otherwise the turn yields and retries. No incomplete
+candidate is published or selected.
+
+**STOPPED is excluded.** `T_RT_reserve`, remaining-interval yield, `reserve_us`
+ceiling, construction-attributable `late_*`, and construction-attributable MIDI
+Input Gap apply only while the track is `RECORDING`, `PLAYING`, or
+`OVERDUBBING` (and `ARMED` / `STOPPED_RECORDING` on the way into those). While
+the track is `STOPPED`, Snapshot idle, persist, and other deferred work may
+take as long as they need. Those samples are not an overrun and must not be
+scored against the 10,000 µs ceiling.
+
+`60% × T_clock` (12.5 ms at 120 BPM) stays an operating/diagnostic proxy only.
+The construction budget is not a function of BPM. Measured `reserve_us` is
+the adaptation mechanism when the MIDI boundary moves.
+
+### Acceptance (task 3.6 still open)
+
+Pass requires a capture-gated recapture with `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
+covering record and overdub through `pending=0` **while timing-critical**.
+STOPPED-hold samples are excluded from the ceiling and lateness gates:
+
+- `reserve_us` varies with actual MIDI boundaries
+- construction-attributable work per turn stays ≤ `T_RT_reserve_ceiling`
+- no construction-attributable `late_clk` / `late_on` / `late_off`
+- construction-attributable MIDI Input Gap stays inside this contract
+- the ~79 ms parent/child class is either non-construction or a gate failure
+- insufficient-reserve turns yield, retry, and then publish only a complete
+  candidate; the previous complete root stays authoritative
+- `pending=0` converges without prefix publication
+
+The `snapshot_idle` parent wall time is not an acceptance metric.
+
+**Amendment (2026-09-08):** Snapshot idle cardinality is **N = 2**, not 1.
+[`104353`](../captures/session_20260908_104353.log) construction stayed well
+under the 10,000 µs ceiling with `stepPendingSnapshotPublish(2)` already in
+firmware. Do not revert `kSnapshotIdleConstructionUnitsPerTurn` to 1 for the
+3.6 gate. Remaining-interval admission compares the two-unit worst-case to
+`min(T_RT_reserve_ceiling, remaining − T_RT_safety_margin)`.
+
+**Amendment (2026-09-08):** STOPPED timings are excluded from the 3.6 gate.
+[`110034`](../captures/session_20260908_110034.log) `reserve_us` 36 / 42 /
+95 ms after `PLAYING → STOPPED` are not overruns. Remaining-interval admission
+does not yield on `STOPPED`.
+
+**Consequences:** add capture-gated `reserve_us` on the existing child line;
+extend the existing Snapshot idle owner for remaining-interval admission; do
+not introduce `RuntimeWorkBudget::admit`. Do not check off `3.5`/`3.6` until
+this recapture passes.
 
 ## DEC-052 — Occupy consumes the draw-source predicate
 
@@ -270,9 +385,10 @@ post-root successor policy outside this slice.
    with the same logical `EventId` and canonical order.
 8. The global overdub undo entry remains pass-based while construction is
    pending. Snapshot-identity undo attachment belongs to the later undo phase.
-9. The device gate uses the measured `T_RT_reserve` contract for construction-
+9. The device gate uses the `T_RT_reserve` contract for construction-
    attributable MIDI gap and deadline lateness. Total construction wall time
-   alone is insufficient.
+   alone is insufficient. **Amended 2026-09-08:** definition, ceiling, and
+   acceptance are [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary).
 
 **Consequences:** OpenSpec tasks `3.5` and `3.6` require updates to the phase
 gate, runtime scope, construction inventory, and parity fixtures before

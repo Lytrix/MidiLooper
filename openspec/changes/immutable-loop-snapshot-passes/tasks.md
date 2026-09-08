@@ -71,7 +71,12 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     [`104353`](../../../captures/session_20260908_104353.log). Remaining-interval
     admission is in tree: two-unit cost versus
     `min(ceiling, remaining − margin)`, with `DIAG,snapshot_idle,yield` and
-    capture-only `!SNAPSHOT_YIELD`. Device yield HITL remains open. Snapshot
+    capture-only `!SNAPSHOT_YIELD`. Device yield HITL
+    [`115043`](../../../captures/session_20260908_115043.log):
+    `snapshot_reserve_admission.py` PASS; 6389 live yields all
+    `remaining=0`; first construction and `pending=0` `root_rev=9` are after
+    `PLAYING → STOPPED`. DEC-053 still requires `pending=0` while
+    timing-critical. Do not check off 3.5/3.6. Snapshot
     idle cardinality is **N = 2**
     (`kSnapshotIdleConstructionUnitsPerTurn`); do not revert to 1.
   - Device `snapshot_idle` now includes `journals`, `fragment=i/n`, and

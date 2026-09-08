@@ -1,6 +1,6 @@
 # Snapshot Publication Reserve Admission
 
-**Status:** Active — host gates PASS; device HITL blocked on missing Teensy USB  
+**Status:** Active — host gates PASS; device yield verifier PASS [`115043`](../../captures/session_20260908_115043.log); DEC-053 3.6 still open  
 **OpenSpec:** `immutable-loop-snapshot-passes` tasks `3.5` / `3.6`  
 **Decision:** [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)  
 **Parent timing plan:** [`snapshot_publication_timing_bugfix.md`](snapshot_publication_timing_bugfix.md)
@@ -92,7 +92,17 @@ Pass requires:
 - STOPPED rows are excluded from reserve scoring
 - existing base note-count, transition, clock, and undo/redo gates still apply
 
-Do not check off OpenSpec `3.5` / `3.6` until this device gate passes.
+Device [`115043`](../../captures/session_20260908_115043.log):
+
+- `snapshot_reserve_admission.py` `{ok: True, yield_count: 6389, yield_state: RECORDING, yield_root_rev: 0, complete_root_rev: 9, complete_pending: 0}`
+- Every live yield is `remaining=0`, `pending=1`, `root_rev=0`
+- Last yield at `#CAP,84386206` before `PLAYING → STOPPED` at `#CAP,84455812`
+- First `snapshot_idle` construction at `#CAP,84560401` (STOPPED)
+- Complete publish at `#CAP,90248476`: `pending=0`, `journals=0`, `construction=0`, `root_rev=9`
+- No yield after STOPPED
+- Host base still FAIL for known non-slice checks (`record_first_note_too_late`, 2304-vs-1536, `dispatch`, SEVT window)
+
+DEC-053 still requires `pending=0` while timing-critical. Do not check off OpenSpec `3.5` / `3.6`. `T_RT_safety_margin` stays unfrozen.
 
 ## Exclusions
 

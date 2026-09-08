@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (DEC-053 remaining-interval admission; 3.6 HITL open)
+Last updated: 2026-09-08 (DEC-053 yield HITL 115043; 3.6 still open)
 
 ---
 
@@ -157,8 +157,11 @@ PASS [`024731`](../../captures/session_20260908_024731.log)
 Do not freeze an observed unit or the minimum observed `reserve_us` as the
 `T_RT_reserve` guarantee. [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
 records the 10,000 µs policy ceiling. Remaining-interval admission for the
-two-unit Snapshot turn is in tree; the 3.6 device yield HITL remains open.
-Do not check off OpenSpec `3.5`/`3.6`.
+two-unit Snapshot turn is in tree. Device yield HITL
+[`115043`](../../captures/session_20260908_115043.log) proves live
+`snapshot_idle,yield` then STOPPED complete publish (`root_rev` 0 → 9,
+`pending=0`). Every live yield has `remaining=0`; DEC-053 still requires
+`pending=0` while timing-critical. Do not check off OpenSpec `3.5`/`3.6`.
 Construction bounds stay unchanged.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
