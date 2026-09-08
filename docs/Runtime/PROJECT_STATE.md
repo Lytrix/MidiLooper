@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (DEC-055 Stage 2 — RAM1 locals 7008)
+Last updated: 2026-09-08 (DEC-055 Stage 2 device PASS 220445)
 
 ---
 
@@ -77,9 +77,10 @@ Device [`201106`](../../captures/session_20260908_201106.log): second
 overdub open `from=snapshot` `root_rev=5` `play_rev=5` `notes=114`.
 NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`. `DFRAME`
 **137** after second stop through session end.
-DEC-055 Stage 2 in tree: first kind-boundary at `undoCount == 0` stores
-E:00 (`hasUndoCurrentState == false`) and restores from the opened
-snapshot. Stage 1 device PASS
+DEC-055 Stage 2 device PASS
+[`220445`](../../captures/session_20260908_220445.log): first Move
+`UNDO_WARM,push,e00` (1358 µs, 79 notes, kind=Move); `focus_snap` = 0.
+Stage 1 device PASS
 [`212850`](../../captures/session_20260908_212850.log). Option B rejected.
 Plans:
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),

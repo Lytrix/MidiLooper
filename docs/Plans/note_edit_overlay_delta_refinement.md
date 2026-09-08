@@ -1,10 +1,10 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 Stage 2 firmware in tree — device recapture open; RAM1 locals 7008  
+**Status:** DEC-055 Stage 2 device PASS [`220445`](../../captures/session_20260908_220445.log)  
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
-**Evidence:** [`212850`](../../captures/session_20260908_212850.log) (PASS), [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
+**Evidence:** [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
 Does **not** start: hydrate 1–5, DEC-054 Stage 2, Option B, rename
 `NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
@@ -93,6 +93,18 @@ span NoteIds from the opened snapshot.
 no `UNDO_WARM,phase,focus_snap` on that first kind-boundary; `push,e00`
 (or equivalent) with `hasUndoCurrentState` false. Select-only cadence from
 Stage 1 stays. Later kind-boundaries may still clone once.
+
+**Device PASS [`220445`](../../captures/session_20260908_220445.log):**
+`NOTE_EDIT_OPEN` `current=1` `root_rev=4` **79** notes after transport
+`STOPPED -> PLAYING`. Select pitchbend lines **211**. First Move
+(POSITION EDIT, kind=3) logs `UNDO_WARM,push,e00,1358,79,3` then
+`GEOM_APPLY,undo,ok,1864`. `focus_snap` / `warm,complete` = **0**. Later
+same-kind `undo,ok` is 0–2 µs (no second kind-boundary). Select-only
+`DFRAME` 30-frame gaps: min **1482** ms, median **1579** ms, max **2089** ms
+(open window `fidx` 750→780). Paint **10611–25800** µs. Compare
+[`212850`](../../captures/session_20260908_212850.log) select-only:
+median **1251** ms, max **1789** ms; [`204458`](../../captures/session_20260908_204458.log)
+after-open max **4594** ms with **23** `warm,complete`.
 
 ---
 
