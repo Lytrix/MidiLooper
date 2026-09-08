@@ -190,6 +190,12 @@ struct Loop {
 
   void rematerializeEditView(LoopEventStore& store) const;
   bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
+  bool tryCopyNoteEditOpenedSnapshotEvents(bool openedOnCurrentSnapshot,
+                                           uint32_t openedSnapshotRevision,
+                                           SessionMidiEventVec& out) const;
+  bool tryCopyNoteEditOpenedSnapshotEvents(bool openedOnCurrentSnapshot,
+                                           uint32_t openedSnapshotRevision,
+                                           MidiEventVec& out) const;
   void copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds, SessionMidiEventVec& out,
                               bool openedOnCurrentSnapshot = false,
                               uint32_t openedSnapshotRevision = 0) const;

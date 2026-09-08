@@ -61,9 +61,13 @@ void restoreSessionStoreFromCurrentState(CowLoopEventStore& store,
                                          uint8_t channel);
 void applySessionUndoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, uint8_t channel,
-                           const EditPassIdList& currentEditPassIds);
+                           const EditPassIdList& currentEditPassIds,
+                           bool openedOnCurrentSnapshot = false,
+                           uint32_t openedSnapshotRevision = 0);
 void applySessionRedoEntry(Loop& loop, CowLoopEventStore& store, const SessionUndoEntry& entry,
                            uint32_t loopLength, uint8_t channel,
-                           const EditPassIdList& currentEditPassIds);
+                           const EditPassIdList& currentEditPassIds,
+                           bool openedOnCurrentSnapshot = false,
+                           uint32_t openedSnapshotRevision = 0);
 
 bool sessionUndoStoresMatch(const LoopEventStore& a, const LoopEventStore& b);

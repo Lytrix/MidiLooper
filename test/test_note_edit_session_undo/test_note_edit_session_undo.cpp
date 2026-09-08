@@ -30,6 +30,7 @@
 #include "../test_support/NoteIdTestFixtures.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "MidiEvent.h"
+#include "LoopSnapshot.h"
 
 namespace {
 
@@ -1085,6 +1086,132 @@ void test_current_state_move_ab_undo_redo_chain() {
   (void)entryB;
 }
 
+void test_session_rows_fallback_uses_opened_snapshot_span_note_ids() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  loop.playbackRevision = 1;
+
+  auto empty = LoopSnapshot::createEmpty(1, loop.loopLengthTicks, 0, 8, 8);
+  LoopSnapshotChangeSet changes;
+
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.next.loopId = 1;
+  noteChange.next.noteId = 7;
+  noteChange.next.pitch = 60;
+  noteChange.next.velocity = 100;
+  noteChange.next.startTick = 100;
+  noteChange.next.endTick = 200;
+  changes.notes.push_back(noteChange);
+
+  MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
+  noteOn.noteId = 7;
+  SnapshotEventChange noteOnChange{};
+  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.next = {1, 1, 0, noteOn};
+  changes.events.push_back(noteOnChange);
+
+  MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
+  noteOff.noteId = 7;
+  SnapshotEventChange noteOffChange{};
+  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.next = {1, 2, 1, noteOff};
+  changes.events.push_back(noteOffChange);
+
+  MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
+  onlyStoreOn.noteId = 64;
+  SnapshotEventChange onlyStoreOnChange{};
+  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
+  changes.events.push_back(onlyStoreOnChange);
+
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef frozen = construction.freeze();
+  TEST_ASSERT_NOT_NULL(frozen.get());
+  loop.storePublishedSnapshotForTest(frozen, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const uint32_t openedSnapshotRevision = loop.publishedSnapshotRevision();
+
+  SessionUndoEntry undoEntry;
+  TEST_ASSERT_FALSE(undoEntry.hasUndoCurrentState);
+  CowLoopEventStore session;
+  applySessionUndoEntry(loop, session, undoEntry, loop.loopLengthTicks, 1, EditPassIdList{},
+                        true, openedSnapshotRevision);
+
+  uint32_t undoNoteOns = 0;
+  bool undoHasSpanId = false;
+  bool undoHasOnlyStore = false;
+  for (const MidiEvent& evt : session.readEvents()) {
+    if (!evt.isNoteOn()) {
+      continue;
+    }
+    ++undoNoteOns;
+    if (evt.noteId == 7) {
+      undoHasSpanId = true;
+      TEST_ASSERT_EQUAL_UINT8(60u, evt.data.noteData.note);
+    }
+    if (evt.noteId == 64) {
+      undoHasOnlyStore = true;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, undoNoteOns);
+  TEST_ASSERT_TRUE(undoHasSpanId);
+  TEST_ASSERT_FALSE(undoHasOnlyStore);
+
+  SessionUndoEntry redoEntry;
+  redoEntry.hasRedoPayload = true;
+  EditPass pitchRow{};
+  pitchRow.actionType = EditActionType::Update;
+  pitchRow.propertyType = EditPropertyType::Pitch;
+  pitchRow.targetNoteId = 7;
+  pitchRow.startTick = 100;
+  pitchRow.endTick = 200;
+  pitchRow.pitch = 72;
+  redoEntry.redoEditRows.push_back(pitchRow);
+  applySessionRedoEntry(loop, session, redoEntry, loop.loopLengthTicks, 1, EditPassIdList{},
+                        true, openedSnapshotRevision);
+
+  uint32_t redoNoteOns = 0;
+  bool redoHasSpanId = false;
+  bool redoHasOnlyStore = false;
+  uint8_t redoPitch = 0;
+  for (const MidiEvent& evt : session.readEvents()) {
+    if (!evt.isNoteOn()) {
+      continue;
+    }
+    ++redoNoteOns;
+    if (evt.noteId == 7) {
+      redoHasSpanId = true;
+      redoPitch = evt.data.noteData.note;
+    }
+    if (evt.noteId == 64) {
+      redoHasOnlyStore = true;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, redoNoteOns);
+  TEST_ASSERT_TRUE(redoHasSpanId);
+  TEST_ASSERT_EQUAL_UINT8(72u, redoPitch);
+  TEST_ASSERT_FALSE(redoHasOnlyStore);
+
+  loop.playbackRevision++;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  CowLoopEventStore miss;
+  applySessionUndoEntry(loop, miss, undoEntry, loop.loopLengthTicks, 1, EditPassIdList{});
+  uint32_t missNoteOns = 0;
+  for (const MidiEvent& evt : miss.readEvents()) {
+    if (evt.isNoteOn()) {
+      ++missNoteOns;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(0u, missNoteOns);
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_session_undo_stack_push_entry);
@@ -1111,5 +1238,6 @@ int main(int argc, char** argv) {
   RUN_TEST(test_current_state_undo_restore_parity_with_clone);
   RUN_TEST(test_current_state_live_capture_undo_redo);
   RUN_TEST(test_current_state_move_ab_undo_redo_chain);
+  RUN_TEST(test_session_rows_fallback_uses_opened_snapshot_span_note_ids);
   return UNITY_END();
 }

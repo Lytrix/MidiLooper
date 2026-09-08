@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (wrap-head last-Off pairing native)
+Last updated: 2026-09-08 (4.4f leftover NOTE_EDIT oracles shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,16 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Wrap-head vs last-Off pairing RC1–RC3** — native shipped; device recapture
-open. Plan:
-[`wrap_head_last_off_pairing_bugfix.md`](../Plans/wrap_head_last_off_pairing_bugfix.md).
-Reconstruct does not wrap-pair a tail On that has a linear Off; two Offs
-at one head tick shorten the wrap head to the incoming On−1. Record stop
-remaps overflow NoteOns into the loop (`tick % length`) before drop; does
-not reorder `setState` / finalize. RAM1 locals **6848**; native **1770
-succeeded, 1 skipped**. Do not start hydrate Stage 4a.
+Do not start hydrate Stage 4a, analysis/validation oracles, 4.5, or 4.6.
 
-**Prior — 4.4e Stage 3 + close bake closed.** Next 4.4 slice requires selection.
+**Prior — OpenSpec 4.4f — leftover NOTE_EDIT oracles.** Current-root open
+skips `assignMissingNoteIds(loop.midiEvents())`. E: rows undo/redo fallback
+uses `Loop::tryCopyNoteEditOpenedSnapshotEvents` (span NoteIds; drops
+event-only 64). Pass rematerialize stays the no-current-root fallback.
+`take_only` unchanged. RAM1 locals **6848**; native **1772 succeeded, 1 skipped**.
+Plan:
+[`note_edit_leftover_oracle_snapshot_refinement.md`](../Plans/note_edit_leftover_oracle_snapshot_refinement.md).
+
+**Prior — Wrap-head vs last-Off pairing RC1–RC3** — accepted without
+174646 recapture. Native shipped; [`185428`](../../captures/session_20260908_185428.log)
+RC3 analog PASS. Plan:
+[`wrap_head_last_off_pairing_bugfix.md`](../Plans/wrap_head_last_off_pairing_bugfix.md).
+
+**Prior — 4.4e Stage 3 + close bake closed.**
 
 **Prior — NOTE_EDIT close bake — snapshot baseline:**
 Empty-id close no longer treats snapshot-store vs pass rematerialize as

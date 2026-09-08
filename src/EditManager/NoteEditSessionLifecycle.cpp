@@ -235,7 +235,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
 #if defined(SESSION_CAPTURE)
     logNoteEditOpenQ3(loop, editSession.store.readStore());
 #endif
-    loop.assignMissingNoteIds(loop.midiEvents());
+    // Current-root open already loaded span events (4.4e). Do not flatten
+    // passes through midiEvents() for leftover identity assign (4.4f).
+    if (!loop.publishedSnapshotIsCurrent()) {
+        loop.assignMissingNoteIds(loop.midiEvents());
+    }
     loop.assignMissingNoteIds(editSession.store.mutEvents());
     stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
     editSession.noteEditCurrentState =

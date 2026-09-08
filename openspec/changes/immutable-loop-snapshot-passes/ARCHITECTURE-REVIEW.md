@@ -401,6 +401,21 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       [`174646`](../../../captures/session_20260908_174646.log): no
       `live capture baked`; empty exit has no `NoteEditPassClosed`.
 
+### Phase 4.4f implementation review — leftover NOTE_EDIT oracles
+
+- [x] Architecture gate posted: skip `assignMissingNoteIds(loop.midiEvents())`
+      on a current root; E: rows fallback copies the opened snapshot root.
+      No owner or transition change. `take_only` unchanged.
+- [x] Stage 1: current-root open does not flatten `midiEvents()` for leftover
+      identity assign.
+- [x] Stage 2: `applySessionEditRows` uses
+      `Loop::tryCopyNoteEditOpenedSnapshotEvents`; pin miss / no current root
+      keeps `materializeExcludingEditPassIds`.
+- [x] Native: `test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids`,
+      `test_session_rows_fallback_uses_opened_snapshot_span_note_ids`.
+- [x] Capture-serial RAM1 locals **6848**. Full native suite:
+      **1772 succeeded, 1 skipped**.
+
 ### Close-publish NoteRange pitch reuse
 
 - [x] Architecture checkpoint: `appendEditRowChange` only; no owner or

@@ -256,6 +256,12 @@ cursors rather than treating that locality as an execution bound.
         close set rebases on an earlier same-`NoteId` change.
         Plan:
         [`note_edit_snapshot_note_range_pitch_bugfix.md`](../../../docs/Plans/note_edit_snapshot_note_range_pitch_bugfix.md).
+  - [x] 4.4f Leftover NOTE_EDIT oracles after 4.4e: current-root open does
+        not flatten `loop.midiEvents()` for NoteId assign; E: rows undo/redo
+        fallback copies the opened snapshot root instead of
+        `materializeExcludingEditPassIds`. Pass rematerialize stays the
+        no-current-root fallback. `take_only` unchanged. Plan:
+        [`note_edit_leftover_oracle_snapshot_refinement.md`](../../../docs/Plans/note_edit_leftover_oracle_snapshot_refinement.md).
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
 
