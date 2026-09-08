@@ -209,7 +209,7 @@ public:
         return deferredNoteEditDisplayRefreshPending_;
     }
 #endif
-    /// Pre-build kind-boundary undo after fader-1 selection (idle frame, not fader path).
+    /// Settled remainder unit after display admission. Not fader-path work.
     void processKindBoundaryUndoWarm(Track& track);
 
     /// Returns session store during note edit, else loop materialized events.
@@ -358,6 +358,7 @@ private:
     uint32_t deferredNoteEditDisplayRefreshArmedAtMs_ = 0;
     static constexpr uint32_t kDeferredNoteEditPlaybackRefreshIdleMs = 80;
     bool kindBoundaryUndoWarmPending_ = false;
+    uint32_t kindBoundaryUndoWarmArmedAtMs_ = 0;
     bool kindBoundaryUndoCacheValid_ = false;
     SessionUndoEntry kindBoundaryUndoCache_{};
     uint32_t kindBoundaryUndoCacheRevision_ = UINT32_MAX;

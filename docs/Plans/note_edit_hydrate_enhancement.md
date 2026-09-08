@@ -1,6 +1,6 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Decided — not now. Architecture PASS (overlap retarget 2026-08-17); firmware not authorized.  
+**Status:** Decided — not now. Architecture PASS (overlap retarget 2026-08-17); firmware not authorized. Bound to the 2026-09-08 overlay-delta design session ([`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md), proposed DEC-055) for **E:00** / no full-row clone.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  

@@ -81,6 +81,36 @@ void test_move_after_reselect_pushes_fresh_geometry_undo() {
   TEST_ASSERT_TRUE(shouldPushGeometryKindUndo(NoteEditKind::Select, NoteEditKind::Move));
 }
 
+void test_kind_boundary_undo_warm_coalesce_and_settle() {
+  bool pending = false;
+  uint32_t armedAtMs = 0;
+  constexpr uint32_t idleMs = 80;
+  for (const uint32_t selectAtMs : {10u, 20u, 30u}) {
+    pending = true;
+    armedAtMs = selectAtMs;
+  }
+  TEST_ASSERT_TRUE(pending);
+  TEST_ASSERT_FALSE(kindBoundaryUndoWarmSettled(pending, 30, armedAtMs, idleMs));
+  TEST_ASSERT_FALSE(kindBoundaryUndoWarmSettled(pending, 109, armedAtMs, idleMs));
+  TEST_ASSERT_TRUE(kindBoundaryUndoWarmSettled(pending, 110, armedAtMs, idleMs));
+}
+
+void test_select_nav_does_not_schedule_kind_boundary_undo_warm() {
+  TEST_ASSERT_FALSE(selectNavSchedulesKindBoundaryUndoWarm());
+  EditorSelection prior{};
+  prior.primaryNote = 1;
+  TEST_ASSERT_TRUE(shouldResetGeometryKindUndoOnSelectChange(prior, 2));
+}
+
+void test_kind_boundary_undo_warm_overrun_does_not_publish() {
+  TEST_ASSERT_FALSE(kindBoundaryUndoWarmMayPublish(false, 0, kKindBoundaryUndoWarmBoundUs));
+  TEST_ASSERT_FALSE(kindBoundaryUndoWarmMayPublish(true, kKindBoundaryUndoWarmBoundUs + 1,
+                                                   kKindBoundaryUndoWarmBoundUs));
+  TEST_ASSERT_TRUE(kindBoundaryUndoWarmMayPublish(true, kKindBoundaryUndoWarmBoundUs,
+                                                  kKindBoundaryUndoWarmBoundUs));
+  TEST_ASSERT_TRUE(kindBoundaryUndoWarmMayPublish(true, 91700, kKindBoundaryUndoWarmBoundUs));
+}
+
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_advance_encoder_cycle_order);
@@ -93,5 +123,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_empty_step_deselect_is_selection_target_change);
   RUN_TEST(test_entity_id_invalid_sentinels);
   RUN_TEST(test_move_after_reselect_pushes_fresh_geometry_undo);
+  RUN_TEST(test_kind_boundary_undo_warm_coalesce_and_settle);
+  RUN_TEST(test_select_nav_does_not_schedule_kind_boundary_undo_warm);
+  RUN_TEST(test_kind_boundary_undo_warm_overrun_does_not_publish);
   return UNITY_END();
 }

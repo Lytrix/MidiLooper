@@ -5,9 +5,7 @@
 
 #include <utility>
 
-#if defined(SESSION_CAPTURE)
 #include <Arduino.h>
-#endif
 
 #include "ControlSurfaceManager.h"
 #include "EditManager.h"
@@ -89,21 +87,27 @@ EDIT_MANAGER_IMPL_MEM bool EditManager::pushSessionUndoOnKindChange(Track& track
 EDIT_MANAGER_IMPL_MEM void EditManager::scheduleKindBoundaryUndoWarm() {
     kindBoundaryUndoWarmPending_ = true;
     kindBoundaryUndoCacheValid_ = false;
+    kindBoundaryUndoWarmArmedAtMs_ = millis();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track) {
     if (!kindBoundaryUndoWarmPending_) {
         return;
     }
-    kindBoundaryUndoWarmPending_ = false;
+    if (!kindBoundaryUndoWarmSettled(true, millis(), kindBoundaryUndoWarmArmedAtMs_,
+                                     kDeferredNoteEditPlaybackRefreshIdleMs)) {
+        return;
+    }
     if (!editSession.active || lastPushedGeometryKind_ != NoteEditKind::Select) {
+        kindBoundaryUndoWarmPending_ = false;
         return;
     }
     if (!editorSelectionHasNote(sessionState.selection)) {
+        kindBoundaryUndoWarmPending_ = false;
         return;
     }
-#if defined(SESSION_CAPTURE)
     const uint32_t warmStartUs = micros();
+#if defined(SESSION_CAPTURE)
     const uint32_t readStartUs = micros();
 #endif
     const auto& sessionFlat = editSession.store.readEvents();
@@ -113,16 +117,30 @@ EDIT_MANAGER_IMPL_MEM void EditManager::processKindBoundaryUndoWarm(Track& track
                 static_cast<unsigned long>(micros() - readStartUs),
                 editSession.focus.baselineMap.size(), sessionFlat.size());
 #endif
-    kindBoundaryUndoCache_ =
+    SessionUndoEntry built =
         buildSessionUndoEntry(editSession.focus, sessionState.selection, sessionFlat,
                               track.getMidiChannel(), noteEditLoopLengthTicks(track),
                               editSession.editPassIds, &editSession.noteEditCurrentState);
+    const uint32_t elapsedUs = micros() - warmStartUs;
+    if (!kindBoundaryUndoWarmMayPublish(true, elapsedUs, kKindBoundaryUndoWarmBoundUs)) {
+#if defined(SESSION_CAPTURE)
+        logger.info("#CAP,%lu,UNDO_WARM,warm,overrun,%lu,%zu,%zu,%u",
+                    static_cast<unsigned long>(micros()),
+                    static_cast<unsigned long>(elapsedUs),
+                    editSession.focus.baselineMap.size(), sessionFlat.size(),
+                    static_cast<unsigned>(built.editRows.size()));
+#endif
+        kindBoundaryUndoWarmArmedAtMs_ = millis();
+        return;
+    }
+    kindBoundaryUndoCache_ = std::move(built);
     kindBoundaryUndoCacheValid_ = true;
     kindBoundaryUndoCacheRevision_ = sessionPreviewRevision_;
+    kindBoundaryUndoWarmPending_ = false;
 #if defined(SESSION_CAPTURE)
     logger.info("#CAP,%lu,UNDO_WARM,warm,complete,%lu,%zu,%zu,%u",
                 static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(micros() - warmStartUs),
+                static_cast<unsigned long>(elapsedUs),
                 editSession.focus.baselineMap.size(), sessionFlat.size(),
                 static_cast<unsigned>(kindBoundaryUndoCache_.editRows.size()));
 #endif

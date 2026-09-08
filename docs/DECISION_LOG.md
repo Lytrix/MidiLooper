@@ -14,6 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 1: eliminate select clone / full-row warm |
+| [DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units) | 2026-09-08 | NOTE_EDIT playing display stall: coalesce/post-display undo warm and deferred open/close | Accepted — Stage 1 admission in tree; Option B rejected by DEC-055; Stage 2 still separate |
 | [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary) | 2026-09-08 | `T_RT_reserve` is a 10 ms policy ceiling plus per-turn MIDI-boundary `reserve_us`; not 60% of `T_clock` and not an observed unit | Accepted — yield device proof parked; 3.5/3.6 closed |
 | [DEC-052](#dec-052--occupy-consumes-the-draw-source-predicate) | 2026-09-02 | Occupy committed source uses the paint draw-source predicate; exclusive snapshot fill when true | Accepted |
 | [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start) | 2026-09-01 | Overdub wrap persist seals at loop end (phase 0); S remains session identity | Accepted |
@@ -67,7 +69,197 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-054 -->
+<!-- Append new entries below (newest first). Next ID: DEC-055 -->
+
+## DEC-055 — NOTE_EDIT working set is overlay delta on opened LoopSnapshot
+
+**Date:** 2026-09-08
+
+**Status:** Accepted — Stage 1 authorized (eliminate select `clone()` /
+full-row warm). First kind-boundary E:00 restore is the next slice.
+
+**Owner:** `EditManager` (session, `NoteEditCurrentState`, **E:**).
+`Loop` owns the published snapshot. `NoteGeometryResolver` owns overlap
+Resolution. `DisplayManager` paints.
+
+**Authority:**
+[`note_edit_overlay_delta_architecture.md`](Plans/note_edit_overlay_delta_architecture.md),
+[`note_edit_overlay_delta_refinement.md`](Plans/note_edit_overlay_delta_refinement.md),
+[`note_edit_selectedtick_lcr_resolution_architecture.md`](Plans/note_edit_selectedtick_lcr_resolution_architecture.md),
+[`note_edit_hydrate_enhancement.md`](Plans/note_edit_hydrate_enhancement.md),
+[DEC-029](#dec-029-noteeditcurrentstate-owns-note-edit-editable-note-state),
+[DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
+[DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units).
+
+**Does not authorize:** hydrate Stages 1–5, DEC-054 Stage 2, Option B
+`clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold,
+raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`.
+
+### Problem
+
+DEC-054 relocated kind-boundary undo warm. [`204458`](../captures/session_20260908_204458.log)
+still pays 34–60 ms `focus_snap` per settled select because
+`NoteEditCurrentState::clone()` copies every row. [`201106`](../captures/session_20260908_201106.log)
+was 91–133 ms for 137 rows. The stall’s cause is a second full-loop
+representation, not an unsliced copy.
+
+### Decision
+
+1. **North star.** A NOTE_EDIT session never creates a second full-loop
+   representation merely to support editing or undo.
+2. **Representations.** Opened `LoopSnapshot` is committed content and
+   **E:00**. `NoteEditCurrentState` is this-session overlay (mover +
+   participating notes). Keep the name (DEC-029). **E:01…** are lossless
+   edit-scope deltas plus selection/focus.
+3. **Select does not clone.** Select updates selection/focus only. No **E:**
+   push, no current-state clone, no full-row warm. Stage 1 is this only.
+4. **First kind-boundary at undoCount 0** is a later slice: restore from
+   opened snapshot (`hasUndoCurrentState == false`). Do not couple it to
+   Stage 1 so the first device capture isolates the select hitch.
+5. Later **E:** entries scale with what changed, not with loop size.
+   Live-capture fold stays its existing path.
+6. Overlap/select query shapes stay the 2026-08-17 sibling amendment.
+   Do not map `currentTick` → `selectedTick`. Do not reuse
+   `ActiveNoteLedger` at the bracket.
+7. **Reject DEC-054 Option B.** Do not slice `clone()`. Remove the full
+   copy from the working set.
+8. Consume already-prepared snapshot/index on open and fader. Miss =
+   legacy only. No new Manager.
+
+### Rationale
+
+DEC-054 identified and relocated the stall. DEC-055 removes its cause.
+Undo storage and analyze cost must scale with edit scope, not note count.
+`applySessionUndoEntry` already has the no-current-state snapshot copy
+path; later slices change which representation the first kind-boundary
+is allowed to publish.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| DEC-054 Option B (slice `clone()`) | Still O(loop size); elaborate machinery |
+| Couple E:00 first-kind-boundary into Stage 1 | Two correctness changes; capture cannot isolate |
+| `ActiveNoteLedger` at `selectedTick` | Playhead runtime; DEC-041/042 |
+| Rename `NoteEditCurrentState` | Churn; DEC-029 already names the overlay owner |
+| Unify live-capture fold into E:00 | Those notes are not in the opened snapshot |
+
+### Affected modules
+
+`EditManager` select / session undo, `NoteEditCurrentState` row scope
+(later slices), opened-snapshot restore, hydrate consume stages.
+
+### Constraints created
+
+- Working-set invariant (architecture doc) is the regression bar.
+- Stage 1 firmware must not clone or warm on select.
+- Stage 2+ must prove lossless E:00 + overlay-delta undo before claiming
+  the clone is gone from kind-boundary.
+- Option B is not an authorized fallback.
+
+### Related OpenSpec
+
+[`note-edit-session-undo`](../../openspec/specs/note-edit-session-undo/spec.md)
+(delta-sized entries). Not an `immutable-loop-snapshot-passes` 4.4/4.5/4.6
+slice.
+
+### Migration notes
+
+No SD schema. First Move after Stage 1 still cache-miss clones until the
+E:00 kind-boundary slice.
+
+---
+
+## DEC-054 — NOTE_EDIT playing display stall remainder units
+
+**Date:** 2026-09-08
+
+**Status:** Accepted — Stage 1 admission firmware in tree. Device
+[`204458`](../captures/session_20260908_204458.log) failed the 30 ms
+cadence during back-and-forth select. **Option B (`clone()` slice)
+rejected** — [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)
+removes the full copy. Stage 2 (deferred open/close) stays separate.
+
+**Owner:** `EditManager` (pending state, execution, publication).
+`ControlSurfaceManager` only requests / marks pending. `DisplayManager`
+paints the last composed frame.
+
+**Authority:**
+[`note_edit_display_playing_stall_architecture.md`](Plans/note_edit_display_playing_stall_architecture.md),
+[`ExecutionBounds.md`](Authority/Architecture/ExecutionBounds.md),
+[DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property).
+
+**Does not authorize:** hydrate Stage 4a, raise snapshot idle `N`,
+`T_RT_reserve` / DEC-053 yield, OpenSpec 4.5 / 4.6, interval reservation,
+`RuntimeWorkBudget::admit`. Slicing `NoteEditCurrentState::clone()`
+(Option B) is **rejected** by DEC-055.
+
+### Problem
+
+[`201106`](../captures/session_20260908_201106.log) display frames are
+18–25 ms. Select-fader `UNDO_WARM` is 91.7–133.2 ms (`focus_snap` includes
+`NoteEditCurrentState::clone()` / `assignFrom` for 137 rows). Twelve stacked
+warms produce a 7.37 s `DFRAME` gap. `openNoteEditSession` is 82 ms on the
+button turn. This is admission/ownership, not OLED performance.
+
+### Decision
+
+1. Do not make `DisplayManager` faster. Remove content-sized `EditManager`
+   work from the display-admission turn.
+2. No new Manager and no `RuntimeWorkBudget`.
+3. Coalesce select kind-boundary undo warm. Reuse
+   `kDeferredNoteEditPlaybackRefreshIdleMs` (80 ms). Process after that
+   turn’s display admission.
+4. **Stage 1 bound gate.** Relocating `processKindBoundaryUndoWarm` after
+   display does not make it a bounded unit. The Stage 1 commit must
+   register the existing whole-warm as an empirically bounded remainder
+   unit with a measured worst case (`201106` 91.7–133.2 ms) and this
+   overrun policy: remain pending; do not publish partial undo state.
+   If Stage 1 device capture shows that bound is unacceptable for the
+   30 ms display cadence, do **not** slice `clone()` — DEC-055 removes
+   the full copy from select / the working set.
+5. Stage 2 (after Stage 1 capture): queue NOTE_EDIT open/close. Old
+   session remains authoritative until the unit commits, then
+   `EditSession.active` and LOOP_EDIT↔NOTE_EDIT flip together.
+   `EditSession.active = false` while bake is pending is forbidden.
+   Immediate UI/session flip is rejected.
+6. Playing move/length/pitch stay on `PlayingEditGeometryDefer`.
+
+### Rationale
+
+Coalesce first: twelve 90–133 ms warms are the multi-second stall.
+A single whole-warm after settle still needs an inventory class and
+overrun policy (DEC-043). Close must not drop the authoritative session
+before bake commits.
+
+### Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| Faster display interval / forced NOTE_EDIT paints | `201106` paint is already 18–25 ms; cannot preempt warm |
+| Treat post-display whole-warm as bounded without a gate | Relocates a 91–133 ms unit; does not classify it |
+| Slice `clone()` (Option B) | Rejected 2026-09-08 — DEC-055 removes the full copy |
+| Optimistic session flip | Half-open session on faders |
+| `RuntimeWorkBudget` / interval reservation | DEC-043 / scheduling contract |
+
+### Affected modules
+
+`EditManager`, `ControlSurfaceManager` (pending only), `main.cpp` display
+admission order, `ExecutionBounds.md`.
+
+### Constraints created
+
+- Stage 1 firmware must include the inventory row and overrun policy.
+- Stage 2 waits as a separate admission change. Option B is not authorized.
+- Close may not clear `EditSession.active` before bake commits.
+
+### Related OpenSpec
+
+None. Not an `immutable-loop-snapshot-passes` 4.4/4.5/4.6 slice.
+
+### Migration notes
+
+None. No SD schema. Undo entry shape unchanged.
 
 ## DEC-053 — T_RT_reserve is ceiling plus per-turn MIDI boundary
 
