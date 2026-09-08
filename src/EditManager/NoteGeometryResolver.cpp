@@ -13,6 +13,8 @@
 #include "EditSessionLiveStoreSpan.h"
 #include "Globals.h"
 #include "NoteEditCurrentState.h"
+#include "OverlapNoteIdObservation.h"
+#include "OverlapNoteIdSet.h"
 #include "ParticipatingNoteSession.h"
 #include "ResolveConstrainedGeometry.h"
 #include "Utils/NoteEditMem.h"
@@ -88,11 +90,35 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     }
     const NoteUtils::DisplayNoteVec& committedDisplayNotes =
         manager.visualCacheNotesForSelectedSlot(track);
-    overlayUneditedBaselineMapFromDisplayNotes(focus, currentStateReader, committedDisplayNotes);
 
+    const NoteBaseline* causingSpan = nullptr;
+    for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
+      if (causing.noteId == focus.movingNoteId) {
+        causingSpan = &causing.span;
+        break;
+      }
+    }
+    OverlapNoteIdSet holdCandidates;
+    OverlapNoteIdObservation::OverlapCandidateQueryStats holdStats;
+    const uint8_t holdPitch =
+        overlapPitchLane.has_value()
+            ? overlapPitchLane.value()
+            : (causingSpan != nullptr ? causingSpan->pitch : 0);
+    if (causingSpan != nullptr) {
+        if (!manager.tryCollectPreparedOverlapHoldNoteIds(track, holdPitch, causingSpan->startTick,
+                                                          causingSpan->endTick, focus.movingNoteId,
+                                                          holdCandidates, &holdStats)) {
+            OverlapNoteIdObservation::collectAnalyzeOverlapNoteIds(
+                committedDisplayNotes, holdPitch, causingSpan->startTick, causingSpan->endTick,
+                loopLength, focus.movingNoteId, holdCandidates, &holdStats);
+        }
+    }
     const NoteIdList evaluationScope =
         collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.movingNoteId,
-                                      overlapPitchLane, currentStateReader);
+                                      overlapPitchLane, currentStateReader,
+                                      causingSpan != nullptr ? &holdCandidates : nullptr);
+    overlayUneditedBaselineMapFromDisplayNotes(focus, currentStateReader, committedDisplayNotes,
+                                               &evaluationScope);
 
     ensureBaselineMapEntriesForEvaluationScope(focus, evaluationScope, liveStore, channel,
                                                currentStateReader, &committedDisplayNotes);
@@ -100,6 +126,9 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     logGeomApplyPhase("setup", micros() - setupStartUs,
                       static_cast<uint32_t>(evaluationScope.size()),
                       static_cast<uint32_t>(focus.baselineMap.size()));
+    logGeomApplyPhase(holdStats.preparedHit ? "candidates_hit" : "candidates_miss",
+                      holdStats.identityLookupScanCount, holdStats.candidateCount,
+                      holdStats.barsScanned);
     const uint32_t analyzeStartUs = micros();
 #endif
     const BaselineMap& transactionBaselineAfterEnsure = focus.baselineMap;
@@ -113,13 +142,6 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
       overlapPairs.push_back(pair);
     }
 
-    const NoteBaseline* causingSpan = nullptr;
-    for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
-      if (causing.noteId == focus.movingNoteId) {
-        causingSpan = &causing.span;
-        break;
-      }
-    }
 #if defined(SESSION_CAPTURE)
     logGeomApplyPhase("pairs", micros() - analyzeStartUs,
                       static_cast<uint32_t>(eligiblePairs.size()),

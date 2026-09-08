@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include "Globals.h"
 #include "LoopSnapshot.h"
+#include "OverlapNoteIdObservation.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
 
 /// Snapshot-note → `DisplayNote` field map. Not display policy and not Loop-owned.
@@ -46,5 +49,70 @@ inline void appendSnapshotNotesForBarRange(const LoopSnapshot& snapshot, uint32_
             appendDisplayNoteUniqueById(out, displayNoteFromSnapshotNote(*reference));
           });
     }
+  }
+}
+
+/// Prepared-hit overlap ids at one pitch. Walks hold bars only (±1 for analyze abut).
+inline void collectSnapshotAnalyzeOverlapNoteIds(
+    const LoopSnapshot& snapshot, uint8_t pitch, uint32_t incomingStart, uint32_t incomingEnd,
+    uint32_t loopLength, NoteId excludeId, OverlapNoteIdSet& out,
+    OverlapNoteIdObservation::OverlapCandidateQueryStats* stats = nullptr) {
+  out.clear();
+  uint32_t incomingLinearStart = 0;
+  uint32_t incomingLinearEnd = 0;
+  if (!OverlapNoteIdObservation::linearSoundingSpan(incomingStart, incomingEnd, loopLength,
+                                                    incomingLinearStart, incomingLinearEnd)) {
+    return;
+  }
+  const uint32_t barTicks = Config::TICKS_PER_BAR;
+  const uint32_t barCount = barTicks == 0 ? 0u : (loopLength + barTicks - 1u) / barTicks;
+  if (barCount == 0) {
+    return;
+  }
+
+  auto visitSegment = [&](uint32_t segStart, uint32_t segEnd) {
+    if (segStart >= segEnd) {
+      return;
+    }
+    int32_t first = static_cast<int32_t>(segStart / barTicks) - 1;
+    uint32_t last = segEnd / barTicks;
+    if (first < 0) {
+      first = 0;
+    }
+    if (last >= barCount) {
+      last = barCount - 1u;
+    }
+    for (uint32_t bar = static_cast<uint32_t>(first); bar <= last; ++bar) {
+      if (stats != nullptr) {
+        ++stats->barsScanned;
+      }
+      const auto membership = snapshot.noteMembership(pitch, bar);
+      forEachSnapshotMembershipReference(
+          membership.get(), [&](const LoopSnapshotNoteRef& reference) {
+            if (stats != nullptr) {
+              ++stats->identityLookupScanCount;
+            }
+            if (!reference || reference->noteId == kInvalidNoteId ||
+                reference->noteId == excludeId || reference->pitch != pitch) {
+              return;
+            }
+            if (OverlapNoteIdObservation::existingNoteOverlapsIncomingHoldInclusive(
+                    reference->startTick, reference->endTick, incomingStart, incomingEnd,
+                    loopLength)) {
+              (void)out.insert(reference->noteId);
+            }
+          });
+    }
+  };
+
+  if (incomingLinearEnd <= loopLength) {
+    visitSegment(incomingLinearStart, incomingLinearEnd);
+  } else {
+    visitSegment(incomingLinearStart, loopLength);
+    visitSegment(0, incomingLinearEnd - loopLength);
+  }
+  if (stats != nullptr) {
+    stats->preparedHit = true;
+    stats->candidateCount = static_cast<uint32_t>(out.size());
   }
 }
