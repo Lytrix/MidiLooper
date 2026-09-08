@@ -454,6 +454,11 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       `test_try_copy_current_snapshot_display_notes_in_window_uses_span_note_ids`.
 - [x] Capture-serial RAM1 locals **6848**. Full native suite:
       **1774 succeeded, 1 skipped** (4.4h files only).
+- [x] Device [`201106`](../../../captures/session_20260908_201106.log):
+      second overdub open `from=snapshot` `root_rev=5` `play_rev=5`
+      `notes=114`. NOTE_EDIT open `current=1` `root_rev=6` **137** /
+      `only_*=0`. `DFRAME` **137** after second stop through session
+      end. First overdub open `from=visual` is before `pending=0`.
 
 ### Close-publish NoteRange pitch reuse
 

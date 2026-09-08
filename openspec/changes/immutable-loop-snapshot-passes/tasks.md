@@ -282,6 +282,9 @@ cursors rather than treating that locality as an execution bound.
         stays the no-current-root fallback. Plan:
         [`display_fallback_identity_snapshot_refinement.md`](../../../docs/Plans/display_fallback_identity_snapshot_refinement.md).
         Capture-serial RAM1 locals **6848**; native **1774 succeeded, 1 skipped**.
+        Device [`201106`](../../../captures/session_20260908_201106.log):
+        second overdub open `from=snapshot` `root_rev=5` `play_rev=5`.
+        NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`.
 - [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
 

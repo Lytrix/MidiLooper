@@ -14,8 +14,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 `rebuildDisplayNotesInWindow` on a current root copies span notes
 (`tryCopyCurrentSnapshotDisplayNotesInWindow`). Overlay gather is
 rejected. Live-capture merge keeps the existing gather. RAM1 locals
-**6848**; native **1774 succeeded, 1 skipped**. Do not start hydrate
-Stage 4a, raise `N`, 4.5, or 4.6.
+**6848**; native **1774 succeeded, 1 skipped**. Device
+[`201106`](../../captures/session_20260908_201106.log): second overdub
+open `from=snapshot` `root_rev=5` `play_rev=5` `notes=114`. NOTE_EDIT
+open `current=1` `root_rev=6` **137** / `only_*=0`. `DFRAME` **137**
+after second stop through session end. First overdub open
+`from=visual` is before `pending=0`. Do not start hydrate Stage 4a,
+raise `N`, 4.5, or 4.6.
 Plan:
 [`display_fallback_identity_snapshot_refinement.md`](../Plans/display_fallback_identity_snapshot_refinement.md).
 
