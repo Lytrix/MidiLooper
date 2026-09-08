@@ -367,6 +367,15 @@ LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVe
   return copyPublishedSnapshotEditViewEvents(*this, out);
 }
 
+LOOP_COLD_MEM void Loop::copyIdleValidateEvents(MidiEventVec& out) const {
+  SessionMidiEventVec sessionEvents;
+  if (tryCopyCurrentSnapshotEditViewEvents(sessionEvents)) {
+    out.assign(sessionEvents.begin(), sessionEvents.end());
+    return;
+  }
+  mergeActiveCapturePasses(out);
+}
+
 LOOP_COLD_MEM bool Loop::tryCopyNoteEditOpenedSnapshotEvents(bool openedOnCurrentSnapshot,
                                                             uint32_t openedSnapshotRevision,
                                                             SessionMidiEventVec& out) const {

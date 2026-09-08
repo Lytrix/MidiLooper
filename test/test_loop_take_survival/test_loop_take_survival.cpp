@@ -1711,6 +1711,106 @@ void test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids() {
   TEST_ASSERT_EQUAL_UINT32(0u, miss.size());
 }
 
+void test_copy_idle_validate_events_uses_snapshot_span_note_ids() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  loop.playbackRevision = 1;
+
+  auto empty = LoopSnapshot::createEmpty(1, loop.loopLengthTicks, 0, 8, 8);
+  LoopSnapshotChangeSet changes;
+
+  SnapshotNoteChange noteChange{};
+  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.next.loopId = 1;
+  noteChange.next.noteId = 7;
+  noteChange.next.pitch = 60;
+  noteChange.next.velocity = 100;
+  noteChange.next.startTick = 100;
+  noteChange.next.endTick = 200;
+  changes.notes.push_back(noteChange);
+
+  MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
+  noteOn.noteId = 7;
+  SnapshotEventChange noteOnChange{};
+  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.next = {1, 1, 0, noteOn};
+  changes.events.push_back(noteOnChange);
+
+  MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
+  noteOff.noteId = 7;
+  SnapshotEventChange noteOffChange{};
+  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.next = {1, 2, 1, noteOff};
+  changes.events.push_back(noteOffChange);
+
+  MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
+  onlyStoreOn.noteId = 64;
+  SnapshotEventChange onlyStoreOnChange{};
+  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
+  changes.events.push_back(onlyStoreOnChange);
+
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef frozen = construction.freeze();
+  TEST_ASSERT_NOT_NULL(frozen.get());
+  loop.storePublishedSnapshotForTest(frozen, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  MidiEventVec currentRoot;
+  loop.copyIdleValidateEvents(currentRoot);
+  uint32_t currentNoteOns = 0;
+  bool currentHasSpanId = false;
+  bool currentHasOnlyStore = false;
+  for (const MidiEvent& evt : currentRoot) {
+    if (!evt.isNoteOn()) {
+      continue;
+    }
+    ++currentNoteOns;
+    if (evt.noteId == 7) {
+      currentHasSpanId = true;
+    }
+    if (evt.noteId == 64) {
+      currentHasOnlyStore = true;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, currentNoteOns);
+  TEST_ASSERT_TRUE(currentHasSpanId);
+  TEST_ASSERT_FALSE(currentHasOnlyStore);
+
+  MidiEventVec mergeEmpty;
+  loop.mergeActiveCapturePasses(mergeEmpty);
+  TEST_ASSERT_EQUAL_UINT32(0u, mergeEmpty.size());
+  TEST_ASSERT_TRUE(currentRoot.size() > mergeEmpty.size());
+
+  loop.playbackRevision++;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  MidiEventVec staleRoot;
+  loop.copyIdleValidateEvents(staleRoot);
+  MidiEventVec mergeStale;
+  loop.mergeActiveCapturePasses(mergeStale);
+  TEST_ASSERT_EQUAL_UINT32(mergeStale.size(), staleRoot.size());
+
+  Loop passLoop;
+  passLoop.loopId = 7;
+  passLoop.loopLengthTicks = 3072;
+  recordLinearNote(passLoop, 100, 200, 60);
+  TEST_ASSERT_TRUE(passLoop.publishedSnapshotIsCurrent());
+  passLoop.playbackRevision++;
+  TEST_ASSERT_FALSE(passLoop.publishedSnapshotIsCurrent());
+  MidiEventVec fallback;
+  passLoop.copyIdleValidateEvents(fallback);
+  MidiEventVec mergeFallback;
+  passLoop.mergeActiveCapturePasses(mergeFallback);
+  TEST_ASSERT_TRUE(mergeFallback.size() > 0);
+  TEST_ASSERT_EQUAL_UINT32(mergeFallback.size(), fallback.size());
+}
+
 void test_visual_cache_idle_slice_copies_current_snapshot_notes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4394,6 +4494,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_rematerialize_edit_view_uses_snapshot_span_note_ids);
   RUN_TEST(test_copy_note_edit_commit_base_uses_snapshot_span_note_ids);
   RUN_TEST(test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids);
+  RUN_TEST(test_copy_idle_validate_events_uses_snapshot_span_note_ids);
   RUN_TEST(test_visual_cache_idle_slice_copies_current_snapshot_notes);
   RUN_TEST(test_loaded_visual_cache_falls_back_until_current_snapshot);
   RUN_TEST(test_stale_published_snapshot_gathers_window_without_full_compatibility);
