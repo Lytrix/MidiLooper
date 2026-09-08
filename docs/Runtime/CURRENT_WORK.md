@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (DEC-053 remaining-interval admission in tree)
+Last updated: 2026-09-08 (DEC-053 yield HITL [`115043`](../../captures/session_20260908_115043.log); 3.6 still open)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -45,8 +45,16 @@ gate. Snapshot idle cardinality is **N = 2**; do not revert to 1. STOPPED
 timings are excluded from the 3.6 ceiling. [`110034`](../../captures/session_20260908_110034.log)
 live `reserve_us` max 5871 µs (zero over 10 ms); the 36 / 42 / 95 ms
 samples are after `PLAYING → STOPPED`. Host: RAM1 locals **6848**; focused admission/yield native PASS;
-full native **1753/1754** (1 skipped). Device yield HITL is blocked until
-the Teensy USB port is present. Do not check off 3.5/3.6.
+full native **1753/1754** (1 skipped). Device yield HITL
+[`115043`](../../captures/session_20260908_115043.log):
+`snapshot_reserve_admission.py` PASS (`yield_count=6389`, first yield
+`RECORDING` `root_rev=0`, complete `root_rev=9` `pending=0`). Every live
+yield has `remaining=0`; the first `snapshot_idle` construction is after
+`PLAYING → STOPPED`; `pending=0` is that STOPPED publish. No yield after
+STOPPED. Host base still FAIL for the known non-slice checks
+(`record_first_note_too_late`, 2304-vs-1536, `dispatch`, SEVT window).
+DEC-053 still requires `pending=0` while timing-critical. Do not check off
+3.5/3.6. `T_RT_safety_margin` stays unfrozen.
 OpenSpec: [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
 3.5–3.6. Plan:
 [`snapshot_publication_reserve_admission_refinement.md`](../Plans/snapshot_publication_reserve_admission_refinement.md).
