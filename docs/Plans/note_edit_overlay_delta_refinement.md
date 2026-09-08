@@ -1,11 +1,11 @@
 # NOTE_EDIT overlay delta — implementation
 
-**Status:** DEC-055 Stage 3 — stop analyze current-state fill  
+**Status:** DEC-055 Stage 3 device PASS [`221906`](../../captures/session_20260908_221906.log)  
 
 **Kind:** refinement  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
-**Evidence:** [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
+**Evidence:** [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS, [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
 Does **not** start: hydrate 1–5, DEC-054 Stage 2, Option B, rename
 `NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
@@ -130,6 +130,15 @@ into `NoteEditCurrentState`.
 **Device:** PLAYING + NOTE_EDIT + first Move. Stage 2 `push,e00` stays.
 `GEOM_APPLY,resolve` still `1,3,0` on a real Move. Select `DFRAME` stays
 in the Stage 1/2 band.
+
+**Device PASS [`221906`](../../captures/session_20260908_221906.log):**
+`NOTE_EDIT_OPEN` `current=1` `root_rev=7` **77** notes after
+`PLAYING -> STOPPED`. First Move (POSITION EDIT, kind=3) logs
+`UNDO_WARM,push,e00,734,77,3` then `GEOM_APPLY,resolve,9669,1,3,0`.
+First-Move `phase,setup` **303–322** µs vs [`220445`](../../captures/session_20260908_220445.log)
+**478–726** µs. Select-only `DFRAME` before that Move: min **1561** ms,
+median **1648** ms, max **2268** ms (open window). Later kind-boundaries
+still clone: 7 `focus_snap` at **37–137** ms (`push,cache_miss`).
 
 ---
 

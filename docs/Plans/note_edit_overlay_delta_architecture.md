@@ -1,11 +1,11 @@
 # NOTE_EDIT overlay delta — eliminate full-loop session builds
 
-**Status:** DEC-055 accepted — Stage 2 device PASS [`220445`](../../captures/session_20260908_220445.log)  
+**Status:** DEC-055 accepted — Stage 3 device PASS [`221906`](../../captures/session_20260908_221906.log)  
 **Kind:** architecture  
 **Date:** 2026-09-08  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Implementation:** [`note_edit_overlay_delta_refinement.md`](note_edit_overlay_delta_refinement.md)  
-**Evidence:** [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS; [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
+**Evidence:** [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS; [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS; [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
 **Does not authorize:** hydrate Stages 1–5, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
 
 This session does **not** invent a second consume model. It binds already-approved plans to one north star and adds the missing **E:** restore contract.
@@ -211,7 +211,7 @@ Firmware only when CURRENT_WORK names the stage.
    [`220445`](../../captures/session_20260908_220445.log).
 3. **Stop full current-state fill** —
    `ensureCurrentStateVisibleRowsFromVisualCache` is not an analyze fill.
-   Authorized in CURRENT_WORK.
+   Device PASS [`221906`](../../captures/session_20260908_221906.log).
 4. **Hydrate 1 → 2 → 3** — select neighborhood query, indexed overlap,
    resolver prepared-hit.
 5. **Hydrate 4a → 4b → 4c → 5** — open without rematerialize-to-analyze;
