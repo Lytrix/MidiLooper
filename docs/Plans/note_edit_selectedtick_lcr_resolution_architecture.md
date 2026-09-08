@@ -501,8 +501,8 @@ DEC-037 amendment 2026-08-16. Architecture PASS. This revision records implement
 ### Stage 4a — Open without full-loop analysis
 
 **Owner:** `openNoteEditSession`.  
-**Invariant:** open does not rematerialize the loop in order to analyze or paint the first frame. Session store may still exist as apply scratch.  
-**Gate:** no `VCACHE,full` / full `materializeToEventVector` required before first `DNTE`.
+**Invariant:** open does not rematerialize the loop in order to analyze or paint the first frame. Session store may still exist as apply scratch. Current state starts empty.  
+**Gate:** no `VCACHE,full` / full `materializeToEventVector` required before first `DNTE`. Current-root `NOTE_EDIT_OPEN` `session_events=0` `current_state=0`. Miss keeps rematerialize.
 
 ### Stage 4b — First select after open
 

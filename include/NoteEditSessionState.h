@@ -130,6 +130,18 @@ inline bool analyzeFillsCurrentStateFromVisualCache() {
   return false;
 }
 
+/// Hydrate 4a: current-root open consumes the published snapshot. Miss keeps
+/// rematerialize / `VCACHE,full` / full current-state build.
+inline bool noteEditOpenRematerializesLoop(bool publishedSnapshotIsCurrent) {
+  return !publishedSnapshotIsCurrent;
+}
+
+/// Hydrate 4a: focus rebuild seeds the mover from the selected DisplayNote.
+/// It must not insert every visual-cache note into current state.
+inline bool noteEditFocusRebuildFillsCurrentStateFromVisualCache() {
+  return false;
+}
+
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation
 /// SHALL push a fresh session undo step even when kind stays Move.
 inline bool shouldResetGeometryKindUndoOnSelectChange(const EditorSelection& prior,

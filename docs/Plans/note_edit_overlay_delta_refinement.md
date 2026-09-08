@@ -7,7 +7,7 @@
 **Design:** [`note_edit_overlay_delta_architecture.md`](note_edit_overlay_delta_architecture.md)  
 **Evidence:** [`231008`](../../captures/session_20260908_231008.log) Hydrate 2–3 functional PASS, [`224533`](../../captures/session_20260908_224533.log) Hydrate 1 functional PASS, [`221906`](../../captures/session_20260908_221906.log) Stage 3 PASS, [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS, [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS, [`204458`](../../captures/session_20260908_204458.log) (pre-fix fail)
 
-Does **not** start: hydrate 4a–5, DEC-054 Stage 2, Option B, rename
+Does **not** start: hydrate 4b–5, DEC-054 Stage 2, Option B, rename
 `NoteEditCurrentState`, live-capture fold change, later **E:** overlay-delta
 entries, open / focus-rebuild fill removal.
 

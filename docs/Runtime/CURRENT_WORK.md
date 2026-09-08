@@ -22,11 +22,11 @@ source `id=93 p=85 s=1728 e=2016` at `root_rev=16` `play_rev=19`.
 Plan:
 [`note_edit_close_stale_snapshot_publish_bugfix.md`](../Plans/note_edit_close_stale_snapshot_publish_bugfix.md).
 
-**Prior — Hydrate 4a mover-only seed after
-[`232826`](../../captures/session_20260908_232826.log).** Current-root
-open does not rematerialize. First focus rebuild seeds the selected mover
-only. Move/Pitch PASS
-[`233644`](../../captures/session_20260908_233644.log). Session store
+**Prior — Hydrate 4a mover-only seed.** Shipped. Current-root open does
+not rematerialize. First focus rebuild seeds the selected mover only.
+Move/Pitch PASS [`233644`](../../captures/session_20260908_233644.log),
+[`000237`](../../captures/session_20260909_000237.log),
+[`000740`](../../captures/session_20260909_000740.log). Session store
 stays apply scratch until overlay project. Not 4b–5.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),

@@ -1,6 +1,6 @@
 # NOTE_EDIT hydrate solution path
 
-**Status:** Hydrate 2–3 device functional PASS [`231008`](../../captures/session_20260908_231008.log). Hydrate 1 device functional PASS [`224533`](../../captures/session_20260908_224533.log). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 4a–5.  
+**Status:** Hydrate 4a shipped (open empty; mover-only seed). Device Move/Pitch PASS [`233644`](../../captures/session_20260908_233644.log), [`000237`](../../captures/session_20260909_000237.log), [`000740`](../../captures/session_20260909_000740.log). Hydrate 2–3 device functional PASS [`231008`](../../captures/session_20260908_231008.log). Bound to [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot). Do not start hydrate 4b–5.  
 **Date:** 2026-08-16 (overlap retarget 2026-08-17)  
 **Kind:** enhancement  
 **Work identity:** this file. Separate from parked wrap-move persist, closed LCR 6C/6D, playback gather, and scheduler grooming.  
@@ -8,7 +8,7 @@
 **Sibling (overlap participants):** [`overdub_participant_loop_content_architecture.md`](overdub_participant_loop_content_architecture.md) §5 NOTE_EDIT sibling  
 **Authority:** [DEC-037](../DECISION_LOG.md#dec-037-loop-content-resolution-parallel-prototype) amendment 2026-08-16  
 **Overdub analog:** notes present vs incoming hold LinearSpan (same participant class). Select stays a `selectedTick` neighborhood.  
-**Does not authorize:** hydrate 4a–5 firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
+**Does not authorize:** hydrate 4b–5 firmware; a new OpenSpec change; a new DEC; `EditHydrateSession` / resumable open FSM; folding into grooming Slice 5; Stages 1–5 from “LCR × interval around `selectedTick`”
 
 ---
 
@@ -76,7 +76,7 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 | 6E overlap query | native PASS; not wired to Track |
 | Wrap-move persist | **parked** — current-structure issue; not a start gate |
 
-Hydrate 1 shipped. Hydrate 2–3 are named in CURRENT_WORK § Now implementing. Do not start 4a–5.
+Hydrate 1–3 shipped. Hydrate 4a is named in CURRENT_WORK § Now implementing. Do not start 4b–5.
 
 ---
 
@@ -142,6 +142,37 @@ YES — Hydrate 2–3 only.
 
 ---
 
+## Pre-implementation review (Hydrate 4a)
+
+### Ready
+
+- `EditManager::openNoteEditSession` is the owner
+- Current-root paint already uses snapshot / existing visual cache (4.4d / 4.4h)
+- `analyzeFillsCurrentStateFromVisualCache()` is already false
+- `rematerializeEditView` stays for miss / apply scratch; not deleted
+
+### Resolved (user / code)
+
+| Topic | Decision |
+|---|---|
+| Current-root open | Skip `rebuildVisualCacheFromPasses`, `rematerializeEditView`, `buildFromSessionStore`, open-path ensure fill |
+| Current state | Starts empty on open. First focus rebuild seeds the selected mover only ([`232826`](../../captures/session_20260908_232826.log)) |
+| Session store | Empty until overlay project. Not a lazy rematerialize on the fader |
+| Miss | Keep today’s rematerialize / `VCACHE,full` / full current-state build |
+| Focus rebuild | Do not insert every visual-cache note; overlay the mover only |
+| LCR | Do not construct / `ensure*` on open |
+| Hydrate 4b–5 | Not this stage |
+
+### Open before coding
+
+None.
+
+### Proceed?
+
+YES — Hydrate 4a only.
+
+---
+
 ## When this work starts
 
 1. Pre-implementation review against the proposal (owners, stages 1→5, work-shape gates).
@@ -196,4 +227,22 @@ succeeded, 1 skipped**. RAM1 locals **7008**.
 resolve med **22206** µs (scan **72–73**). Hit-window actions: Hide **7**,
 Shorten **10**, Restore **7**. Reconstruct med **6411** µs. Transport was
 STOPPED after 86.148 s. Fast-fader `hostdrain` peak **1443580** µs at
-160.038 s is miss-window leftover. Do not start hydrate 4a–5.
+160.038 s is miss-window leftover. Hydrate 4a is the authorized leftover.
+
+---
+
+## Hydrate 4a device regression ([`232826`](../../captures/session_20260908_232826.log))
+
+Open gate held: `NOTE_EDIT_OPEN` `session_events=0` `current_state=0`.
+Focus rebuild logged `noteId=80 presence=-1 rowProjectsToStore=0`.
+Pitch `GEOM_APPLY,resolve,*,0,4,0` (`applied=0`).
+`appendCausingNoteActions` dropped ChangePitch/MoveNote because current
+state and the session store were both empty.
+
+**Fix:** `rebuildNoteEditFocusForDisplayNote` seeds only the selected
+mover (`upsertRow` Visible) when the row is missing. Do not restore
+`ensureCurrentStateVisibleRowsFromVisualCache` as an all-notes fill.
+Do not rematerialize on current-root open.
+
+Native pin:
+`test_builder_empty_current_state_and_store_drops_causing_pitch_232826`.
