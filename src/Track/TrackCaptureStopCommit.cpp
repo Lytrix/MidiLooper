@@ -353,9 +353,9 @@ uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) 
     if (!pendingNotes.empty()) {
       finalizePendingNotes(currentTick);
     }
-    // Record-stop truncation: events captured past final loop length must not
-    // survive into committed playback state.
-    loop.capture.store.dropEventsAtOrBeyondTick(loop.loopLengthTicks);
+    // Overflow NoteOns stay with in-loop stop Offs (174646 last 81). Remaining
+    // events past the quantized length are still dropped.
+    loop.capture.store.mapNoteOnsAtOrBeyondTickIntoLoop(loop.loopLengthTicks);
   }
   return rawLength;
 }

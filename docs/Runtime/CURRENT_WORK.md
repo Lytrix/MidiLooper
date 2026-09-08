@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (NOTE_EDIT close bake device PASS)
+Last updated: 2026-09-08 (wrap-head last-Off pairing native)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,8 +10,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**4.4e Stage 3 + close bake closed.** Next 4.4 slice requires selection.
-Do not start hydrate Stage 4a.
+**Wrap-head vs last-Off pairing RC1–RC3** — native shipped; device recapture
+open. Plan:
+[`wrap_head_last_off_pairing_bugfix.md`](../Plans/wrap_head_last_off_pairing_bugfix.md).
+Reconstruct does not wrap-pair a tail On that has a linear Off; two Offs
+at one head tick shorten the wrap head to the incoming On−1. Record stop
+remaps overflow NoteOns into the loop (`tick % length`) before drop; does
+not reorder `setState` / finalize. RAM1 locals **6848**; native **1770
+succeeded, 1 skipped**. Do not start hydrate Stage 4a.
+
+**Prior — 4.4e Stage 3 + close bake closed.** Next 4.4 slice requires selection.
 
 **Prior — NOTE_EDIT close bake — snapshot baseline:**
 Empty-id close no longer treats snapshot-store vs pass rematerialize as

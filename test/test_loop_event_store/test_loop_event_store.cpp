@@ -203,6 +203,26 @@ void test_drop_events_at_or_beyond_tick_removes_overflow() {
   TEST_ASSERT_EQUAL(1520u, store.at(1).tick);
 }
 
+void test_map_overflow_note_on_keeps_in_loop_stop_off() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+
+  MidiEvent overflowOn = MidiEvent::NoteOn(5529, 4, 81, 100);
+  overflowOn.noteId = 9;
+  MidiEvent stopOff = MidiEvent::NoteOff(192, 4, 81, 0);
+  stopOff.noteId = 9;
+  TEST_ASSERT_TRUE(store.append(overflowOn));
+  TEST_ASSERT_TRUE(store.append(stopOff));
+
+  store.mapNoteOnsAtOrBeyondTickIntoLoop(5376);
+  TEST_ASSERT_EQUAL(2u, store.size());
+  TEST_ASSERT_TRUE(store.at(0).isNoteOn());
+  TEST_ASSERT_EQUAL(153u, store.at(0).tick);
+  TEST_ASSERT_TRUE(store.at(1).isNoteOff());
+  TEST_ASSERT_EQUAL(192u, store.at(1).tick);
+}
+
 void test_first_index_for_bar_uses_bar_index() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -735,6 +755,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_lower_bound_index_skips_prefix);
   RUN_TEST(test_undo_snapshot_ref_isolated_by_cow);
   RUN_TEST(test_drop_events_at_or_beyond_tick_removes_overflow);
+  RUN_TEST(test_map_overflow_note_on_keeps_in_loop_stop_off);
   RUN_TEST(test_first_index_for_bar_uses_bar_index);
   RUN_TEST(test_first_index_for_bar_skips_empty_bar);
   RUN_TEST(test_transfer_capture_chunk_ids_to_published);

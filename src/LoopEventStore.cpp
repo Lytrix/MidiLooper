@@ -982,6 +982,60 @@ void LoopEventStore::dropEventsAtOrBeyondTick(uint32_t tickLimit) {
   markBarIndexDirty();
 }
 
+LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::mapNoteOnsAtOrBeyondTickIntoLoop(
+    uint32_t loopLength) {
+  if (empty() || loopLength == 0) {
+    return;
+  }
+
+  if (hasSealedChunks()) {
+    bool needsRebuild = false;
+    for (uint16_t id : chunkIds_) {
+      const EventChunk& c = chunk(id);
+      for (uint16_t i = 0; i < c.used; ++i) {
+        if (c.events[i].isNoteOn() && c.events[i].tick >= loopLength) {
+          needsRebuild = true;
+          break;
+        }
+      }
+      if (needsRebuild) {
+        break;
+      }
+    }
+    if (needsRebuild) {
+      MidiEventVec flat;
+      copyEventsTo(flat);
+      for (MidiEvent& evt : flat) {
+        if (evt.isNoteOn() && evt.tick >= loopLength) {
+          evt.tick %= loopLength;
+        }
+      }
+      clear();
+      loadFromEvents(flat);
+      dropEventsAtOrBeyondTick(loopLength);
+      return;
+    }
+  }
+
+  for (uint16_t id : chunkIds_) {
+    if (isChunkSealed(id)) {
+      continue;
+    }
+    EventChunk& c = chunk(id);
+    for (uint16_t i = 0; i < c.used; ++i) {
+      if (c.events[i].isNoteOn() && c.events[i].tick >= loopLength) {
+        c.events[i].tick %= loopLength;
+      }
+    }
+    if (c.used > 0) {
+      c.firstTick = c.events[0].tick;
+      c.lastTick = c.events[c.used - 1].tick;
+    }
+  }
+  markBarIndexDirty();
+  dropEventsAtOrBeyondTick(loopLength);
+}
+
 std::shared_ptr<LoopEventStore> LoopEventStore::cloneShared() const {
   auto copy = std::make_shared<LoopEventStore>();
   for (uint16_t id : chunkIds_) {

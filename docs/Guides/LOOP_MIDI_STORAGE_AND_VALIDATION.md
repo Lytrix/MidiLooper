@@ -78,6 +78,8 @@ flowchart LR
 | `adoptChunkIds` / `adoptAll` | O(chunks) | Stop finalize, load, undo restore paths |
 | `cloneShared()` | O(events) | Undo restore (deep copy on apply) |
 | `copyEventsTo` / `loadFromEvents` | O(events) | SD save/load, materialize, cold validate |
+| `dropEventsAtOrBeyondTick` | O(events) | Record stop — remove overflow after length is known |
+| `mapNoteOnsAtOrBeyondTickIntoLoop` | O(events) | Record stop — remap overflow NoteOns to `tick % loopLength`, then drop the rest |
 | `usedChunkCount` / `freeChunkCount` | O(1) | Pool-budget admission and undo pressure |
 | `canAllocChunkWithReserve()` | O(1) | `sealCapture` — true when `freeChunkCount() > CHUNK_RESERVE` |
 
@@ -164,6 +166,7 @@ Why this is reusable: it preserves behavior while turning variable O(n²)-style 
 4. **Shared capture phase** — transport-active overdub and record-while-playing use `Track::capturePhaseTick` → `tickPhaseInProjectionCycle` (same frame as playback playhead); punch-in record uses linear offset from `startLoopTick`; `stopOverdubbing` / finalize use the same `capturePhaseTick` for `closeTick`. Stop must not use unwrapped absolute delta + L-1 clamp. Coordinate decision: [`capture_coordinate_canonical_decision_refinement.md`](../Plans/capture_coordinate_canonical_decision_refinement.md).
 5. **Finalize → seal ownership transition** — after `finalizePendingNotes` returns, each cleared pending key has a capture `NoteOff` at the same phase tick live capture would use; `sealCapture` must not close those notes again.
 6. **Wrapped head NoteOff is canonical** — when `tickRelative < prior tail NoteOn` and the key is still in `pendingNotes`, live overdub records the head off without monotonic bump. Normal pairs obey `NoteOn <= NoteOff`; wrap pairs intentionally do not.
+7. **Record-stop overflow NoteOns stay with in-loop stop Offs** — `stopRecording` still calls `setState(TRACK_STOPPED_RECORDING)` before `prepareRecordStop`, so `finalizePendingNotes` writes the stop Off at loop phase. `prepareRecordStop` then maps capture NoteOns at or past `loopLengthTicks` into the loop (`tick % length`) before `dropEventsAtOrBeyondTick`. Do not reorder `setState` / finalize. See [`wrap_head_last_off_pairing_bugfix.md`](../Plans/wrap_head_last_off_pairing_bugfix.md) RC3 (`174646` last 81).
 
 Canonical wrapped pair in capture store:
 
