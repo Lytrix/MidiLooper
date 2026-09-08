@@ -1,11 +1,11 @@
 # NOTE_EDIT overlay delta — eliminate full-loop session builds
 
-**Status:** DEC-055 accepted — Stage 2 first kind-boundary E:00 (Stage 1 device PASS)  
+**Status:** DEC-055 accepted — Stage 2 device PASS [`220445`](../../captures/session_20260908_220445.log)  
 **Kind:** architecture  
 **Date:** 2026-09-08  
 **Decision:** [DEC-055](../DECISION_LOG.md#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot)  
 **Implementation:** [`note_edit_overlay_delta_refinement.md`](note_edit_overlay_delta_refinement.md)  
-**Evidence:** [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
+**Evidence:** [`220445`](../../captures/session_20260908_220445.log) Stage 2 PASS; [`212850`](../../captures/session_20260908_212850.log) Stage 1 PASS; [`201106`](../../captures/session_20260908_201106.log), [`204458`](../../captures/session_20260908_204458.log) pre-fix  
 **Does not authorize:** hydrate Stages 1–5, DEC-054 Stage 2, Option B `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold, raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`
 
 This session does **not** invent a second consume model. It binds already-approved plans to one north star and adds the missing **E:** restore contract.
@@ -35,7 +35,7 @@ Reuse (do not fork):
 | **Current architecture** | `openNoteEditSession` rematerializes the loop, fills current state from every `visualCache` row, and kind-boundary undo clones every row. `NoteGeometryResolver` walks all NoteOns / display notes. Display already paints from snapshot + overlay on a current root (OpenSpec 4.4h). |
 | **Proposed evolution** | **Extend** `EditManager` / `NoteEditCurrentState` / `NoteEditSessionUndo`. Committed Analyze queries consume the selected `LoopSnapshot` (NAMING). No new Manager. No `EditSourceView`. No ledger at `selectedTick`. |
 | **Migration impact** | Firmware + native undo/overlap/select fixtures + HITL edit + large-loop device gate. No SD schema. `saveNoteEditPass` / global **U:** unchanged. |
-| **Recommendation** | DEC-055 accepted. Stage 1 is select-only (no clone / no full-row warm). First kind-boundary E:00 restore is the next slice. Option B rejected. |
+| **Recommendation** | DEC-055 accepted. Stage 1 select-only and Stage 2 first kind-boundary E:00 are device PASS. Option B rejected. |
 | **Approval required** | Granted 2026-09-08. Stage 1 named in CURRENT_WORK. |
 
 Architecture checkpoint:
@@ -207,7 +207,8 @@ Firmware only when CURRENT_WORK names the stage.
 1. **Stage 1 — eliminate select `clone()` / full-row warm** (device PASS
    [`212850`](../../captures/session_20260908_212850.log)).
 2. **Stage 2 — first kind-boundary at undoCount 0** uses E:00 snapshot
-   restore (`hasUndoCurrentState == false`). Authorized in CURRENT_WORK.
+   restore (`hasUndoCurrentState == false`). Device PASS
+   [`220445`](../../captures/session_20260908_220445.log).
 3. **Stop full current-state fill** —
    `ensureCurrentStateVisibleRowsFromVisualCache` is not an analyze fill.
 4. **Hydrate 1 → 2 → 3** — select neighborhood query, indexed overlap,
