@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (DEC-053 yield HITL 115043; 3.6 still open)
+Last updated: 2026-09-08 (3.5/3.6 closed; yield proof parked; next 4.3)
 
 ---
 
@@ -29,15 +29,11 @@ that the PLAYING/OVERDUBBING rows before root publication were one in-flight
 record construction with no queued successor passes. The final `pending=0`
 row published the root; no later PLAYING/OVERDUBBING idle rows occurred.
 4b.2c is closed without amending `DEC-045`.
-The activated next slice is OpenSpec tasks `3.5`/`3.6`, recorded in
-`DEC-047`: bounded overdub-wrap mutation journals, fixed-capacity immutable
-membership pages, persistent bar cursors, incremental pair-`NoteId` assignment,
-effective event-index updates, retry retention, and the [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
-`T_RT_reserve` device gate. This phase supersedes `DEC-045` only for ordered
-successor construction during `PLAYING`/`OVERDUBBING` after the first root;
-direct consumer migration, persistence, and snapshot-identity undo remain
-later. Firmware edits are not yet authorized until the phase gate and
-execution-bound admission pass.
+Tasks `3.5`/`3.6` are closed. Remaining-interval yield proof is parked
+(`kSnapshotIdleReserveYieldEnabled` is false). The activated next slice is
+OpenSpec task `4.3`: convert `LoopContentResolution` to stateless
+explicit-snapshot queries. Direct consumer migration (4.4–4.6), persistence,
+and snapshot-identity undo remain later.
 Latest `teensy41-capture-serial` build restored RAM1 locals to **7008**
 without USB-host ownership changes, so task `3.6` recapture is unblocked.
 The follow-up admission fix allows queued session-exit snapshot work after
@@ -156,12 +152,10 @@ PASS [`024731`](../../captures/session_20260908_024731.log)
 ([`loaded_hydration_stability_bugfix.md`](../Plans/loaded_hydration_stability_bugfix.md)).
 Do not freeze an observed unit or the minimum observed `reserve_us` as the
 `T_RT_reserve` guarantee. [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
-records the 10,000 µs policy ceiling. Remaining-interval admission for the
-two-unit Snapshot turn is in tree. Device yield HITL
-[`115043`](../../captures/session_20260908_115043.log) proves live
-`snapshot_idle,yield` then STOPPED complete publish (`root_rev` 0 → 9,
-`pending=0`). Every live yield has `remaining=0`; DEC-053 still requires
-`pending=0` while timing-critical. Do not check off OpenSpec `3.5`/`3.6`.
+records the 10,000 µs policy ceiling. Remaining-interval yield proof is
+parked after [`115043`](../../captures/session_20260908_115043.log)
+(`remaining=0` until STOPPED). `kSnapshotIdleReserveYieldEnabled` is false;
+yield helpers stay compiled. OpenSpec `3.5`/`3.6` are closed. Next is `4.3`.
 Construction bounds stay unchanged.
 For open 4b.3 attribution, `TrackManager::updateAllTracks` now emits
 capture-only per-track `track_update` maxima and over-budget counts alongside
@@ -455,7 +449,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; Phase 3 tasks 4.1–4.2 selected; snapshot nodes pack into 32 KB slabs (`DEC-048`); 4.3–4.6 not selected |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 closed (yield proof parked); 4.1–4.2 complete; 4.3 selected; snapshot nodes pack into 32 KB slabs (`DEC-048`); 4.4–4.6 not selected |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

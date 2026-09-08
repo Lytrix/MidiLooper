@@ -45,8 +45,13 @@ inline uint32_t admittedSnapshotIdleUs(uint32_t remainingUs) {
                                                      : kSnapshotIdleReserveCeilingUs;
 }
 
+/// Remaining-interval reject is parked (DEC-053 yield device proof).
+/// `allowSnapshotIdleReserve` and capture `snapshot_idle,yield` stay compiled.
+constexpr bool kSnapshotIdleReserveYieldEnabled = false;
+
 /// Timing-critical Snapshot idle admits only when the classified N-unit cost
 /// fits the remaining interval. STOPPED / non-critical turns always admit.
+/// Callers honor this only when `kSnapshotIdleReserveYieldEnabled` is true.
 inline bool allowSnapshotIdleReserve(uint32_t remainingUs, bool timingCritical,
                                      uint8_t units = kSnapshotIdleConstructionUnitsPerTurn) {
   if (!timingCritical) {

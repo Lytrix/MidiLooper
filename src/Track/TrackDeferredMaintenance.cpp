@@ -882,11 +882,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #endif
     );
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
-    if (InvestigationCaptureLog::consumeSnapshotIdleForcedYield()) {
+    if (InvestigationCaptureLog::consumeSnapshotIdleForcedYield() &&
+        MidiServiceDrain::kSnapshotIdleReserveYieldEnabled) {
       remainingUs = 0;
     }
 #endif
-    if (!MidiServiceDrain::allowSnapshotIdleReserve(
+    if (MidiServiceDrain::kSnapshotIdleReserveYieldEnabled &&
+        !MidiServiceDrain::allowSnapshotIdleReserve(
             remainingUs, timingCritical,
             MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE

@@ -1,7 +1,9 @@
 # Snapshot Publication Reserve Admission
 
-**Status:** Active — host gates PASS; device yield verifier PASS [`115043`](../../captures/session_20260908_115043.log); DEC-053 3.6 still open  
-**OpenSpec:** `immutable-loop-snapshot-passes` tasks `3.5` / `3.6`  
+**Status:** Parked — remaining-interval yield proof is not device-testable;
+`kSnapshotIdleReserveYieldEnabled` is false; yield logs stay compiled.
+OpenSpec `3.5` / `3.6` are closed without this recapture.  
+**OpenSpec:** `immutable-loop-snapshot-passes` tasks `3.5` / `3.6` (closed)  
 **Decision:** [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)  
 **Parent timing plan:** [`snapshot_publication_timing_bugfix.md`](snapshot_publication_timing_bugfix.md)
 
@@ -102,7 +104,13 @@ Device [`115043`](../../captures/session_20260908_115043.log):
 - No yield after STOPPED
 - Host base still FAIL for known non-slice checks (`record_first_note_too_late`, 2304-vs-1536, `dispatch`, SEVT window)
 
-DEC-053 still requires `pending=0` while timing-critical. Do not check off OpenSpec `3.5` / `3.6`. `T_RT_safety_margin` stays unfrozen.
+Parked 2026-09-08: no testable live yield on firmware. Remaining-interval
+reject is off (`kSnapshotIdleReserveYieldEnabled = false`).
+`allowSnapshotIdleReserve`, `DIAG,snapshot_idle,yield`, and `!SNAPSHOT_YIELD`
+stay in tree. OpenSpec `3.5` / `3.6` close on wrap-journal publication plus
+[`101815`](../../captures/session_20260908_101815.log) /
+[`104353`](../../captures/session_20260908_104353.log).
+`T_RT_safety_margin` stays unfrozen.
 
 ## Exclusions
 
