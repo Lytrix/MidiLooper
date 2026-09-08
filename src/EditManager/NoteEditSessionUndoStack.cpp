@@ -382,13 +382,19 @@ buildSessionStoreEditPasses<InternalHeapFirstAllocator<MidiEvent>,
 
 void dropUnrequestedSessionStoreDeletes(EditPassVec& rows,
                                         const NoteEditCurrentState& currentState) {
-  if (currentState.empty() || rows.empty()) {
+  if (rows.empty()) {
     return;
   }
   rows.erase(std::remove_if(rows.begin(), rows.end(),
                             [&currentState](const EditPass& row) {
-                              return row.actionType == EditActionType::Delete &&
-                                     !currentState.isRowHiddenOrDeleted(row.targetNoteId);
+                              if (row.actionType != EditActionType::Delete) {
+                                return false;
+                              }
+                              // Hydrate 4a: empty overlay is not a delete-all request.
+                              if (currentState.empty()) {
+                                return true;
+                              }
+                              return !currentState.isRowHiddenOrDeleted(row.targetNoteId);
                             }),
              rows.end());
 }
