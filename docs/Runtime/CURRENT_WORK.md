@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (DEC-056 stale-root companion admission)
+Last updated: 2026-09-09 (DEC-056 miss-path device PASS 000740)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,19 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**DEC-056 — stale-root NOTE_EDIT rows enter existing
-`pendingSnapshotPublishBox.companionIds`.** Firmware in tree. RAM1 locals
-**7008**. Native **1790 succeeded, 1 skipped**. Device
-[`000237`](../../captures/session_20260909_000237.log) is current-root
-close publish (`root_rev` 4→6); stale-root companion overlay still needs
-a miss-path recapture.
+**No new authorized slice.** DEC-056 is shipped. Do not start hydrate
+4b–5, STOPPED idle `pending=1` repair, or close-NOTE_EDIT-before-overdub.
 
-`saveNoteEditPass` admits the EditPassId when the published root is
-already stale. Close does not `tryPublishNoteEditSnapshot` onto that
-parent. Stale gather applies the ids on snapshot events; overdub source
-applies them in place on DisplayNotes. Not a new publication owner. Not
-hydrate 4b–5. Evidence
-[`233644`](../../captures/session_20260908_233644.log).
+**Prior — DEC-056 stale-root companion admission.** Shipped. RAM1 locals
+**7008**. Native **1790 succeeded, 1 skipped**. Current-root close
+[`000237`](../../captures/session_20260909_000237.log) `root_rev` 4→6.
+Miss-path [`000740`](../../captures/session_20260909_000740.log): open
+`current=0` `root_rev=8`; close `skip stale-parent publish rows=3`;
+source `id=93 p=85 s=1728 e=2016` at `root_rev=16` `play_rev=19`.
 Plan:
 [`note_edit_close_stale_snapshot_publish_bugfix.md`](../Plans/note_edit_close_stale_snapshot_publish_bugfix.md).
 
