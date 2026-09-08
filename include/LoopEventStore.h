@@ -160,6 +160,11 @@ class LoopEventStore {
   /// Drop events whose tick is >= tickLimit. Preserves event order.
   void dropEventsAtOrBeyondTick(uint32_t tickLimit);
 
+  /// Map NoteOns at or past loopLength into [0, loopLength) so a stop Off
+  /// that already landed in-loop keeps its matching On. Then drop remaining
+  /// overflow events.
+  void mapNoteOnsAtOrBeyondTickIntoLoop(uint32_t loopLength);
+
   std::shared_ptr<LoopEventStore> cloneShared() const;
 
   const CaptureChunkIdList& chunkIds() const { return chunkIds_; }
