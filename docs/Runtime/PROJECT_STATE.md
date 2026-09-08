@@ -65,8 +65,10 @@ Close publish: `NoteRange` reuses the current snapshot pitch
 Overdub analysis current-root gather already skips pass flatten (4.4a).
 RAM1 locals **6848**; native **1773 succeeded, 1 skipped**.
 Device [`193700`](../../captures/session_20260908_193700.log): second
-overdub open `from=snapshot` at `root_rev=7` `play_rev=7`. Idle validate
-not exercised.
+overdub open `from=snapshot` at `root_rev=7` `play_rev=7`.
+[`194039`](../../captures/session_20260908_194039.log): NOTE_EDIT open
+`current=1` `root_rev=8` **177** / `only_*=0`. Idle validate not
+exercised.
 Remaining 4.4 display fallback/identity, 4.5 verify, 4.6, persistence,
 and snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate

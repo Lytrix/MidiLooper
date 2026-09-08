@@ -434,8 +434,12 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       **1773 succeeded, 1 skipped**.
 - [x] Device [`193700`](../../../captures/session_20260908_193700.log):
       second overdub open `from=snapshot` `root_rev=7` `play_rev=7`
-      `notes=159`. Idle validate not exercised (60 s defer). First
-      overdub open `from=visual` is before `pending=0` `root_rev=1`.
+      `notes=159`. First overdub open `from=visual` is before
+      `pending=0` `root_rev=1`.
+      [`194039`](../../../captures/session_20260908_194039.log):
+      NOTE_EDIT open `current=1` `root_rev=8` **177** / `only_*=0`.
+      Close `edits=3`, no `live capture baked`. Idle validate not
+      exercised (overdub stop does not queue it).
 
 ### Close-publish NoteRange pitch reuse
 
