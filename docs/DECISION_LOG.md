@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-056](#dec-056--note-edit-rows-enter-the-existing-pending-companion-set-when-the-published-root-is-stale) | 2026-09-08 | NOTE_EDIT `saveNoteEditPass` admits the row into `pendingSnapshotPublishBox.companionIds` when the published root is already stale; not a new publication owner | Accepted |
 | [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 3 device PASS [`221906`](../captures/session_20260908_221906.log); Stage 2 device PASS [`220445`](../captures/session_20260908_220445.log); Stage 1 device PASS [`212850`](../captures/session_20260908_212850.log) |
 | [DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units) | 2026-09-08 | NOTE_EDIT playing display stall: coalesce/post-display undo warm and deferred open/close | Accepted — Stage 1 admission in tree; Option B rejected by DEC-055; Stage 2 still separate |
 | [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary) | 2026-09-08 | `T_RT_reserve` is a 10 ms policy ceiling plus per-turn MIDI-boundary `reserve_us`; not 60% of `T_clock` and not an observed unit | Accepted — yield device proof parked; 3.5/3.6 closed |
@@ -69,7 +70,62 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-055 -->
+<!-- Append new entries below (newest first). Next ID: DEC-057 -->
+
+## DEC-056 — NOTE_EDIT rows enter the existing pending companion set when the published root is stale
+
+**Date:** 2026-09-08
+
+**Status:** Accepted
+
+**Owner:** `Loop::saveNoteEditPass` admits the EditPassId.
+`pendingSnapshotPublishBox.companionIds` remains the unpublished-content
+list. Stale-root `tryGatherPublishedSnapshotEventsInWindow` and
+`rebuildOverdubSourceSpanCache` consume that list.
+
+**Authority:**
+[`note_edit_close_stale_snapshot_publish_bugfix.md`](Plans/note_edit_close_stale_snapshot_publish_bugfix.md),
+[DEC-045](#dec-045-overdub-snapshot-publish-is-idle-stepped),
+[DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot).
+
+**Context:** [`233644`](../captures/session_20260908_233644.log) saved six
+NOTE_EDIT rows (`NoteEditPassClosed edits=6`) while `root_rev=1` and
+`playback_rev=11`. Those ids were not on the pending companion set.
+Stale gather and overdub source (`from=cache`) showed the pre-edit grid.
+`tryPublishNoteEditSnapshot` on close uses the published parent; applying
+the six rows onto rev 1 would drop later overdub content.
+
+**Decision:**
+
+1. This is unpublished-content admission. It is not a new snapshot-publication
+   owner, idle step, or rematerialize.
+2. `saveNoteEditPass` is the admission point. If
+   `publishedSnapshotIsCurrent()` is already false before
+   `playbackRevision++`, append the saved EditPassId to
+   `pendingSnapshotPublishBox.companionIds` (create the box if missing; do
+   not set `sessionExitQueued`).
+3. If the published root is current at save, do not admit. Close keeps
+   `tryPublishNoteEditSnapshot` when `openedOnCurrentSnapshot` or the root
+   is current.
+4. If the root is stale at close, do not publish the edit rows onto that
+   parent.
+5. `queueSessionExitSnapshot` unions incoming companion ids with ids already
+   on the box. It does not replace the list.
+6. Overdub-while-NOTE_EDIT session close is a separate transition. Not this
+   decision.
+
+**Does not authorize:** hydrate 4b–5, scan-all-Active-editPasses gather,
+synchronous construction on close for a stale parent, STOPPED idle
+`pending=1` repair, `beginOverdubSession` closing NOTE_EDIT.
+
+**Consequences:** Stale-root consumers see committed NOTE_EDIT rows through
+the same companion overlay overdub already uses. Gather applies
+`applyNoteEditPassSequence` on snapshot MIDI events. Overdub source
+applies the same ids in place on DisplayNotes (pending Hide/Shorten
+style); it does not reconstruct the source cache. Later session-exit
+publication that applies `companionIds` incorporates them. DEC-045
+synchronous NOTE_EDIT close remains for an opened-current or now-current
+root.
 
 ## DEC-055 — NOTE_EDIT working set is overlay delta on opened LoopSnapshot
 
@@ -94,7 +150,7 @@ Resolution. `DisplayManager` paints.
 [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction),
 [DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units).
 
-**Does not authorize:** hydrate 4a–5, DEC-054 Stage 2, Option B
+**Does not authorize:** hydrate 4b–5, DEC-054 Stage 2, Option B
 `clone()` slice, rename `NoteEditCurrentState`, unify live-capture fold,
 raise `N`, OpenSpec 4.5 / 4.6, `RuntimeWorkBudget`.
 

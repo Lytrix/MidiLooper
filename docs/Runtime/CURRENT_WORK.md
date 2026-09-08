@@ -2,13 +2,41 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (Hydrate 2–3 device functional PASS 231008)
+Last updated: 2026-09-08 (DEC-056 stale-root companion admission)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
 ---
 
 ## Now implementing
+
+**DEC-056 — stale-root NOTE_EDIT rows enter existing
+`pendingSnapshotPublishBox.companionIds`.** Firmware in tree. RAM1 locals
+**7008**. Native **1790 succeeded, 1 skipped**. Device
+[`000237`](../../captures/session_20260909_000237.log) is current-root
+close publish (`root_rev` 4→6); stale-root companion overlay still needs
+a miss-path recapture.
+
+`saveNoteEditPass` admits the EditPassId when the published root is
+already stale. Close does not `tryPublishNoteEditSnapshot` onto that
+parent. Stale gather applies the ids on snapshot events; overdub source
+applies them in place on DisplayNotes. Not a new publication owner. Not
+hydrate 4b–5. Evidence
+[`233644`](../../captures/session_20260908_233644.log).
+Plan:
+[`note_edit_close_stale_snapshot_publish_bugfix.md`](../Plans/note_edit_close_stale_snapshot_publish_bugfix.md).
+
+**Prior — Hydrate 4a mover-only seed after
+[`232826`](../../captures/session_20260908_232826.log).** Current-root
+open does not rematerialize. First focus rebuild seeds the selected mover
+only. Move/Pitch PASS
+[`233644`](../../captures/session_20260908_233644.log). Session store
+stays apply scratch until overlay project. Not 4b–5.
+Plans:
+[`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
+[`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md),
+[`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
+[`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
 
 **Prior — Hydrate 2–3 device functional PASS [`231008`](../../captures/session_20260908_231008.log).**
 Prepared hit: `noteMembership(pitch, bar)` for hold bars. Miss:
@@ -19,9 +47,8 @@ resolve med **8743** µs, scope med **4**. Miss after snapshot not current
 (258): resolve med **22206** µs, scan **72–73**. Hide/Shorten/Restore
 fire on both paths. Reconstruct med **6411** µs remains. Fast-fader
 `hostdrain` peak **1443580** µs is the miss-window leftover, not a
-neighborhood or candidate-source fail. Do not start hydrate 4a–5,
-DEC-054 Stage 2, later **E:** overlay-delta entries, or rename
-`NoteEditCurrentState`.
+neighborhood or candidate-source fail. Hydrate 4a is the authorized
+leftover. Do not start hydrate 4b–5.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_selectedtick_lcr_resolution_architecture.md`](../Plans/note_edit_selectedtick_lcr_resolution_architecture.md),

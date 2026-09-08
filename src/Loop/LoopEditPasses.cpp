@@ -84,7 +84,6 @@ void Loop::adoptPersistedSnapshot(PersistedLoopSnapshot& snapshot) {
   ++playbackRevision;
   markDisplayCachesStale();
   notifyCommittedContentChanged();
-  queueLoadedSnapshotPublish();
 }
 
 void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
@@ -107,7 +106,6 @@ void Loop::restorePassesSnapshot(const PersistedLoopSnapshot& snapshot) {
   ++playbackRevision;
   markDisplayCachesStale();
   notifyCommittedContentChanged();
-  queueLoadedSnapshotPublish();
 }
 
 EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassType passType,
@@ -124,12 +122,18 @@ EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassT
   row.editPassIndex = editPassIndex;
   row.state = EditPassState::Active;
   passes.editPasses.push_back(std::move(row));
+  const EditPassId savedId = passes.editPasses.back().id;
+  // DEC-056: already-stale published root — admit into the existing companion
+  // set before this save makes playbackRevision move further ahead.
+  if (savedId != kInvalidEditPassId && !publishedSnapshotIsCurrent()) {
+    appendPendingSnapshotCompanionId(savedId);
+  }
   if (!deferDerivedInvalidate) {
     ++playbackRevision;
     editStateDirty_ = true;
     notifyCommittedContentChanged();
   }
-  return passes.editPasses.back().id;
+  return savedId;
 }
 
 PassId Loop::saveLoopGeometry(LoopGeometry row) {

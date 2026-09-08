@@ -12,7 +12,11 @@
 #include <vector>
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#include "Utils/DebugSessionCapture.h"
 #include "Utils/InvestigationCaptureLog.h"
+#include "Utils/MemoryMonitor.h"
+
+#include <cstdio>
 #endif
 
 #if defined(SESSION_CAPTURE)
@@ -49,6 +53,31 @@ static void resetSnapshotIdleChildTimes() {
   const uint32_t probeA = micros();
   const uint32_t probeB = micros();
   s_lastSnapshotIdleChildren.probeUs = probeB - probeA;
+}
+#endif
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+LOOP_COLD_MEM __attribute__((noinline)) void emitSnapshotUnitCapture(
+    const Loop& loop, const char* kind, uint32_t heapBefore) {
+  const uint32_t heapAfter = MemoryMonitor::getInternalHeapFreeBytes();
+  char line[192];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,snapshot_unit,kind=%s,ph=%u,ld=%u,p=%u,q=%lu,a=%lu,"
+           "if=%u,hb=%lu,ha=%lu,psram=%lu,n=%lu,b=%lu,s=%lu",
+           static_cast<unsigned long>(micros()), kind != nullptr ? kind : "none",
+           static_cast<unsigned>(loop.loadedSnapshotHydrationPhase()),
+           loop.pendingSnapshotFromLoadedPasses() ? 1u : 0u,
+           loop.hasPendingSnapshotPublish() ? 1u : 0u,
+           static_cast<unsigned long>(loop.pendingSnapshotQueuedPassCount()),
+           static_cast<unsigned long>(loop.pendingSnapshotAppliedPassCount()),
+           loop.hasInFlightSnapshotConstruction() ? 1u : 0u,
+           static_cast<unsigned long>(heapBefore),
+           static_cast<unsigned long>(heapAfter),
+           static_cast<unsigned long>(DebugSessionCapture::kUnsampledHeapBytes),
+           static_cast<unsigned long>(snapshotAllocNodeCount()),
+           static_cast<unsigned long>(snapshotAllocByteCount()),
+           static_cast<unsigned long>(snapshotAllocSlabCount()));
+  DebugSessionCapture::appendCaptureTextLine(line);
 }
 #endif
 
@@ -691,11 +720,10 @@ LOOP_COLD_MEM void refillPassChangeBatch(const Loop& loop, PendingPassChangeProg
                                             progress.batch);
 }
 
-LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnapshot& parent,
-                                                PendingPassChangeProgress& progress,
-                                                LoopSnapshotChangeSet& changes,
-                                                uint32_t& affectedBars,
-                                                uint32_t& membershipEntries) {
+LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
+    const Loop& loop, const LoopSnapshot& parent, PendingPassChangeProgress& progress,
+    LoopSnapshotChangeSet& changes, uint32_t& affectedBars, uint32_t& membershipEntries,
+    bool skipParentNoteLookup) {
   {
 #if defined(SESSION_CAPTURE)
     SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.refillUs);
@@ -709,11 +737,12 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.eventScanUs);
 #endif
-      addEvent = !eventAlreadyInSnapshot(parent, event);
+      addEvent = skipParentNoteLookup ? true : !eventAlreadyInSnapshot(parent, event);
     }
     const bool isNoteEvent = event.isNoteOn() || event.isNoteOff();
     bool parentHasNote = false;
-    if (isNoteEvent && event.noteId != kInvalidNoteId && !progress.fromCaptureStore) {
+    if (isNoteEvent && event.noteId != kInvalidNoteId && !progress.fromCaptureStore &&
+        !skipParentNoteLookup) {
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.noteLookupUs);
 #endif
@@ -787,14 +816,14 @@ LOOP_COLD_MEM bool appendNextPassChangeFragment(const Loop& loop, const LoopSnap
   return true;
 }
 
-LOOP_COLD_MEM bool startNextPassChangeFragmentImpl(Loop& loop, PendingSnapshotPublishBox& box,
-                                                   const ImmutableLoopSnapshotRef& parent) {
+LOOP_COLD_MEM __attribute__((noinline)) bool startNextPassChangeFragmentImpl(
+    Loop& loop, PendingSnapshotPublishBox& box, const ImmutableLoopSnapshotRef& parent) {
   PendingPassChangeProgress& progress = box.passChangeProgress;
   LoopSnapshotChangeSet changes;
   uint32_t affectedBars = 0;
   uint32_t membershipEntries = 0;
   if (!appendNextPassChangeFragment(loop, *parent, progress, changes, affectedBars,
-                                    membershipEntries)) {
+                                    membershipEntries, box.fromLoadedPasses)) {
     box.persistLiveRecordCursor();
     return false;
   }
@@ -881,8 +910,8 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
   return {};
 }
 
-LOOP_COLD_MEM bool startNextPendingConstruction(Loop& loop, PendingSnapshotPublishBox& box,
-                                                uint32_t liveRecordCompletedTicks) {
+LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
+    Loop& loop, PendingSnapshotPublishBox& box, uint32_t liveRecordCompletedTicks) {
   if (!box.queuedWrapJournals.empty()) {
     const SnapshotWrapJournalFragment& fragment = box.queuedWrapJournals.front();
     ImmutableLoopSnapshotRef parent = box.unpublishedCandidate
@@ -974,7 +1003,8 @@ bool remainingWrapPublishWork(const PendingSnapshotPublishBox& box) {
          (box.sessionExitQueued && !box.companionsApplied);
 }
 
-LOOP_COLD_MEM bool finishPendingConstruction(PendingSnapshotPublishBox& box) {
+LOOP_COLD_MEM __attribute__((noinline)) bool finishPendingConstruction(
+    PendingSnapshotPublishBox& box) {
   ImmutableLoopSnapshotRef frozen = box.construction->freeze();
   if (!frozen) {
     return false;
@@ -1126,9 +1156,16 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
 }
 
 LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
-  if (pendingSnapshotPublishBox_ && !pendingSnapshotPublishBox_->sessionExitQueued) {
-    clearPendingSnapshotPublish();
+  if (!pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->sessionExitQueued) {
+    return;
   }
+  // Skipped overdub stop (`094930` seal=skipped) never queues session-exit, then
+  // closeOverdubSession used to drop in-flight wrap journals (`root_rev` stuck at 1).
+  const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  if (!box.queuedWrapJournals.empty() || box.wrapJournalInFlight || box.construction) {
+    return;
+  }
+  clearPendingSnapshotPublish();
 }
 
 LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
@@ -1232,6 +1269,35 @@ LOOP_COLD_MEM uint32_t Loop::pendingSnapshotWrapParentRevision() const {
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued;
+}
+
+LOOP_COLD_MEM bool Loop::pendingSnapshotFromLoadedPasses() const {
+  return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->fromLoadedPasses;
+}
+
+LOOP_COLD_MEM const EditPassIdList* Loop::pendingSnapshotCompanionIds() const {
+  return pendingSnapshotPublishBox_ ? &pendingSnapshotPublishBox_->companionIds : nullptr;
+}
+
+LOOP_COLD_MEM void Loop::appendPendingSnapshotCompanionId(EditPassId id) {
+  if (id == kInvalidEditPassId) {
+    return;
+  }
+  if (!pendingSnapshotPublishBox_) {
+    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  }
+  EditPassIdList& ids = pendingSnapshotPublishBox_->companionIds;
+  for (const EditPassId existing : ids) {
+    if (existing == id) {
+      return;
+    }
+  }
+  ids.push_back(id);
+}
+
+LOOP_COLD_MEM LoadedSnapshotHydrationPhase Loop::loadedSnapshotHydrationPhase() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->loadedHydrationPhase
+                                    : LoadedSnapshotHydrationPhase::None;
 }
 
 LOOP_COLD_MEM uint32_t Loop::pendingSnapshotCandidateLengthTicks() const {
@@ -1431,6 +1497,8 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
   pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
   box.sessionExitQueued = true;
+  box.fromLoadedPasses = true;
+  box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::Queued;
   box.sessionExitReason = CommitReason::RecordStop;
   if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
       !passes.recordPass.committedChunkIds.empty() &&
@@ -1467,7 +1535,8 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
         pendingSnapshotPublishBox_ &&
         (pendingSnapshotPublishBox_->construction ||
          !pendingSnapshotPublishBox_->queuedPassIds.empty() ||
-         pendingSnapshotPublishBox_->unpublishedCandidate);
+         pendingSnapshotPublishBox_->unpublishedCandidate ||
+         !pendingSnapshotPublishBox_->queuedWrapJournals.empty());
     if (!recordPublishInFlight) {
       return false;
     }
@@ -1482,8 +1551,24 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
     box.passChangeProgress.reset();
   }
   box.sessionExitQueued = true;
+  box.fromLoadedPasses = false;
+  box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::None;
   box.sessionExitReason = reason;
-  box.companionIds = companionIds;
+  for (const EditPassId companionId : companionIds) {
+    if (companionId == kInvalidEditPassId) {
+      continue;
+    }
+    bool alreadyQueued = false;
+    for (const EditPassId existing : box.companionIds) {
+      if (existing == companionId) {
+        alreadyQueued = true;
+        break;
+      }
+    }
+    if (!alreadyQueued) {
+      box.companionIds.push_back(companionId);
+    }
+  }
 
   if (isOverdubSessionExit(reason)) {
     for (const PassId passId : overdubSessionPassIds_) {
@@ -1516,7 +1601,7 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
   box.companionsApplied = box.companionIds.empty();
 
   if (box.construction || !box.queuedPassIds.empty() || box.unpublishedCandidate ||
-      !box.companionIds.empty()) {
+      !box.companionIds.empty() || !box.queuedWrapJournals.empty()) {
     return true;
   }
   clearPendingSnapshotPublish();
@@ -1564,9 +1649,14 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   }
 
   size_t remaining = maximumChanges;
+  bool steppedThisCall = false;
+  bool readyToFinish = false;
   while (remaining > 0) {
     if (!box.construction) {
       bool started = false;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      const uint32_t heapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+#endif
       {
 #if defined(SESSION_CAPTURE)
         SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.startUs);
@@ -1577,20 +1667,34 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       if (!started) {
         break;
       }
-      if (maximumChanges <= 1) {
-        break;
+      if (box.fromLoadedPasses) {
+        box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::Constructing;
       }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      emitSnapshotUnitCapture(*this, "start", heapBefore);
+#endif
+      // One start per step. Do not apply/freeze in the same 748-byte frame
+      // (`010922` reset after freeze `nodes=1754`).
+      break;
     }
-    if (!box.construction) {
+    if (box.fromLoadedPasses && box.construction->complete() && !steppedThisCall) {
+      readyToFinish = true;
       break;
     }
     const size_t before = box.construction->completedUnitCount();
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    const uint32_t heapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+#endif
     {
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.stepUs);
 #endif
       box.construction->step(remaining, playheadPhaseTick);
     }
+    steppedThisCall = true;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    emitSnapshotUnitCapture(*this, "step", heapBefore);
+#endif
     if (box.construction->failed()) {
       box.construction.reset();
       if (!box.passChangeProgress.active) {
@@ -1607,6 +1711,14 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     if (!box.construction->complete()) {
       break;
     }
+    if (box.fromLoadedPasses) {
+      break;
+    }
+    readyToFinish = true;
+    break;
+  }
+
+  if (readyToFinish && box.construction) {
     const bool wrapping = box.wrapJournalInFlight;
     const uint8_t fragmentIndex =
         wrapping && !box.queuedWrapJournals.empty()
@@ -1621,12 +1733,18 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
             ? box.queuedWrapJournals.front().targetRevision
             : 0;
     bool finished = false;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    const uint32_t heapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+#endif
     {
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.finishUs);
 #endif
       finished = finishPendingConstruction(box);
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    emitSnapshotUnitCapture(*this, "finish", heapBefore);
+#endif
     if (!finished) {
       box.construction.reset();
       if (!box.passChangeProgress.active) {
@@ -1641,6 +1759,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
 #endif
       storePublishedSnapshot(box.unpublishedCandidate, wrapTargetRevision);
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+      emitSnapshotUnitCapture(*this, "publish", heapBefore);
+#endif
     }
   }
 
@@ -1650,6 +1771,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       clearPendingSnapshotPublish();
       return false;
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    const uint32_t heapBefore = MemoryMonitor::getInternalHeapFreeBytes();
+#endif
     {
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
@@ -1663,6 +1787,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
           oldRoot, publishedSnapshotRevision(), playbackRevision);
 #endif
     }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    emitSnapshotUnitCapture(*this, "publish", heapBefore);
+#endif
     clearPendingSnapshotPublish();
     return false;
   }
