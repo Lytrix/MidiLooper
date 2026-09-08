@@ -84,7 +84,12 @@ This stage records that fact only.
 | Native Stage 1 | `copyIdleValidateEvents` on a published current root keeps span NoteIds (drops event-only 64) |
 | Native fallback | No current root matches `mergeActiveCapturePasses` |
 | RAM1 | `teensy41-capture-serial` locals ≥ 4000 |
-| Device | Not required to start |
+| Device | [`193700`](../../captures/session_20260908_193700.log): Stage 2
+  current-root open `from=snapshot` `root_rev=7` `play_rev=7` `notes=159`.
+  Stage 1 idle validate not exercised (no `MIDI idle validate` /
+  `MIDI validation complete`; last stop at 111.409 s, capture ends ~117 s;
+  defer is 60 s). First overdub open `from=visual` `root_rev=0`
+  `play_rev=1` at 66.025 s is before `pending=0` `root_rev=1` at 66.111 s. |
 
 ## Pre-implementation review
 

@@ -15,6 +15,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 (current-root span-filtered snapshot events). Overdub analysis
 current-root gather already skips pass flatten (4.4a). SEVT / `take_only`
 unchanged. RAM1 locals **6848**; native **1773 succeeded, 1 skipped**.
+Device [`193700`](../../captures/session_20260908_193700.log): second
+overdub open `from=snapshot` `root_rev=7` `play_rev=7` `notes=159`.
+Idle validate not exercised (60 s defer; last stop 111.409 s). First
+overdub open `from=visual` is before `pending=0` `root_rev=1`.
 Do not start hydrate Stage 4a, Overlay-as-display, raise `N`, 4.5, or 4.6.
 Plan:
 [`analysis_validation_oracle_snapshot_refinement.md`](../Plans/analysis_validation_oracle_snapshot_refinement.md).
