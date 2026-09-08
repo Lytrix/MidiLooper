@@ -71,7 +71,7 @@ off the current-root span path.
 |---|---|
 | Native Stage 1 | `test_try_copy_current_snapshot_display_notes_in_window_uses_span_note_ids` PASS. Current-root window keeps span NoteId `7`; drops event-only `64`; stale root returns false. |
 | RAM1 | `teensy41-capture-serial` locals **6848** |
-| Device | Not required to start |
+| Device | [`201106`](../../captures/session_20260908_201106.log): second overdub open `from=snapshot` `root_rev=5` `play_rev=5` `notes=114`. NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`. `DFRAME` **137** after second stop through session end. First overdub open `from=visual` is before `pending=0`. No `rebuildDisplayNotesInWindow` span-copy marker in this file. |
 
 ## Pre-implementation review
 

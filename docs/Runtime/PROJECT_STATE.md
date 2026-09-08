@@ -73,6 +73,10 @@ validate at 600.015 s on current `root_rev=1`; both overdub opens
 `from=snapshot`.
 4.4h Stage 1 shipped: `rebuildDisplayNotesInWindow` copies
 `tryCopyCurrentSnapshotDisplayNotesInWindow` on a current root.
+Device [`201106`](../../captures/session_20260908_201106.log): second
+overdub open `from=snapshot` `root_rev=5` `play_rev=5` `notes=114`.
+NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`. `DFRAME`
+**137** after second stop through session end.
 Remaining 4.4 hydrate / raise `N`, 4.5 verify, 4.6, persistence, and
 snapshot-identity undo remain later.
 The following publication-admission paragraphs retain historical intermediate
