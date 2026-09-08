@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (4.4d closed; remaining 4.4 / 4.5 HITL)
+Last updated: 2026-09-08 (4.4e Stage 1 NOTE_EDIT visual baseline)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 4.4 remaining callers / 4.5 HITL verify:**
-4.4d is closed. Dirty NOTE_EDIT paint/select uses the current snapshot
-as committed base. Commit rematerialize and
-`materializedLoopEventsForNoteEditFocus` stay on passes. RAM1 locals
-**6848**; native **1760 succeeded, 1 skipped**. Remaining 4.4 analysis /
-validation / other NOTE_EDIT oracles, and OpenSpec 4.5 HITL verify, stay
-open. Each sub-slice keeps its own phase gate. Plan:
-[`note_edit_committed_base_snapshot_refinement.md`](../Plans/note_edit_committed_base_snapshot_refinement.md).
+**OpenSpec 4.4e Stage 1 — NOTE_EDIT visual baseline from current snapshot:**
+Host-verified. `rebuildVisualCacheFromPasses` on a current root uses
+`resolveDisplayNotes(*publishedSnapshot())`. Gather still names the root
+and Overlay reject; it does not reconstruct display notes from the flat.
+`visualCache` stays a cache. RAM1 locals **6848**; native **1761 succeeded,
+1 skipped**. Recapture the `153320` shape before Stage 2/3. Plan:
+[`note_edit_committed_oracle_snapshot_bugfix.md`](../Plans/note_edit_committed_oracle_snapshot_bugfix.md).
 
 **Prior — OpenSpec 4.5a — post-stop snapshot publication convergence:**
 Closed. `refreshViewportAfterOverdubStop` holds the last OVERDUBBING

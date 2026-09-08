@@ -800,7 +800,14 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   materializedEventCount_ = flat.size();
   NoteUtils::DisplayNoteVec rebuiltNotes;
   if (usedSnapshot) {
-    rebuiltNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+    // Current-root gather names the usable snapshot; display notes come from
+    // that root's resolve, not reconstruct(flat). 153320: 157 events → 78
+    // reconstructed notes vs STOPPED resolve 75.
+    if (const ImmutableLoopSnapshotRef snapshot = publishedSnapshot()) {
+      LoopContentResolution::resolveDisplayNotes(*snapshot, rebuiltNotes);
+    } else {
+      rebuiltNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+    }
   } else {
     LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, rebuiltNotes);
   }
