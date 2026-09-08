@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (NOTE_EDIT no-edit empty-store bake)
+Last updated: 2026-09-09 (empty-store bake device PASS 002450)
 
 ---
 
@@ -99,8 +99,9 @@ stale-parent publish; overdub source shows `id=93 p=85`. Current-root
 close [`000237`](../../captures/session_20260909_000237.log) `root_rev`
 4→6. Hydrate 4a empty apply scratch made no-edit close rematerialize
 and bake Deletes; [`001857`](../../captures/session_20260909_001857.log)
-hung at `EditSelectNoteState::onExit`. Empty-store bake skip is in tree.
-Do not start hydrate 4b–5.
+hung at `EditSelectNoteState::onExit`. Empty-store bake device PASS
+[`002450`](../../captures/session_20260909_002450.log)
+`NoteEditPass close skip empty-store bake`. Do not start hydrate 4b–5.
 Plans:
 [`note_edit_hydrate_enhancement.md`](../Plans/note_edit_hydrate_enhancement.md),
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),

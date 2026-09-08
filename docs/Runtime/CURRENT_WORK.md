@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (NOTE_EDIT no-edit empty-store bake)
+Last updated: 2026-09-09 (empty-store bake device PASS 002450)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,16 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT no-edit empty-store bake — firmware in tree, device recapture
-open.** Hydrate 4a left `EditSession.store` empty. Close rematerialized
-the published loop and baked Deletes
-([`001857`](../../captures/session_20260909_001857.log) hung after
-`EditSelectNoteState::onExit`). Empty apply scratch with no saved rows
-must not rematerialize or `saveNoteEditPass`. Live-capture fold still
-bakes a nonempty store. RAM1 locals **7008**. Native **1792 succeeded,
-1 skipped**. Do not start hydrate 4b–5.
-Plan:
-[`note_edit_close_empty_store_bake_bugfix.md`](../Plans/note_edit_close_empty_store_bake_bugfix.md).
+**No new authorized slice.** Empty-store bake is shipped
+([`002450`](../../captures/session_20260909_002450.log) `skip empty-store
+bake`). Do not start hydrate 4b–5, STOPPED idle `pending=1` repair, or
+close-NOTE_EDIT-before-overdub.
+
+Named leftover in the same capture (needs authorize): NOTE_EDIT left
+open into OVERDUBBING — overlap/display compose. Not SD persist (no
+`LoopPersist` after 31.2 s). Do not start that firmware from this
+closeout.
 
 **Prior — DEC-056 stale-root companion admission.** Shipped. RAM1 locals
 **7008**. Native **1790 succeeded, 1 skipped**. Current-root close

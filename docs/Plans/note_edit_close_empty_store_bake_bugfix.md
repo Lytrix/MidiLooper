@@ -1,6 +1,6 @@
 # NOTE_EDIT no-edit close empty-store bake
 
-**Status:** Firmware + native PASS. Device recapture open.  
+**Status:** Device PASS [`002450`](../../captures/session_20260909_002450.log).  
 **Kind:** bugfix  
 **Evidence:** [`session_20260909_001857.log`](../../captures/session_20260909_001857.log)  
 **Parent:** Hydrate 4a in [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md)  
@@ -52,4 +52,4 @@ make bake work. That undoes Hydrate 4a.
 |---|---|
 | Capture-serial RAM1 | locals **7008** |
 | Native | **1792 succeeded, 1 skipped.** Pins: `test_empty_apply_scratch_bake_is_no_op`, `test_empty_store_vs_snapshot_baseline_does_not_keep_unrequested_deletes` |
-| Device | No-edit NOTE_EDIT → LOOP_EDIT while PLAYING: loop notes stay; no hang; `NoteEditPass close skip empty-store bake`; no `live capture baked` |
+| Device | [`002450`](../../captures/session_20260909_002450.log) **PASS**. Open `session_events=0` `current=1` `root_rev=4` notes **79**. Exit `NoteEditPass close skip empty-store bake`. No hang. No `live capture baked`. |
