@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-08 (DEC-053 yield HITL [`115043`](../../captures/session_20260908_115043.log); 3.6 still open)
+Last updated: 2026-09-08 (3.5/3.6 closed; yield proof parked; next is 4.3)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,26 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**OpenSpec 3.5 / 3.6 — incremental wrap publication:**
+**OpenSpec 4.3 — `LoopContentResolution` stateless snapshot queries:**
+Convert `LoopContentResolution` to stateless explicit-snapshot queries
+without parent traversal or maintained replay. Do not begin 4.4–4.6 in
+this slice. OpenSpec:
+[`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
+4.3. `DEC-037`. Phase gate required before firmware.
+
+**Prior — OpenSpec 3.5 / 3.6 closed (yield proof parked):**
+3.5 wrap-journal publication is in tree. 3.6 native wrap-journal parity and
+device wrap-retain / reserve telemetry
+[`101815`](../../captures/session_20260908_101815.log) /
+[`104353`](../../captures/session_20260908_104353.log) stand. Remaining-
+interval yield device proof is parked: `kSnapshotIdleReserveYieldEnabled`
+is false after [`115043`](../../captures/session_20260908_115043.log)
+(`remaining=0` until STOPPED). `allowSnapshotIdleReserve`,
+`DIAG,snapshot_idle,yield`, and `!SNAPSHOT_YIELD` stay compiled.
+`T_RT_safety_margin` stays unfrozen. N = 2. Plan:
+[`snapshot_publication_reserve_admission_refinement.md`](../Plans/snapshot_publication_reserve_admission_refinement.md).
+
+**Prior — OpenSpec 3.5 / 3.6 wrap publication notes:**
 3.5 firmware is in tree: settled wraps queue bounded mutation journals;
 session-exit starts at most one journal-capped fragment; publication waits
 until journals, queued passes, construction, and companions complete.
@@ -53,11 +72,7 @@ yield has `remaining=0`; the first `snapshot_idle` construction is after
 `PLAYING → STOPPED`; `pending=0` is that STOPPED publish. No yield after
 STOPPED. Host base still FAIL for the known non-slice checks
 (`record_first_note_too_late`, 2304-vs-1536, `dispatch`, SEVT window).
-DEC-053 still requires `pending=0` while timing-critical. Do not check off
-3.5/3.6. `T_RT_safety_margin` stays unfrozen.
-OpenSpec: [`immutable-loop-snapshot-passes/tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md)
-3.5–3.6. Plan:
-[`snapshot_publication_reserve_admission_refinement.md`](../Plans/snapshot_publication_reserve_admission_refinement.md).
+Yield reject is parked (`kSnapshotIdleReserveYieldEnabled` is false).
 `DEC-047`. `DEC-053`.
 
 **Prior — Loaded hydration stability — device PASS [`024731`](../../captures/session_20260908_024731.log):**

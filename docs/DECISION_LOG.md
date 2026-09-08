@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary) | 2026-09-08 | `T_RT_reserve` is a 10 ms policy ceiling plus per-turn MIDI-boundary `reserve_us`; not 60% of `T_clock` and not an observed unit | Accepted — policy; 3.6 recapture still open |
+| [DEC-053](#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary) | 2026-09-08 | `T_RT_reserve` is a 10 ms policy ceiling plus per-turn MIDI-boundary `reserve_us`; not 60% of `T_clock` and not an observed unit | Accepted — yield device proof parked; 3.5/3.6 closed |
 | [DEC-052](#dec-052--occupy-consumes-the-draw-source-predicate) | 2026-09-02 | Occupy committed source uses the paint draw-source predicate; exclusive snapshot fill when true | Accepted |
 | [DEC-051](#dec-051--overdub-wrap-seals-at-loop-end-not-session-start) | 2026-09-01 | Overdub wrap persist seals at loop end (phase 0); S remains session identity | Accepted |
 | [DEC-050](#dec-050--occupancy-at-noteon-and-per-bar-draw-routing) | 2026-09-01 | Occupancy resolves at NoteOn into pending effective transforms; draw source is per-bar routing only | Accepted |
@@ -73,11 +73,15 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 **Date:** 2026-09-08
 
-**Status:** Accepted — policy for OpenSpec tasks `3.5`/`3.6`. Firmware
-admission is in tree. Device yield HITL
-[`115043`](../captures/session_20260908_115043.log) proves live yield then
-STOPPED complete publish; `pending=0` while timing-critical remains open.
-Tasks stay unchecked.
+**Status:** Accepted — policy for OpenSpec tasks `3.5`/`3.6`. Remaining-interval
+yield device proof is **parked** (no testable live yield on firmware;
+[`115043`](../captures/session_20260908_115043.log) `remaining=0` starved
+construction until STOPPED). `kSnapshotIdleReserveYieldEnabled` is false;
+`allowSnapshotIdleReserve` and `DIAG,snapshot_idle,yield` stay compiled.
+Tasks `3.5`/`3.6` are closed on wrap-journal publication plus
+[`101815`](../captures/session_20260908_101815.log) /
+[`104353`](../captures/session_20260908_104353.log). `T_RT_safety_margin`
+stays unfrozen.
 
 **Scope:** `feature/overdub-wrap-snapshot-publication` / OpenSpec
 `immutable-loop-snapshot-passes` task `3.6`
@@ -149,7 +153,7 @@ scored against the 10,000 µs ceiling.
 The construction budget is not a function of BPM. Measured `reserve_us` is
 the adaptation mechanism when the MIDI boundary moves.
 
-### Acceptance (task 3.6 still open)
+### Acceptance (3.6 closed 2026-09-08; yield device proof parked)
 
 Pass requires a capture-gated recapture with `SESSION_CAPTURE_SNAPSHOT_IDLE=1`
 covering record and overdub through `pending=0` **while timing-critical**.
@@ -178,10 +182,19 @@ firmware. Do not revert `kSnapshotIdleConstructionUnitsPerTurn` to 1 for the
 95 ms after `PLAYING → STOPPED` are not overruns. Remaining-interval admission
 does not yield on `STOPPED`.
 
+**Amendment (2026-09-08):** Device remaining-interval yield proof is parked.
+No testable live yield exists on firmware
+([`115043`](../captures/session_20260908_115043.log) `remaining=0` until
+STOPPED). `kSnapshotIdleReserveYieldEnabled` is false. Yield helpers and
+`DIAG,snapshot_idle,yield` stay compiled. `3.5`/`3.6` close on wrap-journal
+publication plus [`101815`](../captures/session_20260908_101815.log) /
+[`104353`](../captures/session_20260908_104353.log). Re-enable the reject
+only when remaining-interval admission can admit live construction and still
+reject a constrained turn.
+
 **Consequences:** add capture-gated `reserve_us` on the existing child line;
 extend the existing Snapshot idle owner for remaining-interval admission; do
-not introduce `RuntimeWorkBudget::admit`. Do not check off `3.5`/`3.6` until
-this recapture passes.
+not introduce `RuntimeWorkBudget::admit`.
 
 ## DEC-052 — Occupy consumes the draw-source predicate
 

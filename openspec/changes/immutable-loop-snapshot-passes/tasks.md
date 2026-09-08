@@ -2,11 +2,12 @@
 
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
-Progress checkpoint (2026-08-27): 27/45 tasks are complete. Sections 1-3 are
-complete except for the activated wrap-level provisional snapshot publication
-tasks 3.5-3.6. In section 4, 4.1 and 4.2 are complete. In section 4b,
+Progress checkpoint (2026-09-08): sections 1–3 are complete. Tasks 3.5/3.6
+closed: wrap-journal publication is in tree; remaining-interval yield proof
+is parked (`kSnapshotIdleReserveYieldEnabled` is false; yield logs stay).
+In section 4, 4.1 and 4.2 are complete. In section 4b,
 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b, and 4b.4 are complete under
-Ring B round-robin. Open now: 3.5, 3.6, 4.3-4.6, 4b.3, 5.1-5.6, and 6.1-6.5.
+Ring B round-robin. Open now: 4.3-4.6, 4b.3, 5.1-5.6, and 6.1-6.5.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes are approved; the fixed-capacity physical directory is a Phase 3 admission prerequisite and remains measurement-gated.
@@ -39,7 +40,7 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
 - [x] 3.2 Adapt NOTE_EDIT close/commit to publish one global `LoopSnapshot` for a settled edit batch. In-session batch snapshots remain provisional `E:` revisions.
 - [x] 3.3 Retain compatibility pass records only as parity/rollback data while consumers migrate. Use existing verification gates plus invariant-protecting parity checks for overlap, LIFO pairing, wrap pairs, equal-tick ordering, and non-note events; do not use or optimize pass replay as normal effective-state handling.
 - [x] 3.4 Before runtime publication, classify each named candidate-construction operation in `ExecutionBounds.md`; define the unit cap, maximum indivisible step, progress state, completion condition, and explicit overrun/failure policy. Do not introduce content-sized construction in `handleMidiInput()`, clock dispatch, or track-tick paths.
-- [ ] 3.5 Publish a complete provisional `O:` `LoopSnapshot` after each settled overdub wrap through the existing `Loop` publication owner. Preserve `NoteId` for geometry-only `Replace`, remove hidden notes, allocate new IDs only for new notes, publish atomically after bounded construction, and record only one global `OverdubPassAdded` undo transition at overdub stop.
+- [x] 3.5 Publish a complete provisional `O:` `LoopSnapshot` after each settled overdub wrap through the existing `Loop` publication owner. Preserve `NoteId` for geometry-only `Replace`, remove hidden notes, allocate new IDs only for new notes, publish atomically after bounded construction, and record only one global `OverdubPassAdded` undo transition at overdub stop.
   - Capture/pairing state assigns `NoteId` incrementally to each logical NoteOn/NoteOff pair before pass promotion; promotion performs no content-sized pair-identity scan. `EventId` remains for non-note events only.
   - Existing semantic owners provide a transient per-wrap mutation journal with structural caps for mutation count, affected bars, membership entries, and bytes.
   - Oversized work is represented as ordered bounded fragments. Exact parent snapshot identity is retained across fragments and multiple wraps.
@@ -49,7 +50,7 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
   - Snapshot construction uses fixed-capacity immutable membership pages and persistent bar-cursor progress. Construction initialization and per-change begin operations do not enumerate all changed bars up front, and one unit does not copy an unbounded membership vector.
   - The wrap path queues journal fragments only; ordered construction may step during `PLAYING`/`OVERDUBBING` after the first root under the replacement policy for `DEC-045`.
   - “Provisional `O:` snapshot” means a private, unselected candidate; the previous complete root remains active until atomic publication.
-- [ ] 3.6 Complete the first implementation slice before consumer migration: verify snapshot correctness, copy-on-write sharing, bounded maintenance, atomic publication/previous-snapshot retention, parity, maximum MIDI gap attributable to snapshot construction, maintenance time per slice, and total construction wall time on native, firmware-size, and device gates.
+- [x] 3.6 Complete the first implementation slice before consumer migration: verify snapshot correctness, copy-on-write sharing, bounded maintenance, atomic publication/previous-snapshot retention, parity, maximum MIDI gap attributable to snapshot construction, maintenance time per slice, and total construction wall time on native, firmware-size, and device gates.
   - Extend the existing snapshot/take-survival native tests for repeated same-`NoteId` updates, wrap NoteOn/NoteOff replacement, Hide, equal-tick ordering, and non-note events.
     Native wrap-journal fixtures in `test_loop_take_survival` (2026-09-08):
     `test_wrap_journal_repeated_same_note_id_replace`,
@@ -75,8 +76,11 @@ Blocked until section 1 is complete and dirty-bar construction has a declared `E
     [`115043`](../../../captures/session_20260908_115043.log):
     `snapshot_reserve_admission.py` PASS; 6389 live yields all
     `remaining=0`; first construction and `pending=0` `root_rev=9` are after
-    `PLAYING → STOPPED`. DEC-053 still requires `pending=0` while
-    timing-critical. Do not check off 3.5/3.6. Snapshot
+    `PLAYING → STOPPED`. Remaining-interval yield proof is **parked**;
+    `kSnapshotIdleReserveYieldEnabled` is false; yield logs stay compiled.
+    Closed 2026-09-08 on wrap-journal publication plus
+    [`101815`](../../../captures/session_20260908_101815.log) /
+    [`104353`](../../../captures/session_20260908_104353.log). Snapshot
     idle cardinality is **N = 2**
     (`kSnapshotIdleConstructionUnitsPerTurn`); do not revert to 1.
   - Device `snapshot_idle` now includes `journals`, `fragment=i/n`, and

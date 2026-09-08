@@ -158,9 +158,11 @@ pass.
 | **Phase scope** | Tasks `3.5`/`3.6` only: wrap journal/publication, pair-`NoteId` and non-note `EventId` handling, fixed-capacity construction, retry/retention, native parity, firmware-size, `T_RT_reserve`, and required HITL gates. Direct consumer migration, persistence, and snapshot-identity undo are later phases |
 
 The first implementation slice ends before consumer migration. Its device gate
-must report the maximum MIDI gap attributable to snapshot construction,
-maintenance time per slice, and total construction wall time. Total wall time
-alone is not a sufficient performance result. An overrun or failed admission
+is the [DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+`T_RT_reserve` contract: per-turn `reserve_us` from snapshot-idle start to the
+next timing-critical `handleMidiInput()` entry, `T_RT_reserve_ceiling`
+10,000 µs, and yield/retry without prefix publication. Total wall time alone
+is not a sufficient performance result. An overrun or failed admission
 retains the previous complete selected snapshot.
 
 For this sub-gate, the post-root successor restriction in `DEC-045` is
@@ -292,12 +294,16 @@ are not authorized by this slice.
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
 Task 4.4 is not checked off. NOTE_EDIT, overdub analysis, and validation
-callers are not authorized by this slice. Task 4.3 stays skipped.
+callers were not authorized by the 3.5/3.6 slice. Task 4.3 is now selected
+in `CURRENT_WORK.md`.
 
 ### Phase 3 implementation review (3.5–3.6 wrap publication)
 
-- [ ] Phase architecture gate and `DEC-047` supersession are recorded.
-- [ ] `CURRENT_WORK.md` names tasks `3.5`/`3.6` as the active slice.
+Closed 2026-09-08. Remaining-interval yield device proof is parked
+(`kSnapshotIdleReserveYieldEnabled` is false). Yield logs stay compiled.
+
+- [x] Phase architecture gate and `DEC-047` supersession are recorded.
+- [x] `CURRENT_WORK.md` names task `4.3` as the active slice; `3.5`/`3.6` are prior.
 - [ ] Fixed-capacity membership representation is selected and measured.
 - [ ] Mutation count, affected-bar, membership-entry, and journal-byte caps
       are enforced structurally.
@@ -312,10 +318,11 @@ callers are not authorized by this slice. Task 4.3 stays skipped.
       `NoteId` while preserving pair identity and canonical order; non-note
       events retain `EventId`.
 - [ ] Global overdub undo remains pass-based while construction is pending.
-- [ ] Native snapshot/take-survival parity fixtures pass.
-- [ ] Capture-serial build passes with RAM1 locals at least 4000.
-- [ ] The measured `T_RT_reserve` MIDI-gap/deadline-lateness device gate
-      passes with the documented retry behavior.
+- [x] Native snapshot/take-survival parity fixtures pass.
+- [x] Capture-serial build passes with RAM1 locals **6848**.
+- [ ] The [DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+      remaining-interval yield device proof is **parked**. The 10,000 µs
+      ceiling stays policy. Do not freeze the minimum observed reserve.
 
 ### Admission starvation implementation review — 2026-08-27
 

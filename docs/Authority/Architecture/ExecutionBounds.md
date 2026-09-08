@@ -168,12 +168,13 @@ gap and deadline lateness ([DEC-053](../../DECISION_LOG.md#dec-053--t_rt_reserve
 the measured interval from snapshot-idle start to the next timing-critical
 `handleMidiInput()` entry. Admission compares the classified two-unit cost
 to `min(T_RT_reserve_ceiling, remaining_us − T_RT_safety_margin)` and yields
-when the cost does not fit. `60% × T_clock` is a diagnostic proxy only. STOPPED
-samples are excluded from this gate. Device
-[`115043`](../../../captures/session_20260908_115043.log) yielded 6389 live
-turns with `remaining=0` and published `pending=0` only after STOPPED. These
-structural caps admit the 3.5 firmware path; they do not close that device
-measurement. Do not freeze an observed unit as the ceiling.
+when the cost does not fit. That reject is **parked**
+(`kSnapshotIdleReserveYieldEnabled` is false) after
+[`115043`](../../../captures/session_20260908_115043.log) `remaining=0`
+starved live construction until STOPPED. Yield helpers and
+`DIAG,snapshot_idle,yield` stay compiled. `60% × T_clock` is a diagnostic
+proxy only. STOPPED samples are excluded from this gate. Do not freeze an
+observed unit as the ceiling.
 
 Capture-serial `snapshot_idle` now
 emits child durations for `startNextPendingConstruction`, nested

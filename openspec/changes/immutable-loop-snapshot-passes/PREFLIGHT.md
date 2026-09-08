@@ -220,7 +220,8 @@ published snapshot event membership through
 in the paint path). Reconstruction stays on `reconstructDisplayNotes`.
 `visualCache` remains the display list owner. Compatibility gather and LCR
 prepared windows remain only when no published root exists. Task 4.3 is
-skipped. NOTE_EDIT paint still uses `projectedNoteEditDisplayNotes`.
+now the selected slice in `CURRENT_WORK.md`. NOTE_EDIT paint still uses
+`projectedNoteEditDisplayNotes`.
 Analysis, validation, 4.5, and 4.6 identity recording are not authorized.
 Live overdub paint holds the PLAYING committed handoff only while the
 paint window stays inside the last gather. Follow exit or wrap
@@ -281,8 +282,11 @@ The phase requires:
 - effective event-index replacements/removals for note geometry changes and
   hides keyed by pair `NoteId`, with non-note `EventId`s runtime-only in this
   phase; and
-- a device pass based on measured `T_RT_reserve` for construction-attributable
-  MIDI gap and deadline lateness.
+- a device pass against the [DEC-053](../../../docs/DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+  `T_RT_reserve` contract: `T_RT_reserve_ceiling` 10,000 µs, per-turn
+  `reserve_us` to the next timing-critical `handleMidiInput()` entry, and
+  construction-attributable MIDI gap and deadline lateness inside that
+  admitted interval.
 
 The global overdub undo entry remains pass-based while construction is
 pending. Snapshot-identity attachment belongs to the later undo phase.
