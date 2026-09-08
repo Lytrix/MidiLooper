@@ -989,6 +989,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
           loop.lastTickInLoop != UINT32_MAX ? loop.lastTickInLoop : loop.playheadPhaseTick;
       loop.rebuildOverdubSourceView(refreshTick, "idle");
     } else if (allowVisualMaintenanceSlice &&
+               !(postOverdubDrainWindow && loop.pendingSnapshotSessionExitQueued() &&
+                 !loop.publishedSnapshotIsCurrent()) &&
                MidiServiceDrain::allowVisualCacheReconstructSlice(isOverdubbing()) &&
                loop.hasCommittedPasses() && loop.visualCacheDirty) {
       uint8_t barsPerSlice = 4;

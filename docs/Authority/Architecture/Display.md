@@ -51,17 +51,12 @@ Window move should adjust step 2 only when representation revision unchanged.
 ## Overdub-stop handoff
 
 `Track::stopOverdubbing` publishes the sealed overdub pass before changing to
-`PLAYING`. `DisplayManager::refreshViewportAfterOverdubStop` then resolves the
-committed passes through `LoopContentResolution::resolveDisplayNotes` and uses
-that effective result as the live handoff. Cache adoption may still apply
-pending display transforms, so effective resolution is repeated after adoption;
-the final live vector is therefore not allowed to regain first-occupy geometry.
-
-The next `resolveDisplayNotesByDrawSource` call preserves this handoff when the
-track is no longer capturing, the committed-prefix handoff is still open, and
-the playback and capture revisions match. It does not rebuild from the
-draw-source snapshot or cache during this boundary. Deferred save and idle
-cache rebuilding may proceed afterward.
+`PLAYING` and queues `queueSessionExitSnapshot`. `DisplayManager::refreshViewportAfterOverdubStop`
+holds the last OVERDUBBING composed `liveDisplayNotes` vector. It does not
+pass-gather or snapshot-gather on the stop stack. The first new committed paint
+uses `LoopContentResolution::resolveDisplayNotes(*snapshot)` only after
+`publishedSnapshotIsCurrent()`. Occupy/pending geometry on the held frame
+(`225234`) is accepted until that successor is current.
 
 The invariant is observable in `#CAP,DISP`: the first `OVERDUBBING → PLAYING`
 frame must have the same frame and effective counts as the settled frame.

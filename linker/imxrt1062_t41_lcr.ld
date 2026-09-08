@@ -4,6 +4,8 @@
  * bodies land in per-symbol .text.* and default to ITCM. Route that object file's
  * .text* to FLASH so flexRAM ITCM banks are not crossed.
  * LoopSnapshot.cpp / LoopSnapshotPublish.cpp: same STL/shared_ptr template leak.
+ * Display cache/window/note-edit projection TUs: stop-path and paint helpers leak
+ * STL .text.* into ITCM; route them with InvestigationCaptureLog.
  */
 MEMORY
 {
@@ -35,6 +37,15 @@ SECTIONS
 		*LoopSnapshot*.o(.text .text.*)
 		*TrackOverdubWrap*.o(.text .text.*)
 		*TrackUndo*.o(.text .text.*)
+		*InvestigationCaptureLog*.o(.text .text.*)
+		*DisplayCacheLifecycle*.o(.text .text.*)
+		*DisplayNoteWindowGather*.o(.text .text.*)
+		*DisplayNoteResolveCommitted*.o(.text .text.*)
+		*DisplayNoteResolveLiveCapture*.o(.text .text.*)
+		*DisplayWindowUtils*.o(.text .text.*)
+		*PianoRollDraw*.o(.text .text.*)
+		*NoteEditFocusDisplayProjection*.o(.text .text.*)
+		*NoteEditFocusLinearSpan*.o(.text .text.*)
 		. = ALIGN(4);
 		KEEP(*(.init))
 		__preinit_array_start = .;

@@ -161,6 +161,19 @@ void test_prefer_preserved_overdub_stop_handoff_while_cache_dirty() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::preferPreservedOverdubStopHandoff(false, true, true));
 }
 
+void test_hold_overdub_stop_handoff_until_current_snapshot() {
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+      true, true, true, true, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+      true, true, false, false, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+      true, true, true, false, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+      true, false, false, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
+      true, true, false, false, false));
+}
+
 void test_preserve_composed_notes_on_overdub_wrap_invalidate() {
   // session_20260826_011829: wrap invalidate without preserve left no frame for
   // ODUB,stop,display (155 ms gather). RC-W1 still resets bookkeeping.
@@ -302,6 +315,13 @@ void test_should_assign_grown_visual_cache_over_overdub_hold() {
       DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(89u, 63u, 104u));
   TEST_ASSERT_TRUE(
       DisplayWindowUtils::shouldAssignGrownVisualCacheOverOverdubHold(206u, 126u, 134u));
+}
+
+void test_snapshot_backed_display_ready() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::snapshotBackedDisplayReady(false, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::snapshotBackedDisplayReady(false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::snapshotBackedDisplayReady(true, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::snapshotBackedDisplayReady(true, true));
 }
 
 void test_should_gather_published_snapshot_for_draw_source() {
@@ -1837,6 +1857,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_capture_playhead_tails_are_paint_only);
   RUN_TEST(test_overdub_playhead_tails_apply_when_over_budget);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
+  RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
   RUN_TEST(test_should_hold_composed_notes_on_overdub_wrap_revision);
   RUN_TEST(test_committed_display_visual_cache_authoritative);
@@ -1849,6 +1870,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_hold_dirty_overdub_layer_before_window_gather);
   RUN_TEST(test_should_hold_dirty_visual_cache_until_idle);
   RUN_TEST(test_should_assign_grown_visual_cache_over_overdub_hold);
+  RUN_TEST(test_snapshot_backed_display_ready);
   RUN_TEST(test_should_gather_published_snapshot_for_draw_source);
   RUN_TEST(test_visual_cache_reusable_as_committed_draw_source);
   RUN_TEST(test_published_snapshot_is_complete_draw_source);

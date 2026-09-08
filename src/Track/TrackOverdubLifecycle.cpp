@@ -63,7 +63,7 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
     emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
     logOverdubStopStage(loop, stopStartUs, "display", 0,
                         DebugSessionCapture::kUnsampledHeapBytes,
-                        DebugSessionCapture::kUnsampledHeapBytes, "ok");
+                        DebugSessionCapture::kUnsampledHeapBytes, "hold");
 #if defined(SESSION_CAPTURE)
     armOverdubStopDebtProbe(probeVisualDirtyBeforeStop, probeDirtyBarsBeforeStop,
                             probeSavePendingBeforeStop, loop);
@@ -211,7 +211,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   emitOverdubStopDisplaySnapshot(*this, activeLoopIndex, currentTick);
   logOverdubStopStage(loop, stopStartUs, "display", 0,
                       DebugSessionCapture::kUnsampledHeapBytes,
-                      DebugSessionCapture::kUnsampledHeapBytes, "ok");
+                      DebugSessionCapture::kUnsampledHeapBytes, "hold");
 #if defined(SESSION_CAPTURE)
   armOverdubStopDebtProbe(probeVisualDirtyBeforeStop, probeDirtyBarsBeforeStop,
                           probeSavePendingBeforeStop, loop);

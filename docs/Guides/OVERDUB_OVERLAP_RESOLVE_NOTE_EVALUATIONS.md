@@ -216,12 +216,12 @@ persistent note event geometry (Off tick via shortenNoteEndById)
 
 ### Overdub-stop display finalization
 
-At overdub stop, the sealed pass is the storage authority and
-`LoopContentResolution::resolveDisplayNotes` is the display finalization
-authority. `DisplayManager::refreshViewportAfterOverdubStop` resolves the
-committed passes into the live handoff after cache invalidation and repeats
-that resolution after `adoptComposedDisplayNotesIfAuthoritative`, because cache
-adoption can replay pending transforms onto the composed vector.
+At overdub stop, the sealed pass is the storage authority.
+`DisplayManager::refreshViewportAfterOverdubStop` holds the last OVERDUBBING
+composed frame (`from=hold`). It does not call
+`LoopContentResolution::resolveDisplayNotes(passes)` on the stop stack
+(`141434`). The first new committed paint uses the current published
+`LoopSnapshot` after session-exit publication.
 
 The following PLAYING paint must preserve that handoff when capture is no longer
 active, the committed-prefix handoff is still open, and playback/capture

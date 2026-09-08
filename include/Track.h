@@ -320,6 +320,7 @@ public:
   /// True when any slot has pending publication and the published root lags
   /// `playbackRevision`. Boolean backlog-present only; not a size or cost.
   bool hasSnapshotPublicationBacklogOnAnySlot() const;
+  bool hasPendingSessionExitSnapshotOnAnySlot() const;
   Loop& loopWithPendingSnapshotPublish();
 
   // ==========================================
