@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-08 (DEC-055 Stage 1 device PASS)
+Last updated: 2026-09-08 (DEC-055 Stage 2 first kind-boundary E:00)
 
 ---
 
@@ -77,11 +77,11 @@ Device [`201106`](../../captures/session_20260908_201106.log): second
 overdub open `from=snapshot` `root_rev=5` `play_rev=5` `notes=114`.
 NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`. `DFRAME`
 **137** after second stop through session end.
-DEC-055 Stage 1 device PASS
-[`212850`](../../captures/session_20260908_212850.log): select does not
-clone or warm (`UNDO_WARM` = 0). `DFRAME` 30-frame median **1251** ms
-during PLAYING select. First kind-boundary E:00 restore is Stage 2.
-Option B rejected. Plans:
+DEC-055 Stage 2 in tree: first kind-boundary at `undoCount == 0` stores
+E:00 (`hasUndoCurrentState == false`) and restores from the opened
+snapshot. Stage 1 device PASS
+[`212850`](../../captures/session_20260908_212850.log). Option B rejected.
+Plans:
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
 [`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
 DEC-054 Stage 1 admission remains in tree; [`204458`](../../captures/session_20260908_204458.log)

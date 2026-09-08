@@ -120,6 +120,11 @@ inline bool selectNavSchedulesKindBoundaryUndoWarm() {
   return false;
 }
 
+/// DEC-055 Stage 2: first geometry **E:** restores E:00 from the opened snapshot.
+inline bool firstKindBoundaryUsesOpenedSnapshotRestore(size_t undoCount) {
+  return undoCount == 0;
+}
+
 /// After fader-1 targets a different note (or clears selection), the next geometry mutation
 /// SHALL push a fresh session undo step even when kind stays Move.
 inline bool shouldResetGeometryKindUndoOnSelectChange(const EditorSelection& prior,
