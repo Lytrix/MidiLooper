@@ -385,6 +385,16 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
 - [x] Device recapture [`162207`](../../../captures/session_20260908_162207.log)
       questions 1–2 PASS (STOPPED/spans/open visual 98). Do not start Stage 2/3.
 
+### Close-publish NoteRange pitch reuse
+
+- [x] Architecture checkpoint: `appendEditRowChange` only; no owner or
+      transition change.
+- [x] `NoteRange` Replace keeps parent pitch (or earlier same-`NoteId`
+      change). Does not write `row.pitch`.
+- [x] Native:
+      `test_note_edit_close_note_range_reuses_published_pitch`,
+      `test_note_edit_close_pitch_then_note_range_keeps_updated_pitch`.
+
 ### Phase 4.5a implementation review — post-stop snapshot convergence
 
 - [x] Architecture gate posted: hold + elevated session-exit idle; no owner
