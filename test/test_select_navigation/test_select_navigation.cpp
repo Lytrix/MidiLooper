@@ -259,6 +259,121 @@ void test_neighborhood_skips_sounding_through_notes() {
     TEST_ASSERT_EQUAL(1, countNoteSlotsAtTick(slots, selectedTick));
 }
 
+void test_find_slot_prefers_off_grid_note_in_same_sixteenth_134549() {
+    const uint32_t loopLength = 2304;
+    const uint32_t stepTick = 33 * 48;
+    const uint32_t offGridTick = 1616;
+    TEST_ASSERT_EQUAL(stepTick, (offGridTick / 48) * 48);
+
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({59, 48, 100, offGridTick, offGridTick + 96});
+
+    const auto slots = SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes,
+                                                                    offGridTick, true);
+    const int fromStep =
+        SelectNavigation::findSlotIndexForSelection(slots, -1, stepTick, loopLength);
+    TEST_ASSERT_TRUE(fromStep >= 0);
+    TEST_ASSERT_EQUAL(0, slots[static_cast<size_t>(fromStep)].noteIdx);
+    TEST_ASSERT_EQUAL(offGridTick, slots[static_cast<size_t>(fromStep)].relativeTick);
+}
+
+void test_find_slot_picks_stacked_note_from_intra_step_pitchbend_153550() {
+    // session_20260909_153550: after move+pitch to 2304, three notes share the
+    // tick. F1 with selectedNoteIdx=-1 must be able to reach the later stacked
+    // note (moved pitch 82), not only the first (63).
+    const uint32_t loopLength = 3840;
+    const uint32_t stackedTick = 2304;
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({84, 63, 100, stackedTick, stackedTick + 480});
+    notes.push_back({80, 70, 100, stackedTick, stackedTick + 48});
+    notes.push_back({81, 82, 100, stackedTick, stackedTick + 479});
+
+    const auto slots = SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes,
+                                                                    stackedTick, false);
+    const int first = SelectNavigation::findSlotIndexForSelection(slots, -1, stackedTick,
+                                                                  loopLength);
+    TEST_ASSERT_TRUE(first >= 0);
+    TEST_ASSERT_EQUAL(0, slots[static_cast<size_t>(first)].noteIdx);
+
+    const int32_t pitchMin = -8192;
+    const int32_t pitchMax = 8192;
+    const int32_t enterStep = 1763;
+    TEST_ASSERT_EQUAL(stackedTick, SelectNavigation::selectTickFromPitchbend(
+                                       enterStep, pitchMin, pitchMax, loopLength));
+    TEST_ASSERT_EQUAL(0, SelectNavigation::selectStackedNoteIndexFromPitchbend(
+                             enterStep, pitchMin, pitchMax, loopLength, 3));
+    const int32_t lateInStep = 1910;
+    TEST_ASSERT_EQUAL(stackedTick, SelectNavigation::selectTickFromPitchbend(
+                                       lateInStep, pitchMin, pitchMax, loopLength));
+    TEST_ASSERT_EQUAL(2, SelectNavigation::selectStackedNoteIndexFromPitchbend(
+                             lateInStep, pitchMin, pitchMax, loopLength, 3));
+    const int stacked = SelectNavigation::findSlotIndexForSelection(
+        slots, -1, stackedTick, loopLength, lateInStep, pitchMin, pitchMax, loopLength);
+    TEST_ASSERT_TRUE(stacked >= 0);
+    TEST_ASSERT_EQUAL(2, slots[static_cast<size_t>(stacked)].noteIdx);
+    TEST_ASSERT_EQUAL(81, notes[static_cast<size_t>(slots[static_cast<size_t>(stacked)].noteIdx)]
+                              .noteId);
+}
+
+void test_find_slot_picks_off_grid_stack_from_grid_tick_161839() {
+    // session_20260909_161839: movers stay at +4 (628). F1 aims at grid 624.
+    // Notes at 628 must be a selectable stack, not one same-step fallback.
+    const uint32_t loopLength = 1536;
+    const uint32_t gridTick = 13 * 48;
+    const uint32_t noteTick = gridTick + 4;
+    TEST_ASSERT_EQUAL(624, gridTick);
+    TEST_ASSERT_EQUAL(628, noteTick);
+
+    std::vector<NoteUtils::DisplayNote> notes;
+    notes.push_back({1, 60, 100, noteTick, noteTick + 288});
+    notes.push_back({2, 64, 100, noteTick, noteTick + 192});
+    notes.push_back({3, 67, 100, noteTick, noteTick + 192});
+
+    const auto slots = SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes,
+                                                                    noteTick, false);
+    const int32_t pitchMin = -8192;
+    const int32_t pitchMax = 8192;
+    TEST_ASSERT_EQUAL(gridTick, SelectNavigation::selectTickFromPitchbend(
+                                    -1175, pitchMin, pitchMax, loopLength));
+    TEST_ASSERT_EQUAL(0, SelectNavigation::selectStackedNoteIndexFromPitchbend(
+                             -1175, pitchMin, pitchMax, loopLength, 3));
+    const int first = SelectNavigation::findSlotIndexForSelection(
+        slots, -1, gridTick, loopLength, -1175, pitchMin, pitchMax, loopLength);
+    TEST_ASSERT_TRUE(first >= 0);
+    TEST_ASSERT_EQUAL(0, slots[static_cast<size_t>(first)].noteIdx);
+    TEST_ASSERT_EQUAL(noteTick, slots[static_cast<size_t>(first)].relativeTick);
+
+    const int32_t lateInStep = -900;
+    TEST_ASSERT_EQUAL(gridTick, SelectNavigation::selectTickFromPitchbend(
+                                    lateInStep, pitchMin, pitchMax, loopLength));
+    TEST_ASSERT_EQUAL(2, SelectNavigation::selectStackedNoteIndexFromPitchbend(
+                             lateInStep, pitchMin, pitchMax, loopLength, 3));
+    const int stacked = SelectNavigation::findSlotIndexForSelection(
+        slots, -1, gridTick, loopLength, lateInStep, pitchMin, pitchMax, loopLength);
+    TEST_ASSERT_TRUE(stacked >= 0);
+    TEST_ASSERT_EQUAL(2, slots[static_cast<size_t>(stacked)].noteIdx);
+    TEST_ASSERT_EQUAL(3, notes[static_cast<size_t>(slots[static_cast<size_t>(stacked)].noteIdx)]
+                             .noteId);
+
+    notes.clear();
+    notes.push_back({10, 60, 100, gridTick, gridTick + 192});
+    notes.push_back({11, 67, 100, noteTick, noteTick + 192});
+    const auto mixed = SelectNavigation::buildSelectNavigationSlots(loopLength, 0, notes,
+                                                                    noteTick, false);
+    const int mixedFirst = SelectNavigation::findSlotIndexForSelection(
+        mixed, -1, gridTick, loopLength, -1321, pitchMin, pitchMax, loopLength);
+    const int mixedLate = SelectNavigation::findSlotIndexForSelection(
+        mixed, -1, gridTick, loopLength, lateInStep, pitchMin, pitchMax, loopLength);
+    TEST_ASSERT_TRUE(mixedFirst >= 0);
+    TEST_ASSERT_TRUE(mixedLate >= 0);
+    TEST_ASSERT_EQUAL(gridTick, mixed[static_cast<size_t>(mixedFirst)].relativeTick);
+    TEST_ASSERT_EQUAL(noteTick, mixed[static_cast<size_t>(mixedLate)].relativeTick);
+    TEST_ASSERT_EQUAL(10, notes[static_cast<size_t>(mixed[static_cast<size_t>(mixedFirst)].noteIdx)]
+                              .noteId);
+    TEST_ASSERT_EQUAL(11, notes[static_cast<size_t>(mixed[static_cast<size_t>(mixedLate)].noteIdx)]
+                              .noteId);
+}
+
 void test_select_tick_from_pitchbend_is_step_linear() {
     const uint32_t navLength = 1536;
     TEST_ASSERT_EQUAL(0, SelectNavigation::selectTickFromPitchbend(-8192, -8192, 8192, navLength));
@@ -270,6 +385,30 @@ void test_select_tick_from_pitchbend_is_step_linear() {
         SelectNavigation::selectTickFromPitchbend(0, -8192, 8192, navLength);
     TEST_ASSERT_EQUAL(0, midTick % Config::TICKS_PER_16TH_STEP);
     TEST_ASSERT_TRUE(midTick < navLength);
+}
+
+void test_select_pitchbend_from_tick_round_trips_234815() {
+    const uint32_t navLength = 3072;
+    const uint32_t tick = 2640;
+    const int32_t pb =
+        SelectNavigation::selectPitchbendFromTick(tick, -8192, 8192, navLength);
+    TEST_ASSERT_NOT_EQUAL(-4915, pb);
+    TEST_ASSERT_EQUAL(tick, SelectNavigation::selectTickFromPitchbend(pb, -8192, 8192, navLength));
+}
+
+void test_select_pitchbend_from_tick_round_trips_stacked() {
+    const uint32_t navLength = 1536;
+    const uint32_t tick = 384;
+    const int32_t first =
+        SelectNavigation::selectPitchbendFromTick(tick, -8192, 8192, navLength, 0, 3);
+    const int32_t last =
+        SelectNavigation::selectPitchbendFromTick(tick, -8192, 8192, navLength, 2, 3);
+    TEST_ASSERT_EQUAL(tick, SelectNavigation::selectTickFromPitchbend(first, -8192, 8192, navLength));
+    TEST_ASSERT_EQUAL(tick, SelectNavigation::selectTickFromPitchbend(last, -8192, 8192, navLength));
+    TEST_ASSERT_EQUAL(0, SelectNavigation::selectStackedNoteIndexFromPitchbend(
+                             first, -8192, 8192, navLength, 3));
+    TEST_ASSERT_EQUAL(2, SelectNavigation::selectStackedNoteIndexFromPitchbend(
+                             last, -8192, 8192, navLength, 3));
 }
 
 int main(int argc, char** argv) {
@@ -286,6 +425,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_trim_select_slots_to_committed_content_span);
     RUN_TEST(test_neighborhood_does_not_scale_with_loop_length);
     RUN_TEST(test_neighborhood_skips_sounding_through_notes);
+    RUN_TEST(test_find_slot_prefers_off_grid_note_in_same_sixteenth_134549);
+    RUN_TEST(test_find_slot_picks_stacked_note_from_intra_step_pitchbend_153550);
+    RUN_TEST(test_find_slot_picks_off_grid_stack_from_grid_tick_161839);
     RUN_TEST(test_select_tick_from_pitchbend_is_step_linear);
+    RUN_TEST(test_select_pitchbend_from_tick_round_trips_234815);
+    RUN_TEST(test_select_pitchbend_from_tick_round_trips_stacked);
     return UNITY_END();
 }
