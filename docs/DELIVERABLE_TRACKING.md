@@ -26,6 +26,8 @@
 
 - **LoopContentResolution parallel prototype (DEC-037, Aug 2026):** native `LoopContentResolution` + device gate suites; 6C/6D closed [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log). PR [#35](https://github.com/Lytrix/MidiLooper/pull/35) merged to `dev` (`be0e05f`). OpenSpec change `loop-content-resolution` pending archive. Plan: [`loop_event_sourced_resolution_architecture.md`](Plans/loop_event_sourced_resolution_architecture.md).
 
+- **NOTE_EDIT overdub select/pitch hang (Sep 2026):** paint-cache reuse on fingerprint/select; ValueOnly motors while overdubbing. Device PASS [`152705`](../captures/session_20260909_152705.log). Plan: [`note_edit_overdub_select_pitch_hang_bugfix.md`](Plans/note_edit_overdub_select_pitch_hang_bugfix.md).
+
 - **Compose last-bar beat-4 Shorten HITL (Sep 2026):** `STIM-NE-OD-COMPOSE-03` v1 / preset `note_edit_overdub_compose_last_bar_shorten`. Device PASS [`133714`](../captures/session_20260909_133714.log). Plan: [`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md).
 
 - **Overdub companion admission + STOPPED first-paint (§36, Aug 2026):** clock-path gather copy-only; source-span prewarm after `boot_commit`; STOPPED undo/switch keep `visualCache.notes` and budget idle gather. Device PASS [`165107`](../captures/session_20260821_165107.log), [`183229`](../captures/session_20260821_183229.log). Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §35–§36. Later: wrap-append bound, 5 s idle attribution (§37).

@@ -451,11 +451,19 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::syncMotorsFromSelectTarget(
     }
 
     midiHandler.setDroidMotorOutboundPriority(true);
+    const bool runBlockingBurst =
+        NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing());
 #if defined(SESSION_CAPTURE)
-    logger.info("#DBG select_motor_sync mode=SELECT_SYNC sequence=parallel_timed_burst");
+    logger.info("#DBG select_motor_sync mode=SELECT_SYNC sequence=%s",
+                runBlockingBurst ? "parallel_timed_burst" : "value_only");
 #endif
 
-    const bool sent = sendDependentFadersParallelTimedBurst(track, plan, &target);
+    const bool sent =
+        runBlockingBurst
+            ? sendDependentFadersParallelTimedBurst(track, plan, &target)
+            : sendDependentFaderSnapshot(track, plan,
+                                         buildDependentFaderSnapshotForTrack(track, &target),
+                                         DependentFaderSendMode::ValueOnly);
     if (sent) {
         const uint32_t sentAt = millis();
         lastSelectMotorSyncMs_ = sentAt;
