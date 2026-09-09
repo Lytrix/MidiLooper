@@ -15,6 +15,8 @@ from hitl.stimuli import (
     format_fingerprint_text,
     format_human_checklist,
     prepend_hitl_header,
+    run_stimulus,
+    stimulus_report_fields,
 )
 from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
@@ -237,6 +239,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
         _fader2_move_to_sixteenth_step,
     )
 
+    spec = run_stimulus(STIM_NE_OD_COMPOSE_01)
     ns = _parse_scenario_args(args)
     ctx = get_context(args)
     out_dir = ns.out_dir
@@ -261,7 +264,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
         f"[note-edit-overdub-compose] seed={seed_path} loop_length={loop_length} "
         f"notes={stats['note_pairs']} nav_slots={stats['nav_slots']}"
     )
-    print(format_fingerprint_text(STIM_NE_OD_COMPOSE_01))
+    print(format_fingerprint_text(spec))
 
     out_port = mido.open_output(_find_midi_port(ns.midi_out, "output"))
     in_port = mido.open_input(_find_midi_port(ns.midi_in, "input"))
@@ -409,7 +412,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
         ctx.markers.append("exited edit mode")
         time.sleep(ns.final_wait_ms / 1000.0)
 
-        lines = prepend_hitl_header(serial_collector.snapshot(), STIM_NE_OD_COMPOSE_01)
+        lines = prepend_hitl_header(serial_collector.snapshot(), spec)
         serial_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"[note-edit-overdub-compose] serial log: {serial_path}")
 
@@ -424,7 +427,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
         )
         print(
             format_human_checklist(
-                STIM_NE_OD_COMPOSE_01,
+                spec,
                 machine_ok=bool(check.get("ok")),
                 machine_total=machine_total,
             )
@@ -435,12 +438,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
             json.dumps(
                 {
                     "scenario": "note_edit_overdub_compose",
-                    "stimulus": {
-                        "id": STIM_NE_OD_COMPOSE_01.stimulus_id,
-                        "version": STIM_NE_OD_COMPOSE_01.version,
-                        "kind": STIM_NE_OD_COMPOSE_01.kind,
-                        "must_prove": list(STIM_NE_OD_COMPOSE_01.must_prove),
-                    },
+                    "stimulus": stimulus_report_fields(spec),
                     "track_number": ns.track_number,
                     "midi_channel": midi_channel,
                     "seed_serial_log": str(seed_path) if seed_path else None,
@@ -452,7 +450,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
                     },
                     "in_edit_overdub_bars": IN_EDIT_OVERDUB_BARS,
                     "serial_verification": check,
-                    "human_checks": list(STIM_NE_OD_COMPOSE_01.human_checks),
+                    "human_checks": list(spec.human_checks),
                     "markers": ctx.markers,
                 },
                 indent=2,

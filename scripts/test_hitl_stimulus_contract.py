@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -13,6 +14,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl.registry import resolve_scenarios
+from hitl.runner import main as hitl_main
 from hitl.stimuli import (
     STIM_BASE_2_2_01,
     STIM_BASE_2_ONE_OD_01,
@@ -22,11 +24,15 @@ from hitl.stimuli import (
     format_hitl_header,
     get_stimulus,
     prepend_hitl_header,
+    run_stimulus,
+    set_run_stimulus_override,
     stimulus_for_base_preset,
     stimulus_for_scenario,
     temporary_variant,
     validate_stimulus,
 )
+from hitl.stimuli.cli import default_temp_parent_id, write_temporary_sidecar
+from hitl.stimuli.yaml_view import export_registry_yaml
 from hitl.verify.note_edit_overdub_compose import verify_note_edit_overdub_compose
 from test_note_edit_overdub_compose_serial_verify import _pass_lines
 
@@ -136,6 +142,89 @@ class StimulusFingerprintTests(unittest.TestCase):
         )
         self.assertFalse(result["ok"])
         self.assertIn("stimulus_header_missing", result["issues"])
+
+
+class StimulusStage3Tests(unittest.TestCase):
+    def setUp(self) -> None:
+        set_run_stimulus_override(None)
+
+    def tearDown(self) -> None:
+        set_run_stimulus_override(None)
+
+    def test_export_yaml_is_a_view_of_registered_ids(self) -> None:
+        text = export_registry_yaml()
+        self.assertIn("scripts/hitl/stimuli/registry.py", text)
+        for stimulus_id in (
+            "STIM-BASE-2-ONE-OD-01",
+            "STIM-BASE-2-2-01",
+            "STIM-NE-OD-COMPOSE-01",
+            "STIM-OCCUPY-PAINT-01",
+            "STIM-EDIT-OD-DURING-NE-01",
+        ):
+            self.assertIn(stimulus_id, text)
+        self.assertNotIn("-TEMP-", text)
+
+    def test_temp_sidecar_is_not_registered(self) -> None:
+        with TemporaryDirectory() as tmp:
+            spec, path = write_temporary_sidecar(
+                "STIM-NE-OD-COMPOSE-01",
+                "A",
+                out_dir=Path(tmp),
+                reason="unit test",
+            )
+            self.assertEqual(spec.stimulus_id, "STIM-NE-OD-COMPOSE-01-TEMP-A")
+            self.assertEqual(spec.kind, "temporary")
+            self.assertEqual(spec.parent_id, "STIM-NE-OD-COMPOSE-01")
+            self.assertTrue(path.is_file())
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("STIM-NE-OD-COMPOSE-01-TEMP-A", text)
+            self.assertIn('kind: "temporary"', text)
+            self.assertIn('parent_id: "STIM-NE-OD-COMPOSE-01"', text)
+            self.assertIn("reason: unit test", text)
+            self.assertIn("LIVE_CAPTURE_COMPOSE", text)
+            self.assertNotIn("({", text)
+            with self.assertRaises(KeyError):
+                get_stimulus(spec.stimulus_id)
+
+    def test_temp_override_matches_parent_only(self) -> None:
+        temp = temporary_variant("STIM-NE-OD-COMPOSE-01", "A")
+        set_run_stimulus_override(temp)
+        self.assertEqual(run_stimulus(STIM_NE_OD_COMPOSE_01), temp)
+        self.assertEqual(run_stimulus(STIM_OCCUPY_PAINT_01), STIM_OCCUPY_PAINT_01)
+        self.assertEqual(
+            default_temp_parent_id(["base", "note_edit_overdub_compose"]),
+            "STIM-NE-OD-COMPOSE-01",
+        )
+
+    def test_stimulus_cli_export_and_temp(self) -> None:
+        with TemporaryDirectory() as tmp:
+            catalog = Path(tmp) / "catalog.yaml"
+            self.assertEqual(
+                hitl_main(["stimulus", "export-yaml", "--out", str(catalog)]),
+                0,
+            )
+            catalog_text = catalog.read_text(encoding="utf-8")
+            self.assertIn("STIM-NE-OD-COMPOSE-01", catalog_text)
+            self.assertNotIn("-TEMP-", catalog_text)
+            self.assertEqual(
+                hitl_main(
+                    [
+                        "stimulus",
+                        "temp",
+                        "STIM-NE-OD-COMPOSE-01",
+                        "A",
+                        "--out-dir",
+                        tmp,
+                        "--reason",
+                        "cli test",
+                    ]
+                ),
+                0,
+            )
+            sidecar = Path(tmp) / "stimuli" / "STIM-NE-OD-COMPOSE-01-TEMP-A.yaml"
+            self.assertTrue(sidecar.is_file())
+            with self.assertRaises(KeyError):
+                get_stimulus("STIM-NE-OD-COMPOSE-01-TEMP-A")
 
 
 if __name__ == "__main__":

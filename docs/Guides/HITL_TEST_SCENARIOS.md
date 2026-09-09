@@ -48,7 +48,14 @@ The raw Teensy `#CAP` session log stays firmware-only.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --list-stimuli
+.venv/bin/python scripts/host_midi_hitl.py stimulus export-yaml
+.venv/bin/python scripts/host_midi_hitl.py stimulus temp STIM-NE-OD-COMPOSE-01 A
 ```
+
+`export-yaml` dumps the Python registry. It is a view, not a second
+authority. `stimulus temp` writes `captures/stimuli/<id>.yaml` and does
+not register the variant. Attach a TEMP header to a live run with
+`--stimulus-temp-suffix A` (optional `--stimulus-temp-parent`).
 
 Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_enhancement.md).
 

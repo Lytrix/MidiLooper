@@ -21,9 +21,12 @@ When a plan names `required_stimulus`, use that id and version. **Do not change*
 
 If the canonical stimulus cannot exercise the bug:
 
-1. Create a temporary variant (`temporary_variant(...)`, e.g. `STIM-NE-OD-COMPOSE-01-TEMP-A`).
-2. Run it. Report whether it reproduced the condition.
-3. Do not overwrite the canonical recipe. Promote to a new `STIM-…-02` only when the user accepts it as the reproducer.
+1. Create a temporary variant. Do not edit the canonical recipe.
+   ```bash
+   .venv/bin/python scripts/host_midi_hitl.py stimulus temp STIM-NE-OD-COMPOSE-01 A
+   ```
+2. Run the parent preset with `--stimulus-temp-suffix A`. Report whether it reproduced the condition.
+3. Do not overwrite the canonical recipe. Promote to a new `STIM-…-02` only when the user accepts it as the reproducer. YAML under `captures/stimuli/` is a sidecar, not a registry entry.
 
 New HITL for a firmware change must **register or reuse** a stimulus. Do not leave the MIDI history unnamed inside the scenario file.
 

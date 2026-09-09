@@ -22,6 +22,7 @@ from hitl.layered_cli import (
 )
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT
 from hitl.registry import get_registry, resolve_scenarios
+from hitl.stimuli.cli import add_stimulus_subparser, apply_run_temp_override, run_stimulus_command
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -152,6 +153,22 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ask managed capture to send !SNAPSHOT_YIELD after the first timing-critical ST line",
     )
+    run_parser.add_argument(
+        "--stimulus-temp-suffix",
+        default=None,
+        help="Fork the preset's last bound stimulus as STIM-…-TEMP-<suffix> (not registered)",
+    )
+    run_parser.add_argument(
+        "--stimulus-temp-parent",
+        default=None,
+        help="Canonical stimulus id to fork (default: last scenario stimulus on this preset)",
+    )
+    run_parser.add_argument(
+        "--stimulus-temp-reason",
+        default="",
+        help="Why the canonical stimulus cannot exercise the condition",
+    )
+    add_stimulus_subparser(sub)
     return parser
 
 
@@ -289,6 +306,8 @@ def run_scenarios(args: argparse.Namespace, scenario_ids: list[str]) -> int:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = build_parser()
     args, legacy = parser.parse_known_args(argv)
+    if args.command == "stimulus":
+        return run_stimulus_command(args)
     if args.command != "run":
         parser.print_help()
         return 2
@@ -325,6 +344,17 @@ def main(argv: Optional[list[str]] = None) -> int:
                 return upload_code
             if not args.preset and not args.scenarios:
                 args.preset = "base"
+            if getattr(args, "stimulus_temp_suffix", None):
+                try:
+                    layered_ids = resolve_scenarios(
+                        preset=args.preset,
+                        scenario_ids=args.scenarios.split(",") if args.scenarios else None,
+                    )
+                except ValueError:
+                    layered_ids = []
+                temp_code = apply_run_temp_override(args, layered_ids)
+                if temp_code != 0:
+                    return temp_code
             config = config_from_runner_args(args, legacy)
             return run_layered_preset(config)
         scenario_ids = resolve_scenarios(
@@ -337,6 +367,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not args.preset and not args.scenarios:
         args.preset = "base"
         scenario_ids = resolve_scenarios(preset="base", scenario_ids=None)
+    temp_code = apply_run_temp_override(args, scenario_ids)
+    if temp_code != 0:
+        return temp_code
     upload_code = maybe_build_upload(args)
     if upload_code != 0:
         return upload_code

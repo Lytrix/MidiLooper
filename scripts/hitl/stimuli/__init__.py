@@ -3,6 +3,7 @@
 from hitl.stimuli.attach import (
     print_human_checklist,
     print_stimulus_banner,
+    run_stimulus,
     stimulus_report_fields,
     write_headered_snapshot,
 )
@@ -24,6 +25,11 @@ from hitl.stimuli.registry import (
     stimulus_for_scenario,
     temporary_variant,
 )
+from hitl.stimuli.session import (
+    get_run_stimulus_override,
+    resolve_run_stimulus,
+    set_run_stimulus_override,
+)
 from hitl.stimuli.spec import StimulusSpec
 from hitl.stimuli.validate import format_human_checklist, validate_stimulus
 
@@ -37,12 +43,16 @@ __all__ = [
     "format_fingerprint_text",
     "format_hitl_header",
     "format_human_checklist",
+    "get_run_stimulus_override",
     "get_stimulus",
     "list_stimuli",
     "parse_hitl_fields",
     "prepend_hitl_header",
     "print_human_checklist",
     "print_stimulus_banner",
+    "resolve_run_stimulus",
+    "run_stimulus",
+    "set_run_stimulus_override",
     "stimulus_for_base_preset",
     "stimulus_for_scenario",
     "stimulus_report_fields",
