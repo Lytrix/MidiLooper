@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (overdub+NOTE_EDIT compose Stage 1 device PASS)
+Last updated: 2026-09-09 (HITL stimulus contract Stage 1)
 
 ---
 
@@ -107,7 +107,8 @@ open into OVERDUBBING. Compose Stage 1 device PASS
 NOTE_EDIT paint always gathers (`includeActiveCapture`) and keys the
 paint cache on `captureDisplayRevision`. Open visual **48**; in-edit
 `DFRAME` **53 → 63**. Native **1795 succeeded, 1 skipped**. RAM1 locals
-**7008**. HITL `--preset note_edit_overdub_compose`. Stage 2 not started
+**7008**. HITL `--preset note_edit_overdub_compose` / stimulus
+`STIM-NE-OD-COMPOSE-01` v1. Stage 2 not started
 ([`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md)).
 Do not start hydrate 4b–5.
 Plans:

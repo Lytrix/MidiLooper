@@ -187,8 +187,16 @@ def _case_live_overdub_notes_stay_on_roll(lines: list[str]) -> dict[str, Any]:
 
 
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
+    from hitl.stimuli.registry import STIM_NE_OD_COMPOSE_01
+    from hitl.stimuli.validate import validate_stimulus
+
+    require_header = bool(getattr(args, "require_stimulus_header", False))
+    stimulus = validate_stimulus(
+        lines, STIM_NE_OD_COMPOSE_01, require_header=require_header
+    )
     transitions = _count_capture_transitions(lines)
     cases = {
+        "stimulus_validation": stimulus,
         "live_overdub_notes_stay_on_roll": _case_live_overdub_notes_stay_on_roll(lines),
     }
     issues: list[str] = []
@@ -203,5 +211,9 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "live_capture_pitch_band": {
             "low": LIVE_CAPTURE_LOW,
             "high": LIVE_CAPTURE_HIGH,
+        },
+        "stimulus": {
+            "id": STIM_NE_OD_COMPOSE_01.stimulus_id,
+            "version": STIM_NE_OD_COMPOSE_01.version,
         },
     }

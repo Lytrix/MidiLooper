@@ -7,6 +7,28 @@ alwaysApply: true
 
 When an implementation agent ships firmware or HITL logic that device serial can observe, it must add or extend a **specific HITL** for that change. Do not treat `base` / `edit_full` as the only gate.
 
+## Stimulus contract
+
+The live MIDI experiment is a **versioned stimulus**, not an ad-hoc sequence inside the scenario.
+
+| Term | Use |
+|---|---|
+| **Stimulus** | Named recipe (`STIM-NE-OD-COMPOSE-01` v1) in `scripts/hitl/stimuli/` |
+| **Scenario** | Runtime phase that sends that recipe over USB MIDI |
+| **Preset** | Bundle of scenarios |
+
+When a plan names `required_stimulus`, use that id and version. **Do not change** a canonical stimulus to chase a new condition.
+
+If the canonical stimulus cannot exercise the bug:
+
+1. Create a temporary variant (`temporary_variant(...)`, e.g. `STIM-NE-OD-COMPOSE-01-TEMP-A`).
+2. Run it. Report whether it reproduced the condition.
+3. Do not overwrite the canonical recipe. Promote to a new `STIM-…-02` only when the user accepts it as the reproducer.
+
+New HITL for a firmware change must **register or reuse** a stimulus. Do not leave the MIDI history unnamed inside the scenario file.
+
+Host snapshot logs start with `#HITL,SCENARIO,…` / `#HITL,STIMULUS,…`. That is how a capture proves which experiment ran.
+
 ## Reuse existing HITL parts
 
 Do **not** copy a full scenario. Extend or call the existing owners:
@@ -17,9 +39,9 @@ Do **not** copy a full scenario. Extend or call the existing owners:
 | Enter / exit NOTE_EDIT | `_ensure_note_edit_entered`, `edit_controls` |
 | MIDI note / clock stream | `hitl.transport_clock.stream_pattern_for_bars`, `hitl.midi_io` |
 | Serial follow / verify | `ExternalSerialFollowCollector`, `resolve_base_seed_serial_log`, `scripts/hitl/verify/` |
-| Catalog | register in `scripts/hitl/registry.py` and [`docs/Guides/HITL_TEST_SCENARIOS.md`](docs/Guides/HITL_TEST_SCENARIOS.md) |
+| Catalog | register in `scripts/hitl/registry.py`, `scripts/hitl/stimuli/registry.py`, and [`docs/Guides/HITL_TEST_SCENARIOS.md`](docs/Guides/HITL_TEST_SCENARIOS.md) |
 
-New code belongs in `scripts/hitl/scenarios/`, `scripts/hitl/verify/`, or a shared helper under `scripts/hitl/` — not a one-off inline script.
+New code belongs in `scripts/hitl/scenarios/`, `scripts/hitl/verify/`, `scripts/hitl/stimuli/`, or a shared helper under `scripts/hitl/` — not a one-off inline script. Live USB MIDI stays the sender (`flows/`, `canonical_*_legacy_args`, `stream_pattern_for_bars`). Do not generate `.mid` files.
 
 ## Upload and run without asking
 

@@ -12,6 +12,7 @@ Composable hardware-in-the-loop automation lives under [`scripts/hitl/`](../../s
 | `scripts/host_midi_hitl.py` | CLI entry (`run`, `--preset`, `--scenarios`, `--verify-only`) |
 | `scripts/hitl/registry.py` | Preset → scenario IDs, lazy scenario registry |
 | `scripts/hitl/scenarios/*.py` | Run handlers (MIDI phases) |
+| `scripts/hitl/stimuli/` | Versioned stimulus recipes, `#HITL` fingerprint, first-stage validation |
 | `scripts/hitl/verify/*.py` | Serial log verifiers |
 | `scripts/test_*_serial_verify.py` | Host unit tests for verifiers (no Teensy) |
 
@@ -22,9 +23,10 @@ over `hitl.legacy_record_baseline` / `hitl.legacy_edit_baseline` and still accep
 ## Adding a scenario
 
 1. Add `scripts/hitl/scenarios/<id>.py` (`run_<id>`) and optional `scripts/hitl/verify/<id>.py`.
-2. Register in `scripts/hitl/registry.py` (`PRESET_SCENARIOS` + `_lazy_registry`).
-3. Add host verifier test `scripts/test_<id>_serial_verify.py` when serial gates are non-trivial.
-4. **Update [`docs/Guides/HITL_TEST_SCENARIOS.md`](../Guides/HITL_TEST_SCENARIOS.md)** — this is the required catalog row for every new scenario.
+2. Register a **stimulus** in `scripts/hitl/stimuli/registry.py` (or reuse one). Do not leave the MIDI history unnamed.
+3. Register in `scripts/hitl/registry.py` (`PRESET_SCENARIOS` + `_lazy_registry`).
+4. Add host verifier test `scripts/test_<id>_serial_verify.py` when serial gates are non-trivial.
+5. **Update [`docs/Guides/HITL_TEST_SCENARIOS.md`](../Guides/HITL_TEST_SCENARIOS.md)** — this is the required catalog row for every new scenario.
 
 ## `edit_overdub_during_note_edit` pitch bands
 
