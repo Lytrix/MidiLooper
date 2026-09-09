@@ -1,6 +1,6 @@
 # HITL stimulus contract
 
-**Status:** Stage 1 in tree. Later stages not started.  
+**Status:** Stage 2 in tree. Stage 3–4 not started.  
 **Kind:** enhancement  
 **Does not start:** firmware changes, YAML fixture files, `.mid` playback, occupy/base rewrite, compose Stage 2
 
@@ -52,11 +52,22 @@ snapshot and the JSON report. They are not injected into the raw Teensy
 Version starts at **1**. That is the first formalization of the existing
 compose HITL, not a rewrite of the MIDI pattern.
 
-## Later (not this slice)
+## Stage 2 (this slice)
+
+Register existing recipes. Generators stay where they are.
+
+| Stimulus | Scenario | Generator |
+|---|---|---|
+| `STIM-BASE-2-2-01` v1 | `base` | `canonical_baseline_legacy_args` |
+| `STIM-OCCUPY-PAINT-01` v1 | `overdub_occupy_paint` | `canonical_occupy_paint_legacy_args` |
+| `STIM-EDIT-OD-DURING-NE-01` v1 | `edit_overdub_during_note_edit` | `scenario:edit_overdub_during_note_edit` |
+
+Host snapshots for occupy / edit-overdub / default `base` now start with `#HITL`. The compose seed still uses `STIM-BASE-2-ONE-OD-01`. Record-only edit seeds are not labeled as BASE-2-2.
+
+## Later
 
 | Stage | What |
 |---|---|
-| 2 | Register occupy / edit-overdub-during-note-edit / BASE-2+2 as stimuli without moving their generators |
 | 3 | Optional YAML view of the same registry; TEMP variant CLI |
 | 4 | `--list-stimuli` in everyday agent prompts; more BASE-N primitives |
 

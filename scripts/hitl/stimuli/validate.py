@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hitl.capture_transitions import _count_capture_transitions
 from hitl.stimuli.fingerprint import parse_hitl_fields
 from hitl.stimuli.spec import StimulusSpec
 from hitl.verify.note_edit_overdub_compose import (
@@ -118,6 +119,79 @@ def validate_compose_must_prove(lines: list[str], spec: StimulusSpec) -> dict[st
     }
 
 
+def _recording_seen(lines: list[str]) -> bool:
+    if any(",RECA," in line and "#CAP," in line for line in lines):
+        return True
+    if any("Recording started" in line for line in lines):
+        return True
+    latest = None
+    for line in lines:
+        if "#CAP," not in line or ",ST,Track," not in line:
+            continue
+        parts = line[line.find("#CAP,"):].split(",")
+        if len(parts) >= 5:
+            latest = parts[4].strip()
+    return latest == "RECORDING" or any(
+        ",ST,Track," in line and ",RECORDING" in line for line in lines
+    )
+
+
+def validate_overdub_count_must_prove(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
+    counts = _count_capture_transitions(lines)
+    overdub_entries = counts.get(("PLAYING", "OVERDUBBING"), 0)
+    checks = [
+        _check("base_recorded", _recording_seen(lines), f"overdub_entries={overdub_entries}"),
+    ]
+    if spec.must_prove and spec.must_prove[0] == "seed_recorded":
+        checks[0]["name"] = "seed_recorded"
+    for index, row in enumerate(spec.overdubs, start=1):
+        name = spec.must_prove[index] if index < len(spec.must_prove) else f"committed_{row.name.lower()}"
+        checks.append(_check(name, overdub_entries >= index, f"count={overdub_entries} need>={index}"))
+    issues = [row["name"] for row in checks if not row["ok"]]
+    return {"ok": not issues, "issues": issues, "checks": checks}
+
+
+def validate_occupy_must_prove(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
+    recipe = validate_overdub_count_must_prove(lines, spec)
+    undo = sum(1 for line in lines if "Overdub undone" in line)
+    redo = sum(1 for line in lines if "Overdub redone" in line)
+    undo_ok = undo >= 2 and redo >= 2
+    checks = list(recipe.get("checks") or [])
+    checks.append(_check("undo_redo", undo_ok, f"undo={undo} redo={redo}"))
+    issues = [row["name"] for row in checks if not row["ok"]]
+    return {"ok": not issues, "issues": issues, "checks": checks}
+
+
+def validate_edit_overdub_must_prove(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
+    counts = _count_capture_transitions(lines)
+    overdub_entries = counts.get(("PLAYING", "OVERDUBBING"), 0)
+    entered = any("entered note edit mode" in line for line in lines) or (
+        parse_note_edit_open_visual_notes(lines) is not None
+    )
+    session_undo = any("EditSession undo" in line for line in lines)
+    session_redo = any("EditSession redo" in line for line in lines)
+    checks = [
+        _check("pre_edit_overdub", overdub_entries >= 1, f"count={overdub_entries}"),
+        _check("note_edit_entered", entered, "open" if entered else "missing"),
+        _check("in_edit_overdub_active", overdub_entries >= 2, f"count={overdub_entries}"),
+        _check("session_undo_redo", session_undo and session_redo, f"undo={session_undo} redo={session_redo}"),
+    ]
+    issues = [row["name"] for row in checks if not row["ok"]]
+    return {"ok": not issues, "issues": issues, "checks": checks}
+
+
+def validate_recipe(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
+    if spec.scenario_id == "note_edit_overdub_compose":
+        return validate_compose_must_prove(lines, spec)
+    if spec.scenario_id == "overdub_occupy_paint":
+        return validate_occupy_must_prove(lines, spec)
+    if spec.scenario_id == "edit_overdub_during_note_edit":
+        return validate_edit_overdub_must_prove(lines, spec)
+    if spec.scenario_id == "base":
+        return validate_overdub_count_must_prove(lines, spec)
+    return {"ok": True, "issues": [], "checks": []}
+
+
 def validate_stimulus(
     lines: list[str],
     expected: StimulusSpec,
@@ -129,11 +203,7 @@ def validate_stimulus(
     )
     recipe: dict[str, Any] = {"ok": True, "issues": [], "checks": [], "skipped": True}
     if header.get("header_present"):
-        recipe = (
-            validate_compose_must_prove(lines, expected)
-            if expected.scenario_id == "note_edit_overdub_compose"
-            else {"ok": True, "issues": [], "checks": []}
-        )
+        recipe = validate_recipe(lines, expected)
         recipe["skipped"] = False
     issues = list(header.get("issues") or []) + [
         f"must_prove:{name}" for name in (recipe.get("issues") or [])

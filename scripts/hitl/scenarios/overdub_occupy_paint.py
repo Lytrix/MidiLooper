@@ -13,6 +13,14 @@ from hitl.baseline_canonical_args import (
     merge_legacy_cli_args,
     strip_scenario_only_legacy_args,
 )
+from hitl.stimuli import (
+    STIM_OCCUPY_PAINT_01,
+    print_human_checklist,
+    print_stimulus_banner,
+    stimulus_report_fields,
+    validate_stimulus,
+    write_headered_snapshot,
+)
 from hitl.verify.occupy_paint import verify_occupy_paint
 
 
@@ -41,6 +49,7 @@ def run_overdub_occupy_paint(args: object) -> int:
     import host_midi_automation_baseline as baseline
     from hitl.baseline_loop_inventory import latest_base_report
 
+    print_stimulus_banner(STIM_OCCUPY_PAINT_01)
     legacy = strip_scenario_only_legacy_args(list(getattr(args, "legacy_args", []) or []))
     legacy = merge_legacy_cli_args(canonical_occupy_paint_legacy_args(), legacy)
     old_argv = sys.argv
@@ -53,10 +62,15 @@ def run_overdub_occupy_paint(args: object) -> int:
     out_dir = Path(getattr(args, "out_dir", Path("captures")))
     report = latest_base_report(out_dir)
     lines = _resolve_serial_lines(args, report)
-    occupy_check = verify_occupy_paint(lines, args)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    serial_path = out_dir / f"overdub_occupy_paint_{stamp}_serial.log"
+    lines = write_headered_snapshot(serial_path, lines, STIM_OCCUPY_PAINT_01)
+    occupy_check = verify_overdub_occupy_paint(lines, args)
+    occupy_check["stimulus"] = stimulus_report_fields(STIM_OCCUPY_PAINT_01)
+    occupy_check["serial_log_path"] = str(serial_path)
     occupy_path = out_dir / f"host_midi_hitl_occupy_paint_{stamp}.json"
     occupy_path.write_text(json.dumps(occupy_check, indent=2), encoding="utf-8")
+    print_human_checklist(STIM_OCCUPY_PAINT_01, occupy_check)
     print(f"[occupy-paint] verifier report: {occupy_path}")
     if occupy_check.get("issues"):
         print(f"[occupy-paint] FAIL — {occupy_check['issues']}")
@@ -77,4 +91,17 @@ def run_overdub_occupy_paint(args: object) -> int:
 
 
 def verify_overdub_occupy_paint(lines: list[str], args: object) -> dict[str, object]:
-    return verify_occupy_paint(lines, args)
+    firmware = verify_occupy_paint(lines, args)
+    require_header = bool(getattr(args, "require_stimulus_header", False))
+    stimulus = validate_stimulus(
+        lines, STIM_OCCUPY_PAINT_01, require_header=require_header
+    )
+    issues = list(firmware.get("issues") or []) + [
+        f"stimulus_validation:{issue}" for issue in (stimulus.get("issues") or [])
+    ]
+    return {
+        **firmware,
+        "ok": bool(firmware.get("ok")) and bool(stimulus.get("ok")) and not issues,
+        "issues": issues,
+        "stimulus_validation": stimulus,
+    }

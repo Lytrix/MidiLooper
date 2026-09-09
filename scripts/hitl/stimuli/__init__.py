@@ -1,5 +1,11 @@
 """HITL stimulus registry: versioned live-MIDI recipes, not a second generator."""
 
+from hitl.stimuli.attach import (
+    print_human_checklist,
+    print_stimulus_banner,
+    stimulus_report_fields,
+    write_headered_snapshot,
+)
 from hitl.stimuli.fingerprint import (
     format_fingerprint_text,
     format_hitl_header,
@@ -7,10 +13,14 @@ from hitl.stimuli.fingerprint import (
     prepend_hitl_header,
 )
 from hitl.stimuli.registry import (
+    STIM_BASE_2_2_01,
     STIM_BASE_2_ONE_OD_01,
+    STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
+    STIM_OCCUPY_PAINT_01,
     get_stimulus,
     list_stimuli,
+    stimulus_for_base_preset,
     stimulus_for_scenario,
     temporary_variant,
 )
@@ -18,8 +28,11 @@ from hitl.stimuli.spec import StimulusSpec
 from hitl.stimuli.validate import format_human_checklist, validate_stimulus
 
 __all__ = [
+    "STIM_BASE_2_2_01",
     "STIM_BASE_2_ONE_OD_01",
+    "STIM_EDIT_OD_DURING_NE_01",
     "STIM_NE_OD_COMPOSE_01",
+    "STIM_OCCUPY_PAINT_01",
     "StimulusSpec",
     "format_fingerprint_text",
     "format_hitl_header",
@@ -28,7 +41,12 @@ __all__ = [
     "list_stimuli",
     "parse_hitl_fields",
     "prepend_hitl_header",
+    "print_human_checklist",
+    "print_stimulus_banner",
+    "stimulus_for_base_preset",
     "stimulus_for_scenario",
+    "stimulus_report_fields",
     "temporary_variant",
     "validate_stimulus",
+    "write_headered_snapshot",
 ]
