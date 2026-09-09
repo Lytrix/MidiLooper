@@ -10,11 +10,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT + overdub paint/overlap compose Stage 2.** Overlap candidate
-source and action build use the Stage 1 composed DisplayNotes. A
-mover-hold participant is a scoped current-state overlay row. Do not
-rematerialize the apply scratch or fill current state from every visual
-note. Do not change `STIM-NE-OD-COMPOSE-01`. Plan:
+**NOTE_EDIT + overdub paint/overlap compose Stage 2 firmware shipped
+(`f7656b1e`).** Native PASS. Device overlap not proven: TEMP-A has not
+produced Hide/Shorten against a live Capture note. Do not change
+`STIM-NE-OD-COMPOSE-01`. Plan:
 [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 
 **Prior — HITL stimulus contract Stage 4 shipped.** Everyday catalog:

@@ -187,6 +187,29 @@ def _retarget_temp_live_band(spec, selected_pitch: int):
     return updated
 
 
+def _wait_for_loop_origin(
+    serial_collector,
+    *,
+    loop_length: int,
+    abort,
+    timeout_s: float = 8.0,
+) -> bool:
+    from hitl.control_constants import TICKS_PER_BEAT
+    from hitl.serial_tick_anchor import parse_latest_cap_bar_tick
+
+    if loop_length <= 0:
+        return False
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if getattr(abort, "triggered", False):
+            return False
+        tick = parse_latest_cap_bar_tick(serial_collector.snapshot())
+        if tick is not None and (tick % loop_length) < TICKS_PER_BEAT:
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def _selected_seed_pitch(layout, note_slot: int) -> Optional[int]:
     slot = layout.nav_slots[note_slot]
     note_idx = getattr(slot, "note_idx", -1)
@@ -406,6 +429,14 @@ def run_note_edit_overdub_compose(args: object) -> int:
                 return 1
         ctx.markers.append("in-edit overdub")
 
+        if spec.kind == KIND_TEMPORARY:
+            if _wait_for_loop_origin(
+                serial_collector, loop_length=loop_length, abort=abort
+            ):
+                print("[note-edit-overdub-compose] TEMP stream after loop origin")
+            else:
+                print("[note-edit-overdub-compose] warn: TEMP loop-origin wait timed out")
+
         live_before = _stream_live_capture_bar(
             out_port,
             in_port,
@@ -422,6 +453,15 @@ def run_note_edit_overdub_compose(args: object) -> int:
             f"[note-edit-overdub-compose] move selected note "
             f"sixteenth {from_step}->{to_step}"
         )
+        if spec.kind == KIND_TEMPORARY:
+            print("[note-edit-overdub-compose] TEMP re-select seed so F2 is not blocked")
+            _fader1_select_nav_slot_index(
+                out_port,
+                layout=layout,
+                slot_index=note_slot,
+                serial_collector=serial_collector,
+                expected_tick=layout.nav_slots[note_slot].rel_tick,
+            )
         _fader2_move_to_sixteenth_step(
             out_port,
             layout=layout,
