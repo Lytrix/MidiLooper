@@ -51,9 +51,9 @@ inline bool selectDependentSettleExpired(uint32_t nowMs, uint32_t settleUntilMs)
     return settleUntilMs == 0 || nowMs >= settleUntilMs;
 }
 
-/** `145634`: delay() motor bursts during overdub starve USB Host MIDI drain. */
-inline bool shouldRunBlockingMotorBurst(bool overdubbing) {
-    return !overdubbing;
+/** `170818`: delay() motor bursts during PLAYING/OVERDUBBING starve USB Host MIDI drain. */
+inline bool shouldRunBlockingMotorBurst(bool overdubbing, bool playing) {
+    return !overdubbing && !playing;
 }
 
 /**

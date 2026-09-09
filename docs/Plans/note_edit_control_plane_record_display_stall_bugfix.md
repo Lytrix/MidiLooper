@@ -1,8 +1,8 @@
 # NOTE_EDIT control-plane record + display stall
 
-**Status:** RC1 shipped — RC2 shipped — RC4 implementing — RC3 not started  
-**Kind:** bugfix (four RCs, one commit each)  
-**Evidence:** [`session_20260909_170818.log`](../../captures/session_20260909_170818.log) apply stall; [`session_20260909_183453.log`](../../captures/session_20260909_183453.log) RC2 device + deselect-commit stall  
+**Status:** RC1 shipped — RC2 shipped — RC3 shipped — RC4 in tree — RC5 on device — RC6 implementing  
+**Kind:** bugfix (six RCs, one commit each)  
+**Evidence:** [`session_20260909_170818.log`](../../captures/session_20260909_170818.log) apply stall; [`session_20260909_183453.log`](../../captures/session_20260909_183453.log) RC2 device + deselect-commit stall; [`session_20260909_190408.log`](../../captures/session_20260909_190408.log) RC5 motors + RC6 mover drop  
 **Does not reopen:** [`note_edit_overdub_select_pitch_hang_bugfix.md`](note_edit_overdub_select_pitch_hang_bugfix.md) overdub `value_only` (keep), compose `STIM-NE-OD-COMPOSE-01` / `02` / `03` / `04` recipes, hydrate, snapshot publication  
 **Does not start:** a new apply scheduler, interval reservation, `RuntimeWorkBudget::admit`, a new control-plane noun, persist scheduler / `saveState()`, a second derived-representation owner, a deferred-commit FSM
 
@@ -28,15 +28,23 @@ macroCommitPendingEditsBeforeSelectNav
     → commitEditAction logChangeLengthCommitTrace reconstructNotes × 4
       + mergeActiveCapturePasses(takeOnlyFlat) for take_only log only
     ← RC4
+
+OVERDUBBING ValueOnly motor flush
+    → pitchbend / CC only (no DROID notegate note 0)
+    ← RC5
+
+projectNoteEditDisplayNotes currentStateRowAllowedAsPaintExtra
+    → capture-session mover omitted from snapshot committed base
+    ← RC6
 ```
 
 ## Architecture checkpoint
 
-| Question | RC1 | RC2 | RC3 | RC4 |
-|---|---|---|---|---|
-| Ownership change? | NO — extend `RECORD_EXCLUDE_*` used by `MidiHandler::isControlChannel` | NO — extend `ensureNoteEditDisplayProjectionCachesBuilt` + `NoteGeometryResolver::resolve` | NO — extend `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst` | NO — extend `commitEditAction` / `logChangeLengthCommitTrace` |
-| State transition change? | NO | NO | NO | NO — select-nav still commits before focus rebuild |
-| Unbounded interval owner? | NO — filter before `Track::noteOn` | NO if the slice *removes* the full-loop gather/reconstruct on apply. STOP if it adds a content-unbounded owner on the MIDI interval | NO — removes `delay()` from the PLAYING motor path | NO — removes four `reconstructNotes` walks and a log-only `mergeActiveCapturePasses` from the USB MIDI callback |
+| Question | RC1 | RC2 | RC3 | RC4 | RC5 | RC6 |
+|---|---|---|---|---|---|---|
+| Ownership change? | NO — extend `RECORD_EXCLUDE_*` used by `MidiHandler::isControlChannel` | NO — extend `ensureNoteEditDisplayProjectionCachesBuilt` + `NoteGeometryResolver::resolve` | NO — extend `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst` | NO — extend `commitEditAction` / `logChangeLengthCommitTrace` | NO — extend `sendFader1MotorTimedBurst` / `sendDependentFaderNotegates` | NO — extend `currentStateRowAllowedAsPaintExtra` |
+| State transition change? | NO | NO | NO | NO — select-nav still commits before focus rebuild | NO | NO |
+| Unbounded interval owner? | NO — filter before `Track::noteOn` | NO if the slice *removes* the full-loop gather/reconstruct on apply. STOP if it adds a content-unbounded owner on the MIDI interval | NO — removes `delay()` from the PLAYING motor path | NO — removes four `reconstructNotes` walks and a log-only `mergeActiveCapturePasses` from the USB MIDI callback | NO — notegate On/Off without `delay()` | NO — same projection walk, one extra predicate |
 
 RC2 follows [RuntimeArchitecture.md](../Authority/Architecture/RuntimeArchitecture.md) (DEC-016): apply is a **Runtime Request** (derived notes × NOTE_EDIT interval). It must not rebuild the full derived representation. If RC2 needs a new apply owner, a deferred-apply FSM, or a new representation, stop and open a design session.
 
@@ -145,13 +153,15 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 
 ## RC3 — PLAYING NOTE_EDIT motor send is ValueOnly
 
-**Invariant:** While the selected track is PLAYING or OVERDUBBING, NOTE_EDIT motor updates use the existing ValueOnly send. `runMotorFaderBurst` / `parallel_timed_burst` `delay()` does not run. Timed burst may remain when transport is stopped.
+**Invariant:** While the selected track is PLAYING or OVERDUBBING, NOTE_EDIT motor updates do not run `runMotorFaderBurst` / `parallel_timed_burst` `delay()`. They still send DROID notegate (RC5). Timed burst may remain when transport is stopped.
 
 **Owner:** `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst`. Today it is `return !overdubbing`. Extend so PLAYING also returns false. Keep the ValueOnly call sites in `FaderMotorSync` / `FaderOutbound` unchanged.
 
 **Native:** Update `test_should_not_run_blocking_motor_burst_while_overdubbing` (or rename it) so PLAYING and OVERDUBBING are ValueOnly and stopped transport still allows burst.
 
 **HITL:** Reuse a PLAYING NOTE_EDIT preset that already syncs motors (`note_edit_reselect_stacked` or compose after overdub stop). Require `#DBG select_motor_sync` / `geometry_motor_sync` `sequence=value_only` and no `midi_gap` ≥ 200,000 µs on the motor-sync sample. Do not create a new stimulus if an existing preset already logs those lines.
+
+**Shipped:** Native `test_should_not_run_blocking_motor_burst_while_playing_or_overdubbing`. RAM1 locals **7008**. Device [`232026`](../../captures/session_20260909_232026.log) PLAYING `select_motor_sync` / `geometry_motor_sync` `sequence=value_only` (judged 3, timed_burst 0, no motor-sync `midi_gap` ≥ 200000). Reselect stacked nav still failed empty-step on that seed — not this RC.
 
 ---
 
@@ -181,6 +191,38 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 
 ---
 
+## RC5 — overdub motor flush still sends DROID notegate
+
+**Invariant:** While OVERDUBBING, NOTE_EDIT motor flush (`sendFader1MotorTimedBurst`, `syncMotorsFromSelectTarget`, outbound `SendCoarse`) sends position then notegate (note 0 / 1 / 2) with no `delay()`. `publishDependentFaderLatch` stays ValueOnly (no notegate on every geometry tick).
+
+**Owner:** `sendSelectFaderNotegate` + `sendDependentFaderNotegates`. Do not restore `runMotorFaderBurst` on the overdub path.
+
+**Capture pin ([`184740`](../../captures/session_20260909_184740.log)):** DROID moves on notegate ([`DROID_MOTORFADER_PITCHBEND.md`](../Guides/DROID_MOTORFADER_PITCHBEND.md)). PLAYING `geometry_motor_sync sequence=timed_burst` at 288.257 sends `MO,224,16` × 3 then `MO,144,16,0,127`. OVERDUBBING `sequence=value_only` at 233.493 sends `MO,224,16` only. Select flush at 212.478 sends ch14 PB + ch15 CC 2/3 and no notegate.
+
+**Native:** Existing fader-feedback notegate note numbers. No second motor owner.
+
+**HITL:** Compose verify `overdub_motor_sends_notegate` — each in-edit overdub `select_motor_sync sent=1` / `geometry_motor_sync sent=1` is followed by `MO,144` notegate on ch16 note 0, ch14 note 0, or ch15 note 1/2.
+
+---
+
+## RC6 — capture-session mover stays in paint after overlap Hide + Pitch
+
+**Invariant:** `projectNoteEditDisplayNotes` always paints `focus.movingNoteId` from current-state / `focus.last` when that row is visible. Snapshot / visual-cache committed base may omit a capture-session mover. Occupant `HideNote` still suppresses the overlapped note.
+
+**Owner:** `currentStateRowAllowedAsPaintExtra` in `projectNoteEditDisplayNotes`. Do not rematerialize the session store. Do not restore `CaptureAwareGather` `[0, loopLength)`.
+
+**Capture pin ([`190408`](../../captures/session_20260909_190408.log)):** Faders update (RC5). Fine of focus `noteId=94` at 110.585–112.273 keeps `DNTE` on 94 (`2244`…`2286`, length 472) while `ShortenNote` then `HideNote` of 85. Pitch of 94 `2481–2953` at 121.284: `HideNote` 60 on pitch 73 + `ChangePitch` 94→73. **No `DNTE` for the whole pitch gesture** (next `DNTE` is 70@2208 at 123.023). Loop length in `DISP` is **3840**; 2481 is past the original 3-bar (2304) snapshot window. Native fixture: mover absent from committed base, occupant Hidden, ChangePitch 94→73 — projection dropped the mover until the extra-reject allowed `movingNoteId`.
+
+**Allowed:** treat `focus.movingNoteId` as a paint extra even when the snapshot span does not match.
+
+**Forbidden without a design session:** a second paint owner; rematerialize `EditSession.store` for paint; full-loop gather on apply.
+
+**Native:** `test_project_pitch_overlap_keeps_mover_and_highlight_190408` + `test_project_pitch_capture_only_mover_not_in_snapshot_190408`.
+
+**HITL:** Compose verify `pitch_keeps_mover_dnte` — each `EditSessionAction` type=5 is followed by `DNTE` with that pitch and start. Vacuous pass when the run has no type=5. Device recapture of the 190408 pitch-into-overlap pattern: `DNTE` for the mover pitch/start after the first type=5.
+
+---
+
 ## HITL / docs closeout
 
 | Gate | When |
@@ -190,6 +232,8 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 | Compose-reopen HITL | RC1 (and RC2 if implemented) — upload+run without asking |
 | PLAYING motor HITL | RC3 |
 | Compose verify `commit_skips_trace_reconstruct` + device recapture | RC4 |
+| Compose verify `overdub_motor_sends_notegate` + device recapture | RC5 |
+| Compose verify `pitch_keeps_mover_dnte` + device recapture of 190408 pitch | RC6 |
 | [`MIDI_CONFIG_GUIDE.md`](../Guides/MIDI_CONFIG_GUIDE.md) + `MidiConfig.h` comments | RC1 |
 | [`HITL_TEST_SCENARIOS.md`](../Guides/HITL_TEST_SCENARIOS.md) verifier bullets | when a verify check is added |
 | [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) | each shipped RC |

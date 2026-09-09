@@ -74,7 +74,7 @@ DROID applies position on **notegate** (note 0). Order matters:
 
 The HITL probe defaults to **`pitch_note_off`**.
 
-Firmware `SELECT_SYNC` and outbound pipeline use `NoteEditFaderMotorTiming` (three position sends at 12-tick gaps, notegate on with the third, 24-tick note length) from `test/test_faders/fader{2,3,4}_*.mid`. Verified by `scripts/test_note_edit_fader_motor_timing.py` and native `test_note_edit_fader_feedback`.
+Firmware `SELECT_SYNC` and outbound pipeline use `NoteEditFaderMotorTiming` (three position sends at 12-tick gaps, notegate on with the third, 24-tick note length) from `test/test_faders/fader{2,3,4}_*.mid` when the selected track is stopped. While PLAYING or OVERDUBBING, the same flush sends one position then notegate with no `delay()` (`sendSelectFaderNotegate` / `sendDependentFaderNotegates`). Pitchbend/CC alone stores the DROID value; without notegate the motor does not travel ([`184740`](../../captures/session_20260909_184740.log) `value_only` `MO,224,16` with no `MO,144,16,0`). Verified by `scripts/test_note_edit_fader_motor_timing.py` and native `test_note_edit_fader_feedback`.
 
 **Capture analysis:** ch13 motor acks on USB often appear ~**11 ms** after the corresponding notegate MO in host recordings (`kCh13AckCorrelationWindowMs`). Use that window in HITL verifiers only.
 

@@ -396,9 +396,11 @@ void test_note_edit_display_paint_gate_blocks_motor_until_painted() {
     TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::noteEditDisplayPaintedForMotorSync(4, 3));
 }
 
-void test_should_not_run_blocking_motor_burst_while_overdubbing() {
-    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(false));
-    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(true));
+void test_should_not_run_blocking_motor_burst_while_playing_or_overdubbing() {
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(false, false));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(false, true));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(true, false));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(true, true));
 }
 
 void test_record_exclude_matches_droid_control_plane() {
@@ -1240,7 +1242,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_motor_fader_burst_invokes_position_and_notegate_callbacks);
     RUN_TEST(test_select_fader_motor_idle_ms_constant);
     RUN_TEST(test_note_edit_display_paint_gate_blocks_motor_until_painted);
-    RUN_TEST(test_should_not_run_blocking_motor_burst_while_overdubbing);
+    RUN_TEST(test_should_not_run_blocking_motor_burst_while_playing_or_overdubbing);
     RUN_TEST(test_record_exclude_matches_droid_control_plane);
     RUN_TEST(test_should_flush_select_dependent_motor_sync_after_idle);
     RUN_TEST(test_parallel_motor_fader_burst_interleaves_enabled_slots);
