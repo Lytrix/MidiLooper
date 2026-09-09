@@ -197,6 +197,34 @@ inline void collectAnalyzeOverlapNoteIds(const NoteUtils::DisplayNoteVec& notes,
   }
 }
 
+/// Same as `collectAnalyzeOverlapNoteIds` but does not clear `out` first.
+inline void unionAnalyzeOverlapNoteIds(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
+                                       uint32_t startTick, uint32_t endTick, uint32_t loopLength,
+                                       NoteId excludeId, OverlapNoteIdSet& out,
+                                       OverlapCandidateQueryStats* stats = nullptr) {
+  uint32_t incomingLinearStart = 0;
+  uint32_t incomingLinearEnd = 0;
+  if (!linearSoundingSpan(startTick, endTick, loopLength, incomingLinearStart,
+                          incomingLinearEnd)) {
+    return;
+  }
+  uint32_t scanned = 0;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    ++scanned;
+    if (note.note != pitch || note.noteId == kInvalidNoteId || note.noteId == excludeId) {
+      continue;
+    }
+    if (existingNoteOverlapsIncomingHoldInclusive(note.startTick, note.endTick, startTick, endTick,
+                                                  loopLength)) {
+      (void)out.insert(note.noteId);
+    }
+  }
+  if (stats != nullptr) {
+    stats->identityLookupScanCount += scanned;
+    stats->candidateCount = static_cast<uint32_t>(out.size());
+  }
+}
+
 inline void collectObservedOverlapNoteIds(const NoteUtils::DisplayNoteVec& notes, uint8_t pitch,
                                           uint32_t startTick, uint32_t endTick, uint32_t loopLength,
                                           OverlapNoteIdSet& out) {

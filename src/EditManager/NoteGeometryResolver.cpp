@@ -17,6 +17,7 @@
 #include "OverlapNoteIdSet.h"
 #include "ParticipatingNoteSession.h"
 #include "ResolveConstrainedGeometry.h"
+#include "TrackManager.h"
 #include "Utils/NoteEditMem.h"
 
 #if defined(SESSION_CAPTURE)
@@ -89,7 +90,7 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         manager.ensureCurrentStateVisibleRowsFromVisualCache(track);
     }
     const NoteUtils::DisplayNoteVec& committedDisplayNotes =
-        manager.visualCacheNotesForSelectedSlot(track);
+        manager.noteEditCommittedDisplayNotes(track);
 
     const NoteBaseline* causingSpan = nullptr;
     for (const EditedNoteSpan& causing : editedGeometry.causingSpans) {
@@ -111,8 +112,16 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
             OverlapNoteIdObservation::collectAnalyzeOverlapNoteIds(
                 committedDisplayNotes, holdPitch, causingSpan->startTick, causingSpan->endTick,
                 loopLength, focus.movingNoteId, holdCandidates, &holdStats);
+        } else if (trackManager.getSelectedLoop(track).captureActive()) {
+            OverlapNoteIdObservation::unionAnalyzeOverlapNoteIds(
+                committedDisplayNotes, holdPitch, causingSpan->startTick, causingSpan->endTick,
+                loopLength, focus.movingNoteId, holdCandidates, &holdStats);
+        }
+        if (holdCandidates.size() > 0) {
+            currentState.ensureVisibleRowsForDisplayNotes(committedDisplayNotes, holdCandidates);
         }
     }
+    currentStateReader = currentState.empty() ? nullptr : &currentState;
     const NoteIdList evaluationScope =
         collectEvaluationScopeNoteIds(transactionBaseline, liveStore, focus.movingNoteId,
                                       overlapPitchLane, currentStateReader,

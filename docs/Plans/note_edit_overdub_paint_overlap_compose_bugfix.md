@@ -1,6 +1,6 @@
 # NOTE_EDIT + overdub paint/overlap compose
 
-**Status:** Stage 1 device PASS. Stage 2 not started.  
+**Status:** Stage 1 device PASS. Stage 2 firmware + native PASS. Device Stage 2 via TEMP-A.  
 **Kind:** bugfix  
 **Evidence:** [`session_20260909_002450.log`](../../captures/session_20260909_002450.log)  
 **Parents:** Hydrate 4a [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md), DEC-055 overlay delta, DEC-056 companion admission  
@@ -160,7 +160,7 @@ Reuse: YES — `ensureNoteEditDisplayProjectionCachesBuilt`,
 
 ### Proceed?
 
-- Stage 1 YES. Stage 2 NO until Stage 1 is independently verified.
+- Stage 1 YES (device `112612`). Stage 2 YES — extend Stage 1 committed-base cache; scoped hold upsert only.
 
 ## Required stimulus
 
@@ -185,8 +185,9 @@ Do not change this stimulus to chase Stage 2. If it cannot exercise overlap, add
 | Gate | Pass |
 |---|---|
 | Native Stage 1 | **PASS.** Dirty cache + current snapshot + `captureActive` → gather includes snapshot notes **and** the live Capture note. Snapshot-only omits that note. Paint of that composed base keeps `EditSession.store` empty and current state mover-only. `pio test -e native`: **1795 succeeded, 1 skipped**. |
-| Native Stage 2 | Not started. Mover-hold vs that composed note emits Hide or Shorten with empty apply scratch and mover-only current state at start |
-| Device | Stage 1 **PASS** [`112612`](../../captures/session_20260909_112612.log) / [`112643`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_112643.json): `NOTE_EDIT_OPEN` visual **48**; in-edit overdub `DFRAME` **53 → 56 → 57 → 63** with **18** live notes (12–23); after stop **66**. Prior FAIL [`110622`](../../captures/session_20260909_110622.log) stayed **49** until stop. Seed attempt 1 [`112010`](../../captures/session_20260909_112010.log) was empty-slot select-before-clear; HITL now stops that RECORDING before clear. |
+| Native Stage 2 | **PASS.** Mover-hold vs a composed DisplayNote upserts only that overlay row. Hide emits with empty apply scratch. `unionAnalyzeOverlapNoteIds` keeps snapshot ids and adds live Capture. `pio test -e native`: **1798 succeeded, 1 skipped**. |
+| Device Stage 1 | **PASS** [`112612`](../../captures/session_20260909_112612.log) / [`112643`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_112643.json): `NOTE_EDIT_OPEN` visual **48**; in-edit overdub `DFRAME` **53 → 56 → 57 → 63** with **18** live notes (12–23); after stop **66**. Prior FAIL [`110622`](../../captures/session_20260909_110622.log) stayed **49** until stop. |
+| Device Stage 2 | Pending `STIM-NE-OD-COMPOSE-01-TEMP-A`. Canonical `STIM-NE-OD-COMPOSE-01` live 12–23 is not the selected BASE-2 seed pitch (48), so it cannot prove same-pitch hold. |
 | RAM1 | **PASS.** locals **7008** on `teensy41-capture-serial` |
 
 ## Do not

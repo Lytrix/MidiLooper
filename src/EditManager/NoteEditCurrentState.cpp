@@ -195,6 +195,18 @@ NOTE_EDIT_MEM void NoteEditCurrentState::ensureVisibleRowsForDisplayNotes(
   }
 }
 
+NOTE_EDIT_MEM void NoteEditCurrentState::ensureVisibleRowsForDisplayNotes(
+    const NoteUtils::DisplayNoteVec& notes, const OverlapNoteIdSet& scope) {
+  NoteUtils::DisplayNoteVec scoped;
+  scoped.reserve(scope.size());
+  for (const NoteUtils::DisplayNote& note : notes) {
+    if (scope.contains(note.noteId)) {
+      scoped.push_back(note);
+    }
+  }
+  ensureVisibleRowsForDisplayNotes(scoped);
+}
+
 NOTE_EDIT_MEM void NoteEditCurrentState::projectToSessionStore(MidiEventVec& store,
                                                               uint8_t channel) const {
   store.erase(std::remove_if(store.begin(), store.end(),

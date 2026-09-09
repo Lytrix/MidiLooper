@@ -10,6 +10,8 @@
 #include "ParticipatingNoteSession.h"
 #include "EditSessionAction.h"
 #include "NoteEditSessionState.h"
+#include "OverlapNoteIdObservation.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/SelectNavigation.h"
 #include "Utils/NoteEditDisplaySnapshot.h"
@@ -297,6 +299,60 @@ void test_composed_committed_base_paints_without_store_or_full_current_state() {
   TEST_ASSERT_TRUE(hasMover);
   TEST_ASSERT_TRUE(hasSnapshot);
   TEST_ASSERT_TRUE(hasLive);
+}
+
+void test_composed_hold_upserts_only_candidate_overlay_row() {
+  // Stage 2 / 002450: mover-hold vs a composed live Capture note. Empty apply
+  // scratch. Start mover-only. Upsert only the hold candidate, not every display note.
+  constexpr NoteId kMoverId = 10;
+  constexpr NoteId kLiveCaptureId = 99;
+  constexpr NoteId kOtherId = 11;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {63, 100, 0, 480}, {63, 100, 96, 576},
+                         NoteEditPresenceType::Visible);
+  TEST_ASSERT_EQUAL(1u, currentState.size());
+
+  NoteUtils::DisplayNoteVec committed;
+  committed.push_back({kMoverId, 63, 100, 0, 480});
+  committed.push_back({kOtherId, 60, 100, 96, 144});
+  committed.push_back({kLiveCaptureId, 63, 100, 96, 192});
+
+  OverlapNoteIdSet hold;
+  TEST_ASSERT_TRUE(hold.insert(kLiveCaptureId));
+  currentState.ensureVisibleRowsForDisplayNotes(committed, hold);
+
+  TEST_ASSERT_EQUAL(2u, currentState.size());
+  TEST_ASSERT_NOT_NULL(currentState.find(kMoverId));
+  TEST_ASSERT_NOT_NULL(currentState.find(kLiveCaptureId));
+  TEST_ASSERT_NULL(currentState.find(kOtherId));
+  TEST_ASSERT_TRUE(currentState.rowProjectsToStore(kLiveCaptureId));
+  NoteBaseline live{};
+  TEST_ASSERT_TRUE(currentState.readCurrentSpan(kLiveCaptureId, live));
+  TEST_ASSERT_EQUAL_UINT8(63u, live.pitch);
+  TEST_ASSERT_EQUAL_UINT32(96u, live.startTick);
+  TEST_ASSERT_EQUAL_UINT32(192u, live.endTick);
+}
+
+void test_union_analyze_keeps_snapshot_ids_and_adds_composed_live() {
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kSnapshotId = 11;
+  constexpr NoteId kLiveCaptureId = 99;
+  constexpr NoteId kMoverId = 10;
+
+  OverlapNoteIdSet hold;
+  TEST_ASSERT_TRUE(hold.insert(kSnapshotId));
+
+  NoteUtils::DisplayNoteVec committed;
+  committed.push_back({kMoverId, 63, 100, 0, 480});
+  committed.push_back({kSnapshotId, 63, 100, 0, 96});
+  committed.push_back({kLiveCaptureId, 63, 100, 96, 192});
+
+  OverlapNoteIdObservation::unionAnalyzeOverlapNoteIds(
+      committed, 63, 0, 480, kLoopLength, kMoverId, hold);
+  TEST_ASSERT_TRUE(hold.contains(kSnapshotId));
+  TEST_ASSERT_TRUE(hold.contains(kLiveCaptureId));
+  TEST_ASSERT_FALSE(hold.contains(kMoverId));
 }
 
 void test_current_state_upserts_visible_row_from_display_note_without_store_pair() {
@@ -2810,6 +2866,8 @@ int main(int argc, char** argv) {
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
   RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
   RUN_TEST(test_composed_committed_base_paints_without_store_or_full_current_state);
+  RUN_TEST(test_composed_hold_upserts_only_candidate_overlay_row);
+  RUN_TEST(test_union_analyze_keeps_snapshot_ids_and_adds_composed_live);
   RUN_TEST(test_current_state_upserts_visible_row_from_display_note_without_store_pair);
   RUN_TEST(test_ensure_aligns_unedited_visible_row_to_display_span);
   RUN_TEST(test_ensure_merges_split_head_tail_display_notes_to_wrap_span);
