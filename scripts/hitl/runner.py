@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--preset",
         default=None,
-        help="Named preset: base, edit_full, overdub_occupy_paint, note_edit_overdub_compose, edit_overdub_during_note_edit",
+        help="Named preset: base, edit_full, overdub_occupy_paint, note_edit_overdub_compose, note_edit_overdub_compose_last_bar_shorten, edit_overdub_during_note_edit",
     )
     run_parser.add_argument(
         "--scenarios",
@@ -263,6 +263,7 @@ def run_verify_only(args: argparse.Namespace, scenario_ids: list[str]) -> int:
         if spec.verify is None:
             print(f"[hitl] scenario {sid}: no verifier (skipped)")
             continue
+        args.active_scenario_id = sid
         check = spec.verify(lines, args)
         results[sid] = check
         if not check.get("ok", False):
@@ -295,6 +296,7 @@ def run_scenarios(args: argparse.Namespace, scenario_ids: list[str]) -> int:
             exit_code = max(exit_code, 2)
             continue
         print(f"[hitl] running scenario: {sid}")
+        args.active_scenario_id = sid
         code = spec.run(args)
         if code != 0:
             exit_code = max(exit_code, code)

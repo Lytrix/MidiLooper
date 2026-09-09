@@ -1,6 +1,6 @@
 # First record-pass note display vs loop-end Off
 
-**Status:** Investigation — no firmware patch  
+**Status:** Parked — watch HITL did not reproduce; no firmware patch  
 **Kind:** bugfix  
 **Evidence:** [`session_20260909_123953.log`](../../captures/session_20260909_123953.log)  
 **Does not reopen:** compose Stage 1/2, wrap-head RC1–RC3 (`wrap_head_last_off_pairing_bugfix.md` is closed), hydrate 4b–5
@@ -57,6 +57,20 @@ F2 then uses `focus.last` `start=0` `end=135`:
 
 `end=135` is the first **record-pass** Off. `start=0` is the select tick after `note_changed`, not the stored On at 81. After the move the painted length is **135** (0–135), not the opened length **54**.
 
+## Code that paints one note across the loop
+
+A single piano-roll note spans the loop only when a writer sets **end to `loopLength - 1`**, or **end &lt; start** (wrap draw). Those writers:
+
+| Function | What it writes | First record On@81 |
+|---|---|---|
+| `NoteUtils::finishCanonicalSpansOpenNotes` | Unpaired On → exclusive end = `loopLength`, `isOpen` | Yes, if that On is still on the reconstruct stack |
+| `IntervalProjection::renderProjectedIntervalToDisplayNotes` | `isOpen`: `endTick = loopLength - 1`. `splitHeadTail`: tail to `loopLength - 1` plus head from 0 | Paints whatever spans reconstruct emitted |
+| `applyCaptureEventToPreview` wrap-Off branch | `note.endTick = loopLength - 1` plus `resolveWrapHeadSegment` head from 0 | No for Off@135: `isHeadTailWrappedPair` requires On in the last 768 ticks |
+| `applyCapturePlayheadTails` / `applyLiveOpenTails` wrap split | `tailEnd = loopLength - 1` plus wrap head from 0 | Growing RECORD sets `allowWrapContinuation` false (`live_record_open_note_playhead_tail_bugfix`) |
+| `DisplayManager::drawNoteBar` | `endTick < startTick` draws start→loop end and 0→end | Pixel owner for a wrap-held `DisplayNote` |
+
+`reconstructDisplayNotes` defaults `finishOpenNotes` to **true**. The header states unpaired NoteOns become loop-end tails. `rebuildCapturePreviewFromStore` calls the 3-arg form (`verboseLog=false`), so that default applies.
+
 ## Open before a patch
 
 1. Which display row is `note_idx=3` at `selected_tick=0`: wrap head of `2292–2303`, or a distinct tick-0 row that `DNTE` did not dump as start 0?
@@ -70,3 +84,9 @@ F2 then uses `focus.last` `start=0` `end=135`:
 3. Unbounded interval owner? Not asked.
 
 Do not patch until those three are **no** for a named owner, or stop for a design session.
+
+## Parked 2026-09-09
+
+Watch HITL [`132708`](../../captures/session_20260909_132708.log) did not
+reproduce a first record-pass note Off at `loopEndTick`. Skip until a new
+capture shows that row. Do not put this back in Now implementing.

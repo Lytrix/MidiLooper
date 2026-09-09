@@ -18,10 +18,13 @@ from hitl.scenarios.note_edit_overdub_compose import (
     _temp_hold_target_step,
     _temp_layout_with_live_notes,
     _temp_seed_slot_index,
+    last_bar_fourth_beat_tick,
+    live_tick_near_target,
     parse_select_apply,
 )
 from hitl.stimuli import (
     STIM_NE_OD_COMPOSE_02,
+    STIM_NE_OD_COMPOSE_03,
     prepend_hitl_header,
     set_run_stimulus_override,
     temporary_variant,
@@ -83,6 +86,22 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
             resolve_scenarios(preset="note_edit_overdub_compose", scenario_ids=None),
             ["base", "note_edit_overdub_compose"],
         )
+        self.assertEqual(
+            resolve_scenarios(
+                preset="note_edit_overdub_compose_last_bar_shorten",
+                scenario_ids=None,
+            ),
+            ["base", "note_edit_overdub_compose_last_bar_shorten"],
+        )
+
+    def test_last_bar_fourth_beat_tick(self) -> None:
+        self.assertEqual(last_bar_fourth_beat_tick(2304), 2112)
+        self.assertEqual(last_bar_fourth_beat_tick(1536), 1344)
+        self.assertEqual(
+            live_tick_near_target([2118, 15], 2112, 2304, 192),
+            2118,
+        )
+        self.assertIsNone(live_tick_near_target([15], 2112, 2304, 192))
 
     def test_live_notes_stay_on_roll_pass(self) -> None:
         check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
@@ -277,6 +296,57 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
             )
         finally:
             set_run_stimulus_override(None)
+
+    def test_compose_03_header_requires_shorten(self) -> None:
+        lines = prepend_hitl_header(
+            [
+                "[53.290] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,48,session_events,0,current_state,1",
+                "[55.785] #CAP,55785000,ST,Track,PLAYING,OVERDUBBING",
+                "[56.000] #CAP,56000000,MI,U,144,5,12,100",
+                "[56.050] #CAP,56050000,DFRAME,49,1000,2,100,100,100",
+                "[56.200] POSITION EDIT: start=2112",
+                "[56.250] #CAP,56250000,GEOM_APPLY,phase,build,800,2,0",
+                "[56.260] EditSessionAction: type=1 noteId=99 start=2112 end=2166 pitch=12",
+                "[56.270] overlapNotes=1",
+                "[56.300] #CAP,56300000,DFRAME,50,1000,3,100,100,100",
+                "[57.000] #CAP,57000000,ST,Track,OVERDUBBING,PLAYING",
+            ],
+            STIM_NE_OD_COMPOSE_03,
+        )
+        check = verify_note_edit_overdub_compose(
+            lines,
+            SimpleNamespace(active_scenario_id="note_edit_overdub_compose_last_bar_shorten"),
+        )
+        self.assertTrue(check["ok"], check["issues"])
+        shortened = check["cases"]["new_note_shortened"]
+        self.assertTrue(shortened["ok"], shortened["issues"])
+        self.assertGreaterEqual(shortened["shorten"], 1)
+        self.assertNotIn("same_pitch_hold_emits_overlap", check["cases"])
+
+    def test_compose_03_hide_only_is_not_shorten(self) -> None:
+        lines = prepend_hitl_header(
+            [
+                "[53.290] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,48,session_events,0,current_state,1",
+                "[55.785] #CAP,55785000,ST,Track,PLAYING,OVERDUBBING",
+                "[56.000] #CAP,56000000,MI,U,144,5,12,100",
+                "[56.050] #CAP,56050000,DFRAME,49,1000,2,100,100,100",
+                "[56.200] POSITION EDIT: start=2112",
+                "[56.250] #CAP,56250000,GEOM_APPLY,phase,build,800,2,0",
+                "[56.260] EditSessionAction: type=2 noteId=99 start=96 end=192 pitch=12",
+                "[56.270] overlapNotes=1",
+                "[56.300] #CAP,56300000,DFRAME,50,1000,3,100,100,100",
+                "[57.000] #CAP,57000000,ST,Track,OVERDUBBING,PLAYING",
+            ],
+            STIM_NE_OD_COMPOSE_03,
+        )
+        check = verify_note_edit_overdub_compose(
+            lines,
+            SimpleNamespace(active_scenario_id="note_edit_overdub_compose_last_bar_shorten"),
+        )
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("missing_new_note_shorten_action" in issue for issue in check["issues"])
+        )
 
 
 if __name__ == "__main__":

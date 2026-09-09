@@ -11,6 +11,7 @@ from hitl.verify.note_edit_overdub_compose import (
     parse_live_capture_note_ons,
     parse_note_edit_open_visual_notes,
     parse_playing_to_overdubbing,
+    _case_new_note_shortened,
     _case_same_pitch_hold_emits_overlap,
     _move_marker_index,
 )
@@ -112,6 +113,17 @@ def validate_compose_must_prove(lines: list[str], spec: StimulusSpec) -> dict[st
         )
     )
 
+    if "new_note_shortened" in spec.must_prove:
+        after = move_index if move_index is not None else live_after
+        shortened = _case_new_note_shortened(lines, after_index=after)
+        checks.append(
+            _check(
+                "new_note_shortened",
+                bool(shortened.get("ok")),
+                f"shorten={shortened.get('shorten')}",
+            )
+        )
+
     if "same_pitch_hold_overlap" in spec.must_prove:
         after = move_index if move_index is not None else live_after
         overlap = _case_same_pitch_hold_emits_overlap(lines, after_index=after)
@@ -193,7 +205,10 @@ def validate_edit_overdub_must_prove(lines: list[str], spec: StimulusSpec) -> di
 
 
 def validate_recipe(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
-    if spec.scenario_id == "note_edit_overdub_compose":
+    if spec.scenario_id in (
+        "note_edit_overdub_compose",
+        "note_edit_overdub_compose_last_bar_shorten",
+    ):
         return validate_compose_must_prove(lines, spec)
     if spec.scenario_id == "overdub_occupy_paint":
         return validate_occupy_must_prove(lines, spec)

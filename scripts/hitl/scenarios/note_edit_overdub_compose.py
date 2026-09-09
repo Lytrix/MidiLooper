@@ -25,6 +25,7 @@ from hitl.stimuli import (
 from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
     LIVE_CAPTURE_LOW,
+    compose_uses_last_bar_shorten,
     compose_uses_same_pitch_hold,
     live_capture_band_from_spec,
     verify_note_edit_overdub_compose as _verify_note_edit_overdub_compose,
@@ -362,6 +363,33 @@ def _temp_hold_target_step(live_ticks: list[int], seed_tick: int, loop_length: i
     return target // TICKS_PER_16TH_STEP
 
 
+def last_bar_fourth_beat_tick(loop_length: int) -> int:
+    from hitl.control_constants import TICKS_PER_BAR, TICKS_PER_BEAT
+
+    if loop_length < TICKS_PER_BAR:
+        return 3 * TICKS_PER_BEAT
+    bars = loop_length // TICKS_PER_BAR
+    return (bars - 1) * TICKS_PER_BAR + 3 * TICKS_PER_BEAT
+
+
+def live_tick_near_target(
+    live_ticks: list[int], target_tick: int, loop_length: int, window: int
+) -> Optional[int]:
+    best: Optional[int] = None
+    best_dist: Optional[int] = None
+    for tick in live_ticks:
+        if loop_length <= 0:
+            dist = abs(tick - target_tick)
+        else:
+            dist = min(abs(tick - target_tick), loop_length - abs(tick - target_tick))
+        if dist > window:
+            continue
+        if best_dist is None or dist < best_dist:
+            best = tick
+            best_dist = dist
+    return best
+
+
 def _selected_seed_pitch(layout, note_slot: int) -> Optional[int]:
     slot = layout.nav_slots[note_slot]
     note_idx = getattr(slot, "note_idx", -1)
@@ -453,7 +481,8 @@ def run_note_edit_overdub_compose(args: object) -> int:
         _fader2_move_to_sixteenth_step,
     )
 
-    bound = stimulus_for_scenario("note_edit_overdub_compose")
+    scenario_id = getattr(args, "active_scenario_id", None) or "note_edit_overdub_compose"
+    bound = stimulus_for_scenario(scenario_id)
     spec = run_stimulus(bound) if bound is not None else None
     if spec is None:
         print("[note-edit-overdub-compose] no bound compose stimulus")
@@ -618,21 +647,72 @@ def run_note_edit_overdub_compose(args: object) -> int:
                 after_ts=overdub_ts,
                 bpm=float(ns.tempo_bpm),
             )
-            hold_step = _temp_hold_target_step(live_ticks, seed_tick, loop_length)
-            print(
-                f"[note-edit-overdub-compose] same-pitch live ticks={live_ticks} "
-                f"seed_tick={seed_tick} hold_step={hold_step}"
-            )
-            if hold_step is None:
-                print(
-                    "[note-edit-overdub-compose] FAILED: no later same-pitch live note"
+            if compose_uses_last_bar_shorten(spec):
+                from hitl.control_constants import TICKS_PER_BAR, TICKS_PER_BEAT
+
+                target_tick = last_bar_fourth_beat_tick(loop_length)
+                near = live_tick_near_target(
+                    live_ticks, target_tick, loop_length, TICKS_PER_BEAT
                 )
-                return 1
-            to_step = hold_step
-            print(
-                "[note-edit-overdub-compose] re-select seed on the seed layout, "
-                "then move onto live hold"
-            )
+                extra = 0
+                max_extra = max(1, loop_length // TICKS_PER_BAR)
+                while near is None and extra < max_extra:
+                    extra += 1
+                    print(
+                        "[note-edit-overdub-compose] waiting for last-bar beat 4 "
+                        f"live note (stream {extra}/{max_extra})"
+                    )
+                    _stream_live_capture_bar(
+                        out_port,
+                        in_port,
+                        serial_collector,
+                        ns=ns,
+                        midi_channel=midi_channel,
+                        abort=abort,
+                        low_note=live_low,
+                        high_note=live_high,
+                    )
+                    live_ticks = _temp_live_on_ticks(
+                        serial_collector.snapshot(),
+                        pitch=int(selected_pitch),
+                        loop_length=loop_length,
+                        after_ts=overdub_ts,
+                        bpm=float(ns.tempo_bpm),
+                    )
+                    near = live_tick_near_target(
+                        live_ticks, target_tick, loop_length, TICKS_PER_BEAT
+                    )
+                print(
+                    f"[note-edit-overdub-compose] last-bar beat4 tick={target_tick} "
+                    f"near={near} live ticks={live_ticks} seed_tick={seed_tick}"
+                )
+                if near is None:
+                    print(
+                        "[note-edit-overdub-compose] FAILED: no new note near "
+                        "last-bar beat 4"
+                    )
+                    return 1
+                to_step = target_tick // TICKS_PER_16TH_STEP
+                print(
+                    "[note-edit-overdub-compose] re-select seed, then move onto "
+                    "new note at last-bar beat 4"
+                )
+            else:
+                hold_step = _temp_hold_target_step(live_ticks, seed_tick, loop_length)
+                print(
+                    f"[note-edit-overdub-compose] same-pitch live ticks={live_ticks} "
+                    f"seed_tick={seed_tick} hold_step={hold_step}"
+                )
+                if hold_step is None:
+                    print(
+                        "[note-edit-overdub-compose] FAILED: no later same-pitch live note"
+                    )
+                    return 1
+                to_step = hold_step
+                print(
+                    "[note-edit-overdub-compose] re-select seed on the seed layout, "
+                    "then move onto live hold"
+                )
             _fader1_select_nav_slot_index(
                 out_port,
                 layout=layout,
@@ -725,7 +805,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
         report_path.write_text(
             json.dumps(
                 {
-                    "scenario": "note_edit_overdub_compose",
+                    "scenario": scenario_id,
                     "stimulus": stimulus_report_fields(spec),
                     "track_number": ns.track_number,
                     "midi_channel": midi_channel,

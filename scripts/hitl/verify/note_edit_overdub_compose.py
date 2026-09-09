@@ -35,6 +35,12 @@ def compose_uses_same_pitch_hold(spec) -> bool:
     return "same_pitch_hold" in spec.interactions
 
 
+def compose_uses_last_bar_shorten(spec) -> bool:
+    if spec is None:
+        return False
+    return "shorten_new_note_last_bar" in spec.interactions
+
+
 def live_capture_band_from_spec(spec) -> tuple[int, int]:
     for overdub in spec.overdubs:
         if overdub.name == "IN_EDIT_OD" and overdub.note_low is not None:
@@ -185,6 +191,29 @@ def _case_same_pitch_hold_emits_overlap(lines: list[str], *, after_index: int) -
     }
 
 
+def _case_new_note_shortened(lines: list[str], *, after_index: int) -> dict[str, Any]:
+    issues: list[str] = []
+    shorten = 0
+    for index, line in enumerate(lines):
+        if index <= after_index:
+            continue
+        action = EDIT_SESSION_ACTION_RE.search(line)
+        if action is not None and int(action.group(1)) == SHORTEN_NOTE_TYPE:
+            shorten += 1
+    window = lines[after_index + 1 :]
+    if any("coarse_blocked" in line for line in window):
+        issues.append("coarse_fader_blocked_pending_select")
+    elif any("No note selected for coarse editing" in line for line in window):
+        issues.append("coarse_fader_no_note_selected")
+    elif shorten < 1:
+        issues.append("missing_new_note_shorten_action")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "shorten": shorten,
+    }
+
+
 def _case_live_overdub_notes_stay_on_roll(
     lines: list[str], *, low: int = LIVE_CAPTURE_LOW, high: int = LIVE_CAPTURE_HIGH
 ) -> dict[str, Any]:
@@ -261,7 +290,8 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
     from hitl.stimuli.fingerprint import parse_hitl_fields
     from hitl.stimuli.validate import validate_stimulus
 
-    bound = stimulus_for_scenario("note_edit_overdub_compose")
+    scenario_id = getattr(args, "active_scenario_id", None) or "note_edit_overdub_compose"
+    bound = stimulus_for_scenario(scenario_id)
     spec = run_stimulus(bound) if bound is not None else bound
     fields = parse_hitl_fields(lines)
     header_id = fields.get("STIMULUS")
@@ -282,9 +312,11 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "live_overdub_notes_stay_on_roll": live_case,
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))
-    require_hold = spec.kind == KIND_TEMPORARY or (
-        header_present and compose_uses_same_pitch_hold(spec)
-    )
+    require_hold = (
+        spec.kind == KIND_TEMPORARY or (
+            header_present and compose_uses_same_pitch_hold(spec)
+        )
+    ) and not compose_uses_last_bar_shorten(spec)
     if require_hold:
         after = live_case.get("mover_drag_index")
         if after is None:
@@ -292,6 +324,12 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         cases["same_pitch_hold_emits_overlap"] = _case_same_pitch_hold_emits_overlap(
             lines, after_index=after
         )
+    require_shorten = header_present and compose_uses_last_bar_shorten(spec)
+    if require_shorten:
+        after = live_case.get("mover_drag_index")
+        if after is None:
+            after = 0
+        cases["new_note_shortened"] = _case_new_note_shortened(lines, after_index=after)
     issues: list[str] = []
     for name, case in cases.items():
         for issue in case.get("issues") or []:
