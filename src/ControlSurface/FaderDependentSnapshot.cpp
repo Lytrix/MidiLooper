@@ -332,6 +332,83 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::sendNoteValueFaderPosition(Track& trac
     return sendDependentFaderSnapshot(track, plan, snapshot, DependentFaderSendMode::ValueOnly);
 }
 
+NOTE_EDIT_MEM void ControlSurfaceManager::armPendingMotorNotegateOff(uint8_t mask,
+                                                                     uint32_t sentAtMs) {
+    if (mask == 0) {
+        return;
+    }
+    pendingMotorNotegateOffMask_ |= mask;
+    pendingMotorNotegateOffAtMs_ =
+        NoteEditFaderMotorTiming::motorNotegateReleaseAtMs(sentAtMs);
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::releasePendingMotorNotegates() {
+    if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        pendingMotorNotegateOffMask_ = 0;
+        pendingMotorNotegateOffAtMs_ = 0;
+        return;
+    }
+    if (pendingMotorNotegateOffMask_ == 0) {
+        pendingMotorNotegateOffAtMs_ = 0;
+        return;
+    }
+    if ((pendingMotorNotegateOffMask_ & kMotorNotegateSelect) != 0) {
+        midiHandler.sendNoteOff(PITCHBEND_SELECT_CHANNEL, MidiConfig::Fader::MOTOR_TRIGGER_NOTE, 0);
+    }
+    if ((pendingMotorNotegateOffMask_ & kMotorNotegateCoarse) != 0) {
+        sendCoarseFaderMotorNoteOff();
+    }
+    if ((pendingMotorNotegateOffMask_ & kMotorNotegateFine) != 0) {
+        sendFineFaderMotorNoteOff();
+    }
+    if ((pendingMotorNotegateOffMask_ & kMotorNotegateNoteValue) != 0) {
+        sendNoteValueFaderMotorNoteOff();
+    }
+    pendingMotorNotegateOffMask_ = 0;
+    pendingMotorNotegateOffAtMs_ = 0;
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::processPendingMotorNotegates() {
+    if (!NoteEditFaderMotorTiming::motorNotegateReleaseDue(millis(),
+                                                           pendingMotorNotegateOffAtMs_)) {
+        return;
+    }
+    releasePendingMotorNotegates();
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::sendSelectFaderNotegate() {
+    if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        return;
+    }
+    midiHandler.sendNoteOn(PITCHBEND_SELECT_CHANNEL, MidiConfig::Fader::MOTOR_TRIGGER_NOTE, 127);
+    armPendingMotorNotegateOff(kMotorNotegateSelect, millis());
+}
+
+NOTE_EDIT_MEM void ControlSurfaceManager::sendDependentFaderNotegates(
+    const NoteEditFaderOutbound::PlanFlags& plan, const NoteEditDependentFaderSnapshot& snapshot) {
+    if constexpr (!kNoteEditFaderFeedbackEnabled) {
+        (void)plan;
+        (void)snapshot;
+        return;
+    }
+    uint8_t mask = 0;
+    if (plan.coarse && snapshot.coarseValid) {
+        sendCoarseFaderMotorNoteOn();
+        mask |= kMotorNotegateCoarse;
+    }
+    if (plan.fine && snapshot.fineValid) {
+        sendFineFaderMotorNoteOn();
+        mask |= kMotorNotegateFine;
+    }
+    if (plan.noteValue && snapshot.valid) {
+        sendNoteValueFaderMotorNoteOn();
+        mask |= kMotorNotegateNoteValue;
+    }
+    if (mask != 0) {
+        armPendingMotorNotegateOff(mask, millis());
+    }
+}
+
 NOTE_EDIT_MEM void ControlSurfaceManager::sendCoarseFaderMotorNoteOn() {
     if constexpr (!kNoteEditFaderFeedbackEnabled) {
         return;

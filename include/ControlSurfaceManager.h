@@ -169,6 +169,12 @@ private:
     static constexpr uint32_t PITCHBEND_IGNORE_PERIOD = 1500;
     static constexpr uint32_t SELECTNOTE_UPDATE_DELAY = 1600;
     uint32_t selectFaderFeedbackIgnoreUntilMs_ = 0;
+    static constexpr uint8_t kMotorNotegateSelect = 1u;
+    static constexpr uint8_t kMotorNotegateCoarse = 2u;
+    static constexpr uint8_t kMotorNotegateFine = 4u;
+    static constexpr uint8_t kMotorNotegateNoteValue = 8u;
+    uint8_t pendingMotorNotegateOffMask_ = 0;
+    uint32_t pendingMotorNotegateOffAtMs_ = 0;
 
     NoteEditFaderOutbound::Trigger activeOutboundTrigger_ =
         NoteEditFaderOutbound::Trigger::None;
@@ -191,6 +197,12 @@ private:
     void completeOutboundPipelineAtDone(Track& track, uint32_t now);
     void sendFader1BracketFeedback(Track& track, bool updateNavStateFromOutbound = true);
     bool sendFader1MotorTimedBurst(Track& track);
+    void sendSelectFaderNotegate();
+    void sendDependentFaderNotegates(const NoteEditFaderOutbound::PlanFlags& plan,
+                                     const NoteEditDependentFaderSnapshot& snapshot);
+    void armPendingMotorNotegateOff(uint8_t mask, uint32_t sentAtMs);
+    void releasePendingMotorNotegates();
+    void processPendingMotorNotegates();
     void logOutboundStep(const char* label);
     void logSelectSlot(int slotIndex, int16_t pitchValue, bool ignored, const char* reason = nullptr);
     void logSelectApplyDecision(uint32_t targetBracketTick, int targetNoteIdx, int slotIndex,

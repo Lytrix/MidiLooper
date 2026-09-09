@@ -56,6 +56,15 @@ inline bool shouldRunBlockingMotorBurst(bool overdubbing, bool playing) {
     return !overdubbing && !playing;
 }
 
+/** ValueOnly notegate Off is due this many ms after NoteOn (`kMotorNoteDurationMs`). */
+inline uint32_t motorNotegateReleaseAtMs(uint32_t sentAtMs) {
+    return sentAtMs + kMotorNoteDurationMs;
+}
+
+inline bool motorNotegateReleaseDue(uint32_t nowMs, uint32_t releaseAtMs) {
+    return releaseAtMs != 0 && nowMs >= releaseAtMs;
+}
+
 /**
  * DROID motorfader burst: three position sends (12-tick gaps), notegate on with the third,
  * short note (24 ticks) for fast motor refresh. Matches Ableton-validated fader2/3/4 clips.

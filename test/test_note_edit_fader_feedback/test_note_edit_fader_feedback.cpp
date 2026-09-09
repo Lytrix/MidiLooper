@@ -403,6 +403,14 @@ void test_should_not_run_blocking_motor_burst_while_playing_or_overdubbing() {
     TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(true, true));
 }
 
+void test_value_only_notegate_release_matches_motor_note_duration() {
+    TEST_ASSERT_EQUAL_UINT32(125, NoteEditFaderMotorTiming::kMotorNoteDurationMs);
+    TEST_ASSERT_EQUAL_UINT32(1125, NoteEditFaderMotorTiming::motorNotegateReleaseAtMs(1000));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::motorNotegateReleaseDue(1124, 1125));
+    TEST_ASSERT_TRUE(NoteEditFaderMotorTiming::motorNotegateReleaseDue(1125, 1125));
+    TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::motorNotegateReleaseDue(2000, 0));
+}
+
 void test_record_exclude_matches_droid_control_plane() {
     TEST_ASSERT_EQUAL_UINT8(MidiConfig::THRU_EXCLUDE_MIN, MidiConfig::RECORD_EXCLUDE_MIN);
     TEST_ASSERT_EQUAL_UINT8(MidiConfig::THRU_EXCLUDE_MAX, MidiConfig::RECORD_EXCLUDE_MAX);
@@ -1243,6 +1251,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_select_fader_motor_idle_ms_constant);
     RUN_TEST(test_note_edit_display_paint_gate_blocks_motor_until_painted);
     RUN_TEST(test_should_not_run_blocking_motor_burst_while_playing_or_overdubbing);
+    RUN_TEST(test_value_only_notegate_release_matches_motor_note_duration);
     RUN_TEST(test_record_exclude_matches_droid_control_plane);
     RUN_TEST(test_should_flush_select_dependent_motor_sync_after_idle);
     RUN_TEST(test_parallel_motor_fader_burst_interleaves_enabled_slots);
