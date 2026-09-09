@@ -1,6 +1,6 @@
 # HITL stimulus contract
 
-**Status:** Stage 3 in tree. Stage 4 not started.  
+**Status:** Stage 4 in tree.  
 **Kind:** enhancement  
 **Does not start:** firmware changes, YAML-as-authority, `.mid` playback, occupy/base rewrite, compose Stage 2
 
@@ -81,11 +81,28 @@ load YAML to define canonical stimuli. TEMP variants write a sidecar under
 preset (compose, not the seed). Pass `--stimulus-temp-parent` to fork a
 different canonical id.
 
-## Later
+## Stage 4 (this slice)
 
-| Stage | What |
+`stimulus list` is the everyday catalog command. `run --list-stimuli`
+prints the same lines (id, scenario, generator, description).
+
+Named BASE-N primitives now include the existing record-only edit seed.
+That seed uses `canonical_edit_minimal_base_legacy_args` / `EDIT_RECORD_FIXTURE`.
+It is not `STIM-BASE-2-2-01`.
+
+| Stimulus | Generator |
 |---|---|
-| 4 | `--list-stimuli` in everyday agent prompts; more BASE-N primitives |
+| `STIM-BASE-2-ONE-OD-01` v1 | `canonical_record_one_overdub_legacy_args` |
+| `STIM-BASE-2-2-01` v1 | `canonical_baseline_legacy_args` |
+| `STIM-BASE-2-FIXTURE-01` v1 | `canonical_edit_minimal_base_legacy_args` |
+
+`edit_minimal` and `edit_overdub_during_note_edit` seeds bind
+`STIM-BASE-2-FIXTURE-01`. `STIM-EDIT-OD-DURING-NE-01.base_stimulus_id`
+points at that fixture.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py stimulus list
+```
 
 ## Do not
 
@@ -116,3 +133,24 @@ None.
 
 ### Proceed?
 - YES — host-only Stage 3; no firmware, no compose Stage 2, no Stage 4
+
+## Pre-implementation review (Stage 4)
+
+### Ready
+- `run --list-stimuli` already prints the registry; `stimulus list` can share the same formatter
+- `canonical_edit_minimal_base_legacy_args` is the unnamed 2-bar fixture seed from Stage 2
+- `stimulus_for_base_preset("edit_minimal"|"edit_overdub_during_note_edit")` is the bind point
+
+### Resolved (user / code)
+| Topic | Decision |
+|---|---|
+| New id | `STIM-BASE-2-FIXTURE-01` — BASE-N family + existing `EDIT_RECORD_FIXTURE` word |
+| Not BASE-2-2 | Fixture seed stays a separate primitive |
+| List CLI | `stimulus list` is the everyday command; `run --list-stimuli` stays an alias |
+| Scope | Name the existing generator only. No occupy/base rewrite, no new bar lengths |
+
+### Open before coding
+None.
+
+### Proceed?
+- YES — host-only Stage 4; no firmware, no compose Stage 2

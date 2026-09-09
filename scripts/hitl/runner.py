@@ -319,10 +319,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 2
     setattr(args, "legacy_args", legacy)
     if getattr(args, "list_stimuli", False):
-        from hitl.stimuli import list_stimuli
+        from hitl.stimuli import format_stimulus_list_lines
 
-        for spec in list_stimuli():
-            print(f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.description}")
+        for line in format_stimulus_list_lines():
+            print(line)
         return 0
     if args.list_scenarios:
         if getattr(args, "layered", False):

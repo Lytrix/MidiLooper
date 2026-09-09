@@ -19,6 +19,14 @@ The live MIDI experiment is a **versioned stimulus**, not an ad-hoc sequence ins
 
 When a plan names `required_stimulus`, use that id and version. **Do not change** a canonical stimulus to chase a new condition.
 
+Before adding a HITL, list the catalog and reuse a named recipe:
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py stimulus list
+```
+
+BASE-N primitives: `STIM-BASE-2-2-01`, `STIM-BASE-2-ONE-OD-01`, `STIM-BASE-2-FIXTURE-01`. Record-only edit seeds use the fixture id, not BASE-2-2.
+
 If the canonical stimulus cannot exercise the bug:
 
 1. Create a temporary variant. Do not edit the canonical recipe.

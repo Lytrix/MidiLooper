@@ -10,6 +10,14 @@ Flash **`teensy41-capture-serial`** (not plain `teensy41`) so `#CAP` / `REVT` / 
 pio run -e teensy41-capture-serial -t upload
 ```
 
+List named live-MIDI recipes before inventing a new HITL:
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py stimulus list
+```
+
+Record-only edit seeds are **STIM-BASE-2-FIXTURE-01** (`EDIT_RECORD_FIXTURE`), not `STIM-BASE-2-2-01`.
+
 ## Canonical test command
 
 1. Start external capture in one terminal:

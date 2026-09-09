@@ -17,6 +17,7 @@ from hitl.registry import resolve_scenarios
 from hitl.runner import main as hitl_main
 from hitl.stimuli import (
     STIM_BASE_2_2_01,
+    STIM_BASE_2_FIXTURE_01,
     STIM_BASE_2_ONE_OD_01,
     STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
@@ -59,7 +60,19 @@ class StimulusRegistryTests(unittest.TestCase):
             STIM_BASE_2_ONE_OD_01,
         )
         self.assertEqual(stimulus_for_base_preset("base"), STIM_BASE_2_2_01)
-        self.assertIsNone(stimulus_for_base_preset("edit_overdub_during_note_edit"))
+        self.assertEqual(
+            stimulus_for_base_preset("edit_overdub_during_note_edit"),
+            STIM_BASE_2_FIXTURE_01,
+        )
+        self.assertEqual(stimulus_for_base_preset("edit_minimal"), STIM_BASE_2_FIXTURE_01)
+        self.assertEqual(
+            STIM_EDIT_OD_DURING_NE_01.base_stimulus_id,
+            STIM_BASE_2_FIXTURE_01.stimulus_id,
+        )
+        self.assertEqual(
+            STIM_BASE_2_FIXTURE_01.generator,
+            "canonical_edit_minimal_base_legacy_args",
+        )
         self.assertEqual(occupy.generator, "canonical_occupy_paint_legacy_args")
         self.assertEqual(STIM_BASE_2_2_01.generator, "canonical_baseline_legacy_args")
         self.assertEqual(
@@ -157,6 +170,7 @@ class StimulusStage3Tests(unittest.TestCase):
         for stimulus_id in (
             "STIM-BASE-2-ONE-OD-01",
             "STIM-BASE-2-2-01",
+            "STIM-BASE-2-FIXTURE-01",
             "STIM-NE-OD-COMPOSE-01",
             "STIM-OCCUPY-PAINT-01",
             "STIM-EDIT-OD-DURING-NE-01",
@@ -225,6 +239,31 @@ class StimulusStage3Tests(unittest.TestCase):
             self.assertTrue(sidecar.is_file())
             with self.assertRaises(KeyError):
                 get_stimulus("STIM-NE-OD-COMPOSE-01-TEMP-A")
+
+
+class StimulusStage4Tests(unittest.TestCase):
+    def test_fixture_primitive_is_record_only(self) -> None:
+        self.assertEqual(STIM_BASE_2_FIXTURE_01.overdubs, ())
+        self.assertEqual(STIM_BASE_2_FIXTURE_01.base_pattern, "EDIT_RECORD_FIXTURE")
+        lines = prepend_hitl_header(
+            ["#CAP,1,ST,Track,STOPPED,RECORDING"],
+            STIM_BASE_2_FIXTURE_01,
+        )
+        result = validate_stimulus(lines, STIM_BASE_2_FIXTURE_01)
+        self.assertTrue(result["ok"], result["issues"])
+
+    def test_stimulus_list_includes_generator(self) -> None:
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(hitl_main(["stimulus", "list"]), 0)
+            self.assertEqual(hitl_main(["run", "--list-stimuli"]), 0)
+        text = buf.getvalue()
+        self.assertIn("STIM-BASE-2-FIXTURE-01@v1", text)
+        self.assertIn("canonical_edit_minimal_base_legacy_args", text)
+        self.assertEqual(text.count("STIM-BASE-2-FIXTURE-01@v1"), 2)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,14 @@ Transition verification is always required for baseline validation in this repos
 
 Preferred entry point: `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/Plans/hitl_modular_scenarios_enhancement.md`](docs/Plans/hitl_modular_scenarios_enhancement.md).
 
+List named live-MIDI recipes before inventing a new HITL:
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py stimulus list
+```
+
+`base` sends **STIM-BASE-2-2-01**. Do not label a record-only edit seed as that stimulus.
+
 ### Default — managed dual-session (one command)
 
 `host_midi_hitl` **spawns `capture_session.py` and HITL** as two background processes. You do **not** open a second terminal or pass `--follow-current-session`.
