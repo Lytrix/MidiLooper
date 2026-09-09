@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (NOTE_EDIT overdub-exit RC1+RC2 native shipped)
+Last updated: 2026-09-09 (immutable OpenSpec parent 4.4 closed by inventory)
 
 ---
 
@@ -109,11 +109,13 @@ paint cache on `captureDisplayRevision`. Open visual **48**; in-edit
 `DFRAME` **53 → 63**. Native **1795 succeeded, 1 skipped**. RAM1 locals
 **7008**. HITL `--preset note_edit_overdub_compose` / stimulus
 `STIM-NE-OD-COMPOSE-02` v1 (promoted TEMP-A). `01` remains paint-only.
-Compose Stage 1+2 device PASS. Pending same-pitch NoteOn reject RC1
-device PASS [`212509`](../../captures/session_20260909_212509.log)
-(`PENDON,reject`; no first-half loop-end tail). First-note loop-end display is parked
-(watch HITL [`132708`](../../captures/session_20260909_132708.log) did not
-reproduce;
+Compose Stage 1+2 device PASS. Exit persist parked mover shipped
+([`225149`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_225149.json)
+**13/13**; [`note_edit_exit_persist_selected_mover_bugfix.md`](../Plans/note_edit_exit_persist_selected_mover_bugfix.md)).
+First-note loop-end close commit is RC1
+([`192140`](../../captures/session_20260909_192140.log) `ChangeLength` 80–2303;
+watch HITL [`132708`](../../captures/session_20260909_132708.log) did not
+reproduce the store-pair form;
 [`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md)).
 `STIM-NE-OD-COMPOSE-03` last-bar beat-4 Shorten HITL device PASS
 [`133714`](../../captures/session_20260909_133714.log). After that recipe,
@@ -128,8 +130,9 @@ Plans:
 [`note_edit_overlay_delta_architecture.md`](../Plans/note_edit_overlay_delta_architecture.md),
 [`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
 DEC-054 Stage 1 admission remains in tree; [`204458`](../../captures/session_20260908_204458.log)
-failed the select-cadence gate. Remaining 4.4 hydrate / raise `N`, 4.5,
-4.6, persistence, and snapshot-identity undo remain later.
+failed the select-cadence gate. Parent 4.4 closed (inventory
+2026-09-09). Remaining 4.5, 4.6, persistence, and snapshot-identity
+undo remain later. Hydrate 4b–5 and raise `N` stay parked.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.
@@ -551,7 +554,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.3 closed (yield proof parked); 4.4a source resolution and 4.4b display fallback closed; remaining 4.4–4.6 caller migration not complete; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.4 closed (4.4a–4.4h + inventory; yield proof parked); 4.5a closed; 4.5–4.6, persistence, and snapshot-identity undo remain; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
