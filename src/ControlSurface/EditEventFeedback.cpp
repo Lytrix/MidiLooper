@@ -166,6 +166,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSessionOpenedEvent(Track& track)
 
 NOTE_EDIT_MEM void ControlSurfaceManager::handleSessionClosedEvent(Track& track) {
     releaseEditedNoteAudition();
+    releasePendingMotorNotegates();
     (void)track;
 }
 

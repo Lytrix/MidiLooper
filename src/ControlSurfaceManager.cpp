@@ -83,6 +83,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::update() {
         editedNoteAuditionTransportWasRunning_ = transportRunning;
     }
 
+    processPendingMotorNotegates();
     processFaderOutbound();
     Track& selectedTrack = trackManager.getSelectedTrack();
     processPendingPlayingEditGeometry(selectedTrack);
