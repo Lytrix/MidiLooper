@@ -23,6 +23,10 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "edit_full": ("edit_record_prelude", "edit_full"),
     "overdub_occupy_paint": ("overdub_occupy_paint",),
     "note_edit_overdub_compose": ("base", "note_edit_overdub_compose"),
+    "note_edit_overdub_compose_last_bar_shorten": (
+        "base",
+        "note_edit_overdub_compose_last_bar_shorten",
+    ),
     "edit_overdub_during_note_edit": ("base", "edit_overdub_during_note_edit"),
 }
 
@@ -82,6 +86,15 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
                 "After 2-bar record plus one overdub: NOTE_EDIT open, in-edit "
                 "overdub, move the selected note, and keep live Capture notes "
                 "on the roll"
+            ),
+            run=run_note_edit_overdub_compose,
+            verify=verify_note_edit_overdub_compose,
+        ),
+        "note_edit_overdub_compose_last_bar_shorten": ScenarioSpec(
+            scenario_id="note_edit_overdub_compose_last_bar_shorten",
+            description=(
+                "Compose same-pitch live Capture, then move the seed onto the "
+                "new note at beat 4 of the last bar and require Shorten"
             ),
             run=run_note_edit_overdub_compose,
             verify=verify_note_edit_overdub_compose,

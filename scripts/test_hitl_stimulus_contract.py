@@ -22,6 +22,7 @@ from hitl.stimuli import (
     STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
     STIM_NE_OD_COMPOSE_02,
+    STIM_NE_OD_COMPOSE_03,
     STIM_OCCUPY_PAINT_01,
     format_hitl_header,
     get_stimulus,
@@ -53,6 +54,15 @@ class StimulusRegistryTests(unittest.TestCase):
         self.assertIn("same_pitch_hold_overlap", spec.must_prove)
         self.assertEqual(
             get_stimulus("STIM-NE-OD-COMPOSE-01").stimulus_id, "STIM-NE-OD-COMPOSE-01"
+        )
+        last_bar = stimulus_for_scenario("note_edit_overdub_compose_last_bar_shorten")
+        self.assertEqual(last_bar, STIM_NE_OD_COMPOSE_03)
+        self.assertEqual(last_bar.stimulus_id, "STIM-NE-OD-COMPOSE-03")
+        self.assertIn("shorten_new_note_last_bar", last_bar.interactions)
+        self.assertIn("new_note_shortened", last_bar.must_prove)
+        self.assertEqual(
+            stimulus_for_base_preset("note_edit_overdub_compose_last_bar_shorten"),
+            STIM_BASE_2_ONE_OD_01,
         )
 
     def test_stage2_scenarios_bind_canonical_stimuli(self) -> None:
@@ -179,6 +189,7 @@ class StimulusStage3Tests(unittest.TestCase):
             "STIM-BASE-2-FIXTURE-01",
             "STIM-NE-OD-COMPOSE-01",
             "STIM-NE-OD-COMPOSE-02",
+            "STIM-NE-OD-COMPOSE-03",
             "STIM-OCCUPY-PAINT-01",
             "STIM-EDIT-OD-DURING-NE-01",
         ):

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (compose stimulus 02 + first-note display investigation)
+Last updated: 2026-09-09 (compose last-bar beat-4 Shorten HITL shipped)
 
 ---
 
@@ -109,8 +109,13 @@ paint cache on `captureDisplayRevision`. Open visual **48**; in-edit
 `DFRAME` **53 → 63**. Native **1795 succeeded, 1 skipped**. RAM1 locals
 **7008**. HITL `--preset note_edit_overdub_compose` / stimulus
 `STIM-NE-OD-COMPOSE-02` v1 (promoted TEMP-A). `01` remains paint-only.
-Compose Stage 1+2 device PASS. First-note loop-end display is investigation
-only ([`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md)).
+Compose Stage 1+2 device PASS. First-note loop-end display is parked
+(watch HITL [`132708`](../../captures/session_20260909_132708.log) did not
+reproduce;
+[`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md)).
+`STIM-NE-OD-COMPOSE-03` last-bar beat-4 Shorten HITL device PASS
+[`133714`](../../captures/session_20260909_133714.log)
+([`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](../Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md)).
 ([`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md)).
 Do not start hydrate 4b–5.
 Plans:

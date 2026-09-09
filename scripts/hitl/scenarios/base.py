@@ -46,7 +46,10 @@ def run_base_scenario(args: object) -> int:
         print_stimulus_banner(seed_stimulus)
     if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
         defaults = canonical_edit_minimal_base_legacy_args()
-    elif preset == "note_edit_overdub_compose":
+    elif preset in (
+        "note_edit_overdub_compose",
+        "note_edit_overdub_compose_last_bar_shorten",
+    ):
         defaults = canonical_record_one_overdub_legacy_args()
     else:
         # HITL-Test-Flow.md canonical 2+2 bar-synced record/overdub; user flags override via last-wins.

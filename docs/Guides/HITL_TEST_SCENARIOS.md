@@ -40,7 +40,7 @@ Replace `/dev/cu.usbmodem154944801` with your port (`pio device list`).
 |------|---------|
 | **Preset** | Named bundle of one or more scenarios (`--preset base`) |
 | **Scenario** | Single composable phase script (`--scenarios edit_overdub_during_note_edit`) |
-| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-02` v1 everyday compose; `STIM-NE-OD-COMPOSE-01` v1 paint-only) |
+| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-02` v1 everyday compose; `STIM-NE-OD-COMPOSE-03` v1 last-bar Shorten; `STIM-NE-OD-COMPOSE-01` v1 paint-only) |
 
 Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.py) (`PRESET_SCENARIOS`).
 Stimuli are defined in [`scripts/hitl/stimuli/registry.py`](../../scripts/hitl/stimuli/registry.py).
@@ -85,6 +85,7 @@ Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
 | `overdub_occupy_paint` | `overdub_occupy_paint` | **STIM-OCCUPY-PAINT-01** v1: Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
 | `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-02** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub at the selected seed pitch → same-pitch hold move; verifier requires Hide or Shorten. Paint-only leftover: `STIM-NE-OD-COMPOSE-01` (live 12–23) | **Yes** | `verify_note_edit_overdub_compose` |
+| `note_edit_overdub_compose_last_bar_shorten` | `note_edit_overdub_compose_last_bar_shorten` | **STIM-NE-OD-COMPOSE-03** v1: same seed and same-pitch live Capture as `02`, then move the seed onto the new note at beat 4 of the last bar; verifier requires Shorten (`EditSessionAction` type=1). Do not edit `01` or `02` | **Yes** | `verify_note_edit_overdub_compose` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -302,6 +303,18 @@ Verify-only:
 
 Host unit tests: `scripts/test_note_edit_overdub_compose_serial_verify.py`,
 `scripts/test_hitl_stimulus_contract.py`.
+
+### `note_edit_overdub_compose_last_bar_shorten` (seed onto last-bar beat 4)
+
+**Stimulus:** `STIM-NE-OD-COMPOSE-03` v1. Do not edit `STIM-NE-OD-COMPOSE-01` or `02`.
+
+Same seed and same-pitch in-edit Capture as everyday compose. After a live On sits within one beat of last-bar beat 4 (`(bars - 1) * 768 + 3 * 192`; **2112** on a 2304-tick loop), re-select the seed and F2 to that beat. Verifier requires Shorten. Hide-only fails. Device PASS [`133714`](../../captures/session_20260909_133714.log): live **2113**, Shorten `2100–2111`. Plan: [`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](../Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md).
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose_last_bar_shorten \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
 
 ### `note_edit_select_dependent_faders` (F2/F3/F4 motor sync on F1 select)
 

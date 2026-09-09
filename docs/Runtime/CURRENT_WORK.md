@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (compose stimulus 02 + first-note display investigation)
+Last updated: 2026-09-09 (compose last-bar beat-4 Shorten HITL shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**First record-pass note display vs loop-end Off — investigation only.**
-[`123953`](../../captures/session_20260909_123953.log): stored first 48 is
-`SEVT` `N,81` `F,135` / open `DNTE` `81/54`. After live 48s, select remaps
-`7→3` at `selected_tick=0` (`reason=note_changed`); `DNTE` `48@2292` length
-**12** (Off at `loopLength` 2304); F2 uses `focus.last` `0–135`. Do not patch
-the store pair. Plan:
+**Compose last-bar beat-4 Shorten HITL — shipped.** Host-only. Stimulus
+`STIM-NE-OD-COMPOSE-03` v1. Preset
+`note_edit_overdub_compose_last_bar_shorten`. Device PASS
+[`133714`](../../captures/session_20260909_133714.log) /
+[`133744`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_133744.json):
+live On **2113**, F2 to **2112**, Shorten `noteId=56` `2100–2111`. Do not
+edit `01` or `02`. Plan:
+[`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](../Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md).
+
+**Prior — First record-pass note display vs loop-end Off — parked.** Watch
+HITL [`132708`](../../captures/session_20260909_132708.log) did not
+reproduce. [`123953`](../../captures/session_20260909_123953.log) store pair
+is `SEVT` `N,81` `F,135`. Plan:
 [`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md).
 
 **Prior — STIM-NE-OD-COMPOSE-02 promoted.** Everyday compose bind. `01` stays
