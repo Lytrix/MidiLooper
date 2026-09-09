@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (compose firmware Stage 2)
+Last updated: 2026-09-09 (compose stimulus 02 + first-note display investigation)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT + overdub paint/overlap compose Stage 2 device PASS.**
+**First record-pass note display vs loop-end Off — investigation only.**
+[`123953`](../../captures/session_20260909_123953.log): stored first 48 is
+`SEVT` `N,81` `F,135` / open `DNTE` `81/54`. After live 48s, select remaps
+`7→3` at `selected_tick=0` (`reason=note_changed`); `DNTE` `48@2292` length
+**12** (Off at `loopLength` 2304); F2 uses `focus.last` `0–135`. Do not patch
+the store pair. Plan:
+[`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md).
+
+**Prior — STIM-NE-OD-COMPOSE-02 promoted.** Everyday compose bind. `01` stays
+paint-only (live 12–23). TEMP-A is not registered. Device proof remains
+[`123953`](../../captures/session_20260909_123953.log).
+
+**Prior — NOTE_EDIT + overdub paint/overlap compose Stage 2 device PASS.**
 Firmware `f7656b1e`. TEMP-A [`123953`](../../captures/session_20260909_123953.log)
 HideNote against a live Capture 48 while the apply scratch stayed empty.
 Do not change `STIM-NE-OD-COMPOSE-01`. Plan:

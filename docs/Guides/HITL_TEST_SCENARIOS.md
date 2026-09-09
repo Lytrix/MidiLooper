@@ -40,7 +40,7 @@ Replace `/dev/cu.usbmodem154944801` with your port (`pio device list`).
 |------|---------|
 | **Preset** | Named bundle of one or more scenarios (`--preset base`) |
 | **Scenario** | Single composable phase script (`--scenarios edit_overdub_during_note_edit`) |
-| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-01` v1) |
+| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-02` v1 everyday compose; `STIM-NE-OD-COMPOSE-01` v1 paint-only) |
 
 Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.py) (`PRESET_SCENARIOS`).
 Stimuli are defined in [`scripts/hitl/stimuli/registry.py`](../../scripts/hitl/stimuli/registry.py).
@@ -84,7 +84,7 @@ Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
 | `overdub_occupy_paint` | `overdub_occupy_paint` | **STIM-OCCUPY-PAINT-01** v1: Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
-| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-01** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub → move selected note; live Capture notes must stay on the roll | **Yes** | `verify_note_edit_overdub_compose` |
+| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-02** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub at the selected seed pitch → same-pitch hold move; verifier requires Hide or Shorten. Paint-only leftover: `STIM-NE-OD-COMPOSE-01` (live 12–23) | **Yes** | `verify_note_edit_overdub_compose` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -278,13 +278,11 @@ Pass: each fader1 inbound cluster has `MO,224,14` or `#DBG outbound_step=SEND_F2
 max gap between F2 bursts ≤30 s; pipeline shows `BEGIN` → `ARM` → `SEND_F2` → `TRIGGER_F2` → … → `DONE`
 and/or `QUIET_REFRESH` after user-classified quiet.
 
-### `note_edit_overdub_compose` (Stage 1 live Capture paint)
+### `note_edit_overdub_compose` (same-pitch hold)
 
-**Stimulus:** `STIM-NE-OD-COMPOSE-01` v1 (do not edit; TEMP variant if this recipe cannot exercise a new condition).
+**Stimulus:** `STIM-NE-OD-COMPOSE-02` v1 (everyday). Do not edit `STIM-NE-OD-COMPOSE-01` (paint-only, live 12–23). Do not register a TEMP id.
 
-Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. Canonical: NOTE_EDIT open → in-edit OVERDUBBING → live notes in MIDI 12–23 → move the selected seed note. Serial `DFRAME` after that move must stay above the `NOTE_EDIT_OPEN` visual-note count.
-
-Stage 2 same-pitch hold: do **not** edit `STIM-NE-OD-COMPOSE-01`. Canonical live 12–23 is not the selected BASE-2 seed pitch (48). `STIM-NE-OD-COMPOSE-01-TEMP-A` streams at that seed pitch, keeps the seed selected on the seed layout, and moves it onto a later live 48. Verifier requires Hide or Shorten. Device PASS [`123953`](../../captures/session_20260909_123953.log). Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
+Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. `02` streams in-edit Capture at the selected seed pitch, re-selects that seed on the seed layout, and moves it onto a later same-pitch live note. Verifier requires Hide or Shorten. Device PASS [`123953`](../../captures/session_20260909_123953.log) as TEMP-A, then promoted. Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose \
@@ -292,15 +290,7 @@ Stage 2 same-pitch hold: do **not** edit `STIM-NE-OD-COMPOSE-01`. Canonical live
   --track-number 5 --loop-slot 1 --midi-channel 5
 ```
 
-Stage 2 overlap TEMP-A:
-
-```bash
-.venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose \
-  --stimulus-temp-suffix A \
-  --stimulus-temp-reason "canonical live 12-23 is not the selected seed pitch" \
-  --midi-out "Teensy" --midi-in "Teensy" \
-  --track-number 5 --loop-slot 1 --midi-channel 5
-```
+Paint-only leftover (`STIM-NE-OD-COMPOSE-01`, live 12–23) stays in the catalog for replay of Stage 1 captures. Do not use `--stimulus-temp-suffix A` to recreate TEMP-A; that recipe is `02`.
 
 Verify-only:
 
