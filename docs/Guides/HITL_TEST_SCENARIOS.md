@@ -284,7 +284,7 @@ and/or `QUIET_REFRESH` after user-classified quiet.
 
 Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. Canonical: NOTE_EDIT open → in-edit OVERDUBBING → live notes in MIDI 12–23 → move the selected seed note. Serial `DFRAME` after that move must stay above the `NOTE_EDIT_OPEN` visual-note count.
 
-Stage 2 same-pitch hold: do **not** edit `STIM-NE-OD-COMPOSE-01`. Canonical live 12–23 is not the selected BASE-2 seed pitch (48). Use `STIM-NE-OD-COMPOSE-01-TEMP-A` so live notes sit on the selected seed pitch. Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
+Stage 2 same-pitch hold: do **not** edit `STIM-NE-OD-COMPOSE-01`. Canonical live 12–23 is not the selected BASE-2 seed pitch (48). `STIM-NE-OD-COMPOSE-01-TEMP-A` streams at that seed pitch, keeps the seed selected on the seed layout, and moves it onto a later live 48. Verifier requires Hide or Shorten. Device PASS [`123953`](../../captures/session_20260909_123953.log). Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose \

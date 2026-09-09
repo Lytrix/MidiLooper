@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -208,6 +209,157 @@ def _wait_for_loop_origin(
             return True
         time.sleep(0.02)
     return False
+
+
+def _temp_live_on_ticks(
+    lines: list[str],
+    *,
+    pitch: int,
+    loop_length: int,
+    after_ts: int = 0,
+    bpm: float = 120.0,
+) -> list[int]:
+    from hitl.verify.occupy_paint import (
+        interpolate_tick_from_bars,
+        parse_bar_anchors,
+        parse_mi_u_edges,
+    )
+
+    if loop_length <= 0:
+        return []
+    anchors = parse_bar_anchors(lines)
+    ticks: list[int] = []
+    for row in parse_mi_u_edges(lines):
+        if row["ts"] <= after_ts:
+            continue
+        if row["msg_type"] != 144 or row["velocity"] <= 0:
+            continue
+        if row["note"] != pitch:
+            continue
+        tick = interpolate_tick_from_bars(row["ts"], anchors, bpm=bpm)
+        if tick is None:
+            continue
+        ticks.append(tick % loop_length)
+    return ticks
+
+
+def _temp_layout_with_live_notes(
+    seed_pairs: list[tuple[int, int]],
+    live_ticks: list[int],
+    live_pitch: int,
+    loop_length: int,
+):
+    from hitl.legacy_edit_baseline import (
+        RecordLayout,
+        _build_select_navigation_slots,
+        _note_index_to_pitch,
+    )
+
+    pairs = list(seed_pairs)
+    for tick in live_ticks:
+        pairs.append((tick, live_pitch))
+    pairs.sort(key=lambda item: (item[0], item[1]))
+    return RecordLayout(
+        loop_start=0,
+        loop_length=loop_length,
+        step_to_tick={},
+        nav_slots=_build_select_navigation_slots(
+            pairs, loop_length=loop_length, loop_start=0
+        ),
+        note_index_to_pitch=_note_index_to_pitch(pairs),
+    )
+
+
+def _temp_seed_slot_index(live_layout, seed_tick: int, seed_pitch: int) -> Optional[int]:
+    best: Optional[int] = None
+    best_dist: Optional[int] = None
+    for index, slot in enumerate(live_layout.nav_slots):
+        if getattr(slot, "note_idx", -1) < 0:
+            continue
+        pitch = live_layout.note_index_to_pitch.get(slot.note_idx)
+        if pitch != seed_pitch:
+            continue
+        dist = abs(int(slot.rel_tick) - seed_tick)
+        if best_dist is None or dist < best_dist:
+            best = index
+            best_dist = dist
+    return best
+
+
+SELECT_APPLY_RE = re.compile(
+    r"select_apply selected_tick=(\d+) note_idx=(-?\d+) .* apply=(\d+)"
+)
+
+
+def parse_select_apply(line: str) -> Optional[tuple[int, int, int]]:
+    match = SELECT_APPLY_RE.search(line)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def _temp_sweep_select_seed(
+    out_port,
+    serial_collector,
+    seed_tick: int,
+    *,
+    steps: int = 64,
+    settle_s: float = 0.12,
+    tick_tolerance: int = 24,
+) -> Optional[tuple[int, int, int]]:
+    import mido
+    from hitl.legacy_edit_baseline import (
+        FADER_SELECT_CHANNEL_1BASED,
+        PITCHBEND_MAX,
+        PITCHBEND_MIN,
+        _send_program_change,
+    )
+
+    _send_program_change(out_port, FADER_SELECT_CHANNEL_1BASED, 1)
+    for index in range(max(steps, 2)):
+        pitch = PITCHBEND_MIN + int(
+            index * (PITCHBEND_MAX - PITCHBEND_MIN) / (steps - 1)
+        )
+        baseline = len(serial_collector.snapshot())
+        out_port.send(
+            mido.Message(
+                "pitchwheel",
+                channel=FADER_SELECT_CHANNEL_1BASED - 1,
+                pitch=pitch,
+            )
+        )
+        deadline = time.monotonic() + settle_s
+        found: Optional[tuple[int, int, int]] = None
+        while time.monotonic() < deadline:
+            for line in serial_collector.snapshot()[baseline:]:
+                parsed = parse_select_apply(line)
+                if parsed is None:
+                    continue
+                tick, note_idx, applied = parsed
+                if applied == 1 and note_idx >= 0 and abs(tick - seed_tick) <= tick_tolerance:
+                    found = (tick, note_idx, pitch)
+            if found is not None:
+                time.sleep(0.2)
+                return found
+            time.sleep(0.02)
+    return None
+
+
+def _temp_hold_target_step(live_ticks: list[int], seed_tick: int, loop_length: int) -> Optional[int]:
+    from hitl.control_constants import TICKS_PER_16TH_STEP
+
+    later: list[int] = []
+    for tick in live_ticks:
+        rel = tick % loop_length
+        if rel > seed_tick:
+            later.append(rel)
+    if not later:
+        return None
+    later.sort()
+    min_delta = TICKS_PER_16TH_STEP * 2
+    far = [tick for tick in later if tick - seed_tick >= min_delta]
+    target = far[0] if far else later[0]
+    return target // TICKS_PER_16TH_STEP
 
 
 def _selected_seed_pitch(layout, note_slot: int) -> Optional[int]:
@@ -429,14 +581,6 @@ def run_note_edit_overdub_compose(args: object) -> int:
                 return 1
         ctx.markers.append("in-edit overdub")
 
-        if spec.kind == KIND_TEMPORARY:
-            if _wait_for_loop_origin(
-                serial_collector, loop_length=loop_length, abort=abort
-            ):
-                print("[note-edit-overdub-compose] TEMP stream after loop origin")
-            else:
-                print("[note-edit-overdub-compose] warn: TEMP loop-origin wait timed out")
-
         live_before = _stream_live_capture_bar(
             out_port,
             in_port,
@@ -454,14 +598,56 @@ def run_note_edit_overdub_compose(args: object) -> int:
             f"sixteenth {from_step}->{to_step}"
         )
         if spec.kind == KIND_TEMPORARY:
-            print("[note-edit-overdub-compose] TEMP re-select seed so F2 is not blocked")
+            seed_tick = int(layout.nav_slots[note_slot].rel_tick)
+            overdub_ts = 0
+            for line in serial_collector.snapshot():
+                if "ST,Track,PLAYING,OVERDUBBING" in line and "#CAP," in line:
+                    parts = line.split(",")
+                    try:
+                        overdub_ts = int(parts[1])
+                    except (IndexError, ValueError):
+                        continue
+            live_ticks = _temp_live_on_ticks(
+                serial_collector.snapshot(),
+                pitch=int(selected_pitch),
+                loop_length=loop_length,
+                after_ts=overdub_ts,
+                bpm=float(ns.tempo_bpm),
+            )
+            hold_step = _temp_hold_target_step(live_ticks, seed_tick, loop_length)
+            print(
+                f"[note-edit-overdub-compose] TEMP live ticks={live_ticks} "
+                f"seed_tick={seed_tick} hold_step={hold_step}"
+            )
+            if hold_step is None:
+                print(
+                    "[note-edit-overdub-compose] FAILED: TEMP has no later same-pitch live note"
+                )
+                return 1
+            to_step = hold_step
+            print(
+                "[note-edit-overdub-compose] TEMP re-select seed on the seed layout, "
+                "then move onto live hold"
+            )
             _fader1_select_nav_slot_index(
                 out_port,
                 layout=layout,
                 slot_index=note_slot,
                 serial_collector=serial_collector,
-                expected_tick=layout.nav_slots[note_slot].rel_tick,
+                expected_tick=seed_tick,
             )
+            selection_idx = -1
+            for line in serial_collector.snapshot():
+                match = re.search(r"Note selection changed: .* -> (-?\d+)", line)
+                if match is not None:
+                    selection_idx = int(match.group(1))
+            if selection_idx < 0:
+                print(
+                    "[note-edit-overdub-compose] FAILED: TEMP lost note selection; "
+                    "not sending F2"
+                )
+                return 1
+            print(f"[note-edit-overdub-compose] TEMP selection idx={selection_idx}")
         _fader2_move_to_sixteenth_step(
             out_port,
             layout=layout,
