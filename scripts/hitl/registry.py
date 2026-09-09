@@ -23,6 +23,7 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
     "edit_full": ("edit_record_prelude", "edit_full"),
     "overdub_occupy_paint": ("overdub_occupy_paint",),
     "note_edit_overdub_compose": ("base", "note_edit_overdub_compose"),
+    "edit_overdub_during_note_edit": ("base", "edit_overdub_during_note_edit"),
 }
 
 
@@ -40,6 +41,10 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.scenarios.note_edit_overdub_compose import (
         run_note_edit_overdub_compose,
         verify_note_edit_overdub_compose,
+    )
+    from hitl.scenarios.edit_overdub_during_note_edit import (
+        run_edit_overdub_during_note_edit,
+        verify_edit_overdub_during_note_edit,
     )
 
     return {
@@ -80,6 +85,15 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             ),
             run=run_note_edit_overdub_compose,
             verify=verify_note_edit_overdub_compose,
+        ),
+        "edit_overdub_during_note_edit": ScenarioSpec(
+            scenario_id="edit_overdub_during_note_edit",
+            description=(
+                "EDIT_RECORD_FIXTURE seed, pre-edit overdub, NOTE_EDIT, "
+                "in-edit overdub, session undo/redo, exit, global undo"
+            ),
+            run=run_edit_overdub_during_note_edit,
+            verify=verify_edit_overdub_during_note_edit,
         ),
     }
 

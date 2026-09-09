@@ -12,12 +12,17 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from hitl.registry import resolve_scenarios
 from hitl.stimuli import (
+    STIM_BASE_2_2_01,
     STIM_BASE_2_ONE_OD_01,
+    STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
+    STIM_OCCUPY_PAINT_01,
     format_hitl_header,
     get_stimulus,
     prepend_hitl_header,
+    stimulus_for_base_preset,
     stimulus_for_scenario,
     temporary_variant,
     validate_stimulus,
@@ -36,6 +41,43 @@ class StimulusRegistryTests(unittest.TestCase):
         self.assertEqual(spec.base_stimulus_id, STIM_BASE_2_ONE_OD_01.stimulus_id)
         self.assertEqual(spec.generator, "scenario:note_edit_overdub_compose")
         self.assertIn("live_capture_notes_present", spec.must_prove)
+
+    def test_stage2_scenarios_bind_canonical_stimuli(self) -> None:
+        occupy = stimulus_for_scenario("overdub_occupy_paint")
+        edit_od = stimulus_for_scenario("edit_overdub_during_note_edit")
+        self.assertEqual(occupy, STIM_OCCUPY_PAINT_01)
+        self.assertEqual(edit_od, STIM_EDIT_OD_DURING_NE_01)
+        self.assertEqual(stimulus_for_scenario("base"), STIM_BASE_2_2_01)
+        self.assertEqual(
+            stimulus_for_base_preset("note_edit_overdub_compose"),
+            STIM_BASE_2_ONE_OD_01,
+        )
+        self.assertEqual(stimulus_for_base_preset("base"), STIM_BASE_2_2_01)
+        self.assertIsNone(stimulus_for_base_preset("edit_overdub_during_note_edit"))
+        self.assertEqual(occupy.generator, "canonical_occupy_paint_legacy_args")
+        self.assertEqual(STIM_BASE_2_2_01.generator, "canonical_baseline_legacy_args")
+        self.assertEqual(
+            resolve_scenarios(preset="edit_overdub_during_note_edit", scenario_ids=None),
+            ["base", "edit_overdub_during_note_edit"],
+        )
+
+    def test_occupy_header_requires_two_overdubs_and_undo(self) -> None:
+        lines = prepend_hitl_header(
+            [
+                "#CAP,1,ST,Track,STOPPED,RECORDING",
+                "#CAP,2,ST,Track,PLAYING,OVERDUBBING",
+                "#CAP,3,ST,Track,OVERDUBBING,PLAYING",
+                "#CAP,4,ST,Track,PLAYING,OVERDUBBING",
+                "Overdub undone",
+                "Overdub undone",
+                "Overdub redone",
+                "Overdub redone",
+            ],
+            STIM_OCCUPY_PAINT_01,
+        )
+        result = validate_stimulus(lines, STIM_OCCUPY_PAINT_01)
+        self.assertTrue(result["ok"], result["issues"])
+        self.assertFalse(result["must_prove"]["skipped"])
 
     def test_unknown_stimulus_raises(self) -> None:
         with self.assertRaises(KeyError):

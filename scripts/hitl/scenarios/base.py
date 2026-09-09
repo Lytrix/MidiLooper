@@ -31,9 +31,17 @@ def run_base_scenario(args: object) -> int:
         resolve_base_seed_serial_log,
     )
     from hitl.context import get_context
+    from hitl.stimuli import (
+        print_stimulus_banner,
+        stimulus_for_base_preset,
+        write_headered_snapshot,
+    )
 
     legacy = strip_scenario_only_legacy_args(list(getattr(args, "legacy_args", []) or []))
     preset = getattr(args, "preset", None)
+    seed_stimulus = stimulus_for_base_preset(preset)
+    if seed_stimulus is not None:
+        print_stimulus_banner(seed_stimulus)
     if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
         defaults = canonical_edit_minimal_base_legacy_args()
     elif preset == "note_edit_overdub_compose":
@@ -82,10 +90,30 @@ def run_base_scenario(args: object) -> int:
         ctx.base_serial_log_path = resolve_base_seed_serial_log(report, out_dir)
         if ctx.base_serial_log_path is not None:
             print(f"[hitl] base loop seed: {ctx.base_serial_log_path}")
+            if seed_stimulus is not None:
+                from datetime import datetime
+
+                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                snapshot = out_dir / f"base_{stamp}_serial.log"
+                raw = ctx.base_serial_log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()
+                write_headered_snapshot(snapshot, raw, seed_stimulus)
+                print(f"[hitl] base stimulus snapshot: {snapshot}")
     return code
 
 
 def verify_base_scenario(lines: list[str], args: object) -> dict[str, object]:
-    import host_midi_automation_baseline as baseline
+    from hitl.stimuli import stimulus_for_base_preset, validate_stimulus
 
-    return {"ok": True, "note": "use baseline JSON report for full gate checks"}
+    preset = getattr(args, "preset", None)
+    spec = stimulus_for_base_preset(preset)
+    if spec is None:
+        return {"ok": True, "note": "use baseline JSON report for full gate checks"}
+    stimulus = validate_stimulus(lines, spec)
+    return {
+        "ok": bool(stimulus.get("ok")),
+        "note": "use baseline JSON report for full gate checks",
+        "stimulus_validation": stimulus,
+        "issues": list(stimulus.get("issues") or []),
+    }

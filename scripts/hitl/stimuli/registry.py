@@ -68,14 +68,103 @@ STIM_NE_OD_COMPOSE_01 = StimulusSpec(
     ),
 )
 
+STIM_BASE_2_2_01 = StimulusSpec(
+    stimulus_id="STIM-BASE-2-2-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="base",
+    description="2-bar record, 2-bar overdub, default second overdub, post-stop undo/redo",
+    generator="canonical_baseline_legacy_args",
+    base_bars=2,
+    base_pattern="BASE-2-2",
+    base_stimulus_id=None,
+    overdubs=(
+        OverdubRecipe(name="OD1", bars=2, pattern="BASELINE_OVERDUB", note_low=24, note_high=39),
+        OverdubRecipe(name="OD2", bars=2, pattern="BASELINE_SECOND_OVERDUB", note_low=12, note_high=35),
+    ),
+    interactions=("undo_redo_after_last_overdub",),
+    must_prove=("base_recorded", "committed_od1", "committed_od2"),
+    human_checks=("record and both overdub layers audible",),
+)
+
+STIM_OCCUPY_PAINT_01 = StimulusSpec(
+    stimulus_id="STIM-OCCUPY-PAINT-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="overdub_occupy_paint",
+    description=(
+        "4-bar seed, OD1 half-bar source phrase, OD2 occupy "
+        "(same-start hide / +1/4 shorten / −1/2 hide), two undo then two redo"
+    ),
+    generator="canonical_occupy_paint_legacy_args",
+    base_bars=4,
+    base_pattern="OCCUPY_SEED",
+    base_stimulus_id=None,
+    overdubs=(
+        OverdubRecipe(name="OD1", bars=4, pattern="OCCUPY_SOURCE_PHRASE", note_low=48, note_high=60),
+        OverdubRecipe(name="OD2", bars=8, pattern="OCCUPY_PAINT", note_low=48, note_high=60),
+    ),
+    interactions=("undo_redo",),
+    must_prove=("seed_recorded", "od1_source_phrase", "od2_occupy", "undo_redo"),
+    human_checks=(
+        "occupy hide/shorten visible",
+        "undo restores source phrase",
+        "redo reapplies occupy",
+    ),
+)
+
+STIM_EDIT_OD_DURING_NE_01 = StimulusSpec(
+    stimulus_id="STIM-EDIT-OD-DURING-NE-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="edit_overdub_during_note_edit",
+    description=(
+        "EDIT_RECORD_FIXTURE seed, pre-edit overdub 24–39, NOTE_EDIT, "
+        "in-edit overdub 12–35, session undo/redo, exit, global undo"
+    ),
+    generator="scenario:edit_overdub_during_note_edit",
+    base_bars=2,
+    base_pattern="EDIT_RECORD_FIXTURE",
+    base_stimulus_id=None,
+    overdubs=(
+        OverdubRecipe(name="OD1", bars=2, pattern="PRE_EDIT_OVERDUB", note_low=24, note_high=39),
+        OverdubRecipe(name="IN_EDIT_OD", bars=2, pattern="IN_EDIT_OVERDUB", note_low=12, note_high=35),
+    ),
+    interactions=("note_edit", "in_edit_overdub", "session_undo_redo", "post_exit_global_undo"),
+    must_prove=(
+        "pre_edit_overdub",
+        "note_edit_entered",
+        "in_edit_overdub_active",
+        "session_undo_redo",
+    ),
+    human_checks=(
+        "pre-edit and in-edit layers separable",
+        "session undo removes only the in-edit layer",
+    ),
+)
+
 _STIMULI: dict[str, StimulusSpec] = {
     STIM_BASE_2_ONE_OD_01.stimulus_id: STIM_BASE_2_ONE_OD_01,
+    STIM_BASE_2_2_01.stimulus_id: STIM_BASE_2_2_01,
     STIM_NE_OD_COMPOSE_01.stimulus_id: STIM_NE_OD_COMPOSE_01,
+    STIM_OCCUPY_PAINT_01.stimulus_id: STIM_OCCUPY_PAINT_01,
+    STIM_EDIT_OD_DURING_NE_01.stimulus_id: STIM_EDIT_OD_DURING_NE_01,
 }
 
 SCENARIO_STIMULUS: dict[str, str] = {
     "note_edit_overdub_compose": STIM_NE_OD_COMPOSE_01.stimulus_id,
+    "overdub_occupy_paint": STIM_OCCUPY_PAINT_01.stimulus_id,
+    "edit_overdub_during_note_edit": STIM_EDIT_OD_DURING_NE_01.stimulus_id,
+    "base": STIM_BASE_2_2_01.stimulus_id,
 }
+
+
+def stimulus_for_base_preset(preset: str | None) -> StimulusSpec | None:
+    if preset == "note_edit_overdub_compose":
+        return STIM_BASE_2_ONE_OD_01
+    if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
+        return None
+    return STIM_BASE_2_2_01
 
 
 def get_stimulus(stimulus_id: str) -> StimulusSpec:

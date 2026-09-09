@@ -48,6 +48,9 @@ def _parse_common_args(args: object) -> argparse.Namespace:
     return parser.parse_known_args(legacy)[0]
 
 def run_edit_overdub_during_note_edit(args: object) -> int:
+    from hitl.stimuli import STIM_EDIT_OD_DURING_NE_01, print_stimulus_banner
+
+    print_stimulus_banner(STIM_EDIT_OD_DURING_NE_01)
     import mido
     from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
@@ -448,24 +451,37 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
 
         exit_code = 0
         if serial_collector is not None:
-            lines = serial_collector.snapshot()
+            from datetime import datetime
+            from pathlib import Path
+            import json
+
+            from hitl.stimuli import (
+                STIM_EDIT_OD_DURING_NE_01,
+                print_human_checklist,
+                stimulus_report_fields,
+                write_headered_snapshot,
+            )
+
+            out_dir = Path(getattr(args, "out_dir", Path("captures")))
+            out_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            serial_path = out_dir / f"edit_overdub_during_note_edit_{stamp}_serial.log"
+            lines = write_headered_snapshot(
+                serial_path, serial_collector.snapshot(), STIM_EDIT_OD_DURING_NE_01
+            )
             check = verify_edit_overdub_during_note_edit(lines, args)
             print(f"[edit-overdub-hitl] serial verification ok={check.get('ok')}")
             if check.get("issues"):
                 for issue in check["issues"]:
                     print(f"  issue: {issue}")
-            from datetime import datetime
-            from pathlib import Path
-            import json
-
-            out_dir = Path(getattr(args, "out_dir", Path("captures")))
-            out_dir.mkdir(parents=True, exist_ok=True)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            print_human_checklist(STIM_EDIT_OD_DURING_NE_01, check)
             report_path = out_dir / f"host_midi_hitl_edit_overdub_during_note_edit_{stamp}.json"
             report_path.write_text(
                 json.dumps(
                     {
                         "scenario": "edit_overdub_during_note_edit",
+                        "stimulus": stimulus_report_fields(STIM_EDIT_OD_DURING_NE_01),
+                        "serial_log_path": str(serial_path),
                         "track_number": ns.track_number,
                         "record_bars": ns.record_bars,
                         "overdub_bars": ns.overdub_bars,
@@ -498,8 +514,22 @@ def run_edit_overdub_during_note_edit(args: object) -> int:
         _drain_input_messages(in_port)
 
 def verify_edit_overdub_during_note_edit(lines: list[str], args: object) -> dict[str, object]:
+    from hitl.stimuli import STIM_EDIT_OD_DURING_NE_01, validate_stimulus
     from hitl.verify.edit_overdub_during_note_edit import (
         verify_edit_overdub_during_note_edit as _verify,
     )
 
-    return _verify(lines, args)
+    firmware = _verify(lines, args)
+    require_header = bool(getattr(args, "require_stimulus_header", False))
+    stimulus = validate_stimulus(
+        lines, STIM_EDIT_OD_DURING_NE_01, require_header=require_header
+    )
+    issues = list(firmware.get("issues") or []) + [
+        f"stimulus_validation:{issue}" for issue in (stimulus.get("issues") or [])
+    ]
+    return {
+        **firmware,
+        "ok": bool(firmware.get("ok")) and bool(stimulus.get("ok")) and not issues,
+        "issues": issues,
+        "stimulus_validation": stimulus,
+    }

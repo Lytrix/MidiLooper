@@ -58,11 +58,11 @@ Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_
 
 | ID | Preset | What it exercises | Serial required | Host verifier |
 |----|--------|-------------------|-----------------|---------------|
-| `base` | `base` | Clear → record → overdub(s) → optional global undo/redo after last overdub | Recommended | Legacy baseline JSON report |
+| `base` | `base` | **STIM-BASE-2-2-01** v1: Clear → record → overdub(s) → optional global undo/redo after last overdub | Recommended | Legacy baseline JSON report |
 | `edit_record_prelude` | `edit_full`, `edit_minimal` | 2-bar fixture record for edit suites | Recommended | Record transitions |
 | `edit_minimal` | `edit_minimal` | Prelude → enter edit → add/delete/move/length → exit | Recommended | Session enter subset |
 | `edit_full` | `edit_full` | Prelude → full note-edit overlap suite | Recommended | Legacy edit baseline gates |
-| `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | **record_seed** (EDIT_RECORD_FIXTURE) → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
+| `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | **STIM-EDIT-OD-DURING-NE-01** v1: **record_seed** (EDIT_RECORD_FIXTURE) → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
 | `long_loop_display_window` | `long_loop_display_window` | 24+ bar record → NOTE_EDIT window freeze → play/stop long-press snap → hold-to-track | **Yes** | `verify_long_loop_display_window` |
 | `revision_commit_save` | `revision_commit_save` | Transport stop (current epoch) → `!REV_COMMIT` → `!REV_CLEANUP` (no catalog pollution) | **Yes** | `verify_revision_commit_save` |
 | `revision_load` | `revision_load` | Transport stop → `!REV_COMMIT` → `!REV_LOAD` → `!REV_CLEANUP` | **Yes** | `verify_revision_load` |
@@ -70,7 +70,7 @@ Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_
 | `fader_motor_probe` | `fader_motor_probe` | NOTE_EDIT arm + fader motor pitchbend/note-0 steps (host → Teensy → DROID) | Optional | `verify_fader_motor_probe` |
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
-| `overdub_occupy_paint` | `overdub_occupy_paint` | Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
+| `overdub_occupy_paint` | `overdub_occupy_paint` | **STIM-OCCUPY-PAINT-01** v1: Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
 | `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-01** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub → move selected note; live Capture notes must stay on the roll | **Yes** | `verify_note_edit_overdub_compose` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
@@ -162,6 +162,8 @@ Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `b
 
 ### `overdub_occupy_paint` (source OD1 + occupy OD2 + GUS)
 
+**Stimulus:** `STIM-OCCUPY-PAINT-01` v1 (do not edit in place).
+
 Clear (if needed) → arm → record a **4-bar seed** (pitch 72 only; not an occupy target) → **first overdub** writes the half-bar phrase (48/52/56/60, unshifted) → **second overdub** occupies that phrase:
 
 | OD2 lap | Incoming notes | Occupy case |
@@ -218,6 +220,8 @@ Host unit test: `scripts/test_long_loop_display_serial_verify.py`.
 Legacy entry: `scripts/host_midi_automation_edit_baseline.py`.
 
 ### `edit_overdub_during_note_edit`
+
+**Stimulus:** `STIM-EDIT-OD-DURING-NE-01` v1 (do not edit in place).
 
 Layered preset runs **`record_seed`** (2-bar `EDIT_RECORD_FIXTURE` via the proven clear/arm path) then the edit+overdub body. Legacy `--preset edit_overdub_during_note_edit` runs the same two phases (`base` seed + body).
 
