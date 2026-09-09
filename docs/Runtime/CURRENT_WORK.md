@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (HITL stimulus contract Stage 2)
+Last updated: 2026-09-09 (HITL stimulus contract Stage 3)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,11 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**HITL stimulus contract — Stage 2.** Named recipes now include
-`STIM-BASE-2-2-01`, `STIM-OCCUPY-PAINT-01`, and
-`STIM-EDIT-OD-DURING-NE-01`. Generators were not moved. Do not change a
-canonical stimulus unless it is proven insufficient. Do not generate
-`.mid` files. Later: YAML / TEMP CLI / BASE-N. Plan:
+**HITL stimulus contract — Stage 3.** YAML export is a view of
+`scripts/hitl/stimuli/registry.py`. TEMP CLI writes a sidecar and does
+not register the variant. Use
+`host_midi_hitl.py stimulus export-yaml` /
+`stimulus temp PARENT SUFFIX` or
+`run --stimulus-temp-suffix A`. Do not change a canonical stimulus
+unless it is proven insufficient. Do not generate `.mid` files. Do not
+start Stage 4 (more BASE-N / agent `--list-stimuli` expansion) until
+asked. Plan:
 [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_enhancement.md).
 
 **Prior — NOTE_EDIT + overdub paint/overlap compose Stage 1 device PASS.**

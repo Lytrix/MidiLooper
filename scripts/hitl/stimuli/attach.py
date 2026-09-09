@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Any
 
 from hitl.stimuli.fingerprint import format_fingerprint_text, prepend_hitl_header
+from hitl.stimuli.session import resolve_run_stimulus
 from hitl.stimuli.spec import StimulusSpec
+
+
+def run_stimulus(canonical: StimulusSpec) -> StimulusSpec:
+    """Canonical spec, or the matching TEMP override for this run."""
+    return resolve_run_stimulus(canonical)
 from hitl.stimuli.validate import format_human_checklist
 
 

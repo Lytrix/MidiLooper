@@ -33,6 +33,7 @@ def run_base_scenario(args: object) -> int:
     from hitl.context import get_context
     from hitl.stimuli import (
         print_stimulus_banner,
+        run_stimulus,
         stimulus_for_base_preset,
         write_headered_snapshot,
     )
@@ -41,6 +42,7 @@ def run_base_scenario(args: object) -> int:
     preset = getattr(args, "preset", None)
     seed_stimulus = stimulus_for_base_preset(preset)
     if seed_stimulus is not None:
+        seed_stimulus = run_stimulus(seed_stimulus)
         print_stimulus_banner(seed_stimulus)
     if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
         defaults = canonical_edit_minimal_base_legacy_args()
@@ -104,13 +106,13 @@ def run_base_scenario(args: object) -> int:
 
 
 def verify_base_scenario(lines: list[str], args: object) -> dict[str, object]:
-    from hitl.stimuli import stimulus_for_base_preset, validate_stimulus
+    from hitl.stimuli import run_stimulus, stimulus_for_base_preset, validate_stimulus
 
     preset = getattr(args, "preset", None)
     spec = stimulus_for_base_preset(preset)
     if spec is None:
         return {"ok": True, "note": "use baseline JSON report for full gate checks"}
-    stimulus = validate_stimulus(lines, spec)
+    stimulus = validate_stimulus(lines, run_stimulus(spec))
     return {
         "ok": bool(stimulus.get("ok")),
         "note": "use baseline JSON report for full gate checks",
