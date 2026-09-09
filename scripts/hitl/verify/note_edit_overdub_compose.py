@@ -27,6 +27,14 @@ EDIT_SESSION_ACTION_RE = re.compile(
 OVERLAP_NOTES_RE = re.compile(r"overlapNotes=(\d+)")
 
 
+def compose_uses_same_pitch_hold(spec) -> bool:
+    if spec is None:
+        return False
+    if spec.kind == KIND_TEMPORARY:
+        return True
+    return "same_pitch_hold" in spec.interactions
+
+
 def live_capture_band_from_spec(spec) -> tuple[int, int]:
     for overdub in spec.overdubs:
         if overdub.name == "IN_EDIT_OD" and overdub.note_low is not None:
@@ -244,10 +252,24 @@ def _case_live_overdub_notes_stay_on_roll(
 
 
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
-    from hitl.stimuli import STIM_NE_OD_COMPOSE_01, run_stimulus, stimulus_report_fields
+    from hitl.stimuli import (
+        get_stimulus,
+        run_stimulus,
+        stimulus_for_scenario,
+        stimulus_report_fields,
+    )
+    from hitl.stimuli.fingerprint import parse_hitl_fields
     from hitl.stimuli.validate import validate_stimulus
 
-    spec = run_stimulus(STIM_NE_OD_COMPOSE_01)
+    bound = stimulus_for_scenario("note_edit_overdub_compose")
+    spec = run_stimulus(bound) if bound is not None else bound
+    fields = parse_hitl_fields(lines)
+    header_id = fields.get("STIMULUS")
+    if header_id:
+        try:
+            spec = run_stimulus(get_stimulus(header_id))
+        except KeyError:
+            pass
     require_header = bool(getattr(args, "require_stimulus_header", False))
     stimulus = validate_stimulus(
         lines, spec, require_header=require_header
@@ -259,7 +281,11 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "stimulus_validation": stimulus,
         "live_overdub_notes_stay_on_roll": live_case,
     }
-    if spec.kind == KIND_TEMPORARY:
+    header_present = bool(stimulus.get("header", {}).get("header_present"))
+    require_hold = spec.kind == KIND_TEMPORARY or (
+        header_present and compose_uses_same_pitch_hold(spec)
+    )
+    if require_hold:
         after = live_case.get("mover_drag_index")
         if after is None:
             after = 0

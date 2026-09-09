@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (compose Stage 2 device PASS)
+Last updated: 2026-09-09 (compose stimulus 02 + first-note display investigation)
 
 ---
 
@@ -108,7 +108,9 @@ NOTE_EDIT paint always gathers (`includeActiveCapture`) and keys the
 paint cache on `captureDisplayRevision`. Open visual **48**; in-edit
 `DFRAME` **53 → 63**. Native **1795 succeeded, 1 skipped**. RAM1 locals
 **7008**. HITL `--preset note_edit_overdub_compose` / stimulus
-`STIM-NE-OD-COMPOSE-01` v1. Stage 2 not started
+`STIM-NE-OD-COMPOSE-02` v1 (promoted TEMP-A). `01` remains paint-only.
+Compose Stage 1+2 device PASS. First-note loop-end display is investigation
+only ([`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md)).
 ([`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md)).
 Do not start hydrate 4b–5.
 Plans:

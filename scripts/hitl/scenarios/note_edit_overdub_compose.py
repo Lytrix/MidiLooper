@@ -14,18 +14,18 @@ from hitl.context import get_context
 from dataclasses import replace
 
 from hitl.stimuli import (
-    STIM_NE_OD_COMPOSE_01,
     format_fingerprint_text,
     format_human_checklist,
     prepend_hitl_header,
     run_stimulus,
     set_run_stimulus_override,
+    stimulus_for_scenario,
     stimulus_report_fields,
 )
-from hitl.stimuli.spec import KIND_TEMPORARY
 from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
     LIVE_CAPTURE_LOW,
+    compose_uses_same_pitch_hold,
     live_capture_band_from_spec,
     verify_note_edit_overdub_compose as _verify_note_edit_overdub_compose,
 )
@@ -165,8 +165,8 @@ def _first_note_slot_index(layout) -> Optional[int]:
     return None
 
 
-def _retarget_temp_live_band(spec, selected_pitch: int):
-    if spec.kind != KIND_TEMPORARY:
+def _retarget_same_pitch_live_band(spec, selected_pitch: int):
+    if not compose_uses_same_pitch_hold(spec):
         return spec
     overdubs = []
     for overdub in spec.overdubs:
@@ -180,7 +180,7 @@ def _retarget_temp_live_band(spec, selected_pitch: int):
         spec,
         overdubs=tuple(overdubs),
         description=(
-            f"{spec.description}; TEMP same-pitch live {selected_pitch} "
+            f"{spec.description}; same-pitch live {selected_pitch} "
             "(canonical 12-23 is not the selected seed pitch)"
         ),
     )
@@ -453,7 +453,11 @@ def run_note_edit_overdub_compose(args: object) -> int:
         _fader2_move_to_sixteenth_step,
     )
 
-    spec = run_stimulus(STIM_NE_OD_COMPOSE_01)
+    bound = stimulus_for_scenario("note_edit_overdub_compose")
+    spec = run_stimulus(bound) if bound is not None else None
+    if spec is None:
+        print("[note-edit-overdub-compose] no bound compose stimulus")
+        return 1
     ns = _parse_scenario_args(args)
     ctx = get_context(args)
     out_dir = ns.out_dir
@@ -483,13 +487,13 @@ def run_note_edit_overdub_compose(args: object) -> int:
         f"notes={stats['note_pairs']} nav_slots={stats['nav_slots']}"
     )
     selected_pitch = _selected_seed_pitch(layout, note_slot)
-    if spec.kind == KIND_TEMPORARY:
+    if compose_uses_same_pitch_hold(spec):
         if selected_pitch is None:
-            print("[note-edit-overdub-compose] TEMP-A needs selected seed pitch")
+            print("[note-edit-overdub-compose] same-pitch hold needs selected seed pitch")
             return 1
-        spec = _retarget_temp_live_band(spec, selected_pitch)
+        spec = _retarget_same_pitch_live_band(spec, selected_pitch)
         print(
-            f"[note-edit-overdub-compose] TEMP same-pitch live={selected_pitch} "
+            f"[note-edit-overdub-compose] same-pitch live={selected_pitch} "
             "(canonical 12-23 cannot prove mover-hold overlap)"
         )
     live_low, live_high = live_capture_band_from_spec(spec)
@@ -597,7 +601,7 @@ def run_note_edit_overdub_compose(args: object) -> int:
             f"[note-edit-overdub-compose] move selected note "
             f"sixteenth {from_step}->{to_step}"
         )
-        if spec.kind == KIND_TEMPORARY:
+        if compose_uses_same_pitch_hold(spec):
             seed_tick = int(layout.nav_slots[note_slot].rel_tick)
             overdub_ts = 0
             for line in serial_collector.snapshot():
@@ -616,17 +620,17 @@ def run_note_edit_overdub_compose(args: object) -> int:
             )
             hold_step = _temp_hold_target_step(live_ticks, seed_tick, loop_length)
             print(
-                f"[note-edit-overdub-compose] TEMP live ticks={live_ticks} "
+                f"[note-edit-overdub-compose] same-pitch live ticks={live_ticks} "
                 f"seed_tick={seed_tick} hold_step={hold_step}"
             )
             if hold_step is None:
                 print(
-                    "[note-edit-overdub-compose] FAILED: TEMP has no later same-pitch live note"
+                    "[note-edit-overdub-compose] FAILED: no later same-pitch live note"
                 )
                 return 1
             to_step = hold_step
             print(
-                "[note-edit-overdub-compose] TEMP re-select seed on the seed layout, "
+                "[note-edit-overdub-compose] re-select seed on the seed layout, "
                 "then move onto live hold"
             )
             _fader1_select_nav_slot_index(
@@ -643,11 +647,11 @@ def run_note_edit_overdub_compose(args: object) -> int:
                     selection_idx = int(match.group(1))
             if selection_idx < 0:
                 print(
-                    "[note-edit-overdub-compose] FAILED: TEMP lost note selection; "
+                    "[note-edit-overdub-compose] FAILED: lost note selection; "
                     "not sending F2"
                 )
                 return 1
-            print(f"[note-edit-overdub-compose] TEMP selection idx={selection_idx}")
+            print(f"[note-edit-overdub-compose] same-pitch selection idx={selection_idx}")
         _fader2_move_to_sixteenth_step(
             out_port,
             layout=layout,

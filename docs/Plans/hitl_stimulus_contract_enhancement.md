@@ -1,8 +1,8 @@
 # HITL stimulus contract
 
-**Status:** Stage 4 in tree.  
+**Status:** Stage 4 in tree. Compose everyday recipe promoted to `STIM-NE-OD-COMPOSE-02`.  
 **Kind:** enhancement  
-**Does not start:** firmware changes, YAML-as-authority, `.mid` playback, occupy/base rewrite, compose Stage 2
+**Does not start:** firmware changes, YAML-as-authority, `.mid` playback, occupy/base rewrite, editing `STIM-NE-OD-COMPOSE-01`
 
 Live USB MIDI stays the test mechanism. This layer names the
 **input recipe** so a capture can prove which experiment ran.
@@ -108,10 +108,10 @@ points at that fixture.
 
 - Generate or load `.mid` files
 - Copy a scenario to make a stimulus
-- Edit `STIM-NE-OD-COMPOSE-01` to chase a new bug — add `STIM-NE-OD-COMPOSE-01-TEMP-A`, then promote only if it becomes the reproducer
+- Edit `STIM-NE-OD-COMPOSE-01` to chase a new bug — add a TEMP sidecar, then promote to a new canonical id (`STIM-NE-OD-COMPOSE-02` is the promoted same-pitch hold recipe)
+- Register a TEMP id. `STIM-NE-OD-COMPOSE-01-TEMP-A` stays unregistered; everyday compose binds `02`
 - Treat missing `#HITL` headers on pre-fingerprint captures as a firmware FAIL
 - Load YAML as a second stimulus authority
-- Register a TEMP variant in `registry.py`
 
 ## Pre-implementation review
 

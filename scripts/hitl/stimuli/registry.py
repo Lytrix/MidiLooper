@@ -68,6 +68,46 @@ STIM_NE_OD_COMPOSE_01 = StimulusSpec(
     ),
 )
 
+STIM_NE_OD_COMPOSE_02 = StimulusSpec(
+    stimulus_id="STIM-NE-OD-COMPOSE-02",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="note_edit_overdub_compose",
+    description=(
+        "BASE-2 + one overdub, then NOTE_EDIT, in-edit overdub at the selected "
+        "seed pitch, and a same-pitch hold move that must Hide or Shorten"
+    ),
+    generator="scenario:note_edit_overdub_compose",
+    base_bars=2,
+    base_pattern="BASE-2-ONE-OD",
+    base_stimulus_id=STIM_BASE_2_ONE_OD_01.stimulus_id,
+    overdubs=(
+        OverdubRecipe(name="OD1", bars=2, pattern="BASELINE_OVERDUB", note_low=24, note_high=39),
+        OverdubRecipe(
+            name="IN_EDIT_OD",
+            bars=2,
+            pattern="LIVE_CAPTURE_SAME_PITCH",
+            note_low=None,
+            note_high=None,
+        ),
+    ),
+    interactions=("note_edit", "in_edit_overdub", "same_pitch_hold", "move_selected_note"),
+    must_prove=(
+        "base_recorded",
+        "committed_od1",
+        "in_edit_overdub_active",
+        "live_capture_notes_present",
+        "selected_note_moved",
+        "same_pitch_hold_overlap",
+    ),
+    human_checks=(
+        "same-pitch hold Hide or Shorten visible",
+        "moved note visible",
+        "no display corruption",
+        "stop/restart behaves normally",
+    ),
+)
+
 STIM_BASE_2_2_01 = StimulusSpec(
     stimulus_id="STIM-BASE-2-2-01",
     version=1,
@@ -164,12 +204,13 @@ _STIMULI: dict[str, StimulusSpec] = {
     STIM_BASE_2_2_01.stimulus_id: STIM_BASE_2_2_01,
     STIM_BASE_2_FIXTURE_01.stimulus_id: STIM_BASE_2_FIXTURE_01,
     STIM_NE_OD_COMPOSE_01.stimulus_id: STIM_NE_OD_COMPOSE_01,
+    STIM_NE_OD_COMPOSE_02.stimulus_id: STIM_NE_OD_COMPOSE_02,
     STIM_OCCUPY_PAINT_01.stimulus_id: STIM_OCCUPY_PAINT_01,
     STIM_EDIT_OD_DURING_NE_01.stimulus_id: STIM_EDIT_OD_DURING_NE_01,
 }
 
 SCENARIO_STIMULUS: dict[str, str] = {
-    "note_edit_overdub_compose": STIM_NE_OD_COMPOSE_01.stimulus_id,
+    "note_edit_overdub_compose": STIM_NE_OD_COMPOSE_02.stimulus_id,
     "overdub_occupy_paint": STIM_OCCUPY_PAINT_01.stimulus_id,
     "edit_overdub_during_note_edit": STIM_EDIT_OD_DURING_NE_01.stimulus_id,
     "base": STIM_BASE_2_2_01.stimulus_id,

@@ -21,6 +21,7 @@ from hitl.stimuli import (
     STIM_BASE_2_ONE_OD_01,
     STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
+    STIM_NE_OD_COMPOSE_02,
     STIM_OCCUPY_PAINT_01,
     format_hitl_header,
     get_stimulus,
@@ -43,11 +44,16 @@ class StimulusRegistryTests(unittest.TestCase):
         spec = stimulus_for_scenario("note_edit_overdub_compose")
         self.assertIsNotNone(spec)
         assert spec is not None
-        self.assertEqual(spec.stimulus_id, "STIM-NE-OD-COMPOSE-01")
+        self.assertEqual(spec, STIM_NE_OD_COMPOSE_02)
+        self.assertEqual(spec.stimulus_id, "STIM-NE-OD-COMPOSE-02")
         self.assertEqual(spec.version, 1)
         self.assertEqual(spec.base_stimulus_id, STIM_BASE_2_ONE_OD_01.stimulus_id)
         self.assertEqual(spec.generator, "scenario:note_edit_overdub_compose")
-        self.assertIn("live_capture_notes_present", spec.must_prove)
+        self.assertIn("same_pitch_hold", spec.interactions)
+        self.assertIn("same_pitch_hold_overlap", spec.must_prove)
+        self.assertEqual(
+            get_stimulus("STIM-NE-OD-COMPOSE-01").stimulus_id, "STIM-NE-OD-COMPOSE-01"
+        )
 
     def test_stage2_scenarios_bind_canonical_stimuli(self) -> None:
         occupy = stimulus_for_scenario("overdub_occupy_paint")
@@ -172,6 +178,7 @@ class StimulusStage3Tests(unittest.TestCase):
             "STIM-BASE-2-2-01",
             "STIM-BASE-2-FIXTURE-01",
             "STIM-NE-OD-COMPOSE-01",
+            "STIM-NE-OD-COMPOSE-02",
             "STIM-OCCUPY-PAINT-01",
             "STIM-EDIT-OD-DURING-NE-01",
         ):
@@ -207,7 +214,7 @@ class StimulusStage3Tests(unittest.TestCase):
         self.assertEqual(run_stimulus(STIM_OCCUPY_PAINT_01), STIM_OCCUPY_PAINT_01)
         self.assertEqual(
             default_temp_parent_id(["base", "note_edit_overdub_compose"]),
-            "STIM-NE-OD-COMPOSE-01",
+            "STIM-NE-OD-COMPOSE-02",
         )
 
     def test_stimulus_cli_export_and_temp(self) -> None:

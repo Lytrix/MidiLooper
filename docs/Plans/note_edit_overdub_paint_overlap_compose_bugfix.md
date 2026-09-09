@@ -167,7 +167,7 @@ Reuse: YES — `ensureNoteEditDisplayProjectionCachesBuilt`,
 ```yaml
 required_stimulus:
   scenario: note_edit_overdub_compose
-  stimulus: STIM-NE-OD-COMPOSE-01
+  stimulus: STIM-NE-OD-COMPOSE-02
   version: 1
 
 must_prove:
@@ -176,9 +176,10 @@ must_prove:
   - in_edit_overdub_active
   - live_capture_notes_present
   - selected_note_moved
+  - same_pitch_hold_overlap
 ```
 
-Do not change this stimulus to chase Stage 2. If it cannot exercise overlap, add `STIM-NE-OD-COMPOSE-01-TEMP-A` and report why. Plan: [`hitl_stimulus_contract_enhancement.md`](hitl_stimulus_contract_enhancement.md).
+Stage 1 paint leftover remains `STIM-NE-OD-COMPOSE-01` (live 12–23). Do not edit `01`. TEMP-A was promoted to `02`; do not register `STIM-NE-OD-COMPOSE-01-TEMP-A`. Plan: [`hitl_stimulus_contract_enhancement.md`](hitl_stimulus_contract_enhancement.md).
 
 ## Verification
 
@@ -187,7 +188,7 @@ Do not change this stimulus to chase Stage 2. If it cannot exercise overlap, add
 | Native Stage 1 | **PASS.** Dirty cache + current snapshot + `captureActive` → gather includes snapshot notes **and** the live Capture note. Snapshot-only omits that note. Paint of that composed base keeps `EditSession.store` empty and current state mover-only. `pio test -e native`: **1795 succeeded, 1 skipped**. |
 | Native Stage 2 | **PASS.** Mover-hold vs a composed DisplayNote upserts only that overlay row. Hide emits with empty apply scratch. `unionAnalyzeOverlapNoteIds` keeps snapshot ids and adds live Capture. `pio test -e native`: **1798 succeeded, 1 skipped**. |
 | Device Stage 1 | **PASS** [`112612`](../../captures/session_20260909_112612.log) / [`112643`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_112643.json): `NOTE_EDIT_OPEN` visual **48**; in-edit overdub `DFRAME` **53 → 56 → 57 → 63** with **18** live notes (12–23); after stop **66**. Prior FAIL [`110622`](../../captures/session_20260909_110622.log) stayed **49** until stop. |
-| Device Stage 2 | **PASS** [`123953`](../../captures/session_20260909_123953.log) / [`124023`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_124023.json). `STIM-NE-OD-COMPOSE-01-TEMP-A` live 48s at ticks **1563–2200**; seed kept; mover **0→1536**; `candidates_hit` candidateCount **1**; `HideNote` type=2 noteId=52 @ 1640–1667; `storeNoteOns=0`. Canonical live 12–23 cannot prove this. |
+| Device Stage 2 | **PASS** [`123953`](../../captures/session_20260909_123953.log) / [`124023`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_124023.json). Proven as `STIM-NE-OD-COMPOSE-01-TEMP-A`, promoted to `STIM-NE-OD-COMPOSE-02`. Live 48s at ticks **1563–2200**; seed kept; mover **0→1536**; `candidates_hit` candidateCount **1**; `HideNote` type=2 noteId=52 @ 1640–1667; `storeNoteOns=0`. Canonical `01` live 12–23 cannot prove this. |
 | RAM1 | **PASS.** locals **7008** on `teensy41-capture-serial` |
 
 ## Do not

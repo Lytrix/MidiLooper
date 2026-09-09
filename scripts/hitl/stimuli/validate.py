@@ -11,6 +11,7 @@ from hitl.verify.note_edit_overdub_compose import (
     parse_live_capture_note_ons,
     parse_note_edit_open_visual_notes,
     parse_playing_to_overdubbing,
+    _case_same_pitch_hold_emits_overlap,
     _move_marker_index,
 )
 
@@ -110,6 +111,17 @@ def validate_compose_must_prove(lines: list[str], spec: StimulusSpec) -> dict[st
             f"index={move_index}",
         )
     )
+
+    if "same_pitch_hold_overlap" in spec.must_prove:
+        after = move_index if move_index is not None else live_after
+        overlap = _case_same_pitch_hold_emits_overlap(lines, after_index=after)
+        checks.append(
+            _check(
+                "same_pitch_hold_overlap",
+                bool(overlap.get("ok")),
+                f"hide_or_shorten={overlap.get('hide_or_shorten')}",
+            )
+        )
 
     issues = [row["name"] for row in checks if not row["ok"]]
     return {
