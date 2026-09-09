@@ -168,6 +168,25 @@ void test_resolve_note_edit_committed_base_from_snapshot() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldResolveNoteEditCommittedBaseFromSnapshot(false, false));
 }
 
+void test_select_note_edit_committed_base_kind_capture_vs_playing() {
+  using Kind = DisplayWindowUtils::NoteEditCommittedBaseKind;
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::CaptureAwareGather),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+                        true, true, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::VisualCache),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+                        true, false, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::Snapshot),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+                        false, true, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::PassMaterialize),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+                        false, true, false)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::VisualCache),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+                        false, false, true)));
+}
+
 void test_hold_overdub_stop_handoff_until_current_snapshot() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
       true, true, true, true, true));
@@ -1865,6 +1884,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_playhead_tails_apply_when_over_budget);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_resolve_note_edit_committed_base_from_snapshot);
+  RUN_TEST(test_select_note_edit_committed_base_kind_capture_vs_playing);
   RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
   RUN_TEST(test_should_hold_composed_notes_on_overdub_wrap_revision);

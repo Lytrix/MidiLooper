@@ -243,6 +243,62 @@ void test_display_projection_keeps_committed_note_without_current_state_row() {
   TEST_ASSERT_TRUE(hasLinear);
 }
 
+void test_composed_committed_base_paints_without_store_or_full_current_state() {
+  // Stage 1 / 002450: snapshot notes + live Capture note on the committed base.
+  // Empty apply scratch and mover-only current state must still paint the base.
+  constexpr uint32_t kLoopLength = 3072;
+  constexpr NoteId kMoverId = 10;
+  constexpr NoteId kSnapshotId = 11;
+  constexpr NoteId kLiveCaptureId = 99;
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, {63, 100, 0, 480}, {63, 100, 0, 480},
+                         NoteEditPresenceType::Visible);
+  TEST_ASSERT_EQUAL(1u, currentState.size());
+
+  MidiEventVec store;
+  TEST_ASSERT_TRUE(store.empty());
+
+  NoteUtils::DisplayNoteVec committedBase;
+  committedBase.push_back({kMoverId, 63, 100, 0, 480});
+  committedBase.push_back({kSnapshotId, 60, 100, 96, 144});
+  committedBase.push_back({kLiveCaptureId, 72, 100, 400, 448});
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {63, 100, 0, 480};
+  focus.commitBaseline = focus.last;
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, kChannel, kLoopLength,
+                                  &currentState);
+  TEST_ASSERT_TRUE(store.empty());
+  TEST_ASSERT_EQUAL(1u, currentState.size());
+  TEST_ASSERT_NOT_NULL(currentState.find(kMoverId));
+  TEST_ASSERT_NULL(currentState.find(kSnapshotId));
+  TEST_ASSERT_NULL(currentState.find(kLiveCaptureId));
+
+  bool hasMover = false;
+  bool hasSnapshot = false;
+  bool hasLive = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    if (dn.noteId == kMoverId) {
+      hasMover = true;
+    }
+    if (dn.noteId == kSnapshotId) {
+      hasSnapshot = true;
+    }
+    if (dn.noteId == kLiveCaptureId) {
+      hasLive = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasMover);
+  TEST_ASSERT_TRUE(hasSnapshot);
+  TEST_ASSERT_TRUE(hasLive);
+}
+
 void test_current_state_upserts_visible_row_from_display_note_without_store_pair() {
   // 174635 / Stage 6: select painted noteId=78 (presence=-1). Coarse fader computed
   // 384→336 but NoteGeometryResolver emitted no Move — readEditableCurrentSpan and
@@ -2753,6 +2809,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_projection_owner_path_after_current_state_edit);
   RUN_TEST(test_display_projection_same_pitch_reorder_uses_current_span);
   RUN_TEST(test_display_projection_keeps_committed_note_without_current_state_row);
+  RUN_TEST(test_composed_committed_base_paints_without_store_or_full_current_state);
   RUN_TEST(test_current_state_upserts_visible_row_from_display_note_without_store_pair);
   RUN_TEST(test_ensure_aligns_unedited_visible_row_to_display_span);
   RUN_TEST(test_ensure_merges_split_head_tail_display_notes_to_wrap_span);

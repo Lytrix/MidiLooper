@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (overdub+NOTE_EDIT paint/overlap compose plan)
+Last updated: 2026-09-09 (overdub+NOTE_EDIT compose Stage 1 native)
 
 ---
 
@@ -102,8 +102,10 @@ and bake Deletes; [`001857`](../../captures/session_20260909_001857.log)
 hung at `EditSelectNoteState::onExit`. Empty-store bake device PASS
 [`002450`](../../captures/session_20260909_002450.log)
 `NoteEditPass close skip empty-store bake`. Same capture left NOTE_EDIT
-open into OVERDUBBING; paint/overlap compose plan is authorized, firmware
-not started
+open into OVERDUBBING. Compose Stage 1 is in tree: capture-active dirty
+NOTE_EDIT paint uses `rebuildDisplayNotesInWindow` (snapshot/source +
+live Capture). Clean visual cache is consumed as that compose. Native
+**1795 succeeded, 1 skipped**. RAM1 locals **7008**. Stage 2 not started
 ([`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md)).
 Do not start hydrate 4b–5.
 Plans:

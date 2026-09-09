@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (overdub+NOTE_EDIT paint/overlap compose plan)
+Last updated: 2026-09-09 (overdub+NOTE_EDIT compose Stage 1 native)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT + overdub paint/overlap compose — plan authorized, firmware
-not started.** [`002450`](../../captures/session_20260909_002450.log):
-NOTE_EDIT stayed open into OVERDUBBING. Paint committed base omitted live
-Capture; overlap hit the published snapshot and an empty apply scratch.
-Stage 1 paint, then Stage 2 overlap. Do not start firmware until an
-implement session names Stage 1. Do not start hydrate 4b–5,
-close-NOTE_EDIT-before-overdub, or open rematerialize.
+**NOTE_EDIT + overdub paint/overlap compose — Stage 1 native verified.**
+Dirty cache while `captureActive` uses `rebuildDisplayNotesInWindow`
+with live Capture. Clean visual cache is consumed as the already-built
+compose. Does not rematerialize `EditSession.store` or refill current
+state. RAM1 locals **7008**. Native **1795 succeeded, 1 skipped**.
+Device remaining: NOTE_EDIT open → overdub → live notes stay on the
+roll. Do not start Stage 2, hydrate 4b–5, or close-NOTE_EDIT-before-overdub.
 Plan:
 [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 

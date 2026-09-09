@@ -4621,6 +4621,76 @@ void test_draw_source_reuses_visual_cache_when_revision_and_coverage_match() {
   TEST_ASSERT_TRUE(foundSealed);
 }
 
+void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
+  // Stage 1 / 002450: dirty cache + current snapshot + captureActive must not
+  // collapse to snapshot-only. Same gather as rebuildDisplayNotesInWindow.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint8_t i = 0; i < 3; ++i) {
+    const uint32_t onTick = static_cast<uint32_t>(i) * 96u;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, 60 + i, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(onTick + 48, 1, 60 + i, 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 288));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec snapshotOnly;
+  LoopContentResolution::resolveDisplayNotes(*loop.publishedSnapshot(), snapshotOnly);
+  TEST_ASSERT_EQUAL(3u, snapshotOnly.size());
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(448, 1, 72, 0)));
+  TEST_ASSERT_TRUE(loop.captureActive());
+  loop.visualCacheDirty = true;
+
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather),
+      static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+          loop.captureActive(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent())));
+
+  bool snapshotHasLive = false;
+  for (const NoteUtils::DisplayNote& note : snapshotOnly) {
+    if (note.note == 72) {
+      snapshotHasLive = true;
+    }
+  }
+  TEST_ASSERT_FALSE(snapshotHasLive);
+
+  SessionMidiEventVec gatherBuffer;
+  Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;
+  bool usedSnapshot = loop.tryGatherPublishedSnapshotEventsInWindowWithCapture(
+      gatherBuffer, 0, loop.loopLengthTicks, &path);
+  if (path == Loop::SnapshotWindowGatherPath::Overlay) {
+    gatherBuffer.clear();
+    usedSnapshot = false;
+  }
+  if (!usedSnapshot) {
+    loop.gatherCommittedEventsInWindowWithCapture(gatherBuffer, 0, loop.loopLengthTicks);
+  }
+  const NoteUtils::DisplayNoteVec composed =
+      NoteUtils::reconstructDisplayNotes(gatherBuffer, loop.loopLengthTicks, false, false);
+
+  bool composedHasLive = false;
+  uint32_t snapshotPitchCount = 0;
+  for (const NoteUtils::DisplayNote& note : composed) {
+    if (note.note == 72) {
+      composedHasLive = true;
+    }
+    if (note.note == 60 || note.note == 61 || note.note == 62) {
+      ++snapshotPitchCount;
+    }
+  }
+  TEST_ASSERT_TRUE(composedHasLive);
+  TEST_ASSERT_EQUAL(3u, snapshotPitchCount);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
@@ -4650,6 +4720,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans);
   RUN_TEST(test_rematerialize_edit_view_uses_snapshot_span_note_ids);
   RUN_TEST(test_copy_note_edit_commit_base_uses_snapshot_span_note_ids);
+  RUN_TEST(test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture);
   RUN_TEST(test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids);
   RUN_TEST(test_copy_idle_validate_events_uses_snapshot_span_note_ids);
   RUN_TEST(test_try_copy_current_snapshot_display_notes_in_window_uses_span_note_ids);

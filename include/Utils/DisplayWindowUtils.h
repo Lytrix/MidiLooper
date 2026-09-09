@@ -128,9 +128,36 @@ inline bool shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
 
 /// NOTE_EDIT paint/select dirty committed base. A current snapshot replaces
 /// pass materialize for that base only. Commit rematerialize stays on passes.
+/// Capture-active rebuilds do not use this path — see
+/// `selectNoteEditCommittedBaseKind`.
 inline bool shouldResolveNoteEditCommittedBaseFromSnapshot(bool visualCacheDirty,
                                                            bool publishedSnapshotIsCurrent) {
     return visualCacheDirty && publishedSnapshotIsCurrent;
+}
+
+enum class NoteEditCommittedBaseKind {
+  Snapshot,
+  PassMaterialize,
+  VisualCache,
+  CaptureAwareGather,
+};
+
+/// Stage 1 overdub+NOTE_EDIT paint: Capture uses the existing overdub compose.
+/// Clean visual cache is that compose. Dirty cache gathers snapshot/source +
+/// live Capture (`rebuildDisplayNotesInWindow`). No-capture keeps 4.4d.
+inline NoteEditCommittedBaseKind selectNoteEditCommittedBaseKind(bool captureActive,
+                                                                 bool visualCacheDirty,
+                                                                 bool publishedSnapshotIsCurrent) {
+    if (captureActive) {
+        return visualCacheDirty ? NoteEditCommittedBaseKind::CaptureAwareGather
+                                : NoteEditCommittedBaseKind::VisualCache;
+    }
+    if (shouldResolveNoteEditCommittedBaseFromSnapshot(visualCacheDirty,
+                                                       publishedSnapshotIsCurrent)) {
+        return NoteEditCommittedBaseKind::Snapshot;
+    }
+    return visualCacheDirty ? NoteEditCommittedBaseKind::PassMaterialize
+                            : NoteEditCommittedBaseKind::VisualCache;
 }
 
 /// `225243`: playhead tails (`endTick = currentTick`) are paint-only. RC5a

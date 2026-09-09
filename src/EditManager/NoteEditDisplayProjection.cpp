@@ -5,6 +5,7 @@
 
 #include <Arduino.h>
 
+#include "DisplayManagerInternal.h"
 #include "EditManager.h"
 #include "Globals.h"
 #include "LoopContentResolution.h"
@@ -64,29 +65,42 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         return;
     }
 
-    // B2a: when visualCache is stale, committed base is the current snapshot
-    // when that root is current (4.4d). Otherwise reconstruct(materialize(active
-    // passes)) — same oracle as commitEditAction. Do not call getVisualNotesForSlot
-    // while dirty (that is VCACHE,full / B2b). Reuse this projection cache until
-    // playbackRevision or the existing fingerprint changes. After E: undo,
-    // editPassIds is empty but dirty is set by disableEditPasses; materialize
-    // then drops Disabled rows.
+    // B2a / Stage 1: no-capture dirty cache uses the current snapshot (4.4d) or
+    // pass materialize. Capture-active dirty cache reuses the existing overdub
+    // gather (`rebuildDisplayNotesInWindow`). Clean visual cache is that compose.
+    // Do not rematerialize EditSession.store or refill current state here.
     NoteUtils::DisplayNoteVec materializedCommittedBase;
     const NoteUtils::DisplayNoteVec* committedBase = nullptr;
-    if (DisplayWindowUtils::shouldResolveNoteEditCommittedBaseFromSnapshot(
-            loop.visualCacheDirty, loop.publishedSnapshotIsCurrent())) {
+    const DisplayWindowUtils::NoteEditCommittedBaseKind baseKind =
+        DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+            loop.captureActive(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent());
+    switch (baseKind) {
+    case DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather: {
+        SessionMidiEventVec gatherBuffer;
+        DisplayManagerInternal::rebuildDisplayNotesInWindow(
+            loop, loop, loopLength, 0, loopLength, gatherBuffer, materializedCommittedBase, true);
+        committedBase = &materializedCommittedBase;
+        break;
+    }
+    case DisplayWindowUtils::NoteEditCommittedBaseKind::Snapshot:
         if (const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot()) {
             LoopContentResolution::resolveDisplayNotes(*snapshot, materializedCommittedBase);
             committedBase = &materializedCommittedBase;
         }
-    }
-    if (committedBase == nullptr && loop.visualCacheDirty) {
+        break;
+    case DisplayWindowUtils::NoteEditCommittedBaseKind::PassMaterialize: {
         MidiEventVec flat;
         loop.passes.materializeToEventVector(flat, loopLength);
         materializedCommittedBase =
             NoteUtils::reconstructDisplayNotes(flat, loopLength, false, false);
         committedBase = &materializedCommittedBase;
-    } else if (committedBase == nullptr) {
+        break;
+    }
+    case DisplayWindowUtils::NoteEditCommittedBaseKind::VisualCache:
+        committedBase = &track.getVisualNotesForSlot(slot);
+        break;
+    }
+    if (committedBase == nullptr) {
         committedBase = &track.getVisualNotesForSlot(slot);
     }
 
