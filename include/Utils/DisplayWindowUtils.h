@@ -448,6 +448,21 @@ inline bool shouldRetainRecordStopHandoffSeed(bool snapshotSelectedByPredicate,
     return !snapshotSelectedByPredicate && !visualCacheCleanNonempty;
 }
 
+/// After NOTE_EDIT close while capture/overdub is still active (`214900`):
+/// retain the unpublished visual compose when **this** draw-source gather is a
+/// smaller stale snapshot. Not a global larger-cache-wins rule. Does not change
+/// `shouldGatherPublishedSnapshotForCompleteDrawSource` (wrap `004351`).
+inline bool shouldRetainUnpublishedVisualCacheOverStaleGather(bool publishedSnapshotIsCurrent,
+                                                             bool captureOrOverdubActive,
+                                                             size_t retainedVisualCacheCount,
+                                                             size_t thisStaleGatherCount,
+                                                             bool hasUncoveredSealedPreview) {
+    if (publishedSnapshotIsCurrent || !captureOrOverdubActive || hasUncoveredSealedPreview) {
+        return false;
+    }
+    return retainedVisualCacheCount > 0 && retainedVisualCacheCount > thisStaleGatherCount;
+}
+
 /// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
 /// RC5a refresh. A short-loop composed frame that is larger than `visualCache`
 /// must be adopted onto that loop. Do not replace a long-loop cache with a

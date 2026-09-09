@@ -480,6 +480,42 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
                 for issue in check["issues"])
         )
 
+    def test_pending_note_edit_close_keeps_overdub_frame_absent_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["pending_note_edit_close_keeps_overdub_frame"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["closes_judged"], 0)
+
+    def test_pending_note_edit_close_keeps_overdub_frame_retained_65_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,1520657315,DFRAME,64,22380,32610,2569,2809,4640")
+        lines.insert(11, "#CAP,1517780743,DISP,0,OVERDUBBING,2304,64,65,64,64,1,0,3,64")
+        lines.insert(12, "[1521.383] [INFO] [MIDI] Edit session: LOOP_EDIT (Program 0, Note 100 trigger)")
+        lines.insert(
+            13,
+            "#CAP,1521494215,DIAG,draw_src,layers,visual,65,preview,0,sealed,0,snap,0,frame,65,hidden,0",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["pending_note_edit_close_keeps_overdub_frame"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["closes_judged"], 1)
+
+    def test_pending_note_edit_close_keeps_overdub_frame_214900_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,1520657315,DFRAME,64,22380,32610,2569,2809,4640")
+        lines.insert(11, "#CAP,1517780743,DISP,0,OVERDUBBING,2304,64,65,64,64,1,0,3,64")
+        lines.insert(12, "[1521.383] [INFO] [MIDI] Edit session: LOOP_EDIT (Program 0, Note 100 trigger)")
+        lines.insert(
+            13,
+            "#CAP,1521494215,DIAG,draw_src,layers,visual,65,preview,0,sealed,0,snap,0,frame,56,hidden,9",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("overdub_close_stale_gather=visual65>frame56" in issue
+                for issue in check["issues"])
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

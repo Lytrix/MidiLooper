@@ -37,6 +37,11 @@ COORD_RE = re.compile(
 SEVT_RE = re.compile(r"#CAP,\d+,SEVT,[A-Za-z],\d+,(\d+),(\d+)")
 DNTE_FULL_RE = re.compile(r"#CAP,\d+,DNTE,(\d+),(\d+),(\d+),(\d+),")
 DISP_LOOP_LEN_RE = re.compile(r"#CAP,\d+,DISP,\d+,[A-Za-z_]+,(\d+),")
+DISP_STATE_RE = re.compile(r"#CAP,\d+,DISP,\d+,([A-Z_]+),")
+DRAW_SRC_LAYERS_RE = re.compile(
+    r"draw_src,layers,visual,(\d+),preview,\d+,sealed,\d+,snap,\d+,frame,(\d+),hidden,(\d+)"
+)
+LOOP_EDIT_ENTER_RE = re.compile(r"Edit session: LOOP_EDIT")
 MOTOR_ACK_CHANNEL = 13
 FADER_COARSE_CHANNEL = 14
 FADER_CC_CHANNEL = 15
@@ -469,6 +474,50 @@ def _case_pending_same_pitch_note_on_not_loop_end_tail(lines: list[str]) -> dict
     }
 
 
+def _case_pending_note_edit_close_keeps_overdub_frame(lines: list[str]) -> dict[str, Any]:
+    # 214900: NOTE_EDIT close while OVERDUBBING gathered stale snapshot 56
+    # against visual 65. Vacuous when the log never leaves NOTE_EDIT in overdub.
+    judged = 0
+    issues: list[str] = []
+    last_dframe = None
+    last_disp_state = None
+    for index, line in enumerate(lines):
+        dframe = DFRAME_RE.search(line)
+        if dframe is not None:
+            last_dframe = int(dframe.group(2))
+        disp = DISP_STATE_RE.search(line)
+        if disp is not None:
+            last_disp_state = disp.group(1)
+        if LOOP_EDIT_ENTER_RE.search(line) is None:
+            continue
+        if last_disp_state != "OVERDUBBING":
+            continue
+        judged += 1
+        visual = None
+        frame = None
+        for row in lines[index + 1 : min(len(lines), index + 400)]:
+            layers = DRAW_SRC_LAYERS_RE.search(row)
+            if layers is not None:
+                visual = int(layers.group(1))
+                frame = int(layers.group(2))
+                break
+            later = DFRAME_RE.search(row)
+            if later is not None and frame is None:
+                frame = int(later.group(2))
+        if frame is None:
+            issues.append("overdub_close_missing_frame")
+            continue
+        if last_dframe is not None and frame < last_dframe:
+            issues.append(f"overdub_close_frame={frame}<dframe={last_dframe}")
+        if visual is not None and visual > frame:
+            issues.append(f"overdub_close_stale_gather=visual{visual}>frame{frame}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "closes_judged": judged,
+    }
+
+
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
     from hitl.stimuli import (
         get_stimulus,
@@ -505,6 +554,9 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         ),
         "pending_same_pitch_note_on_not_loop_end_tail": (
             _case_pending_same_pitch_note_on_not_loop_end_tail(lines)
+        ),
+        "pending_note_edit_close_keeps_overdub_frame": (
+            _case_pending_note_edit_close_keeps_overdub_frame(lines)
         ),
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))

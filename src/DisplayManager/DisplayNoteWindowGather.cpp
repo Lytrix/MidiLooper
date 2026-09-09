@@ -662,6 +662,14 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         DIAG_COUNTER_INC(DisplayFullRebuild);
         gatherCommittedDrawSourceBars(loop, firstBar, lastBar, resolvedPitchLow, resolvedPitchHigh,
                                       candidate, committedDisplayEnd);
+        if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+                loop.publishedSnapshotIsCurrent(),
+                loop.captureActive() || loop.hasOverdubSession(), loop.visualCache.notes.size(),
+                committedDisplayEnd,
+                loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered())) {
+            candidate.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+            committedDisplayEnd = candidate.size();
+        }
         storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
         const bool snapshotSelected =
