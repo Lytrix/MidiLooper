@@ -277,10 +277,9 @@ This does not add a new unbounded owner; idle uses
 - [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
-Tasks 4.4–4.6 remain open. The stateless LCR query slice (4.3) is complete;
-display/NOTE_EDIT/analysis caller migration, HITL coverage for those callers,
-and identity recording on the remaining representations require a separately
-selected migration slice.
+Task 4.4 is closed (2026-09-09 inventory). 4.5 (HITL/native cross-gate
+verify) and 4.6 (snapshot-identity freshness on remaining derived
+representations) remain open and separately gated.
 
 ### Phase 3 implementation review (4.4 display only)
 
@@ -296,9 +295,9 @@ selected migration slice.
 - [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
-Task 4.4 is not checked off. NOTE_EDIT, overdub analysis, and validation
-callers remain outside the completed 4.3 query-adapter slice. Task 4.3 is
-complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
+Historical note: the paragraph above referred to the early 4.4 display-only
+slice. Parent 4.4 is closed after 4.4a–4.4h + inventory
+([`immutable_loop_snapshot_4_4_closeout_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_4_closeout_refinement.md)).
 
 ### Phase 4.3 implementation review — stateless snapshot queries
 
@@ -459,6 +458,18 @@ complete in `CURRENT_WORK.md`; 4.4 requires a new phase selection and gate.
       `notes=114`. NOTE_EDIT open `current=1` `root_rev=6` **137** /
       `only_*=0`. `DFRAME` **137** after second stop through session
       end. First overdub open `from=visual` is before `pending=0`.
+
+### Phase 4.4 parent closeout — inventory
+
+- [x] Architecture checkpoint: inventory / checkoff only; no owner,
+      transition, or interval-bound change.
+- [x] Production `src/` pass-flatten / `resolveDisplayNotes(passes)` /
+      `mergeActiveCapturePasses` sites classified as current-root normal
+      (none remaining), no-current fallback, capture/oracle, or out of
+      4.4 (→ 4.6 / §5 / §6).
+- [x] Parent task 4.4 checked off. Plan:
+      [`immutable_loop_snapshot_4_4_closeout_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_4_closeout_refinement.md).
+- [ ] 4.5 and 4.6 remain open; do not start hydrate 4b–5 or raise `N`.
 
 ### Close-publish NoteRange pitch reuse
 

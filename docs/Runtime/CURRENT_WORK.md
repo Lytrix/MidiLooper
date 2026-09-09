@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (NOTE_EDIT overdub-exit RC1+RC2 native shipped)
+Last updated: 2026-09-09 (immutable OpenSpec parent 4.4 closed by inventory)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,34 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT exit during overdub drops the live piano roll — RC1+RC2 native shipped.**
-[`214900`](../../captures/session_20260909_214900.log). RC1 retain:
-unpublished `visualCache` over this stale gather (native **65**). RC2:
-non-selected `stopPlaying` does not write `liveDisplayNotes`. Compose
-`02` [`222902`](../../captures/session_20260909_222902.log) machine
-**12/12**; close/stop cases vacuous (`closes_judged=0`,
-`stops_judged=0`). Device recapture of `214900` still needed. Do not
-edit compose `01`/`02`/`03`/`04`. Plan:
+**Immutable OpenSpec parent 4.4 closed — inventory only.** Sub-slices
+4.4a–4.4h and 4.5a already shipped. Production pass-flatten sites are
+current-root normal (none left), no-current fallback, capture/oracle, or
+out of 4.4 (→ 4.6 / §5 / §6). No firmware in this slice. Next pick:
+**4.5** (HITL/native verify) or **4.6** (snapshot-identity freshness).
+Do not start hydrate 4b–5 or raise `N`. Plan:
+[`immutable_loop_snapshot_4_4_closeout_refinement.md`](../Plans/immutable_loop_snapshot_4_4_closeout_refinement.md).
+
+**Prior — NOTE_EDIT close must not invent mover Length to loop end — RC1 open.**
+[`192140`](../../captures/session_20260909_192140.log) `ChangeLength`
+noteId=58 `80–2303` after in-edit overdub. Extend
+`shouldRejectMoverPreCommitRow` (inclusive `loopLength - 1`, same skip as
+overlap RC3). Do not edit compose `01`/`02`/`03`/`04`. Plan:
+[`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md).
+
+**Prior — NOTE_EDIT exit persist parked mover — shipped.** Close commits
+parked Visible `currentSpan` ≠ `committedSpan` and does not drop
+`applyOwnedEditPassRows` when canonical is empty. Living guide:
+[`MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md) § Commit / macro
+seal. Compose `02` [`225149`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_225149.json)
+**13/13**. Do not edit compose `01`/`02`/`03`/`04`. Plan:
+[`note_edit_exit_persist_selected_mover_bugfix.md`](../Plans/note_edit_exit_persist_selected_mover_bugfix.md).
+
+**Prior — NOTE_EDIT exit during overdub drops the live piano roll — RC1+RC2 device PASS.**
+[`223532`](../../captures/session_20260909_223532.log): close while
+OVERDUBBING keeps `frame,65` (not `56`); first STOPPED `DISP,0` is
+`2304/65` (not `6144`/`50688`). Compose `02` [`222902`](../../captures/session_20260909_222902.log)
+**12/12**. Do not edit compose `01`/`02`/`03`/`04`. Plan:
 [`note_edit_overdub_exit_piano_roll_revert_bugfix.md`](../Plans/note_edit_overdub_exit_piano_roll_revert_bugfix.md).
 
 **Reject same-pitch NoteOn while pending — RC1 shipped.** `202226`
@@ -26,13 +46,6 @@ On@435 then On@520 then Off@529 left `48@435` unpaired; `203112` paints
 closes 435 (length 94). Not replace-on-retrigger. Not MIDI-input reject.
 Do not edit compose `01`/`02`/`03`/`04`. Plan:
 [`capture_pending_same_pitch_note_on_reject_bugfix.md`](../Plans/capture_pending_same_pitch_note_on_reject_bugfix.md).
-
-**NOTE_EDIT close must not invent mover Length to loop end — RC1 implementing.**
-[`192140`](../../captures/session_20260909_192140.log) `ChangeLength`
-noteId=58 `80–2303` after in-edit overdub. Extend
-`shouldRejectMoverPreCommitRow` (inclusive `loopLength - 1`, same skip as
-overlap RC3). Do not edit compose `01`/`02`/`03`/`04`. Plan:
-[`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md).
 
 **Prior — NOTE_EDIT control-plane record + display stall — RC6 implementing.**
 RC2 shipped (`3fc5744c`). RC4/RC5 in tree (not bundled). RC5 motors
@@ -1682,8 +1695,8 @@ Firmware in tree; host gates next. Does not change snapshot ownership or LCR.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 **Plan:** [`loop_pass_snapshot_effective_state_refinement.md`](../Plans/loop_pass_snapshot_effective_state_refinement.md)
-**Active wrap slice:** [`overdub_wrap_source_snapshot_migration_refinement.md`](../Plans/overdub_wrap_source_snapshot_migration_refinement.md) — OpenSpec tasks `3.5`/`3.6` are closed; 4.4a source resolution and 4.4b display snapshot fallback are now closed.
-**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters, Phase 3 playback snapshot reads (4.1–4.2), stateless snapshot queries (4.3), 4.4a source resolution, and 4.4b display fallback are complete. Remaining NOTE_EDIT/analysis/validation and display identity migration remains next.
+**Active wrap slice:** [`overdub_wrap_source_snapshot_migration_refinement.md`](../Plans/overdub_wrap_source_snapshot_migration_refinement.md) — OpenSpec tasks `3.5`/`3.6` are closed; parent **4.4** closed (4.4a–4.4h + inventory).
+**Applied Phase 0 spec patch:** [`loop_snapshot_pitch_bar_span_index_refinement.md`](../Plans/loop_snapshot_pitch_bar_span_index_refinement.md) — logical structure selected. Phase 1 native/offline model is complete. Phase 2 publication adapters, Phase 3 playback snapshot reads (4.1–4.2), stateless snapshot queries (4.3), and display/NOTE_EDIT/analysis/validation current-root migration (4.4) are complete. Next: **4.5** verify or **4.6** snapshot-identity freshness.
 
 Phase 0 documentation now includes the project-scoped
 [`MIDI_PROTOCOL_GUIDE.md`](../Guides/MIDI_PROTOCOL_GUIDE.md), based on

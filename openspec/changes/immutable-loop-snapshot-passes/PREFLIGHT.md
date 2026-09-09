@@ -8,7 +8,8 @@
 **Status amendment (2026-09-08):** This preflight records the approved
 architecture and phase gates; its original Phase 0 “not authorized” statements
 are historical. Tasks 3.5/3.6 and 4.1–4.3 have since been implemented and
-reviewed. Tasks 4.4–4.6, 4b.3, 5.1–5.6, and 6.1–6.5 remain future scope.
+reviewed. Tasks 4.5–4.6, 4b.3, 5.1–5.6, and 6.1–6.5 remain future scope.
+Parent 4.4 closed 2026-09-09 (4.4a–4.4h + inventory).
 
 ## Problem
 
@@ -214,7 +215,7 @@ remains the hot-path scalar. Row 2 stays unbounded; this slice does not
 convert it.
 
 Task 4.3 was subsequently completed as the stateless explicit-snapshot query
-slice. Caller migration tasks 4.4–4.6 remain separately gated.
+slice. Caller migration task 4.4 is closed; 4.5–4.6 remain separately gated.
 
 ### Phase 3 display result (4.4 display only)
 

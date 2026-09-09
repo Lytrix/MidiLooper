@@ -2,12 +2,13 @@
 
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
-Progress checkpoint (2026-09-08): sections 1–3 are complete. Tasks 3.5/3.6
+Progress checkpoint (2026-09-09): sections 1–3 are complete. Tasks 3.5/3.6
 closed: wrap-journal publication is in tree; the remaining-interval yield
 proof is parked (`kSnapshotIdleReserveYieldEnabled` is false; yield logs
-stay). In section 4, 4.1, 4.2, and 4.3 are complete. In section 4b,
-4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b, and 4b.4 are complete under
-Ring B round-robin. Open now: 4.4–4.6, 4b.3, 5.1–5.6, and 6.1–6.5.
+stay). In section 4, 4.1–4.4 and 4.5a are complete (4.4a–4.4h shipped;
+parent 4.4 closed by inventory closeout). In section 4b, 4b.0, 4b.1,
+4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b, and 4b.4 are complete under Ring B
+round-robin. Open now: 4.5, 4.6, 4b.3, 5.1–5.6, and 6.1–6.5.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -188,13 +189,20 @@ cursors rather than treating that locality as an execution bound.
       samples: 74 `compatibility`, 8 `snapshot`, and no `note_edit`.
 - [x] 4.2 Preserve `Track` / `LoopPlaybackRuntime` ownership of cursor, order, ledger, and horizon state; verify output with existing playback gates.
 - [x] 4.3 Convert `LoopContentResolution` to stateless explicit-snapshot queries without parent traversal or maintained replay.
-- [ ] 4.4 Complete the remaining display fallback/identity caller
-      migrations independently with rollback gates. Existing display snapshot
-      reads are partial and do not close this task. Source resolution reads
-      selected pitch/bar `NoteRef`s, deduplicates by `NoteId`, and derives
-      immutable geometry. Select bounded canonical span ranges before
-      `IntervalProjection`; define long-span `k` limits or empirical overrun
-      policies as consumer bounds, not snapshot-architecture units.
+- [x] 4.4 Complete the remaining display fallback/identity caller
+      migrations independently with rollback gates. Closed 2026-09-09:
+      sub-slices 4.4a–4.4h and 4.5a shipped; inventory found no remaining
+      current-root normal-path display / NOTE_EDIT / analysis / validation
+      oracle inside this task. Pass rematerialize stays no-current-root
+      fallback or capture/deferred oracle only. Plan:
+      [`immutable_loop_snapshot_4_4_closeout_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_4_closeout_refinement.md).
+      Source resolution reads selected pitch/bar `NoteRef`s, deduplicates by
+      `NoteId`, and derives immutable geometry. Select bounded canonical
+      span ranges before `IntervalProjection`; define long-span `k` limits
+      or empirical overrun policies as consumer bounds, not
+      snapshot-architecture units. Idle `legacyMidiEventsFromCommitted` /
+      effective-store freshness and snapshot-identity undo are **4.6** /
+      **§5**, not leftover 4.4 work.
   - [x] 4.4a Migrate the selected-snapshot overdub source branch to gather
         only the bounded source-window bar memberships. Preserve
         `overdubSourceSpanCacheNotes_` / `overdubSourceViewNotes_` ownership,
