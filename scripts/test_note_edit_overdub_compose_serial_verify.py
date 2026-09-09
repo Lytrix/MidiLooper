@@ -169,7 +169,41 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
             self.assertEqual(check["live_capture_pitch_band"]["low"], 48)
             overlap = check["cases"]["same_pitch_hold_emits_overlap"]
             self.assertTrue(overlap["ok"], overlap["issues"])
-            self.assertGreaterEqual(overlap["build_actions"], 1)
+            self.assertGreaterEqual(overlap["hide_or_shorten"], 1)
+        finally:
+            set_run_stimulus_override(None)
+
+    def test_temp_a_move_note_only_is_not_overlap(self) -> None:
+        overdubs = []
+        for overdub in STIM_NE_OD_COMPOSE_01.overdubs:
+            if overdub.name == "IN_EDIT_OD":
+                overdubs.append(replace(overdub, note_low=48, note_high=48))
+            else:
+                overdubs.append(overdub)
+        temp = replace(
+            temporary_variant(STIM_NE_OD_COMPOSE_01.stimulus_id, "A"),
+            overdubs=tuple(overdubs),
+        )
+        set_run_stimulus_override(temp)
+        try:
+            check = verify_note_edit_overdub_compose(
+                [
+                    "[53.290] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,48,session_events,0,current_state,1",
+                    "[55.785] #CAP,55785000,ST,Track,PLAYING,OVERDUBBING",
+                    "[56.000] #CAP,56000000,MI,U,144,5,48,100",
+                    "[56.050] #CAP,56050000,DFRAME,49,1000,2,100,100,100",
+                    "[56.200] POSITION EDIT: start=192",
+                    "[56.250] #CAP,56250000,GEOM_APPLY,phase,build,800,1,0",
+                    "[56.260] EditSessionAction: type=3 noteId=58 start=240 end=382 pitch=48",
+                    "[56.300] #CAP,56300000,DFRAME,50,1000,3,100,100,100",
+                    "[57.000] #CAP,57000000,ST,Track,OVERDUBBING,PLAYING",
+                ],
+                SimpleNamespace(),
+            )
+            self.assertFalse(check["ok"])
+            self.assertTrue(
+                any("missing_same_pitch_hold_overlap_action" in issue for issue in check["issues"])
+            )
         finally:
             set_run_stimulus_override(None)
 
