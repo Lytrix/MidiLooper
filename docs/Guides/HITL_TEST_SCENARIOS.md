@@ -18,6 +18,7 @@ Never use `--serial-port` while `capture_session.py` holds the USB serial port.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --list-scenarios
+.venv/bin/python scripts/host_midi_hitl.py stimulus list
 .venv/bin/python scripts/host_midi_hitl.py run --list-stimuli
 ```
 
@@ -47,15 +48,20 @@ A host serial snapshot for a bound scenario starts with `#HITL,SCENARIO,…` and
 The raw Teensy `#CAP` session log stays firmware-only.
 
 ```bash
-.venv/bin/python scripts/host_midi_hitl.py run --list-stimuli
+.venv/bin/python scripts/host_midi_hitl.py stimulus list
 .venv/bin/python scripts/host_midi_hitl.py stimulus export-yaml
 .venv/bin/python scripts/host_midi_hitl.py stimulus temp STIM-NE-OD-COMPOSE-01 A
 ```
 
-`export-yaml` dumps the Python registry. It is a view, not a second
-authority. `stimulus temp` writes `captures/stimuli/<id>.yaml` and does
-not register the variant. Attach a TEMP header to a live run with
+`stimulus list` is the everyday catalog (`run --list-stimuli` prints the
+same lines). `export-yaml` dumps the Python registry. It is a view, not a
+second authority. `stimulus temp` writes `captures/stimuli/<id>.yaml` and
+does not register the variant. Attach a TEMP header to a live run with
 `--stimulus-temp-suffix A` (optional `--stimulus-temp-parent`).
+
+BASE-N primitives: **STIM-BASE-2-2-01**, **STIM-BASE-2-ONE-OD-01**,
+**STIM-BASE-2-FIXTURE-01** (2-bar `EDIT_RECORD_FIXTURE`; used by
+`edit_minimal` and `edit_overdub_during_note_edit` seeds).
 
 Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_enhancement.md).
 
@@ -69,7 +75,7 @@ Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_
 | `edit_record_prelude` | `edit_full`, `edit_minimal` | 2-bar fixture record for edit suites | Recommended | Record transitions |
 | `edit_minimal` | `edit_minimal` | Prelude → enter edit → add/delete/move/length → exit | Recommended | Session enter subset |
 | `edit_full` | `edit_full` | Prelude → full note-edit overlap suite | Recommended | Legacy edit baseline gates |
-| `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | **STIM-EDIT-OD-DURING-NE-01** v1: **record_seed** (EDIT_RECORD_FIXTURE) → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
+| `edit_overdub_during_note_edit` | `edit_overdub_during_note_edit` | **STIM-EDIT-OD-DURING-NE-01** v1 on **STIM-BASE-2-FIXTURE-01** seed: **record_seed** (EDIT_RECORD_FIXTURE) → overdub → edit → in-edit overdub → **E:** session undo/redo → exit → global undo | **Yes** | `verify_edit_overdub_during_note_edit` |
 | `long_loop_display_window` | `long_loop_display_window` | 24+ bar record → NOTE_EDIT window freeze → play/stop long-press snap → hold-to-track | **Yes** | `verify_long_loop_display_window` |
 | `revision_commit_save` | `revision_commit_save` | Transport stop (current epoch) → `!REV_COMMIT` → `!REV_CLEANUP` (no catalog pollution) | **Yes** | `verify_revision_commit_save` |
 | `revision_load` | `revision_load` | Transport stop → `!REV_COMMIT` → `!REV_LOAD` → `!REV_CLEANUP` | **Yes** | `verify_revision_load` |
@@ -228,7 +234,7 @@ Legacy entry: `scripts/host_midi_automation_edit_baseline.py`.
 
 ### `edit_overdub_during_note_edit`
 
-**Stimulus:** `STIM-EDIT-OD-DURING-NE-01` v1 (do not edit in place).
+**Stimulus:** `STIM-EDIT-OD-DURING-NE-01` v1 on seed **STIM-BASE-2-FIXTURE-01** (do not edit in place).
 
 Layered preset runs **`record_seed`** (2-bar `EDIT_RECORD_FIXTURE` via the proven clear/arm path) then the edit+overdub body. Legacy `--preset edit_overdub_during_note_edit` runs the same two phases (`base` seed + body).
 

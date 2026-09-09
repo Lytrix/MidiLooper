@@ -9,7 +9,7 @@ Composable hardware-in-the-loop automation lives under [`scripts/hitl/`](../../s
 
 | Path | Role |
 |------|------|
-| `scripts/host_midi_hitl.py` | CLI entry (`run`, `stimulus export-yaml` / `stimulus temp`, `--preset`, `--scenarios`, `--verify-only`) |
+| `scripts/host_midi_hitl.py` | CLI entry (`run`, `stimulus list` / `export-yaml` / `temp`, `--preset`, `--scenarios`, `--verify-only`) |
 | `scripts/hitl/registry.py` | Preset → scenario IDs, lazy scenario registry |
 | `scripts/hitl/scenarios/*.py` | Run handlers (MIDI phases) |
 | `scripts/hitl/stimuli/` | Versioned stimulus recipes, `#HITL` fingerprint, YAML view, TEMP sidecar CLI |

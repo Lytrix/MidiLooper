@@ -87,6 +87,22 @@ STIM_BASE_2_2_01 = StimulusSpec(
     human_checks=("record and both overdub layers audible",),
 )
 
+STIM_BASE_2_FIXTURE_01 = StimulusSpec(
+    stimulus_id="STIM-BASE-2-FIXTURE-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="base",
+    description="2-bar record-only EDIT_RECORD_FIXTURE seed; no overdub",
+    generator="canonical_edit_minimal_base_legacy_args",
+    base_bars=2,
+    base_pattern="EDIT_RECORD_FIXTURE",
+    base_stimulus_id=None,
+    overdubs=(),
+    interactions=(),
+    must_prove=("base_recorded",),
+    human_checks=("fixture seed plays",),
+)
+
 STIM_OCCUPY_PAINT_01 = StimulusSpec(
     stimulus_id="STIM-OCCUPY-PAINT-01",
     version=1,
@@ -125,7 +141,7 @@ STIM_EDIT_OD_DURING_NE_01 = StimulusSpec(
     generator="scenario:edit_overdub_during_note_edit",
     base_bars=2,
     base_pattern="EDIT_RECORD_FIXTURE",
-    base_stimulus_id=None,
+    base_stimulus_id=STIM_BASE_2_FIXTURE_01.stimulus_id,
     overdubs=(
         OverdubRecipe(name="OD1", bars=2, pattern="PRE_EDIT_OVERDUB", note_low=24, note_high=39),
         OverdubRecipe(name="IN_EDIT_OD", bars=2, pattern="IN_EDIT_OVERDUB", note_low=12, note_high=35),
@@ -146,6 +162,7 @@ STIM_EDIT_OD_DURING_NE_01 = StimulusSpec(
 _STIMULI: dict[str, StimulusSpec] = {
     STIM_BASE_2_ONE_OD_01.stimulus_id: STIM_BASE_2_ONE_OD_01,
     STIM_BASE_2_2_01.stimulus_id: STIM_BASE_2_2_01,
+    STIM_BASE_2_FIXTURE_01.stimulus_id: STIM_BASE_2_FIXTURE_01,
     STIM_NE_OD_COMPOSE_01.stimulus_id: STIM_NE_OD_COMPOSE_01,
     STIM_OCCUPY_PAINT_01.stimulus_id: STIM_OCCUPY_PAINT_01,
     STIM_EDIT_OD_DURING_NE_01.stimulus_id: STIM_EDIT_OD_DURING_NE_01,
@@ -163,7 +180,7 @@ def stimulus_for_base_preset(preset: str | None) -> StimulusSpec | None:
     if preset == "note_edit_overdub_compose":
         return STIM_BASE_2_ONE_OD_01
     if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
-        return None
+        return STIM_BASE_2_FIXTURE_01
     return STIM_BASE_2_2_01
 
 
@@ -184,6 +201,13 @@ def stimulus_for_scenario(scenario_id: str) -> StimulusSpec | None:
 
 def list_stimuli() -> list[StimulusSpec]:
     return [get_stimulus(stimulus_id) for stimulus_id in sorted(_STIMULI)]
+
+
+def format_stimulus_list_lines() -> list[str]:
+    return [
+        f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.generator}  {spec.description}"
+        for spec in list_stimuli()
+    ]
 
 
 def temporary_variant(parent_id: str, suffix: str, **overrides: object) -> StimulusSpec:

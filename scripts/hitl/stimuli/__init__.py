@@ -15,10 +15,12 @@ from hitl.stimuli.fingerprint import (
 )
 from hitl.stimuli.registry import (
     STIM_BASE_2_2_01,
+    STIM_BASE_2_FIXTURE_01,
     STIM_BASE_2_ONE_OD_01,
     STIM_EDIT_OD_DURING_NE_01,
     STIM_NE_OD_COMPOSE_01,
     STIM_OCCUPY_PAINT_01,
+    format_stimulus_list_lines,
     get_stimulus,
     list_stimuli,
     stimulus_for_base_preset,
@@ -35,6 +37,7 @@ from hitl.stimuli.validate import format_human_checklist, validate_stimulus
 
 __all__ = [
     "STIM_BASE_2_2_01",
+    "STIM_BASE_2_FIXTURE_01",
     "STIM_BASE_2_ONE_OD_01",
     "STIM_EDIT_OD_DURING_NE_01",
     "STIM_NE_OD_COMPOSE_01",
@@ -43,6 +46,7 @@ __all__ = [
     "format_fingerprint_text",
     "format_hitl_header",
     "format_human_checklist",
+    "format_stimulus_list_lines",
     "get_run_stimulus_override",
     "get_stimulus",
     "list_stimuli",

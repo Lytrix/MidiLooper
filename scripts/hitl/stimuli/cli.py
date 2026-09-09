@@ -13,7 +13,7 @@ from hitl.stimuli.yaml_view import export_registry_yaml, export_spec_yaml, write
 def add_stimulus_subparser(sub: argparse._SubParsersAction) -> None:
     stim = sub.add_parser(
         "stimulus",
-        help="Export the Python stimulus registry or write a TEMP sidecar",
+        help="List, export, or fork HITL stimuli (YAML is a view)",
     )
     stim_sub = stim.add_subparsers(dest="stimulus_command", required=True)
     export_p = stim_sub.add_parser(
@@ -21,6 +21,10 @@ def add_stimulus_subparser(sub: argparse._SubParsersAction) -> None:
         help="Dump the in-memory registry as YAML (view only, not authority)",
     )
     export_p.add_argument("--out", type=Path, default=None)
+    stim_sub.add_parser(
+        "list",
+        help="List canonical stimulus ids, generators, and versions",
+    )
     temp_p = stim_sub.add_parser(
         "temp",
         help="Write a TEMP variant sidecar without registering it",
@@ -90,6 +94,12 @@ def apply_run_temp_override(args: argparse.Namespace, scenario_ids: list[str]) -
 
 def run_stimulus_command(args: argparse.Namespace) -> int:
     command = getattr(args, "stimulus_command", None)
+    if command == "list":
+        from hitl.stimuli.registry import format_stimulus_list_lines
+
+        for line in format_stimulus_list_lines():
+            print(line)
+        return 0
     if command == "export-yaml":
         text = export_registry_yaml()
         out = getattr(args, "out", None)
