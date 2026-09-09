@@ -26,7 +26,7 @@
  * | Fader input   | ch16: pitchbend; ch14: pitchbend (fader2); ch15: CC 2,3 | —                                 |
  * | Fader output  | —                                 | ch16: pitchbend (fader1); ch14: pitchbend (fader2); ch15: CC 2,3 |
  *
- * Record exclusion: channel 16 not recorded. See RECORD_EXCLUDE_*.
+ * Record exclusion: DROID control plane ch13–16 not recorded. See RECORD_EXCLUDE_*.
  * See docs/Guides/MIDI_CONFIG_GUIDE.md for remap instructions.
  */
 #ifndef MIDI_CONFIG_H
@@ -54,8 +54,8 @@ namespace Channels {
   constexpr uint8_t SELECT = 16;             // Fader 1 (select), buttons, loop length
 }
 
-// --- Record exclusion (channel 16 = buttons, not recorded) ---
-constexpr uint8_t RECORD_EXCLUDE_MIN = 16;
+// --- Record exclusion (DROID control plane ch13–16, same as THRU_EXCLUDE_*) ---
+constexpr uint8_t RECORD_EXCLUDE_MIN = 13;
 constexpr uint8_t RECORD_EXCLUDE_MAX = 16;
 
 // --- MIDI thru exclusion (DROID control plane ch13-16) ---
