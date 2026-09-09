@@ -401,6 +401,23 @@ void test_should_not_run_blocking_motor_burst_while_overdubbing() {
     TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(true));
 }
 
+void test_record_exclude_matches_droid_control_plane() {
+    TEST_ASSERT_EQUAL_UINT8(MidiConfig::THRU_EXCLUDE_MIN, MidiConfig::RECORD_EXCLUDE_MIN);
+    TEST_ASSERT_EQUAL_UINT8(MidiConfig::THRU_EXCLUDE_MAX, MidiConfig::RECORD_EXCLUDE_MAX);
+    TEST_ASSERT_EQUAL_UINT8(13, MidiConfig::RECORD_EXCLUDE_MIN);
+    TEST_ASSERT_EQUAL_UINT8(16, MidiConfig::RECORD_EXCLUDE_MAX);
+    for (uint8_t channel = 1; channel <= 12; ++channel) {
+        const bool excluded = channel >= MidiConfig::RECORD_EXCLUDE_MIN &&
+                              channel <= MidiConfig::RECORD_EXCLUDE_MAX;
+        TEST_ASSERT_FALSE(excluded);
+    }
+    for (uint8_t channel = 13; channel <= 16; ++channel) {
+        const bool excluded = channel >= MidiConfig::RECORD_EXCLUDE_MIN &&
+                              channel <= MidiConfig::RECORD_EXCLUDE_MAX;
+        TEST_ASSERT_TRUE(excluded);
+    }
+}
+
 void test_should_flush_select_dependent_motor_sync_after_idle() {
     TEST_ASSERT_FALSE(NoteEditFaderMotorTiming::shouldFlushSelectDependentMotorSync(
         1000, 300, false));
@@ -1224,6 +1241,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_select_fader_motor_idle_ms_constant);
     RUN_TEST(test_note_edit_display_paint_gate_blocks_motor_until_painted);
     RUN_TEST(test_should_not_run_blocking_motor_burst_while_overdubbing);
+    RUN_TEST(test_record_exclude_matches_droid_control_plane);
     RUN_TEST(test_should_flush_select_dependent_motor_sync_after_idle);
     RUN_TEST(test_parallel_motor_fader_burst_interleaves_enabled_slots);
     RUN_TEST(test_ch13_ack_correlation_window_ms_for_capture_logs);

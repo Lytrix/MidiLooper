@@ -25,6 +25,7 @@ from hitl.scenarios.note_edit_overdub_compose import (
 from hitl.stimuli import (
     STIM_NE_OD_COMPOSE_02,
     STIM_NE_OD_COMPOSE_03,
+    STIM_NE_OD_COMPOSE_04,
     prepend_hitl_header,
     set_run_stimulus_override,
     temporary_variant,
@@ -92,6 +93,13 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
                 scenario_ids=None,
             ),
             ["base", "note_edit_overdub_compose_last_bar_shorten"],
+        )
+        self.assertEqual(
+            resolve_scenarios(
+                preset="note_edit_overdub_compose_last_bar_reopen",
+                scenario_ids=None,
+            ),
+            ["base", "note_edit_overdub_compose_last_bar_reopen"],
         )
 
     def test_last_bar_fourth_beat_tick(self) -> None:
@@ -347,6 +355,88 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("missing_new_note_shorten_action" in issue for issue in check["issues"])
         )
+
+    def test_compose_04_header_requires_reopen_select_and_move(self) -> None:
+        lines = prepend_hitl_header(
+            [
+                "[53.290] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,48,session_events,0,current_state,1",
+                "[55.785] #CAP,55785000,ST,Track,PLAYING,OVERDUBBING",
+                "[56.000] #CAP,56000000,MI,U,144,5,12,100",
+                "[56.050] #CAP,56050000,DFRAME,49,1000,2,100,100,100",
+                "[56.200] POSITION EDIT: start=2112",
+                "[56.250] #CAP,56250000,GEOM_APPLY,phase,build,800,2,0",
+                "[56.260] EditSessionAction: type=1 noteId=99 start=2112 end=2166 pitch=12",
+                "[56.270] overlapNotes=1",
+                "[56.300] #CAP,56300000,DFRAME,50,1000,3,100,100,100",
+                "[57.000] #CAP,57000000,ST,Track,OVERDUBBING,PLAYING",
+                "[58.000] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,72,session_events,255,current_state,0",
+                "[58.010] Note selection changed: -1 -> 12",
+                "[58.100] POSITION EDIT: start=192",
+                "[58.110] EditSessionAction: type=3 noteId=12 start=192 end=288 pitch=48",
+            ],
+            STIM_NE_OD_COMPOSE_04,
+        )
+        check = verify_note_edit_overdub_compose(
+            lines,
+            SimpleNamespace(active_scenario_id="note_edit_overdub_compose_last_bar_reopen"),
+        )
+        self.assertTrue(check["ok"], check["issues"])
+        reopen = check["cases"]["reopen_select_and_move"]
+        self.assertTrue(reopen["ok"], reopen["issues"])
+        self.assertGreaterEqual(reopen["selection_idx"], 0)
+        self.assertGreaterEqual(reopen["moves"], 1)
+
+    def test_compose_04_reopen_empty_select_fails(self) -> None:
+        lines = prepend_hitl_header(
+            [
+                "[53.290] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,48,session_events,0,current_state,1",
+                "[55.785] #CAP,55785000,ST,Track,PLAYING,OVERDUBBING",
+                "[56.000] #CAP,56000000,MI,U,144,5,12,100",
+                "[56.050] #CAP,56050000,DFRAME,49,1000,2,100,100,100",
+                "[56.200] POSITION EDIT: start=2112",
+                "[56.260] EditSessionAction: type=1 noteId=99 start=2112 end=2166 pitch=12",
+                "[57.000] #CAP,57000000,ST,Track,OVERDUBBING,PLAYING",
+                "[58.000] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,72,session_events,255,current_state,0",
+                "[58.010] Note selection changed: 59 -> -1",
+            ],
+            STIM_NE_OD_COMPOSE_04,
+        )
+        check = verify_note_edit_overdub_compose(
+            lines,
+            SimpleNamespace(active_scenario_id="note_edit_overdub_compose_last_bar_reopen"),
+        )
+        self.assertFalse(check["ok"])
+        self.assertTrue(any("reopen_select_empty" in issue for issue in check["issues"]))
+
+    def test_control_plane_coord_ack_during_overdub_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(
+            6,
+            (
+                "[56.080] #CAP,56080000,COORD,abs,100,storage,13,proj,13,display,13,"
+                "startLoop,0,projStart,0,loopStart,0,ch,13,note,84"
+            ),
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("overdub_coord_ch13_ack" in issue for issue in check["issues"])
+        )
+
+    def test_control_plane_sevt_ch15_cc_note_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.append("[57.200] #CAP,57200000,SEVT,N,96,15,3")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("stored_control_plane_sevt" in issue for issue in check["issues"])
+        )
+
+    def test_pass_lines_have_no_control_plane_capture(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["control_plane_not_captured"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["overdub_coord_ch13_ack"], 0)
 
 
 if __name__ == "__main__":

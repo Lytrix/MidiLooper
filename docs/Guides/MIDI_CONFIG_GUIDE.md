@@ -29,7 +29,7 @@ ordering, and the current UMP/MIDI 2.0 scope, see
    - Buttons (ch 16)
    - Faders (15, 16)
    - LED feedback (ch 15)
-   - Recorded MIDI (channel 16 excluded; other channels recorded as loop data)
+   - Recorded MIDI (channels 13–16 excluded; other channels recorded as loop data)
 
 2. **Update `MidiConfig.h`** — Change `Channels::*`, `Led::*`, `Fader::*`, `BarStepButton::*`, `LoopEdit::*` to match your controller’s output.
 
@@ -103,10 +103,10 @@ Channel 15 is excluded from All Notes Off on USB so LED state is preserved.
 1. In `MidiConfig.h`, add or reuse a constant for your transport channel (or change `Channels::SELECT` if 16 is used for transport).
 2. In `MidiButtonConfig.cpp`, change the channel in each `ButtonConfig` for notes 35, 36, 37, 38, 39 (e.g. replace `16` with `5`).
 3. If using DROID, change the `channel` in the `[midiout]` block that drives B2.29, B2.30, etc., to 5.
-4. Ensure channel 5 is in `RECORD_EXCLUDE_MIN`..`RECORD_EXCLUDE_MAX` if you do not want those button presses recorded as MIDI. (Channel 16 is excluded by default.)
+4. Ensure channel 5 is in `RECORD_EXCLUDE_MIN`..`RECORD_EXCLUDE_MAX` if you do not want those button presses recorded as MIDI. (Channels 13–16 are excluded by default.)
 
 ---
 
 ## Record exclusion
 
-Channel 16 is not recorded into loops (buttons/control traffic). If you move buttons to other channels, their note messages will be recorded. Either keep control on 16 or extend `RECORD_EXCLUDE_*` in `MidiConfig.h`.
+Channels 13–16 are not recorded into loops (DROID control plane: motor-ack notes on 13, fader pitchbend/CC on 14–15, buttons on 16). `RECORD_EXCLUDE_*` matches `THRU_EXCLUDE_*`. If you move buttons or faders outside 13–16, those messages will be recorded unless you extend `RECORD_EXCLUDE_*` in `MidiConfig.h`.

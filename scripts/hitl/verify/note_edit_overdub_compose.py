@@ -18,6 +18,8 @@ LIVE_CAPTURE_HIGH = 23
 NOTE_ON_STATUS = 144
 HIDE_NOTE_TYPE = 2
 SHORTEN_NOTE_TYPE = 1
+MOVE_NOTE_TYPE = 3
+SELECTION_CHANGED_RE = re.compile(r"Note selection changed: .* -> (-?\d+)")
 GEOM_APPLY_PHASE_RE = re.compile(
     r"#CAP,\d+,GEOM_APPLY,phase,([^,]+),(\d+),(\d+),(\d+)"
 )
@@ -25,6 +27,16 @@ EDIT_SESSION_ACTION_RE = re.compile(
     r"EditSessionAction: type=(\d+) noteId="
 )
 OVERLAP_NOTES_RE = re.compile(r"overlapNotes=(\d+)")
+COORD_RE = re.compile(
+    r"#CAP,\d+,COORD,abs,\d+,storage,\d+,proj,\d+,display,\d+,"
+    r"startLoop,\d+,projStart,-?\d+,loopStart,\d+,ch,(\d+),note,(\d+)"
+)
+SEVT_RE = re.compile(r"#CAP,\d+,SEVT,[A-Za-z],\d+,(\d+),(\d+)")
+MOTOR_ACK_CHANNEL = 13
+FADER_COARSE_CHANNEL = 14
+FADER_CC_CHANNEL = 15
+MOTOR_ACK_NOTES = frozenset(range(80, 88))
+FADER_CC_NUMBERS = frozenset({2, 3})
 
 
 def compose_uses_same_pitch_hold(spec) -> bool:
@@ -39,6 +51,12 @@ def compose_uses_last_bar_shorten(spec) -> bool:
     if spec is None:
         return False
     return "shorten_new_note_last_bar" in spec.interactions
+
+
+def compose_uses_reopen_select_move(spec) -> bool:
+    if spec is None:
+        return False
+    return "reenter_note_edit" in spec.interactions
 
 
 def live_capture_band_from_spec(spec) -> tuple[int, int]:
@@ -62,18 +80,25 @@ def _cap_ts(line: str) -> Optional[int]:
         return None
 
 
-def parse_note_edit_open_visual_notes(lines: list[str]) -> Optional[dict[str, int]]:
-    last: Optional[dict[str, int]] = None
+def parse_note_edit_open_rows(lines: list[str]) -> list[dict[str, int]]:
+    rows: list[dict[str, int]] = []
     for index, line in enumerate(lines):
         match = NOTE_EDIT_OPEN_RE.search(line)
         if match is None:
             continue
-        last = {
-            "index": index,
-            "visual_notes": int(match.group(1)),
-            "ts": _cap_ts(line) if _cap_ts(line) is not None else index,
-        }
-    return last
+        rows.append(
+            {
+                "index": index,
+                "visual_notes": int(match.group(1)),
+                "ts": _cap_ts(line) if _cap_ts(line) is not None else index,
+            }
+        )
+    return rows
+
+
+def parse_note_edit_open_visual_notes(lines: list[str]) -> Optional[dict[str, int]]:
+    rows = parse_note_edit_open_rows(lines)
+    return rows[-1] if rows else None
 
 
 def parse_dframes(lines: list[str]) -> list[dict[str, int]]:
@@ -102,6 +127,26 @@ def parse_playing_to_overdubbing(lines: list[str]) -> list[dict[str, int]]:
             continue
         rows.append({"index": index, "ts": int(match.group(1))})
     return rows
+
+
+def _overdubbing_index_ranges(lines: list[str]) -> list[tuple[int, int]]:
+    starts = parse_playing_to_overdubbing(lines)
+    stops = parse_overdubbing_to_playing(lines)
+    ranges: list[tuple[int, int]] = []
+    stop_i = 0
+    for start in starts:
+        end = len(lines)
+        while stop_i < len(stops) and stops[stop_i]["index"] <= start["index"]:
+            stop_i += 1
+        if stop_i < len(stops):
+            end = stops[stop_i]["index"]
+            stop_i += 1
+        ranges.append((start["index"], end))
+    return ranges
+
+
+def _index_in_ranges(index: int, ranges: list[tuple[int, int]]) -> bool:
+    return any(start <= index < end for start, end in ranges)
 
 
 def parse_overdubbing_to_playing(lines: list[str]) -> list[dict[str, int]]:
@@ -214,11 +259,43 @@ def _case_new_note_shortened(lines: list[str], *, after_index: int) -> dict[str,
     }
 
 
+def _case_reopen_select_and_move(lines: list[str]) -> dict[str, Any]:
+    issues: list[str] = []
+    opens = parse_note_edit_open_rows(lines)
+    if len(opens) < 2:
+        issues.append("missing_reopen_note_edit")
+        return {"ok": False, "issues": issues, "selection_idx": None, "moves": 0}
+    reopen_index = opens[1]["index"]
+    selection_idx: Optional[int] = None
+    moves = 0
+    for index, line in enumerate(lines):
+        if index <= reopen_index:
+            continue
+        changed = SELECTION_CHANGED_RE.search(line)
+        if changed is not None:
+            selection_idx = int(changed.group(1))
+        action = EDIT_SESSION_ACTION_RE.search(line)
+        if action is not None and int(action.group(1)) == MOVE_NOTE_TYPE:
+            moves += 1
+    if selection_idx is None or selection_idx < 0:
+        issues.append("reopen_select_empty")
+    if moves < 1:
+        issues.append("missing_reopen_move_action")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "selection_idx": selection_idx,
+        "moves": moves,
+        "reopen_index": reopen_index,
+    }
+
+
 def _case_live_overdub_notes_stay_on_roll(
     lines: list[str], *, low: int = LIVE_CAPTURE_LOW, high: int = LIVE_CAPTURE_HIGH
 ) -> dict[str, Any]:
     issues: list[str] = []
-    opened = parse_note_edit_open_visual_notes(lines)
+    opens = parse_note_edit_open_rows(lines)
+    opened = opens[0] if opens else None
     if opened is None:
         issues.append("missing_note_edit_open")
         return {
@@ -280,6 +357,46 @@ def _case_live_overdub_notes_stay_on_roll(
     }
 
 
+def _case_control_plane_not_captured(lines: list[str]) -> dict[str, Any]:
+    issues: list[str] = []
+    ranges = _overdubbing_index_ranges(lines)
+    coord_ack = 0
+    coord_fader_notes = 0
+    sevt_control = 0
+    for index, line in enumerate(lines):
+        coord = COORD_RE.search(line)
+        if coord is not None and _index_in_ranges(index, ranges):
+            channel = int(coord.group(1))
+            note = int(coord.group(2))
+            if channel == MOTOR_ACK_CHANNEL and note in MOTOR_ACK_NOTES:
+                coord_ack += 1
+            elif channel in (FADER_COARSE_CHANNEL, FADER_CC_CHANNEL):
+                coord_fader_notes += 1
+        sevt = SEVT_RE.search(line)
+        if sevt is not None:
+            channel = int(sevt.group(1))
+            note = int(sevt.group(2))
+            if channel == MOTOR_ACK_CHANNEL and note in MOTOR_ACK_NOTES:
+                sevt_control += 1
+            elif channel == FADER_COARSE_CHANNEL:
+                sevt_control += 1
+            elif channel == FADER_CC_CHANNEL and note in FADER_CC_NUMBERS:
+                sevt_control += 1
+    if coord_ack:
+        issues.append(f"overdub_coord_ch13_ack count={coord_ack}")
+    if coord_fader_notes:
+        issues.append(f"overdub_coord_ch14_or_ch15 count={coord_fader_notes}")
+    if sevt_control:
+        issues.append(f"stored_control_plane_sevt count={sevt_control}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "overdub_coord_ch13_ack": coord_ack,
+        "overdub_coord_ch14_or_ch15": coord_fader_notes,
+        "stored_control_plane_sevt": sevt_control,
+    }
+
+
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
     from hitl.stimuli import (
         get_stimulus,
@@ -310,6 +427,7 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
     cases = {
         "stimulus_validation": stimulus,
         "live_overdub_notes_stay_on_roll": live_case,
+        "control_plane_not_captured": _case_control_plane_not_captured(lines),
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))
     require_hold = (
@@ -330,6 +448,8 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         if after is None:
             after = 0
         cases["new_note_shortened"] = _case_new_note_shortened(lines, after_index=after)
+    if header_present and compose_uses_reopen_select_move(spec):
+        cases["reopen_select_and_move"] = _case_reopen_select_and_move(lines)
     issues: list[str] = []
     for name, case in cases.items():
         for issue in case.get("issues") or []:
