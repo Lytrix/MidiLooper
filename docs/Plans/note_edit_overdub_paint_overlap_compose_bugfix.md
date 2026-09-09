@@ -1,6 +1,6 @@
 # NOTE_EDIT + overdub paint/overlap compose
 
-**Status:** Plan authorized. Do not start firmware until an implement session names Stage 1.  
+**Status:** Stage 1 native verified. Stage 2 not started.  
 **Kind:** bugfix  
 **Evidence:** [`session_20260909_002450.log`](../../captures/session_20260909_002450.log)  
 **Parents:** Hydrate 4a [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md), DEC-055 overlay delta, DEC-056 companion admission  
@@ -155,21 +155,21 @@ Reuse: YES — `ensureNoteEditDisplayProjectionCachesBuilt`,
 
 ### Open before coding
 
-1. Stage 1 reuse pin: call `rebuildDisplayNotesInWindow(..., includeActiveCapture=true)` vs consume the already-built visual cache when it is the overdub compose. Implementer picks the existing function; do not write a third merge.
-2. Prepared-hit during Capture: keep snapshot `noteMembership` for committed notes, and add live-capture identities from the composed DisplayNotes. Do not construct LCR on the fader (6.0).
+1. Stage 1 reuse pin — **resolved.** `selectNoteEditCommittedBaseKind`: `captureActive && !visualCacheDirty` consumes `getVisualNotesForSlot`. `captureActive && visualCacheDirty` calls `rebuildDisplayNotesInWindow(..., includeActiveCapture=true)`. No third merge.
+2. Prepared-hit during Capture — **Stage 2.** Keep snapshot `noteMembership` for committed notes, and add live-capture identities from the composed DisplayNotes. Do not construct LCR on the fader (6.0).
 
 ### Proceed?
 
-- Plan YES. Firmware NO until the implement session starts Stage 1.
+- Stage 1 YES. Stage 2 NO until Stage 1 is independently verified.
 
 ## Verification
 
 | Gate | Pass |
 |---|---|
-| Native Stage 1 | Dirty cache + current snapshot + `captureActive` → committed base includes a live-capture note that the snapshot alone omits |
-| Native Stage 2 | Mover-hold vs that composed note emits Hide or Shorten with empty apply scratch and mover-only current state at start |
-| Device | NOTE_EDIT open → overdub → drag across an existing note: overlap paints immediately; live overdub notes stay on the roll; select does not “restore” notes that never should have left |
-| RAM1 | locals ≥ 4000 on `teensy41-capture-serial` |
+| Native Stage 1 | **PASS.** Dirty cache + current snapshot + `captureActive` → gather includes snapshot notes **and** the live Capture note. Snapshot-only omits that note. Paint of that composed base keeps `EditSession.store` empty and current state mover-only. `pio test -e native`: **1795 succeeded, 1 skipped**. |
+| Native Stage 2 | Not started. Mover-hold vs that composed note emits Hide or Shorten with empty apply scratch and mover-only current state at start |
+| Device | Stage 1 remaining: NOTE_EDIT open → overdub → live overdub notes stay on the roll while the selected note moves. Overlap-on-first-drag is Stage 2. |
+| RAM1 | **PASS.** locals **7008** on `teensy41-capture-serial` |
 
 ## Do not
 
