@@ -10,17 +10,22 @@ from pathlib import Path
 from typing import Any, Optional
 
 from hitl.context import get_context
+from dataclasses import replace
+
 from hitl.stimuli import (
     STIM_NE_OD_COMPOSE_01,
     format_fingerprint_text,
     format_human_checklist,
     prepend_hitl_header,
     run_stimulus,
+    set_run_stimulus_override,
     stimulus_report_fields,
 )
+from hitl.stimuli.spec import KIND_TEMPORARY
 from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
     LIVE_CAPTURE_LOW,
+    live_capture_band_from_spec,
     verify_note_edit_overdub_compose as _verify_note_edit_overdub_compose,
 )
 
@@ -159,6 +164,38 @@ def _first_note_slot_index(layout) -> Optional[int]:
     return None
 
 
+def _retarget_temp_live_band(spec, selected_pitch: int):
+    if spec.kind != KIND_TEMPORARY:
+        return spec
+    overdubs = []
+    for overdub in spec.overdubs:
+        if overdub.name == "IN_EDIT_OD":
+            overdubs.append(
+                replace(overdub, note_low=selected_pitch, note_high=selected_pitch)
+            )
+        else:
+            overdubs.append(overdub)
+    updated = replace(
+        spec,
+        overdubs=tuple(overdubs),
+        description=(
+            f"{spec.description}; TEMP same-pitch live {selected_pitch} "
+            "(canonical 12-23 is not the selected seed pitch)"
+        ),
+    )
+    set_run_stimulus_override(updated)
+    return updated
+
+
+def _selected_seed_pitch(layout, note_slot: int) -> Optional[int]:
+    slot = layout.nav_slots[note_slot]
+    note_idx = getattr(slot, "note_idx", -1)
+    if note_idx < 0:
+        return None
+    pitch = layout.note_index_to_pitch.get(note_idx)
+    return int(pitch) if pitch is not None else None
+
+
 def _stream_live_capture_bar(
     out_port,
     in_port,
@@ -167,6 +204,8 @@ def _stream_live_capture_bar(
     ns: argparse.Namespace,
     midi_channel: int,
     abort,
+    low_note: int = LIVE_CAPTURE_LOW,
+    high_note: int = LIVE_CAPTURE_HIGH,
 ) -> int:
     from hitl.control_constants import OVERDUB_GRID_STEP_CLOCKS
     from hitl.serial_transport import resolve_wall_tempo_for_proxy
@@ -191,8 +230,8 @@ def _stream_live_capture_bar(
         out_port,
         in_port,
         midi_channel_1based=midi_channel,
-        low_note=LIVE_CAPTURE_LOW,
-        high_note=LIVE_CAPTURE_HIGH,
+        low_note=low_note,
+        high_note=high_note,
         step_clocks=OVERDUB_GRID_STEP_CLOCKS,
         gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
         target_bars=LIVE_STREAM_BARS,
@@ -259,11 +298,26 @@ def run_note_edit_overdub_compose(args: object) -> int:
         print("[note-edit-overdub-compose] no note slot in seed layout")
         return 1
     loop_length, note_pairs = materialized_note_pairs_from_base_seed(seed_lines, base_config)
+    if not layout.note_index_to_pitch:
+        from hitl.legacy_edit_baseline import _note_index_to_pitch
+
+        layout.note_index_to_pitch = _note_index_to_pitch(note_pairs)
     stats = nav_slot_stats(note_pairs, loop_length=loop_length)
     print(
         f"[note-edit-overdub-compose] seed={seed_path} loop_length={loop_length} "
         f"notes={stats['note_pairs']} nav_slots={stats['nav_slots']}"
     )
+    selected_pitch = _selected_seed_pitch(layout, note_slot)
+    if spec.kind == KIND_TEMPORARY:
+        if selected_pitch is None:
+            print("[note-edit-overdub-compose] TEMP-A needs selected seed pitch")
+            return 1
+        spec = _retarget_temp_live_band(spec, selected_pitch)
+        print(
+            f"[note-edit-overdub-compose] TEMP same-pitch live={selected_pitch} "
+            "(canonical 12-23 cannot prove mover-hold overlap)"
+        )
+    live_low, live_high = live_capture_band_from_spec(spec)
     print(format_fingerprint_text(spec))
 
     out_port = mido.open_output(_find_midi_port(ns.midi_out, "output"))
@@ -359,6 +413,8 @@ def run_note_edit_overdub_compose(args: object) -> int:
             ns=ns,
             midi_channel=midi_channel,
             abort=abort,
+            low_note=live_low,
+            high_note=live_high,
         )
         print(f"[note-edit-overdub-compose] live Capture notes before move={live_before}")
 
@@ -381,6 +437,8 @@ def run_note_edit_overdub_compose(args: object) -> int:
             ns=ns,
             midi_channel=midi_channel,
             abort=abort,
+            low_note=live_low,
+            high_note=live_high,
         )
         print(f"[note-edit-overdub-compose] live Capture notes after move={live_after}")
 
@@ -445,8 +503,8 @@ def run_note_edit_overdub_compose(args: object) -> int:
                     "serial_log_path": str(serial_path),
                     "nav_slot_stats": stats,
                     "live_capture_pitch_band": {
-                        "low": LIVE_CAPTURE_LOW,
-                        "high": LIVE_CAPTURE_HIGH,
+                        "low": live_low,
+                        "high": live_high,
                     },
                     "in_edit_overdub_bars": IN_EDIT_OVERDUB_BARS,
                     "serial_verification": check,

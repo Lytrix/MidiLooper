@@ -14,11 +14,13 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from hitl.baseline_loop_inventory import resolve_base_seed_serial_log
 from hitl.registry import resolve_scenarios
+from hitl.stimuli import STIM_NE_OD_COMPOSE_01, set_run_stimulus_override, temporary_variant
 from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
     LIVE_CAPTURE_LOW,
     verify_note_edit_overdub_compose,
 )
+from dataclasses import replace
 
 
 def _pass_lines() -> list[str]:
@@ -134,6 +136,42 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("missing_live_capture_note_on" in issue for issue in check["issues"])
         )
+
+    def test_temp_a_same_pitch_hold_requires_overlap_action(self) -> None:
+        overdubs = []
+        for overdub in STIM_NE_OD_COMPOSE_01.overdubs:
+            if overdub.name == "IN_EDIT_OD":
+                overdubs.append(replace(overdub, note_low=48, note_high=48))
+            else:
+                overdubs.append(overdub)
+        temp = replace(
+            temporary_variant(STIM_NE_OD_COMPOSE_01.stimulus_id, "A"),
+            overdubs=tuple(overdubs),
+        )
+        set_run_stimulus_override(temp)
+        try:
+            check = verify_note_edit_overdub_compose(
+                [
+                    "[53.290] #CAP,NOTE_EDIT_OPEN,sync,visual_notes,48,session_events,0,current_state,1",
+                    "[55.785] #CAP,55785000,ST,Track,PLAYING,OVERDUBBING",
+                    "[56.000] #CAP,56000000,MI,U,144,5,48,100",
+                    "[56.050] #CAP,56050000,DFRAME,49,1000,2,100,100,100",
+                    "[56.200] POSITION EDIT: start=192",
+                    "[56.250] #CAP,56250000,GEOM_APPLY,phase,build,800,2,0",
+                    "[56.260] EditSessionAction: type=2 noteId=99 start=96 end=192 pitch=48",
+                    "[56.270] overlapNotes=1",
+                    "[56.300] #CAP,56300000,DFRAME,50,1000,3,100,100,100",
+                    "[57.000] #CAP,57000000,ST,Track,OVERDUBBING,PLAYING",
+                ],
+                SimpleNamespace(),
+            )
+            self.assertTrue(check["ok"], check["issues"])
+            self.assertEqual(check["live_capture_pitch_band"]["low"], 48)
+            overlap = check["cases"]["same_pitch_hold_emits_overlap"]
+            self.assertTrue(overlap["ok"], overlap["issues"])
+            self.assertGreaterEqual(overlap["build_actions"], 1)
+        finally:
+            set_run_stimulus_override(None)
 
 
 if __name__ == "__main__":

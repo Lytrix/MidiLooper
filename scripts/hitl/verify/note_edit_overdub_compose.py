@@ -6,6 +6,7 @@ import re
 from typing import Any, Optional
 
 from hitl.capture_transitions import _count_capture_transitions
+from hitl.stimuli.spec import KIND_TEMPORARY
 
 NOTE_EDIT_OPEN_RE = re.compile(r"NOTE_EDIT_OPEN,sync,visual_notes,(\d+)")
 DFRAME_RE = re.compile(r"#CAP,(\d+),DFRAME,(\d+),")
@@ -15,6 +16,23 @@ MI_U_RE = re.compile(r"#CAP,(\d+),MI,U,(\d+),(\d+),(\d+),(\d+)")
 LIVE_CAPTURE_LOW = 12
 LIVE_CAPTURE_HIGH = 23
 NOTE_ON_STATUS = 144
+HIDE_NOTE_TYPE = 2
+SHORTEN_NOTE_TYPE = 1
+GEOM_APPLY_PHASE_RE = re.compile(
+    r"#CAP,\d+,GEOM_APPLY,phase,([^,]+),(\d+),(\d+),(\d+)"
+)
+EDIT_SESSION_ACTION_RE = re.compile(
+    r"EditSessionAction: type=(\d+) noteId="
+)
+OVERLAP_NOTES_RE = re.compile(r"overlapNotes=(\d+)")
+
+
+def live_capture_band_from_spec(spec) -> tuple[int, int]:
+    for overdub in spec.overdubs:
+        if overdub.name == "IN_EDIT_OD" and overdub.note_low is not None:
+            high = overdub.note_high if overdub.note_high is not None else overdub.note_low
+            return int(overdub.note_low), int(high)
+    return LIVE_CAPTURE_LOW, LIVE_CAPTURE_HIGH
 
 
 def _cap_ts(line: str) -> Optional[int]:
@@ -126,7 +144,37 @@ def _move_marker_index(lines: list[str], *, after_index: int) -> Optional[int]:
     return None
 
 
-def _case_live_overdub_notes_stay_on_roll(lines: list[str]) -> dict[str, Any]:
+def _case_same_pitch_hold_emits_overlap(lines: list[str], *, after_index: int) -> dict[str, Any]:
+    issues: list[str] = []
+    build_actions = 0
+    hide_or_shorten = 0
+    overlap_notes = 0
+    for index, line in enumerate(lines):
+        if index <= after_index:
+            continue
+        phase = GEOM_APPLY_PHASE_RE.search(line)
+        if phase is not None and phase.group(1) == "build":
+            build_actions = max(build_actions, int(phase.group(3)))
+        action = EDIT_SESSION_ACTION_RE.search(line)
+        if action is not None and int(action.group(1)) in (HIDE_NOTE_TYPE, SHORTEN_NOTE_TYPE):
+            hide_or_shorten += 1
+        overlap = OVERLAP_NOTES_RE.search(line)
+        if overlap is not None:
+            overlap_notes = max(overlap_notes, int(overlap.group(1)))
+    if build_actions < 1 and hide_or_shorten < 1 and overlap_notes < 1:
+        issues.append("missing_same_pitch_hold_overlap_action")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "build_actions": build_actions,
+        "hide_or_shorten": hide_or_shorten,
+        "overlap_notes": overlap_notes,
+    }
+
+
+def _case_live_overdub_notes_stay_on_roll(
+    lines: list[str], *, low: int = LIVE_CAPTURE_LOW, high: int = LIVE_CAPTURE_HIGH
+) -> dict[str, Any]:
     issues: list[str] = []
     opened = parse_note_edit_open_visual_notes(lines)
     if opened is None:
@@ -138,6 +186,7 @@ def _case_live_overdub_notes_stay_on_roll(lines: list[str]) -> dict[str, Any]:
             "live_capture_note_ons": 0,
             "dframes_during_overdub": 0,
             "max_dframe_during_overdub": None,
+            "mover_drag_index": None,
         }
 
     overdubs = [
@@ -147,7 +196,9 @@ def _case_live_overdub_notes_stay_on_roll(lines: list[str]) -> dict[str, Any]:
         issues.append("missing_in_edit_playing_overdubbing")
 
     live_after = overdubs[0]["index"] if overdubs else opened["index"]
-    live_ons = parse_live_capture_note_ons(lines, after_index=live_after)
+    live_ons = parse_live_capture_note_ons(
+        lines, after_index=live_after, low=low, high=high
+    )
     if not live_ons:
         issues.append("missing_live_capture_note_on")
 
@@ -183,6 +234,7 @@ def _case_live_overdub_notes_stay_on_roll(lines: list[str]) -> dict[str, Any]:
         "dframes_during_overdub": len(during),
         "max_dframe_during_overdub": max_during,
         "mover_drag_seen": move_index is not None,
+        "mover_drag_index": move_index,
     }
 
 
@@ -195,11 +247,20 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
     stimulus = validate_stimulus(
         lines, spec, require_header=require_header
     )
+    low, high = live_capture_band_from_spec(spec)
     transitions = _count_capture_transitions(lines)
+    live_case = _case_live_overdub_notes_stay_on_roll(lines, low=low, high=high)
     cases = {
         "stimulus_validation": stimulus,
-        "live_overdub_notes_stay_on_roll": _case_live_overdub_notes_stay_on_roll(lines),
+        "live_overdub_notes_stay_on_roll": live_case,
     }
+    if spec.kind == KIND_TEMPORARY:
+        after = live_case.get("mover_drag_index")
+        if after is None:
+            after = 0
+        cases["same_pitch_hold_emits_overlap"] = _case_same_pitch_hold_emits_overlap(
+            lines, after_index=after
+        )
     issues: list[str] = []
     for name, case in cases.items():
         for issue in case.get("issues") or []:
@@ -210,8 +271,8 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "cases": cases,
         "transitions": {f"{a}->{b}": c for (a, b), c in transitions.items()},
         "live_capture_pitch_band": {
-            "low": LIVE_CAPTURE_LOW,
-            "high": LIVE_CAPTURE_HIGH,
+            "low": low,
+            "high": high,
         },
         "stimulus": stimulus_report_fields(spec),
     }

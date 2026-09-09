@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (HITL stimulus contract Stage 4)
+Last updated: 2026-09-09 (compose firmware Stage 2)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,20 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**HITL stimulus contract — Stage 4 shipped.** Everyday catalog:
+**NOTE_EDIT + overdub paint/overlap compose Stage 2.** Overlap candidate
+source and action build use the Stage 1 composed DisplayNotes. A
+mover-hold participant is a scoped current-state overlay row. Do not
+rematerialize the apply scratch or fill current state from every visual
+note. Do not change `STIM-NE-OD-COMPOSE-01`. Plan:
+[`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
+
+**Prior — HITL stimulus contract Stage 4 shipped.** Everyday catalog:
 `host_midi_hitl.py stimulus list`. BASE-N primitives:
 `STIM-BASE-2-2-01`, `STIM-BASE-2-ONE-OD-01`, `STIM-BASE-2-FIXTURE-01`.
-Do not change a canonical stimulus unless it is proven insufficient.
-Do not generate `.mid` files. Plan:
-[`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_enhancement.md).
 
 **Prior — NOTE_EDIT + overdub paint/overlap compose Stage 1 device PASS.**
 [`112612`](../../captures/session_20260909_112612.log) open visual **48**,
 in-edit overdub `DFRAME` **53 → 63** with 18 live notes. Required stimulus:
-`STIM-NE-OD-COMPOSE-01` v1. Do not start compose Stage 2 until asked.
+`STIM-NE-OD-COMPOSE-01` v1.
 Prior FAIL [`110622`](../../captures/session_20260909_110622.log).
-Plan:
-[`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 
 **Prior — NOTE_EDIT no-edit empty-store bake.** Shipped.
 [`002450`](../../captures/session_20260909_002450.log)

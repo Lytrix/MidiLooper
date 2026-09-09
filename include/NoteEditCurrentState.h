@@ -9,6 +9,7 @@
 
 #include "MidiEvent.h"
 #include "NoteEditFocus.h"
+#include "OverlapNoteIdSet.h"
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include "Utils/NoteUtils.h"
 
@@ -95,6 +96,9 @@ class NoteEditCurrentState {
   /// Does not overwrite Hidden / Deleted / Added / this-session geometry. Skips
   /// invalid NoteId and zero-length display spans (`endTick == startTick`).
   void ensureVisibleRowsForDisplayNotes(const NoteUtils::DisplayNoteVec& notes);
+  /// Stage 2: upsert only hold-candidate ids from the composed DisplayNotes.
+  void ensureVisibleRowsForDisplayNotes(const NoteUtils::DisplayNoteVec& notes,
+                                        const OverlapNoteIdSet& scope);
 
   /// Canonical lossy projection: Visible/Added rows only.
   void projectToSessionStore(MidiEventVec& store, uint8_t channel) const;

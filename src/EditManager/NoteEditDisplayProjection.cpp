@@ -33,6 +33,12 @@ EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::projectedNoteEditDi
     return noteEditPaintDisplayCacheNotes_;
 }
 
+EDIT_MANAGER_IMPL_MEM const NoteUtils::DisplayNoteVec& EditManager::noteEditCommittedDisplayNotes(
+    const Track& track) const {
+    ensureNoteEditDisplayProjectionCachesBuilt(track);
+    return noteEditCommittedDisplayCacheNotes_;
+}
+
 EDIT_MANAGER_IMPL_MEM NoteUtils::DisplayNoteVec EditManager::filteredSelectableDisplayNotesForNoteEdit(
     const Track& track) const {
     ensureNoteEditDisplayProjectionCachesBuilt(track);
@@ -44,6 +50,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     if (!editSession.active || loopLength == 0) {
         noteEditPaintDisplayCacheNotes_.clear();
+        noteEditCommittedDisplayCacheNotes_.clear();
         noteEditSelectableDisplayCacheNotes_.clear();
         return;
     }
@@ -113,6 +120,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
     noteEditSelectableDisplayCacheCaptureRevision_ = captureRevision;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
+    noteEditCommittedDisplayCacheNotes_ = *committedBase;
     noteEditPaintDisplayCacheNotes_ =
         projectNoteEditDisplayNotes(*committedBase, track.editAwareMidiEvents(), focus,
                                     track.getMidiChannel(), loopLength,
@@ -134,6 +142,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCacheCaptureRevision_ = 0xFFFF;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     noteEditPaintDisplayCacheNotes_.clear();
+    noteEditCommittedDisplayCacheNotes_.clear();
     noteEditSelectableDisplayCacheNotes_.clear();
 }
 

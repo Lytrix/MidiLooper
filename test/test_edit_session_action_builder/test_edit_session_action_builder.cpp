@@ -1067,6 +1067,44 @@ void test_builder_causing_skip_and_emit_follow_current_state_not_store() {
   TEST_ASSERT_EQUAL_UINT32(160u, moveActions[0].startTick);
 }
 
+void test_builder_hides_composed_hold_participant_without_store_row() {
+  // Stage 2: empty apply scratch, mover-only at start, then scoped overlay row
+  // for the composed hold participant. Hide must emit against that row.
+  constexpr NoteId kMoverId = 10;
+  constexpr NoteId kLiveCaptureId = 99;
+  const NoteBaseline moverSpan{63, 100, 0, 480};
+  const NoteBaseline liveSpan{63, 100, 96, 192};
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kMoverId, moverSpan, {63, 100, 96, 576}, NoteEditPresenceType::Visible);
+  TEST_ASSERT_EQUAL(1u, currentState.size());
+  currentState.upsertRow(kLiveCaptureId, liveSpan, liveSpan, NoteEditPresenceType::Visible);
+
+  MidiEventVec emptyStore;
+  NoteEditFocus focus{};
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.last = {63, 100, 96, 576};
+
+  ConstrainedNoteGeometry constrained{};
+  constrained.noteId = kLiveCaptureId;
+  constrained.visible = false;
+  constrained.pitch = liveSpan.pitch;
+  constrained.startTick = liveSpan.startTick;
+  constrained.endTick = liveSpan.endTick;
+
+  BaselineMap transactionBaseline;
+  transactionBaseline[kLiveCaptureId] = liveSpan;
+  const EditedGeometry geometry = makeEditedGeometry(kMoverId, focus.last);
+
+  const EditSessionActions actions =
+      buildEditSessionActions({constrained}, geometry, transactionBaseline, transactionBaseline,
+                              NoteIdList{}, emptyStore, kChannel, focus, kLoopLength,
+                              &currentState);
+  TEST_ASSERT_TRUE(emptyStore.empty());
+  TEST_ASSERT_TRUE(actionsContainTypeForNote(actions, EditSessionActionType::HideNote, kLiveCaptureId));
+}
+
 void test_builder_empty_current_state_and_store_drops_causing_pitch_232826() {
   constexpr NoteId kMover = 80;
   const NoteBaseline committed{64, 100, 768, 1056};
@@ -1124,6 +1162,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_builder_complete_cover_hides_two_shortened_stubs_022849);
   RUN_TEST(test_builder_skips_reinsert_for_sealed_deleted_022849);
   RUN_TEST(test_builder_causing_skip_and_emit_follow_current_state_not_store);
+  RUN_TEST(test_builder_hides_composed_hold_participant_without_store_row);
   RUN_TEST(test_builder_empty_current_state_and_store_drops_causing_pitch_232826);
   return UNITY_END();
 }
