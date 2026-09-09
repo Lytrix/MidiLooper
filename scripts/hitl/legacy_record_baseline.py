@@ -54,6 +54,7 @@ from hitl.capture_transitions import (
     _wait_for_recording_active,
     _wait_for_state_entry_count,
     _wait_for_transition_count,
+    _wait_until_latest_state_not,
 )
 from hitl.persistence_rows import extract_persistence_heap_rows
 from hitl.control_constants import (
@@ -83,6 +84,7 @@ from hitl.midi_io import (
     _send_short_press,
 )
 from hitl.serial_collector import RunAbort, SerialCaptureCollector, _wait_for_serial_line_idle
+from hitl.serial_tick_anchor import TRANSPORT_SHORT_DEBOUNCE_MS
 from hitl.serial_timing import (
     extract_first_note_offset as _extract_first_note_offset,
     extract_phase_boundaries as _extract_phase_boundaries,
@@ -489,6 +491,54 @@ def _send_loop_slot_select_press(
         channel_1based=CONTROL_CHANNEL_1BASED,
         press_ms=press_ms,
     )
+
+
+def _empty_slot_select_started_recording(
+    lines: list[str], *, after_index: int = 0
+) -> bool:
+    """Empty-slot Loops-row short press arms RECORDING after the tap window.
+
+    [`session_20260909_112010.log`] Loop 1 select-before-clear started capture;
+    the following record long-press cleared it (`stopToStopped`) so the seed
+    never reached PLAYING.
+    """
+    return _latest_track_state(lines, after_index=after_index) == "RECORDING"
+
+
+def _stop_empty_slot_select_recording_before_clear(
+    out_port: mido.ports.BaseOutput,
+    serial_collector: SerialCaptureCollector,
+    args: Any,
+    *,
+    after_index: int,
+    abort: RunAbort,
+) -> None:
+    """Stop a select-before-clear RECORDING so clear does not wipe a live capture."""
+    if not _empty_slot_select_started_recording(
+        serial_collector.snapshot(), after_index=after_index
+    ):
+        return
+    print(
+        "[info] Empty-slot select started RECORDING; "
+        "short-press record to stop it before clear"
+    )
+    stop_baseline = len(serial_collector.snapshot())
+    _send_short_press(
+        out_port,
+        note=RECORD_BUTTON_NOTE,
+        channel_1based=CONTROL_CHANNEL_1BASED,
+        press_ms=args.press_ms,
+    )
+    timeout_s = args.state_sync_timeout_ms / 1000.0
+    left_recording = _wait_until_latest_state_not(
+        serial_collector,
+        states=("RECORDING", "STOPPED_RECORDING"),
+        after_index=stop_baseline,
+        timeout_s=timeout_s,
+        abort=abort,
+    )
+    if not left_recording:
+        print("[warn] Timed out waiting for select-started RECORDING to stop before clear")
 
 
 def _send_record_clear_long_press(out_port: mido.ports.BaseOutput, *, clear_press_ms: int) -> None:
@@ -1387,12 +1437,24 @@ def _run_clear_before_record(
             f"[track {_user_track_number(track_index)}] select loop slot "
             f"{target_loop_slot} before clear"
         )
+        select_baseline_len = (
+            len(serial_collector.snapshot()) if serial_collector is not None else 0
+        )
         _send_loop_slot_select_press(
             out_port,
             loop_slot=target_loop_slot,
             press_ms=args.press_ms,
         )
-        time.sleep(args.phase_wait_ms / 1000.0)
+        settle_ms = max(args.phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS)
+        time.sleep(settle_ms / 1000.0)
+        if serial_collector is not None:
+            _stop_empty_slot_select_recording_before_clear(
+                out_port,
+                serial_collector,
+                args,
+                after_index=select_baseline_len,
+                abort=abort,
+            )
 
     print(
         f"[track {_user_track_number(track_index)}] clear selected loop "

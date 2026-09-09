@@ -52,6 +52,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     const uint32_t playbackRevision = loop.playbackRevision;
     const uint32_t visualRevision = loop.visualCache.revision;
+    const uint16_t captureRevision = loop.captureDisplayRevision;
     const uint32_t previewRevision = sessionPreviewRevision_;
     const uint32_t displayFingerprint =
         noteEditDisplayCacheFingerprint(focus, &editSession.noteEditCurrentState);
@@ -60,15 +61,16 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
         playbackRevision == noteEditSelectableDisplayCachePlaybackRevision_ &&
         visualRevision == noteEditSelectableDisplayCacheVisualRevision_ &&
+        captureRevision == noteEditSelectableDisplayCacheCaptureRevision_ &&
         selectedNoteIdx == noteEditSelectableDisplayCacheSelectedNoteIdx_ &&
         !noteEditPaintDisplayCacheNotes_.empty()) {
         return;
     }
 
     // B2a / Stage 1: no-capture dirty cache uses the current snapshot (4.4d) or
-    // pass materialize. Capture-active dirty cache reuses the existing overdub
-    // gather (`rebuildDisplayNotesInWindow`). Clean visual cache is that compose.
-    // Do not rematerialize EditSession.store or refill current state here.
+    // pass materialize. Capture-active always gathers (`rebuildDisplayNotesInWindow`)
+    // because NOTE_EDIT does not refresh visual cache and live notes only bump
+    // captureDisplayRevision (`110622`). Do not rematerialize EditSession.store.
     NoteUtils::DisplayNoteVec materializedCommittedBase;
     const NoteUtils::DisplayNoteVec* committedBase = nullptr;
     const DisplayWindowUtils::NoteEditCommittedBaseKind baseKind =
@@ -109,6 +111,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     noteEditSelectableDisplayCacheLoopLength_ = loopLength;
     noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
     noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
+    noteEditSelectableDisplayCacheCaptureRevision_ = captureRevision;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
     noteEditPaintDisplayCacheNotes_ =
         projectNoteEditDisplayNotes(*committedBase, track.editAwareMidiEvents(), focus,
@@ -128,6 +131,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCacheLoopLength_ = 0;
     noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     noteEditSelectableDisplayCacheVisualRevision_ = UINT32_MAX;
+    noteEditSelectableDisplayCacheCaptureRevision_ = 0xFFFF;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     noteEditPaintDisplayCacheNotes_.clear();
     noteEditSelectableDisplayCacheNotes_.clear();

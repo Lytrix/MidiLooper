@@ -357,6 +357,7 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     mutable uint32_t noteEditSelectableDisplayCacheVisualRevision_ = UINT32_MAX;
+    mutable uint16_t noteEditSelectableDisplayCacheCaptureRevision_ = 0xFFFF;
     mutable int noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     mutable NoteUtils::DisplayNoteVec noteEditPaintDisplayCacheNotes_;
     mutable NoteUtils::DisplayNoteVec noteEditSelectableDisplayCacheNotes_;

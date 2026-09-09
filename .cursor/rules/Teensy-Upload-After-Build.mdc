@@ -13,7 +13,9 @@ Use **`teensy41-capture-serial`** for firmware build/upload unless the user opts
 
 After you run a **successful** Teensy firmware build because firmware code changed, **ask the user** whether to flash the board.
 
-Do **not** upload automatically. Do **not** skip the question silently.
+**Exception:** when evaluating that change with a dedicated HITL preset, upload and run the HITL without asking — [HITL-Implementation-Evaluation.mdc](HITL-Implementation-Evaluation.mdc).
+
+Do **not** upload automatically for other builds. Do **not** skip the question silently.
 
 ## What to ask
 

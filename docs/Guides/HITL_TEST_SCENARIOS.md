@@ -60,6 +60,7 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
 | `overdub_occupy_paint` | `overdub_occupy_paint` | Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
+| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub → move selected note; live Capture notes must stay on the roll | **Yes** | `verify_note_edit_overdub_compose` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -248,6 +249,26 @@ print(verify_note_edit_fader_select_refresh(lines))
 Pass: each fader1 inbound cluster has `MO,224,14` or `#DBG outbound_step=SEND_F2` within 3 s;
 max gap between F2 bursts ≤30 s; pipeline shows `BEGIN` → `ARM` → `SEND_F2` → `TRIGGER_F2` → … → `DONE`
 and/or `QUIET_REFRESH` after user-classified quiet.
+
+### `note_edit_overdub_compose` (Stage 1 live Capture paint)
+
+Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. First case: NOTE_EDIT open → in-edit OVERDUBBING → live notes in MIDI 12–23 → move the selected seed note. Serial `DFRAME` after that move must stay above the `NOTE_EDIT_OPEN` visual-note count. Stage 2 overlap is not in this preset yet. Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+Verify-only:
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run \
+  --scenarios note_edit_overdub_compose \
+  --verify-serial-log captures/<log>.log --verify-only
+```
+
+Host unit test: `scripts/test_note_edit_overdub_compose_serial_verify.py`.
 
 ### `note_edit_select_dependent_faders` (F2/F3/F4 motor sync on F1 select)
 
