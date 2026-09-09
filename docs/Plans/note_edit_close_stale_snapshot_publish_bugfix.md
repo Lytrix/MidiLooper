@@ -27,6 +27,8 @@ closeNoteEditPass
 ```
 
 `missing in recon` / Hydrate 4a mover seed / STOPPED idle starvation are not this RC.
+NOTE_EDIT left open during OVERDUBBING paint/overlap is
+[`note_edit_overdub_paint_overlap_compose_bugfix.md`](note_edit_overdub_paint_overlap_compose_bugfix.md).
 
 ## Invariant
 
