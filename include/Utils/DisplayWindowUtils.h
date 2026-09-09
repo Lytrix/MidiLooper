@@ -463,6 +463,12 @@ inline bool shouldRetainUnpublishedVisualCacheOverStaleGather(bool publishedSnap
     return retainedVisualCacheCount > 0 && retainedVisualCacheCount > thisStaleGatherCount;
 }
 
+/// Transport stop hops every playing track (`214900`). Only the selected
+/// track may `resolveDisplayNotes` into shared `liveDisplayNotes`.
+inline bool shouldWriteLiveDisplayNotesOnTransportStop(bool isSelectedTrack) {
+    return isSelectedTrack;
+}
+
 /// `000013`: global stop hops tracks and clears `liveDisplayNotes` (141→31) before
 /// RC5a refresh. A short-loop composed frame that is larger than `visualCache`
 /// must be adopted onto that loop. Do not replace a long-loop cache with a

@@ -509,6 +509,11 @@ void test_should_retain_unpublished_visual_cache_over_stale_gather() {
       false, true, 56u, 65u, false));
 }
 
+void test_should_write_live_display_notes_on_transport_stop() {
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldWriteLiveDisplayNotesOnTransportStop(true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldWriteLiveDisplayNotesOnTransportStop(false));
+}
+
 void test_should_union_sealed_capture_preview_for_draw_source() {
   // Live session: uncovered sealed stays in the frame (012714 wrap 2).
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
@@ -1950,6 +1955,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_capture_preview_row_covered_by_visual_cache);
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
   RUN_TEST(test_should_retain_unpublished_visual_cache_over_stale_gather);
+  RUN_TEST(test_should_write_live_display_notes_on_transport_stop);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);

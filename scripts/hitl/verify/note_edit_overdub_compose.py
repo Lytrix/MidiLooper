@@ -38,6 +38,7 @@ SEVT_RE = re.compile(r"#CAP,\d+,SEVT,[A-Za-z],\d+,(\d+),(\d+)")
 DNTE_FULL_RE = re.compile(r"#CAP,\d+,DNTE,(\d+),(\d+),(\d+),(\d+),")
 DISP_LOOP_LEN_RE = re.compile(r"#CAP,\d+,DISP,\d+,[A-Za-z_]+,(\d+),")
 DISP_STATE_RE = re.compile(r"#CAP,\d+,DISP,\d+,([A-Z_]+),")
+DISP_SLOT_STATE_LEN_RE = re.compile(r"#CAP,\d+,DISP,(\d+),([A-Z_]+),(\d+),")
 DRAW_SRC_LAYERS_RE = re.compile(
     r"draw_src,layers,visual,(\d+),preview,\d+,sealed,\d+,snap,\d+,frame,(\d+),hidden,(\d+)"
 )
@@ -518,6 +519,61 @@ def _case_pending_note_edit_close_keeps_overdub_frame(lines: list[str]) -> dict[
     }
 
 
+def _case_stop_selected_slot_not_foreign_loop(lines: list[str]) -> dict[str, Any]:
+    # 214900: after OVERDUBBING→STOPPED the selected slot must keep the
+    # overdub loopLength. Later DISP on that slot must not become 6144/50688.
+    last_overdub_slot = None
+    last_overdub_len = None
+    for line in lines:
+        disp = DISP_SLOT_STATE_LEN_RE.search(line)
+        if disp is not None and disp.group(2) == "OVERDUBBING":
+            last_overdub_slot = int(disp.group(1))
+            last_overdub_len = int(disp.group(3))
+    judged = 0
+    issues: list[str] = []
+    watching = False
+    saw_selected = False
+    for line in lines:
+        st = ST_RE.search(line)
+        if st is not None and st.group(2) == "OVERDUBBING" and st.group(3) == "STOPPED":
+            watching = True
+            continue
+        if not watching:
+            continue
+        later_st = ST_RE.search(line)
+        if later_st is not None and later_st.group(3) in {
+            "PLAYING",
+            "RECORDING",
+            "OVERDUBBING",
+        }:
+            break
+        disp = DISP_SLOT_STATE_LEN_RE.search(line)
+        if disp is None or disp.group(2) != "STOPPED":
+            continue
+        if last_overdub_slot is None or int(disp.group(1)) != last_overdub_slot:
+            continue
+        judged += 1
+        loop_len = int(disp.group(3))
+        if not saw_selected:
+            saw_selected = True
+            if last_overdub_len is not None and loop_len != last_overdub_len:
+                issues.append(
+                    f"stop_selected_slot_len={loop_len} overdub_len={last_overdub_len}"
+                )
+            continue
+        if last_overdub_len is not None and loop_len != last_overdub_len:
+            issues.append(
+                f"stop_selected_slot_later_len={loop_len} overdub_len={last_overdub_len}"
+            )
+    if watching and last_overdub_len is not None and not saw_selected:
+        issues.append("stop_selected_slot_missing_disp")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "stops_judged": judged,
+    }
+
+
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
     from hitl.stimuli import (
         get_stimulus,
@@ -557,6 +613,9 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         ),
         "pending_note_edit_close_keeps_overdub_frame": (
             _case_pending_note_edit_close_keeps_overdub_frame(lines)
+        ),
+        "stop_selected_slot_not_foreign_loop": _case_stop_selected_slot_not_foreign_loop(
+            lines
         ),
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))

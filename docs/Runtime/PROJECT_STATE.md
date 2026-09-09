@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (NOTE_EDIT overdub-exit RC1 native shipped)
+Last updated: 2026-09-09 (NOTE_EDIT overdub-exit RC1+RC2 native shipped)
 
 ---
 
