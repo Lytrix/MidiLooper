@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (empty-store bake device PASS 002450)
+Last updated: 2026-09-09 (overdub+NOTE_EDIT paint/overlap compose plan)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,20 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**No new authorized slice.** Empty-store bake is shipped
-([`002450`](../../captures/session_20260909_002450.log) `skip empty-store
-bake`). Do not start hydrate 4b–5, STOPPED idle `pending=1` repair, or
-close-NOTE_EDIT-before-overdub.
+**NOTE_EDIT + overdub paint/overlap compose — plan authorized, firmware
+not started.** [`002450`](../../captures/session_20260909_002450.log):
+NOTE_EDIT stayed open into OVERDUBBING. Paint committed base omitted live
+Capture; overlap hit the published snapshot and an empty apply scratch.
+Stage 1 paint, then Stage 2 overlap. Do not start firmware until an
+implement session names Stage 1. Do not start hydrate 4b–5,
+close-NOTE_EDIT-before-overdub, or open rematerialize.
+Plan:
+[`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 
-Named leftover in the same capture (needs authorize): NOTE_EDIT left
-open into OVERDUBBING — overlap/display compose. Not SD persist (no
-`LoopPersist` after 31.2 s). Do not start that firmware from this
-closeout.
+**Prior — NOTE_EDIT no-edit empty-store bake.** Shipped.
+[`002450`](../../captures/session_20260909_002450.log)
+`NoteEditPass close skip empty-store bake`. Plan:
+[`note_edit_close_empty_store_bake_bugfix.md`](../Plans/note_edit_close_empty_store_bake_bugfix.md).
 
 **Prior — DEC-056 stale-root companion admission.** Shipped. RAM1 locals
 **7008**. Native **1790 succeeded, 1 skipped**. Current-root close

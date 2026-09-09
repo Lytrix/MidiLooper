@@ -79,6 +79,8 @@ Stages, invariants, overlay lifecycle, and work-shape gates live in the proposal
 Hydrate 1–4a shipped. 4a empty apply scratch made no-edit close rematerialize
 and bake Deletes ([`001857`](../../captures/session_20260909_001857.log)).
 Fix: [`note_edit_close_empty_store_bake_bugfix.md`](note_edit_close_empty_store_bake_bugfix.md).
+Same capture leftover (NOTE_EDIT open during OVERDUBBING):
+[`note_edit_overdub_paint_overlap_compose_bugfix.md`](note_edit_overdub_paint_overlap_compose_bugfix.md).
 Do not start 4b–5.
 
 ---
