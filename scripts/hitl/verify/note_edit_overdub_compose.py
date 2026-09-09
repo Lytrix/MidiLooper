@@ -161,8 +161,11 @@ def _case_same_pitch_hold_emits_overlap(lines: list[str], *, after_index: int) -
         overlap = OVERLAP_NOTES_RE.search(line)
         if overlap is not None:
             overlap_notes = max(overlap_notes, int(overlap.group(1)))
-    if any("coarse_blocked" in line for line in lines[after_index + 1 :]):
+    window = lines[after_index + 1 :]
+    if any("coarse_blocked" in line for line in window):
         issues.append("coarse_fader_blocked_pending_select")
+    elif any("No note selected for coarse editing" in line for line in window):
+        issues.append("coarse_fader_no_note_selected")
     elif hide_or_shorten < 1:
         issues.append("missing_same_pitch_hold_overlap_action")
     return {

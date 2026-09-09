@@ -14,6 +14,12 @@ if str(_SCRIPT_DIR) not in sys.path:
 
 from hitl.baseline_loop_inventory import resolve_base_seed_serial_log
 from hitl.registry import resolve_scenarios
+from hitl.scenarios.note_edit_overdub_compose import (
+    _temp_hold_target_step,
+    _temp_layout_with_live_notes,
+    _temp_seed_slot_index,
+    parse_select_apply,
+)
 from hitl.stimuli import STIM_NE_OD_COMPOSE_01, set_run_stimulus_override, temporary_variant
 from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
@@ -136,6 +142,23 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("missing_live_capture_note_on" in issue for issue in check["issues"])
         )
+
+    def test_temp_lock_keeps_seed_and_moves_onto_later_live_note(self) -> None:
+        seed_tick = 104
+        live_ticks = [0, 96, 192, 288, 384]
+        layout = _temp_layout_with_live_notes(
+            [(seed_tick, 48), (480, 49)], live_ticks, 48, 2304
+        )
+        seed_slot = _temp_seed_slot_index(layout, seed_tick, 48)
+        self.assertIsNotNone(seed_slot)
+        seed = layout.nav_slots[seed_slot]
+        self.assertEqual(seed.rel_tick, seed_tick)
+        self.assertEqual(layout.note_index_to_pitch[seed.note_idx], 48)
+        self.assertEqual(_temp_hold_target_step(live_ticks, seed_tick, 2304), 6)
+        tick, note_idx, applied = parse_select_apply(
+            "#DBG select_apply selected_tick=81 note_idx=7 slot=3 prior_slot=1 apply=1 reason=note"
+        )
+        self.assertEqual((tick, note_idx, applied), (81, 7, 1))
 
     def test_temp_a_same_pitch_hold_requires_overlap_action(self) -> None:
         overdubs = []
