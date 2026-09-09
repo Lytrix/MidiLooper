@@ -1,10 +1,10 @@
 # NOTE_EDIT control-plane record + display stall
 
-**Status:** RC1 shipped — RC2 implementing — RC3 not started  
-**Kind:** bugfix (three RCs, one commit each)  
-**Evidence:** [`session_20260909_170818.log`](../../captures/session_20260909_170818.log)  
+**Status:** RC1 shipped — RC2 shipped — RC4 implementing — RC3 not started  
+**Kind:** bugfix (four RCs, one commit each)  
+**Evidence:** [`session_20260909_170818.log`](../../captures/session_20260909_170818.log) apply stall; [`session_20260909_183453.log`](../../captures/session_20260909_183453.log) RC2 device + deselect-commit stall  
 **Does not reopen:** [`note_edit_overdub_select_pitch_hang_bugfix.md`](note_edit_overdub_select_pitch_hang_bugfix.md) overdub `value_only` (keep), compose `STIM-NE-OD-COMPOSE-01` / `02` / `03` / `04` recipes, hydrate, snapshot publication  
-**Does not start:** a new apply scheduler, interval reservation, `RuntimeWorkBudget::admit`, a new control-plane noun, persist scheduler / `saveState()`, a second derived-representation owner
+**Does not start:** a new apply scheduler, interval reservation, `RuntimeWorkBudget::admit`, a new control-plane noun, persist scheduler / `saveState()`, a second derived-representation owner, a deferred-commit FSM
 
 ## Debugging boundary
 
@@ -22,15 +22,21 @@ queuePendingPlayingEdit* while transport running
 NoteEditFaderMotorTiming::runMotorFaderBurst delay()
     while PLAYING (shouldRunBlockingMotorBurst(false) == true)
     ← RC3
+
+macroCommitPendingEditsBeforeSelectNav
+    → commitAllPendingNoteEditActions
+    → commitEditAction logChangeLengthCommitTrace reconstructNotes × 4
+      + mergeActiveCapturePasses(takeOnlyFlat) for take_only log only
+    ← RC4
 ```
 
 ## Architecture checkpoint
 
-| Question | RC1 | RC2 | RC3 |
-|---|---|---|---|
-| Ownership change? | NO — extend `RECORD_EXCLUDE_*` used by `MidiHandler::isControlChannel` | NO — extend `ensureNoteEditDisplayProjectionCachesBuilt` + `NoteGeometryResolver::resolve` | NO — extend `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst` |
-| State transition change? | NO | NO | NO |
-| Unbounded interval owner? | NO — filter before `Track::noteOn` | NO if the slice *removes* the full-loop gather/reconstruct on apply. STOP if it adds a content-unbounded owner on the MIDI interval | NO — removes `delay()` from the PLAYING motor path |
+| Question | RC1 | RC2 | RC3 | RC4 |
+|---|---|---|---|---|
+| Ownership change? | NO — extend `RECORD_EXCLUDE_*` used by `MidiHandler::isControlChannel` | NO — extend `ensureNoteEditDisplayProjectionCachesBuilt` + `NoteGeometryResolver::resolve` | NO — extend `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst` | NO — extend `commitEditAction` / `logChangeLengthCommitTrace` |
+| State transition change? | NO | NO | NO | NO — select-nav still commits before focus rebuild |
+| Unbounded interval owner? | NO — filter before `Track::noteOn` | NO if the slice *removes* the full-loop gather/reconstruct on apply. STOP if it adds a content-unbounded owner on the MIDI interval | NO — removes `delay()` from the PLAYING motor path | NO — removes four `reconstructNotes` walks and a log-only `mergeActiveCapturePasses` from the USB MIDI callback |
 
 RC2 follows [RuntimeArchitecture.md](../Authority/Architecture/RuntimeArchitecture.md) (DEC-016): apply is a **Runtime Request** (derived notes × NOTE_EDIT interval). It must not rebuild the full derived representation. If RC2 needs a new apply owner, a deferred-apply FSM, or a new representation, stop and open a design session.
 
@@ -77,8 +83,9 @@ Playing geometry in this file is not the stall (resolve 3.6–4.0 ms, `DNTE` ~8 
 1. **RC1** — stop recording DROID control-plane voice. Commit. Recapture NOTE_EDIT move + pitch during OVERDUBBING and PLAYING.
 2. **RC2** — after RC1 recapture, ship if CaptureAwareGather / resolver / reconstruct still rebuilds `[0, loopLength)` on apply (or resolve stays far above the playing ~4 ms move). One owner, one commit.
 3. **RC3** — PLAYING motor `value_only`. Independent of RC2. May ship after RC1 even if RC2 is skipped.
+4. **RC4** — after RC2 recapture, stop `commitEditAction` four-view reconstruct on select-nav leave. Do not fold into RC2 or RC3. Do not defer the commit.
 
-Do not amend RC1 when HITL unmasks RC2.
+Do not amend RC1 when HITL unmasks RC2. Do not amend RC2 when HITL unmasks RC4.
 
 ---
 
@@ -130,7 +137,9 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 
 **Native:** Fixture: capture-active NOTE_EDIT Move/Pitch does not call `rebuildDisplayNotesInWindow` for `[0, loopLength)` when the snapshot source revision is unchanged. Reuse existing `test_note_edit_*` / compose overlap fixtures; do not add a second resolver.
 
-**HITL:** Same compose-reopen preset. Serial: no full-loop gather on in-edit overdub Move/Pitch while the published root is unchanged; `GEOM_APPLY,resolve` in the playing-class band from the RC1 recapture; `DNTE` follows the applied tick/pitch without a 1 s+ gap after the first queue of that gesture.
+**HITL:** Same compose-reopen preset. Serial: `overdub_apply_reuses_committed_base` — in-edit overdub `GEOM_APPLY,resolve` ≤ 20,000 µs (170818 PLAYING band 3.6–4.0 ms; gather was 91–234 ms). `DNTE` follows the applied tick/pitch without a 1 s+ gap after the first queue of that gesture.
+
+**Shipped:** Device [`183453`](../../captures/session_20260909_183453.log) `GEOM_APPLY,resolve` n=183 min **5899** µs p50 **12873** p90 **16295** max **21608** (170818 overdub gather was 91–234 ms). Capture-active apply no longer takes `CaptureAwareGather`. Compose-reopen HITL still does not land a real overdub resolve (3-bar seed / clock); do not keep retrying `04` for this RC.
 
 ---
 
@@ -146,6 +155,32 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 
 ---
 
+## RC4 — select-nav commit does not reconstruct the loop to print traces
+
+**Invariant:** `commitEditAction` rematerializes the session store from committed passes. It does not call `NoteUtils::reconstructNotes` on four flats, and it does not call `Loop::mergeActiveCapturePasses` solely to feed `logChangeLengthCommitTrace("take_only")`. Select-nav still runs `macroCommitPendingEditsBeforeSelectNav` → `commitAllPendingNoteEditActions` before focus rebuild.
+
+**Owner:** `EditManager::commitEditAction` and `logChangeLengthCommitTrace`. Do not add a deferred-commit owner. Do not skip `copyNoteEditCommitBase` + `loadFromEvents` rematerialize. Do not move `rebuildVisualCacheFromPasses` in this RC.
+
+**Capture pin ([`183453`](../../captures/session_20260909_183453.log)):** First F1 leave after a pending edit (note or empty step) runs the same macro commit. Empty-step with nothing pending is cheap (`2255.244` no `commitEditAction` lines). Three commits in this file:
+
+| Host time | Trigger | `commitEditAction` traces | USB callback |
+|---|---|---|---|
+| 2253.650 | note 34→33 | replay_flat 2253.733 … loop_materialized 2253.883 (each `reconstructNotes` on 145–150 events) | `hostdrain` **605232** µs |
+| 2279.376 | note 13→14 | 2279.497–2279.725; selection 13→14 at 2279.903 | `hostdrain` **916528** µs |
+| 2295.797 | note 16→15 | 2295.956–2296.254; selection 16→15 at 2296.492 | later `hostdrain` **899170** µs |
+
+`logChangeLengthCommitTrace` always calls `reconstructNotes(flat, loopLength, false)` for `replay_flat`, `take_only`, `session_store`, and `loop_materialized`. `takeOnlyFlat` is written only by `mergeActiveCapturePasses` and read only by that log.
+
+**Allowed:** gate the four-view reconstruct (and the take_only merge) behind a `constexpr bool` that defaults false. Keep persist-identity / incoming-row / `commitEditAction trace` lines.
+
+**Forbidden without a design session:** deferring macro commit off select-nav; a commit slice FSM; skipping session-store rematerialize; changing `rebuildVisualCacheFromPasses` on this path.
+
+**Native:** Existing `test_edit_apply` commit fixtures. No second commit owner.
+
+**HITL:** Reuse compose verify. Serial: `commit_skips_trace_reconstruct` — no `commitEditAction replay_flat` / `take_only` / `session_store` / `loop_materialized` lines. Device recapture of the 183453 leave-after-edit pattern: those four lines absent; `hostdrain` after that leave is not the 600–900 ms reconstruct batch.
+
+---
+
 ## HITL / docs closeout
 
 | Gate | When |
@@ -154,6 +189,7 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 | `pio test -e native` | each firmware RC |
 | Compose-reopen HITL | RC1 (and RC2 if implemented) — upload+run without asking |
 | PLAYING motor HITL | RC3 |
+| Compose verify `commit_skips_trace_reconstruct` + device recapture | RC4 |
 | [`MIDI_CONFIG_GUIDE.md`](../Guides/MIDI_CONFIG_GUIDE.md) + `MidiConfig.h` comments | RC1 |
 | [`HITL_TEST_SCENARIOS.md`](../Guides/HITL_TEST_SCENARIOS.md) verifier bullets | when a verify check is added |
 | [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) | each shipped RC |

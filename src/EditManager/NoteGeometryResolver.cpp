@@ -12,6 +12,7 @@
 #include "EditSessionInteraction.h"
 #include "EditSessionLiveStoreSpan.h"
 #include "Globals.h"
+#include "Loop.h"
 #include "NoteEditCurrentState.h"
 #include "OverlapNoteIdObservation.h"
 #include "OverlapNoteIdSet.h"
@@ -112,13 +113,20 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
             OverlapNoteIdObservation::collectAnalyzeOverlapNoteIds(
                 committedDisplayNotes, holdPitch, causingSpan->startTick, causingSpan->endTick,
                 loopLength, focus.movingNoteId, holdCandidates, &holdStats);
-        } else if (trackManager.getSelectedLoop(track).captureActive()) {
+        }
+        const Loop& selectedLoop = trackManager.getSelectedLoop(track);
+        if (selectedLoop.captureActive()) {
             OverlapNoteIdObservation::unionAnalyzeOverlapNoteIds(
-                committedDisplayNotes, holdPitch, causingSpan->startTick, causingSpan->endTick,
-                loopLength, focus.movingNoteId, holdCandidates, &holdStats);
+                selectedLoop.capturePreview.notes, holdPitch, causingSpan->startTick,
+                causingSpan->endTick, loopLength, focus.movingNoteId, holdCandidates,
+                &holdStats);
         }
         if (holdCandidates.size() > 0) {
             currentState.ensureVisibleRowsForDisplayNotes(committedDisplayNotes, holdCandidates);
+            if (selectedLoop.captureActive()) {
+                currentState.ensureVisibleRowsForDisplayNotes(selectedLoop.capturePreview.notes,
+                                                              holdCandidates);
+            }
         }
     }
     currentStateReader = currentState.empty() ? nullptr : &currentState;
@@ -266,6 +274,10 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
     applyEditSessionActions(actions, liveStore, focus, channel, loopLength,
                             &manager.getEditSession().applyOwnedEditPassRows,
                             &currentState);
+    Loop& loop = trackManager.getSelectedLoop(track);
+    if (loop.hasOverdubSourceView()) {
+        loop.applyNoteEditCurrentStateToOverdubSourceView(currentState);
+    }
 #if defined(SESSION_CAPTURE)
     logGeomApplyPhase("apply", micros() - applyStartUs,
                       static_cast<uint32_t>(actions.size()), 0);

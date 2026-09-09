@@ -4622,8 +4622,8 @@ void test_draw_source_reuses_visual_cache_when_revision_and_coverage_match() {
 }
 
 void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
-  // Stage 1 / 002450: dirty cache + current snapshot + captureActive must not
-  // collapse to snapshot-only. Same gather as rebuildDisplayNotesInWindow.
+  // RC2 / 170818: capture-active dirty+current uses Snapshot, not
+  // CaptureAwareGather. Live notes stay on capturePreview overlay.
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -4651,11 +4651,11 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
   loop.visualCacheDirty = true;
 
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather),
+      static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::Snapshot),
       static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
           loop.captureActive(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent())));
   TEST_ASSERT_EQUAL(
-      static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather),
+      static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::VisualCache),
       static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
           loop.captureActive(), false, loop.publishedSnapshotIsCurrent())));
 
@@ -4666,6 +4666,13 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
     }
   }
   TEST_ASSERT_FALSE(snapshotHasLive);
+  bool previewHasLive = false;
+  for (const NoteUtils::DisplayNote& note : loop.capturePreview.notes) {
+    if (note.note == 72) {
+      previewHasLive = true;
+    }
+  }
+  TEST_ASSERT_TRUE(previewHasLive);
 
   SessionMidiEventVec gatherBuffer;
   Loop::SnapshotWindowGatherPath path = Loop::SnapshotWindowGatherPath::None;

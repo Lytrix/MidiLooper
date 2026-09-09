@@ -5,7 +5,6 @@
 
 #include <Arduino.h>
 
-#include "DisplayManagerInternal.h"
 #include "EditManager.h"
 #include "Globals.h"
 #include "LoopContentResolution.h"
@@ -67,11 +66,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         previewRevision == noteEditSelectableDisplayCachePreviewRevision_ &&
         loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
         playbackRevision == noteEditSelectableDisplayCachePlaybackRevision_ &&
-        visualRevision == noteEditSelectableDisplayCacheVisualRevision_ &&
-        captureRevision == noteEditSelectableDisplayCacheCaptureRevision_;
+        visualRevision == noteEditSelectableDisplayCacheVisualRevision_;
     const bool paintKeysMatch =
         displayFingerprint == noteEditSelectableDisplayCacheFingerprint_ &&
-        selectedNoteIdx == noteEditSelectableDisplayCacheSelectedNoteIdx_;
+        selectedNoteIdx == noteEditSelectableDisplayCacheSelectedNoteIdx_ &&
+        captureRevision == noteEditSelectableDisplayCacheCaptureRevision_;
     const DisplayWindowUtils::NoteEditProjectionCacheReuse cacheReuse =
         DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
             !noteEditCommittedDisplayCacheNotes_.empty(), committedBaseKeysMatch,
@@ -81,23 +80,17 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     }
 
     if (cacheReuse == DisplayWindowUtils::NoteEditProjectionCacheReuse::RebuildCommittedBase) {
-        // B2a / Stage 1: no-capture dirty cache uses the current snapshot (4.4d) or
-        // pass materialize. Capture-active always gathers (`rebuildDisplayNotesInWindow`)
-        // because NOTE_EDIT does not refresh visual cache and live notes only bump
-        // captureDisplayRevision (`110622`). Do not rematerialize EditSession.store.
+        // Snapshot / visual cache / pass materialize only. Live Capture is
+        // capturePreview overlay on paint and overlap analyze — do not
+        // rebuildDisplayNotesInWindow([0, loopLength)) here (`170818`).
+        // Do not rematerialize EditSession.store.
         NoteUtils::DisplayNoteVec materializedCommittedBase;
         const NoteUtils::DisplayNoteVec* committedBase = nullptr;
         const DisplayWindowUtils::NoteEditCommittedBaseKind baseKind =
             DisplayWindowUtils::selectNoteEditCommittedBaseKind(
                 loop.captureActive(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent());
         switch (baseKind) {
-        case DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather: {
-            SessionMidiEventVec gatherBuffer;
-            DisplayManagerInternal::rebuildDisplayNotesInWindow(
-                loop, loop, loopLength, 0, loopLength, gatherBuffer, materializedCommittedBase, true);
-            committedBase = &materializedCommittedBase;
-            break;
-        }
+        case DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather:
         case DisplayWindowUtils::NoteEditCommittedBaseKind::Snapshot:
             if (const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot()) {
                 LoopContentResolution::resolveDisplayNotes(*snapshot, materializedCommittedBase);
@@ -124,13 +117,34 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         noteEditSelectableDisplayCacheLoopLength_ = loopLength;
         noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
         noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
-        noteEditSelectableDisplayCacheCaptureRevision_ = captureRevision;
     }
 
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
+    noteEditSelectableDisplayCacheCaptureRevision_ = captureRevision;
+    const NoteUtils::DisplayNoteVec* paintSource = &noteEditCommittedDisplayCacheNotes_;
+    NoteUtils::DisplayNoteVec captureOverlaySource;
+    if (loop.captureActive() && !loop.capturePreview.notes.empty()) {
+        captureOverlaySource = noteEditCommittedDisplayCacheNotes_;
+        for (const NoteUtils::DisplayNote& preview : loop.capturePreview.notes) {
+            if (preview.noteId == kInvalidNoteId) {
+                continue;
+            }
+            bool alreadyPresent = false;
+            for (const NoteUtils::DisplayNote& existing : captureOverlaySource) {
+                if (existing.noteId == preview.noteId) {
+                    alreadyPresent = true;
+                    break;
+                }
+            }
+            if (!alreadyPresent) {
+                captureOverlaySource.push_back(preview);
+            }
+        }
+        paintSource = &captureOverlaySource;
+    }
     noteEditPaintDisplayCacheNotes_ =
-        projectNoteEditDisplayNotes(noteEditCommittedDisplayCacheNotes_,
+        projectNoteEditDisplayNotes(*paintSource,
                                     track.editAwareMidiEvents(), focus,
                                     track.getMidiChannel(), loopLength,
                                     &editSession.noteEditCurrentState);
