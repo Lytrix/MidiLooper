@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (compose last-bar beat-4 Shorten HITL shipped)
+Last updated: 2026-09-09 (overdub select/pitch hang shipped)
 
 ---
 
@@ -114,7 +114,10 @@ Compose Stage 1+2 device PASS. First-note loop-end display is parked
 reproduce;
 [`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md)).
 `STIM-NE-OD-COMPOSE-03` last-bar beat-4 Shorten HITL device PASS
-[`133714`](../../captures/session_20260909_133714.log)
+[`133714`](../../captures/session_20260909_133714.log). After that recipe,
+[`134549`](../../captures/session_20260909_134549.log) Shorten `58` `2102–2111`
+then LCR `e=2212` / reopen `empty_step`
+([`note_edit_overdub_compose_shorten_hold_select_bugfix.md`](../Plans/note_edit_overdub_compose_shorten_hold_select_bugfix.md)).
 ([`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](../Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md)).
 ([`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md)).
 Do not start hydrate 4b–5.

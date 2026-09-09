@@ -168,6 +168,25 @@ void test_resolve_note_edit_committed_base_from_snapshot() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldResolveNoteEditCommittedBaseFromSnapshot(false, false));
 }
 
+void test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather() {
+  using Reuse = DisplayWindowUtils::NoteEditProjectionCacheReuse;
+  TEST_ASSERT_EQUAL(static_cast<int>(Reuse::FullHit),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+                        true, true, true, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Reuse::ReprojectFromCommittedBase),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+                        true, true, true, false)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Reuse::ReprojectFromCommittedBase),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+                        true, true, false, false)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Reuse::RebuildCommittedBase),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+                        true, false, true, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Reuse::RebuildCommittedBase),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+                        false, true, true, true)));
+}
+
 void test_select_note_edit_committed_base_kind_capture_vs_playing() {
   using Kind = DisplayWindowUtils::NoteEditCommittedBaseKind;
   TEST_ASSERT_EQUAL(static_cast<int>(Kind::CaptureAwareGather),
@@ -1884,6 +1903,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_playhead_tails_apply_when_over_budget);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_resolve_note_edit_committed_base_from_snapshot);
+  RUN_TEST(test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather);
   RUN_TEST(test_select_note_edit_committed_base_kind_capture_vs_playing);
   RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);

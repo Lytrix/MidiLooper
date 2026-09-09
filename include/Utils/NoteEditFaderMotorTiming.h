@@ -51,6 +51,11 @@ inline bool selectDependentSettleExpired(uint32_t nowMs, uint32_t settleUntilMs)
     return settleUntilMs == 0 || nowMs >= settleUntilMs;
 }
 
+/** `145634`: delay() motor bursts during overdub starve USB Host MIDI drain. */
+inline bool shouldRunBlockingMotorBurst(bool overdubbing) {
+    return !overdubbing;
+}
+
 /**
  * DROID motorfader burst: three position sends (12-tick gaps), notegate on with the third,
  * short note (24 ticks) for fast motor refresh. Matches Ableton-validated fader2/3/4 clips.

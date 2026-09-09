@@ -146,6 +146,26 @@ enum class NoteEditCommittedBaseKind {
 /// live Capture. NOTE_EDIT does not refresh visual cache, so a clean cache is
 /// the pre-capture compose (`110622` DFRAME stayed at open count). No-capture
 /// keeps 4.4d.
+/// `145634`: select/pitch during overdub re-projected on every F1 note change.
+/// Fingerprint / selected-note changes must not re-gather the committed base.
+enum class NoteEditProjectionCacheReuse {
+  FullHit,
+  ReprojectFromCommittedBase,
+  RebuildCommittedBase,
+};
+
+inline NoteEditProjectionCacheReuse selectNoteEditProjectionCacheReuse(
+    bool committedBasePresent, bool committedBaseKeysMatch, bool paintPresent,
+    bool paintKeysMatch) {
+    if (committedBasePresent && committedBaseKeysMatch && paintPresent && paintKeysMatch) {
+        return NoteEditProjectionCacheReuse::FullHit;
+    }
+    if (committedBasePresent && committedBaseKeysMatch) {
+        return NoteEditProjectionCacheReuse::ReprojectFromCommittedBase;
+    }
+    return NoteEditProjectionCacheReuse::RebuildCommittedBase;
+}
+
 inline NoteEditCommittedBaseKind selectNoteEditCommittedBaseKind(bool captureActive,
                                                                  bool visualCacheDirty,
                                                                  bool publishedSnapshotIsCurrent) {

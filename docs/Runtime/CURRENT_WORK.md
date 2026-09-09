@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (compose last-bar beat-4 Shorten HITL shipped)
+Last updated: 2026-09-09 (overdub select/pitch hang shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,26 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Compose last-bar beat-4 Shorten HITL — shipped.** Host-only. Stimulus
+**NOTE_EDIT select/pitch during overdub hang — shipped.** `145634` full-loop
+gather + `delay()` motor burst. Device PASS
+[`152705`](../../captures/session_20260909_152705.log)
+`sequence=value_only`; HITL-04 machine PASS 4/4
+[`152745`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_152745.json).
+Native **1804 succeeded, 1 skipped**. RAM1 locals **7008**. Plan:
+[`note_edit_overdub_select_pitch_hang_bugfix.md`](../Plans/note_edit_overdub_select_pitch_hang_bugfix.md).
+
+**Prior — Compose Shorten hold + reopen select — implementing.** RC1 clips
+NOTE_EDIT Shorten onto `overdubSourceViewNotes_` and keeps rematerialize
+Shorten against a longer visual. RC2 seals rematerialize-open current
+state and lets sixteenth select hit an off-grid note in that step.
+HITL `STIM-NE-OD-COMPOSE-04` / preset
+`note_edit_overdub_compose_last_bar_reopen` (do not edit `01`/`02`/`03`).
+Exit/re-enter is short press. NOTE_EDIT close arms loop-fader ignore
+before LOOP_EDIT inbound routing.
+Plan:
+[`note_edit_overdub_compose_shorten_hold_select_bugfix.md`](../Plans/note_edit_overdub_compose_shorten_hold_select_bugfix.md).
+
+**Prior — Compose last-bar beat-4 Shorten HITL — shipped.** Host-only. Stimulus
 `STIM-NE-OD-COMPOSE-03` v1. Preset
 `note_edit_overdub_compose_last_bar_shorten`. Device PASS
 [`133714`](../../captures/session_20260909_133714.log) /
