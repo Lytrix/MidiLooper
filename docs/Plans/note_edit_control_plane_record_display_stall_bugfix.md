@@ -1,7 +1,7 @@
 # NOTE_EDIT control-plane record + display stall
 
-**Status:** RC1 shipped — RC2 shipped — RC3 shipped — RC4 in tree — RC5 on device — RC6 implementing  
-**Kind:** bugfix (six RCs, one commit each)  
+**Status:** RC1 shipped — RC2 shipped — RC3 shipped — RC4 in tree — RC5 on device — RC6 implementing — RC7 shipped — RC8 shipped  
+**Kind:** bugfix (eight RCs, one commit each)  
 **Evidence:** [`session_20260909_170818.log`](../../captures/session_20260909_170818.log) apply stall; [`session_20260909_183453.log`](../../captures/session_20260909_183453.log) RC2 device + deselect-commit stall; [`session_20260909_190408.log`](../../captures/session_20260909_190408.log) RC5 motors + RC6 mover drop  
 **Does not reopen:** [`note_edit_overdub_select_pitch_hang_bugfix.md`](note_edit_overdub_select_pitch_hang_bugfix.md) overdub `value_only` (keep), compose `STIM-NE-OD-COMPOSE-01` / `02` / `03` / `04` recipes, hydrate, snapshot publication  
 **Does not start:** a new apply scheduler, interval reservation, `RuntimeWorkBudget::admit`, a new control-plane noun, persist scheduler / `saveState()`, a second derived-representation owner, a deferred-commit FSM
@@ -36,15 +36,25 @@ OVERDUBBING ValueOnly motor flush
 projectNoteEditDisplayNotes currentStateRowAllowedAsPaintExtra
     → capture-session mover omitted from snapshot committed base
     ← RC6
+
+ValueOnly notegate NoteOn then NoteOff in the same millisecond
+    → DROID stores position and does not travel (`232309` F1 echo −8176 after pb=2730)
+    ← RC7
+
+resolveTargetPitchbend maps neighborhood slot index onto full F1 travel
+    → tick 2640 / 6 slots → pb −4915 (`234815`)
+    ← RC8
 ```
 
 ## Architecture checkpoint
 
-| Question | RC1 | RC2 | RC3 | RC4 | RC5 | RC6 |
+| Question | RC1 | RC2 | RC3 | RC4 | RC5 | RC6 | RC7 |
 |---|---|---|---|---|---|---|
-| Ownership change? | NO — extend `RECORD_EXCLUDE_*` used by `MidiHandler::isControlChannel` | NO — extend `ensureNoteEditDisplayProjectionCachesBuilt` + `NoteGeometryResolver::resolve` | NO — extend `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst` | NO — extend `commitEditAction` / `logChangeLengthCommitTrace` | NO — extend `sendFader1MotorTimedBurst` / `sendDependentFaderNotegates` | NO — extend `currentStateRowAllowedAsPaintExtra` |
-| State transition change? | NO | NO | NO | NO — select-nav still commits before focus rebuild | NO | NO |
-| Unbounded interval owner? | NO — filter before `Track::noteOn` | NO if the slice *removes* the full-loop gather/reconstruct on apply. STOP if it adds a content-unbounded owner on the MIDI interval | NO — removes `delay()` from the PLAYING motor path | NO — removes four `reconstructNotes` walks and a log-only `mergeActiveCapturePasses` from the USB MIDI callback | NO — notegate On/Off without `delay()` | NO — same projection walk, one extra predicate |
+| Ownership change? | NO — extend `RECORD_EXCLUDE_*` used by `MidiHandler::isControlChannel` | NO — extend `ensureNoteEditDisplayProjectionCachesBuilt` + `NoteGeometryResolver::resolve` | NO — extend `NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst` | NO — extend `commitEditAction` / `logChangeLengthCommitTrace` | NO — extend `sendFader1MotorTimedBurst` / `sendDependentFaderNotegates` | NO — extend `currentStateRowAllowedAsPaintExtra` | NO — extend `sendSelectFaderNotegate` / `sendDependentFaderNotegates` + `ControlSurfaceManager::update` |
+| State transition change? | NO | NO | NO | NO — select-nav still commits before focus rebuild | NO | NO | NO |
+| Unbounded interval owner? | NO — filter before `Track::noteOn` | NO if the slice *removes* the full-loop gather/reconstruct on apply. STOP if it adds a content-unbounded owner on the MIDI interval | NO — removes `delay()` from the PLAYING motor path | NO — removes four `reconstructNotes` walks and a log-only `mergeActiveCapturePasses` from the USB MIDI callback | NO — notegate On/Off without `delay()` | NO — same projection walk, one extra predicate | NO — one deadline, at most four NoteOffs |
+
+RC8 checkpoint (same three questions): ownership NO — extend `SelectNavigation::selectPitchbendFromTick` + `resolveTargetPitchbend`; transitions NO; unbounded interval NO.
 
 RC2 follows [RuntimeArchitecture.md](../Authority/Architecture/RuntimeArchitecture.md) (DEC-016): apply is a **Runtime Request** (derived notes × NOTE_EDIT interval). It must not rebuild the full derived representation. If RC2 needs a new apply owner, a deferred-apply FSM, or a new representation, stop and open a design session.
 
@@ -223,6 +233,40 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 
 ---
 
+## RC7 — ValueOnly notegate stays on for the DROID motor duration
+
+**Invariant:** While PLAYING or OVERDUBBING, ValueOnly motor flush still sends position then notegate with no `delay()`. NoteOff is deferred `kMotorNoteDurationMs` (125 ms) on the existing `ControlSurfaceManager::update` tick. Timed burst (stopped transport) still holds the note inside `runMotorFaderBurst`.
+
+**Owner:** `sendSelectFaderNotegate` / `sendDependentFaderNotegates` + `processPendingMotorNotegates`. Do not restore `shouldRunBlockingMotorBurst` true for PLAYING. Do not add a second motor owner.
+
+**Capture pin ([`232309`](../../captures/session_20260909_232309.log)):** RC3 PLAYING `geometry_motor_sync sequence=value_only` at 287.919 sends `MO,224,16` pb=2730 then `MO,144,16,0,127` / `MO,128,16,0,0` 1 ms later. Next F1 echo is −8176 (not 2730). DROID travels on notegate; Ableton clips hold the note 24 ticks (`kMotorNoteDurationMs`). Select flush at 270.096 also On/Off in 1 ms.
+
+**Allowed:** NoteOn now; NoteOff at `motorNotegateReleaseAtMs`; release pending gates on NOTE_EDIT close.
+
+**Forbidden without a design session:** `delay()` on the PLAYING/OVERDUBBING path; a new outbound FSM; changing DROID notegate note numbers.
+
+**Native:** `test_value_only_notegate_release_matches_motor_note_duration`.
+
+**HITL:** Compose verify `value_only_notegate_held` — each `sequence=value_only` sync that emits a motor NoteOn has a matching NoteOff ≥ 80 ms later. Reselect stacked uses the same case. Do not edit compose `01`/`02`/`03`/`04`.
+
+---
+
+## RC8 — F1 motor pitchbend uses the inbound linear tick map
+
+**Invariant:** `EditSelectNoteState::resolveTargetPitchbend` sends a ch16 value that `selectTickFromPitchbend` decodes back to the selected sixteenth (and stacked index when several notes share that step). It does not map neighborhood slot index onto the full fader.
+
+**Owner:** `SelectNavigation::selectPitchbendFromTick` used by `resolveTargetPitchbend`. Do not restore slot-index / (slotCount−1) outbound.
+
+**Capture pin ([`234815`](../../captures/session_20260909_234815.log)):** After RC7, F2 follows. Last geometry flush: `selectedTick=2640`, `Final navigation slots: 6`, `Position 1/6 = −4915`. Loop is 3072 ticks (64 steps); linear F1 for step 55 is near +6200. −4915 decodes to tick 576. Neighborhood slots (`kSelectNavigationNeighborhoodRadiusSteps = 1`) are only for inbound note pick.
+
+**Architecture checkpoint:** ownership NO; transitions NO; unbounded interval NO.
+
+**Native:** `test_select_pitchbend_from_tick_round_trips_234815` + stacked round-trip.
+
+**HITL:** Compose `STIM-NE-OD-COMPOSE-02` machine **14/14 PASS** (`session_20260909_235743` / report `20260909_235823`). User accepted the `234815` late-loop F1 travel after the linear outbound flash. Do not edit compose `01`/`02`/`03`/`04`.
+
+---
+
 ## HITL / docs closeout
 
 | Gate | When |
@@ -234,6 +278,8 @@ Today `selectNoteEditCommittedBaseKind` picks `CaptureAwareGather` whenever `cap
 | Compose verify `commit_skips_trace_reconstruct` + device recapture | RC4 |
 | Compose verify `overdub_motor_sends_notegate` + device recapture | RC5 |
 | Compose verify `pitch_keeps_mover_dnte` + device recapture of 190408 pitch | RC6 |
+| Compose verify `value_only_notegate_held` + PLAYING recapture of `232309` F1/F2 travel | RC7 |
+| Device recapture: `geometry_motor_sync` pb decodes to `bracket_tick` (`234815` 2640 ≠ −4915) | RC8 shipped — user accepted |
 | [`MIDI_CONFIG_GUIDE.md`](../Guides/MIDI_CONFIG_GUIDE.md) + `MidiConfig.h` comments | RC1 |
 | [`HITL_TEST_SCENARIOS.md`](../Guides/HITL_TEST_SCENARIOS.md) verifier bullets | when a verify check is added |
 | [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) | each shipped RC |

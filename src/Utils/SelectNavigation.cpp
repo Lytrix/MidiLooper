@@ -43,6 +43,65 @@ uint32_t selectTickFromPitchbend(int32_t pitchValue, int32_t pitchMin, int32_t p
     return static_cast<uint32_t>(step) * Config::TICKS_PER_16TH_STEP;
 }
 
+int32_t selectPitchbendFromTick(uint32_t tick, int32_t pitchMin, int32_t pitchMax,
+                                uint32_t navLength, uint32_t stackedIndex, uint32_t stackedCount) {
+    if (navLength == 0) {
+        return pitchMin;
+    }
+    const uint32_t numSteps = navLength / Config::TICKS_PER_16TH_STEP;
+    if (numSteps <= 1) {
+        return pitchMin;
+    }
+    const int32_t span = pitchMax - pitchMin;
+    if (span == 0) {
+        return pitchMin;
+    }
+    uint32_t count = stackedCount == 0 ? 1 : stackedCount;
+    if (stackedIndex >= count) {
+        stackedIndex = count - 1;
+    }
+    const uint32_t step = (tick % navLength) / Config::TICKS_PER_16TH_STEP;
+    const int64_t remCenter =
+        (static_cast<int64_t>(stackedIndex) * 2 + 1) * static_cast<int64_t>(span) /
+        (static_cast<int64_t>(count) * 2);
+    const int64_t pos = static_cast<int64_t>(step) * static_cast<int64_t>(span) + remCenter;
+    int64_t pitch = static_cast<int64_t>(pitchMin) + pos / static_cast<int64_t>(numSteps - 1);
+    if (pitch < pitchMin) {
+        pitch = pitchMin;
+    }
+    if (pitch > pitchMax) {
+        pitch = pitchMax;
+    }
+    return static_cast<int32_t>(pitch);
+}
+
+uint32_t selectStackedNoteIndexFromPitchbend(int32_t pitchValue, int32_t pitchMin, int32_t pitchMax,
+                                             uint32_t navLength, uint32_t stackedCount) {
+    if (stackedCount <= 1) {
+        return 0;
+    }
+    const uint32_t numSteps = navLength / Config::TICKS_PER_16TH_STEP;
+    if (numSteps <= 1) {
+        return 0;
+    }
+    const int32_t span = pitchMax - pitchMin;
+    if (span == 0) {
+        return 0;
+    }
+    const int64_t pos = static_cast<int64_t>(pitchValue - pitchMin) *
+                        static_cast<int64_t>(numSteps - 1);
+    int64_t rem = pos % static_cast<int64_t>(span);
+    if (rem < 0) {
+        rem += span;
+    }
+    const uint32_t idx = static_cast<uint32_t>((rem * static_cast<int64_t>(stackedCount)) /
+                                               static_cast<int64_t>(span));
+    if (idx >= stackedCount) {
+        return stackedCount - 1;
+    }
+    return idx;
+}
+
 std::vector<SelectNavSlot> buildSelectNavigationSlots(
     uint32_t loopLength,
     uint32_t loopStartTick,
@@ -175,6 +234,18 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
                               int selectedNoteIdx,
                               uint32_t selectedTick,
                               uint32_t loopLength) {
+    return findSlotIndexForSelection(slots, selectedNoteIdx, selectedTick, loopLength, 0, 0, 0,
+                                     0);
+}
+
+int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
+                              int selectedNoteIdx,
+                              uint32_t selectedTick,
+                              uint32_t loopLength,
+                              int32_t pitchValue,
+                              int32_t pitchMin,
+                              int32_t pitchMax,
+                              uint32_t navLength) {
     if (slots.empty()) {
         return -1;
     }
@@ -188,13 +259,25 @@ int findSlotIndexForSelection(const std::vector<SelectNavSlot>& slots,
     }
 
     const uint32_t phaseSelectedTick = displayPhaseTick(selectedTick, loopLength);
+    const uint32_t targetStep = phaseSelectedTick / Config::TICKS_PER_16TH_STEP;
+    int exactTickIdx = -1;
+    std::vector<int> stepNoteSlots;
     for (int i = 0; i < (int)slots.size(); i++) {
         if (slots[i].relativeTick == phaseSelectedTick) {
-            return i;
+            exactTickIdx = i;
+        }
+        if (slots[i].noteIdx >= 0 &&
+            slots[i].relativeTick / Config::TICKS_PER_16TH_STEP == targetStep) {
+            stepNoteSlots.push_back(i);
         }
     }
-
-    return -1;
+    if (!stepNoteSlots.empty()) {
+        const uint32_t stackedIdx = selectStackedNoteIndexFromPitchbend(
+            pitchValue, pitchMin, pitchMax, navLength,
+            static_cast<uint32_t>(stepNoteSlots.size()));
+        return stepNoteSlots[static_cast<size_t>(stackedIdx)];
+    }
+    return exactTickIdx;
 }
 
 int findSlotIndexForNoteId(const std::vector<SelectNavSlot>& slots,

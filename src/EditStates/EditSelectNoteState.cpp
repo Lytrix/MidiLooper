@@ -2,6 +2,9 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "EditStates/EditSelectNoteState.h"
+
+#include <vector>
+
 #include "EditManager.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
@@ -218,51 +221,57 @@ bool EditSelectNoteState::resolveTargetPitchbend(EditManager& manager, Track& tr
         return false;
     }
 
-    const uint32_t numSteps = loopLength / Config::TICKS_PER_16TH_STEP;
+    const uint32_t navLength = manager.noteEditSelectNavigationLengthTicks(track);
+    const uint32_t numSteps = navLength / Config::TICKS_PER_16TH_STEP;
     logger.log(CAT_MIDI, LOG_DEBUG,
-               "Target pitchbend calculation: loopLength=%lu, numSteps=%lu, selectedTick=%lu",
-               loopLength, numSteps, selectedTick);
+               "Target pitchbend calculation: loopLength=%lu, navLength=%lu, numSteps=%lu, selectedTick=%lu",
+               loopLength, navLength, numSteps, selectedTick);
 
     if (numSteps == 0) {
         return false;
     }
 
+    uint32_t stackedIndex = 0;
+    uint32_t stackedCount = 1;
     const std::vector<SelectNavigation::SelectNavSlot> slots =
         manager.buildSelectNavigationSlots(track, selectedTick, true);
-
-    logger.log(CAT_MIDI, LOG_DEBUG, "Target pitchbend: Final navigation slots: %lu", slots.size());
-
-    if (slots.empty()) {
-        return false;
+    const uint32_t phaseTick = SelectNavigation::displayPhaseTick(selectedTick, loopLength);
+    const uint32_t targetStep = phaseTick / Config::TICKS_PER_16TH_STEP;
+    std::vector<int> stepNoteSlots;
+    for (int i = 0; i < static_cast<int>(slots.size()); ++i) {
+        if (slots[static_cast<size_t>(i)].noteIdx >= 0 &&
+            slots[static_cast<size_t>(i)].relativeTick / Config::TICKS_PER_16TH_STEP ==
+                targetStep) {
+            stepNoteSlots.push_back(i);
+        }
+    }
+    if (stepNoteSlots.size() > 1) {
+        stackedCount = static_cast<uint32_t>(stepNoteSlots.size());
+        const EditorSelection& sel = manager.getNoteEditSessionState().selection;
+        const auto navNotes = manager.selectableDisplayNotesForEditUi(track);
+        int currentSlot = -1;
+        if (editorSelectionHasNote(sel)) {
+            currentSlot = SelectNavigation::findSlotIndexForNoteId(
+                slots, navNotes, sel.primaryNote, selectedTick, loopLength);
+        }
+        for (uint32_t i = 0; i < stackedCount; ++i) {
+            if (stepNoteSlots[static_cast<size_t>(i)] == currentSlot) {
+                stackedIndex = i;
+                break;
+            }
+        }
     }
 
-    const EditorSelection& sel = manager.getNoteEditSessionState().selection;
-    const auto navNotes = manager.selectableDisplayNotesForEditUi(track);
-    int currentPosIndex = -1;
-    if (editorSelectionHasNote(sel)) {
-        currentPosIndex = SelectNavigation::findSlotIndexForNoteId(
-            slots, navNotes, sel.primaryNote, selectedTick, loopLength);
-    } else {
-        currentPosIndex =
-            SelectNavigation::findSlotIndexForSelection(slots, -1, selectedTick, loopLength);
-    }
-
-    if (currentPosIndex < 0) {
-        logger.log(CAT_MIDI, LOG_DEBUG,
-                   "Target pitchbend: Current selection not found in navigation slots");
-        return false;
-    }
-
-    const float normalizedPos =
-        static_cast<float>(currentPosIndex) / static_cast<float>(slots.size() - 1);
-    int16_t targetPitchbend = static_cast<int16_t>(
-        MidiConfig::Pitchbend::MIN +
-        normalizedPos * static_cast<float>(MidiConfig::Pitchbend::MAX - MidiConfig::Pitchbend::MIN));
-    outPitchbend = constrain(targetPitchbend, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX);
+    const int32_t targetPitchbend = SelectNavigation::selectPitchbendFromTick(
+        selectedTick, MidiConfig::Pitchbend::MIN, MidiConfig::Pitchbend::MAX, navLength,
+        stackedIndex, stackedCount);
+    outPitchbend = constrain(static_cast<int16_t>(targetPitchbend), MidiConfig::Pitchbend::MIN,
+                             MidiConfig::Pitchbend::MAX);
 
     logger.log(CAT_MIDI, LOG_DEBUG,
-               "SENDING PITCHBEND: Position %d/%lu at tick %lu = value %d (range: %d to %d)",
-               currentPosIndex, slots.size(), selectedTick, outPitchbend, MidiConfig::Pitchbend::MIN,
+               "SENDING PITCHBEND: tick %lu stack=%lu/%lu value %d (range: %d to %d)",
+               selectedTick, static_cast<unsigned long>(stackedIndex),
+               static_cast<unsigned long>(stackedCount), outPitchbend, MidiConfig::Pitchbend::MIN,
                MidiConfig::Pitchbend::MAX);
     return true;
 }

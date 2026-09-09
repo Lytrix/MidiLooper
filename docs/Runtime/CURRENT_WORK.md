@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (control-plane RC3 PLAYING motor ValueOnly shipped)
+Last updated: 2026-09-10 (control-plane RC8 shipped; stacked deselect display drop next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Immutable OpenSpec 4.5 — cross-gate verify (no firmware).** Map record /
+**NOTE_EDIT stacked move + deselect drops the note from display.** `232309`
+commit of `55@240` onto the 64/67 stack: LCR spans **8** include
+`id=8 p=55 s=240`; `pairrows at=passes count=7`; `VCACHE,full notes=7`;
+`DISP` 7. Separate owner from control-plane RC7/RC8. Plan:
+[`note_edit_stacked_move_deselect_display_drop_bugfix.md`](../Plans/note_edit_stacked_move_deselect_display_drop_bugfix.md).
+
+**Prior — NOTE_EDIT control-plane RC8 F1 outbound linear map — shipped.**
+User accepted the `234815` late-loop F1 travel. Native `1818` succeeded;
+compose `STIM-NE-OD-COMPOSE-02` machine **14/14 PASS**. Do not restore
+neighborhood slot-index outbound. Plan:
+[`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
+
+**Prior — NOTE_EDIT control-plane RC7 ValueOnly notegate hold — shipped.**
+`234815` F2 follows. NoteOff stays deferred `kMotorNoteDurationMs`.
+
+**Prior — Immutable OpenSpec 4.5 — cross-gate verify (no firmware).** Map record /
 overdub / wrap / undo / active-capture / snapshot identity to existing
 HITL + native gates; RAM1 then upload; run `base`, `overdub_occupy_paint`,
 `note_edit_overdub_compose` (`STIM-NE-OD-COMPOSE-02`), and `pio test -e native`.
