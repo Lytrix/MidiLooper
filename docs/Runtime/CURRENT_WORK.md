@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (immutable OpenSpec parent 4.4 closed by inventory)
+Last updated: 2026-09-09 (control-plane RC3 PLAYING motor ValueOnly shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Immutable OpenSpec parent 4.4 closed — inventory only.** Sub-slices
-4.4a–4.4h and 4.5a already shipped. Production pass-flatten sites are
-current-root normal (none left), no-current fallback, capture/oracle, or
-out of 4.4 (→ 4.6 / §5 / §6). No firmware in this slice. Next pick:
-**4.5** (HITL/native verify) or **4.6** (snapshot-identity freshness).
-Do not start hydrate 4b–5 or raise `N`. Plan:
+**Immutable OpenSpec 4.5 — cross-gate verify (no firmware).** Map record /
+overdub / wrap / undo / active-capture / snapshot identity to existing
+HITL + native gates; RAM1 then upload; run `base`, `overdub_occupy_paint`,
+`note_edit_overdub_compose` (`STIM-NE-OD-COMPOSE-02`), and `pio test -e native`.
+Do not start 4.6, hydrate 4b–5, or raise `N`. Plan:
+[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
+
+**Prior — NOTE_EDIT control-plane RC3 PLAYING motor ValueOnly — shipped.**
+`shouldRunBlockingMotorBurst` is false while PLAYING or OVERDUBBING.
+Device [`232026`](../../captures/session_20260909_232026.log) `sequence=value_only`
+judged 3. Do not edit compose `01`/`02`/`03`/`04`. Plan:
+[`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
+
+**Prior — Immutable OpenSpec parent 4.4 closed — inventory only.** Sub-slices
+4.4a–4.4h and 4.5a already shipped. Plan:
 [`immutable_loop_snapshot_4_4_closeout_refinement.md`](../Plans/immutable_loop_snapshot_4_4_closeout_refinement.md).
 
 **Prior — NOTE_EDIT close must not invent mover Length to loop end — RC1 open.**

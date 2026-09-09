@@ -153,13 +153,15 @@ NOTE_EDIT_MEM void ControlSurfaceManager::sendFader1BracketFeedback(Track& track
     if (sessionOpenOutbound) {
         midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend);
     }
-    if (NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing())) {
+    if (NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing(),
+                                                             track.isPlaying())) {
         NoteEditFaderMotorTiming::runMotorFaderBurst(
             [&]() { midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend); },
             [&]() { midiHandler.sendNoteOn(PITCHBEND_SELECT_CHANNEL, 0, 127); },
             [&]() { midiHandler.sendNoteOff(PITCHBEND_SELECT_CHANNEL, 0, 0); });
     } else {
         midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend);
+        sendSelectFaderNotegate();
     }
     lastSelectnoteSentTime = sentAt;
     auto& selectState = midiFaderManager.getFaderStateMutable(MidiMapping::FaderType::FADER_SELECT);
@@ -195,13 +197,15 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::sendFader1MotorTimedBurst(Track& track
     }
 
     midiHandler.setDroidMotorOutboundPriority(true);
-    if (NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing())) {
+    if (NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing(),
+                                                             track.isPlaying())) {
         NoteEditFaderMotorTiming::runMotorFaderBurst(
             [&]() { midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend); },
             [&]() { midiHandler.sendNoteOn(PITCHBEND_SELECT_CHANNEL, 0, 127); },
             [&]() { midiHandler.sendNoteOff(PITCHBEND_SELECT_CHANNEL, 0, 0); });
     } else {
         midiHandler.sendPitchBend(PITCHBEND_SELECT_CHANNEL, targetPitchbend);
+        sendSelectFaderNotegate();
     }
 
     const uint32_t sentAt = millis();
@@ -215,7 +219,8 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::sendFader1MotorTimedBurst(Track& track
     logger.info(
         "#DBG geometry_motor_sync sent=1 bracket_tick=%lu pb=%d mode=GEOMETRY_SYNC sequence=%s",
         static_cast<unsigned long>(editManager.getSelectedTick()), targetPitchbend,
-        NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing())
+        NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing(),
+                                                             track.isPlaying())
             ? "timed_burst"
             : "value_only");
 #endif
@@ -298,13 +303,19 @@ NOTE_EDIT_MEM void ControlSurfaceManager::processFaderOutbound() {
             outboundStepStartedMs_ = now;
             return;
         case NoteEditFaderOutbound::Step::SendCoarse: {
+            const bool runBlockingBurst =
+                NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing(),
+                                                                     track.isPlaying());
+            const NoteEditDependentFaderSnapshot snapshot =
+                buildDependentFaderSnapshotForTrack(track, nullptr);
             const bool sent =
-                NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing())
+                runBlockingBurst
                     ? sendDependentFadersParallelTimedBurst(track, outboundPlan_, nullptr)
-                    : sendDependentFaderSnapshot(
-                          track, outboundPlan_,
-                          buildDependentFaderSnapshotForTrack(track, nullptr),
-                          DependentFaderSendMode::ValueOnly);
+                    : sendDependentFaderSnapshot(track, outboundPlan_, snapshot,
+                                                 DependentFaderSendMode::ValueOnly);
+            if (sent && !runBlockingBurst) {
+                sendDependentFaderNotegates(outboundPlan_, snapshot);
+            }
             if (sent) {
                 const uint32_t sentAt = millis();
                 if (outboundPlan_.coarse) {

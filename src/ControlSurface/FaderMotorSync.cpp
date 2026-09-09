@@ -452,18 +452,23 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::syncMotorsFromSelectTarget(
 
     midiHandler.setDroidMotorOutboundPriority(true);
     const bool runBlockingBurst =
-        NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing());
+        NoteEditFaderMotorTiming::shouldRunBlockingMotorBurst(track.isOverdubbing(),
+                                                             track.isPlaying());
 #if defined(SESSION_CAPTURE)
     logger.info("#DBG select_motor_sync mode=SELECT_SYNC sequence=%s",
                 runBlockingBurst ? "parallel_timed_burst" : "value_only");
 #endif
 
+    const NoteEditDependentFaderSnapshot snapshot =
+        buildDependentFaderSnapshotForTrack(track, &target);
     const bool sent =
         runBlockingBurst
             ? sendDependentFadersParallelTimedBurst(track, plan, &target)
-            : sendDependentFaderSnapshot(track, plan,
-                                         buildDependentFaderSnapshotForTrack(track, &target),
+            : sendDependentFaderSnapshot(track, plan, snapshot,
                                          DependentFaderSendMode::ValueOnly);
+    if (sent && !runBlockingBurst) {
+        sendDependentFaderNotegates(plan, snapshot);
+    }
     if (sent) {
         const uint32_t sentAt = millis();
         lastSelectMotorSyncMs_ = sentAt;
