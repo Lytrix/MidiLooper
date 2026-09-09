@@ -128,8 +128,7 @@ inline bool shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
 
 /// NOTE_EDIT paint/select dirty committed base. A current snapshot replaces
 /// pass materialize for that base only. Commit rematerialize stays on passes.
-/// Capture-active rebuilds do not use this path — see
-/// `selectNoteEditCommittedBaseKind`.
+/// Live Capture is `capturePreview` overlay — not a committed-base rebuild.
 inline bool shouldResolveNoteEditCommittedBaseFromSnapshot(bool visualCacheDirty,
                                                            bool publishedSnapshotIsCurrent) {
     return visualCacheDirty && publishedSnapshotIsCurrent;
@@ -142,12 +141,10 @@ enum class NoteEditCommittedBaseKind {
   CaptureAwareGather,
 };
 
-/// Stage 1 overdub+NOTE_EDIT paint: Capture always gathers snapshot/source +
-/// live Capture. NOTE_EDIT does not refresh visual cache, so a clean cache is
-/// the pre-capture compose (`110622` DFRAME stayed at open count). No-capture
-/// keeps 4.4d.
-/// `145634`: select/pitch during overdub re-projected on every F1 note change.
-/// Fingerprint / selected-note changes must not re-gather the committed base.
+/// Live Capture does not pick the committed-base kind. `CaptureAwareGather` is
+/// leftover: apply overlays `capturePreview` on Snapshot / VisualCache /
+/// PassMaterialize (`170818` full-loop gather on every capture revision).
+/// `145634`: fingerprint / selected-note changes must not rebuild the base.
 enum class NoteEditProjectionCacheReuse {
   FullHit,
   ReprojectFromCommittedBase,
@@ -169,9 +166,7 @@ inline NoteEditProjectionCacheReuse selectNoteEditProjectionCacheReuse(
 inline NoteEditCommittedBaseKind selectNoteEditCommittedBaseKind(bool captureActive,
                                                                  bool visualCacheDirty,
                                                                  bool publishedSnapshotIsCurrent) {
-    if (captureActive) {
-        return NoteEditCommittedBaseKind::CaptureAwareGather;
-    }
+    (void)captureActive;
     if (shouldResolveNoteEditCommittedBaseFromSnapshot(visualCacheDirty,
                                                        publishedSnapshotIsCurrent)) {
         return NoteEditCommittedBaseKind::Snapshot;

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (overdub select/pitch hang shipped)
+Last updated: 2026-09-09 (control-plane record RC2 shipped; RC4 implementing)
 
 ---
 

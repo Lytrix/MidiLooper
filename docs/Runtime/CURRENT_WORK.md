@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (overdub select/pitch hang shipped)
+Last updated: 2026-09-09 (control-plane record RC2 shipped; RC4 implementing)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,25 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT select/pitch during overdub hang — shipped.** `145634` full-loop
+**NOTE_EDIT control-plane record + display stall — RC2 shipped, RC4 implementing.**
+RC1: `RECORD_EXCLUDE` matches `THRU_EXCLUDE` (ch13–16). Commit `c45f75f5`.
+RC2: capture-active apply uses Snapshot/VisualCache + `capturePreview`.
+Device [`183453`](../../captures/session_20260909_183453.log)
+`GEOM_APPLY,resolve` 6–22 ms (was 91–234 ms).
+RC4: `commitEditAction` must not `reconstructNotes` × 4 or
+`mergeActiveCapturePasses` for take_only logs on F1 leave.
+Do not edit compose `01`/`02`/`03`/`04`. Plan:
+[`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
+
+**Prior — NOTE_EDIT reselect moved note on stacked sixteenth — shipped.**
+F1 picks among every note start in the aimed sixteenth (`161839` off-grid
+`628` on grid `624`; `153550` exact-tick stack). Device PASS
+[`164516`](../../captures/session_20260909_164516.log)
+`note_idx` 3 then 4 at dest `5@240`. Native **1806 succeeded, 1 skipped**.
+RAM1 locals **7008**. Plan:
+[`note_edit_reselect_moved_stacked_note_bugfix.md`](../Plans/note_edit_reselect_moved_stacked_note_bugfix.md).
+
+**Prior — NOTE_EDIT select/pitch during overdub hang — shipped.** `145634` full-loop
 gather + `delay()` motor burst. Device PASS
 [`152705`](../../captures/session_20260909_152705.log)
 `sequence=value_only`; HITL-04 machine PASS 4/4

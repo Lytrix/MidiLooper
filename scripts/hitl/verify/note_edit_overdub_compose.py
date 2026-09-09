@@ -23,6 +23,9 @@ SELECTION_CHANGED_RE = re.compile(r"Note selection changed: .* -> (-?\d+)")
 GEOM_APPLY_PHASE_RE = re.compile(
     r"#CAP,\d+,GEOM_APPLY,phase,([^,]+),(\d+),(\d+),(\d+)"
 )
+GEOM_APPLY_RESOLVE_RE = re.compile(r"#CAP,\d+,GEOM_APPLY,resolve,(\d+),")
+# 170818 PLAYING resolve 3.6–4.0 ms; overdub gather was 91–234 ms.
+MAX_OVERDUB_RESOLVE_US = 20000
 EDIT_SESSION_ACTION_RE = re.compile(
     r"EditSessionAction: type=(\d+) noteId="
 )
@@ -397,6 +400,30 @@ def _case_control_plane_not_captured(lines: list[str]) -> dict[str, Any]:
     }
 
 
+def _case_overdub_apply_reuses_committed_base(lines: list[str]) -> dict[str, Any]:
+    issues: list[str] = []
+    ranges = _overdubbing_index_ranges(lines)
+    resolve_us: list[int] = []
+    for index, line in enumerate(lines):
+        if not _index_in_ranges(index, ranges):
+            continue
+        match = GEOM_APPLY_RESOLVE_RE.search(line)
+        if match is None:
+            continue
+        resolve_us.append(int(match.group(1)))
+    max_us = max(resolve_us) if resolve_us else 0
+    if resolve_us and max_us > MAX_OVERDUB_RESOLVE_US:
+        issues.append(
+            f"overdub_resolve_us={max_us} max={MAX_OVERDUB_RESOLVE_US}"
+        )
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "overdub_resolve_count": len(resolve_us),
+        "max_overdub_resolve_us": max_us,
+    }
+
+
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
     from hitl.stimuli import (
         get_stimulus,
@@ -428,6 +455,9 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "stimulus_validation": stimulus,
         "live_overdub_notes_stay_on_roll": live_case,
         "control_plane_not_captured": _case_control_plane_not_captured(lines),
+        "overdub_apply_reuses_committed_base": _case_overdub_apply_reuses_committed_base(
+            lines
+        ),
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))
     require_hold = (

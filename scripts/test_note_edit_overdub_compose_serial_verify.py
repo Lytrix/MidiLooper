@@ -438,6 +438,23 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(case["ok"], case["issues"])
         self.assertEqual(case["overdub_coord_ch13_ack"], 0)
 
+    def test_overdub_playing_class_resolve_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "[56.210] #CAP,56210000,GEOM_APPLY,resolve,4000,1,3,0")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["overdub_apply_reuses_committed_base"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["max_overdub_resolve_us"], 4000)
+
+    def test_overdub_full_loop_gather_resolve_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "[56.210] #CAP,56210000,GEOM_APPLY,resolve,91511,1,3,0")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("overdub_resolve_us=91511" in issue for issue in check["issues"])
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
