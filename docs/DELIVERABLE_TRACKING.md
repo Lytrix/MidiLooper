@@ -26,6 +26,8 @@
 
 - **LoopContentResolution parallel prototype (DEC-037, Aug 2026):** native `LoopContentResolution` + device gate suites; 6C/6D closed [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log). PR [#35](https://github.com/Lytrix/MidiLooper/pull/35) merged to `dev` (`be0e05f`). OpenSpec change `loop-content-resolution` pending archive. Plan: [`loop_event_sourced_resolution_architecture.md`](Plans/loop_event_sourced_resolution_architecture.md).
 
+- **Capture pending same-pitch NoteOn reject (Sep 2026):** `Track::noteOn` drops a second On while `{note, channel}` is pending so the first On is not orphaned to loop end. Device PASS [`212509`](../captures/session_20260909_212509.log) compose `10/10`. Plan: [`capture_pending_same_pitch_note_on_reject_bugfix.md`](Plans/capture_pending_same_pitch_note_on_reject_bugfix.md).
+
 - **NOTE_EDIT overdub select/pitch hang (Sep 2026):** paint-cache reuse on fingerprint/select; ValueOnly motors while overdubbing. Device PASS [`152705`](../captures/session_20260909_152705.log). Plan: [`note_edit_overdub_select_pitch_hang_bugfix.md`](Plans/note_edit_overdub_select_pitch_hang_bugfix.md).
 
 - **Compose last-bar beat-4 Shorten HITL (Sep 2026):** `STIM-NE-OD-COMPOSE-03` v1 / preset `note_edit_overdub_compose_last_bar_shorten`. Device PASS [`133714`](../captures/session_20260909_133714.log). Plan: [`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md).

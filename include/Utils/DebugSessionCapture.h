@@ -220,6 +220,8 @@ SC_MEM_ATTR void playbackFrame(uint8_t slot, uint32_t currentTick, uint32_t tick
                                uint8_t atLoopStart, uint8_t wrapDetected, uint8_t wasStale,
                                uint32_t playbackRevision, uint32_t playbackGeneration);
 SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, uint8_t note);
+SC_MEM_ATTR void pendingSamePitchNoteOnReject(uint8_t pitch, uint8_t channel,
+                                              uint32_t pendingStartTick, uint32_t rejectedTick);
 SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t count);
 SC_MEM_ATTR size_t flushPendingRevts(size_t maxLines = 64);
 SC_MEM_ATTR void flushAllPendingRevts();
@@ -320,6 +322,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                      loopStart, loopLen, idxBefore, idxAfter, orderSize, sent, \
                                      atLoopStart, wrap, stale, rev, gen)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) DebugSessionCapture::storedWrapPair(onTick, offTick, ch, note)
+#define SC_PENDING_SAME_PITCH_NOTE_ON_REJECT(pitch, ch, pendingStartTick, rejectedTick) \
+  DebugSessionCapture::pendingSamePitchNoteOnReject(pitch, ch, pendingStartTick, rejectedTick)
 #define SC_CAPTURE_CLEANUP(phase, kind, count) DebugSessionCapture::captureCleanup(phase, kind, count)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) DebugSessionCapture::queueStoredNoteOn(tick, ch, note)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) DebugSessionCapture::flushCaptureBuffer(maxLines)
@@ -401,6 +405,7 @@ inline void restartCaptureBootGrace() {}
                           rev, gen) \
   ((void)0)
 #define SC_STORED_WRAP_PAIR(onTick, offTick, ch, note) ((void)0)
+#define SC_PENDING_SAME_PITCH_NOTE_ON_REJECT(pitch, ch, pendingStartTick, rejectedTick) ((void)0)
 #define SC_CAPTURE_CLEANUP(phase, kind, count) ((void)0)
 #define SC_REC_QUEUE_STORED_NOTE_ON(tick, ch, note) ((void)0)
 #define SC_REC_FLUSH_PENDING_REVTS(maxLines) ((void)0)

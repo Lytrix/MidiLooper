@@ -759,6 +759,12 @@ SC_MEM_ATTR void storedWrapPair(uint32_t onTick, uint32_t offTick, uint8_t ch, u
                 (unsigned long)offTick, ch, note);
 }
 
+SC_MEM_ATTR void pendingSamePitchNoteOnReject(uint8_t pitch, uint8_t channel,
+                                              uint32_t pendingStartTick, uint32_t rejectedTick) {
+  emitCapPrintf("#CAP,%lu,PENDON,reject,%u,%u,%lu,%lu\r\n", (unsigned long)micros(), pitch, channel,
+                (unsigned long)pendingStartTick, (unsigned long)rejectedTick);
+}
+
 SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t count) {
   emitCapPrintf("#CAP,%lu,CLN,%s,%s,%lu\r\n", (unsigned long)micros(), phase, kind,
                 (unsigned long)count);
