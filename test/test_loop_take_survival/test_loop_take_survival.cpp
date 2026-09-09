@@ -2965,6 +2965,13 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
       }
     }
     prefixEnd = out.size();
+    if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+            loop.publishedSnapshotIsCurrent(), captureActive || loop.hasOverdubSession(),
+            loop.visualCache.notes.size(), prefixEnd,
+            loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered())) {
+      out.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
+      prefixEnd = out.size();
+    }
   }
   if (committedEnd != nullptr) {
     *committedEnd = prefixEnd;
@@ -3554,6 +3561,62 @@ NoteUtils::DisplayNote makeAdoptedNote(NoteId noteId, uint8_t pitch, uint32_t st
   note.startTick = startTick;
   note.endTick = endTick;
   return note;
+}
+
+/// 214900: NOTE_EDIT close while overdub dirties the cache; this gather is the
+/// stale published snapshot (56). Retain the unpublished visual compose (65).
+void test_draw_source_retains_unpublished_visual_cache_over_stale_gather_214900() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 2304;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t i = 0; i < 56; ++i) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(i * 24u, 1, static_cast<uint8_t>(20 + (i % 20)), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(i * 24u + 12u, 1, static_cast<uint8_t>(20 + (i % 20)), 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 55u * 24u + 12u));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec unpublished;
+  unpublished.reserve(65);
+  for (uint32_t i = 1; i <= 65; ++i) {
+    unpublished.push_back(makeAdoptedNote(static_cast<NoteId>(i), static_cast<uint8_t>(20 + (i % 30)),
+                                          (i - 1u) * 24u, (i - 1u) * 24u + 12u));
+  }
+  for (uint32_t offset = 0; offset < 8; ++offset) {
+    unpublished[57 + offset].noteId = static_cast<NoteId>(59 + offset);
+    unpublished[57 + offset].note = 49;
+  }
+  loop.adoptComposedDisplayNotesFromViewport(unpublished);
+  loop.visualCacheDirty = true;
+  TEST_ASSERT_EQUAL_UINT32(65u, static_cast<uint32_t>(loop.visualCache.notes.size()));
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  ++loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec drawn;
+  gatherDrawSourceDisplayNotes(loop, 0, 2, 0, 0, 127, drawn);
+  TEST_ASSERT_EQUAL_UINT32(65u, static_cast<uint32_t>(drawn.size()));
+  bool found59 = false;
+  bool found66 = false;
+  for (const NoteUtils::DisplayNote& note : drawn) {
+    if (note.noteId == 59 && note.note == 49) {
+      found59 = true;
+    }
+    if (note.noteId == 66 && note.note == 49) {
+      found66 = true;
+    }
+  }
+  TEST_ASSERT_TRUE(found59);
+  TEST_ASSERT_TRUE(found66);
 }
 
 void adoptFourBarLinearCache(Loop& loop, NoteId pitch39Id) {
@@ -4781,6 +4844,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_overlay_only_reuse_skips_committed_walk);
   RUN_TEST(test_draw_source_reuse_reapplies_pending_without_mutating_prefix);
   RUN_TEST(test_draw_source_keeps_stale_snapshot_after_second_wrap);
+  RUN_TEST(test_draw_source_retains_unpublished_visual_cache_over_stale_gather_214900);
   RUN_TEST(test_draw_source_od2_clean_adopt_keeps_linear_tail);
   RUN_TEST(test_draw_source_no_snapshot_uses_clean_visual_cache);
   RUN_TEST(test_draw_source_no_snapshot_empty_dirty_cache_stays_empty);

@@ -490,6 +490,25 @@ void test_should_retain_record_stop_handoff_seed() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(true, true));
 }
 
+void test_should_retain_unpublished_visual_cache_over_stale_gather() {
+  // 214900: dirty unpublished compose 65 vs this stale gather 56. Sealed wrap
+  // gather (`170537`) keeps the snapshot+sealed prefix.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      false, true, 65u, 56u, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      false, true, 65u, 56u, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      true, true, 65u, 56u, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      false, false, 65u, 56u, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      false, true, 56u, 56u, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      false, true, 0u, 56u, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      false, true, 56u, 65u, false));
+}
+
 void test_should_union_sealed_capture_preview_for_draw_source() {
   // Live session: uncovered sealed stays in the frame (012714 wrap 2).
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
@@ -1930,6 +1949,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_companion_transform_already_represented);
   RUN_TEST(test_sealed_capture_preview_row_covered_by_visual_cache);
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
+  RUN_TEST(test_should_retain_unpublished_visual_cache_over_stale_gather);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);

@@ -369,6 +369,13 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
     }
     flushDeferredNoteEditDisplayRefresh(track);
     closeNoteEditPass(track);
+    Loop& loop = trackManager.getSelectedLoop(track);
+    if (loop.captureActive() || loop.hasOverdubSession()) {
+        const NoteUtils::DisplayNoteVec projected = projectedNoteEditDisplayNotes(track);
+        if (!projected.empty() && projected.size() >= loop.visualCache.notes.size()) {
+            loop.adoptComposedDisplayNotesFromViewport(projected);
+        }
+    }
     editSession.store.mutStore().clear();
     editSession.store.discardEventsCache();
     editSession.noteEditCurrentState.clear();
