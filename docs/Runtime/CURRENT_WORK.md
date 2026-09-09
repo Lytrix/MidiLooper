@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (overdub+NOTE_EDIT compose Stage 1 recapture)
+Last updated: 2026-09-09 (HITL stimulus contract Stage 1)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT + overdub paint/overlap compose — Stage 1 device PASS.**
+**HITL stimulus contract — Stage 1.** Versioned live-MIDI recipes under
+`scripts/hitl/stimuli/`. First canonical pair: `STIM-BASE-2-ONE-OD-01` v1
+and `STIM-NE-OD-COMPOSE-01` v1. Host snapshots start with `#HITL,…`.
+Do not change a canonical stimulus unless it is proven insufficient.
+Do not generate `.mid` files. Later: occupy / BASE-N registration, YAML.
+Plan:
+[`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_enhancement.md).
+
+**Prior — NOTE_EDIT + overdub paint/overlap compose Stage 1 device PASS.**
 [`112612`](../../captures/session_20260909_112612.log) open visual **48**,
-in-edit overdub `DFRAME` **53 → 63** with 18 live notes. Recapture:
-`captureActive` always gather; paint key includes `captureDisplayRevision`.
-HITL `--preset note_edit_overdub_compose`. Do not start Stage 2 until
-asked. Prior FAIL [`110622`](../../captures/session_20260909_110622.log).
+in-edit overdub `DFRAME` **53 → 63** with 18 live notes. Required stimulus:
+`STIM-NE-OD-COMPOSE-01` v1. Do not start compose Stage 2 until asked.
+Prior FAIL [`110622`](../../captures/session_20260909_110622.log).
 Plan:
 [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 

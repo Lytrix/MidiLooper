@@ -44,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--out-dir", type=Path, default=Path("captures"))
     run_parser.add_argument("--list-scenarios", action="store_true")
     run_parser.add_argument(
+        "--list-stimuli",
+        action="store_true",
+        help="List canonical stimulus ids and versions",
+    )
+    run_parser.add_argument(
         "--track",
         "--track-number",
         type=int,
@@ -287,13 +292,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command != "run":
         parser.print_help()
         return 2
-    if not args.list_scenarios:
+    if not args.list_scenarios and not getattr(args, "list_stimuli", False):
         try:
             legacy = legacy_args_with_slot_flags(args, legacy)
         except ValueError as exc:
             print(f"[hitl] {exc}")
             return 2
     setattr(args, "legacy_args", legacy)
+    if getattr(args, "list_stimuli", False):
+        from hitl.stimuli import list_stimuli
+
+        for spec in list_stimuli():
+            print(f"{spec.fingerprint_key()}  {spec.scenario_id}  {spec.description}")
+        return 0
     if args.list_scenarios:
         if getattr(args, "layered", False):
             from hitl.layered_registry import get_layered_registry

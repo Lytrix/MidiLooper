@@ -18,6 +18,7 @@ Never use `--serial-port` while `capture_session.py` holds the USB serial port.
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --list-scenarios
+.venv/bin/python scripts/host_midi_hitl.py run --list-stimuli
 ```
 
 **Verify-only** (replay a captured serial log without MIDI):
@@ -32,14 +33,24 @@ Replace `/dev/cu.usbmodem154944801` with your port (`pio device list`).
 
 ---
 
-## Presets vs scenarios
+## Presets, scenarios, and stimuli
 
 | Kind | Meaning |
 |------|---------|
 | **Preset** | Named bundle of one or more scenarios (`--preset base`) |
 | **Scenario** | Single composable phase script (`--scenarios edit_overdub_during_note_edit`) |
+| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-01` v1) |
 
 Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.py) (`PRESET_SCENARIOS`).
+Stimuli are defined in [`scripts/hitl/stimuli/registry.py`](../../scripts/hitl/stimuli/registry.py).
+A host serial snapshot for a bound scenario starts with `#HITL,SCENARIO,…` and `#HITL,STIMULUS,…`.
+The raw Teensy `#CAP` session log stays firmware-only.
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --list-stimuli
+```
+
+Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_enhancement.md).
 
 ---
 
@@ -60,7 +71,7 @@ Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
 | `overdub_occupy_paint` | `overdub_occupy_paint` | Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
-| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub → move selected note; live Capture notes must stay on the roll | **Yes** | `verify_note_edit_overdub_compose` |
+| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-01** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub → move selected note; live Capture notes must stay on the roll | **Yes** | `verify_note_edit_overdub_compose` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -252,6 +263,8 @@ and/or `QUIET_REFRESH` after user-classified quiet.
 
 ### `note_edit_overdub_compose` (Stage 1 live Capture paint)
 
+**Stimulus:** `STIM-NE-OD-COMPOSE-01` v1 (do not edit; TEMP variant if this recipe cannot exercise a new condition).
+
 Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. First case: NOTE_EDIT open → in-edit OVERDUBBING → live notes in MIDI 12–23 → move the selected seed note. Serial `DFRAME` after that move must stay above the `NOTE_EDIT_OPEN` visual-note count. Stage 2 overlap is not in this preset yet. Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
 
 ```bash
@@ -268,7 +281,8 @@ Verify-only:
   --verify-serial-log captures/<log>.log --verify-only
 ```
 
-Host unit test: `scripts/test_note_edit_overdub_compose_serial_verify.py`.
+Host unit tests: `scripts/test_note_edit_overdub_compose_serial_verify.py`,
+`scripts/test_hitl_stimulus_contract.py`.
 
 ### `note_edit_select_dependent_faders` (F2/F3/F4 motor sync on F1 select)
 

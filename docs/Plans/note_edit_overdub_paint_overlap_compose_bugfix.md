@@ -162,6 +162,24 @@ Reuse: YES — `ensureNoteEditDisplayProjectionCachesBuilt`,
 
 - Stage 1 YES. Stage 2 NO until Stage 1 is independently verified.
 
+## Required stimulus
+
+```yaml
+required_stimulus:
+  scenario: note_edit_overdub_compose
+  stimulus: STIM-NE-OD-COMPOSE-01
+  version: 1
+
+must_prove:
+  - base_recorded
+  - committed_od1
+  - in_edit_overdub_active
+  - live_capture_notes_present
+  - selected_note_moved
+```
+
+Do not change this stimulus to chase Stage 2. If it cannot exercise overlap, add `STIM-NE-OD-COMPOSE-01-TEMP-A` and report why. Plan: [`hitl_stimulus_contract_enhancement.md`](hitl_stimulus_contract_enhancement.md).
+
 ## Verification
 
 | Gate | Pass |
