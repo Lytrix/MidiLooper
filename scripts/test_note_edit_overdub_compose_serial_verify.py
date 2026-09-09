@@ -516,6 +516,35 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
                 for issue in check["issues"])
         )
 
+    def test_stop_selected_slot_not_foreign_loop_absent_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["stop_selected_slot_not_foreign_loop"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["stops_judged"], 0)
+
+    def test_stop_selected_slot_not_foreign_loop_2304_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.append("#CAP,1529000000,DISP,0,OVERDUBBING,2304,87,87,87,87,1,0,3,87")
+        lines.append("#CAP,1529968000,ST,Track,OVERDUBBING,STOPPED")
+        lines.append("#CAP,1529969000,DISP,0,STOPPED,2304,87,87,87,87,1,0,3,87")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["stop_selected_slot_not_foreign_loop"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["stops_judged"], 1)
+
+    def test_stop_selected_slot_not_foreign_loop_214900_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.append("#CAP,1529000000,DISP,0,OVERDUBBING,2304,87,87,87,87,1,0,3,87")
+        lines.append("#CAP,1529968000,ST,Track,OVERDUBBING,STOPPED")
+        lines.append("#CAP,1529969000,DISP,0,STOPPED,2304,87,87,87,87,1,0,3,87")
+        lines.append("#CAP,1530000000,DISP,0,STOPPED,50688,352,1429,352,352,1,0,3,352")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("stop_selected_slot_later_len=50688 overdub_len=2304" in issue
+                for issue in check["issues"])
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

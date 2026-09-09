@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (NOTE_EDIT overdub-exit RC1 native shipped)
+Last updated: 2026-09-09 (NOTE_EDIT overdub-exit RC1+RC2 native shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT exit during overdub drops the live piano roll — RC1 native shipped.**
+**NOTE_EDIT exit during overdub drops the live piano roll — RC1+RC2 native shipped.**
 [`214900`](../../captures/session_20260909_214900.log). RC1 retain:
-unpublished `visualCache` over this stale gather (native **65**, ids
-59–66); sealed wrap gather (`170537`) stays snapshot+sealed. Compose
-`02` does not close NOTE_EDIT while OVERDUBBING (`closes_judged=0`).
-Device recapture of `214900` still needed. RC2 not started: non-selected
-`stopPlaying` must leave `liveDisplayNotes` identity/content unchanged.
-Do not edit compose `01`/`02`/`03`/`04`. Plan:
+unpublished `visualCache` over this stale gather (native **65**). RC2:
+non-selected `stopPlaying` does not write `liveDisplayNotes`. Compose
+`02` [`222902`](../../captures/session_20260909_222902.log) machine
+**12/12**; close/stop cases vacuous (`closes_judged=0`,
+`stops_judged=0`). Device recapture of `214900` still needed. Do not
+edit compose `01`/`02`/`03`/`04`. Plan:
 [`note_edit_overdub_exit_piano_roll_revert_bugfix.md`](../Plans/note_edit_overdub_exit_piano_roll_revert_bugfix.md).
 
 **Reject same-pitch NoteOn while pending — RC1 shipped.** `202226`

@@ -1,6 +1,6 @@
 # NOTE_EDIT exit during overdub must keep the live piano roll
 
-**Status:** RC1 native shipped; RC2 not started  
+**Status:** RC1+RC2 native shipped; device recapture of `214900` still open  
 **Kind:** bugfix  
 **Evidence:** [`session_20260909_214900.log`](../../captures/session_20260909_214900.log)  
 **Does not reopen:** DEC-056 stale-parent publish skip, replace-on-retrigger, compose `STIM-NE-OD-COMPOSE-01` / `02` / `03` / `04`, occupy hide/ledger, OpenSpec `3.5` / `3.6`, wrap `004351` dirty→last-snapshot rule
