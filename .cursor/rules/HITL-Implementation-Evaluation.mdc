@@ -1,0 +1,40 @@
+---
+description: Implementation agents must add a specific HITL, reuse HITL parts, flash and run it, and cap unattended fix loops at 6
+alwaysApply: true
+---
+
+# HITL evaluation for implementation work
+
+When an implementation agent ships firmware or HITL logic that device serial can observe, it must add or extend a **specific HITL** for that change. Do not treat `base` / `edit_full` as the only gate.
+
+## Reuse existing HITL parts
+
+Do **not** copy a full scenario. Extend or call the existing owners:
+
+| Need | Reuse |
+|---|---|
+| Record / overdub seed | `run_base_scenario`, `canonical_*_legacy_args`, `stream_pattern_for_bars` / `_run_overdub_pass` |
+| Enter / exit NOTE_EDIT | `_ensure_note_edit_entered`, `edit_controls` |
+| MIDI note / clock stream | `hitl.transport_clock.stream_pattern_for_bars`, `hitl.midi_io` |
+| Serial follow / verify | `ExternalSerialFollowCollector`, `resolve_base_seed_serial_log`, `scripts/hitl/verify/` |
+| Catalog | register in `scripts/hitl/registry.py` and [`docs/Guides/HITL_TEST_SCENARIOS.md`](docs/Guides/HITL_TEST_SCENARIOS.md) |
+
+New code belongs in `scripts/hitl/scenarios/`, `scripts/hitl/verify/`, or a shared helper under `scripts/hitl/` — not a one-off inline script.
+
+## Upload and run without asking
+
+For a HITL that evaluates the change just implemented:
+
+1. `pio run -e teensy41-capture-serial` (RAM1 locals ≥ 4000).
+2. Upload immediately: `pio run -e teensy41-capture-serial -t upload`.
+3. Run the dedicated preset via `host_midi_hitl.py` (managed capture default).
+
+Do **not** wait for a human to approve upload or the HITL run. This overrides [Teensy-Upload-After-Build.mdc](Teensy-Upload-After-Build.mdc) for that evaluation loop only.
+
+## Fix loop cap
+
+After a HITL **FAIL**, fix firmware and/or HITL (one root cause per iteration) and repeat upload+run.
+
+**Stop and ask** after **6** upload+run attempts in the same session, or sooner if the next change would move ownership, transitions, or an unbounded MIDI-interval owner. Ask whether to continue or revert.
+
+Count: each device run after a code change is one attempt. Verify-only on an existing log does not count.

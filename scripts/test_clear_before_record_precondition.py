@@ -19,6 +19,7 @@ from hitl.capture_transitions import (
 from host_midi_automation_baseline import (
     _can_skip_clear_before_record,
     _clear_undo_prune_gate_ok,
+    _empty_slot_select_started_recording,
     _serial_has_clear_completed,
     _track_cleared_for_record,
 )
@@ -57,6 +58,26 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         lines = ["[1456.072] [INFO] MIDI: Clear selected slot 2"]
         self.assertTrue(_serial_has_clear_completed(lines))
         self.assertTrue(_track_cleared_for_record(lines))
+
+    def test_empty_slot_select_started_recording_112010(self) -> None:
+        """After flash, Loops-row select on an empty slot starts RECORDING.
+
+        [`session_20260909_112010.log`] Loop 1 Start Recording then clear
+        `stopToStopped` — seed never reached PLAYING.
+        """
+        before_select = [
+            "#CAP,43301228,ST,Track,STOPPED,PLAYING",
+        ]
+        after_select = before_select + [
+            "#CAP,44684478,ST,Track,STOPPED,RECORDING",
+        ]
+        after_clear = after_select + [
+            "#CAP,45792197,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,45792585,ST,Track,STOPPED_RECORDING,STOPPED",
+        ]
+        self.assertFalse(_empty_slot_select_started_recording(before_select))
+        self.assertTrue(_empty_slot_select_started_recording(after_select))
+        self.assertFalse(_empty_slot_select_started_recording(after_clear))
 
     def test_clear_ignored_selected_slot_empty(self) -> None:
         from host_midi_automation_baseline import _serial_has_clear_ignored_empty

@@ -142,15 +142,15 @@ enum class NoteEditCommittedBaseKind {
   CaptureAwareGather,
 };
 
-/// Stage 1 overdub+NOTE_EDIT paint: Capture uses the existing overdub compose.
-/// Clean visual cache is that compose. Dirty cache gathers snapshot/source +
-/// live Capture (`rebuildDisplayNotesInWindow`). No-capture keeps 4.4d.
+/// Stage 1 overdub+NOTE_EDIT paint: Capture always gathers snapshot/source +
+/// live Capture. NOTE_EDIT does not refresh visual cache, so a clean cache is
+/// the pre-capture compose (`110622` DFRAME stayed at open count). No-capture
+/// keeps 4.4d.
 inline NoteEditCommittedBaseKind selectNoteEditCommittedBaseKind(bool captureActive,
                                                                  bool visualCacheDirty,
                                                                  bool publishedSnapshotIsCurrent) {
     if (captureActive) {
-        return visualCacheDirty ? NoteEditCommittedBaseKind::CaptureAwareGather
-                                : NoteEditCommittedBaseKind::VisualCache;
+        return NoteEditCommittedBaseKind::CaptureAwareGather;
     }
     if (shouldResolveNoteEditCommittedBaseFromSnapshot(visualCacheDirty,
                                                        publishedSnapshotIsCurrent)) {

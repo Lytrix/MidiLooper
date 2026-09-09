@@ -1,6 +1,6 @@
 # NOTE_EDIT + overdub paint/overlap compose
 
-**Status:** Stage 1 native verified. Stage 2 not started.  
+**Status:** Stage 1 device PASS. Stage 2 not started.  
 **Kind:** bugfix  
 **Evidence:** [`session_20260909_002450.log`](../../captures/session_20260909_002450.log)  
 **Parents:** Hydrate 4a [`note_edit_hydrate_enhancement.md`](note_edit_hydrate_enhancement.md), DEC-055 overlay delta, DEC-056 companion admission  
@@ -155,7 +155,7 @@ Reuse: YES — `ensureNoteEditDisplayProjectionCachesBuilt`,
 
 ### Open before coding
 
-1. Stage 1 reuse pin — **resolved.** `selectNoteEditCommittedBaseKind`: `captureActive && !visualCacheDirty` consumes `getVisualNotesForSlot`. `captureActive && visualCacheDirty` calls `rebuildDisplayNotesInWindow(..., includeActiveCapture=true)`. No third merge.
+1. Stage 1 reuse pin — **resolved, then device-corrected.** `captureActive` always `CaptureAwareGather` (`rebuildDisplayNotesInWindow(..., includeActiveCapture=true)`). NOTE_EDIT does not refresh visual cache; `appendCaptureEvent` only bumps `captureDisplayRevision`, which is now in the paint-cache key. [`110622`](../../captures/session_20260909_110622.log) proved clean visual cache is the pre-capture 49-note compose.
 2. Prepared-hit during Capture — **Stage 2.** Keep snapshot `noteMembership` for committed notes, and add live-capture identities from the composed DisplayNotes. Do not construct LCR on the fader (6.0).
 
 ### Proceed?
@@ -168,7 +168,7 @@ Reuse: YES — `ensureNoteEditDisplayProjectionCachesBuilt`,
 |---|---|
 | Native Stage 1 | **PASS.** Dirty cache + current snapshot + `captureActive` → gather includes snapshot notes **and** the live Capture note. Snapshot-only omits that note. Paint of that composed base keeps `EditSession.store` empty and current state mover-only. `pio test -e native`: **1795 succeeded, 1 skipped**. |
 | Native Stage 2 | Not started. Mover-hold vs that composed note emits Hide or Shorten with empty apply scratch and mover-only current state at start |
-| Device | Stage 1 remaining: NOTE_EDIT open → overdub → live overdub notes stay on the roll while the selected note moves. Overlap-on-first-drag is Stage 2. |
+| Device | Stage 1 **PASS** [`112612`](../../captures/session_20260909_112612.log) / [`112643`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_112643.json): `NOTE_EDIT_OPEN` visual **48**; in-edit overdub `DFRAME` **53 → 56 → 57 → 63** with **18** live notes (12–23); after stop **66**. Prior FAIL [`110622`](../../captures/session_20260909_110622.log) stayed **49** until stop. Seed attempt 1 [`112010`](../../captures/session_20260909_112010.log) was empty-slot select-before-clear; HITL now stops that RECORDING before clear. |
 | RAM1 | **PASS.** locals **7008** on `teensy41-capture-serial` |
 
 ## Do not

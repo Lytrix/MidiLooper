@@ -4654,6 +4654,10 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
       static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather),
       static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
           loop.captureActive(), loop.visualCacheDirty, loop.publishedSnapshotIsCurrent())));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::NoteEditCommittedBaseKind::CaptureAwareGather),
+      static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+          loop.captureActive(), false, loop.publishedSnapshotIsCurrent())));
 
   bool snapshotHasLive = false;
   for (const NoteUtils::DisplayNote& note : snapshotOnly) {

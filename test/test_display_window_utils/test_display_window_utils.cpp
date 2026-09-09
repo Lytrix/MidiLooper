@@ -173,7 +173,7 @@ void test_select_note_edit_committed_base_kind_capture_vs_playing() {
   TEST_ASSERT_EQUAL(static_cast<int>(Kind::CaptureAwareGather),
                     static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
                         true, true, true)));
-  TEST_ASSERT_EQUAL(static_cast<int>(Kind::VisualCache),
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::CaptureAwareGather),
                     static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
                         true, false, true)));
   TEST_ASSERT_EQUAL(static_cast<int>(Kind::Snapshot),

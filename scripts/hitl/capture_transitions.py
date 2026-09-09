@@ -344,6 +344,26 @@ def _wait_for_armed_state(
     return False
 
 
+def _wait_until_latest_state_not(
+    collector: SerialCaptureCollector,
+    *,
+    states: tuple[str, ...],
+    after_index: int,
+    timeout_s: float,
+    abort: Optional[RunAbort] = None,
+) -> bool:
+    """Wait until the latest ST Track state is present and not in ``states``."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while time.monotonic() < deadline:
+        if abort is not None and abort.check() is not None:
+            return False
+        latest = _latest_track_state(collector.snapshot(), after_index=after_index)
+        if latest is not None and latest not in states:
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def _wait_for_recording_active(
     collector: SerialCaptureCollector,
     *,

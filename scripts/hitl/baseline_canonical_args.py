@@ -120,6 +120,31 @@ def canonical_occupy_paint_legacy_args() -> list[str]:
     ]
 
 
+def canonical_record_one_overdub_legacy_args() -> list[str]:
+    """2-bar record plus one overdub; no second overdub and no post-stop undo."""
+    return [
+        "--record-bars",
+        "2",
+        "--overdub-bars",
+        "2",
+        "--second-overdub-bars",
+        "0",
+        "--no-fixed-grid-notes",
+        "--start-transport",
+        "--overdub-start-delay-bars",
+        "0",
+        "--overdub-start-delay-beats",
+        "1",
+        "--phase-wait-ms",
+        "500",
+        "--final-wait-ms",
+        "3000",
+        "--press-ms",
+        "120",
+        "--no-undo-redo-after-overdub-stop",
+    ]
+
+
 def canonical_edit_minimal_base_legacy_args() -> list[str]:
     """2-bar record-only base seed for edit_minimal (proven baseline record path, no overdub)."""
     return [

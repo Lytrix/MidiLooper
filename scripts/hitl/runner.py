@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--preset",
         default=None,
-        help="Named preset: base, edit_full, overdub_occupy_paint",
+        help="Named preset: base, edit_full, overdub_occupy_paint, note_edit_overdub_compose",
     )
     run_parser.add_argument(
         "--scenarios",

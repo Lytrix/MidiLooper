@@ -43,6 +43,37 @@ def serial_log_from_base_report(report: Mapping[str, Any]) -> Path | None:
         return Path(serial_path)
     return None
 
+
+def current_session_serial_log(out_dir: Path) -> Path | None:
+    pointer = out_dir / ".current_session"
+    if not pointer.is_file():
+        return None
+    raw = pointer.read_text(encoding="utf-8").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = (Path.cwd() / path).resolve()
+    if path.is_file():
+        return path
+    return None
+
+
+def resolve_base_seed_serial_log(
+    report: Mapping[str, Any] | None,
+    out_dir: Path,
+    *,
+    explicit: Path | None = None,
+) -> Path | None:
+    """Prefer the baseline snapshot file; follow-current-session uses `.current_session`."""
+    if explicit is not None and explicit.is_file():
+        return explicit
+    if report is not None:
+        from_report = serial_log_from_base_report(report)
+        if from_report is not None:
+            return from_report
+    return current_session_serial_log(out_dir)
+
 def base_preset_config(report: Mapping[str, Any] | None) -> dict[str, Any]:
     if report is None:
         return {}
