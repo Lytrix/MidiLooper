@@ -455,6 +455,31 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
             any("overdub_resolve_us=91511" in issue for issue in check["issues"])
         )
 
+    def test_pending_same_pitch_note_on_not_loop_end_tail_absent_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["pending_same_pitch_note_on_not_loop_end_tail"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["loop_end_tails"], [])
+
+    def test_pending_same_pitch_note_on_not_loop_end_tail_short_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,56200000,DISP,0,PLAYING,2304,63,63,63,63,1,0,3,63")
+        lines.insert(11, "#CAP,56201000,DNTE,48,435,435,94,8")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["pending_same_pitch_note_on_not_loop_end_tail"]
+        self.assertTrue(case["ok"], case["issues"])
+
+    def test_pending_same_pitch_note_on_not_loop_end_tail_203112_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,56200000,DISP,0,PLAYING,2304,63,63,63,63,1,0,3,63")
+        lines.insert(11, "#CAP,56201000,DNTE,48,435,435,1869,8")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("same_pitch_pending_loop_end_tail=48@435len1869" in issue
+                for issue in check["issues"])
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

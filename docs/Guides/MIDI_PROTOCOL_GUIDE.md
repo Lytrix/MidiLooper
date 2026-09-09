@@ -77,12 +77,14 @@ Consequences:
 - the complete `LoopSnapshot` still needs correct internal note spans for
   persistence, undo, display, and future resolution.
 
-Current source capture retains the existing same-channel/same-pitch
-`pendingNotes` and LIFO behavior. A source-level replace-on-retrigger guard that
-would insert an internal synthetic NoteOff before replacing an open capture
-entry is intentionally deferred; this snapshot change does not alter live MIDI
-capture pairing. Existing record/overdub stop finalization remains responsible
-for closing notes that are still open at stop.
+Current source capture keeps one `pendingNotes[{note, channel}]` slot. A second
+same-pitch NoteOn while that key is pending is **capture-admission reject**
+only (`Track::noteOn`): the first On stays pending, the second On is not
+appended, and MIDI thru is unchanged. Equal-tick Note Off then Note On still
+admits the second On because Off clears the slot first. A source-level
+replace-on-retrigger guard that would insert an internal synthetic NoteOff
+before keeping the new On stays deferred. Existing record/overdub stop
+finalization remains responsible for closing notes that are still open at stop.
 
 MIDI 2.0 adds per-note controller and per-note management messages for
 independent per-note control of multiple notes with the same note number. That

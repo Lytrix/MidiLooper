@@ -35,6 +35,8 @@ COORD_RE = re.compile(
     r"startLoop,\d+,projStart,-?\d+,loopStart,\d+,ch,(\d+),note,(\d+)"
 )
 SEVT_RE = re.compile(r"#CAP,\d+,SEVT,[A-Za-z],\d+,(\d+),(\d+)")
+DNTE_FULL_RE = re.compile(r"#CAP,\d+,DNTE,(\d+),(\d+),(\d+),(\d+),")
+DISP_LOOP_LEN_RE = re.compile(r"#CAP,\d+,DISP,\d+,[A-Za-z_]+,(\d+),")
 MOTOR_ACK_CHANNEL = 13
 FADER_COARSE_CHANNEL = 14
 FADER_CC_CHANNEL = 15
@@ -424,6 +426,49 @@ def _case_overdub_apply_reuses_committed_base(lines: list[str]) -> dict[str, Any
     }
 
 
+def _loop_length_before(lines: list[str], index: int) -> Optional[int]:
+    loop_len: Optional[int] = None
+    for row in lines[:index]:
+        match = DISP_LOOP_LEN_RE.search(row)
+        if match is None:
+            continue
+        value = int(match.group(1))
+        if value > 0:
+            loop_len = value
+    return loop_len
+
+
+def _case_pending_same_pitch_note_on_not_loop_end_tail(lines: list[str]) -> dict[str, Any]:
+    # 202226/203112: rejected second On leaves first On paired. A painted note
+    # whose length is loopLength-start and whose start is in the first half is
+    # the finishOpenNotes orphan tail (48@435 length 1869 on loop 2304).
+    tails: list[str] = []
+    judged = 0
+    for index, line in enumerate(lines):
+        match = DNTE_FULL_RE.search(line)
+        if match is None:
+            continue
+        start = int(match.group(2))
+        length = int(match.group(4))
+        loop_len = _loop_length_before(lines, index)
+        if loop_len is None or loop_len < 2:
+            continue
+        judged += 1
+        if start == 0 or start >= (loop_len // 2):
+            continue
+        if length == (loop_len - start):
+            tails.append(f"{match.group(1)}@{start}len{length}")
+    issues: list[str] = []
+    if tails:
+        issues.append("same_pitch_pending_loop_end_tail=" + ",".join(tails))
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "dnte_judged": judged,
+        "loop_end_tails": tails,
+    }
+
+
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
     from hitl.stimuli import (
         get_stimulus,
@@ -457,6 +502,9 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "control_plane_not_captured": _case_control_plane_not_captured(lines),
         "overdub_apply_reuses_committed_base": _case_overdub_apply_reuses_committed_base(
             lines
+        ),
+        "pending_same_pitch_note_on_not_loop_end_tail": (
+            _case_pending_same_pitch_note_on_not_loop_end_tail(lines)
         ),
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))

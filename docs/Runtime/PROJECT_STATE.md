@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-09 (control-plane record RC2 shipped; RC4 implementing)
+Last updated: 2026-09-09 (pending same-pitch NoteOn reject RC1 shipped)
 
 ---
 
@@ -109,7 +109,9 @@ paint cache on `captureDisplayRevision`. Open visual **48**; in-edit
 `DFRAME` **53 → 63**. Native **1795 succeeded, 1 skipped**. RAM1 locals
 **7008**. HITL `--preset note_edit_overdub_compose` / stimulus
 `STIM-NE-OD-COMPOSE-02` v1 (promoted TEMP-A). `01` remains paint-only.
-Compose Stage 1+2 device PASS. First-note loop-end display is parked
+Compose Stage 1+2 device PASS. Pending same-pitch NoteOn reject RC1
+device PASS [`212509`](../../captures/session_20260909_212509.log)
+(`PENDON,reject`; no first-half loop-end tail). First-note loop-end display is parked
 (watch HITL [`132708`](../../captures/session_20260909_132708.log) did not
 reproduce;
 [`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md)).

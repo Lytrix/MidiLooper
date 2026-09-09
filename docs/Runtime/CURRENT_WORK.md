@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-09 (control-plane record RC2 shipped; RC4 implementing)
+Last updated: 2026-09-09 (pending same-pitch NoteOn reject RC1 shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,25 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**NOTE_EDIT control-plane record + display stall — RC2 shipped, RC4 implementing.**
-RC1: `RECORD_EXCLUDE` matches `THRU_EXCLUDE` (ch13–16). Commit `c45f75f5`.
-RC2: capture-active apply uses Snapshot/VisualCache + `capturePreview`.
-Device [`183453`](../../captures/session_20260909_183453.log)
-`GEOM_APPLY,resolve` 6–22 ms (was 91–234 ms).
-RC4: `commitEditAction` must not `reconstructNotes` × 4 or
-`mergeActiveCapturePasses` for take_only logs on F1 leave.
+**Reject same-pitch NoteOn while pending — RC1 shipped.** `202226`
+On@435 then On@520 then Off@529 left `48@435` unpaired; `203112` paints
+`DNTE,48,435,435,1869`. `Track::noteOn` rejects the second On so Off@529
+closes 435 (length 94). Not replace-on-retrigger. Not MIDI-input reject.
+Do not edit compose `01`/`02`/`03`/`04`. Plan:
+[`capture_pending_same_pitch_note_on_reject_bugfix.md`](../Plans/capture_pending_same_pitch_note_on_reject_bugfix.md).
+
+**NOTE_EDIT close must not invent mover Length to loop end — RC1 implementing.**
+[`192140`](../../captures/session_20260909_192140.log) `ChangeLength`
+noteId=58 `80–2303` after in-edit overdub. Extend
+`shouldRejectMoverPreCommitRow` (inclusive `loopLength - 1`, same skip as
+overlap RC3). Do not edit compose `01`/`02`/`03`/`04`. Plan:
+[`note_edit_record_first_note_loopend_display_bugfix.md`](../Plans/note_edit_record_first_note_loopend_display_bugfix.md).
+
+**Prior — NOTE_EDIT control-plane record + display stall — RC6 implementing.**
+RC2 shipped (`3fc5744c`). RC4/RC5 in tree (not bundled). RC5 motors
+accepted on [`190408`](../../captures/session_20260909_190408.log).
+RC6: capture-session mover stays in `projectNoteEditDisplayNotes` after
+overlap Hide + Pitch (`190408` type=5 of note 94 @2481, no `DNTE`).
 Do not edit compose `01`/`02`/`03`/`04`. Plan:
 [`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
 

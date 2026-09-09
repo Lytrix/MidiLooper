@@ -283,7 +283,7 @@ and/or `QUIET_REFRESH` after user-classified quiet.
 
 **Stimulus:** `STIM-NE-OD-COMPOSE-02` v1 (everyday). Do not edit `STIM-NE-OD-COMPOSE-01` (paint-only, live 12–23). Do not register a TEMP id.
 
-Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. `02` streams in-edit Capture at the selected seed pitch, re-selects that seed on the seed layout, and moves it onto a later same-pitch live note. Verifier requires Hide or Shorten. Device PASS [`123953`](../../captures/session_20260909_123953.log) as TEMP-A, then promoted. Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md).
+Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. `02` streams in-edit Capture at the selected seed pitch, re-selects that seed on the seed layout, and moves it onto a later same-pitch live note. Verifier requires Hide or Shorten and `pending_same_pitch_note_on_not_loop_end_tail` so a same-pitch On-On-Off does not paint `length == loopLength-start` in the first half (`203112` `48@435` 1869). Device PASS [`123953`](../../captures/session_20260909_123953.log) as TEMP-A, then promoted. Device reject PASS [`212509`](../../captures/session_20260909_212509.log). Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md). Reject-pending plan: [`capture_pending_same_pitch_note_on_reject_bugfix.md`](../Plans/capture_pending_same_pitch_note_on_reject_bugfix.md).
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose \

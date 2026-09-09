@@ -684,11 +684,18 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
   }
 
   if (trackState == TRACK_RECORDING || trackState == TRACK_OVERDUBBING) {
-    // Single slot per (note, channel). A second live NoteOn replaces the first;
-    // Stage A occupancy must not add a nested slot here.
+    // Single slot per (note, channel). A second live NoteOn is capture-admission
+    // reject only — MIDI thru already sent it. Do not replace the pending start
+    // or append a second On (`202226` On@435, On@520, Off@529).
+    const auto key = std::make_pair(note, channel);
+    const auto pendingIt = pendingNotes.find(key);
+    if (pendingIt != pendingNotes.end()) {
+      SC_PENDING_SAME_PITCH_NOTE_ON_REJECT(note, channel, pendingIt->second.startNoteTick, tick);
+      return;
+    }
     PendingNote pending{note, channel, tick, velocity};
     snapshotOverlapHoldCandidates(pending);
-    pendingNotes[{note, channel}] = pending;
+    pendingNotes[key] = pending;
 
     recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
   }

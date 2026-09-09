@@ -968,25 +968,103 @@ void test_occupancy_add_then_shorten_composes_in_source_view() {
   TEST_ASSERT_EQUAL_UINT32(159u, composed->endTick);
 }
 
-void test_retrigger_pending_note_slot_replaces_first() {
-  // Pins Track::noteOn single-slot pendingNotes[{note, channel}] replacement.
-  // Stage A must not add a second slot or merge occupancyResolvedNoteIds across retriggers.
-  struct Slot {
-    uint32_t startNoteTick = 0;
-    OverlapNoteIdSet occupancyResolvedNoteIds;
-  };
-  std::map<std::pair<uint8_t, uint8_t>, Slot> pendingNotes;
-  Slot first;
-  first.startNoteTick = 100;
-  first.occupancyResolvedNoteIds = overlapIds({1});
-  pendingNotes[{60, 1}] = first;
-  Slot second;
-  second.startNoteTick = 200;
-  pendingNotes[{60, 1}] = second;
+struct CapturePendingSlot {
+  uint32_t startNoteTick = 0;
+};
+
+bool admitCaptureNoteOn(std::map<std::pair<uint8_t, uint8_t>, CapturePendingSlot>& pendingNotes,
+                        Loop& loop, uint8_t channel, uint8_t pitch, uint32_t tick) {
+  const auto key = std::make_pair(pitch, channel);
+  const auto pendingIt = pendingNotes.find(key);
+  if (pendingIt != pendingNotes.end()) {
+    return false;
+  }
+  pendingNotes[key] = CapturePendingSlot{tick};
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(tick, channel, pitch, 98)));
+  return true;
+}
+
+void admitCaptureNoteOff(std::map<std::pair<uint8_t, uint8_t>, CapturePendingSlot>& pendingNotes,
+                         Loop& loop, uint8_t channel, uint8_t pitch, uint32_t tick) {
+  const auto key = std::make_pair(pitch, channel);
+  const auto pendingIt = pendingNotes.find(key);
+  TEST_ASSERT_TRUE(pendingIt != pendingNotes.end());
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(tick, channel, pitch, 0)));
+  pendingNotes.erase(pendingIt);
+}
+
+void test_retrigger_pending_note_rejects_second_same_pitch() {
+  // session_20260909_202226 second live stream: On@435, On@520, Off@529.
+  // Track::noteOn rejects the second On; Off closes the first. Reconstruct is
+  // 435–529 (94), not a loop-end tail.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint8_t kChannel = 5;
+  constexpr uint8_t kPitch = 48;
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  loop.beginCapture(CapturePhase::Overdub);
+  std::map<std::pair<uint8_t, uint8_t>, CapturePendingSlot> pendingNotes;
+
+  TEST_ASSERT_TRUE(admitCaptureNoteOn(pendingNotes, loop, kChannel, kPitch, 435));
+  TEST_ASSERT_FALSE(admitCaptureNoteOn(pendingNotes, loop, kChannel, kPitch, 520));
   TEST_ASSERT_EQUAL(1u, pendingNotes.size());
-  const Slot& replaced = pendingNotes[{60, 1}];
-  TEST_ASSERT_EQUAL_UINT32(200u, replaced.startNoteTick);
-  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(replaced.occupancyResolvedNoteIds.size()));
+  const auto pendingAfterReject = pendingNotes.find({kPitch, kChannel});
+  TEST_ASSERT_TRUE(pendingAfterReject != pendingNotes.end());
+  TEST_ASSERT_EQUAL_UINT32(435u, pendingAfterReject->second.startNoteTick);
+
+  admitCaptureNoteOff(pendingNotes, loop, kChannel, kPitch, 529);
+  TEST_ASSERT_TRUE(pendingNotes.find({kPitch, kChannel}) == pendingNotes.end());
+
+  MidiEventVec captured;
+  loop.capture.store.copyEventsTo(captured);
+  uint32_t onCount = 0;
+  uint32_t offCount = 0;
+  bool sawOn520 = false;
+  for (const MidiEvent& evt : captured) {
+    if (evt.channel != kChannel || evt.data.noteData.note != kPitch) {
+      continue;
+    }
+    if (evt.isNoteOn()) {
+      ++onCount;
+      TEST_ASSERT_EQUAL_UINT32(435u, evt.tick);
+      if (evt.tick == 520) {
+        sawOn520 = true;
+      }
+    } else if (evt.isNoteOff()) {
+      ++offCount;
+      TEST_ASSERT_EQUAL_UINT32(529u, evt.tick);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1u, onCount);
+  TEST_ASSERT_EQUAL_UINT32(1u, offCount);
+  TEST_ASSERT_FALSE(sawOn520);
+
+  const NoteUtils::DisplayNoteVec notes =
+      NoteUtils::reconstructDisplayNotes(captured, kLoopLength, false);
+  TEST_ASSERT_EQUAL(1u, notes.size());
+  TEST_ASSERT_EQUAL_UINT8(kPitch, notes[0].note);
+  TEST_ASSERT_EQUAL_UINT32(435u, notes[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(529u, notes[0].endTick);
+  TEST_ASSERT_EQUAL_UINT32(94u, notes[0].endTick - notes[0].startTick);
+}
+
+void test_retrigger_pending_note_admits_on_after_off_same_tick() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  constexpr uint32_t kLoopLength = 2304;
+  Loop loop;
+  loop.loopLengthTicks = kLoopLength;
+  loop.beginCapture(CapturePhase::Overdub);
+  std::map<std::pair<uint8_t, uint8_t>, CapturePendingSlot> pendingNotes;
+
+  TEST_ASSERT_TRUE(admitCaptureNoteOn(pendingNotes, loop, 5, 48, 435));
+  admitCaptureNoteOff(pendingNotes, loop, 5, 48, 529);
+  TEST_ASSERT_TRUE(admitCaptureNoteOn(pendingNotes, loop, 5, 48, 529));
+  const auto admitted = pendingNotes.find({48, 5});
+  TEST_ASSERT_TRUE(admitted != pendingNotes.end());
+  TEST_ASSERT_EQUAL_UINT32(529u, admitted->second.startNoteTick);
 }
 
 void test_occupancy_undo_restores_original_geometry() {
@@ -5174,7 +5252,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_occupancy_composition_shorten_below_min_length_hides);
   RUN_TEST(test_occupancy_wrap_split_keeps_most_restrictive);
   RUN_TEST(test_occupancy_add_then_shorten_composes_in_source_view);
-  RUN_TEST(test_retrigger_pending_note_slot_replaces_first);
+  RUN_TEST(test_retrigger_pending_note_rejects_second_same_pitch);
+  RUN_TEST(test_retrigger_pending_note_admits_on_after_off_same_tick);
   RUN_TEST(test_occupancy_undo_restores_original_geometry);
   RUN_TEST(test_pending_shorten_applies_to_display_notes);
   RUN_TEST(test_wrap_keeps_source_view_inner_shortens_prior_add);
