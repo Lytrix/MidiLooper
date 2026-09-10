@@ -563,6 +563,7 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     key.capturePreviewRevision = loop.capturePreview.revision;
     key.visualCacheRevision = loop.visualCache.revision;
     key.publishedSnapshotRevision = loop.publishedSnapshotRevision();
+    key.publishedSnapshotIdentity = loop.publishedSnapshotIdentity();
     if (DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
             loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered(),
             loop.captureActive(), loop.hasOverdubSession())) {

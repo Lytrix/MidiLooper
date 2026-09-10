@@ -1533,6 +1533,7 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceTestKey(uint32_t windowSta
   key.capturePreviewRevision = 8;
   key.visualCacheRevision = 5;
   key.publishedSnapshotRevision = 3;
+  key.publishedSnapshotIdentity = reinterpret_cast<const void*>(0xA);
   key.playheadBar = playheadBar;
   key.valid = 1;
   return key;
@@ -1613,7 +1614,28 @@ void test_rebuild_committed_draw_source_on_committed_revision() {
       static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
   current = last;
+  current.publishedSnapshotIdentity = reinterpret_cast<const void*>(0xB);
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+  current = last;
   current.snapshotCurrent = 1;
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
+      static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
+}
+
+void test_rebuild_committed_draw_source_on_snapshot_identity_same_revision() {
+  const uint32_t bar = Config::TICKS_PER_BAR;
+  DisplayWindowUtils::DrawSourceGatherKey last = makeDrawSourceTestKey(0, 16u * bar, 2);
+  last.publishedSnapshotIdentity = reinterpret_cast<const void*>(0xA);
+  last.snapshotCurrent = 1;
+  DisplayWindowUtils::DrawSourceGatherKey current = last;
+  // Same playback / published revision, replaced root identity → rebuild (4.6 Stage 2).
+  current.publishedSnapshotIdentity = reinterpret_cast<const void*>(0xB);
+  TEST_ASSERT_TRUE(last.playbackRevision == current.playbackRevision);
+  TEST_ASSERT_TRUE(last.publishedSnapshotRevision == current.publishedSnapshotRevision);
+  TEST_ASSERT_FALSE(DisplayWindowUtils::drawSourceCommittedSourceKeysMatch(last, current));
   TEST_ASSERT_EQUAL(
       static_cast<int>(DisplayWindowUtils::DrawSourceReuseKind::RebuildCommittedDrawSource),
       static_cast<int>(DisplayWindowUtils::selectDrawSourceReuseKind(last, current, bar)));
@@ -2052,6 +2074,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_slide_committed_draw_source_exactly_one_bar);
   RUN_TEST(test_rebuild_committed_draw_source_two_bar_jump);
   RUN_TEST(test_rebuild_committed_draw_source_on_committed_revision);
+  RUN_TEST(test_rebuild_committed_draw_source_on_snapshot_identity_same_revision);
   RUN_TEST(test_reuse_committed_draw_source_when_only_overlay_keys_change);
   RUN_TEST(test_pending_paint_representation_and_overview_source);
   RUN_TEST(test_deferred_wrap_append_source_identity);
