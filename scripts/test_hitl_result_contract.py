@@ -121,10 +121,24 @@ class HitlResultContractTests(unittest.TestCase):
         from hitl.verify.legacy_adapter import verification_from_legacy_dict
 
         result = verification_from_legacy_dict(
-            {"ok": False, "issues": ["record_first_note_too_late"], "cap_sparse": False}
+            {"ok": False, "issues": ["record_first_note_missing"], "cap_sparse": False}
         )
         self.assertEqual(result.verdict, HitlVerdict.FAIL)
         self.assertFalse(result.ok)
+
+    def test_legacy_adapter_timing_warnings_alone_are_pass(self) -> None:
+        from hitl.verify.legacy_adapter import verification_from_legacy_dict
+
+        result = verification_from_legacy_dict(
+            {
+                "ok": True,
+                "issues": [],
+                "timing_warnings": ["record_first_note_too_late"],
+                "cap_sparse": False,
+            }
+        )
+        self.assertEqual(result.verdict, HitlVerdict.PASS)
+        self.assertTrue(result.ok)
 
 
 if __name__ == "__main__":

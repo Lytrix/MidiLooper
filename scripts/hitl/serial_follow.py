@@ -177,6 +177,12 @@ class ExternalSerialFollowCollector:
                         raw = log_file.readline()
                         if not raw:
                             break
+                        # Growing-file race: readline() can return a partial line
+                        # without a terminator. Advancing offset would split/drop
+                        # the CAP line (seen as missing RECS,stage,publish between
+                        # seal and finalize while the on-disk session log is intact).
+                        if not raw.endswith((b"\n", b"\r")):
+                            break
                         self._offset = log_file.tell()
                         line = raw.decode("utf-8", errors="replace").strip()
                         if not line:

@@ -147,10 +147,12 @@ To align stop actions with the intended musical boundary despite button short-pr
 - The script adds a final settle delay before exit (`--final-wait-ms 1200`) so deferred button actions can complete.
 - In bar mode, the script records clock pulses seen in the JSON report (`*_clock_pulses_seen`) so you can verify phase length. Counts come from host MIDI in or serial transport proxy pacing — not from `#CAP` clock lines.
 - Record stop returns to playback (`STOPPED_RECORDING -> PLAYING`), a second record short press enters overdub (`PLAYING -> OVERDUBBING`), and a third press exits overdub (`OVERDUBBING -> PLAYING`).
-- First-note timing validation (serial verification path):
+- First-note latency (serial verification path) — **advisory only** (does not fail the run):
   - `--record-first-note-max-clocks` (default `12`)
   - `--overdub-first-note-max-clocks` (default `12`)
   - Offset is derived from microsecond delta between phase `ST,Track` entry and first `#CAP,MI,U` note-on, converted using serial BPM (or `--tempo-bpm`).
+  - Exceeding the max emits `timing_warnings` (e.g. `record_first_note_too_late`); missing first note remains a hard fail.
+  - Skew is expected from host stream vs ST anchor and the ~300ms transport debounce.
 
 ## Output
 
@@ -162,7 +164,7 @@ The report includes:
 - per-track sent note/CC counts,
 - serial capture marker counts (`RECA`, `RECS`) when enabled,
 - track transition counts for `ARMED->RECORDING`, `RECORDING->STOPPED_RECORDING`, `STOPPED_RECORDING->PLAYING`, `PLAYING->OVERDUBBING`, `OVERDUBBING->PLAYING`,
-- serial first-note offsets (`record_first_note_offset`, `overdub_first_note_offset`) and timing issues when out of threshold,
+- serial first-note offsets (`record_first_note_offset`, `overdub_first_note_offset`) and advisory `timing_warnings` when latency exceeds threshold,
 - `overall_ok` pass/fail summary.
 
 ## Next extension points
