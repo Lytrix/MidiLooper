@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-10 (OpenSpec 4.6 Stage 4 SHIPPED — base [`172224`](../../captures/session_20260910_172224.log); length-fader gate [`171420`](../../captures/session_20260910_171420.log))
+Last updated: 2026-09-10 (Overdub live wrap playhead-tail Stage 1 SHIPPED; OpenSpec 4.6 Stage 4 SHIPPED — base [`172224`](../../captures/session_20260910_172224.log); length-fader gate [`171420`](../../captures/session_20260910_171420.log))
 
 ---
 

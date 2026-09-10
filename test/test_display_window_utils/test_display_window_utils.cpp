@@ -152,6 +152,28 @@ void test_overdub_playhead_tails_apply_when_over_budget() {
       true, false, false, false, true));
 }
 
+void test_should_allow_capture_playhead_wrap_continuation_stage1_truth_table() {
+  // Pinned table (overdub_live_wrap_playhead_tail_display_bugfix). Stage 1 keeps
+  // OVERDUBBING → NO; Stage 2 flips OVERDUBBING+PLAYING → YES.
+  // RECORDING, not playing
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      true, false, false));
+  // RECORDING + PLAYING
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      true, true, false));
+  // OVERDUBBING + PLAYING (Stage 1 still NO)
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      false, true, true));
+  // OVERDUBBING without playing arg (defensive)
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      false, false, true));
+  // stopped / non-capture
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      false, true, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      false, false, false));
+}
+
 void test_prefer_preserved_overdub_stop_handoff_while_cache_dirty() {
   // session_20260820_000553: first PLAYING after overdub stop must keep the composed
   // frame while visualCache is dirty (655 → 583 flash when cache notes were used).
@@ -2024,6 +2046,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_capture_playhead_tails_are_paint_only);
   RUN_TEST(test_overdub_playhead_tails_apply_when_over_budget);
+  RUN_TEST(test_should_allow_capture_playhead_wrap_continuation_stage1_truth_table);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_resolve_note_edit_committed_base_from_snapshot);
   RUN_TEST(test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather);

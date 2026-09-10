@@ -722,7 +722,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
             const bool allowWrapContinuation =
-                !track.isOverdubbing() && !(track.isRecording() && !track.isPlaying());
+                DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+                    track.isRecording(), track.isPlaying() || track.isOverdubbing(),
+                    track.isOverdubbing());
             applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
