@@ -3982,6 +3982,43 @@ void test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151
   TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 16));
 }
 
+/// 194531: current snapshot OD open omitted bar-crossing id=27 (74@1500–1554)
+/// while committed events still pair. from=snapshot must mergeOmitted.
+void test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = 2304;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 1452, 1, 73, 100, 26));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1500, 1, 73, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 1500, 1, 74, 100, 27));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1554, 1, 74, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 28;
+
+  loop.storePublishedSnapshotForTest(
+      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 26, 73, 1452, 1500),
+      loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec fromSnap;
+  appendSnapshotNotesForBarRange(*loop.publishedSnapshot(), 0, 2, fromSnap);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(fromSnap, 26));
+  TEST_ASSERT_NULL(findDisplayNoteById(fromSnap, 27));
+
+  loop.openOverdubSession(0);
+  TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
+  const NoteUtils::DisplayNote* restored = findSpanCacheNote(loop, 27);
+  TEST_ASSERT_NOT_NULL_MESSAGE(restored,
+                               "from=snapshot must merge omitted bar-crossing id=27");
+  TEST_ASSERT_EQUAL_UINT32(74u, restored->note);
+  TEST_ASSERT_EQUAL_UINT32(1500u, restored->startTick);
+  TEST_ASSERT_EQUAL_UINT32(1554u, restored->endTick);
+  TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 26));
+}
+
 void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4744,6 +4781,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
   RUN_TEST(test_draw_source_snapshot_miss_recovers_pending_shorten_212700);
   RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
+  RUN_TEST(test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);
   RUN_TEST(test_ready_fallback_cache_does_not_override_current_snapshot);

@@ -663,11 +663,15 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         DIAG_COUNTER_INC(DisplayFullRebuild);
         gatherCommittedDrawSourceBars(loop, firstBar, lastBar, resolvedPitchLow, resolvedPitchHigh,
                                       candidate, committedDisplayEnd);
+        const bool captureOrOverdubActive =
+            loop.captureActive() || loop.hasOverdubSession();
         if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
-                loop.publishedSnapshotIsCurrent(),
-                loop.captureActive() || loop.hasOverdubSession(), loop.visualCache.notes.size(),
-                committedDisplayEnd,
-                loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered())) {
+                loop.publishedSnapshotIsCurrent(), captureOrOverdubActive,
+                loop.visualCache.notes.size(), committedDisplayEnd,
+                loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) ||
+            DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+                loop.publishedSnapshotIsCurrent(), captureOrOverdubActive,
+                loop.visualCacheDirty, loop.visualCache.notes.size(), committedDisplayEnd)) {
             candidate.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             committedDisplayEnd = candidate.size();
         }
@@ -699,6 +703,22 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         recoverMissingSealedShortenSources(loop, liveDisplayNotes, committedDisplayEnd)) {
         storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
                                        liveDisplayCommittedPrefix_);
+    }
+
+    // Stage 3B: STOPPED idle draw-source — snapshot spans (or reused snapshot
+    // prefix) can omit wrap-held On→loopEnd. Complete with the same pass
+    // append used by VC rebuild / Stage 3A. Snapshot remains base.
+    if (DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
+            track.isStopped(), loop.captureActive(),
+            loop.publishedSnapshotIsCurrent())) {
+        Loop& mutLoop = const_cast<Loop&>(loop);
+        const size_t beforeComplete = liveDisplayNotes.size();
+        mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
+        if (liveDisplayNotes.size() != beforeComplete) {
+            committedDisplayEnd = liveDisplayNotes.size();
+            storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+                                           liveDisplayCommittedPrefix_);
+        }
     }
 
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(

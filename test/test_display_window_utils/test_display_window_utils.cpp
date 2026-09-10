@@ -152,19 +152,18 @@ void test_overdub_playhead_tails_apply_when_over_budget() {
       true, false, false, false, true));
 }
 
-void test_should_allow_capture_playhead_wrap_continuation_stage1_truth_table() {
-  // Pinned table (overdub_live_wrap_playhead_tail_display_bugfix). Stage 1 keeps
-  // OVERDUBBING → NO; Stage 2 flips OVERDUBBING+PLAYING → YES.
+void test_should_allow_capture_playhead_wrap_continuation_stage2_truth_table() {
+  // Pinned table (overdub_live_wrap_playhead_tail_display_bugfix) after Stage 2.
   // RECORDING, not playing
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
       true, false, false));
   // RECORDING + PLAYING
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
       true, true, false));
-  // OVERDUBBING + PLAYING (Stage 1 still NO)
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+  // OVERDUBBING + PLAYING → YES
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
       false, true, true));
-  // OVERDUBBING without playing arg (defensive)
+  // OVERDUBBING without playing arg stays NO
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
       false, false, true));
   // stopped / non-capture
@@ -172,6 +171,21 @@ void test_should_allow_capture_playhead_wrap_continuation_stage1_truth_table() {
       false, true, false));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
       false, false, false));
+}
+
+void test_should_complete_stopped_draw_source_wrap_held_stage3b_truth_table() {
+  // STOPPED + capture idle + current snapshot → YES
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
+      true, false, true));
+  // PLAYING
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
+      false, false, true));
+  // STOPPED but capture still active
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
+      true, true, true));
+  // STOPPED idle without current snapshot
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
+      true, false, false));
 }
 
 void test_prefer_preserved_overdub_stop_handoff_while_cache_dirty() {
@@ -593,6 +607,27 @@ void test_should_retain_unpublished_visual_cache_over_stale_gather() {
       false, true, 56u, 65u, false));
 }
 
+void test_should_retain_visual_cache_over_incomplete_current_snapshot_gather() {
+  // 194531: current snapshot OD open notes=31 vs clean visual=32 (bar-crossing
+  // id 27). Unpublished-stale retain stays false when snapshot is current.
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      true, true, 32u, 31u, false));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, true, false, 32u, 31u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      false, true, false, 32u, 31u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, false, false, 32u, 31u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, true, true, 32u, 31u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, true, false, 31u, 31u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, true, false, 0u, 31u));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, true, false, 31u, 32u));
+}
+
 void test_should_write_live_display_notes_on_transport_stop() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldWriteLiveDisplayNotesOnTransportStop(true));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldWriteLiveDisplayNotesOnTransportStop(false));
@@ -880,6 +915,40 @@ void test_overlay_same_id_replaces_suffix_row() {
   TEST_ASSERT_EQUAL(32, notes[0].noteId);
   TEST_ASSERT_EQUAL(148, notes[1].noteId);
   TEST_ASSERT_EQUAL_UINT32(96u, notes[1].endTick);
+}
+
+/// [`191636`] pitch 18 WRAP On@2181 Off@100: closed preview emits On→loopEnd and
+/// head with the same NoteId. Upsert-by-id alone must not let the head wipe the tail.
+void test_overlay_same_id_keeps_wrap_on_to_loop_end_and_head_191636() {
+  NoteUtils::DisplayNoteVec notes;
+  const size_t committedEnd = 0;
+  constexpr NoteId kId = 57;
+  constexpr uint8_t kPitch = 18;
+  constexpr uint32_t kOn = 2181;
+  constexpr uint32_t kLoopEndInclusive = 2303;
+  constexpr uint32_t kHeadOff = 100;
+
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{kId, kPitch, 98, kOn, kLoopEndInclusive},
+      true);
+  DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(
+      notes, committedEnd, NoteUtils::DisplayNote{kId, kPitch, 98, 0, kHeadOff}, true);
+
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  bool sawTail = false;
+  bool sawHead = false;
+  for (const NoteUtils::DisplayNote& note : notes) {
+    TEST_ASSERT_EQUAL(kId, note.noteId);
+    TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+    if (note.startTick == kOn && note.endTick == kLoopEndInclusive) {
+      sawTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == kHeadOff) {
+      sawHead = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sawTail);
+  TEST_ASSERT_TRUE(sawHead);
 }
 
 void test_overlay_invalid_id_still_replaces_pitch_start() {
@@ -2046,7 +2115,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_preserved_overdub_stop_keeps_capture_suffix);
   RUN_TEST(test_capture_playhead_tails_are_paint_only);
   RUN_TEST(test_overdub_playhead_tails_apply_when_over_budget);
-  RUN_TEST(test_should_allow_capture_playhead_wrap_continuation_stage1_truth_table);
+  RUN_TEST(test_should_allow_capture_playhead_wrap_continuation_stage2_truth_table);
+  RUN_TEST(test_should_complete_stopped_draw_source_wrap_held_stage3b_truth_table);
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_resolve_note_edit_committed_base_from_snapshot);
   RUN_TEST(test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather);
@@ -2076,6 +2146,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_capture_preview_row_covered_by_visual_cache);
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
   RUN_TEST(test_should_retain_unpublished_visual_cache_over_stale_gather);
+  RUN_TEST(test_should_retain_visual_cache_over_incomplete_current_snapshot_gather);
   RUN_TEST(test_should_write_live_display_notes_on_transport_stop);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
@@ -2114,6 +2185,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_capture_sealed_upsert_keeps_longer_suffix_150650);
   RUN_TEST(test_overlay_keeps_distinct_valid_ids_at_same_pitch_start_195409);
   RUN_TEST(test_overlay_same_id_replaces_suffix_row);
+  RUN_TEST(test_overlay_same_id_keeps_wrap_on_to_loop_end_and_head_191636);
   RUN_TEST(test_overlay_invalid_id_still_replaces_pitch_start);
   RUN_TEST(test_overlay_repeated_sealed_ids_keep_equal_geometry_195409);
   RUN_TEST(test_stopped_sealed_upsert_appends_when_prefix_lacks_pitch_start);

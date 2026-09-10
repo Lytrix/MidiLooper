@@ -3069,7 +3069,10 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
     if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
             loop.publishedSnapshotIsCurrent(), captureActive || loop.hasOverdubSession(),
             loop.visualCache.notes.size(), prefixEnd,
-            loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered())) {
+            loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) ||
+        DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+            loop.publishedSnapshotIsCurrent(), captureActive || loop.hasOverdubSession(),
+            loop.visualCacheDirty, loop.visualCache.notes.size(), prefixEnd)) {
       out.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
       prefixEnd = out.size();
     }
@@ -3193,8 +3196,8 @@ int findCaptureTailTargetIndex(const NoteUtils::DisplayNoteVec& notes, size_t re
   return anyMatch;
 }
 
-/// Same body as `DisplayManagerInternal::applyCapturePlayheadTails`. Overdub paint passes
-/// `allowWrapContinuation=false`.
+/// Same body as `DisplayManagerInternal::applyCapturePlayheadTails`. Callers pass
+/// `shouldAllowCapturePlayheadWrapContinuation` (OVERDUBBING+PLAYING → true).
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
                                NoteUtils::DisplayNoteVec& notes, bool allowWrapContinuation) {
@@ -4136,6 +4139,212 @@ void test_same_pass_playhead_tails_keep_closed_bar_four_end() {
   }
 }
 
+/// Stage 0/2 fixture from [`session_20260910_175831.log`](../../captures/session_20260910_175831.log):
+/// OD2 pitch 18 On@2095 (abs 6703), Off@6 (abs 6918), loopLength 2304.
+/// A — pre-wrap open hold: On → currentTick. B — post-wrap open hold with
+/// wrap continuation: On → loopEnd-1 plus 0 → currentTick. Policy gate is
+/// OVERDUBBING+PLAYING → YES.
+void test_overdub_live_wrap_playhead_tails_175831_ab() {
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint32_t kOnTick = 2095;
+  constexpr uint32_t kPreWrapClose = 2200;
+  constexpr uint32_t kPostWrapClose = 6;
+  constexpr uint8_t kPitch = 18;
+  const NoteId noteId = 57;
+
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+      false, true, true));
+
+  CapturePreview preview;
+  NoteUtils::DisplayNote openRow{};
+  openRow.noteId = noteId;
+  openRow.note = kPitch;
+  openRow.velocity = 98;
+  openRow.startTick = kOnTick;
+  openRow.endTick = kOnTick;
+  preview.notes.push_back(openRow);
+  CapturePreviewNoteState state{};
+  state.open = true;
+  state.wrapHeld = false;
+  preview.noteStates.push_back(state);
+  preview.openNoteIndices.push_back(0);
+
+  NoteUtils::DisplayNoteVec drawnA = preview.notes;
+  const bool allowWrap =
+      DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(false, true, true);
+  applyCapturePlayheadTails(preview, kLoopLength, kPreWrapClose, 0, drawnA, allowWrap);
+  TEST_ASSERT_EQUAL(1u, drawnA.size());
+  TEST_ASSERT_EQUAL_UINT8(kPitch, drawnA[0].note);
+  TEST_ASSERT_EQUAL_UINT32(kOnTick, drawnA[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kPreWrapClose, drawnA[0].endTick);
+
+  preview.noteStates[0].wrapHeld = true;
+  NoteUtils::DisplayNoteVec drawnB = preview.notes;
+  applyCapturePlayheadTails(preview, kLoopLength, kPostWrapClose, 0, drawnB, allowWrap);
+  TEST_ASSERT_EQUAL(2u, drawnB.size());
+  bool sawTail = false;
+  bool sawHead = false;
+  for (const NoteUtils::DisplayNote& note : drawnB) {
+    TEST_ASSERT_EQUAL_UINT8(kPitch, note.note);
+    if (note.startTick == kOnTick && note.endTick == kLoopLength - 1u) {
+      sawTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == kPostWrapClose) {
+      sawHead = true;
+    }
+  }
+  TEST_ASSERT_TRUE(sawTail);
+  TEST_ASSERT_TRUE(sawHead);
+
+  NoteUtils::DisplayNoteVec drawnStage1 = preview.notes;
+  applyCapturePlayheadTails(preview, kLoopLength, kPostWrapClose, 0, drawnStage1, false);
+  TEST_ASSERT_EQUAL(1u, drawnStage1.size());
+  TEST_ASSERT_EQUAL_UINT32(kOnTick, drawnStage1[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(kOnTick, drawnStage1[0].endTick);
+}
+
+/// Stage 3 fixture from [`session_20260910_180916.log`]: pitch 17 WRAP
+/// On@2088 Off@29 on loop 2304. LCR passes alone keeps head only; wrap-held
+/// append restores On→loopEnd-1 and 0→Off (STOPPED paint order).
+void test_stopped_passes_resolve_append_wrap_held_180916() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint32_t kOnTick = 2088;
+  constexpr uint32_t kOffTick = 29;
+  constexpr uint8_t kPitch = 17;
+  loop.loopId = 7;
+  loop.loopLengthTicks = kLoopLength;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kOnTick, 1, kPitch, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOffTick, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, kOffTick));
+
+  NoteUtils::DisplayNoteVec passesOnly;
+  LoopContentResolution::resolveDisplayNotes(loop.passes, kLoopLength, passesOnly);
+  bool passesSawTail = false;
+  bool passesSawHead = false;
+  for (const NoteUtils::DisplayNote& note : passesOnly) {
+    if (note.note != kPitch) {
+      continue;
+    }
+    if (note.startTick == kOnTick && note.endTick == kLoopLength - 1u) {
+      passesSawTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == kOffTick) {
+      passesSawHead = true;
+    }
+  }
+  TEST_ASSERT_FALSE(passesSawTail);
+  TEST_ASSERT_TRUE(passesSawHead);
+
+  NoteUtils::DisplayNoteVec withAppend = passesOnly;
+  loop.appendOverdubPassDisplayNotes(withAppend);
+  bool appendSawTail = false;
+  bool appendSawHead = false;
+  for (const NoteUtils::DisplayNote& note : withAppend) {
+    if (note.note != kPitch) {
+      continue;
+    }
+    if (note.startTick == kOnTick && note.endTick == kLoopLength - 1u) {
+      appendSawTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == kOffTick) {
+      appendSawHead = true;
+    }
+  }
+  TEST_ASSERT_TRUE(appendSawTail);
+  TEST_ASSERT_TRUE(appendSawHead);
+  TEST_ASSERT_GREATER_THAN(passesOnly.size(), withAppend.size());
+}
+
+/// Stage 3B ([`183741`](../../captures/session_20260910_183741.log)): STOPPED
+/// draw-source paints current-snapshot spans missing wrap On→loopEnd. Gate +
+/// append completes the candidate; snapshot remains base (no VC preference).
+void test_stopped_draw_source_snapshot_append_wrap_held_183741() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  constexpr uint32_t kLoopLength = 2304;
+  constexpr uint32_t kOnTick = 2088;
+  constexpr uint32_t kOffTick = 29;
+  constexpr uint8_t kPitch = 17;
+  loop.loopId = 7;
+  loop.loopLengthTicks = kLoopLength;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kOnTick, 1, kPitch, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(kOffTick, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, kOffTick));
+  const bool published = loop.tryPublishSessionExitSnapshot(CommitReason::OverdubStop, {});
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(published);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loop.captureActive());
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldCompleteStoppedDrawSourceWrapHeld(
+      true, loop.captureActive(), loop.publishedSnapshotIsCurrent()));
+
+  // Draw-source may settle an incomplete committed candidate (passes LCR /
+  // incomplete snapshot projection). Same completion helper as Stage 3A.
+  NoteUtils::DisplayNoteVec candidate;
+  LoopContentResolution::resolveDisplayNotes(loop.passes, kLoopLength, candidate);
+  bool candidateSawTail = false;
+  bool candidateSawHead = false;
+  for (const NoteUtils::DisplayNote& note : candidate) {
+    if (note.note != kPitch) {
+      continue;
+    }
+    if (note.startTick == kOnTick && note.endTick == kLoopLength - 1u) {
+      candidateSawTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == kOffTick) {
+      candidateSawHead = true;
+    }
+  }
+  TEST_ASSERT_FALSE(candidateSawTail);
+  TEST_ASSERT_TRUE(candidateSawHead);
+
+  NoteUtils::DisplayNoteVec completed = candidate;
+  loop.appendOverdubPassDisplayNotes(completed);
+  bool completedSawTail = false;
+  bool completedSawHead = false;
+  for (const NoteUtils::DisplayNote& note : completed) {
+    if (note.note != kPitch) {
+      continue;
+    }
+    if (note.startTick == kOnTick && note.endTick == kLoopLength - 1u) {
+      completedSawTail = true;
+    }
+    if (note.startTick == 0u && note.endTick == kOffTick) {
+      completedSawHead = true;
+    }
+  }
+  TEST_ASSERT_TRUE(completedSawTail);
+  TEST_ASSERT_TRUE(completedSawHead);
+  TEST_ASSERT_GREATER_THAN(candidate.size(), completed.size());
+}
+
+/// Same NoteId wrap head+tail must both survive unique-by-id gather
+/// ([`193108`](../../captures/session_20260910_193108.log) STOPPED dropped On@2151).
+void test_append_display_note_unique_by_id_keeps_wrap_segments() {
+  NoteUtils::DisplayNoteVec out;
+  constexpr NoteId kId = 57;
+  appendDisplayNoteUniqueById(out, NoteUtils::DisplayNote{kId, 18, 98, 2151, 2303});
+  appendDisplayNoteUniqueById(out, NoteUtils::DisplayNote{kId, 18, 98, 0, 81});
+  appendDisplayNoteUniqueById(out, NoteUtils::DisplayNote{kId, 18, 98, 0, 81});
+  TEST_ASSERT_EQUAL(2u, out.size());
+  TEST_ASSERT_EQUAL_UINT32(2151u, out[0].startTick);
+  TEST_ASSERT_EQUAL_UINT32(0u, out[1].startTick);
+}
+
 /// RC2b (172532): closed 2304→2496 same NoteId must not become wrap-held 2304→432
 /// after wrap-2 journal drain / gather. Sibling 240→432 is the Off draw_src stole.
 void test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather() {
@@ -4960,6 +5169,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_reuses_visual_cache_when_revision_and_coverage_match);
   RUN_TEST(test_same_pass_draw_source_keeps_closed_bar_four_end);
   RUN_TEST(test_same_pass_playhead_tails_keep_closed_bar_four_end);
+  RUN_TEST(test_overdub_live_wrap_playhead_tails_175831_ab);
+  RUN_TEST(test_stopped_passes_resolve_append_wrap_held_180916);
+  RUN_TEST(test_stopped_draw_source_snapshot_append_wrap_held_183741);
+  RUN_TEST(test_append_display_note_unique_by_id_keeps_wrap_segments);
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);

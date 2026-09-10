@@ -234,7 +234,7 @@ inline bool shouldApplyLiveCapturePlayheadTails(bool recording, bool overdubbing
 /// From capture state only — not a generic wrap switch. Pinned truth table
 /// (`overdub_live_wrap_playhead_tail_display_bugfix`):
 ///   RECORDING (any playing) → NO
-///   OVERDUBBING + PLAYING → YES (Stage 2); Stage 1 keeps NO
+///   OVERDUBBING + PLAYING → YES
 /// `playing` means playhead advancing (`isPlaying() || isOverdubbing()`):
 /// `Track::isPlaying()` alone is false while `trackState == OVERDUBBING`.
 inline bool shouldAllowCapturePlayheadWrapContinuation(bool recording, bool playing,
@@ -243,10 +243,7 @@ inline bool shouldAllowCapturePlayheadWrapContinuation(bool recording, bool play
         return false;
     }
     if (overdubbing) {
-        // Stage 1: behavior-preserving NO (current tree disables OD wrap paint).
-        // Stage 2: return playing;
-        (void)playing;
-        return false;
+        return playing;
     }
     (void)playing;
     return false;
@@ -496,6 +493,18 @@ inline bool shouldGatherPublishedSnapshotForDrawSource(bool hasPublishedSnapshot
     return false;
 }
 
+/// Stage 3B (`overdub_live_wrap_playhead_tail_display_bugfix`): STOPPED
+/// LOOP_EDIT draw-source may paint current-snapshot spans that omit wrap-held
+/// On→loopEnd (`183741`: frame 57 vs reconstruct/VC 60). Complete the settled
+/// committed candidate with `appendOverdubPassDisplayNotes` — snapshot stays
+/// base authority. Not a general post-snapshot append; not VisualCache preference.
+/// Gate: STOPPED track + capture idle + current published snapshot (reuse of an
+/// incomplete snapshot-derived prefix still completes).
+inline bool shouldCompleteStoppedDrawSourceWrapHeld(bool stopped, bool captureActive,
+                                                    bool publishedSnapshotIsCurrent) {
+    return stopped && !captureActive && publishedSnapshotIsCurrent;
+}
+
 /// Record-stop first PLAYING paint: keep the last RECORDING composed prefix only
 /// when the predicate did not select a current snapshot and clean visual is not
 /// authority. The seed is not a committed-source representation (`151552`).
@@ -517,6 +526,20 @@ inline bool shouldRetainUnpublishedVisualCacheOverStaleGather(bool publishedSnap
         return false;
     }
     return retainedVisualCacheCount > 0 && retainedVisualCacheCount > thisStaleGatherCount;
+}
+
+/// During capture/overdub, a **current** published snapshot can still omit
+/// committed spans (`194531` id=27 pitch 74 @ 1500–1554 bar-crossing; OD open
+/// `from=snapshot` notes=31 while clean visual=32). Retain the clean visual
+/// when **this** gather is smaller. Pending Hide/Shorten overlays still apply
+/// after retain. Not a global VC preference; not STOPPED (Stage 3B wrap path).
+inline bool shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+    bool publishedSnapshotIsCurrent, bool captureOrOverdubActive, bool visualCacheDirty,
+    size_t visualCacheCount, size_t snapshotGatherCount) {
+    if (!publishedSnapshotIsCurrent || !captureOrOverdubActive || visualCacheDirty) {
+        return false;
+    }
+    return visualCacheCount > 0 && visualCacheCount > snapshotGatherCount;
 }
 
 /// Transport stop hops every playing track (`214900`). Only the selected
@@ -935,10 +958,17 @@ inline void upsertDisplayNoteAtPitchStartFrom(NoteUtils::DisplayNoteVec& notes,
   if (row.endTick >= row.startTick) {
     if (row.noteId != kInvalidNoteId) {
       for (size_t i = suffixBegin; i < notes.size(); ++i) {
-        if (notes[i].noteId == row.noteId) {
-          notes[i] = row;
-          return;
+        if (notes[i].noteId != row.noteId) {
+          continue;
         }
+        // Wrap head + On→loopEnd share one NoteId with different starts. Replacing
+        // by id alone drops On→loopEnd when the head is upserted second
+        // (`191636` preview_miss id 57: want 2181→2303, frame end=100).
+        if (notes[i].startTick != row.startTick) {
+          continue;
+        }
+        notes[i] = row;
+        return;
       }
     }
     for (size_t i = suffixBegin; i < notes.size(); ++i) {
