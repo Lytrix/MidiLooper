@@ -219,8 +219,17 @@ def stream_occupy_record_bars(
     stop_press_ms: int = 120,
     abort: Optional[Any] = None,
 ) -> tuple[int, int, int, dict[str, float]]:
-    """Stream the record seed and optionally press record-stop early."""
+    """Stream the record seed and press record-stop at a full-loop boundary.
+
+    Stop is anchored to ``loop_bars * TICKS_PER_BAR``, not the last MIDI edge.
+    The seed's last Off sits at half-bar into the final bar (~2688 on a 4-bar
+    loop). Stopping there leaves ``raw % 768 <= 384``, so firmware
+    ``quantizeTransportRecordLength`` floors to 3 bars (2304). Occupy recipes
+    require the sealed length to be the full loop.
+    """
     del serial_collector
+    if loop_bars <= 0:
+        raise ValueError("loop_bars must be > 0")
     start = stream_start_monotonic if stream_start_monotonic is not None else time.monotonic()
     seconds_per_tick = 60.0 / tempo_bpm / float(TICKS_PER_BEAT)
     return _play_edges_wall_clock(
@@ -234,6 +243,7 @@ def stream_occupy_record_bars(
         clocks=_stream_clocks(loop_bars, laps=1),
         stop_press_advance_clocks=stop_press_advance_clocks,
         stop_press_ms=stop_press_ms,
+        stop_at_tick=loop_bars * TICKS_PER_BAR,
     )
 
 
@@ -363,14 +373,16 @@ def _play_edges_wall_clock(
     clocks: int,
     stop_press_advance_clocks: int = 0,
     stop_press_ms: int = 120,
+    stop_at_tick: Optional[int] = None,
 ) -> tuple[int, int, int, dict[str, float]]:
     note_on_count = 0
     first_tick = edges[0][0] if edges else 0
     last_tick = edges[-1][0] if edges else 0
     stop_mono: Optional[float] = None
-    if stop_press_advance_clocks > 0:
-        advance_ticks = stop_press_advance_clocks * TICKS_PER_CLOCK
-        stop_tick = max(first_tick, last_tick - advance_ticks)
+    if stop_press_advance_clocks > 0 or stop_at_tick is not None:
+        base_stop_tick = last_tick if stop_at_tick is None else int(stop_at_tick)
+        advance_ticks = max(0, int(stop_press_advance_clocks)) * TICKS_PER_CLOCK
+        stop_tick = max(first_tick, base_stop_tick - advance_ticks)
         stop_mono = start + ((stop_tick - first_tick) * seconds_per_tick)
     stop_sent = False
 

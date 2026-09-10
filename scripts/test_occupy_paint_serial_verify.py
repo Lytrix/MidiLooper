@@ -15,12 +15,14 @@ if str(_SCRIPT_DIR) not in sys.path:
 from hitl.control_constants import TICKS_PER_BAR, TICKS_PER_BEAT
 from hitl.flows.occupy_paint import (
     HALF_BAR_TICKS,
+    OCCUPY_LOOP_BARS,
     PHRASE_SHORTEN_HIDE,
     QUARTER_BAR_TICKS,
     RECORD_SEED_PITCH,
     SAME_START_PITCH,
     SOURCE_PHRASE,
     WRAP_PITCHES,
+    _play_edges_wall_clock,
     loop_wrap_occupy_edges,
     occupy_midi_edges,
     occupy_overdub_note_count,
@@ -33,6 +35,7 @@ from hitl.flows.occupy_paint import (
     source_overdub_midi_edges,
     wrap_note_count,
 )
+from hitl.serial_tick_anchor import TICKS_PER_CLOCK
 from hitl.verify.occupy_paint import verify_occupy_paint
 
 _RC1B_PASS_DUMPS = [
@@ -535,6 +538,88 @@ class OccupyPaintSerialVerifyTests(unittest.TestCase):
         self.assertTrue(result["ok"], result.get("issues"))
         self.assertEqual(result["rc1b"]["frame_count"], 1)
         self.assertEqual(result["rc1b"]["effective_count"], 1)
+
+    def test_verifier_rejects_three_bar_seal(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,1100,DIAG,oh,n,16,e,0,i,0,o,0,k,0,x,0,s,0,u,0,t,0,add,16,shorten,0,hide,0",
+            "#CAP,2000,ST,Track,OVERDUBBING,PLAYING",
+            "#CAP,2100,VCACHE,adopt_partial,ev,-1,notes,80,first,0,last,3,total,4,dsz,4,dcnt,0,dirty,0",
+            "#CAP,2200,DISP,0,PLAYING,2304,80,80,80,80,1",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3100,DIAG,draw_src,layers,visual,80,preview,1,sealed,0,snap,0,frame,80,"
+            "hidden,0,missed_preview,0",
+            "#CAP,3200,DIAG,oh,n,20,e,0,i,2,o,0,k,12,x,2,s,12,u,1,t,2,add,4,shorten,8,hide,6",
+            "#CAP,3300,WRAP,2112,192,5,52",
+            "#CAP,3301,WRAP,2112,192,5,48",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+            "Overdub undone",
+            "Overdub undone",
+            "Overdub redone",
+            "Overdub redone",
+            *_RC1B_PASS_DUMPS,
+        ]
+        result = verify_occupy_paint(lines, SimpleNamespace(undo_redo_cycles=2))
+        self.assertFalse(result["ok"])
+        self.assertIn("occupy_loop_length_mismatch:2304!=3072", result["issues"])
+
+    def test_record_stop_anchors_to_full_loop_not_last_edge(self) -> None:
+        """Last seed Off is ~2688; stop must wait for 3072 so rem clears half-bar grace."""
+        edges = record_midi_edges(loop_bars=OCCUPY_LOOP_BARS, origin=0)
+        last_edge = edges[-1][0]
+        self.assertLess(last_edge, OCCUPY_LOOP_BARS * TICKS_PER_BAR)
+        sent: list[tuple[str, int]] = []
+
+        class _Port:
+            def send(self, msg: object) -> None:
+                note = int(getattr(msg, "note"))
+                velocity = int(getattr(msg, "velocity"))
+                sent.append(("on" if velocity > 0 else "off", note))
+
+        seconds_per_tick = 60.0 / 120.0 / float(TICKS_PER_BEAT)
+        start = 1000.0
+        advance_clocks = 24
+        stop_at = OCCUPY_LOOP_BARS * TICKS_PER_BAR
+        expected_stop_tick = stop_at - advance_clocks * TICKS_PER_CLOCK
+        expected_stop_mono = start + ((expected_stop_tick - edges[0][0]) * seconds_per_tick)
+        # Last-edge-based stop would land before the half-bar grace boundary.
+        legacy_stop_tick = last_edge - advance_clocks * TICKS_PER_CLOCK
+        self.assertLessEqual(legacy_stop_tick % TICKS_PER_BAR, TICKS_PER_BAR // 2)
+        self.assertGreater(expected_stop_tick % TICKS_PER_BAR, TICKS_PER_BAR // 2)
+
+        mono = {"now": start}
+
+        def _monotonic() -> float:
+            return mono["now"]
+
+        def _sleep(seconds: float) -> None:
+            mono["now"] += max(seconds, 0.0)
+
+        import hitl.flows.occupy_paint as occupy_mod
+
+        real_monotonic = occupy_mod.time.monotonic
+        real_sleep = occupy_mod.time.sleep
+        occupy_mod.time.monotonic = _monotonic  # type: ignore[method-assign]
+        occupy_mod.time.sleep = _sleep  # type: ignore[method-assign]
+        try:
+            _note_ons, _cc, _clocks, timing = _play_edges_wall_clock(
+                _Port(),
+                channel_0=4,
+                edges=edges,
+                seconds_per_tick=seconds_per_tick,
+                max_seconds_guard=30.0,
+                abort=None,
+                start=start,
+                clocks=OCCUPY_LOOP_BARS * 96,
+                stop_press_advance_clocks=advance_clocks,
+                stop_press_ms=1,
+                stop_at_tick=stop_at,
+            )
+        finally:
+            occupy_mod.time.monotonic = real_monotonic  # type: ignore[method-assign]
+            occupy_mod.time.sleep = real_sleep  # type: ignore[method-assign]
+        self.assertEqual(timing.get("stop_press_sent_during_stream"), 1.0)
+        self.assertGreaterEqual(mono["now"], expected_stop_mono - 1e-9)
 
 
 if __name__ == "__main__":
