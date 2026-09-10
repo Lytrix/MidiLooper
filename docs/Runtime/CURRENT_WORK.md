@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (LOOP_EDIT length-fader capture gate SHIPPED — HITL base [`171420`](../../captures/session_20260910_171420.log); OpenSpec 4.6 Stage 4 pending commit)
+Last updated: 2026-09-10 (OpenSpec 4.6 Stage 4 SHIPPED — HITL base [`172224`](../../captures/session_20260910_172224.log); wrap playhead-tail plan parked)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,17 +10,23 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — LOOP_EDIT length/start fader ignored during RECORD/OVERDUB — SHIPPED.**
-RC1: `shouldIgnoreLoopGeometryFaderDuringCapture`; HITL base PASS
-[`171420`](../../captures/session_20260910_171420.log) (ch14 noise ignored).
-Plan: [`loop_edit_length_fader_during_capture_bugfix.md`](../Plans/loop_edit_length_fader_during_capture_bugfix.md).
-
-**Now — Immutable OpenSpec 4.6 Stage 4 in tree** (NOTE_EDIT committed-base cache
-identity) — native A→B@R + RAM1 **7008**; HITL unblocked by length-fader gate.
-Commit Stage 4 next. Plan:
+**Now — Immutable OpenSpec 4.6 Stage 4 SHIPPED** (NOTE_EDIT committed-base cache
+identity). Next: evaluate `legacyMidiEventsFromCommitted` (may need design).
+`noteEditSelectableDisplayCachePublishedSnapshotIdentity_` +
+`noteEditCommittedBaseKeysMatch` identity compare; native A→B@R; RAM1 **7008**;
+HITL `base` PASS [`172224`](../../captures/session_20260910_172224.log).
+OpenSpec `4.6` stays open. Plan:
 [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
 `N` in this slice.
+
+**Parked — Overdub live wrap playhead-tail display** (plan only).
+[`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
+Pin desired OD wrap-continuation before coding.
+
+**Prior — LOOP_EDIT length/start fader ignored during RECORD/OVERDUB — SHIPPED.**
+`766d1b33`; HITL base PASS [`171420`](../../captures/session_20260910_171420.log).
+Plan: [`loop_edit_length_fader_during_capture_bugfix.md`](../Plans/loop_edit_length_fader_during_capture_bugfix.md).
 
 **Prior — Immutable OpenSpec 4.6 Stage 3 — overdub span-cache identity SHIPPED.**
 Stage 3: `overdubSourceSpanCachePublishedIdentity_` + reusable match;
