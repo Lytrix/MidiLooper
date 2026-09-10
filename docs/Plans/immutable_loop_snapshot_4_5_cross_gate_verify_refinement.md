@@ -1,6 +1,6 @@
 # Immutable loop snapshot — OpenSpec 4.5 cross-gate verify
 
-**Status:** Implementing — HITL `base` PASS after harness fix; occupy + compose next  
+**Status:** Implementing — `base` + occupy PASS; compose blocked on resolve latency  
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.5`  
 **Parent:** 4.4 closed
 ([`immutable_loop_snapshot_4_4_closeout_refinement.md`](immutable_loop_snapshot_4_4_closeout_refinement.md)).  
@@ -12,8 +12,8 @@ undo/load format, §6 compatibility retirement. No new HITL stimulus.
 | Gate | Result |
 |---|---|
 | HITL `base` (harness ARMED→play→RECORDING) | PASS — [`122812`](../../captures/session_20260910_122812.log) / report [`122857`](../../captures/host_midi_automation_baseline_20260910_122857.json); first-note 7/10 clocks |
-| HITL `overdub_occupy_paint` | pending |
-| HITL `note_edit_overdub_compose` (`02`) | pending |
+| HITL `overdub_occupy_paint` | PASS — [`123445`](../../captures/session_20260910_123445.log) / occupy report [`123557`](../../captures/host_midi_hitl_occupy_paint_20260910_123557.json) |
+| HITL `note_edit_overdub_compose` (`02`) | FAIL 13/14 — [`124645`](../../captures/note_edit_overdub_compose_20260910_124645_serial.log): same-pitch Hold/Move OK (`EditSessionAction` type=2/3); **`GEOM_APPLY,resolve` 61442 µs > 20000 µs** (`overdub_apply_reuses_committed_base`) |
 
 ## Gate log (2026-09-09)
 
@@ -24,7 +24,7 @@ undo/load format, §6 compatibility retirement. No new HITL stimulus.
 | Native ERRORED remount | PASS — all 10 suites / 341 cases (`test_loop_take_survival`, `test_sd_load_adopt`, …) |
 | HITL `base` attempt 1–6 | FAIL / blocked — superseded by 2026-09-10 harness PASS |
 
-**OpenSpec 4.5 not checked off** until occupy + compose PASS.
+**OpenSpec 4.5 not checked off** — compose blocked on in-edit overdub resolve latency (firmware gate), not on seed arm/select after harness fixes.
 
 ## Architecture checkpoint
 

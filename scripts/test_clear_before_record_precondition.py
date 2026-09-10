@@ -137,6 +137,17 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
                 ],
             )
         )
+        # Clear leaves STOPPED while sequencer still runs (no Transport started
+        # line in capture) — must still stop before arm.
+        self.assertTrue(
+            _transport_running_before_record_arm(
+                [
+                    "#CAP,1,ST,Track,STOPPED,PLAYING",
+                    "#CAP,2,ST,Track,PLAYING,STOPPED",
+                    "Clear ignored — selected slot is empty",
+                ],
+            )
+        )
 
     def test_clear_ignored_selected_slot_empty(self) -> None:
         from host_midi_automation_baseline import _serial_has_clear_ignored_empty

@@ -723,6 +723,40 @@ def run_note_edit_overdub_compose(args: object) -> int:
                 serial_collector=serial_collector,
                 expected_tick=seed_tick,
             )
+            # [`123633`] reselect timed out and select_apply landed on tick=0
+            # (wrap pitch 39) while same-pitch live was 48@32 — F2 then moved
+            # the wrap note with overlapNotes=0.
+            select_tick: Optional[int] = None
+            for line in reversed(serial_collector.snapshot()):
+                parsed = parse_select_apply(line)
+                if parsed is None:
+                    continue
+                select_tick, _note_idx, applied = parsed
+                if applied == 1:
+                    break
+                select_tick = None
+            if select_tick is None or abs(select_tick - seed_tick) > 24:
+                print(
+                    "[note-edit-overdub-compose] seed reselect missed "
+                    f"tick={seed_tick} (got={select_tick}); sweeping F1"
+                )
+                swept = _temp_sweep_select_seed(
+                    out_port,
+                    serial_collector,
+                    seed_tick,
+                )
+                if swept is None:
+                    print(
+                        "[note-edit-overdub-compose] FAILED: could not select "
+                        f"seed tick {seed_tick} for same-pitch hold"
+                    )
+                    return 1
+                print(
+                    "[note-edit-overdub-compose] sweep select "
+                    f"tick={swept[0]} note_idx={swept[1]}"
+                )
+                # Let select_dependent_settle expire before F2.
+                time.sleep(0.55)
             selection_idx = -1
             for line in serial_collector.snapshot():
                 match = re.search(r"Note selection changed: .* -> (-?\d+)", line)

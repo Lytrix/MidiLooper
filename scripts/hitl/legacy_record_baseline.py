@@ -1055,13 +1055,32 @@ def _transport_running_before_record_arm(
     [`session_20260910_121508.log`] after clear (STOPPED) the old
     ``start_transport`` + proxy branch toggled play on; arm then saw PLAYING and
     failed before ARMED→play→RECORDING.
+
+    Clear can leave the track STOPPED while the sequencer still runs without a
+    fresh ``Transport started`` line ([`session_20260910_123738.log`]): Record
+    then jumps STOPPED→RECORDING and skips ARMED.
     """
     if serial_global_transport_running(lines, after_index=0):
         return True
     if after_index > 0 and serial_global_transport_running(lines, after_index=after_index):
         return True
     latest = _latest_track_state(lines, after_index=after_index) if lines else None
-    return latest in ("PLAYING", "OVERDUBBING", "RECORDING", "STOPPED_RECORDING")
+    if latest in ("PLAYING", "OVERDUBBING", "RECORDING", "STOPPED_RECORDING"):
+        return True
+    last_to_playing = -1
+    last_transport_stopped = -1
+    for index, line in enumerate(lines):
+        if "Transport stopped" in line:
+            last_transport_stopped = index
+        if "#CAP," not in line or ",ST,Track," not in line:
+            continue
+        parts = line.split(",")
+        # #CAP,ts,ST,Track,FROM,TO
+        if len(parts) < 6 or parts[2] != "ST" or parts[3] != "Track":
+            continue
+        if parts[5].strip() == "PLAYING":
+            last_to_playing = index
+    return last_to_playing > last_transport_stopped
 
 
 def _ensure_transport_stopped_before_record_arm(
@@ -1200,11 +1219,53 @@ def _run_record_arm_until_capturing(
     if _serial_has_recording_active(
         serial_collector.snapshot(), after_index=arm_baseline_len
     ):
-        print(
-            "[info] RECORDING already active after arm press; "
-            "skipping transport start so capture is not toggled off."
+        # Prefer ARMED→transport→RECORDING. Direct STOPPED→RECORDING (transport
+        # still running) skips the schedule anchor and dirties stop
+        # ([`session_20260910_124800.log`]).
+        armed_seen = any(
+            ",ST,Track," in line and line.rstrip().endswith(",ARMED")
+            for line in serial_collector.snapshot()[arm_baseline_len:]
         )
-        return True, time.monotonic()
+        if armed_seen:
+            print(
+                "[info] RECORDING already active after arm press; "
+                "skipping transport start so capture is not toggled off."
+            )
+            return True, time.monotonic()
+        print(
+            "[info] RECORDING without ARMED after arm press; "
+            "stopping capture to retry ARMED→transport→RECORDING"
+        )
+        _send_short_press(
+            out_port,
+            note=RECORD_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=args.press_ms,
+        )
+        time.sleep(args.phase_wait_ms / 1000.0)
+        _ensure_transport_stopped_before_record_arm(
+            out_port,
+            in_port,
+            serial_collector,
+            args,
+            press_ms=args.press_ms,
+            phase_wait_ms=args.phase_wait_ms,
+            after_index=0,
+        )
+        rearm_baseline = len(serial_collector.snapshot())
+        _send_record_arm_press(
+            out_port, press_ms=args.press_ms, loop_slot=record_loop_slot
+        )
+        time.sleep(args.phase_wait_ms / 1000.0)
+        if not _latest_track_is(
+            serial_collector.snapshot(), ("ARMED", "RECORDING"), after_index=rearm_baseline
+        ):
+            return False, None
+        if _latest_track_is(
+            serial_collector.snapshot(), ("RECORDING",), after_index=rearm_baseline
+        ):
+            # Still jumped to RECORDING; stream with wall-clock anchor.
+            return True, time.monotonic()
 
     transport_baseline_len = len(serial_collector.snapshot())
     ok, press_sent = _restart_transport_after_clear(

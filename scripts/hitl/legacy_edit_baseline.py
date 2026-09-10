@@ -1254,6 +1254,36 @@ def _coarse_settle_block_remain_ms(collector: Any, *, baseline_len: int = 0) -> 
     return remain
 
 
+def _wait_for_select_dependent_settle_clear(
+    collector: Any, *, timeout_s: float = 1.5, poll_s: float = 0.05
+) -> bool:
+    """Wait until firmware clears select_dependent_settle (until_ms=1).
+
+    Compose [`124422`] swept the seed, then F2 ran while motor sync had just
+    renewed settle — pitchbend was accepted on the wire with no EditSessionAction.
+    """
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while time.monotonic() < deadline:
+        for line in reversed(collector.snapshot()[-80:]):
+            if "select_dependent_settle until_ms=1" in line:
+                return True
+            if "select_dependent_settle_block fader=coarse" in line:
+                match = re.search(r"remain_ms=(\d+)", line)
+                if match:
+                    remain = int(match.group(1))
+                    if remain > 0:
+                        time.sleep(remain / 1000.0 + 0.05)
+                        break
+        else:
+            time.sleep(max(poll_s, 0.01))
+            continue
+        # remaining settle sleep above; re-check
+    for line in reversed(collector.snapshot()[-40:]):
+        if "select_dependent_settle until_ms=1" in line:
+            return True
+    return False
+
+
 def _send_coarse_pitchbend(
     out_port: mido.ports.BaseOutput,
     pb: int,
@@ -1261,27 +1291,35 @@ def _send_coarse_pitchbend(
     serial_collector: Optional[Any] = None,
     baseline_len: int = 0,
 ) -> None:
-    """Send fader2 PB; retry once if firmware logs select_dependent_settle_block."""
+    """Send fader2 PB; retry while firmware logs select_dependent_settle_block.
+
+    Compose [`124216`] swept onto the seed then F2 was blocked twice; a single
+    retry left no ``EditSessionAction`` / same-pitch overlap.
+    """
     _send_program_change(out_port, FADER_COARSE_CHANNEL_1BASED, 2)
-    out_port.send(
-        mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
-    )
     if serial_collector is None:
+        out_port.send(
+            mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
+        )
         return
-    time.sleep(0.08)
-    remain = _coarse_settle_block_remain_ms(
-        serial_collector, baseline_len=baseline_len
-    )
-    if remain <= 0:
-        return
-    print(
-        f"[edit-hitl] coarse fader blocked by select_dependent_settle "
-        f"({remain}ms); retry after settle"
-    )
-    time.sleep(remain / 1000.0 + 0.06)
-    out_port.send(
-        mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
-    )
+    del baseline_len  # per-attempt snapshot baseline; ignore caller stale index
+    _wait_for_select_dependent_settle_clear(serial_collector)
+    for attempt in range(5):
+        send_baseline = len(serial_collector.snapshot())
+        out_port.send(
+            mido.Message("pitchwheel", channel=FADER_COARSE_CHANNEL_1BASED - 1, pitch=pb)
+        )
+        time.sleep(0.08)
+        remain = _coarse_settle_block_remain_ms(
+            serial_collector, baseline_len=send_baseline
+        )
+        if remain <= 0:
+            return
+        print(
+            f"[edit-hitl] coarse fader blocked by select_dependent_settle "
+            f"({remain}ms); retry {attempt + 1}/4 after settle"
+        )
+        time.sleep(remain / 1000.0 + 0.08)
 
 
 def _wait_for_serial_line_match(
