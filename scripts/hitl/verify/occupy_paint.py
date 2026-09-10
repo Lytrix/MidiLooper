@@ -6,7 +6,7 @@ import re
 from typing import Any, Optional
 
 from hitl.control_constants import TICKS_PER_BAR, TICKS_PER_BEAT
-from hitl.flows.occupy_paint import HALF_BAR_TICKS, WRAP_PITCHES
+from hitl.flows.occupy_paint import HALF_BAR_TICKS, OCCUPY_LOOP_BARS, WRAP_PITCHES
 from hitl.serial_timing import extract_phase_boundaries
 from hitl.verify.dnte_src_dumps import (
     frame_effective_length_mismatches,
@@ -296,6 +296,14 @@ def _lines_between(
 def verify_occupy_paint(lines: list[str], args: object) -> dict[str, Any]:
     issues: list[str] = []
     windows = _phase_windows(lines)
+    expected_loop_length = OCCUPY_LOOP_BARS * TICKS_PER_BAR
+    observed_loop_length = parse_loop_length(lines)
+    if observed_loop_length is None:
+        issues.append("occupy_loop_length_missing")
+    elif int(observed_loop_length) != expected_loop_length:
+        issues.append(
+            f"occupy_loop_length_mismatch:{observed_loop_length}!={expected_loop_length}"
+        )
     od1_lines = _lines_between(lines, windows["od1_start"], windows["od1_stop"])
     od2_lines = _lines_between(lines, windows["od2_start"], windows["od2_stop"])
     # Source phrase is OD1. Occupy (same-start / +1/4 / −1/2) is OD2.
@@ -329,7 +337,7 @@ def verify_occupy_paint(lines: list[str], args: object) -> dict[str, Any]:
     if max_hide < 2:
         issues.append(f"occupy_hide_lt_2:{max_hide}")
 
-    loop_length = parse_loop_length(lines) or (4 * TICKS_PER_BAR)
+    loop_length = observed_loop_length or expected_loop_length
     wrap_pairs = [
         row
         for row in parse_wrap_pairs(lines)
@@ -412,6 +420,8 @@ def verify_occupy_paint(lines: list[str], args: object) -> dict[str, Any]:
         "wrap_pairs": wrap_pairs,
         "wrap_source": wrap_source,
         "windows": windows,
+        "loop_length": observed_loop_length,
+        "expected_loop_length": expected_loop_length,
         "rc1b": rc1b,
     }
 
