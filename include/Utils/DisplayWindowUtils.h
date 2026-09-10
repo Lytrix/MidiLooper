@@ -530,13 +530,15 @@ inline bool shouldRetainUnpublishedVisualCacheOverStaleGather(bool publishedSnap
 
 /// During capture/overdub, a **current** published snapshot can still omit
 /// committed spans (`194531` id=27 pitch 74 @ 1500–1554 bar-crossing; OD open
-/// `from=snapshot` notes=31 while clean visual=32). Retain the clean visual
-/// when **this** gather is smaller. Pending Hide/Shorten overlays still apply
-/// after retain. Not a global VC preference; not STOPPED (Stage 3B wrap path).
+/// `from=snapshot` notes=31 while visual=32). Retain visual when **this** gather
+/// is smaller — including when visual is dirty after wrap (`204344`: wrap marks
+/// `visualCacheDirty`, then `draw_src` hides id 27 until the next settle;
+/// sealed/capture overlays still apply after retain). Pending Hide/Shorten
+/// overlays still apply after retain. Not a global VC preference; not STOPPED.
 inline bool shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-    bool publishedSnapshotIsCurrent, bool captureOrOverdubActive, bool visualCacheDirty,
+    bool publishedSnapshotIsCurrent, bool captureOrOverdubActive, bool /*visualCacheDirty*/,
     size_t visualCacheCount, size_t snapshotGatherCount) {
-    if (!publishedSnapshotIsCurrent || !captureOrOverdubActive || visualCacheDirty) {
+    if (!publishedSnapshotIsCurrent || !captureOrOverdubActive) {
         return false;
     }
     return visualCacheCount > 0 && visualCacheCount > snapshotGatherCount;
@@ -652,6 +654,28 @@ inline const NoteUtils::DisplayNote* findDisplayNoteByNoteId(const NoteUtils::Di
 
 inline bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
     return findDisplayNoteByNoteId(notes, noteId) != nullptr;
+}
+
+/// Upsert missing `NoteId` rows from `candidates` into `dest` (no geometry replace).
+inline void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
+                                      const NoteUtils::DisplayNoteVec& candidates) {
+    for (const NoteUtils::DisplayNote& candidate : candidates) {
+        if (candidate.noteId == kInvalidNoteId) {
+            continue;
+        }
+        if (!displayNotesContainNoteId(dest, candidate.noteId)) {
+            dest.push_back(candidate);
+        }
+    }
+}
+
+/// Current-snapshot draw-source gather can omit bar-crossing NoteRefs while
+/// visual still holds them (`205031` OD1: visual=30 has id 26, snap gather same
+/// count without it → count-based retain fails). Heal after snapshot bar append.
+inline bool shouldHealCurrentSnapshotDrawSourceMembership(bool publishedSnapshotIsCurrent,
+                                                          bool captureOrOverdubActive,
+                                                          bool usedPublishedSnapshotGather) {
+    return publishedSnapshotIsCurrent && captureOrOverdubActive && usedPublishedSnapshotGather;
 }
 
 /// Every sealed preview row must be present in `visualCache` before coverage

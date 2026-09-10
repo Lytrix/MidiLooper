@@ -831,6 +831,8 @@ LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesInto(
   SessionMidiEventVec committedEvents;
   passes.materializeToEventVector(committedEvents, loopLengthTicks);
   mergeOmittedCommittedNoteOnIdentities(dest, committedEvents);
+  // Raw-event merge can reintroduce sealed Delete targets (`202713`).
+  applyPendingNoteChangesToDisplayNotes(dest, dest.size());
 }
 
 LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
@@ -1082,16 +1084,20 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     if (mergeOmittedFromEvents) {
       SessionMidiEventVec committedEvents;
       passes.materializeToEventVector(committedEvents, loopLengthTicks);
-      // Full-loop snapshot can omit a NoteRef while reconstruct still pairs
-      // (`200405` OD2: mergeOmitted alone left id=27 out after OD1). Upsert
-      // missing NoteIds from reconstruct; do not replace existing snapshot rows.
+      // Upsert missing NoteIds from pass resolve (honors sealed Delete/Length),
+      // not raw reconstruct — reconstruct re-admits Hidden shorts (`202713`).
       if (std::strcmp(sourceOrigin, "passes") != 0) {
-        NoteUtils::DisplayNoteVec committedNotes =
-            NoteUtils::reconstructDisplayNotes(committedEvents, loopLengthTicks, false, false);
+        NoteUtils::DisplayNoteVec committedNotes;
+        LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, committedNotes);
         appendOverdubPassWrapPairedNotes(committedNotes);
         mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
       }
       mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
+      // mergeOmitted walks materialize events and can reintroduce NoteIds that
+      // sealed Delete already removed from the snapshot. Always re-apply sealed
+      // + pending Hide/Shorten after merge (`202713` OD2 ghosts).
+      applyPendingNoteChangesToDisplayNotes(overdubSourceSpanCacheNotes_,
+                                            overdubSourceSpanCacheNotes_.size());
       if (std::strcmp(sourceOrigin, "snapshot") != 0 &&
           !overdubSourceSpanCacheNotes_.empty()) {
         overdubSourceSpanCacheFullLoop_ = true;
@@ -1138,9 +1144,10 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
       ++it;
     }
   }
-  if (!publishedSnapshotIsCurrent()) {
-    applyPendingSnapshotCompanionsToDisplayNotes(overdubSourceSpanCacheNotes_);
-  }
+  // Snapshot-current roots already bake companions into NoteRefs, but merge
+  // above can reintroduce pre-companion rows — apply companion Delete/Length
+  // whenever companion ids are still pending on the loop.
+  applyPendingSnapshotCompanionsToDisplayNotes(overdubSourceSpanCacheNotes_);
   overdubSourceSpanCachePublishedRevision_ =
       std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotRevision() : 0;
   overdubSourceSpanCachePublishedIdentity_ =
