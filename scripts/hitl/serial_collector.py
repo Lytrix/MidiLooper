@@ -5,14 +5,29 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import serial
 from serial import SerialException
 
+from hitl.contract import CaptureIntegrity
+
+_TRANSPORT_MARKERS = (
+    ",BPM,",
+    ",BAR,",
+    ",DFRAME,",
+    ",MI,",
+    ",MO,",
+    ",ST,",
+    ",RECA,",
+    ",RECS,",
+)
+
+ChildPoll = Callable[[], Optional[int]]
+
 
 def serial_line_resets_heartbeat(line: str) -> bool:
-    """Return False for keepalive lines that must not mask HITL stalls."""
+    """True for firmware-progress lines. Keepalives must not mask HITL stalls."""
     if ",DFRAME," in line:
         return False
     if ",PERS,work," in line:
@@ -20,6 +35,67 @@ def serial_line_resets_heartbeat(line: str) -> bool:
     if ",PERS,mid_pass," in line:
         return False
     return True
+
+
+def serial_line_is_transport(line: str) -> bool:
+    """True when the line shows sequencer/transport activity."""
+    if "#CAP," not in line:
+        return False
+    return any(marker in line for marker in _TRANSPORT_MARKERS)
+
+
+@dataclass
+class CaptureLineClock:
+    """Separate reader, firmware, and transport liveness plus integrity."""
+
+    baseline_index: int = 0
+    last_reader_at: Optional[float] = None
+    last_firmware_at: Optional[float] = None
+    last_transport_at: Optional[float] = None
+    integrity: CaptureIntegrity = CaptureIntegrity.UNKNOWN
+    integrity_reason: str = ""
+
+    def note_line(self, line: str, *, now: Optional[float] = None) -> None:
+        stamp = now if now is not None else time.monotonic()
+        self.last_reader_at = stamp
+        if serial_line_resets_heartbeat(line):
+            self.last_firmware_at = stamp
+        if serial_line_is_transport(line):
+            self.last_transport_at = stamp
+        if self.integrity is CaptureIntegrity.UNKNOWN:
+            self.integrity = CaptureIntegrity.COMPLETE
+
+    def mark_incomplete(self, reason: str) -> None:
+        self.integrity = CaptureIntegrity.INCOMPLETE
+        self.integrity_reason = reason
+
+    def seconds_since(self, stamp: Optional[float], *, now: Optional[float] = None) -> Optional[float]:
+        if stamp is None:
+            return None
+        return (now if now is not None else time.monotonic()) - stamp
+
+    def seconds_since_last_reader_line(self, *, now: Optional[float] = None) -> Optional[float]:
+        return self.seconds_since(self.last_reader_at, now=now)
+
+    def seconds_since_last_firmware_line(self, *, now: Optional[float] = None) -> Optional[float]:
+        return self.seconds_since(self.last_firmware_at, now=now)
+
+    def seconds_since_last_transport_line(self, *, now: Optional[float] = None) -> Optional[float]:
+        return self.seconds_since(self.last_transport_at, now=now)
+
+    def integrity_abort_reason(self) -> Optional[str]:
+        if self.integrity is CaptureIntegrity.INCOMPLETE and self.integrity_reason:
+            return self.integrity_reason
+        return None
+
+
+def child_exit_abort_reason(poll: Optional[ChildPoll]) -> Optional[str]:
+    if poll is None:
+        return None
+    code = poll()
+    if code is None:
+        return None
+    return f"managed capture child exited ({code})"
 
 
 @dataclass
@@ -34,8 +110,14 @@ class RunAbort:
         now = time.monotonic()
         if self.run_deadline is not None and now >= self.run_deadline:
             return "run deadline exceeded"
-        if self.serial_collector is not None and self.heartbeat_timeout_s > 0:
-            return self.serial_collector.heartbeat_abort_reason(self.heartbeat_timeout_s)
+        collector = self.serial_collector
+        if collector is None:
+            return None
+        capture_abort = getattr(collector, "capture_abort_reason", None)
+        if callable(capture_abort):
+            return capture_abort(self.heartbeat_timeout_s)
+        if self.heartbeat_timeout_s > 0:
+            return collector.heartbeat_abort_reason(self.heartbeat_timeout_s)
         return None
 
 
@@ -92,9 +174,10 @@ class SerialCaptureCollector:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._error: str = ""
-        self._last_line_at: Optional[float] = None
+        self._clock = CaptureLineClock()
         self._started_at = time.monotonic()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        self._child_poll: Optional[ChildPoll] = None
 
     def start(self) -> None:
         self._started_at = time.monotonic()
@@ -160,10 +243,11 @@ class SerialCaptureCollector:
                     continue
                 with self._lock:
                     self._lines.append(line)
-                    if serial_line_resets_heartbeat(line):
-                        self._last_line_at = time.monotonic()
+                    self._clock.note_line(line)
         except SerialException as exc:
             self._error = str(exc)
+            with self._lock:
+                self._clock.mark_incomplete(f"serial read error: {exc}")
             self._stop.set()
 
     def snapshot(self) -> list[str]:
@@ -173,23 +257,56 @@ class SerialCaptureCollector:
     def error(self) -> str:
         return self._error
 
-    def seconds_since_last_line(self) -> Optional[float]:
+    def capture_integrity(self) -> CaptureIntegrity:
         with self._lock:
-            if self._last_line_at is None:
-                return None
-            return time.monotonic() - self._last_line_at
+            return self._clock.integrity
+
+    def session_start_index(self) -> int:
+        with self._lock:
+            return self._clock.baseline_index
+
+    def capture_integrity_reason(self) -> str:
+        with self._lock:
+            return self._clock.integrity_reason
+
+    def seconds_since_last_line(self) -> Optional[float]:
+        """Firmware-progress age. DFRAME keepalives do not reset this."""
+        with self._lock:
+            return self._clock.seconds_since_last_firmware_line()
+
+    def seconds_since_last_reader_line(self) -> Optional[float]:
+        with self._lock:
+            return self._clock.seconds_since_last_reader_line()
+
+    def seconds_since_last_transport_line(self) -> Optional[float]:
+        with self._lock:
+            return self._clock.seconds_since_last_transport_line()
 
     def write_line(self, text: str) -> None:
         payload = (text.rstrip("\n") + "\n").encode("utf-8")
         self._serial.write(payload)
         self._serial.flush()
 
+    def capture_abort_reason(self, timeout_s: float) -> Optional[str]:
+        child_reason = child_exit_abort_reason(self._child_poll)
+        if child_reason:
+            with self._lock:
+                self._clock.mark_incomplete(child_reason)
+            return child_reason
+        with self._lock:
+            integrity_reason = self._clock.integrity_abort_reason()
+        if integrity_reason:
+            return integrity_reason
+        if timeout_s <= 0:
+            return None
+        return self.heartbeat_abort_reason(timeout_s)
+
     def heartbeat_abort_reason(self, timeout_s: float) -> Optional[str]:
         if self._error:
             return f"serial read error: {self._error}"
         now = time.monotonic()
         with self._lock:
-            last_at = self._last_line_at
+            last_at = self._clock.last_firmware_at
             started_at = self._started_at
         if last_at is None:
             elapsed = now - started_at

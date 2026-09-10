@@ -446,13 +446,93 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(case["ok"], case["issues"])
         self.assertEqual(case["max_overdub_resolve_us"], 4000)
 
-    def test_overdub_full_loop_gather_resolve_fails(self) -> None:
+    def test_overdub_motor_notegate_absent_fails(self) -> None:
         lines = list(_pass_lines())
-        lines.insert(10, "[56.210] #CAP,56210000,GEOM_APPLY,resolve,91511,1,3,0")
+        lines.insert(10, "[56.210] #CAP,56210000,ST,Track,PLAYING,OVERDUBBING")
+        lines.insert(
+            11,
+            "[56.220] #DBG geometry_motor_sync sent=1 bracket_tick=140 "
+            "pb=2730 mode=GEOMETRY_SYNC sequence=value_only",
+        )
+        lines.insert(12, "[56.230] #CAP,56230000,ST,Track,OVERDUBBING,PLAYING")
         check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
         self.assertFalse(check["ok"])
         self.assertTrue(
-            any("overdub_resolve_us=91511" in issue for issue in check["issues"])
+            any(
+                "overdub_motor_missing_notegate=1/1" in issue
+                for issue in check["issues"]
+            )
+        )
+
+    def test_overdub_motor_notegate_present_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "[56.210] #CAP,56210000,ST,Track,PLAYING,OVERDUBBING")
+        lines.insert(11, "[56.215] #CAP,56215000,MO,224,16,42,85")
+        lines.insert(12, "[56.216] #CAP,56216000,MO,144,16,0,127")
+        lines.insert(
+            13,
+            "[56.220] #DBG geometry_motor_sync sent=1 bracket_tick=140 "
+            "pb=2730 mode=GEOMETRY_SYNC sequence=value_only",
+        )
+        lines.insert(14, "[56.341] #CAP,56341000,MO,128,16,0,0")
+        lines.insert(15, "[56.350] #CAP,56350000,ST,Track,OVERDUBBING,PLAYING")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["overdub_motor_sends_notegate"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["overdub_motor_sync_sent"], 1)
+        held = check["cases"]["value_only_notegate_held"]
+        self.assertTrue(held["ok"], held["issues"])
+        self.assertEqual(held["value_only_notegate_held_judged"], 1)
+
+    def test_value_only_notegate_one_ms_pair_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "[56.210] #CAP,56210000,ST,Track,PLAYING,OVERDUBBING")
+        lines.insert(11, "[56.215] #CAP,56215000,MO,224,16,42,85")
+        lines.insert(12, "[56.216] #CAP,56216000,MO,144,16,0,127")
+        lines.insert(13, "[56.217] #CAP,56217000,MO,128,16,0,0")
+        lines.insert(
+            14,
+            "[56.220] #DBG geometry_motor_sync sent=1 bracket_tick=140 "
+            "pb=2730 mode=GEOMETRY_SYNC sequence=value_only",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        held = check["cases"]["value_only_notegate_held"]
+        self.assertFalse(held["ok"])
+        self.assertTrue(
+            any("value_only_notegate_short=" in issue for issue in held["issues"])
+        )
+
+    def test_pitch_keeps_mover_dnte_absent_pitch_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["pitch_keeps_mover_dnte"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["pitch_actions"], 0)
+
+    def test_pitch_keeps_mover_dnte_present_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(
+            10,
+            "[56.210] [DEBUG] [MIDI] EditSessionAction: type=5 noteId=94 "
+            "start=2481 end=2953 pitch=73",
+        )
+        lines.insert(11, "#CAP,56220000,DNTE,73,2481,2481,472,64")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["pitch_keeps_mover_dnte"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["pitch_actions"], 1)
+        self.assertEqual(case["pitch_without_dnte"], 0)
+
+    def test_pitch_keeps_mover_dnte_missing_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(
+            10,
+            "[56.210] [DEBUG] [MIDI] EditSessionAction: type=5 noteId=94 "
+            "start=2481 end=2953 pitch=73",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("pitch_without_dnte=1/1" in issue for issue in check["issues"])
         )
 
     def test_pending_same_pitch_note_on_not_loop_end_tail_absent_passes(self) -> None:
@@ -468,17 +548,6 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
         case = check["cases"]["pending_same_pitch_note_on_not_loop_end_tail"]
         self.assertTrue(case["ok"], case["issues"])
-
-    def test_pending_same_pitch_note_on_not_loop_end_tail_203112_fails(self) -> None:
-        lines = list(_pass_lines())
-        lines.insert(10, "#CAP,56200000,DISP,0,PLAYING,2304,63,63,63,63,1,0,3,63")
-        lines.insert(11, "#CAP,56201000,DNTE,48,435,435,1869,8")
-        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
-        self.assertFalse(check["ok"])
-        self.assertTrue(
-            any("same_pitch_pending_loop_end_tail=48@435len1869" in issue
-                for issue in check["issues"])
-        )
 
     def test_pending_note_edit_close_keeps_overdub_frame_absent_passes(self) -> None:
         check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
@@ -504,9 +573,10 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         lines = list(_pass_lines())
         lines.insert(10, "#CAP,1520657315,DFRAME,64,22380,32610,2569,2809,4640")
         lines.insert(11, "#CAP,1517780743,DISP,0,OVERDUBBING,2304,64,65,64,64,1,0,3,64")
-        lines.insert(12, "[1521.383] [INFO] [MIDI] Edit session: LOOP_EDIT (Program 0, Note 100 trigger)")
+        lines.insert(12, "[1521.362] [INFO] [TRACK] NoteEditPassClosed editPass=0 edits=3")
+        lines.insert(13, "[1521.383] [INFO] [MIDI] Edit session: LOOP_EDIT (Program 0, Note 100 trigger)")
         lines.insert(
-            13,
+            14,
             "#CAP,1521494215,DIAG,draw_src,layers,visual,65,preview,0,sealed,0,snap,0,frame,56,hidden,9",
         )
         check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
@@ -514,6 +584,46 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("overdub_close_stale_gather=visual65>frame56" in issue
                 for issue in check["issues"])
+        )
+
+    def test_note_edit_close_persists_apply_owned_absent_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["note_edit_close_persists_apply_owned"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["closes_judged"], 0)
+
+    def test_note_edit_close_persists_apply_owned_canonical_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.append(
+            "[453.992] [WARN] [TRACK] NOTE_EDIT commit parity mismatch "
+            "canonical=1 apply_owned=1 first=0"
+        )
+        lines.append(
+            "[453.993] [INFO] [TRACK] NoteEditPass close keep committed "
+            "editPass=0 rows=3 (no display-diff replace)"
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["note_edit_close_persists_apply_owned"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["closes_judged"], 1)
+
+    def test_note_edit_close_persists_apply_owned_223532_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.append(
+            "[453.992] [WARN] [TRACK] NOTE_EDIT commit parity mismatch "
+            "canonical=0 apply_owned=1 first=0"
+        )
+        lines.append(
+            "[453.993] [INFO] [TRACK] NoteEditPass close keep committed "
+            "editPass=0 rows=2 (no display-diff replace)"
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any(
+                "close_dropped_apply_owned=canonical0,apply_owned1" in issue
+                for issue in check["issues"]
+            )
         )
 
     def test_stop_selected_slot_not_foreign_loop_absent_passes(self) -> None:
@@ -543,6 +653,79 @@ class NoteEditOverdubComposeSerialVerifyTests(unittest.TestCase):
         self.assertTrue(
             any("stop_selected_slot_later_len=50688 overdub_len=2304" in issue
                 for issue in check["issues"])
+        )
+
+    def test_pending_same_pitch_note_on_not_loop_end_tail_203112_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,56200000,DISP,0,PLAYING,2304,63,63,63,63,1,0,3,63")
+        lines.insert(11, "#CAP,56201000,DNTE,48,435,435,1869,8")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("same_pitch_pending_loop_end_tail=48@435len1869" in issue
+                for issue in check["issues"])
+        )
+
+    def test_commit_skips_unpainted_mover_loop_end_absent_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["commit_skips_unpainted_mover_loop_end"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["change_length_commits"], 0)
+
+    def test_commit_skips_unpainted_mover_loop_end_invented_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,56200000,DISP,0,OVERDUBBING,2304,57,48,57,57,1,0,3,57")
+        lines.insert(
+            11,
+            "[67.013] [INFO] [TRACK] commitEditAction incoming ChangeLength "
+            "targetNoteId=58 start=80 moverBaselineEnd=80 newEnd=2303",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("mover_length_to_loop_end=1/1" in issue for issue in check["issues"])
+        )
+
+    def test_commit_skips_unpainted_mover_loop_end_already_loop_end_passes(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "#CAP,56200000,DISP,0,PLAYING,2304,48,48,48,48,1,0,3,48")
+        lines.insert(
+            11,
+            "[67.013] [INFO] [TRACK] commitEditAction incoming ChangeLength "
+            "targetNoteId=16 start=2256 moverBaselineEnd=2303 newEnd=2303",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        case = check["cases"]["commit_skips_unpainted_mover_loop_end"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["change_length_commits"], 1)
+        self.assertEqual(case["mover_length_to_loop_end"], 0)
+
+    def test_commit_trace_reconstruct_absent_passes(self) -> None:
+        check = verify_note_edit_overdub_compose(_pass_lines(), SimpleNamespace())
+        case = check["cases"]["commit_skips_trace_reconstruct"]
+        self.assertTrue(case["ok"], case["issues"])
+        self.assertEqual(case["trace_reconstruct_count"], 0)
+
+    def test_commit_trace_reconstruct_lines_fail(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(
+            10,
+            "[56.210] [INFO] [TRACK] commitEditAction replay_flat: "
+            "M71 start=1372 end=1428 noteId=24 flatEvents=145",
+        )
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("commit_trace_reconstruct=replay_flat" in issue for issue in check["issues"])
+        )
+
+    def test_overdub_full_loop_gather_resolve_fails(self) -> None:
+        lines = list(_pass_lines())
+        lines.insert(10, "[56.210] #CAP,56210000,GEOM_APPLY,resolve,91511,1,3,0")
+        check = verify_note_edit_overdub_compose(lines, SimpleNamespace())
+        self.assertFalse(check["ok"])
+        self.assertTrue(
+            any("overdub_resolve_us=91511" in issue for issue in check["issues"])
         )
 
 

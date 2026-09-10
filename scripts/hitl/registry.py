@@ -27,7 +27,12 @@ PRESET_SCENARIOS: dict[str, tuple[str, ...]] = {
         "base",
         "note_edit_overdub_compose_last_bar_shorten",
     ),
+    "note_edit_overdub_compose_last_bar_reopen": (
+        "base",
+        "note_edit_overdub_compose_last_bar_reopen",
+    ),
     "edit_overdub_during_note_edit": ("base", "edit_overdub_during_note_edit"),
+    "note_edit_reselect_stacked": ("base", "note_edit_reselect_stacked"),
 }
 
 
@@ -49,6 +54,10 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
     from hitl.scenarios.edit_overdub_during_note_edit import (
         run_edit_overdub_during_note_edit,
         verify_edit_overdub_during_note_edit,
+    )
+    from hitl.scenarios.note_edit_reselect_stacked import (
+        run_note_edit_reselect_stacked,
+        verify_note_edit_reselect_stacked,
     )
 
     return {
@@ -99,6 +108,15 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             run=run_note_edit_overdub_compose,
             verify=verify_note_edit_overdub_compose,
         ),
+        "note_edit_overdub_compose_last_bar_reopen": ScenarioSpec(
+            scenario_id="note_edit_overdub_compose_last_bar_reopen",
+            description=(
+                "Last-bar Shorten, then exit NOTE_EDIT, re-enter, select a "
+                "seed note, and move it"
+            ),
+            run=run_note_edit_overdub_compose,
+            verify=verify_note_edit_overdub_compose,
+        ),
         "edit_overdub_during_note_edit": ScenarioSpec(
             scenario_id="edit_overdub_during_note_edit",
             description=(
@@ -107,6 +125,15 @@ def _lazy_registry() -> dict[str, ScenarioSpec]:
             ),
             run=run_edit_overdub_during_note_edit,
             verify=verify_edit_overdub_during_note_edit,
+        ),
+        "note_edit_reselect_stacked": ScenarioSpec(
+            scenario_id="note_edit_reselect_stacked",
+            description=(
+                "EDIT_RECORD_FIXTURE seed, NOTE_EDIT, move onto an occupied "
+                "sixteenth, deselect, and F1 intra-step reselect"
+            ),
+            run=run_note_edit_reselect_stacked,
+            verify=verify_note_edit_reselect_stacked,
         ),
     }
 

@@ -14,6 +14,19 @@ from typing import Callable, Iterator, Optional
 from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
+_ACTIVE_LOCK = threading.Lock()
+_ACTIVE_SESSION: Optional["ManagedCaptureSession"] = None
+
+
+def active_managed_capture() -> Optional["ManagedCaptureSession"]:
+    with _ACTIVE_LOCK:
+        return _ACTIVE_SESSION
+
+
+def _set_active_managed_capture(session: Optional["ManagedCaptureSession"]) -> None:
+    global _ACTIVE_SESSION
+    with _ACTIVE_LOCK:
+        _ACTIVE_SESSION = session
 
 
 def wait_for_current_session_pointer(
@@ -116,21 +129,38 @@ class ManagedCaptureSession:
             started_after=started_at,
         )
         print(f"[hitl-capture] session log: {self._session_log}", flush=True)
+        _set_active_managed_capture(self)
         return self._session_log
 
-    def stop(self) -> None:
+    def poll(self) -> Optional[int]:
         process = self._process
         if process is None:
-            return
-        if process.poll() is None:
-            print("[hitl-capture] stopping capture_session.py", flush=True)
-            process.send_signal(signal.SIGINT)
-            try:
-                process.wait(timeout=8.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2.0)
-        self._process = None
+            return None
+        return process.poll()
+
+    def child_exit_reason(self) -> Optional[str]:
+        code = self.poll()
+        if code is None:
+            return None
+        return f"managed capture child exited ({code})"
+
+    def stop(self) -> None:
+        try:
+            process = self._process
+            if process is None:
+                return
+            if process.poll() is None:
+                print("[hitl-capture] stopping capture_session.py", flush=True)
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=8.0)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=2.0)
+            self._process = None
+        finally:
+            if active_managed_capture() is self:
+                _set_active_managed_capture(None)
 
     def _drain_output(self) -> None:
         process = self._process

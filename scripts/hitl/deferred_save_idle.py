@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 _PERS_REQUEST_RE = re.compile(r"#CAP,\d+,PERS,request,")
 _PERS_WORK_RE = re.compile(r"#CAP,\d+,PERS,work,")
+_PERS_DRAIN_STUCK_CAP_RE = re.compile(r"#CAP,\d+,PERS,drain,stuck\b")
 _CLEAR_WAITING_SAVE_RE = re.compile(r"Clear waiting for deferred save", re.I)
 _PERSISTENCE_DRAIN_RE = re.compile(r"Persistence drain", re.I)
 _PERSISTENCE_DRAIN_STUCK_RE = re.compile(r"Persistence drain stuck", re.I)
@@ -37,9 +38,23 @@ def _last_match_index(lines: list[str], pattern: re.Pattern[str]) -> int:
 
 
 def persistence_drain_stuck_in_suffix(lines: list[str], *, after_index: int = 0) -> bool:
-    """True when firmware logged a stuck synchronous persistence drain."""
+    """True when a stuck drain is the latest unresolved persistence marker."""
     suffix = lines[after_index:]
-    return any(_PERSISTENCE_DRAIN_STUCK_RE.search(line) for line in suffix)
+    last_stuck = -1
+    for index, line in enumerate(suffix):
+        if _PERSISTENCE_DRAIN_STUCK_RE.search(line) or _PERS_DRAIN_STUCK_CAP_RE.search(line):
+            last_stuck = index
+    if last_stuck < 0:
+        return False
+    after_stuck = suffix[last_stuck + 1 :]
+    return not any(
+        _SAVE_COMPLETED_RE.search(line)
+        or _SAVE_IDLE_RE.search(line)
+        or _PERS_RESULT_OK_RE.search(line)
+        or _SAVE_STATE_SUCCESS_RE.search(line)
+        or _CURRENT_SET_SAVED_RE.search(line)
+        for line in after_stuck
+    )
 
 
 def deferred_save_active_in_suffix(lines: list[str], *, after_index: int = 0) -> bool:
@@ -194,11 +209,15 @@ def wait_for_deferred_save_idle(
             return False
         lines = collector.snapshot()
         if persistence_drain_stuck_in_suffix(lines, after_index=after_line_index):
-            print(
-                f"{log_prefix} firmware persistence drain stuck — "
-                "stop transport and wait for async save before clear, or reboot device"
-            )
-            return False
+            now = time.monotonic()
+            if now - last_progress_log >= 5.0:
+                print(
+                    f"{log_prefix} firmware persistence drain stuck — "
+                    "waiting for async settle (or reboot if this never clears)"
+                )
+                last_progress_log = now
+            time.sleep(0.05)
+            continue
         if deferred_save_idle_in_suffix(lines, after_index=after_line_index):
             print(f"{log_prefix} idle (suffix after line {after_line_index})")
             return True

@@ -138,9 +138,10 @@ def ensure_transport_clock(
     min_clocks: int,
     timeout_s: float,
     abort: Optional[Any] = None,
+    after_index: int = 0,
 ) -> tuple[bool, bool]:
     """Return (ok, using_serial_proxy). Proxy = serial capture shows transport without USB clock in."""
-    if use_serial_transport_proxy(args, serial_collector):
+    if use_serial_transport_proxy(args, serial_collector, after_index=after_index):
         return True, True
     ok = ensure_midi_clock(
         in_port,

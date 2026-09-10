@@ -228,6 +228,8 @@ def wrap_pairs_from_mi_u(
         if tick is None:
             continue
         if row["msg_type"] == 144:
+            if row["velocity"] <= 0:
+                continue
             pending.setdefault(pitch, []).append(tick)
             continue
         if row["msg_type"] != 128:
@@ -260,9 +262,9 @@ def _cap_ts(line: str) -> Optional[int]:
         return None
 
 
-def _phase_windows(lines: list[str]) -> dict[str, Optional[int]]:
+def _phase_windows(lines: list[str], *, after_index: Optional[int] = None) -> dict[str, Optional[int]]:
     """OD1/OD2 windows by start time. Close a missing ST stop from Overdubbing stopped / ODUB,stop,enter."""
-    bounds = extract_phase_boundaries(lines)
+    bounds = extract_phase_boundaries(lines, after_index=after_index)
     return {
         "od1_start": bounds.get("overdub_start_ts"),
         "od1_stop": bounds.get("overdub_stop_ts"),

@@ -26,6 +26,7 @@ from hitl.verify.note_edit_overdub_compose import (
     LIVE_CAPTURE_HIGH,
     LIVE_CAPTURE_LOW,
     compose_uses_last_bar_shorten,
+    compose_uses_reopen_select_move,
     compose_uses_same_pitch_hold,
     live_capture_band_from_spec,
     verify_note_edit_overdub_compose as _verify_note_edit_overdub_compose,
@@ -460,17 +461,19 @@ def run_note_edit_overdub_compose(args: object) -> int:
     )
     from hitl.control_constants import (
         CONTROL_CHANNEL_1BASED,
-        EDIT_BUTTON_NOTE,
         FADER_SELECT_SETTLE_MS,
         NOTE_SELECTION_GRACE_MS,
         RECORD_BUTTON_NOTE,
         TICKS_PER_16TH_STEP,
         TRACK_SELECT_NOTE_BASE,
     )
-    from hitl.edit_controls import _ensure_transport_running, _send_long_press
+    from hitl.edit_controls import _ensure_transport_running
     from hitl.midi_io import _find_midi_port, _send_short_press
     from hitl.serial_collector import RunAbort
-    from hitl.scenarios.edit_minimal import _ensure_note_edit_entered
+    from hitl.scenarios.edit_minimal import (
+        _ensure_note_edit_entered,
+        _ensure_note_edit_exited,
+    )
     from hitl.baseline_loop_inventory import (
         nav_slot_stats,
         record_layout_from_base_seed,
@@ -771,13 +774,67 @@ def run_note_edit_overdub_compose(args: object) -> int:
         )
 
         print("[note-edit-overdub-compose] exit NOTE_EDIT")
-        _send_long_press(
+        if not _ensure_note_edit_exited(
             out_port,
-            note=EDIT_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=700,
-        )
+            serial_collector,
+            press_ms=ns.press_ms,
+            phase_wait_ms=ns.phase_wait_ms,
+            timeout_s=ns.edit_enter_timeout_s,
+            log_prefix="[note-edit-overdub-compose]",
+        ):
+            print("[note-edit-overdub-compose] FAILED: NOTE_EDIT exit not confirmed")
+            return 1
         ctx.markers.append("exited edit mode")
+
+        if compose_uses_reopen_select_move(spec):
+            print("[note-edit-overdub-compose] re-enter NOTE_EDIT")
+            if not _ensure_note_edit_entered(
+                out_port,
+                serial_collector,
+                press_ms=ns.press_ms,
+                phase_wait_ms=ns.phase_wait_ms,
+                timeout_s=ns.edit_enter_timeout_s,
+                log_prefix="[note-edit-overdub-compose]",
+            ):
+                print("[note-edit-overdub-compose] FAILED: NOTE_EDIT re-enter not confirmed")
+                return 1
+            ctx.markers.append("NOTE_EDIT reopen")
+            seed_tick = int(layout.nav_slots[note_slot].rel_tick)
+            print(
+                "[note-edit-overdub-compose] re-select seed on the seed layout, "
+                f"then move after reopen tick={seed_tick}"
+            )
+            _fader1_select_nav_slot_index(
+                out_port,
+                layout=layout,
+                slot_index=note_slot,
+                serial_collector=serial_collector,
+                expected_tick=seed_tick,
+            )
+            selection_idx = -1
+            for line in serial_collector.snapshot():
+                match = re.search(r"Note selection changed: .* -> (-?\d+)", line)
+                if match is not None:
+                    selection_idx = int(match.group(1))
+            if selection_idx < 0:
+                print(
+                    "[note-edit-overdub-compose] FAILED: reopen lost note selection; "
+                    "not sending F2"
+                )
+                return 1
+            print(f"[note-edit-overdub-compose] reopen selection idx={selection_idx}")
+            reopen_step = seed_tick // TICKS_PER_16TH_STEP
+            reopen_to = min(reopen_step + 4, layout.sixteenth_steps - 1)
+            if reopen_to == reopen_step and reopen_step > 0:
+                reopen_to = reopen_step - 1
+            _fader2_move_to_sixteenth_step(
+                out_port,
+                layout=layout,
+                fixture_step=reopen_to,
+                serial_collector=serial_collector,
+            )
+            ctx.markers.append("reopen select and move")
+
         time.sleep(ns.final_wait_ms / 1000.0)
 
         lines = prepend_hitl_header(serial_collector.snapshot(), spec)

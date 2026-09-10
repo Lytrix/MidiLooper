@@ -82,6 +82,13 @@ class SerialTransportProxyTests(unittest.TestCase):
         lines = ["#CAP,1,DFRAME,32,9200,120", "#CAP,2,BAR,768,1"]
         self.assertTrue(serial_lines_show_transport_activity(lines))
 
+    def test_historical_bar_does_not_authorize_new_phase(self) -> None:
+        lines = ["#CAP,1,BAR,768,1", "bootstrap"]
+        self.assertTrue(serial_lines_show_transport_activity(lines))
+        self.assertFalse(serial_lines_show_transport_activity(lines, after_index=1))
+        collector = _FakeCollector(lines, silence_s=0.1)
+        self.assertFalse(serial_sequencer_running(collector, after_index=1))
+
     def test_dframe_activity_in_tail(self) -> None:
         lines = ["#CAP,1,MI,U,144,1,60,100", "#CAP,2,DFRAME,0,9270,33120"]
         self.assertTrue(serial_lines_show_transport_activity(lines))

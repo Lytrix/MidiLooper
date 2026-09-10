@@ -17,11 +17,13 @@ from hitl.capture_transitions import (
     _record_entry_to_recording_count,
 )
 from host_midi_automation_baseline import (
+    _arm_already_satisfied,
     _can_skip_clear_before_record,
     _clear_undo_prune_gate_ok,
     _empty_slot_select_started_recording,
     _serial_has_clear_completed,
     _track_cleared_for_record,
+    _transport_running_before_record_arm,
 )
 
 class ClearBeforeRecordPreconditionTests(unittest.TestCase):
@@ -78,6 +80,63 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         self.assertFalse(_empty_slot_select_started_recording(before_select))
         self.assertTrue(_empty_slot_select_started_recording(after_select))
         self.assertFalse(_empty_slot_select_started_recording(after_clear))
+
+    def test_arm_already_satisfied_ignores_historical_recording_when_stopped(self) -> None:
+        """Empty-slot select left RECA in the suffix; clear stopped capture.
+
+        [`session_20260910_115153.log`] arm treated historical RECORDING as
+        already satisfied while latest was STOPPED, so no notes were sent.
+        """
+        lines = [
+            "#CAP,1,ST,Track,STOPPED,RECORDING",
+            "#CAP,2,RECA,0,399",
+            "#CAP,3,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,4,ST,Track,STOPPED_RECORDING,STOPPED",
+            "Clear ignored — selected slot is empty",
+        ]
+        self.assertFalse(_arm_already_satisfied(lines))
+        self.assertTrue(
+            _arm_already_satisfied(
+                lines + ["#CAP,5,ST,Track,STOPPED,ARMED"],
+            )
+        )
+        self.assertTrue(
+            _arm_already_satisfied(
+                lines + ["#CAP,5,ST,Track,ARMED,RECORDING"],
+            )
+        )
+
+    def test_transport_not_running_when_stopped_after_clear(self) -> None:
+        """After clear STOPPED must not force a transport toggle before arm.
+
+        [`session_20260910_121508.log`] proxy/clock fallback pressed transport
+        while STOPPED → PLAYING → arm RECOVERY_FAILED before play→RECORDING.
+        """
+        lines = [
+            "#CAP,1,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,2,ST,Track,STOPPED_RECORDING,STOPPED",
+            "Clear ignored — selected slot is empty",
+        ]
+        self.assertFalse(_transport_running_before_record_arm(lines))
+        self.assertTrue(
+            _transport_running_before_record_arm(
+                lines + ["#CAP,3,ST,Track,STOPPED,PLAYING"],
+            )
+        )
+        self.assertTrue(
+            _transport_running_before_record_arm(
+                ["Transport started", "#CAP,1,ST,Track,STOPPED,PLAYING"],
+            )
+        )
+        self.assertFalse(
+            _transport_running_before_record_arm(
+                [
+                    "Transport started",
+                    "Transport stopped",
+                    "#CAP,1,ST,Track,PLAYING,STOPPED",
+                ],
+            )
+        )
 
     def test_clear_ignored_selected_slot_empty(self) -> None:
         from host_midi_automation_baseline import _serial_has_clear_ignored_empty
@@ -148,6 +207,27 @@ class EditMinimalSeedOkTests(unittest.TestCase):
                     {"from": "ARMED", "to": "RECORDING", "ok": True},
                     {"from": "RECORDING", "to": "STOPPED_RECORDING", "ok": True},
                     {"from": "STOPPED_RECORDING", "to": "PLAYING", "ok": False},
+                ]
+            },
+        }
+        self.assertTrue(base_report_record_seed_ok(report))
+
+    def test_fixture_seed_ok_without_host_clock_grid(self) -> None:
+        from hitl.baseline_loop_inventory import base_report_record_seed_ok
+
+        report = {
+            "config": {"record_only": True, "edit_record_fixture": True},
+            "per_track_stats": [
+                {
+                    "record_notes_sent": 8,
+                    "record_clock_pulses_seen": 177,
+                }
+            ],
+            "assertions": {
+                "transition_checks": [
+                    {"from": "ARMED", "to": "RECORDING", "ok": True},
+                    {"from": "RECORDING", "to": "STOPPED_RECORDING", "ok": True},
+                    {"from": "STOPPED_RECORDING", "to": "PLAYING", "ok": True},
                 ]
             },
         }

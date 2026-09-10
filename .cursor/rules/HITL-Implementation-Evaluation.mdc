@@ -60,9 +60,11 @@ For a HITL that evaluates the change just implemented:
 
 1. `pio run -e teensy41-capture-serial` (RAM1 locals ≥ 4000).
 2. Upload immediately: `pio run -e teensy41-capture-serial -t upload`.
-3. Run the dedicated preset via `host_midi_hitl.py` (managed capture default).
+3. Start the dedicated preset via `host_midi_hitl.py` (managed capture default) **and** `pio test -e native` **in parallel**. Do not wait for the full native suite to finish before upload or HITL. The suite takes about as long as a compose-class HITL; serializing them doubles the wait.
 
 Do **not** wait for a human to approve upload or the HITL run. This overrides [Teensy-Upload-After-Build.mdc](Teensy-Upload-After-Build.mdc) for that evaluation loop only.
+
+Focused native filters may still run first during iteration. The parallel rule is for the **full** `pio test -e native` plus the dedicated HITL. Both must PASS before the stage is verified. A fail on either side is independent — do not treat one PASS as covering the other.
 
 ## Fix loop cap
 

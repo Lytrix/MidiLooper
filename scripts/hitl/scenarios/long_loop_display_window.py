@@ -219,12 +219,14 @@ def run_long_loop_display_window(args: object) -> int:
         if serial_collector is not None:
             from hitl.edit_mode_precondition import ensure_loop_edit_before_record
 
-            ensure_loop_edit_before_record(
+            if not ensure_loop_edit_before_record(
                 out_port,
                 serial_collector,
                 press_ms=ns.press_ms,
                 phase_wait_ms=ns.phase_wait_ms,
-            )
+            ):
+                print("[long-loop] NOTE_EDIT exit not confirmed; aborting")
+                return 2
 
         if ns.clear_before_record:
             if serial_collector is not None:

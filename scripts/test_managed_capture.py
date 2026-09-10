@@ -72,6 +72,13 @@ class ManagedCaptureTests(unittest.TestCase):
         self.assertTrue(config.needs_managed_capture())
         self.assertTrue(config.uses_external_serial_capture)
 
+    def test_managed_session_poll_none_before_start(self) -> None:
+        from hitl.managed_capture import ManagedCaptureSession, active_managed_capture
+
+        session = ManagedCaptureSession(out_dir=Path("captures"))
+        self.assertIsNone(session.poll())
+        self.assertIsNone(active_managed_capture())
+
 
 if __name__ == "__main__":
     unittest.main()

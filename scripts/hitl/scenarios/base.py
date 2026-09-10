@@ -44,11 +44,12 @@ def run_base_scenario(args: object) -> int:
     if seed_stimulus is not None:
         seed_stimulus = run_stimulus(seed_stimulus)
         print_stimulus_banner(seed_stimulus)
-    if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
+    if preset in ("edit_minimal", "edit_overdub_during_note_edit", "note_edit_reselect_stacked"):
         defaults = canonical_edit_minimal_base_legacy_args()
     elif preset in (
         "note_edit_overdub_compose",
         "note_edit_overdub_compose_last_bar_shorten",
+        "note_edit_overdub_compose_last_bar_reopen",
     ):
         defaults = canonical_record_one_overdub_legacy_args()
     else:
@@ -66,7 +67,7 @@ def run_base_scenario(args: object) -> int:
     report = latest_base_report(out_dir)
     seed_ok = (
         base_report_record_seed_ok(report)
-        if preset in ("edit_minimal", "edit_overdub_during_note_edit")
+        if preset in ("edit_minimal", "edit_overdub_during_note_edit", "note_edit_reselect_stacked")
         else False
     )
     loop_materialized = base_report_loop_materialized(report)
@@ -79,7 +80,7 @@ def run_base_scenario(args: object) -> int:
         code = 0
 
     usable = base_report_usable_for_note_edit_sweep(report)
-    if preset in ("edit_minimal", "edit_overdub_during_note_edit") and seed_ok:
+    if preset in ("edit_minimal", "edit_overdub_during_note_edit", "note_edit_reselect_stacked") and seed_ok:
         usable = True
         if code != 0:
             print(

@@ -8,6 +8,8 @@ alwaysApply: true
 Use this exact flow whenever running or validating the local hardware-in-the-loop MIDI automation baseline.
 Transition verification is always required for baseline validation in this repository.
 
+Host result contract: `PASS` / `FAIL` / `INCONCLUSIVE_CAPTURE` in `scripts/hitl/contract.py`. Do not treat incomplete capture as a firmware fail or pass. Retry a control press only when serial evidence after the action baseline proves the requested transition did not happen. Historical pre-baseline `BAR`/`DFRAME` must not authorize a new transport-proxy phase. Truncated, rotated, or child-exited capture is incomplete. See [`docs/Plans/hitl_framework_hardening_refinement.md`](../../docs/Plans/hitl_framework_hardening_refinement.md).
+
 ## Canonical test command
 
 **Default:** assume `teensy41-capture-serial` is already on the device. HITL does **not** build or upload unless you pass `--build-upload`.

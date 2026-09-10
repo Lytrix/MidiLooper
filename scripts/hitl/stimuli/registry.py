@@ -154,6 +154,56 @@ STIM_NE_OD_COMPOSE_03 = StimulusSpec(
     ),
 )
 
+STIM_NE_OD_COMPOSE_04 = StimulusSpec(
+    stimulus_id="STIM-NE-OD-COMPOSE-04",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="note_edit_overdub_compose_last_bar_reopen",
+    description=(
+        "Last-bar Shorten, then exit NOTE_EDIT, re-enter, select a seed note, "
+        "and move it"
+    ),
+    generator="scenario:note_edit_overdub_compose",
+    base_bars=2,
+    base_pattern="BASE-2-ONE-OD",
+    base_stimulus_id=STIM_BASE_2_ONE_OD_01.stimulus_id,
+    overdubs=(
+        OverdubRecipe(name="OD1", bars=2, pattern="BASELINE_OVERDUB", note_low=24, note_high=39),
+        OverdubRecipe(
+            name="IN_EDIT_OD",
+            bars=2,
+            pattern="LIVE_CAPTURE_SAME_PITCH",
+            note_low=None,
+            note_high=None,
+        ),
+    ),
+    interactions=(
+        "note_edit",
+        "in_edit_overdub",
+        "same_pitch_hold",
+        "shorten_new_note_last_bar",
+        "move_selected_note",
+        "reenter_note_edit",
+        "select_and_move_after_reopen",
+    ),
+    must_prove=(
+        "base_recorded",
+        "committed_od1",
+        "in_edit_overdub_active",
+        "live_capture_notes_present",
+        "selected_note_moved",
+        "new_note_shortened",
+        "reopen_note_edit_selected",
+        "reopen_note_moved",
+    ),
+    human_checks=(
+        "new note Shortened at last-bar beat 4",
+        "reopen select lands on a note",
+        "reopen move visible",
+        "no display corruption",
+    ),
+)
+
 STIM_BASE_2_2_01 = StimulusSpec(
     stimulus_id="STIM-BASE-2-2-01",
     version=1,
@@ -215,6 +265,32 @@ STIM_OCCUPY_PAINT_01 = StimulusSpec(
     ),
 )
 
+STIM_NE_RESELECT_STACKED_01 = StimulusSpec(
+    stimulus_id="STIM-NE-RESELECT-STACKED-01",
+    version=1,
+    kind=KIND_CANONICAL,
+    scenario_id="note_edit_reselect_stacked",
+    description=(
+        "EDIT_RECORD_FIXTURE seed, NOTE_EDIT, move a higher-pitch note onto "
+        "an occupied sixteenth, deselect, then F1 intra-step reselect"
+    ),
+    generator="scenario:note_edit_reselect_stacked",
+    base_bars=2,
+    base_pattern="EDIT_RECORD_FIXTURE",
+    base_stimulus_id=STIM_BASE_2_FIXTURE_01.stimulus_id,
+    overdubs=(),
+    interactions=("note_edit", "move_onto_occupied_step", "deselect", "reselect_stacked"),
+    must_prove=(
+        "note_edit_entered",
+        "selected_note_moved",
+        "stacked_reselect_after_deselect",
+    ),
+    human_checks=(
+        "moved note reselectable on the stacked sixteenth",
+        "first stacked note still selectable",
+    ),
+)
+
 STIM_EDIT_OD_DURING_NE_01 = StimulusSpec(
     stimulus_id="STIM-EDIT-OD-DURING-NE-01",
     version=1,
@@ -252,15 +328,19 @@ _STIMULI: dict[str, StimulusSpec] = {
     STIM_NE_OD_COMPOSE_01.stimulus_id: STIM_NE_OD_COMPOSE_01,
     STIM_NE_OD_COMPOSE_02.stimulus_id: STIM_NE_OD_COMPOSE_02,
     STIM_NE_OD_COMPOSE_03.stimulus_id: STIM_NE_OD_COMPOSE_03,
+    STIM_NE_OD_COMPOSE_04.stimulus_id: STIM_NE_OD_COMPOSE_04,
     STIM_OCCUPY_PAINT_01.stimulus_id: STIM_OCCUPY_PAINT_01,
     STIM_EDIT_OD_DURING_NE_01.stimulus_id: STIM_EDIT_OD_DURING_NE_01,
+    STIM_NE_RESELECT_STACKED_01.stimulus_id: STIM_NE_RESELECT_STACKED_01,
 }
 
 SCENARIO_STIMULUS: dict[str, str] = {
     "note_edit_overdub_compose": STIM_NE_OD_COMPOSE_02.stimulus_id,
     "note_edit_overdub_compose_last_bar_shorten": STIM_NE_OD_COMPOSE_03.stimulus_id,
+    "note_edit_overdub_compose_last_bar_reopen": STIM_NE_OD_COMPOSE_04.stimulus_id,
     "overdub_occupy_paint": STIM_OCCUPY_PAINT_01.stimulus_id,
     "edit_overdub_during_note_edit": STIM_EDIT_OD_DURING_NE_01.stimulus_id,
+    "note_edit_reselect_stacked": STIM_NE_RESELECT_STACKED_01.stimulus_id,
     "base": STIM_BASE_2_2_01.stimulus_id,
 }
 
@@ -269,9 +349,10 @@ def stimulus_for_base_preset(preset: str | None) -> StimulusSpec | None:
     if preset in (
         "note_edit_overdub_compose",
         "note_edit_overdub_compose_last_bar_shorten",
+        "note_edit_overdub_compose_last_bar_reopen",
     ):
         return STIM_BASE_2_ONE_OD_01
-    if preset in ("edit_minimal", "edit_overdub_during_note_edit"):
+    if preset in ("edit_minimal", "edit_overdub_during_note_edit", "note_edit_reselect_stacked"):
         return STIM_BASE_2_FIXTURE_01
     return STIM_BASE_2_2_01
 

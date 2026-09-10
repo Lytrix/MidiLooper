@@ -130,8 +130,11 @@ def base_report_record_seed_ok(report: Mapping[str, Any] | None) -> bool:
     min_notes = 7 if config.get("edit_record_fixture") else 32
     if int(row.get("record_notes_sent", 0) or 0) < min_notes:
         return False
-    if int(row.get("record_clock_pulses_seen", 0) or 0) < 192:
-        return False
+    # Fixture seed is wall-clock paced and sends 8 notes. Host USB MIDI in often
+    # misses Teensy clock, so do not require the 32-note 192-pulse grid count.
+    if not config.get("edit_record_fixture"):
+        if int(row.get("record_clock_pulses_seen", 0) or 0) < 192:
+            return False
     transitions = (report.get("assertions") or {}).get("transition_checks") or []
     if config.get("record_only"):
         # Edit-minimal seed: capture + fixture notes matter more than every ST gate.
