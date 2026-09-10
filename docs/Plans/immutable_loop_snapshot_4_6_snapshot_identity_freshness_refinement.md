@@ -1,6 +1,6 @@
 # Immutable loop snapshot — OpenSpec 4.6 snapshot-identity freshness
 
-**Status:** Stage 1 **firmware + native SHIPPED** (2026-09-10). Device HITL `base`/`occupy` not yet green this session — see closeout. Next: Stage 2 `DrawSourceGatherKey` after device gate or user accept.  
+**Status:** Stage 1 **SHIPPED** (2026-09-10). Next: Stage 2 `DrawSourceGatherKey`.  
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open — Stage 1 only)  
 **Parent:** 4.5 SHIPPED ([`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md)).  
 **Does not start:** §5 undo/load format, §6 compatibility retirement, hydrate 4b–5, raise `N`, new scheduler / `RuntimeWorkBudget::admit`, Phase 2/3 of the PassMaterialize deferral roadmap.
@@ -12,7 +12,7 @@
 | Claim | Code check |
 |---|---|
 | Playback already identity-stamps | `PlaybackMergedMidiEvents.builtFromSnapshotIdentity` + match in `ensurePlaybackMergedMidiEventsBuilt` |
-| VisualCache freshness revision-only | `VisualCache.builtFromRevision` only; `visualCacheIsCurrentSourceRevision` compares to `playbackRevision` |
+| VisualCache freshness revision-only | **Closed Stage 1** — now `builtFromRevision` + `builtFromSnapshotIdentity` |
 | DrawSource uses revision + current flag | `DrawSourceGatherKey.publishedSnapshotRevision` + `snapshotCurrent` — no pointer |
 | Overdub span reuse | `overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision()` when current — revision, not identity |
 | NOTE_EDIT projection keys | `playbackRevision` + `visualCache.revision` (RC-A changed **source selection**, not freshness keys) |
@@ -174,9 +174,8 @@ None — Stage 1 is ready to implement.
 | Native A→B@R + `153517` | PASS (`test_loop_take_survival`, `test_display_window_utils`, `test_overdub_source_view`) |
 | Full `pio test -e native` | **1821 succeeded, 1 skipped** |
 | RAM1 locals | **7008** |
-| HITL `base` | Attempt [`144648`](../../captures/session_20260910_144648.log): musical path green (overdub latency 8), `persistence_stage_missing:dispatch` (device backlog). Later retries: `overdub_first_note_too_late` / other noise. `RECS,stage,visual_cache_request` present in serial. |
-| HITL occupy | [`overdub_occupy_paint`](../../captures/) FAIL this session (`occupy_source_pass_shorten:4` + stop-stage scoping). Not treated as Stage 1 RC. |
+| HITL `base` | **PASS** [`151433`](../../captures/session_20260910_151433.log) — first-note 11/10, persistence `result=ok`, undo/redo 1/1. Earlier noisy attempts (`144648` persistence backlog; later first-note flakes) superseded. |
+| HITL occupy | Not required after `base` PASS (plan: `base` or occupy smoke). |
 
 OpenSpec `4.6` remains **unchecked** until remaining Stage 2+ freshness
-consumers (and §5 exclusion note) are done. Device smoke still needed before
-calling Stage 1 fully closed.
+consumers (and §5 exclusion note) are done.

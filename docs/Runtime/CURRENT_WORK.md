@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (OpenSpec 4.6 Stage 1 VisualCache identity stamp)
+Last updated: 2026-09-10 (OpenSpec 4.6 Stage 1 SHIPPED — HITL base PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,18 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.6 Stage 1 device HITL still open; Stage 2 not started.**
-Stage 1 firmware+native: `VisualCache::builtFromSnapshotIdentity` +
-`visualCacheIsCurrentPublishedSnapshot`; A→B@R native proof;
-`153517` green; RAM1 **7008**; native **1821 succeeded, 1 skipped**.
-Device `base`/`occupy` not PASS this session (see plan closeout).
-OpenSpec `4.6` stays open. Plan:
+**Now — Immutable OpenSpec 4.6 Stage 2 next** (`DrawSourceGatherKey` identity).
+Stage 1 **SHIPPED**: `VisualCache::builtFromSnapshotIdentity` +
+`visualCacheIsCurrentPublishedSnapshot`; A→B@R native; RAM1 **7008**;
+native **1821/1**; HITL `base` PASS [`151433`](../../captures/session_20260910_151433.log).
+OpenSpec `4.6` stays open (Stage 2+ / §5 exclusion). Plan:
 [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
 `N` in this slice.
 
 **Prior — Immutable OpenSpec 4.6 Stage 1 — VisualCache identity stamp SHIPPED.**
-See Now implementing above.
+Commit `125f8941`; device gate [`151433`](../../captures/session_20260910_151433.log).
 
 **Prior — Immutable OpenSpec 4.5 — SHIPPED.** HITL `base` PASS
 ([`122812`](../../captures/session_20260910_122812.log)); `overdub_occupy_paint`
