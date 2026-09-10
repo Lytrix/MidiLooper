@@ -1,9 +1,10 @@
 # Immutable loop snapshot — OpenSpec 4.6 snapshot-identity freshness
 
-**Status:** Stage 3 **SHIPPED** (2026-09-10). Stage 4 **next** (NOTE_EDIT committed-base cache keys). Stages 1–2 **SHIPPED**.  
-**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open)  
+**Status:** Stage 4 **SHIPPED** (2026-09-10) — NOTE_EDIT committed-base cache keys. Stages 1–3 **SHIPPED**. Next: evaluate `legacyMidiEventsFromCommitted` (may need design).  
+**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open — remaining consumers / §5 exclusion)  
 **Parent:** 4.5 SHIPPED ([`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md)).  
 **Does not start:** §5 undo/load format, §6 compatibility retirement, hydrate 4b–5, raise `N`, new scheduler / `RuntimeWorkBudget::admit`, Phase 2/3 of the PassMaterialize deferral roadmap.
+**Related (separate):** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) — plan only.
 
 ## Codebase / end-state review (2026-09-10)
 
@@ -15,7 +16,7 @@
 | VisualCache freshness revision-only | **Closed Stage 1** — now `builtFromRevision` + `builtFromSnapshotIdentity` |
 | DrawSource uses revision + current flag | **Closed Stage 2** — `publishedSnapshotIdentity` on `DrawSourceGatherKey` |
 | Overdub span reuse | **Closed Stage 3** — `overdubSourceSpanCachePublishedIdentity_` |
-| NOTE_EDIT projection keys | `playbackRevision` + `visualCache.revision` (RC-A changed **source selection**, not freshness keys) |
+| NOTE_EDIT projection keys | `playbackRevision` + `visualCache.revision` + `publishedSnapshotIdentity` (Stage 4) |
 | `legacyMidiEventsFromCommitted` | Always `materializeEditViewFromPasses` keyed by `playbackRevision` |
 
 RC-A did **not** close any 4.6 freshness gap. PassMaterialize removal from the NOTE_EDIT selector is ownership of **request rebuild**, not derived-rep identity stamps.
@@ -73,7 +74,7 @@ Reuse: **YES** — extend `publishedSnapshotIdentity()` + stamp pattern from `en
 | `VisualCache` | `Loop` | `builtFromRevision` only | **Yes — Stage 1** | Source migrated 4.4b/e |
 | `DrawSourceGatherKey` | `DisplayManager` | revision + `publishedSnapshotRevision` + current flag | **Yes** | After VisualCache |
 | Overdub span cache reuse | `Loop` | playback + published **revision** numbers | **Yes** | Fill already snapshot |
-| NOTE_EDIT projection caches | `EditManager` | `playbackRevision` + `visualCache.revision` | **Yes** | Source Snapshot\|VisualCache (RC-A) |
+| NOTE_EDIT projection caches | `EditManager` | revision **+** `publishedSnapshotIdentity` | **Closed Stage 4** | Source Snapshot\|VisualCache (RC-A) |
 | `materializedLoopEventsForNoteEditFocus` | `EditManager` | `playbackRevision` | **Yes** | Later |
 | `legacyMidiEventsFromCommitted` | `Track` | `playbackRevision`; always pass materialize | **Yes — large** | Named in 4.4 closeout |
 | `passesMaterializedStore_` / `midiEvents()` | `Loop` | dirty flag | **Yes → §6 overlap** | Don’t over-invest |
@@ -185,10 +186,40 @@ occupy request; new owner/scheduler.
 | HITL `base` | **PASS** [`155756`](../../captures/session_20260910_155756.log) |
 | HITL occupy | Machine **PASS** [`160337`](../../captures/session_20260910_160337.log) — shorten=5 hide=4 undo=2 redo=2; process exit non-zero from base `persistence_stage_missing:dispatch` only |
 
-### Stage 4+ (ordered, separate commits)
+### Stage 4 — NOTE_EDIT committed-base cache identity — SHIPPED
 
-1. NOTE_EDIT committed-base cache keys  
-2. Then evaluate `legacyMidiEventsFromCommitted` (may need design if source + freshness)
+**Field:** `noteEditSelectableDisplayCachePublishedSnapshotIdentity_` beside
+playback/visual revision cache stamps. Compared in
+`noteEditCommittedBaseKeysMatch` (pointer equality; `nullptr == nullptr` is a
+valid “no current root” match — DrawSource-style). Stamped from
+`Loop::publishedSnapshotIdentity()` when rebuilding the committed base in
+`ensureNoteEditDisplayProjectionCachesBuilt`. Paint-only keys
+(`sessionPreviewRevision`, fingerprint, capture revision) unchanged.
+
+**Primary native proof:** same loopLength / playback / visual revision with
+identity A→B ⇒ `RebuildCommittedBase`
+(`test_rebuild_note_edit_committed_base_on_snapshot_identity_same_revision`).
+
+**Falsify Stage 4 if:** identity ignored across A→B at same R; PassMaterialize on
+NOTE_EDIT request; paint keys treated as committed-base keys; new owner/scheduler.
+
+### Stage 4 closeout (2026-09-10)
+
+| Gate | Result |
+|---|---|
+| Native A→B@R committed-base | PASS (`test_display_window_utils`) |
+| Full `pio test -e native` | **1825 succeeded, 1 skipped** (with length-fader gate) |
+| RAM1 locals | **7008** |
+| HITL `base` | **PASS** [`172224`](../../captures/session_20260910_172224.log) — earlier [`172050`](../../captures/session_20260910_172050.log) FAIL was record seal **3840** (stop late), not Stage 4 identity; length-fader gate held (`ignored: capture active`) |
+
+OpenSpec `4.6` remains **unchecked** until remaining freshness consumers
+(`materializedLoopEventsForNoteEditFocus`, `legacyMidiEventsFromCommitted`, …)
+and §5 exclusion note are done.
+
+### Stage 5+ (ordered, separate commits)
+
+1. Evaluate `legacyMidiEventsFromCommitted` (may need design if source + freshness)
+2. Then `materializedLoopEventsForNoteEditFocus` / remaining inventory rows
 
 ## Explicit non-goals
 

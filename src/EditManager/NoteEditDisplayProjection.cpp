@@ -62,10 +62,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     const uint32_t previewRevision = sessionPreviewRevision_;
     const uint32_t displayFingerprint =
         noteEditDisplayCacheFingerprint(focus, &editSession.noteEditCurrentState);
+    const void* publishedSnapshotIdentity = loop.publishedSnapshotIdentity();
     const bool committedBaseKeysMatch = DisplayWindowUtils::noteEditCommittedBaseKeysMatch(
         loopLength, noteEditSelectableDisplayCacheLoopLength_, playbackRevision,
         noteEditSelectableDisplayCachePlaybackRevision_, visualRevision,
-        noteEditSelectableDisplayCacheVisualRevision_);
+        noteEditSelectableDisplayCacheVisualRevision_, publishedSnapshotIdentity,
+        noteEditSelectableDisplayCachePublishedSnapshotIdentity_);
     const bool paintKeysMatch = DisplayWindowUtils::noteEditPaintKeysMatch(
         displayFingerprint, noteEditSelectableDisplayCacheFingerprint_, selectedNoteIdx,
         noteEditSelectableDisplayCacheSelectedNoteIdx_, captureRevision,
@@ -109,6 +111,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
         noteEditSelectableDisplayCacheLoopLength_ = loopLength;
         noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
         noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
+        noteEditSelectableDisplayCachePublishedSnapshotIdentity_ = publishedSnapshotIdentity;
     }
 
     noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
@@ -155,6 +158,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateProjectedNoteEditDisplayCache(
     noteEditSelectableDisplayCacheLoopLength_ = 0;
     noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     noteEditSelectableDisplayCacheVisualRevision_ = UINT32_MAX;
+    noteEditSelectableDisplayCachePublishedSnapshotIdentity_ = nullptr;
     noteEditSelectableDisplayCacheCaptureRevision_ = 0xFFFF;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     noteEditPaintDisplayCacheNotes_.clear();

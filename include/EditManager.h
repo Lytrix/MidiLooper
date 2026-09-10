@@ -128,6 +128,8 @@ public:
         const Track& track, uint32_t selectedTick, bool includeSelectedTickIfMissing = true) const;
     /// Map select-fader pitchbend onto a 16th in the select nav span.
     uint32_t selectTickFromSelectFaderPitchbend(const Track& track, int16_t pitchValue) const;
+    /// Select fader / bracket nav span — committed content bars when loop is lengthened past content.
+    uint32_t noteEditSelectNavigationLengthTicks(const Track& track) const;
     /// Prepared snapshot hold query. False is legacy visual-cache miss.
     bool tryCollectPreparedOverlapHoldNoteIds(
         const Track& track, uint8_t pitch, uint32_t startTick, uint32_t endTick, NoteId excludeId,
@@ -321,8 +323,6 @@ private:
     /// After **Delete** — restore overlap notes the removed causing note had hidden or shortened.
     void applyDeleteNoteOverlapRestore(Track& track);
     void invalidateNoteEditDerivedCaches();
-    /// Select fader / bracket nav span — committed content bars when loop is lengthened past content.
-    uint32_t noteEditSelectNavigationLengthTicks(const Track& track) const;
     uint32_t clampNoteEditBracketPhaseTick(const Track& track, uint32_t phaseTick) const;
     void ensureNoteEditDisplayProjectionCachesBuilt(const Track& track) const;
     /// Cached NOTE_EDIT selectable inventory (`filterSelectableDisplayNotes` on paint projection).
@@ -359,6 +359,9 @@ private:
     mutable uint32_t noteEditSelectableDisplayCacheLoopLength_ = 0;
     mutable uint32_t noteEditSelectableDisplayCachePlaybackRevision_ = UINT32_MAX;
     mutable uint32_t noteEditSelectableDisplayCacheVisualRevision_ = UINT32_MAX;
+    /// `Loop::publishedSnapshotIdentity()` when the committed base was built;
+    /// nullptr when no published root (OpenSpec 4.6 Stage 4).
+    mutable const void* noteEditSelectableDisplayCachePublishedSnapshotIdentity_ = nullptr;
     mutable uint16_t noteEditSelectableDisplayCacheCaptureRevision_ = 0xFFFF;
     mutable int noteEditSelectableDisplayCacheSelectedNoteIdx_ = -2;
     mutable NoteUtils::DisplayNoteVec noteEditPaintDisplayCacheNotes_;

@@ -148,6 +148,8 @@ enum class NoteEditCommittedBaseKind {
 /// `145634`: fingerprint / selected-note changes must not rebuild the base.
 /// RC1 / compose `124645`: `sessionPreviewRevision` is a paint key only — not a
 /// committed-base key.
+/// OpenSpec 4.6 Stage 4: published snapshot identity is a committed-base key
+/// (A→B at fixed playbackRevision ⇒ RebuildCommittedBase).
 /// RC-A: selector result space is Snapshot | VisualCache only — never
 /// PassMaterialize (stale snapshot must not force content-sized rebuild).
 enum class NoteEditProjectionCacheReuse {
@@ -156,13 +158,20 @@ enum class NoteEditProjectionCacheReuse {
   RebuildCommittedBase,
 };
 
+/// Committed-base freshness: loop length + playback/visual revisions + published
+/// snapshot identity. Same playbackRevision with a replaced root must miss
+/// (OpenSpec 4.6 Stage 4). `nullptr == nullptr` is a valid "no current root"
+/// match (DrawSource-style), distinct from VisualCache currency.
 inline bool noteEditCommittedBaseKeysMatch(uint32_t loopLength, uint32_t cachedLoopLength,
                                            uint32_t playbackRevision,
                                            uint32_t cachedPlaybackRevision,
                                            uint32_t visualRevision,
-                                           uint32_t cachedVisualRevision) {
+                                           uint32_t cachedVisualRevision,
+                                           const void* publishedSnapshotIdentity,
+                                           const void* cachedPublishedSnapshotIdentity) {
     return loopLength == cachedLoopLength && playbackRevision == cachedPlaybackRevision &&
-           visualRevision == cachedVisualRevision;
+           visualRevision == cachedVisualRevision &&
+           publishedSnapshotIdentity == cachedPublishedSnapshotIdentity;
 }
 
 inline bool noteEditPaintKeysMatch(uint32_t displayFingerprint, uint32_t cachedFingerprint,
