@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (Overdub live wrap playhead-tail Stage 1 SHIPPED; Stage 2 next; 4.6 Stage 4 SHIPPED)
+Last updated: 2026-09-10 (Overdub live wrap Stage 2b SHIPPED — NoteId wrap split)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub live wrap playhead-tail display — Stage 1 SHIPPED; Stage 2 next.**
-Pin: pre-wrap `On→currentTick` **and** post-wrap `On→loopEnd` + `0→currentTick`;
-STOPPED geometry-equivalent. Stage 1: `shouldAllowCapturePlayheadWrapContinuation`
-wired (OVERDUBBING still NO). Stage 2: flip OVERDUBBING+PLAYING → YES.
-Plan: [`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
-Do not touch 4.6, DEC-051 seal, gather stash, or Occupy.
+**Now — Overdub start snapshot omits bar-crossing record note — SHIPPED.**
+Consumer Stages 1–2: clean-visual retain when current snapshot gather is
+smaller; full-loop `from=snapshot` `mergeOmitted`. HITL `base` PASS
+[`200405`](../../captures/session_20260910_200405.log): OD open notes=33
+(id 27 present); RAM1 **7008**; native PASS. Plan:
+[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
+
+**Prior — Overdub live wrap Stage 2b SHIPPED** (shared NoteId head/tail collapse).
+Device [`193615`](../../captures/session_20260910_193615.log): STOPPED
+`frame`=`reconstruct`=58; wrap pitches keep On→loopEnd + head. HITL `base`
+PASS [`194531`](../../captures/session_20260910_194531.log). Plan:
+[`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
+
+**Next (optional):** snapshot publish membership root cause (why NoteRef omitted
+before merge); open-hold live paint if user still sees pre-Off gap after wrap.
 
 **Prior — Immutable OpenSpec 4.6 Stage 4 SHIPPED** (NOTE_EDIT committed-base cache
 identity). Next 4.6: evaluate `legacyMidiEventsFromCommitted` (may need design).

@@ -1059,21 +1059,31 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     sourceOrigin = "passes";
   }
   }
-  if (loopLengthTicks > 0 && std::strcmp(sourceOrigin, "snapshot") != 0) {
-    // Cache/snapshot/prepared/reconstruct miss is not committed-content absence
-    // (`174151` id=112). Reconstruct can omit a tail-window On closed by an
-    // untagged Off at L-1; ledger pairing still sees that identity.
-    SessionMidiEventVec committedEvents;
-    passes.materializeToEventVector(committedEvents, loopLengthTicks);
-    if (std::strcmp(sourceOrigin, "passes") != 0) {
-      NoteUtils::DisplayNoteVec committedNotes =
-          NoteUtils::reconstructDisplayNotes(committedEvents, loopLengthTicks, false, false);
-      appendOverdubPassWrapPairedNotes(committedNotes);
-      mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
-    }
-    mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
-    if (!overdubSourceSpanCacheNotes_.empty()) {
-      overdubSourceSpanCacheFullLoop_ = true;
+  if (loopLengthTicks > 0) {
+    // Span-list miss is not committed-content absence (`174151` id=112;
+    // `194531` id=27 from=snapshot notes=31 vs visual 32). Reconstruct can omit
+    // a tail-window On closed by an untagged Off at L-1; a current **full-loop**
+    // snapshot can omit a bar-crossing NoteRef while events still pair. Do not
+    // merge into a bounded snapshot window cache (`test_snapshot_source_uses_
+    // bounded_overdub_window`) — that would mark partial caches full-loop ready
+    // and pull out-of-window identities into the span list.
+    const bool mergeOmittedFromEvents =
+        std::strcmp(sourceOrigin, "snapshot") != 0 || overdubSourceSpanCacheFullLoop_;
+    if (mergeOmittedFromEvents) {
+      SessionMidiEventVec committedEvents;
+      passes.materializeToEventVector(committedEvents, loopLengthTicks);
+      if (std::strcmp(sourceOrigin, "passes") != 0 &&
+          std::strcmp(sourceOrigin, "snapshot") != 0) {
+        NoteUtils::DisplayNoteVec committedNotes =
+            NoteUtils::reconstructDisplayNotes(committedEvents, loopLengthTicks, false, false);
+        appendOverdubPassWrapPairedNotes(committedNotes);
+        mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
+      }
+      mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
+      if (std::strcmp(sourceOrigin, "snapshot") != 0 &&
+          !overdubSourceSpanCacheNotes_.empty()) {
+        overdubSourceSpanCacheFullLoop_ = true;
+      }
     }
   }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
