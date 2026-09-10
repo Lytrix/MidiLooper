@@ -277,9 +277,9 @@ This does not add a new unbounded owner; idle uses
 - [x] Runtime scope and result are recorded in `CURRENT_WORK.md`,
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
-Task 4.4 is closed (2026-09-09 inventory). 4.5 (HITL/native cross-gate
-verify) and 4.6 (snapshot-identity freshness on remaining derived
-representations) remain open and separately gated.
+Task 4.4 is closed (2026-09-09 inventory). **4.5** cross-gate verify is
+closed (2026-09-10). **4.6** (snapshot-identity freshness on remaining derived
+representations) remains open and separately gated — Stage 1 VisualCache stamp.
 
 ### Phase 3 implementation review (4.4 display only)
 
