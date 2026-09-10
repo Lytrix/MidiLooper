@@ -213,7 +213,7 @@ private:
                                     int16_t priorF2Pb, int priorF4Cc, bool motorValueChanged);
     void resetSelectNavSlotApplyState();
     int selectNavSlotIndexForPitchbend(Track& track, int16_t pitchValue);
-    bool applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue, int posIndex);
+    bool applyNoteSelectFromFader1Pitchbend(Track& track, const Fader1SelectTarget& target);
     /// Macro-commit pending overlap/mover edits before F1 focus rebuild (note or empty step).
     void macroCommitPendingEditsBeforeSelectNav(Track& track, NoteId selectNoteId,
                                                 uint32_t bracketTick);

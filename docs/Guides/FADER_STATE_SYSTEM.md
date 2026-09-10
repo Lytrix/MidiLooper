@@ -177,7 +177,7 @@ Queues **do not merge**. Input on one driver **cancels** the opposite pending qu
 
 ### Live F1 select (Select kind)
 
-- `handleSelectFaderInput` → `applyNoteSelectFromFader1Pitchbend` → `applySelectNav(..., requestFaderSync=false)` → `armSelectDependentSettle` (resets 450 ms settle on each select change).
+- `handleSelectFaderInput` resolves `Fader1SelectTarget` once (`resolveFader1SelectTarget`) and passes that target into `applyNoteSelectFromFader1Pitchbend` → `applySelectNav(..., requestFaderSync=false)` → `armSelectDependentSettle` (resets 450 ms settle on each select change). Inbound F1 does not call `selectNavSlotIndexForPitchbend` or rebuild navigation slots inside apply. Post-commit slot rebuild stays a recovery path when the selected `NoteId` is missing after macro commit.
 - Motor sync for F2–F4 is **deferred** to `processDeferredFaderMotorSync` in `main.cpp` (after display frame), not flushed from `ControlSurfaceManager::update()`.
 - Motor sync fires on **`EditorSelection.primaryNote`** / `NoteId` change, not list-index-only shifts.
 

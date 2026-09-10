@@ -98,8 +98,13 @@ NOTE_EDIT_MEM ControlSurfaceManager::Fader1SelectTarget ControlSurfaceManager::r
     if (slots.empty()) {
         return target;
     }
-    int posIndex =
-        SelectNavigation::findSlotIndexForSelection(slots, -1, targetTick, loopLength);
+    uint32_t navLength = editManager.noteEditSelectNavigationLengthTicks(track);
+    if (navLength == 0) {
+        navLength = loopLength;
+    }
+    int posIndex = SelectNavigation::findSlotIndexForSelection(
+        slots, -1, targetTick, loopLength, pitchValue, MidiConfig::Pitchbend::MIN,
+        MidiConfig::Pitchbend::MAX, navLength);
     if (posIndex < 0) {
         posIndex = 0;
     }
@@ -126,7 +131,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
         clearSelectFaderNavigationGates();
     }
 
-    const int slotIndex = selectNavSlotIndexForPitchbend(track, pitchValue);
+    const int slotIndex = navigationTarget.valid ? navigationTarget.slotIndex : -1;
 
     clearPendingGeometryDriverMotorSync();
     lastUserSelectFaderValue = pitchValue;
@@ -251,7 +256,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
             geometrySelectBlockedDuringGeometryHold_ = false;
             logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
                                    true, "empty_step");
-            applyNoteSelectFromFader1Pitchbend(track, pitchValue, target.slotIndex);
+            applyNoteSelectFromFader1Pitchbend(track, target);
         } else {
             logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
                                    false, "empty_step");
@@ -263,7 +268,7 @@ NOTE_EDIT_MEM void ControlSurfaceManager::handleSelectFaderInput(int16_t pitchVa
         geometrySelectBlockedDuringGeometryHold_ = false;
         logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
                                true, "note_changed");
-        applyNoteSelectFromFader1Pitchbend(track, pitchValue, target.slotIndex);
+        applyNoteSelectFromFader1Pitchbend(track, target);
     } else {
         logSelectApplyDecision(target.absoluteTargetTick, target.noteIdx, target.slotIndex, -1,
                                false, "unchanged_note");
@@ -293,36 +298,29 @@ NOTE_EDIT_MEM void ControlSurfaceManager::macroCommitPendingEditsBeforeSelectNav
     editManager.commitAllPendingNoteEditActions(track);
 }
 
-NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Track& track, int16_t pitchValue,
-                                                         int posIndex) {
+NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(
+    Track& track, const Fader1SelectTarget& target) {
     const uint32_t loopLength = track.getLoopLength();
-    if (loopLength == 0) {
+    if (loopLength == 0 || !target.valid) {
         return false;
     }
 
-    const uint32_t targetTick = editManager.selectTickFromSelectFaderPitchbend(track, pitchValue);
-    const std::vector<SelectNavigation::SelectNavSlot> slots =
-        editManager.buildSelectNavigationSlots(track, targetTick, true);
-
-    if (slots.empty() || posIndex < 0 || posIndex >= static_cast<int>(slots.size())) {
-        return false;
-    }
-
-    const SelectNavigation::SelectNavSlot& slot = slots[static_cast<size_t>(posIndex)];
-    const uint32_t absoluteTargetTick = slot.relativeTick;
+    const uint32_t absoluteTargetTick = target.absoluteTargetTick;
+    const int noteIdx = target.noteIdx;
+    const int posIndex = target.slotIndex;
     const std::vector<NoteUtils::DisplayNote> notes = editManager.selectableDisplayNotesForEditUi(track);
-    const int noteIdx = SelectNavigation::resolveNoteIdxAtSlot(slot);
-
-    (void)pitchValue;
 
     if (noteIdx >= 0) {
         int notesAtPosition = 0;
         int notePosition = 0;
-        for (const SelectNavigation::SelectNavSlot& s : slots) {
-            if (s.relativeTick == slot.relativeTick && s.noteIdx >= 0) {
-                notesAtPosition++;
-                if (s.noteIdx == noteIdx) {
-                    notePosition = notesAtPosition;
+        if (noteIdx < static_cast<int>(notes.size())) {
+            const uint32_t selectedStart = notes[static_cast<size_t>(noteIdx)].startTick;
+            for (int i = 0; i < static_cast<int>(notes.size()); ++i) {
+                if (notes[static_cast<size_t>(i)].startTick == selectedStart) {
+                    notesAtPosition++;
+                    if (i == noteIdx) {
+                        notePosition = notesAtPosition;
+                    }
                 }
             }
         }
@@ -421,3 +419,4 @@ NOTE_EDIT_MEM bool ControlSurfaceManager::applyNoteSelectFromFader1Pitchbend(Tra
     }
     return true;
 }
+
