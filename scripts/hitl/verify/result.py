@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
+
+from hitl.contract import HitlVerdict
 
 
 @dataclass
@@ -22,7 +25,12 @@ class VerificationResult:
     failures: list[VerificationFailure] = field(default_factory=list)
     metrics: dict[str, object] = field(default_factory=dict)
     attachments: dict[str, object] = field(default_factory=dict)
+    verdict: Optional[HitlVerdict] = None
 
     @property
     def ok(self) -> bool:
+        if self.verdict is HitlVerdict.INCONCLUSIVE_CAPTURE:
+            return False
+        if self.verdict is HitlVerdict.FAIL:
+            return False
         return self.passed and not self.failures

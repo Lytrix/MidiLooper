@@ -157,6 +157,50 @@ def _ensure_note_edit_entered(
             time.sleep(0.05)
     return False
 
+
+def _ensure_note_edit_exited(
+    out_port,
+    collector,
+    *,
+    press_ms: int,
+    phase_wait_ms: int,
+    timeout_s: float,
+    log_prefix: str,
+) -> bool:
+    from hitl.control_constants import (
+        CONTROL_CHANNEL_1BASED,
+        EDIT_BUTTON_DEBOUNCE_MS,
+        EDIT_BUTTON_NOTE,
+    )
+    from hitl.edit_mode_precondition import last_edit_session_kind, _wait_for_loop_edit
+    from hitl.midi_io import _send_short_press
+
+    snapshot = collector.snapshot()
+    kind = last_edit_session_kind(snapshot)
+    if kind == "LOOP_EDIT":
+        print(f"{log_prefix} LOOP_EDIT already active")
+        return True
+    if kind != "NOTE_EDIT":
+        print(f"{log_prefix} not in NOTE_EDIT; skip exit")
+        return True
+
+    for attempt in range(1, 3):
+        baseline = len(collector.snapshot())
+        print(f"{log_prefix} exit NOTE_EDIT attempt {attempt}/2")
+        _send_short_press(
+            out_port,
+            note=EDIT_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=press_ms,
+        )
+        time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
+        if _wait_for_loop_edit(
+            collector, baseline_line_count=baseline, timeout_s=timeout_s
+        ):
+            print(f"{log_prefix} NOTE_EDIT exit confirmed")
+            return True
+    return False
+
 def _first_note_fixture_step(layout) -> Optional[int]:
     from hitl.control_constants import TICKS_PER_16TH_STEP
 

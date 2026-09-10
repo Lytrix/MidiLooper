@@ -228,6 +228,17 @@ def _record_entry_to_recording_count(
     return total
 
 
+def _latest_track_is(
+    lines: list[str],
+    states: tuple[str, ...],
+    *,
+    after_index: int = 0,
+) -> bool:
+    """True when the latest ST/DISP track state is one of ``states``."""
+    latest = _latest_track_state(lines, after_index=after_index)
+    return latest is not None and latest in states
+
+
 def _latest_track_state(lines: list[str], *, after_index: int = 0) -> Optional[str]:
     latest: Optional[str] = None
     latest_ts = -1
@@ -258,12 +269,13 @@ def _wait_for_state_entry_count(
     target_count: int,
     timeout_s: float,
     abort: Optional[RunAbort] = None,
+    after_index: int = 0,
 ) -> bool:
     deadline = time.monotonic() + max(timeout_s, 0.0)
     while time.monotonic() < deadline:
         if abort is not None and abort.check() is not None:
             return False
-        counts = _count_capture_state_entries(collector.snapshot())
+        counts = _count_capture_state_entries(collector.snapshot()[after_index:])
         if counts.get(to_state, 0) >= target_count:
             return True
         time.sleep(0.01)

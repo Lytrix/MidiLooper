@@ -49,7 +49,16 @@ class CaptureTransitionEvidenceTests(unittest.TestCase):
         ]
         self.assertFalse(_serial_has_recording_active(lines))
 
-    def test_stopped_to_recording_is_active_not_armed(self) -> None:
+    def test_arm_is_not_recording_started(self) -> None:
+        from hitl.legacy_record_baseline import _serial_has_recording_started
+
+        lines = [
+            "[951.469] [INFO] Loop 2: Start Recording",
+            "[951.469] [INFO] [TRACK] Track 4 armed, waiting for clock to start recording",
+            "#CAP,1,ST,Track,STOPPED,ARMED",
+        ]
+        self.assertFalse(_serial_has_recording_started(lines))
+        self.assertFalse(_serial_has_recording_active(lines))
         lines = [
             "#CAP,44713251,ST,Track,STOPPED,RECORDING",
             "#CAP,44713252,RECA,0,346",
@@ -147,6 +156,48 @@ class SerialHeartbeatNoiseTests(unittest.TestCase):
 
     def test_state_line_resets_heartbeat(self) -> None:
         self.assertTrue(serial_line_resets_heartbeat("#CAP,1,ST,Track,STOPPED,ARMED"))
+
+
+class SerialVerificationRegressionTests(unittest.TestCase):
+    def test_record_loop_length_accepts_bar_aligned_stop(self) -> None:
+        from hitl.legacy_record_baseline import _verify_record_loop_length
+
+        result = _verify_record_loop_length(
+            [{"timestamp": 1, "raw_length": 2070, "final_length": 2304}],
+            record_bars=2,
+        )
+        self.assertTrue(result["final_length_ok"])
+        self.assertEqual(result["bar_aligned_final_length"], 2304)
+
+    def test_persistence_handoff_accepts_work_instead_of_dispatch(self) -> None:
+        from hitl.legacy_record_baseline import _summarize_persistence_handoff
+
+        lines = [
+            "#CAP,100,PERS,request,0,221184,221184,queued",
+            "#CAP,200,PERS,work,10,0,0,FinalizeWorkspace,singleton,start,ok",
+            "#CAP,300,PERS,result,100,221184,221184,ok",
+        ]
+        heap_rows = [
+            {
+                "timestamp": 100,
+                "stage": "request",
+                "duration_us": 0,
+                "heap_before": 221184,
+                "heap_after": 221184,
+                "outcome": "queued",
+            },
+            {
+                "timestamp": 300,
+                "stage": "result",
+                "duration_us": 100,
+                "heap_before": 221184,
+                "heap_after": 221184,
+                "outcome": "ok",
+            },
+        ]
+        summary = _summarize_persistence_handoff(heap_rows, record_stop_ts=50, lines=lines)
+        self.assertIsNone(summary["first_missing_stage"])
+        self.assertTrue(summary["dispatch_via_work"])
 
 
 if __name__ == "__main__":

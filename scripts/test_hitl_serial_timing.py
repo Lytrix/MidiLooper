@@ -11,7 +11,13 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
-from hitl.serial_timing import extract_first_note_offset, extract_phase_boundaries, phase_start_delay_clocks
+from hitl.serial_timing import (
+    extract_first_note_offset,
+    extract_phase_boundaries,
+    extract_phase_sessions,
+    phase_start_delay_clocks,
+)
+from hitl.contract import PhaseAmbiguity
 
 
 class ExtractPhaseBoundariesTests(unittest.TestCase):
@@ -97,6 +103,48 @@ class ExtractPhaseBoundariesTests(unittest.TestCase):
         self.assertEqual(bounds["second_overdub_start_ts"], 91173391)
         self.assertEqual(bounds["second_overdub_stop_ts"], 105954997)
 
+    def test_stale_pre_baseline_sessions_are_ignored(self) -> None:
+        lines = [
+            "#CAP,100,ST,Track,ARMED,RECORDING",
+            "#CAP,200,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,300,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,400,ST,Track,OVERDUBBING,PLAYING",
+            "baseline",
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+        ]
+        bounds = extract_phase_boundaries(lines, after_index=4)
+        self.assertEqual(bounds["record_start_ts"], 1000)
+        self.assertEqual(bounds["overdub_start_ts"], 3000)
+        self.assertIsNone(extract_phase_boundaries(lines[:5], after_index=4)["record_start_ts"])
+
+    def test_hitl_header_scopes_phase_sessions(self) -> None:
+        lines = [
+            "#CAP,100,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,200,ST,Track,OVERDUBBING,PLAYING",
+            "#HITL,SCENARIO,record_overdub",
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,4000,ST,Track,OVERDUBBING,PLAYING",
+        ]
+        bounds = extract_phase_boundaries(lines)
+        self.assertEqual(bounds["record_start_ts"], 1000)
+        self.assertEqual(bounds["overdub_start_ts"], 3000)
+
+    def test_unmatched_overdub_start_is_missing_stop(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,ARMED,RECORDING",
+            "#CAP,2000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,3000,ST,Track,PLAYING,OVERDUBBING",
+        ]
+        report = extract_phase_sessions(lines)
+        self.assertEqual(report.overdub.start_ts if report.overdub else None, 3000)
+        self.assertIsNone(report.overdub.stop_ts if report.overdub else 0)
+        self.assertIn(PhaseAmbiguity.MISSING_STOP, report.ambiguities)
+
 
 class ExtractFirstNoteOffsetTests(unittest.TestCase):
     def test_offset_from_us_delta_at_120_bpm(self) -> None:
@@ -167,6 +215,38 @@ class ExtractFirstNoteOffsetTests(unittest.TestCase):
             fallback_bpm=120.0,
         )
         self.assertIsNone(result["offset_clocks"])
+
+    def test_rejects_note_on_velocity_zero(self) -> None:
+        lines = [
+            "#CAP,1000000,ST,Track,ARMED,RECORDING",
+            "#CAP,1041666,MI,U,144,5,60,0",
+            "#CAP,1083332,MI,U,144,5,60,100",
+        ]
+        result = extract_first_note_offset(
+            lines,
+            midi_channel_1based=5,
+            phase_start_ts=1_000_000,
+            phase_stop_ts=2_000_000,
+            fallback_bpm=120.0,
+        )
+        self.assertEqual(result["offset_clocks"], 4)
+        self.assertEqual(result["first_note_ts"], 1083332)
+
+    def test_does_not_use_whole_log_bpm_outside_phase(self) -> None:
+        lines = [
+            "#CAP,100,BPM,60.0,60.0",
+            "#CAP,1000000,ST,Track,ARMED,RECORDING",
+            "#CAP,1041666,MI,U,144,5,60,100",
+        ]
+        result = extract_first_note_offset(
+            lines,
+            midi_channel_1based=5,
+            phase_start_ts=1_000_000,
+            phase_stop_ts=2_000_000,
+            fallback_bpm=120.0,
+        )
+        self.assertEqual(result["bpm_source"], "fallback_cli")
+        self.assertEqual(result["offset_clocks"], 2)
 
 
 if __name__ == "__main__":

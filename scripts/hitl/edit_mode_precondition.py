@@ -78,28 +78,11 @@ def ensure_loop_edit_before_record(
         EDIT_BUTTON_NOTE,
     )
     from hitl.midi_io import _send_short_press
-    from hitl.edit_controls import _send_long_press
 
     print("[hitl] exit NOTE_EDIT before record")
-    baseline = len(snapshot)
+    from hitl.recovery import log_action_outcome, request_state_transition
 
-    _send_long_press(
-        out_port,
-        note=EDIT_BUTTON_NOTE,
-        channel_1based=CONTROL_CHANNEL_1BASED,
-        press_ms=exit_press_ms,
-    )
-    time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
-
-    if _wait_for_loop_edit(
-        serial_collector, baseline_line_count=baseline, timeout_s=timeout_s
-    ):
-        print("[hitl] left NOTE_EDIT after edit long press")
-        return True
-
-    tail = serial_collector.snapshot()[baseline:]
-    if last_edit_session_kind(tail) == "NOTE_EDIT":
-        print("[hitl] still NOTE_EDIT; cycling edit session with short press")
+    def _send_exit() -> None:
         _send_short_press(
             out_port,
             note=EDIT_BUTTON_NOTE,
@@ -107,11 +90,26 @@ def ensure_loop_edit_before_record(
             press_ms=press_ms,
         )
         time.sleep(max(EDIT_BUTTON_DEBOUNCE_MS, phase_wait_ms) / 1000.0)
-        if _wait_for_loop_edit(
-            serial_collector, baseline_line_count=baseline, timeout_s=timeout_s
-        ):
-            print("[hitl] left NOTE_EDIT after edit short press")
-            return True
 
-    print("[hitl] WARN: NOTE_EDIT exit not confirmed in serial; continuing")
-    return True
+    def _confirmed(lines: list[str], after: int) -> bool:
+        return loop_edit_confirmed_in_suffix(lines[after:])
+
+    def _still_note_edit(lines: list[str], after: int) -> bool:
+        return last_edit_session_kind(lines[after:]) == "NOTE_EDIT"
+
+    outcome = request_state_transition(
+        snapshot=serial_collector.snapshot,
+        requested="LOOP_EDIT",
+        already_satisfied=lambda _lines, _baseline: False,
+        confirmed=_confirmed,
+        disproved=_still_note_edit,
+        send_request=_send_exit,
+        timeout_s=timeout_s,
+        max_retries=1,
+    )
+    log_action_outcome(outcome)
+    if outcome.ok:
+        print("[hitl] left NOTE_EDIT after edit short press")
+        return True
+    print("[hitl] NOTE_EDIT exit not confirmed in serial; aborting")
+    return False

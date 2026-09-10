@@ -23,6 +23,7 @@ from hitl.stimuli import (
     STIM_NE_OD_COMPOSE_01,
     STIM_NE_OD_COMPOSE_02,
     STIM_NE_OD_COMPOSE_03,
+    STIM_NE_RESELECT_STACKED_01,
     STIM_OCCUPY_PAINT_01,
     format_hitl_header,
     get_stimulus,
@@ -64,6 +65,17 @@ class StimulusRegistryTests(unittest.TestCase):
             stimulus_for_base_preset("note_edit_overdub_compose_last_bar_shorten"),
             STIM_BASE_2_ONE_OD_01,
         )
+        last_bar_reopen = stimulus_for_scenario(
+            "note_edit_overdub_compose_last_bar_reopen"
+        )
+        self.assertEqual(last_bar_reopen.stimulus_id, "STIM-NE-OD-COMPOSE-04")
+        self.assertIn("reenter_note_edit", last_bar_reopen.interactions)
+        self.assertIn("reopen_note_edit_selected", last_bar_reopen.must_prove)
+        self.assertIn("reopen_note_moved", last_bar_reopen.must_prove)
+        self.assertEqual(
+            stimulus_for_base_preset("note_edit_overdub_compose_last_bar_reopen"),
+            STIM_BASE_2_ONE_OD_01,
+        )
 
     def test_stage2_scenarios_bind_canonical_stimuli(self) -> None:
         occupy = stimulus_for_scenario("overdub_occupy_paint")
@@ -94,6 +106,18 @@ class StimulusRegistryTests(unittest.TestCase):
         self.assertEqual(
             resolve_scenarios(preset="edit_overdub_during_note_edit", scenario_ids=None),
             ["base", "edit_overdub_during_note_edit"],
+        )
+        self.assertEqual(
+            stimulus_for_scenario("note_edit_reselect_stacked"),
+            STIM_NE_RESELECT_STACKED_01,
+        )
+        self.assertEqual(
+            stimulus_for_base_preset("note_edit_reselect_stacked"),
+            STIM_BASE_2_FIXTURE_01,
+        )
+        self.assertEqual(
+            resolve_scenarios(preset="note_edit_reselect_stacked", scenario_ids=None),
+            ["base", "note_edit_reselect_stacked"],
         )
 
     def test_occupy_header_requires_two_overdubs_and_undo(self) -> None:
@@ -190,8 +214,10 @@ class StimulusStage3Tests(unittest.TestCase):
             "STIM-NE-OD-COMPOSE-01",
             "STIM-NE-OD-COMPOSE-02",
             "STIM-NE-OD-COMPOSE-03",
+            "STIM-NE-OD-COMPOSE-04",
             "STIM-OCCUPY-PAINT-01",
             "STIM-EDIT-OD-DURING-NE-01",
+            "STIM-NE-RESELECT-STACKED-01",
         ):
             self.assertIn(stimulus_id, text)
         self.assertNotIn("-TEMP-", text)
@@ -282,6 +308,144 @@ class StimulusStage4Tests(unittest.TestCase):
         self.assertIn("STIM-BASE-2-FIXTURE-01@v1", text)
         self.assertIn("canonical_edit_minimal_base_legacy_args", text)
         self.assertEqual(text.count("STIM-BASE-2-FIXTURE-01@v1"), 2)
+
+
+class ReselectStackedHelperTests(unittest.TestCase):
+    def test_pitchbend_map_matches_153550_native_fixture(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import (
+            select_stacked_note_index_from_pitchbend,
+            select_tick_from_pitchbend,
+        )
+
+        nav = 3840
+        self.assertEqual(select_tick_from_pitchbend(1763, nav), 2304)
+        self.assertEqual(select_stacked_note_index_from_pitchbend(1763, nav, 3), 0)
+        self.assertEqual(select_tick_from_pitchbend(1910, nav), 2304)
+        self.assertEqual(select_stacked_note_index_from_pitchbend(1910, nav, 3), 2)
+
+    def test_verify_requires_two_dest_notes_after_deselect(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertTrue(result["ok"], result["issues"])
+        self.assertEqual(result["dest_distinct_note_idxs"], [3, 5])
+
+    def test_verify_accepts_off_grid_note_ticks_in_dest_sixteenth(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import (
+            select_apply_lands_on_step,
+            verify_note_edit_reselect_stacked,
+        )
+
+        self.assertTrue(select_apply_lands_on_step(428, 3, 0, 384, want_note=True))
+        self.assertFalse(select_apply_lands_on_step(384, -1, 1, 384, want_note=True))
+        self.assertFalse(select_apply_lands_on_step(432, 3, 1, 384, want_note=True))
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#DBG select_apply selected_tick=196 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=220 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertTrue(result["ok"], result["issues"])
+        self.assertEqual(result["dest_distinct_note_idxs"], [3, 5])
+
+    def test_playing_motor_value_only_rejects_timed_burst(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#CAP,100,ST,Track,STOPPED_RECORDING,PLAYING",
+            "#DBG select_motor_sync mode=SELECT_SYNC sequence=parallel_timed_burst",
+            "#CAP,200,DIAG,midi_gap,265402,1",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("playing_motor_timed_burst" in issue for issue in result["issues"]))
+        self.assertTrue(any("playing_motor_midi_gap" in issue for issue in result["issues"]))
+
+    def test_playing_motor_value_only_accepts_value_only(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#CAP,100,ST,Track,STOPPED_RECORDING,PLAYING",
+            "#DBG select_motor_sync mode=SELECT_SYNC sequence=value_only",
+            "#DBG geometry_motor_sync sent=1 bracket_tick=192 pb=0 mode=GEOMETRY_SYNC sequence=value_only",
+            "#CAP,200,DIAG,midi_gap,18420,1",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertTrue(result["ok"], result["issues"])
+        self.assertEqual(result["playing_motor_value_only"]["playing_motor_sync_judged"], 2)
+        self.assertEqual(result["value_only_notegate_held"]["value_only_notegate_held_judged"], 0)
+
+    def test_playing_value_only_notegate_one_ms_pair_fails(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#CAP,100,ST,Track,STOPPED_RECORDING,PLAYING",
+            "#DBG select_motor_sync mode=SELECT_SYNC sequence=value_only",
+            "#CAP,229701914,MO,144,16,0,127",
+            "#CAP,229702914,MO,128,16,0,0",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("value_only_notegate_short=" in issue for issue in result["issues"]))
+
+    def test_f1_highlight_starved_fails_when_applies_outpace_dnte(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        applies = [
+            f"#DBG select_apply selected_tick={i * 48} note_idx={i} slot=1 prior_slot=-1 apply=1 reason=note_changed"
+            for i in range(12)
+        ]
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+            *applies,
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("select_apply_highlight_starved=" in issue for issue in result["issues"]))
+
+    def test_vcache_drop_after_deselect_fails(self) -> None:
+        from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+        lines = [
+            "Edit session: NOTE_EDIT",
+            "EditSessionAction: type=3 noteId=81",
+            "#CAP,1,VCACHE,full,ev,16,notes,8,first,0,last,1,total,2,dsz,0,dcnt,0,dirty,0",
+            "#DBG select_apply selected_tick=48 note_idx=-1 slot=1 prior_slot=0 apply=1 reason=empty",
+            "#CAP,2,VCACHE,full,ev,16,notes,7,first,0,last,1,total,2,dsz,0,dcnt,0,dirty,0",
+            "#DBG select_apply selected_tick=192 note_idx=3 slot=2 prior_slot=1 apply=1 reason=nav",
+            "#DBG select_apply selected_tick=192 note_idx=5 slot=3 prior_slot=2 apply=1 reason=nav",
+        ]
+        result = verify_note_edit_reselect_stacked(lines, SimpleNamespace())
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("moved_note_dropped_from_vcache=" in issue for issue in result["issues"]))
 
 
 if __name__ == "__main__":

@@ -9,9 +9,10 @@ from hitl.stimuli.fingerprint import parse_hitl_fields
 from hitl.stimuli.spec import StimulusSpec
 from hitl.verify.note_edit_overdub_compose import (
     parse_live_capture_note_ons,
-    parse_note_edit_open_visual_notes,
+    parse_note_edit_open_rows,
     parse_playing_to_overdubbing,
     _case_new_note_shortened,
+    _case_reopen_select_and_move,
     _case_same_pitch_hold_emits_overlap,
     _move_marker_index,
 )
@@ -67,7 +68,8 @@ def validate_stimulus_header(
 def validate_compose_must_prove(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
     """Serial evidence that the compose recipe actually ran."""
     checks: list[dict[str, Any]] = []
-    opened = parse_note_edit_open_visual_notes(lines)
+    opens = parse_note_edit_open_rows(lines)
+    opened = opens[0] if opens else None
     checks.append(
         _check(
             "note_edit_entered",
@@ -123,6 +125,26 @@ def validate_compose_must_prove(lines: list[str], spec: StimulusSpec) -> dict[st
                 f"shorten={shortened.get('shorten')}",
             )
         )
+
+    if "reopen_note_edit_selected" in spec.must_prove or "reopen_note_moved" in spec.must_prove:
+        reopen = _case_reopen_select_and_move(lines)
+        if "reopen_note_edit_selected" in spec.must_prove:
+            checks.append(
+                _check(
+                    "reopen_note_edit_selected",
+                    reopen.get("selection_idx") is not None
+                    and int(reopen.get("selection_idx") or -1) >= 0,
+                    f"selection_idx={reopen.get('selection_idx')}",
+                )
+            )
+        if "reopen_note_moved" in spec.must_prove:
+            checks.append(
+                _check(
+                    "reopen_note_moved",
+                    int(reopen.get("moves") or 0) >= 1,
+                    f"moves={reopen.get('moves')}",
+                )
+            )
 
     if "same_pitch_hold_overlap" in spec.must_prove:
         after = move_index if move_index is not None else live_after
@@ -204,16 +226,31 @@ def validate_edit_overdub_must_prove(lines: list[str], spec: StimulusSpec) -> di
     return {"ok": not issues, "issues": issues, "checks": checks}
 
 
+def validate_reselect_stacked_must_prove(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
+    from hitl.verify.note_edit_reselect_stacked import verify_note_edit_reselect_stacked
+
+    result = verify_note_edit_reselect_stacked(lines, spec)
+    checks = [
+        _check(name, name not in (result.get("issues") or []), name)
+        for name in spec.must_prove
+    ]
+    issues = [row["name"] for row in checks if not row["ok"]]
+    return {"ok": not issues, "issues": issues, "checks": checks, "detail": result}
+
+
 def validate_recipe(lines: list[str], spec: StimulusSpec) -> dict[str, Any]:
     if spec.scenario_id in (
         "note_edit_overdub_compose",
         "note_edit_overdub_compose_last_bar_shorten",
+        "note_edit_overdub_compose_last_bar_reopen",
     ):
         return validate_compose_must_prove(lines, spec)
     if spec.scenario_id == "overdub_occupy_paint":
         return validate_occupy_must_prove(lines, spec)
     if spec.scenario_id == "edit_overdub_during_note_edit":
         return validate_edit_overdub_must_prove(lines, spec)
+    if spec.scenario_id == "note_edit_reselect_stacked":
+        return validate_reselect_stacked_must_prove(lines, spec)
     if spec.scenario_id == "base":
         return validate_overdub_count_must_prove(lines, spec)
     return {"ok": True, "issues": [], "checks": []}

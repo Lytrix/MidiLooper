@@ -19,11 +19,48 @@ NOTE_ON_STATUS = 144
 HIDE_NOTE_TYPE = 2
 SHORTEN_NOTE_TYPE = 1
 MOVE_NOTE_TYPE = 3
+CHANGE_PITCH_TYPE = 5
+PITCH_ACTION_RE = re.compile(
+    r"EditSessionAction: type=5 noteId=\d+ start=(\d+) end=\d+ pitch=(\d+)"
+)
+DNTE_RE = re.compile(r"#CAP,\d+,DNTE,(\d+),(\d+),")
+DNTE_FULL_RE = re.compile(r"#CAP,\d+,DNTE,(\d+),(\d+),(\d+),(\d+),")
 SELECTION_CHANGED_RE = re.compile(r"Note selection changed: .* -> (-?\d+)")
 GEOM_APPLY_PHASE_RE = re.compile(
     r"#CAP,\d+,GEOM_APPLY,phase,([^,]+),(\d+),(\d+),(\d+)"
 )
 GEOM_APPLY_RESOLVE_RE = re.compile(r"#CAP,\d+,GEOM_APPLY,resolve,(\d+),")
+COMMIT_TRACE_RECONSTRUCT_RE = re.compile(
+    r"commitEditAction (replay_flat|take_only|session_store|loop_materialized):"
+)
+COMMIT_CHANGE_LENGTH_RE = re.compile(
+    r"commitEditAction incoming ChangeLength targetNoteId=\d+ "
+    r"start=\d+ moverBaselineEnd=(\d+) newEnd=(\d+)"
+)
+CLOSE_COMMIT_PARITY_APPLY_OWNED_RE = re.compile(
+    r"NOTE_EDIT commit parity mismatch canonical=(\d+) apply_owned=(\d+)"
+)
+NOTE_EDIT_CLOSE_RE = re.compile(
+    r"NoteEditPass close keep committed|NoteEditPassClosed"
+)
+DISP_LOOP_LEN_RE = re.compile(r"#CAP,\d+,DISP,\d+,[A-Za-z_]+,(\d+),")
+DISP_STATE_RE = re.compile(r"#CAP,\d+,DISP,\d+,([A-Z_]+),")
+DISP_SLOT_STATE_LEN_RE = re.compile(r"#CAP,\d+,DISP,(\d+),([A-Z_]+),(\d+),")
+DRAW_SRC_LAYERS_RE = re.compile(
+    r"draw_src,layers,visual,(\d+),preview,\d+,sealed,\d+,snap,\d+,frame,(\d+),hidden,(\d+)"
+)
+LOOP_EDIT_ENTER_RE = re.compile(r"Edit session: LOOP_EDIT")
+MOTOR_SYNC_SENT_RE = re.compile(
+    r"(?:select_motor_sync sent=1|geometry_motor_sync sent=1)"
+)
+MOTOR_NOTEGATE_MO_RE = re.compile(r"#CAP,\d+,MO,144,(14|15|16),([0-2]),")
+MOTOR_NOTEGATE_ON_RE = re.compile(r"#CAP,(\d+),MO,144,(14|15|16),([0-2]),")
+MOTOR_NOTEGATE_OFF_RE = re.compile(r"#CAP,(\d+),MO,128,(14|15|16),([0-2]),")
+MOTOR_SYNC_VALUE_ONLY_RE = re.compile(
+    r"(?:select_motor_sync|geometry_motor_sync).*sequence=value_only"
+)
+# Firmware hold is 125 ms; 80 ms rejects the 1 ms ValueOnly On/Off pair (`232309`).
+MIN_VALUE_ONLY_NOTEGATE_HOLD_US = 80000
 # 170818 PLAYING resolve 3.6–4.0 ms; overdub gather was 91–234 ms.
 MAX_OVERDUB_RESOLVE_US = 20000
 EDIT_SESSION_ACTION_RE = re.compile(
@@ -35,14 +72,6 @@ COORD_RE = re.compile(
     r"startLoop,\d+,projStart,-?\d+,loopStart,\d+,ch,(\d+),note,(\d+)"
 )
 SEVT_RE = re.compile(r"#CAP,\d+,SEVT,[A-Za-z],\d+,(\d+),(\d+)")
-DNTE_FULL_RE = re.compile(r"#CAP,\d+,DNTE,(\d+),(\d+),(\d+),(\d+),")
-DISP_LOOP_LEN_RE = re.compile(r"#CAP,\d+,DISP,\d+,[A-Za-z_]+,(\d+),")
-DISP_STATE_RE = re.compile(r"#CAP,\d+,DISP,\d+,([A-Z_]+),")
-DISP_SLOT_STATE_LEN_RE = re.compile(r"#CAP,\d+,DISP,(\d+),([A-Z_]+),(\d+),")
-DRAW_SRC_LAYERS_RE = re.compile(
-    r"draw_src,layers,visual,(\d+),preview,\d+,sealed,\d+,snap,\d+,frame,(\d+),hidden,(\d+)"
-)
-LOOP_EDIT_ENTER_RE = re.compile(r"Edit session: LOOP_EDIT")
 MOTOR_ACK_CHANNEL = 13
 FADER_COARSE_CHANNEL = 14
 FADER_CC_CHANNEL = 15
@@ -475,6 +504,36 @@ def _case_pending_same_pitch_note_on_not_loop_end_tail(lines: list[str]) -> dict
     }
 
 
+def _case_note_edit_close_persists_apply_owned(lines: list[str]) -> dict[str, Any]:
+    # 223532: exit after grace-deferred select-away logged canonical=0
+    # apply_owned=1 and bake kept earlier rows. Vacuous when no close
+    # carries an apply_owned parity line.
+    judged = 0
+    issues: list[str] = []
+    last_apply_owned = None
+    for line in lines:
+        parity = CLOSE_COMMIT_PARITY_APPLY_OWNED_RE.search(line)
+        if parity is not None:
+            last_apply_owned = (int(parity.group(1)), int(parity.group(2)))
+            continue
+        if NOTE_EDIT_CLOSE_RE.search(line) is None:
+            continue
+        if last_apply_owned is None:
+            continue
+        judged += 1
+        canonical, apply_owned = last_apply_owned
+        if canonical == 0 and apply_owned > 0:
+            issues.append(
+                f"close_dropped_apply_owned=canonical{canonical},apply_owned{apply_owned}"
+            )
+        last_apply_owned = None
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "closes_judged": judged,
+    }
+
+
 def _case_pending_note_edit_close_keeps_overdub_frame(lines: list[str]) -> dict[str, Any]:
     # 214900: NOTE_EDIT close while OVERDUBBING gathered stale snapshot 56
     # against visual 65. Vacuous when the log never leaves NOTE_EDIT in overdub.
@@ -574,6 +633,161 @@ def _case_stop_selected_slot_not_foreign_loop(lines: list[str]) -> dict[str, Any
     }
 
 
+def _case_commit_skips_unpainted_mover_loop_end(lines: list[str]) -> dict[str, Any]:
+    # 192140: close wrote ChangeLength 80–2303 after in-edit overdub. Inclusive
+    # loop-end Off is loopLength-1. Skip when baseline was not already there.
+    judged = 0
+    invented = 0
+    for index, line in enumerate(lines):
+        match = COMMIT_CHANGE_LENGTH_RE.search(line)
+        if match is None:
+            continue
+        baseline_end = int(match.group(1))
+        new_end = int(match.group(2))
+        loop_len = _loop_length_before(lines, index)
+        if loop_len is None:
+            continue
+        judged += 1
+        loop_ends = {loop_len, loop_len - 1}
+        if new_end not in loop_ends:
+            continue
+        if baseline_end in loop_ends:
+            continue
+        invented += 1
+    issues: list[str] = []
+    if invented:
+        issues.append(f"mover_length_to_loop_end={invented}/{judged}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "change_length_commits": judged,
+        "mover_length_to_loop_end": invented,
+    }
+
+
+def _case_commit_skips_trace_reconstruct(lines: list[str]) -> dict[str, Any]:
+    stages: list[str] = []
+    for line in lines:
+        match = COMMIT_TRACE_RECONSTRUCT_RE.search(line)
+        if match is None:
+            continue
+        stages.append(match.group(1))
+    issues: list[str] = []
+    if stages:
+        issues.append("commit_trace_reconstruct=" + ",".join(stages))
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "trace_reconstruct_count": len(stages),
+    }
+
+
+def _case_pitch_keeps_mover_dnte(lines: list[str]) -> dict[str, Any]:
+    # 190408: type=5 of note 94 @2481 had no DNTE for the whole gesture.
+    # After overlap Hide the mover must still highlight (DNTE pitch+start).
+    seen = 0
+    missing = 0
+    for index, line in enumerate(lines):
+        match = PITCH_ACTION_RE.search(line)
+        if match is None:
+            continue
+        seen += 1
+        start = int(match.group(1))
+        pitch = int(match.group(2))
+        found = False
+        for row in lines[index + 1 : min(len(lines), index + 80)]:
+            if PITCH_ACTION_RE.search(row) is not None:
+                break
+            dnte = DNTE_RE.search(row)
+            if dnte is not None and int(dnte.group(1)) == pitch and int(dnte.group(2)) == start:
+                found = True
+                break
+        if not found:
+            missing += 1
+    issues: list[str] = []
+    if seen and missing:
+        issues.append(f"pitch_without_dnte={missing}/{seen}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "pitch_actions": seen,
+        "pitch_without_dnte": missing,
+    }
+
+
+def _case_overdub_motor_sends_notegate(lines: list[str]) -> dict[str, Any]:
+    ranges = _overdubbing_index_ranges(lines)
+    sent = 0
+    missing = 0
+    for index, line in enumerate(lines):
+        if not _index_in_ranges(index, ranges):
+            continue
+        if MOTOR_SYNC_SENT_RE.search(line) is None:
+            continue
+        sent += 1
+        window = lines[max(0, index - 8) : index + 9]
+        if not any(MOTOR_NOTEGATE_MO_RE.search(row) for row in window):
+            missing += 1
+    issues: list[str] = []
+    if sent and missing:
+        issues.append(f"overdub_motor_missing_notegate={missing}/{sent}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "overdub_motor_sync_sent": sent,
+        "overdub_motor_missing_notegate": missing,
+    }
+
+
+def _case_value_only_notegate_held(lines: list[str]) -> dict[str, Any]:
+    judged = 0
+    short = 0
+    missing_off = 0
+    for index, line in enumerate(lines):
+        if MOTOR_SYNC_VALUE_ONLY_RE.search(line) is None:
+            continue
+        ons: list[tuple[int, int, str, str]] = []
+        window_start = max(0, index - 8)
+        window_end = min(len(lines), index + 21)
+        for row_index in range(window_start, window_end):
+            match = MOTOR_NOTEGATE_ON_RE.search(lines[row_index])
+            if match is None:
+                continue
+            ons.append(
+                (row_index, int(match.group(1)), match.group(2), match.group(3))
+            )
+        if not ons:
+            continue
+        judged += 1
+        for on_index, on_us, channel, note in ons:
+            off_us = None
+            for row in lines[on_index + 1 :]:
+                off_match = MOTOR_NOTEGATE_OFF_RE.search(row)
+                if (
+                    off_match is not None
+                    and off_match.group(2) == channel
+                    and off_match.group(3) == note
+                ):
+                    off_us = int(off_match.group(1))
+                    break
+            if off_us is None:
+                missing_off += 1
+            elif off_us - on_us < MIN_VALUE_ONLY_NOTEGATE_HOLD_US:
+                short += 1
+    issues: list[str] = []
+    if short:
+        issues.append(f"value_only_notegate_short={short}")
+    if missing_off:
+        issues.append(f"value_only_notegate_off_missing={missing_off}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "value_only_notegate_held_judged": judged,
+        "value_only_notegate_short": short,
+        "value_only_notegate_off_missing": missing_off,
+    }
+
+
 def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str, object]:
     from hitl.stimuli import (
         get_stimulus,
@@ -608,15 +822,25 @@ def verify_note_edit_overdub_compose(lines: list[str], args: object) -> dict[str
         "overdub_apply_reuses_committed_base": _case_overdub_apply_reuses_committed_base(
             lines
         ),
+        "commit_skips_trace_reconstruct": _case_commit_skips_trace_reconstruct(lines),
+        "commit_skips_unpainted_mover_loop_end": _case_commit_skips_unpainted_mover_loop_end(
+            lines
+        ),
         "pending_same_pitch_note_on_not_loop_end_tail": (
             _case_pending_same_pitch_note_on_not_loop_end_tail(lines)
         ),
         "pending_note_edit_close_keeps_overdub_frame": (
             _case_pending_note_edit_close_keeps_overdub_frame(lines)
         ),
+        "note_edit_close_persists_apply_owned": (
+            _case_note_edit_close_persists_apply_owned(lines)
+        ),
         "stop_selected_slot_not_foreign_loop": _case_stop_selected_slot_not_foreign_loop(
             lines
         ),
+        "overdub_motor_sends_notegate": _case_overdub_motor_sends_notegate(lines),
+        "value_only_notegate_held": _case_value_only_notegate_held(lines),
+        "pitch_keeps_mover_dnte": _case_pitch_keeps_mover_dnte(lines),
     }
     header_present = bool(stimulus.get("header", {}).get("header_present"))
     require_hold = (

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (F1 one-resolve + stacked keep-committed-mover RC1 PASS)
+Last updated: 2026-09-10 (HITL hardening shipped; OpenSpec 4.5 device gates)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,34 +10,26 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**HITL framework hardening — Stages 0–4 shipped; `base` device PASS.**
+Host-only. Frozen verdict/action contract (`PASS` / `FAIL` /
+`INCONCLUSIVE_CAPTURE`; `CONFIRMED` / `ALREADY_SATISFIED` /
+`RECOVERY_FAILED` / `EVIDENCE_UNAVAILABLE`). Disproof only after the
+action wait timeout. Clear/arm/stop path: ARMED → transport → RECORDING
+(Record button 36; no Loops-row arm). [`122812`](../../captures/session_20260910_122812.log)
+`Result: PASS`. Plan:
+[`hitl_framework_hardening_refinement.md`](../Plans/hitl_framework_hardening_refinement.md).
+
+**Now — Immutable OpenSpec 4.5 — cross-gate verify.** Native host matrix
+green; HITL `base` PASS. Next: `overdub_occupy_paint` then
+`note_edit_overdub_compose` (`STIM-NE-OD-COMPOSE-02`). Plan:
+[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
+
 **Prior — NOTE_EDIT F1 select display lag — RC1 shipped (device PASS).**
 One `resolveFader1SelectTarget` per inbound F1 pitchbend.
 [`095539`](../../captures/session_20260910_095539.log) 77/87 `DNTE`;
 [`100844`](../../captures/session_20260910_100844.log) 150/149. Do not
 restore PLAYING `timed_burst`. Plan:
 [`note_edit_fader1_select_display_lag_bugfix.md`](../Plans/note_edit_fader1_select_display_lag_bugfix.md).
-
-**Prior — NOTE_EDIT stacked move + deselect display drop — RC1 shipped
-(device PASS).** `keepCommittedMoverInVisualCache` after post-commit
-rebuild. Native `test_keep_committed_mover_in_visual_cache_232309` PASS.
-[`100844`](../../captures/session_20260910_100844.log) empty-step keeps
-`VCACHE,full notes,42`. Plan:
-[`note_edit_stacked_move_deselect_display_drop_bugfix.md`](../Plans/note_edit_stacked_move_deselect_display_drop_bugfix.md).
-
-**Prior — NOTE_EDIT control-plane RC8 F1 outbound linear map — shipped.**
-User accepted the `234815` late-loop F1 travel. Native `1818` succeeded;
-compose `STIM-NE-OD-COMPOSE-02` machine **14/14 PASS**. Do not restore
-neighborhood slot-index outbound. Plan:
-[`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
-
-**Prior — NOTE_EDIT control-plane RC7 ValueOnly notegate hold — shipped.**
-`234815` F2 follows. NoteOff stays deferred `kMotorNoteDurationMs`.
-
-**Prior — Immutable OpenSpec 4.5 — cross-gate verify (paused).** Native host
-matrix green. HITL `--preset base` FAIL after clean flash (attempt 6:
-record stop did not reach PLAYING; [`234207`](../../captures/session_20260909_234207.log)).
-Ask before more device runs. Plan:
-[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
 
 **Prior — NOTE_EDIT control-plane RC3 PLAYING motor ValueOnly — shipped.**
 `shouldRunBlockingMotorBurst` is false while PLAYING or OVERDUBBING.

@@ -35,27 +35,17 @@ def parse_latest_bpm(lines: list[str], *, tail: int = 80) -> Optional[float]:
     return None
 
 
-def serial_lines_show_transport_activity(lines: list[str], *, tail: int = 40) -> bool:
-    """True when tail shows live capture / sequencer activity on the serial stream.
+def serial_lines_show_transport_activity(
+    lines: list[str], *, tail: int = 40, after_index: int = 0
+) -> bool:
+    """True when the current-session suffix shows sequencer activity.
 
-    Prefer #CAP,BPM / #CAP,BAR when present. Also accept #CAP,DFRAME (continuous while
-    transport runs), #CAP,MI/MO (button + note traffic), and #CAP,ST (state transitions).
+    Historical lines before ``after_index`` must not authorize a new phase.
     """
-    for line in lines[-tail:]:
-        if "#CAP," not in line:
-            continue
-        if (
-            ",BPM," in line
-            or ",BAR," in line
-            or ",DFRAME," in line
-            or ",MI," in line
-            or ",MO," in line
-            or ",ST," in line
-            or ",RECA," in line
-            or ",RECS," in line
-        ):
-            return True
-    return False
+    from hitl.serial_collector import serial_line_is_transport
+
+    suffix = lines[max(after_index, 0) :]
+    return any(serial_line_is_transport(line) for line in suffix[-tail:])
 
 
 def serial_lines_show_bpm_activity(lines: list[str], *, tail: int = 40) -> bool:
@@ -86,6 +76,7 @@ def serial_sequencer_running(
     collector: Any,
     *,
     max_silence_s: float = 4.0,
+    after_index: int = 0,
 ) -> bool:
     """True when capture shows recent sequencer ticks (#CAP,BPM, BAR, DFRAME, etc.).
 
@@ -94,18 +85,25 @@ def serial_sequencer_running(
     seconds_since_last_line() stale even while DFRAME lines keep flowing.
     """
     lines = collector.snapshot()
-    if serial_lines_show_transport_activity(lines):
+    if serial_lines_show_transport_activity(lines, after_index=after_index):
         return True
-    silence = collector.seconds_since_last_line()
-    if silence is None or silence > max_silence_s:
+    if after_index > 0:
         return False
+    transport_age = getattr(collector, "seconds_since_last_transport_line", lambda: None)()
+    if transport_age is not None and transport_age <= max_silence_s:
+        return True
     return False
 
 
-def use_serial_transport_proxy(args: argparse.Namespace, serial_collector: Any | None) -> bool:
+def use_serial_transport_proxy(
+    args: argparse.Namespace,
+    serial_collector: Any | None,
+    *,
+    after_index: int = 0,
+) -> bool:
     if serial_collector is None or not serial_capture_active(args):
         return False
-    return serial_sequencer_running(serial_collector)
+    return serial_sequencer_running(serial_collector, after_index=after_index)
 
 
 def resolve_wall_tempo_bpm(serial_collector: Any | None, fallback_bpm: float) -> float:

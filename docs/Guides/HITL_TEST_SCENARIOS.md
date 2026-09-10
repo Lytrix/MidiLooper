@@ -14,6 +14,22 @@ from the host Mac. Entry point: [`scripts/host_midi_hitl.py`](../../scripts/host
 
 Never use `--serial-port` while `capture_session.py` holds the USB serial port.
 
+## Result contract (host harness)
+
+Machine-readable verdicts live in [`scripts/hitl/contract.py`](../../scripts/hitl/contract.py). Plan: [`hitl_framework_hardening_refinement.md`](../Plans/hitl_framework_hardening_refinement.md).
+
+| Verdict | Meaning |
+|---------|---------|
+| `PASS` | Evidence complete, setup transitions confirmed, firmware assertions pass |
+| `FAIL` | Evidence complete, stimulus valid, setup confirmed, firmware contradicted |
+| `INCONCLUSIVE_CAPTURE` | Required evidence missing or ambiguous — do not conclude firmware |
+
+Control actions return `CONFIRMED`, `ALREADY_SATISFIED`, `RECOVERY_FAILED`, or `EVIDENCE_UNAVAILABLE`. A retry press is allowed only when evidence after the action baseline proves the requested transition did not happen.
+
+Serial evidence is fresh to the current action baseline. Capture integrity (`COMPLETE` / `INCOMPLETE` / `UNKNOWN`) is separate from firmware assertions: truncated or rotated session logs, a dead managed `capture_session.py` child, or missing serial lines are `INCONCLUSIVE_CAPTURE`, not a firmware fail. Transport liveness (`BAR`/`DFRAME`/…), firmware-progress liveness, and serial-reader liveness are separate signals.
+
+Process exit: `0` PASS, `2` FAIL, `3` INCONCLUSIVE_CAPTURE. Do not rewrite an inconclusive verdict to pass or fail.
+
 **List scenario IDs:**
 
 ```bash
@@ -40,7 +56,7 @@ Replace `/dev/cu.usbmodem154944801` with your port (`pio device list`).
 |------|---------|
 | **Preset** | Named bundle of one or more scenarios (`--preset base`) |
 | **Scenario** | Single composable phase script (`--scenarios edit_overdub_during_note_edit`) |
-| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-02` v1 everyday compose; `STIM-NE-OD-COMPOSE-03` v1 last-bar Shorten; `STIM-NE-OD-COMPOSE-01` v1 paint-only) |
+| **Stimulus** | Versioned live-MIDI recipe the scenario must send (`STIM-NE-OD-COMPOSE-02` v1 everyday compose; `STIM-NE-OD-COMPOSE-03` v1 last-bar Shorten; `STIM-NE-OD-COMPOSE-04` v1 last-bar Shorten then reopen select/move; `STIM-NE-OD-COMPOSE-01` v1 paint-only) |
 
 Presets are defined in [`scripts/hitl/registry.py`](../../scripts/hitl/registry.py) (`PRESET_SCENARIOS`).
 Stimuli are defined in [`scripts/hitl/stimuli/registry.py`](../../scripts/hitl/stimuli/registry.py).
@@ -84,8 +100,10 @@ Plan: [`hitl_stimulus_contract_enhancement.md`](../Plans/hitl_stimulus_contract_
 | `fader_motor_sweep` | `fader_motor_sweep` | Quarter sweep 0 % → 25 % → 50 % → 75 % → 100 % on fader1 (default) | Optional | `verify_fader_motor_probe` |
 | `note_edit_select_dependent_faders` | `base`, `note_edit_select_dependent_faders` | **base** (2+2 + 2 overdub) then NOTE_EDIT F1 sweep + toggle | **Yes** | `verify_note_edit_select_dependent_faders` |
 | `overdub_occupy_paint` | `overdub_occupy_paint` | **STIM-OCCUPY-PAINT-01** v1: Clear/arm → seed record → first overdub half-bar phrase → second overdub occupy (same-start hide / +1/4 shorten / −1/2 hide) → 2 undo then 2 redo | **Yes** | `verify_occupy_paint` |
-| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-02** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub at the selected seed pitch → same-pitch hold move; verifier requires Hide or Shorten. Paint-only leftover: `STIM-NE-OD-COMPOSE-01` (live 12–23) | **Yes** | `verify_note_edit_overdub_compose` |
+| `note_edit_overdub_compose` | `note_edit_overdub_compose` | **STIM-NE-OD-COMPOSE-02** v1: **base** (2-bar record + **one** overdub) then NOTE_EDIT open → in-edit overdub at the selected seed pitch → same-pitch hold move; verifier requires Hide or Shorten; close must not drop `apply_owned` (`canonical=0`). Paint-only leftover: `STIM-NE-OD-COMPOSE-01` (live 12–23) | **Yes** | `verify_note_edit_overdub_compose` |
 | `note_edit_overdub_compose_last_bar_shorten` | `note_edit_overdub_compose_last_bar_shorten` | **STIM-NE-OD-COMPOSE-03** v1: same seed and same-pitch live Capture as `02`, then move the seed onto the new note at beat 4 of the last bar; verifier requires Shorten (`EditSessionAction` type=1). Do not edit `01` or `02` | **Yes** | `verify_note_edit_overdub_compose` |
+| `note_edit_overdub_compose_last_bar_reopen` | `note_edit_overdub_compose_last_bar_reopen` | **STIM-NE-OD-COMPOSE-04** v1: `03` plus exit NOTE_EDIT, re-enter, select the seed, and move it. Do not edit `01`, `02`, or `03` | **Yes** | `verify_note_edit_overdub_compose` |
+| `note_edit_reselect_stacked` | `note_edit_reselect_stacked` | **STIM-NE-RESELECT-STACKED-01** v1 on **STIM-BASE-2-FIXTURE-01**: NOTE_EDIT, move a higher-pitch fixture note onto an occupied sixteenth, deselect, F1 intra-step reselect; PLAYING motor sync is `value_only` | **Yes** | `verify_note_edit_reselect_stacked` |
 
 ### `revision_commit_save` (packed revision write + cleanup)
 
@@ -229,7 +247,7 @@ Host unit test: `scripts/test_long_loop_display_serial_verify.py`.
   --record-bars 2 --start-transport
 ```
 
-`--loop-slot` drives **record arm** on the Loops row (notes 50–57) during the base seed; omit it to use Record button 36 on the device-selected slot. The base phase logs `[info] --loop-slot N on track …`.
+`--loop-slot` selects the Loops row (notes 50–57) **before clear**; record arm then uses Record button 36 on that selected slot (ARMED → transport → RECORDING). Omit `--loop-slot` to clear/arm the device-selected slot. The base phase logs `[info] --loop-slot N on track …`.
 
 Legacy entry: `scripts/host_midi_automation_edit_baseline.py`.
 
@@ -283,7 +301,7 @@ and/or `QUIET_REFRESH` after user-classified quiet.
 
 **Stimulus:** `STIM-NE-OD-COMPOSE-02` v1 (everyday). Do not edit `STIM-NE-OD-COMPOSE-01` (paint-only, live 12–23). Do not register a TEMP id.
 
-Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. `02` streams in-edit Capture at the selected seed pitch, re-selects that seed on the seed layout, and moves it onto a later same-pitch live note. Verifier requires Hide or Shorten and `pending_same_pitch_note_on_not_loop_end_tail` so a same-pitch On-On-Off does not paint `length == loopLength-start` in the first half (`203112` `48@435` 1869). Device PASS [`123953`](../../captures/session_20260909_123953.log) as TEMP-A, then promoted. Device reject PASS [`212509`](../../captures/session_20260909_212509.log). Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md). Reject-pending plan: [`capture_pending_same_pitch_note_on_reject_bugfix.md`](../Plans/capture_pending_same_pitch_note_on_reject_bugfix.md).
+Runs **`base`** as a 2-bar record plus **one** overdub (`--second-overdub-bars 0`, no post-stop undo), then the compose cases. `02` streams in-edit Capture at the selected seed pitch, re-selects that seed on the seed layout, and moves it onto a later same-pitch live note. Verifier requires Hide or Shorten, no DROID control-plane `COORD`/`SEVT` (ch13 acks 80–87, ch14/ch15), in-edit overdub `GEOM_APPLY,resolve` ≤ 20 ms, no `commitEditAction` four-view reconstruct traces, `pitch_keeps_mover_dnte` when the log has type=5 (vacuous if none), `commit_skips_unpainted_mover_loop_end` when close writes `ChangeLength` to loop end (`192140` 80–2303), and `pending_same_pitch_note_on_not_loop_end_tail` so a same-pitch On-On-Off does not paint `length == loopLength-start` in the first half (`203112` `48@435` 1869), and `note_edit_close_persists_apply_owned` so NOTE_EDIT close must not log `canonical=0` with `apply_owned>0` (`223532`). Compose `02` device PASS [`225149`](../../captures/host_midi_hitl_note_edit_overdub_compose_20260909_225149.json) **13/13**. Device PASS [`123953`](../../captures/session_20260909_123953.log) as TEMP-A, then promoted. Plan: [`note_edit_overdub_paint_overlap_compose_bugfix.md`](../Plans/note_edit_overdub_paint_overlap_compose_bugfix.md). Reject-pending plan: [`capture_pending_same_pitch_note_on_reject_bugfix.md`](../Plans/capture_pending_same_pitch_note_on_reject_bugfix.md). Exit persist: [`note_edit_exit_persist_selected_mover_bugfix.md`](../Plans/note_edit_exit_persist_selected_mover_bugfix.md).
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose \
@@ -312,6 +330,30 @@ Same seed and same-pitch in-edit Capture as everyday compose. After a live On si
 
 ```bash
 .venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose_last_bar_shorten \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+### `note_edit_overdub_compose_last_bar_reopen` (Shorten, exit, re-enter, select, move)
+
+**Stimulus:** `STIM-NE-OD-COMPOSE-04` v1. Do not edit `STIM-NE-OD-COMPOSE-01`, `02`, or `03`.
+
+Same last-bar Shorten as `03`, then short-press exit to LOOP_EDIT, short-press re-enter, re-select the seed on the original seed layout, and F2 move. Verifier requires a second `NOTE_EDIT_OPEN`, a non-empty reopen select, and a Move `EditSessionAction`. Also requires no overdub `COORD` ch13 notes 80–87 and no stored ch14/ch15 control-plane `SEVT`. Verifier `commit_skips_trace_reconstruct` fails on `commitEditAction replay_flat` / `take_only` / `session_store` / `loop_materialized`. Verifier `pitch_keeps_mover_dnte` fails when a type=5 `EditSessionAction` has no following `DNTE` at that pitch and start. Verifier `commit_skips_unpainted_mover_loop_end` fails when `commitEditAction incoming ChangeLength` writes `newEnd` at loop end (`loopLength` or `loopLength-1`) and `moverBaselineEnd` was not already there (`192140` 80–2303). Plan: [`note_edit_overdub_compose_shorten_hold_select_bugfix.md`](../Plans/note_edit_overdub_compose_shorten_hold_select_bugfix.md). RC1–RC6: [`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_overdub_compose_last_bar_reopen \
+  --midi-out "Teensy" --midi-in "Teensy" \
+  --track-number 5 --loop-slot 1 --midi-channel 5
+```
+
+### `note_edit_reselect_stacked` (reselect moved note on a stacked sixteenth)
+
+**Stimulus:** `STIM-NE-RESELECT-STACKED-01` v1 on seed **STIM-BASE-2-FIXTURE-01** (no overdub). Do not edit `STIM-NE-OD-COMPOSE-01`, `02`, or `03`.
+
+Moves the recorded fixture step-8 note onto the recorded step-4 sixteenth (not the theoretical 16th grid), deselects on an empty sixteenth, then F1 intra-step pitchbend must apply two different notes in that destination sixteenth. PLAYING `select_motor_sync` / `geometry_motor_sync` must be `sequence=value_only` with no following `DIAG,midi_gap` ≥ 200000 µs (`170818` timed burst). `value_only_notegate_held` requires motor NoteOff ≥ 80 ms after NoteOn (`232309` 1 ms pair). `select_apply_highlight_follows` fails when ≥ 10 `apply=1` note selects have fewer than half as many `DNTE` (`235958` 48/3). `moved_note_kept_after_deselect` fails when `VCACHE,full notes` drops after empty-step (`232309` 8→7). Plan: [`note_edit_reselect_moved_stacked_note_bugfix.md`](../Plans/note_edit_reselect_moved_stacked_note_bugfix.md). F1 lag: [`note_edit_fader1_select_display_lag_bugfix.md`](../Plans/note_edit_fader1_select_display_lag_bugfix.md). Stacked drop: [`note_edit_stacked_move_deselect_display_drop_bugfix.md`](../Plans/note_edit_stacked_move_deselect_display_drop_bugfix.md). Control-plane RC3/RC7: [`note_edit_control_plane_record_display_stall_bugfix.md`](../Plans/note_edit_control_plane_record_display_stall_bugfix.md).
+
+```bash
+.venv/bin/python scripts/host_midi_hitl.py run --preset note_edit_reselect_stacked \
   --midi-out "Teensy" --midi-in "Teensy" \
   --track-number 5 --loop-slot 1 --midi-channel 5
 ```
@@ -387,4 +429,5 @@ Hardware steps from [`firmware_ownership_lifetime_review.md`](../Plans/firmware_
 - Implementation notes: [`docs/Plans/hitl_modular_scenarios_enhancement.md`](../Plans/hitl_modular_scenarios_enhancement.md)
 - DROID motorfader pitchbend / probe timing: [`DROID_MOTORFADER_PITCHBEND.md`](DROID_MOTORFADER_PITCHBEND.md)
 - Cursor rule (canonical `base` command): [`.cursor/rules/HITL-Test-Flow.mdc`](../../.cursor/rules/HITL-Test-Flow.mdc)
+- Host result contract: [`hitl_framework_hardening_refinement.md`](../Plans/hitl_framework_hardening_refinement.md)
 - Undo/redo storage rules: [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md)
