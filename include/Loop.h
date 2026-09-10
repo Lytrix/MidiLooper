@@ -644,6 +644,10 @@ struct Loop {
   /// Visual-cache entry: wrap-held heads/tails only. Interior wrap-paired
   /// body notes stay off the piano-roll list (204132 / NOTE_EDIT open).
   void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
+  /// Closed NoteOn identities in committed events but missing from `dest`
+  /// (snapshot NoteRef / resolve miss). Cold path only — `200405` visual=32
+  /// while source merge already restored id=27.
+  void mergeOmittedCommittedNoteOnIdentitiesInto(NoteUtils::DisplayNoteVec& dest) const;
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
   /// (PLAYING viewport backfill); pass UINT32_MAX for full-loop idle backfill when stopped.

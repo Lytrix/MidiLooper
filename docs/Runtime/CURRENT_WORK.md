@@ -10,12 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub start snapshot omits bar-crossing record note — SHIPPED.**
-Consumer Stages 1–2: clean-visual retain when current snapshot gather is
-smaller; full-loop `from=snapshot` `mergeOmitted`. HITL `base` PASS
-[`200405`](../../captures/session_20260910_200405.log): OD open notes=33
-(id 27 present); RAM1 **7008**; native PASS. Plan:
+**Now — Overdub start snapshot omits bar-crossing record note — SHIPPED (Stages 1–3).**
+Stage 3: merge omitted into snapshot-sourced visual + adopt; full-loop
+snapshot upserts reconstruct by NoteId. HITL `base` PASS
+[`202323`](../../captures/session_20260910_202323.log): OD1 `visual=33`, id 27
+in OD1+OD2 srcspan; RAM1 **7008**. Plan:
 [`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
+
+**Next (optional):** snapshot publish membership root cause (why NoteRef omitted
+before merge).
 
 **Prior — Overdub live wrap Stage 2b SHIPPED** (shared NoteId head/tail collapse).
 Device [`193615`](../../captures/session_20260910_193615.log): STOPPED

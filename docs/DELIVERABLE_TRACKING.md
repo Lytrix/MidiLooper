@@ -6,6 +6,8 @@
 
 **Shipped** (in firmware on `dev`):
 
+- **Overdub start bar-crossing snapshot omit — consumer Stages 1–3 (Sep 2026):** retain clean visual over incomplete current snapshot gather; full-loop `from=snapshot` mergeOmitted + reconstruct NoteId upsert; visual/idle/adopt merge omitted identities. Device PASS [`202323`](../captures/session_20260910_202323.log) (`visual=33`, id 27 OD1+OD2). Plan: [`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
+
 - 8 tracks × 8 loop slots: per-slot record, overdub, clear, mute, quantized switching, multi-slot hold layering (`Track`, `TrackManager`, `SlotStateMachine`)
 - Undo/redo per slot (overdub, clear, loop start) — memory-aware depth (`PREFERRED_UNDO_DEPTH` 99, `MIN_UNDO_DEPTH` 8, `ABSOLUTE_MAX_UNDO_ENTRIES` 512; `trimGlobalUndoStackForMemory` in `PassReclaim` / `TrackUndo`). Redo branch preserved after full undo until a new pass pushes.
 - 192 PPQN internal clock, 24 PPQN MIDI sync with internal fallback (`ClockManager`, `ClockSourceStateMachine`)
@@ -26,11 +28,15 @@
 
 - **LoopContentResolution parallel prototype (DEC-037, Aug 2026):** native `LoopContentResolution` + device gate suites; 6C/6D closed [`205928`](../captures/session_20260815_205928.log) / [`210508`](../captures/session_20260815_210508.log). PR [#35](https://github.com/Lytrix/MidiLooper/pull/35) merged to `dev` (`be0e05f`). OpenSpec change `loop-content-resolution` pending archive. Plan: [`loop_event_sourced_resolution_architecture.md`](Plans/loop_event_sourced_resolution_architecture.md).
 
-- **NOTE_EDIT overdub-exit piano-roll revert (Sep 2026):** RC1 retain unpublished `visualCache` over this stale gather (`214900` 65 vs 56). RC2 non-selected `stopPlaying` does not write `liveDisplayNotes`. Native **1814 succeeded, 1 skipped**. RAM1 locals **7008**. Compose `02` [`222902`](../captures/session_20260909_222902.log) **12/12** (close/stop cases vacuous). Device recapture of `214900` still open. Plan: [`note_edit_overdub_exit_piano_roll_revert_bugfix.md`](Plans/note_edit_overdub_exit_piano_roll_revert_bugfix.md).
+- **NOTE_EDIT exit persist parked mover (Sep 2026):** close commits parked Visible `currentSpan` ≠ `committedSpan` and does not drop `applyOwnedEditPassRows` when canonical is empty. Same owner as empty-step deselect (`commitAllPendingNoteEditActions`). Guide: [`MOVE_NOTE_LOGIC.md`](Guides/MOVE_NOTE_LOGIC.md) § Commit / macro seal. Compose `02` [`225149`](../captures/host_midi_hitl_note_edit_overdub_compose_20260909_225149.json) **13/13**. Plan: [`note_edit_exit_persist_selected_mover_bugfix.md`](Plans/note_edit_exit_persist_selected_mover_bugfix.md).
+
+- **NOTE_EDIT overdub-exit piano-roll revert (Sep 2026):** RC1 retain unpublished `visualCache` over this stale gather. RC2 non-selected `stopPlaying` does not write `liveDisplayNotes`. Device PASS [`223532`](../captures/session_20260909_223532.log) `frame,65` / first STOPPED `2304/65`. Plan: [`note_edit_overdub_exit_piano_roll_revert_bugfix.md`](Plans/note_edit_overdub_exit_piano_roll_revert_bugfix.md).
 
 - **Capture pending same-pitch NoteOn reject (Sep 2026):** `Track::noteOn` drops a second On while `{note, channel}` is pending so the first On is not orphaned to loop end. Device PASS [`212509`](../captures/session_20260909_212509.log) compose `10/10`. Plan: [`capture_pending_same_pitch_note_on_reject_bugfix.md`](Plans/capture_pending_same_pitch_note_on_reject_bugfix.md).
 
 - **NOTE_EDIT overdub select/pitch hang (Sep 2026):** paint-cache reuse on fingerprint/select; ValueOnly motors while overdubbing. Device PASS [`152705`](../captures/session_20260909_152705.log). Plan: [`note_edit_overdub_select_pitch_hang_bugfix.md`](Plans/note_edit_overdub_select_pitch_hang_bugfix.md).
+
+- **NOTE_EDIT control-plane motors (Sep 2026):** RC7 ValueOnly notegate held `kMotorNoteDurationMs`; RC8 F1 outbound uses `selectPitchbendFromTick` (not neighborhood slot index). User accepted [`234815`](../captures/session_20260909_234815.log) late-loop F1. Compose `02` **14/14**. Plan: [`note_edit_control_plane_record_display_stall_bugfix.md`](Plans/note_edit_control_plane_record_display_stall_bugfix.md).
 
 - **Compose last-bar beat-4 Shorten HITL (Sep 2026):** `STIM-NE-OD-COMPOSE-03` v1 / preset `note_edit_overdub_compose_last_bar_shorten`. Device PASS [`133714`](../captures/session_20260909_133714.log). Plan: [`note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md`](Plans/note_edit_overdub_compose_last_bar_shorten_hitl_enhancement.md).
 
