@@ -13,17 +13,43 @@ DEC-051 seal; Occupy/Shorten/Hide; 4.6 identity stamps.
 
 ```text
 … → capturePreview open indices / wrapHeld state     ← trust unless logs disagree
+ → resolveDisplayNotes path fork (NOTE vs draw-source) ← Stage 0 must classify
  → allowWrapContinuation during OVERDUBBING          ← current investigation
  → applyCapturePlayheadTails linear vs wrap split
  → STOPPED reconstruct / seal                        ← out (must stay equivalent)
 ```
 
+Do **not** make NOTE_EDIT the LOOP_EDIT display owner. Do **not** reopen
+NOTE_EDIT projection architecture — only compare its wrap paint result as an
+oracle for Stage 0.
 ## Symptom (product)
 
 During **OVERDUBBING**, an open capture-preview note near loop end should paint
 as a live playhead tail, then as the documented live wrap split after phase-0.
 Instead the pre-wrap tail disappears and only the post-wrap head remains until
 stop.
+
+### NOTE_EDIT vs LOOP_EDIT (user observation — path fork)
+
+Wrapped notes that start near loop end **paint correctly after entering
+NOTE_EDIT**, then **revert when returning to LOOP_EDIT**. That is not a missing
+reconstruct: wrap geometry already exists somewhere; **LOOP_EDIT is not using
+the same display projection path**.
+
+Proven fork in `DisplayManager::resolveDisplayNotes`:
+
+| Session | Path |
+|---|---|
+| `EditSessionType::Note` | `editManager.projectedNoteEditDisplayNotes(track)` (committed base + projection; participant paint uses `applyDisplayWrapPhaseToPaintNote` for linear→wrap phase) |
+| else (incl. LOOP_EDIT) | `resolveDisplayNotesByDrawSource` → `applyCapturePlayheadTails` with `allowWrapContinuation` **false** while OVERDUBBING |
+
+So the working paint is already reachable via the NOTE_EDIT owner; LOOP_EDIT /
+overdub draw-source is the consumer that does not apply the same wrap
+projection at the right time. Stage 0 must prove with DNTE whether the
+NOTE_EDIT-good / LOOP_EDIT-bad pair is (1) **live OVERDUBBING**, (2) **PLAYING
+after OD**, or (3) **STOPPED** — without merging NOTE_EDIT ownership into
+draw-source. Reuse a shared wrap-paint helper only if Stage 0 shows the same
+geometry gap on the LOOP_EDIT path.
 
 ## Code fact (current tree)
 
@@ -116,13 +142,15 @@ the policy input to that owner.
 
 ## Stages
 
-### Stage 0 — Capture proof (A / B / C)
+### Stage 0 — Capture proof (A / B / C + NOTE vs LOOP)
 
 1. HITL or manual OD2 hold across loop end.
-2. Dump `#CAP` / `DNTE` (or equivalent) for the open pitch at **A**, **B**, and
-   **C**; confirm current `allowWrapContinuation == false` on OVERDUBBING frames.
-3. Do not start Stage 1 until A/B/C expectations are logged against today’s
-   wrong paint.
+2. Dump `#CAP` / `DNTE` for the open pitch at **A**, **B**, and **C**; confirm
+   current `allowWrapContinuation == false` on OVERDUBBING frames.
+3. **Same hold, when LOOP_EDIT paint is wrong:** enter NOTE_EDIT, dump DNTE for
+   that pitch; exit to LOOP_EDIT, dump again. Record whether NOTE_EDIT restores
+   wrap and LOOP_EDIT drops the tail again.
+4. Do not start Stage 1 until A/B/C **and** the NOTE/LOOP fork are logged.
 
 ### Stage 1 — Policy predicate (behavior unchanged)
 
@@ -156,6 +184,8 @@ paint sentence when Stage 2 ships.
 - Occupy resolve / Shorten-Hide  
 - OpenSpec 4.6 / `legacyMidiEventsFromCommitted`  
 - Globally enabling wrap continuation outside open capture-preview OVERDUBBING  
+- Making NOTE_EDIT the LOOP_EDIT / overdub display owner  
+- Changing NOTE_EDIT projection architecture (oracle only in Stage 0)  
 
 ## Approval
 
