@@ -1,7 +1,7 @@
 # Immutable loop snapshot — OpenSpec 4.6 snapshot-identity freshness
 
-**Status:** Stage 1 **SHIPPED** (2026-09-10). Next: Stage 2 `DrawSourceGatherKey`.  
-**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open — Stage 1 only)  
+**Status:** Stage 2 **SHIPPED** (2026-09-10). Stage 3 **next**. Stage 1 **SHIPPED**.  
+**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open)  
 **Parent:** 4.5 SHIPPED ([`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md)).  
 **Does not start:** §5 undo/load format, §6 compatibility retirement, hydrate 4b–5, raise `N`, new scheduler / `RuntimeWorkBudget::admit`, Phase 2/3 of the PassMaterialize deferral roadmap.
 
@@ -13,7 +13,7 @@
 |---|---|
 | Playback already identity-stamps | `PlaybackMergedMidiEvents.builtFromSnapshotIdentity` + match in `ensurePlaybackMergedMidiEventsBuilt` |
 | VisualCache freshness revision-only | **Closed Stage 1** — now `builtFromRevision` + `builtFromSnapshotIdentity` |
-| DrawSource uses revision + current flag | `DrawSourceGatherKey.publishedSnapshotRevision` + `snapshotCurrent` — no pointer |
+| DrawSource uses revision + current flag | **Closed Stage 2** — `publishedSnapshotIdentity` on `DrawSourceGatherKey` |
 | Overdub span reuse | `overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision()` when current — revision, not identity |
 | NOTE_EDIT projection keys | `playbackRevision` + `visualCache.revision` (RC-A changed **source selection**, not freshness keys) |
 | `legacyMidiEventsFromCommitted` | Always `materializeEditViewFromPasses` keyed by `playbackRevision` |
@@ -132,12 +132,50 @@ keep a separate predicate if needed — Stage 1 does not invent a new owner.
 
 **Falsify Stage 1 if:** identity ignored across A→B at same R; `nullptr` treated as current; PassMaterialize/full flatten on request paths; `Loop` sidecar; new scheduler.
 
-### Stage 2+ (ordered, separate commits)
+### Stage 2 — DrawSourceGatherKey snapshot-identity — SHIPPED
 
-1. `DrawSourceGatherKey` identity field  
-2. Overdub span-cache reuse identity  
-3. NOTE_EDIT committed-base cache keys  
-4. Then evaluate `legacyMidiEventsFromCommitted` (may need design if source + freshness)
+**Field:** `DrawSourceGatherKey::publishedSnapshotIdentity` next to
+`publishedSnapshotRevision`. Stamped from `Loop::publishedSnapshotIdentity()` in
+`makeDrawSourceGatherKey`. Compared in `drawSourceCommittedSourceKeysMatch`
+(pointer equality; `nullptr == nullptr` is a valid “no current root” match for
+reuse keys — distinct from VisualCache currency where nullptr is never current).
+
+**Primary native proof:** same `playbackRevision` / `publishedSnapshotRevision`
+with identity A→B ⇒ `RebuildCommittedDrawSource`
+(`test_rebuild_committed_draw_source_on_snapshot_identity_same_revision`).
+
+**Falsify Stage 2 if:** identity ignored across A→B at same R; PassMaterialize on
+draw-source request; new owner/scheduler.
+
+### Stage 2 closeout (2026-09-10)
+
+| Gate | Result |
+|---|---|
+| Native A→B@R draw-source | PASS (`test_display_window_utils`) |
+| Full `pio test -e native` | **1822 succeeded, 1 skipped** |
+| RAM1 locals | **7008** |
+| HITL `base` | **PASS** [`154842`](../../captures/session_20260910_154842.log) — first-note latency advisory; serial-follow partial-line race fixed so `RECS,stage,publish` is not dropped |
+
+OpenSpec `4.6` remains **unchecked** until remaining Stage 3+ freshness
+consumers (and §5 exclusion note) are done.
+
+**Field:** `overdubSourceSpanCachePublishedIdentity_` beside
+`overdubSourceSpanCachePublishedRevision_`. Stamp non-null
+`publishedSnapshotIdentity()` when fill origin is `"snapshot"`; else `nullptr`.
+`overdubSourceSpanCacheReusable()` when a current root exists: require revision
+match **and** identity match (non-null). When no current root, keep today’s
+ready-cache reuse (`publishedSnapshotIsCurrent()` false → reusable if ready).
+
+**Primary native proof:** A→B at fixed playback/published revision ⇒ span cache
+not reusable; rebuild fills from B.
+
+**Falsify Stage 3 if:** identity ignored across A→B at same R; PassMaterialize on
+occupy request; new owner/scheduler.
+
+### Stage 4+ (ordered, separate commits)
+
+1. NOTE_EDIT committed-base cache keys  
+2. Then evaluate `legacyMidiEventsFromCommitted` (may need design if source + freshness)
 
 ## Explicit non-goals
 

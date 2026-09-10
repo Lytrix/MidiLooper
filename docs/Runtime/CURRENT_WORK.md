@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (OpenSpec 4.6 Stage 1 SHIPPED — HITL base PASS)
+Last updated: 2026-09-10 (OpenSpec 4.6 Stage 2 SHIPPED — HITL base PASS)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.6 Stage 2 next** (`DrawSourceGatherKey` identity).
-Stage 1 **SHIPPED**: `VisualCache::builtFromSnapshotIdentity` +
-`visualCacheIsCurrentPublishedSnapshot`; A→B@R native; RAM1 **7008**;
-native **1821/1**; HITL `base` PASS [`151433`](../../captures/session_20260910_151433.log);
-`overdub_occupy_paint` PASS [`151700`](../../captures/session_20260910_151700.log).
-OpenSpec `4.6` stays open (Stage 2+ / §5 exclusion). Plan:
+**Now — Immutable OpenSpec 4.6 Stage 3 next** (overdub span-cache reuse identity).
+Stage 2 **SHIPPED**: `DrawSourceGatherKey::publishedSnapshotIdentity` + match in
+`drawSourceCommittedSourceKeysMatch`; native A→B@R; RAM1 **7008**; native
+**1822/1**; HITL `base` PASS [`154842`](../../captures/session_20260910_154842.log).
+OpenSpec `4.6` stays open (Stage 3+ / §5 exclusion). Plan:
 [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
 `N` in this slice.
+
+**Prior — Immutable OpenSpec 4.6 Stage 2 — DrawSourceGatherKey identity SHIPPED.**
+Device gate [`154842`](../../captures/session_20260910_154842.log) (`base`).
+Host: first-note latency is advisory; serial-follow does not advance offset on
+partial lines (was dropping `RECS,stage,publish`).
 
 **Prior — Immutable OpenSpec 4.6 Stage 1 — VisualCache identity stamp SHIPPED.**
 Commit `125f8941`; device gates [`151433`](../../captures/session_20260910_151433.log)

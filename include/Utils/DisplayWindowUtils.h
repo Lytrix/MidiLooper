@@ -1085,6 +1085,10 @@ struct DrawSourceGatherKey {
     uint32_t capturePreviewRevision = 0xFFFFFFFFu;
     uint32_t visualCacheRevision = 0xFFFFFFFFu;
     uint32_t publishedSnapshotRevision = 0xFFFFFFFFu;
+    /// Published root identity at gather time (`publishedSnapshotIdentity()`), or
+    /// nullptr when no current root. OpenSpec 4.6 Stage 2: same revision with a
+    /// replaced root must not reuse the committed draw-source prefix.
+    const void* publishedSnapshotIdentity = nullptr;
     uint32_t sealedPreviewRevision = 0;
     uint32_t pendingChangeGeneration = 0;
     uint32_t playheadBar = 0xFFFFFFFFu;
@@ -1104,6 +1108,7 @@ inline bool drawSourceCommittedSourceKeysMatch(const DrawSourceGatherKey& last,
            last.captureDisplayRevision == current.captureDisplayRevision &&
            last.visualCacheRevision == current.visualCacheRevision &&
            last.publishedSnapshotRevision == current.publishedSnapshotRevision &&
+           last.publishedSnapshotIdentity == current.publishedSnapshotIdentity &&
            last.snapshotCurrent == current.snapshotCurrent;
 }
 
