@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-10 (HITL hardening shipped; OpenSpec 4.5 device gates)
+Last updated: 2026-09-10 (OpenSpec 4.5 SHIPPED; 4.6 Stage 1 next)
 
 ---
 
@@ -131,8 +131,10 @@ Plans:
 [`note_edit_overlay_delta_refinement.md`](../Plans/note_edit_overlay_delta_refinement.md).
 DEC-054 Stage 1 admission remains in tree; [`204458`](../../captures/session_20260908_204458.log)
 failed the select-cadence gate. Parent 4.4 closed (inventory
-2026-09-09). Remaining 4.5, 4.6, persistence, and snapshot-identity
-undo remain later. Hydrate 4b–5 and raise `N` stay parked.
+2026-09-09). **4.5 SHIPPED** (2026-09-10): `base` / occupy / compose `02`
+PASS. **4.6** snapshot-identity freshness is now implementing (Stage 1
+VisualCache stamp). Persistence and snapshot-identity undo (§5) remain
+later. Hydrate 4b–5 and raise `N` stay parked.
 The following publication-admission paragraphs retain historical intermediate
 captures; their earlier “recapture remains open” wording is superseded by the
 closed 3.5/3.6 evidence above.
@@ -554,7 +556,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.4 closed (4.4a–4.4h + inventory; yield proof parked); 4.5a closed; 4.5–4.6, persistence, and snapshot-identity undo remain; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.5 closed (4.4a–4.4h + inventory; 4.5a; 4.5 cross-gate 2026-09-10); **4.6** in progress (VisualCache identity stamp first); persistence and snapshot-identity undo remain; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |
