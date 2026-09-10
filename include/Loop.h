@@ -37,6 +37,7 @@
 #include "Utils/LoopStopFinalize.h"
 
 class Track;
+class NoteEditCurrentState;
 struct PlaybackMergedMidiEvents;
 
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
@@ -336,7 +337,8 @@ struct Loop {
   void clearCommittedPlaybackNoteOnIdentities();
   bool overdubSourceSpanCacheReady() const;
   /// Ready storage that may be reused for the current committed source.
-  /// A current published snapshot requires a matching published-revision stamp.
+  /// A current published snapshot requires matching published-revision **and**
+  /// published-identity stamps (OpenSpec 4.6 Stage 3).
   bool overdubSourceSpanCacheReusable() const;
 #if defined(PIO_UNIT_TEST_NATIVE)
   void replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes);
@@ -347,6 +349,9 @@ struct Loop {
   }
   uint32_t overdubSourceSpanCachePublishedRevisionForTest() const {
     return overdubSourceSpanCachePublishedRevision_;
+  }
+  const void* overdubSourceSpanCachePublishedIdentityForTest() const {
+    return overdubSourceSpanCachePublishedIdentity_;
   }
   const char* rebuildOverdubSourceSpanCacheForTest(uint32_t requestedWindowStart = 0,
                                                    uint32_t requestedWindowLength = 0) {
@@ -399,6 +404,9 @@ struct Loop {
   /// uses `appendLastCommittedOverdubPassToSourceView`. Full rebuild is idle /
   /// later, not the wrap clock tick. Does not clear pending.
   void applyPendingNoteChangesToOverdubSourceView();
+  /// Apply NOTE_EDIT overlay Hide/Shorten onto `overdubSourceViewNotes_` by NoteId.
+  /// Reuses occupy pending clip. Does not add occupy pending rows.
+  void applyNoteEditCurrentStateToOverdubSourceView(const NoteEditCurrentState& currentState);
   /// Apply pending effective Hide/Shorten onto a display-note list. Not Add
   /// (live capture already has those). Hide matches `noteId` or same-pitch overlapping
   /// span on the committed prefix only — notes at `liveCaptureBegin` and after are
@@ -765,6 +773,9 @@ struct Loop {
   uint32_t overdubSourceSpanCacheLoopLengthTicks_ = 0;
   uint32_t overdubSourceSpanCachePlaybackRevision_ = 0;
   uint32_t overdubSourceSpanCachePublishedRevision_ = 0;
+  /// Published root identity when the span cache was filled from `"snapshot"`;
+  /// nullptr for fallback fills. OpenSpec 4.6 Stage 3 freshness key.
+  const void* overdubSourceSpanCachePublishedIdentity_ = nullptr;
   bool overdubSourceSpanCacheValid_ = false;
   bool overdubSourceSpanCacheFullLoop_ = false;
   uint32_t overdubSourceViewLoopLengthTicks_ = 0;

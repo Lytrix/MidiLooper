@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-10 (OpenSpec 4.6 Stage 2 SHIPPED — base [`154842`](../../captures/session_20260910_154842.log))
+Last updated: 2026-09-10 (OpenSpec 4.6 Stage 3 SHIPPED — base [`155756`](../../captures/session_20260910_155756.log), occupy machine [`160337`](../../captures/session_20260910_160337.log))
 
 ---
 
