@@ -308,8 +308,8 @@ cursors rather than treating that locality as an execution bound.
       **Stage 1 SHIPPED (2026-09-10):** `VisualCache::builtFromSnapshotIdentity` +
       `visualCacheIsCurrentPublishedSnapshot`; native A→B@R;
       `test_overdub_source_view` wrap-append skip stamps identity; RAM1 **7008**;
-      native **1821 succeeded, 1 skipped**; HITL `base` PASS
-      [`151433`](../../../captures/session_20260910_151433.log).
+      native **1821 succeeded, 1 skipped**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log);
+      `overdub_occupy_paint` PASS [`151700`](../../../captures/session_20260910_151700.log).
       Undo/load format remains §5; materialize retirement §6.
       Stage 2+ (`DrawSourceGatherKey`, …) remain.
 

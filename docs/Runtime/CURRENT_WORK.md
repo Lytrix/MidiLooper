@@ -13,14 +13,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 **Now — Immutable OpenSpec 4.6 Stage 2 next** (`DrawSourceGatherKey` identity).
 Stage 1 **SHIPPED**: `VisualCache::builtFromSnapshotIdentity` +
 `visualCacheIsCurrentPublishedSnapshot`; A→B@R native; RAM1 **7008**;
-native **1821/1**; HITL `base` PASS [`151433`](../../captures/session_20260910_151433.log).
+native **1821/1**; HITL `base` PASS [`151433`](../../captures/session_20260910_151433.log);
+`overdub_occupy_paint` PASS [`151700`](../../captures/session_20260910_151700.log).
 OpenSpec `4.6` stays open (Stage 2+ / §5 exclusion). Plan:
 [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
 `N` in this slice.
 
 **Prior — Immutable OpenSpec 4.6 Stage 1 — VisualCache identity stamp SHIPPED.**
-Commit `125f8941`; device gate [`151433`](../../captures/session_20260910_151433.log).
+Commit `125f8941`; device gates [`151433`](../../captures/session_20260910_151433.log)
+(`base`), [`151700`](../../captures/session_20260910_151700.log) (occupy).
 
 **Prior — Immutable OpenSpec 4.5 — SHIPPED.** HITL `base` PASS
 ([`122812`](../../captures/session_20260910_122812.log)); `overdub_occupy_paint`
