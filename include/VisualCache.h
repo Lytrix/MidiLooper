@@ -79,12 +79,17 @@ struct VisualCache {
   /// the resulting notes include the committed representation for that revision. Overlay-rejected
   /// fallback and `slice_keep` of a smaller gather do not establish coverage (`153517` RC1).
   uint32_t builtFromRevision = 0;
+  /// Published `LoopSnapshot` identity used as the gather source, or nullptr when the cache
+  /// came from prepared/fallback/compatibility gather. Nullptr is never snapshot-current
+  /// (OpenSpec 4.6 Stage 1).
+  const void* builtFromSnapshotIdentity = nullptr;
   DisplayNoteVec notes;
   VisualBarVec dirtyBars;
 
   void clear() {
     revision = 0;
     builtFromRevision = 0;
+    builtFromSnapshotIdentity = nullptr;
     notes.clear();
     dirtyBars.clear();
   }

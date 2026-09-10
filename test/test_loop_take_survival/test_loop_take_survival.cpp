@@ -1397,6 +1397,8 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   loop.rebuildVisualCacheFromPasses();
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_EQUAL(loop.publishedSnapshotRevision(), loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(),
+                        loop.visualCache.builtFromSnapshotIdentity);
   TEST_ASSERT_EQUAL(resolved.size(), loop.visualCache.notes.size());
   TEST_ASSERT_EQUAL(resolved[0].note, loop.visualCache.notes[0].note);
   TEST_ASSERT_EQUAL(resolved[0].startTick, loop.visualCache.notes[0].startTick);
@@ -1411,6 +1413,7 @@ void test_visual_cache_reads_published_snapshot_with_fallback() {
   noSnapshot.rebuildVisualCacheIdleSlice(4, 0);
   TEST_ASSERT_FALSE(noSnapshot.lastVisualCacheIdleCopiedSnapshotNotes());
   TEST_ASSERT_FALSE(noSnapshot.visualCache.notes.empty());
+  TEST_ASSERT_NULL(noSnapshot.visualCache.builtFromSnapshotIdentity);
 }
 
 void test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes() {
@@ -1441,11 +1444,60 @@ void test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes() {
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(), loop.publishedSnapshot().get());
   TEST_ASSERT_EQUAL(loop.publishedSnapshotRevision(), loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(),
+                        loop.visualCache.builtFromSnapshotIdentity);
   TEST_ASSERT_EQUAL(resolved.size(), loop.visualCache.notes.size());
   TEST_ASSERT_EQUAL(resolved[0].noteId, loop.visualCache.notes[0].noteId);
   TEST_ASSERT_EQUAL(resolved[0].note, loop.visualCache.notes[0].note);
   TEST_ASSERT_EQUAL(resolved[0].startTick, loop.visualCache.notes[0].startTick);
   TEST_ASSERT_EQUAL(resolved[0].endTick, loop.visualCache.notes[0].endTick);
+}
+
+/// OpenSpec 4.6 Stage 1: same playbackRevision with a replaced published root must
+/// not treat VisualCache as snapshot-current. Nullptr is never current.
+void test_visual_cache_identity_stale_when_published_root_replaced_same_revision() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const uint32_t revisionR = loop.playbackRevision;
+  const void* identityA = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_NOT_NULL(identityA);
+
+  loop.invalidateDisplayCaches();
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_EQUAL_UINT32(revisionR, loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL_PTR(identityA, loop.visualCache.builtFromSnapshotIdentity);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
+      loop.visualCache.builtFromRevision, loop.playbackRevision,
+      loop.visualCache.builtFromSnapshotIdentity, loop.publishedSnapshotIdentity()));
+
+  auto empty = LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, 0, 8, 8);
+  LoopSnapshotChangeSet changes;
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshotB = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshotB.get());
+  TEST_ASSERT_TRUE(snapshotB.get() != identityA);
+  loop.storePublishedSnapshotForTest(snapshotB, revisionR);
+  TEST_ASSERT_EQUAL_UINT32(revisionR, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const void* identityB = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_EQUAL_PTR(snapshotB.get(), identityB);
+  TEST_ASSERT_TRUE(identityB != identityA);
+
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
+      loop.visualCache.builtFromRevision, loop.playbackRevision,
+      loop.visualCache.builtFromSnapshotIdentity, loop.publishedSnapshotIdentity()));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
+      revisionR, revisionR, nullptr, nullptr));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
+      revisionR, revisionR, nullptr, identityB));
 }
 
 void test_keep_committed_mover_in_visual_cache_232309() {
@@ -2034,6 +2086,9 @@ void test_visual_cache_idle_slice_copies_current_snapshot_notes() {
                     static_cast<int>(loop.lastVisualCacheIdleGatherSource()));
   TEST_ASSERT_EQUAL(fromSnapshot.size(), loop.visualCache.notes.size());
   TEST_ASSERT_FALSE(loop.visualCacheDirty);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, loop.visualCache.builtFromRevision);
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(),
+                        loop.visualCache.builtFromSnapshotIdentity);
 }
 
 void test_loaded_visual_cache_falls_back_until_current_snapshot() {
@@ -4837,6 +4892,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
   RUN_TEST(test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes);
+  RUN_TEST(test_visual_cache_identity_stale_when_published_root_replaced_same_revision);
   RUN_TEST(test_keep_committed_mover_in_visual_cache_232309);
   RUN_TEST(test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans);
   RUN_TEST(test_rematerialize_edit_view_uses_snapshot_span_note_ids);

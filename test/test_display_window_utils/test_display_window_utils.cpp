@@ -1662,6 +1662,18 @@ void test_deferred_wrap_append_source_identity() {
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldApplyDeferredVisualCacheWrapAppend(false, 4, 4));
   TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheIsCurrentSourceRevision(5, 5));
   TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentSourceRevision(4, 5));
+  const void* identityA = reinterpret_cast<const void*>(0xA);
+  const void* identityB = reinterpret_cast<const void*>(0xB);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(5, 5, identityA,
+                                                                             identityA));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(5, 5, identityA,
+                                                                              identityB));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(4, 5, identityA,
+                                                                              identityA));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(5, 5, nullptr, nullptr));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(5, 5, nullptr, identityA));
 }
 
 void test_noteon_shorten_paint_copy_keeps_compose_original_end() {
