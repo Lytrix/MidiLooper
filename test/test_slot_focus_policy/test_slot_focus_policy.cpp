@@ -179,6 +179,14 @@ void test_may_not_write_loop_geometry_on_edit_depart_while_transport_active() {
   TEST_ASSERT_TRUE(mayWriteLoopGeometryOnEditDepart(false));
 }
 
+void test_ignore_loop_geometry_fader_during_capture() {
+  // HITL 170743 / 165541: ch14 length fader must not resize mid-RECORD/OVERDUB.
+  TEST_ASSERT_TRUE(shouldIgnoreLoopGeometryFaderDuringCapture(true, false));
+  TEST_ASSERT_TRUE(shouldIgnoreLoopGeometryFaderDuringCapture(false, true));
+  TEST_ASSERT_TRUE(shouldIgnoreLoopGeometryFaderDuringCapture(true, true));
+  TEST_ASSERT_FALSE(shouldIgnoreLoopGeometryFaderDuringCapture(false, false));
+}
+
 void test_sync_loop_edit_baseline_from_transport_reanchor_zero_start() {
   uint32_t baselineStart = 3216;
   uint32_t baselineLength = 6144;
@@ -256,6 +264,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_active_note_ledger_orphan_off_is_inactive);
   RUN_TEST(test_playhead_storage_phase_inactive_slot_uses_start_loop_tick);
   RUN_TEST(test_may_not_write_loop_geometry_on_edit_depart_while_transport_active);
+  RUN_TEST(test_ignore_loop_geometry_fader_during_capture);
   RUN_TEST(test_sync_loop_edit_baseline_from_transport_reanchor_zero_start);
   RUN_TEST(test_loop_end_commit_after_transport_reanchor_uses_storage_wrap);
   RUN_TEST(test_mid_play_loop_start_restore_shifts_loop_end_commit_point);

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (OpenSpec 4.6 Stage 3 SHIPPED — HITL base PASS)
+Last updated: 2026-09-10 (LOOP_EDIT length-fader capture gate SHIPPED — HITL base [`171420`](../../captures/session_20260910_171420.log); OpenSpec 4.6 Stage 4 pending commit)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,17 +10,23 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.6 Stage 4 next** (NOTE_EDIT committed-base cache keys).
-Stage 3 **SHIPPED**: `overdubSourceSpanCachePublishedIdentity_` + reusable match;
-native A→B@R; RAM1 **7008**; native **1823/1**; HITL `base` PASS
-[`155756`](../../captures/session_20260910_155756.log); occupy machine PASS
-[`160337`](../../captures/session_20260910_160337.log).
-OpenSpec `4.6` stays open (Stage 4+ / §5 exclusion). Plan:
+**Now — LOOP_EDIT length/start fader ignored during RECORD/OVERDUB — SHIPPED.**
+RC1: `shouldIgnoreLoopGeometryFaderDuringCapture`; HITL base PASS
+[`171420`](../../captures/session_20260910_171420.log) (ch14 noise ignored).
+Plan: [`loop_edit_length_fader_during_capture_bugfix.md`](../Plans/loop_edit_length_fader_during_capture_bugfix.md).
+
+**Now — Immutable OpenSpec 4.6 Stage 4 in tree** (NOTE_EDIT committed-base cache
+identity) — native A→B@R + RAM1 **7008**; HITL unblocked by length-fader gate.
+Commit Stage 4 next. Plan:
 [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
 `N` in this slice.
 
 **Prior — Immutable OpenSpec 4.6 Stage 3 — overdub span-cache identity SHIPPED.**
+Stage 3: `overdubSourceSpanCachePublishedIdentity_` + reusable match;
+native A→B@R; RAM1 **7008**; native **1823/1**; HITL `base` PASS
+[`155756`](../../captures/session_20260910_155756.log); occupy machine PASS
+[`160337`](../../captures/session_20260910_160337.log).
 
 **Prior — Immutable OpenSpec 4.6 Stage 2 — DrawSourceGatherKey identity SHIPPED.**
 Device gate [`154842`](../../captures/session_20260910_154842.log) (`base`).
