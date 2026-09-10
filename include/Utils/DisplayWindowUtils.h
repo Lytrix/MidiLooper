@@ -230,6 +230,28 @@ inline bool shouldApplyLiveCapturePlayheadTails(bool recording, bool overdubbing
     return recording && !reuseLastValidFrame && !budgetExceeded;
 }
 
+/// Capture-preview playhead wrap-continuation policy for `applyCapturePlayheadTails`.
+/// From capture state only — not a generic wrap switch. Pinned truth table
+/// (`overdub_live_wrap_playhead_tail_display_bugfix`):
+///   RECORDING (any playing) → NO
+///   OVERDUBBING + PLAYING → YES (Stage 2); Stage 1 keeps NO
+/// `playing` means playhead advancing (`isPlaying() || isOverdubbing()`):
+/// `Track::isPlaying()` alone is false while `trackState == OVERDUBBING`.
+inline bool shouldAllowCapturePlayheadWrapContinuation(bool recording, bool playing,
+                                                       bool overdubbing) {
+    if (recording) {
+        return false;
+    }
+    if (overdubbing) {
+        // Stage 1: behavior-preserving NO (current tree disables OD wrap paint).
+        // Stage 2: return playing;
+        (void)playing;
+        return false;
+    }
+    (void)playing;
+    return false;
+}
+
 /// RC-W1 wrap resets live compose bookkeeping so the next OVERDUBBING frame
 /// rebuilds the committed prefix. It must not drop the composed DisplayNote
 /// vector — a stop before that frame has nothing to hold

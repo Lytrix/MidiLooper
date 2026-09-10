@@ -45,8 +45,9 @@ bool visualCacheCoversFollowWindow(const Loop& loop, uint32_t windowStart, uint3
 
 uint8_t resolveTrackIndex(const Track& track);
 
-/// `allowWrapContinuation`: false during growing live record and overdub
-/// (session wrap must not extend a held ON to loop end).
+/// `allowWrapContinuation`: policy from
+/// `DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation`. Stage 1
+/// keeps OVERDUBBING → false (growing RECORD stays false).
 void applyCapturePlayheadTails(const CapturePreview& preview, uint32_t loopLength,
                                uint32_t closeTick, size_t captureRegionStart,
                                NoteUtils::DisplayNoteVec& notes, bool allowWrapContinuation = true);

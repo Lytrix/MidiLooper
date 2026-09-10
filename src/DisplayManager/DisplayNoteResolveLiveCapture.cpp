@@ -874,12 +874,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             const uint32_t tailsStartUs = micros();
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
-            // Growing RECORD has no sealed loop wrap. Overdub session wrap jumps
-            // playhead to S; a held tail ON then extends to loop end until NoteOff
-            // (012925 note 30). Linear playhead close only — no wrap tail or head.
+            // Growing RECORD has no sealed loop wrap. Stage 1 keeps OVERDUBBING
+            // wrap continuation off (012925 note 30 linear close). Stage 2 flips
+            // OVERDUBBING+PLAYING under shouldAllowCapturePlayheadWrapContinuation.
             const bool allowWrapContinuation =
-                !track.isOverdubbing() &&
-                !(track.isRecording() && !track.isPlaying());
+                DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
+                    track.isRecording(), track.isPlaying() || track.isOverdubbing(),
+                    track.isOverdubbing());
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);

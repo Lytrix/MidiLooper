@@ -1,6 +1,6 @@
 # Overdub live wrap — open loop-end playhead tail display
 
-**Status:** Plan **APPROVED** (2026-09-10) — pin **(c) both**; Stage 0 next  
+**Status:** Stage 1 SHIPPED (2026-09-10) — predicate wired, OVERDUBBING still NO  
 **Separate from:** OpenSpec 4.6 Stage 4 (`742852ec`)  
 **Observed:** HITL / manual second overdub — note held across loop end loses the
 growing tail (`On → endTick = currentTick`); OLED shows only the wrapped head
@@ -152,17 +152,21 @@ the policy input to that owner.
    wrap and LOOP_EDIT drops the tail again.
 4. Do not start Stage 1 until A/B/C **and** the NOTE/LOOP fork are logged.
 
-### Stage 1 — Policy predicate (behavior unchanged)
+### Stage 1 — Policy predicate (behavior unchanged) — SHIPPED
 
 Add `shouldAllowCapturePlayheadWrapContinuation` next to existing display-window
 helpers with the truth table above. Wire call sites to the predicate; **keep
 OVERDUBBING → NO** until Stage 2 so Stage 1 is behavior-preserving.
 
-Native: full truth-table tests.
+Native: full truth-table tests
+(`test_should_allow_capture_playhead_wrap_continuation_stage1_truth_table`).
+Call sites pass `playing = isPlaying() || isOverdubbing()` because
+`Track::isPlaying()` is false while `trackState == OVERDUBBING`.
 
 ### Stage 2 — Enable OVERDUBBING wrap continuation for open preview paint
 
-Flip OVERDUBBING + PLAYING → **YES** under the predicate.
+Flip OVERDUBBING + PLAYING → **YES** under the predicate (`return playing` in
+the overdubbing branch).
 `applyCapturePlayheadTails` remains owner; paint-only
 (`capturePlayheadTailsArePaintOnly`).
 

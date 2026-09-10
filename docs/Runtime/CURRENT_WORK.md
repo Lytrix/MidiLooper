@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (Overdub live wrap playhead-tail plan APPROVED (c); Stage 0 next; 4.6 Stage 4 SHIPPED)
+Last updated: 2026-09-10 (Overdub live wrap playhead-tail Stage 1 SHIPPED; Stage 2 next; 4.6 Stage 4 SHIPPED)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,9 +10,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub live wrap playhead-tail display — plan APPROVED (c).**
+**Now — Overdub live wrap playhead-tail display — Stage 1 SHIPPED; Stage 2 next.**
 Pin: pre-wrap `On→currentTick` **and** post-wrap `On→loopEnd` + `0→currentTick`;
-STOPPED geometry-equivalent. Stage 0 = A/B/C capture proofs next.
+STOPPED geometry-equivalent. Stage 1: `shouldAllowCapturePlayheadWrapContinuation`
+wired (OVERDUBBING still NO). Stage 2: flip OVERDUBBING+PLAYING → YES.
 Plan: [`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
 Do not touch 4.6, DEC-051 seal, gather stash, or Occupy.
 
