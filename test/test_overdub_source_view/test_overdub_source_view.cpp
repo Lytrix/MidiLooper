@@ -4053,6 +4053,7 @@ void test_ready_fallback_cache_does_not_override_current_snapshot() {
   TEST_ASSERT_EQUAL_STRING("passes", loop.rebuildOverdubSourceSpanCacheForTest());
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
   TEST_ASSERT_EQUAL_UINT32(0u, loop.overdubSourceSpanCachePublishedRevisionForTest());
+  TEST_ASSERT_NULL(loop.overdubSourceSpanCachePublishedIdentityForTest());
   const NoteUtils::DisplayNote* fallback = findSpanCacheNote(loop, 1);
   TEST_ASSERT_NOT_NULL(fallback);
   TEST_ASSERT_EQUAL_UINT32(58u, fallback->endTick);
@@ -4087,6 +4088,8 @@ void test_snapshot_stamped_span_cache_is_reused() {
   TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReusableForTest());
   TEST_ASSERT_EQUAL_UINT32(loop.publishedSnapshotRevision(),
                            loop.overdubSourceSpanCachePublishedRevisionForTest());
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(),
+                        loop.overdubSourceSpanCachePublishedIdentityForTest());
 
   loop.openOverdubSession(0);
   loop.establishOverdubSourceView(0);
@@ -4095,6 +4098,43 @@ void test_snapshot_stamped_span_cache_is_reused() {
   TEST_ASSERT_EQUAL_UINT32(128u, occupy->endTick);
   TEST_ASSERT_EQUAL_UINT32(loop.publishedSnapshotRevision(),
                            loop.overdubSourceSpanCachePublishedRevisionForTest());
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(),
+                        loop.overdubSourceSpanCachePublishedIdentityForTest());
+}
+
+/// OpenSpec 4.6 Stage 3: same playback/published revision with a replaced root
+/// must not reuse a span cache stamped from identity A.
+void test_span_cache_identity_stale_when_published_root_replaced_same_revision() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  seedRecordNote(loop, 10, 58, 60);
+  const uint32_t revisionR = loop.playbackRevision;
+  const ImmutableLoopSnapshotRef snapshotA =
+      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 128);
+  loop.storePublishedSnapshotForTest(snapshotA, revisionR);
+  TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReusableForTest());
+  const void* identityA = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_EQUAL_PTR(identityA, loop.overdubSourceSpanCachePublishedIdentityForTest());
+  TEST_ASSERT_EQUAL_UINT32(128u, findSpanCacheNote(loop, 1)->endTick);
+
+  const ImmutableLoopSnapshotRef snapshotB =
+      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 10, 176);
+  TEST_ASSERT_TRUE(snapshotB.get() != snapshotA.get());
+  loop.storePublishedSnapshotForTest(snapshotB, revisionR);
+  TEST_ASSERT_EQUAL_UINT32(revisionR, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIdentity() != identityA);
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReadyForTest());
+  TEST_ASSERT_FALSE(loop.overdubSourceSpanCacheReusableForTest());
+
+  TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
+  TEST_ASSERT_TRUE(loop.overdubSourceSpanCacheReusableForTest());
+  TEST_ASSERT_EQUAL_PTR(loop.publishedSnapshotIdentity(),
+                        loop.overdubSourceSpanCachePublishedIdentityForTest());
+  TEST_ASSERT_EQUAL_UINT32(176u, findSpanCacheNote(loop, 1)->endTick);
 }
 
 void test_occupy_predicate_false_uses_prepared_not_snapshot() {
@@ -4708,6 +4748,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);
   RUN_TEST(test_ready_fallback_cache_does_not_override_current_snapshot);
   RUN_TEST(test_snapshot_stamped_span_cache_is_reused);
+  RUN_TEST(test_span_cache_identity_stale_when_published_root_replaced_same_revision);
   RUN_TEST(test_occupy_predicate_false_uses_prepared_not_snapshot);
   RUN_TEST(test_occupy_predicate_false_stale_snapshot_uses_visual_not_snapshot);
   RUN_TEST(test_occupy_follows_snapshot_change_while_visual_stale);

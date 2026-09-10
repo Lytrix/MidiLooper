@@ -1,6 +1,6 @@
 # Immutable loop snapshot — OpenSpec 4.6 snapshot-identity freshness
 
-**Status:** Stage 2 **SHIPPED** (2026-09-10). Stage 3 **next**. Stage 1 **SHIPPED**.  
+**Status:** Stage 3 **SHIPPED** (2026-09-10). Stage 4 **next** (NOTE_EDIT committed-base cache keys). Stages 1–2 **SHIPPED**.  
 **OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open)  
 **Parent:** 4.5 SHIPPED ([`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md)).  
 **Does not start:** §5 undo/load format, §6 compatibility retirement, hydrate 4b–5, raise `N`, new scheduler / `RuntimeWorkBudget::admit`, Phase 2/3 of the PassMaterialize deferral roadmap.
@@ -14,7 +14,7 @@
 | Playback already identity-stamps | `PlaybackMergedMidiEvents.builtFromSnapshotIdentity` + match in `ensurePlaybackMergedMidiEventsBuilt` |
 | VisualCache freshness revision-only | **Closed Stage 1** — now `builtFromRevision` + `builtFromSnapshotIdentity` |
 | DrawSource uses revision + current flag | **Closed Stage 2** — `publishedSnapshotIdentity` on `DrawSourceGatherKey` |
-| Overdub span reuse | `overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision()` when current — revision, not identity |
+| Overdub span reuse | **Closed Stage 3** — `overdubSourceSpanCachePublishedIdentity_` |
 | NOTE_EDIT projection keys | `playbackRevision` + `visualCache.revision` (RC-A changed **source selection**, not freshness keys) |
 | `legacyMidiEventsFromCommitted` | Always `materializeEditViewFromPasses` keyed by `playbackRevision` |
 
@@ -159,6 +159,8 @@ draw-source request; new owner/scheduler.
 OpenSpec `4.6` remains **unchecked** until remaining Stage 3+ freshness
 consumers (and §5 exclusion note) are done.
 
+### Stage 3 — Overdub span-cache reuse identity — SHIPPED
+
 **Field:** `overdubSourceSpanCachePublishedIdentity_` beside
 `overdubSourceSpanCachePublishedRevision_`. Stamp non-null
 `publishedSnapshotIdentity()` when fill origin is `"snapshot"`; else `nullptr`.
@@ -167,10 +169,21 @@ match **and** identity match (non-null). When no current root, keep today’s
 ready-cache reuse (`publishedSnapshotIsCurrent()` false → reusable if ready).
 
 **Primary native proof:** A→B at fixed playback/published revision ⇒ span cache
-not reusable; rebuild fills from B.
+not reusable; rebuild fills from B
+(`test_span_cache_identity_stale_when_published_root_replaced_same_revision`).
 
 **Falsify Stage 3 if:** identity ignored across A→B at same R; PassMaterialize on
 occupy request; new owner/scheduler.
+
+### Stage 3 closeout (2026-09-10)
+
+| Gate | Result |
+|---|---|
+| Native A→B@R span cache | PASS (`test_overdub_source_view`) |
+| Full `pio test -e native` | **1823 succeeded, 1 skipped** |
+| RAM1 locals | **7008** |
+| HITL `base` | **PASS** [`155756`](../../captures/session_20260910_155756.log) |
+| HITL occupy | Machine **PASS** [`160337`](../../captures/session_20260910_160337.log) — shorten=5 hide=4 undo=2 redo=2; process exit non-zero from base `persistence_stage_missing:dispatch` only |
 
 ### Stage 4+ (ordered, separate commits)
 

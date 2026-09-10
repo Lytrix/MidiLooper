@@ -936,6 +936,7 @@ void Loop::replaceOverdubSourceViewNotesForTest(NoteUtils::DisplayNoteVec notes)
   overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
   overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
   overdubSourceSpanCachePublishedRevision_ = 0;
+  overdubSourceSpanCachePublishedIdentity_ = nullptr;
   overdubSourceSpanCacheValid_ = true;
   overdubSourceSpanCacheFullLoop_ = false;
   overdubSourceViewLoopLengthTicks_ = loopLengthTicks;
@@ -973,7 +974,9 @@ LOOP_COLD_MEM bool Loop::overdubSourceSpanCacheReusable() const {
   if (!publishedSnapshotIsCurrent()) {
     return true;
   }
-  return overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision();
+  return overdubSourceSpanCachePublishedRevision_ == publishedSnapshotRevision() &&
+         overdubSourceSpanCachePublishedIdentity_ != nullptr &&
+         overdubSourceSpanCachePublishedIdentity_ == publishedSnapshotIdentity();
 }
 
 LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart,
@@ -990,6 +993,7 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   overdubSourceSpanCacheLoopLengthTicks_ = loopLengthTicks;
   overdubSourceSpanCachePlaybackRevision_ = playbackRevision;
   overdubSourceSpanCachePublishedRevision_ = 0;
+  overdubSourceSpanCachePublishedIdentity_ = nullptr;
   overdubSourceSpanCacheValid_ = true;
   overdubSourceSpanCacheFullLoop_ = false;
   if (loopLengthTicks == 0) {
@@ -1117,6 +1121,8 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   }
   overdubSourceSpanCachePublishedRevision_ =
       std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotRevision() : 0;
+  overdubSourceSpanCachePublishedIdentity_ =
+      std::strcmp(sourceOrigin, "snapshot") == 0 ? publishedSnapshotIdentity() : nullptr;
   return sourceOrigin;
 }
 
@@ -2121,6 +2127,7 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
     // Do not reuse a stale pre-commit cache after a failed restamp.
     overdubSourceSpanCacheValid_ = false;
     overdubSourceSpanCachePublishedRevision_ = 0;
+    overdubSourceSpanCachePublishedIdentity_ = nullptr;
   }
 #if defined(SESSION_CAPTURE)
   if (spanCacheCanRestamp && spanCacheRestampAttempted) {
