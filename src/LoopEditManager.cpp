@@ -242,6 +242,10 @@ std::vector<uint32_t> LoopEditManager::buildLoopStartFaderPositions(const Track&
     return allPositions;
 }
 
+void LoopEditManager::armLoopFaderFeedbackIgnore() {
+    feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
+}
+
 void LoopEditManager::onLeaveLoopEditSession() {
     loopStartEditingTime = 0;
     loopStartEditingEnabled = false;
@@ -250,7 +254,7 @@ void LoopEditManager::onLeaveLoopEditSession() {
     loopStartSettleUntilMs_ = 0;
     pendingLoopLengthTicks_ = 0;
     loopLengthSettleUntilMs_ = 0;
-    feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
+    armLoopFaderFeedbackIgnore();
     sessionSlot_ = 255;
     logger.log(CAT_MIDI, LOG_DEBUG,
                "Loop edit session left — grace cleared, ignoring loop fader input briefly");
@@ -261,7 +265,7 @@ void LoopEditManager::reopenLoopEditSession(Track& track) {
 }
 
 void LoopEditManager::onEnterLoopEditSession(Track& track) {
-    feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
+    armLoopFaderFeedbackIgnore();
     captureSessionBaseline(track);
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
@@ -315,7 +319,7 @@ void LoopEditManager::onGlobalGeometryRestored(Track& track) {
     if (!isLoopEditMode() || sessionSlot_ >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
-    feedbackIgnoreUntilMs_ = millis() + LOOP_EDIT_FEEDBACK_IGNORE_MS;
+    armLoopFaderFeedbackIgnore();
     sendCurrentLoopStartPitchbend(track);
     sendCurrentLoopLengthCC(track);
     logger.log(CAT_MIDI, LOG_DEBUG,
@@ -401,6 +405,11 @@ void LoopEditManager::handleLoopStartFaderInput(int16_t pitchValue, Track& track
     }
     if (shouldIgnoreLoopFaderInput()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop start fader input ignored: session feedback settle");
+        return;
+    }
+    if (shouldIgnoreLoopGeometryFaderDuringCapture(track.isRecording(), track.isOverdubbing())) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Loop start fader input ignored: capture active (RECORDING/OVERDUBBING)");
         return;
     }
     const Loop& loop = trackManager.getSelectedLoop(track);
@@ -507,6 +516,11 @@ void LoopEditManager::handleLoopLengthInput(uint8_t ccValue, Track& track) {
     }
     if (shouldIgnoreLoopFaderInput()) {
         logger.log(CAT_MIDI, LOG_DEBUG, "Loop length input ignored: session feedback settle");
+        return;
+    }
+    if (shouldIgnoreLoopGeometryFaderDuringCapture(track.isRecording(), track.isOverdubbing())) {
+        logger.log(CAT_MIDI, LOG_DEBUG,
+                   "Loop length input ignored: capture active (RECORDING/OVERDUBBING)");
         return;
     }
     
