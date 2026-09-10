@@ -4059,6 +4059,53 @@ void test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405() {
                                "adopt must merge omitted id=27 into visual");
 }
 
+/// `202713`: Stage 3 reconstruct upsert re-admitted sealed Hide targets at OD2.
+/// Span cache must restore publication-miss id=27 and keep sealed Delete id=26 out.
+void test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 1;
+  loop.loopLengthTicks = 2304;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 1452, 1, 73, 100, 26));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1500, 1, 73, 0)));
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 1500, 1, 74, 100, 27));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(1554, 1, 74, 0)));
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = 28;
+
+  loop.storePublishedSnapshotForTest(
+      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 26, 73, 1452, 1500),
+      loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = 26;
+  hide.pitch = 73;
+  hide.startTick = 1452;
+  hide.endTick = 1500;
+  const EditPassId hideId =
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(hide), EditPassType::Note);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  EditPassIdList companions;
+  companions.push_back(hideId);
+  loop.recordLastOverdubSeal(1, companions, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+
+  loop.openOverdubSession(0);
+  const char* from = loop.rebuildOverdubSourceSpanCacheForTest();
+  TEST_ASSERT_TRUE_MESSAGE(std::strcmp(from, "snapshot") == 0 || std::strcmp(from, "passes") == 0,
+                           from);
+  TEST_ASSERT_NULL_MESSAGE(findSpanCacheNote(loop, 26),
+                           "sealed Hide must win over snapshot+merge upsert");
+  const NoteUtils::DisplayNote* restored = findSpanCacheNote(loop, 27);
+  TEST_ASSERT_NOT_NULL_MESSAGE(restored, "publication-miss id=27 must still merge in");
+  TEST_ASSERT_EQUAL_UINT32(74u, restored->note);
+}
+
 void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4823,6 +4870,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
   RUN_TEST(test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531);
   RUN_TEST(test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405);
+  RUN_TEST(test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);
   RUN_TEST(test_ready_fallback_cache_does_not_override_current_snapshot);

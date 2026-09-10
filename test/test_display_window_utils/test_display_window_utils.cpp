@@ -608,24 +608,58 @@ void test_should_retain_unpublished_visual_cache_over_stale_gather() {
 }
 
 void test_should_retain_visual_cache_over_incomplete_current_snapshot_gather() {
-  // 194531: current snapshot OD open notes=31 vs clean visual=32 (bar-crossing
+  // 194531: current snapshot OD open notes=31 vs visual=32 (bar-crossing
   // id 27). Unpublished-stale retain stays false when snapshot is current.
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
       true, true, 32u, 31u, false));
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, true, false, 32u, 31u));
+  // 204344: wrap marks visual dirty; incomplete current snapshot gather must
+  // still lose to the larger visual so id 27 does not blink out at lap start.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+      true, true, true, 50u, 48u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       false, true, false, 32u, 31u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, false, false, 32u, 31u));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, true, true, 32u, 31u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, true, false, 31u, 31u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, true, false, 0u, 31u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, true, false, 31u, 32u));
+}
+
+void test_should_heal_current_snapshot_draw_source_membership_205031() {
+  // OD1/OD2: current snapshot gather selected during capture — heal membership.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
+      true, true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
+      false, true, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
+      true, false, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
+      true, true, false));
+
+  NoteUtils::DisplayNoteVec dest;
+  NoteUtils::DisplayNote a{};
+  a.noteId = 26;
+  a.note = 73;
+  a.startTick = 1480;
+  a.endTick = 1541;
+  dest.push_back(a);
+  NoteUtils::DisplayNoteVec visual = dest;
+  NoteUtils::DisplayNote b{};
+  b.noteId = 27;
+  b.note = 74;
+  b.startTick = 1514;
+  b.endTick = 1570;
+  visual.push_back(b);
+  // Snapshot dest missing id 27; visual still has it (equal-count retain miss).
+  DisplayWindowUtils::mergeDisplayNotesByNoteId(dest, visual);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNotesContainNoteId(dest, 26));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNotesContainNoteId(dest, 27));
+  TEST_ASSERT_EQUAL(2u, dest.size());
 }
 
 void test_should_write_live_display_notes_on_transport_stop() {
@@ -2147,6 +2181,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
   RUN_TEST(test_should_retain_unpublished_visual_cache_over_stale_gather);
   RUN_TEST(test_should_retain_visual_cache_over_incomplete_current_snapshot_gather);
+  RUN_TEST(test_should_heal_current_snapshot_draw_source_membership_205031);
   RUN_TEST(test_should_write_live_display_notes_on_transport_stop);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
