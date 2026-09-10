@@ -10,19 +10,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**HITL framework hardening — Stages 0–4 shipped; `base` device PASS.**
+**Now — Immutable OpenSpec 4.5 — cross-gate verify.** HITL `base` PASS
+([`122812`](../../captures/session_20260910_122812.log)); `overdub_occupy_paint`
+PASS ([`123445`](../../captures/session_20260910_123445.log)). Compose `02`
+FAIL 13/14: same-pitch hold OK; `GEOM_APPLY,resolve` **61442 µs > 20000**
+([`124645`](../../captures/note_edit_overdub_compose_20260910_124645_serial.log)).
+Plan:
+[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
+
+**Prior — HITL framework hardening — Stages 0–4 shipped; `base` device PASS.**
 Host-only. Frozen verdict/action contract (`PASS` / `FAIL` /
 `INCONCLUSIVE_CAPTURE`; `CONFIRMED` / `ALREADY_SATISFIED` /
 `RECOVERY_FAILED` / `EVIDENCE_UNAVAILABLE`). Disproof only after the
 action wait timeout. Clear/arm/stop path: ARMED → transport → RECORDING
-(Record button 36; no Loops-row arm). [`122812`](../../captures/session_20260910_122812.log)
-`Result: PASS`. Plan:
+(Record button 36; no Loops-row arm). Plan:
 [`hitl_framework_hardening_refinement.md`](../Plans/hitl_framework_hardening_refinement.md).
-
-**Now — Immutable OpenSpec 4.5 — cross-gate verify.** Native host matrix
-green; HITL `base` PASS. Next: `overdub_occupy_paint` then
-`note_edit_overdub_compose` (`STIM-NE-OD-COMPOSE-02`). Plan:
-[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
 
 **Prior — NOTE_EDIT F1 select display lag — RC1 shipped (device PASS).**
 One `resolveFader1SelectTarget` per inbound F1 pitchbend.
