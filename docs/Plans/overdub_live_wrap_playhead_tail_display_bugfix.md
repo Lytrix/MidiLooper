@@ -1,11 +1,13 @@
 # Overdub live wrap — open loop-end playhead tail display
 
-**Status:** Plan only — **not implementing** until Stage 4 HITL gate closes  
+**Status:** Plan **APPROVED** (2026-09-10) — pin **(c) both**; Stage 0 next  
+**Separate from:** OpenSpec 4.6 Stage 4 (`742852ec`)  
 **Observed:** HITL / manual second overdub — note held across loop end loses the
 growing tail (`On → endTick = currentTick`); OLED shows only the wrapped head
 fragment. Display restores correctly at **STOPPED**.  
 **Not this:** DisplayNoteWindowGather stash (`preservedOverdubStopHandoff` only
-when `!captureActive`); LOOP_EDIT length-fader mid-capture gate (`766d1b33`).
+when `!captureActive`); LOOP_EDIT length-fader mid-capture gate (`766d1b33`);
+DEC-051 seal; Occupy/Shorten/Hide; 4.6 identity stamps.
 
 ## Debugging boundary
 
@@ -13,18 +15,15 @@ when `!captureActive`); LOOP_EDIT length-fader mid-capture gate (`766d1b33`).
 … → capturePreview open indices / wrapHeld state     ← trust unless logs disagree
  → allowWrapContinuation during OVERDUBBING          ← current investigation
  → applyCapturePlayheadTails linear vs wrap split
- → STOPPED reconstruct / seal                        ← out (already correct)
+ → STOPPED reconstruct / seal                        ← out (must stay equivalent)
 ```
-
-Do **not** reopen: length-fader capture gate; OpenSpec 4.6 Stage 4 identity
-stamps; stashed gather handoff; occupy Shorten/Hide geometry.
 
 ## Symptom (product)
 
-During **OVERDUBBING** (seen on second overdub), an open note whose On is near
-loop end should keep painting as a live playhead tail: **start = NoteOn**,
-**end = currentTick** (and after wrap, the documented live wrap split). Instead
-the tail disappears and only the post-wrap head segment remains until stop.
+During **OVERDUBBING**, an open capture-preview note near loop end should paint
+as a live playhead tail, then as the documented live wrap split after phase-0.
+Instead the pre-wrap tail disappears and only the post-wrap head remains until
+stop.
 
 ## Code fact (current tree)
 
@@ -35,84 +34,130 @@ allowWrapContinuation =
   !isOverdubbing() && !(isRecording() && !isPlaying())
 ```
 
-So **while OVERDUBBING, wrap continuation is off**. Linear close only
-(`DisplayNoteWindowGather` / `DisplayNoteResolveLiveCapture`, comment `012925`).
-
-Guide note: [`NOTE_WRAPPING_LOGIC.md`](../Guides/NOTE_WRAPPING_LOGIC.md) § Display
-states overdub wrap continuation is off; live RECORD growing also disables it.
-This plan asks whether **open-at-loop-end live paint** during overdub should
-still grow `endTick = currentTick` (and/or show head+tail after phase-0 wrap)
-without reopening seal/storage.
+So **while OVERDUBBING, wrap continuation is off** (linear close only —
+`DisplayNoteWindowGather` / `DisplayNoteResolveLiveCapture`, comment `012925`).
+Guide still documents that policy in
+[`NOTE_WRAPPING_LOGIC.md`](../Guides/NOTE_WRAPPING_LOGIC.md) § Display — this
+plan changes **open capture-preview paint policy for OVERDUBBING**, not seal.
 
 ## Stash check (closed)
 
-`stash@{0}` DisplayNoteWindowGather WIP:
+`stash@{0}` is **not** the fix: handoff requires `!captureActive()`; no
+`applyCapturePlayheadTails` edits.
 
-| Change | Applies during OD2? |
-|---|---|
-| `preservedOverdubStopHandoff` | **No** — requires `!captureActive()` |
-| Draw-source complete-snapshot / sealed union helpers | Selection only; **no** `applyCapturePlayheadTails` edits |
+## Desired invariant — pinned **(c) both**
 
-Stash is **not** the fix for this symptom.
+Prove **A** and **B** separately so a post-wrap pass cannot hide a pre-wrap
+regression.
 
-## Desired invariant (draft — pin before coding)
+### A — Before phase-0 wrap
 
 ```text
-While OVERDUBBING, an open capturePreview note whose On is still in the
-current loop cycle paints endTick = playhead (currentTick), including when
-the On is near loop end. After phase-0 wrap of that held note, live paint
-follows LivePlayhead wrap split (tail + head) unless a sealed reason
-forbids it — seal/storage unchanged.
+On near loop end
+currentTick > On
+currentTick < loopEnd
+
+expected paint:
+  NoteOn → currentTick
 ```
 
-Pin with user before firmware: is the missing piece (a) pre-wrap growing tail
-only, (b) post-wrap head+tail live split, or (c) both?
+### B — After phase-0 wrap (same still-open note)
 
-## Architecture checkpoint (pre-impl)
+```text
+same open capture-preview note
+phase crosses 0
 
-| Question | Expected |
+expected paint:
+  NoteOn → loopEnd
+  loopStart → currentTick
+```
+
+### C — STOPPED
+
+```text
+stop after the same hold
+
+expected:
+  existing sealed/reconstructed result, geometry-equivalent to pre-fix
+```
+
+Diagnostic:
+
+| Result | Meaning |
 |---|---|
-| Ownership change? | **NO** — extend `applyCapturePlayheadTails` / `allowWrapContinuation` policy |
-| State-transition change? | **NO** — no seal / wrap-commit / DEC-051 change |
+| **A fails** | live-tail application itself is wrong |
+| **A passes, B fails** | wrap-continuation policy/path only |
+| **A and B pass, C changes** | crossed display-only boundary — **stop** |
+
+## Policy truth table (pinned)
+
+Define `shouldAllowCapturePlayheadWrapContinuation(recording, playing, overdubbing)`
+from **capture state** — not a generic “enable wrap” switch.
+**OVERDUBBING is a specific exception for open capture-preview paint.**
+
+| State | Live playhead tail | Wrap continuation |
+|---|---:|---:|
+| RECORDING, not playing | yes | **NO** |
+| RECORDING + PLAYING | yes | **NO** |
+| OVERDUBBING + PLAYING | yes | **YES** |
+| stopped | n/a | existing stopped path |
+| sealed/closed capture | no live tail | existing behavior |
+
+`applyCapturePlayheadTails` remains the owner; `allowWrapContinuation` is only
+the policy input to that owner.
+
+## Architecture checkpoint
+
+| Question | Answer |
+|---|---|
+| Ownership change? | **NO** — extend `applyCapturePlayheadTails` policy only |
+| State-transition change? | **NO** — no seal / wrap-commit / DEC-051 |
 | Unbounded MIDI-interval owner? | **NO** |
 
-Formal trigger only if the fix moves wrap seal ownership or enables wrap
-continuation globally without a capture-scoped predicate.
+## Stages
 
-## Proposed stages (after pin)
+### Stage 0 — Capture proof (A / B / C)
 
-### Stage 0 — Capture proof
+1. HITL or manual OD2 hold across loop end.
+2. Dump `#CAP` / `DNTE` (or equivalent) for the open pitch at **A**, **B**, and
+   **C**; confirm current `allowWrapContinuation == false` on OVERDUBBING frames.
+3. Do not start Stage 1 until A/B/C expectations are logged against today’s
+   wrong paint.
 
-1. HITL or manual OD2 hold across loop end; dump `#CAP` / `DNTE` for the open
-   pitch before wrap, at wrap, and after wrap vs STOPPED.
-2. Confirm `allowWrapContinuation == false` on those frames (log or native
-   fixture mirroring the policy).
+### Stage 1 — Policy predicate (behavior unchanged)
 
-### Stage 1 — Policy predicate
+Add `shouldAllowCapturePlayheadWrapContinuation` next to existing display-window
+helpers with the truth table above. Wire call sites to the predicate; **keep
+OVERDUBBING → NO** until Stage 2 so Stage 1 is behavior-preserving.
 
-Replace the blanket `!isOverdubbing()` with an explicit predicate, e.g.
-`shouldAllowCapturePlayheadWrapContinuation(recording, playing, overdubbing)`
-owned next to existing display-window helpers. Default behavior unchanged until
-Stage 2 flips the overdub case under test.
+Native: full truth-table tests.
 
-Native: table tests for RECORD growing / OVERDUBBING / PLAYING.
+### Stage 2 — Enable OVERDUBBING wrap continuation for open preview paint
 
-### Stage 2 — Overdub live open tail (+ optional wrap split)
+Flip OVERDUBBING + PLAYING → **YES** under the predicate.
+`applyCapturePlayheadTails` remains owner; paint-only
+(`capturePlayheadTailsArePaintOnly`).
 
-Enable the pinned behavior for OVERDUBBING open preview notes only.
-`applyCapturePlayheadTails` remains the owner; paint-only (`capturePlayheadTailsArePaintOnly`).
+**Identity-neutral acceptance:** the open capture-preview / open-note
+representation used for live painting is the **same** before and after wrap;
+the change only alters how `applyCapturePlayheadTails` projects it into the
+display window. Do not invent a second note/head identity to “fix” paint.
 
-Native fixture from Stage 0 slice. Device: dedicated HITL or base+manual hold;
-STOPPED frame must stay unchanged vs pre-fix.
+Native fixture from Stage 0. Device: dedicated HITL or base+manual hold.
+**C must remain geometry-equivalent to pre-fix.**
 
-### Explicit non-goals
+Update [`NOTE_WRAPPING_LOGIC.md`](../Guides/NOTE_WRAPPING_LOGIC.md) overdub live
+paint sentence when Stage 2 ships.
 
-- Popping DisplayNoteWindowGather stash as this fix  
+## Explicit non-goals
+
+- Popping DisplayNoteWindowGather stash  
 - Changing wrap seal at phase 0 (DEC-051)  
 - Occupy resolve / Shorten-Hide  
-- OpenSpec 4.6 identity stamps  
+- OpenSpec 4.6 / `legacyMidiEventsFromCommitted`  
+- Globally enabling wrap continuation outside open capture-preview OVERDUBBING  
 
-## Relation to OpenSpec 4.6 Stage 4
+## Approval
 
-Independent display bug. Gate Stage 4 with HITL `base` first; implement this
-plan only after Stage 4 closeout (or explicit user override).
+**APPROVED** with (c) pinned and Stage 0 split into pre-wrap / post-wrap /
+STOPPED proofs. Isolated capture-preview → display projection policy bug.
