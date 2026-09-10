@@ -1,9 +1,9 @@
 # Overdub start — current snapshot omits bar-crossing record note
 
-**Status:** Stages 1–2 SHIPPED — device HITL `base` PASS
-[`200405`](../../captures/session_20260910_200405.log): OD1 open
-`from=snapshot` **notes=33** (was 31); id 27 pitch 74 @ 1512–1570 present;
-no `draw_src` zero-diff for pitches 70–80; DISP no frame=31 drop.  
+**Status:** Stages 1–3 SHIPPED — device HITL `base` PASS
+[`202323`](../../captures/session_20260910_202323.log): OD1 `visual=33` (was 32);
+id 27 in OD1+OD2 `srcspan`; DISP OVERDUBBING starts `33,33,…`.  
+Prior Stage 1–2 pin [`200405`](../../captures/session_20260910_200405.log) (source merge only).  
 **Evidence (fail pin):** [`session_20260910_194531.log`](../../captures/session_20260910_194531.log)  
 **Parent / adjacent:** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) Option C (snapshot membership) — this RC is the **consumer** completeness fix, not DEC-051 seal / wrap head-tail.
 
@@ -93,9 +93,19 @@ In `rebuildOverdubSourceSpanCache`, run `mergeOmittedCommittedNoteOnIdentities` 
 
 Native: source-view / take-survival fixture — snapshot missing one closed pair that events still contain → after `establishOverdubSourceView`, note present.
 
+### Stage 3 — Visual + adopt + full-loop snapshot reconstruct upsert (`200405`) — SHIPPED
+
+**Proof:** OD1 source has id 27; OLED/`DISP` `visual=32` never gains 74; post-stop `adopt_partial` notes=48 without 74; OD2 `srcspan` omits id 27 (mergeOmitted alone insufficient after OD1).
+
+1. `Loop::mergeOmittedCommittedNoteOnIdentitiesInto` — materialize + merge helper.
+2. Call after snapshot resolve in `rebuildVisualCacheFromPasses`, after snapshot bar copy / snapshot-event reconstruct in idle slices, and in `adoptComposedDisplayNotesFromViewport`.
+3. Full-loop `from=snapshot` also `mergeDisplayNotesByNoteId` from reconstruct (same as visual/prior origins) so OD2 source recovers identities mergeOmitted misses.
+
+Device [`202323`](../../captures/session_20260910_202323.log): OD1 `visual=33`; id 27 in OD1+OD2; native `test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405`.
+
 ### Out of scope (follow-up)
 
-- Why publish/apply omitted NoteId 27 (journal caps, open-note flush, membership apply) — new RC if Stage 1–2 pass and device still shows snapshot-only dumps missing the span.
+- Why publish/apply omitted NoteId 27 (journal caps, open-note flush, membership apply) — new RC if Stage 1–3 pass and device still shows snapshot-only dumps missing the span.
 - Option C wrap-held snapshot geometry (parent wrap plan).
 
 ## Validation

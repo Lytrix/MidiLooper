@@ -823,6 +823,16 @@ LOOP_COLD_MEM void mergeOmittedCommittedNoteOnIdentities(NoteUtils::DisplayNoteV
 
 }  // namespace
 
+LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesInto(
+    NoteUtils::DisplayNoteVec& dest) const {
+  if (loopLengthTicks == 0) {
+    return;
+  }
+  SessionMidiEventVec committedEvents;
+  passes.materializeToEventVector(committedEvents, loopLengthTicks);
+  mergeOmittedCommittedNoteOnIdentities(dest, committedEvents);
+}
+
 LOOP_COLD_MEM void Loop::appendLastCommittedOverdubPassToSourceView() {
   if (!overdubSourceViewEstablished_ || lastCommittedPassId_ == kInvalidPassId ||
       loopLengthTicks == 0) {
@@ -1072,8 +1082,10 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     if (mergeOmittedFromEvents) {
       SessionMidiEventVec committedEvents;
       passes.materializeToEventVector(committedEvents, loopLengthTicks);
-      if (std::strcmp(sourceOrigin, "passes") != 0 &&
-          std::strcmp(sourceOrigin, "snapshot") != 0) {
+      // Full-loop snapshot can omit a NoteRef while reconstruct still pairs
+      // (`200405` OD2: mergeOmitted alone left id=27 out after OD1). Upsert
+      // missing NoteIds from reconstruct; do not replace existing snapshot rows.
+      if (std::strcmp(sourceOrigin, "passes") != 0) {
         NoteUtils::DisplayNoteVec committedNotes =
             NoteUtils::reconstructDisplayNotes(committedEvents, loopLengthTicks, false, false);
         appendOverdubPassWrapPairedNotes(committedNotes);

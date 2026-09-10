@@ -268,7 +268,11 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToVisualCacheNotes() {
 }
 
 LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
-  adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, notes, loopLengthTicks,
+  DisplayNoteVec adopted = notes;
+  // Viewport compose during OD follows visual; if visual omitted a bar-crossing
+  // NoteRef, adopt would seal that hole into the next OD open (`200405` 48).
+  mergeOmittedCommittedNoteOnIdentitiesInto(adopted);
+  adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, adopted, loopLengthTicks,
                                Config::TICKS_PER_BAR);
   applyPendingNoteChangesToVisualCacheNotes();
   emitVisualCacheState("adopt_partial", -1);
@@ -357,6 +361,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (publishedSnapshotIsCurrent()) {
     if (const ImmutableLoopSnapshotRef snapshot = publishedSnapshot()) {
       appendSnapshotNotesForBarRange(*snapshot, startBar, endBar, sliceNotes);
+      // Snapshot bar membership can omit a closed NoteRef while events still
+      // pair (`200405`: visual stayed 32 without id=27). Merge before upsert.
+      mergeOmittedCommittedNoteOnIdentitiesInto(sliceNotes);
       usedSnapshot = true;
       lastVisualCacheIdleCopiedSnapshotNotes_ = true;
       lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Snapshot;
@@ -419,6 +426,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (!lastVisualCacheIdleCopiedSnapshotNotes_) {
     if (usedSnapshot || usedPrepared) {
       sliceNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+      if (usedSnapshot) {
+        mergeOmittedCommittedNoteOnIdentitiesInto(sliceNotes);
+      }
     } else {
       NoteUtils::DisplayNoteVec paired;
       LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
@@ -810,6 +820,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
     // reconstructed notes vs STOPPED resolve 75.
     if (const ImmutableLoopSnapshotRef snapshot = publishedSnapshot()) {
       LoopContentResolution::resolveDisplayNotes(*snapshot, rebuiltNotes);
+      mergeOmittedCommittedNoteOnIdentitiesInto(rebuiltNotes);
     } else {
       rebuiltNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
     }
