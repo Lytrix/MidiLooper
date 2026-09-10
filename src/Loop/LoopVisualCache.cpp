@@ -892,6 +892,40 @@ LOOP_COLD_MEM void Loop::retireSupersededPitchDisplayNote(uint8_t previousPitch,
   visualCache.notes.erase(newEnd, visualCache.notes.end());
 }
 
+LOOP_COLD_MEM void Loop::keepCommittedMoverInVisualCache(NoteId noteId, uint8_t pitchHint) {
+  if (noteId == kInvalidNoteId) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& note : visualCache.notes) {
+    if (note.noteId == noteId) {
+      return;
+    }
+  }
+  auto keepFrom = [&](const ImmutableLoopSnapshotRef& snapshot) -> bool {
+    if (!snapshot) {
+      return false;
+    }
+    const LoopSnapshotNoteRef ref = snapshot->findNote(noteId, pitchHint);
+    if (!ref) {
+      return false;
+    }
+    appendDisplayNoteUniqueById(visualCache.notes, displayNoteFromSnapshotNote(*ref));
+    const uint32_t endTick = ref->endTick >= ref->startTick ? ref->endTick : ref->startTick;
+    const uint32_t startBar = visualBarForTick(ref->startTick, Config::TICKS_PER_BAR);
+    const uint32_t endBar = visualBarForTick(endTick, Config::TICKS_PER_BAR);
+    for (uint32_t bar = startBar; bar <= endBar; ++bar) {
+      visualCache.markBarDirty(bar);
+    }
+    ++visualCache.revision;
+    emitVisualCacheState("keep_committed_mover", -1);
+    return true;
+  };
+  if (keepFrom(publishedSnapshot())) {
+    return;
+  }
+  (void)keepFrom(unpublishedSnapshot());
+}
+
 LOOP_COLD_MEM void Loop::ensureVisualCacheBuilt() {
   if (!visualCacheDirty) {
     return;

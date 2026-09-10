@@ -1448,6 +1448,52 @@ void test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes() {
   TEST_ASSERT_EQUAL(resolved[0].endTick, loop.visualCache.notes[0].endTick);
 }
 
+void test_keep_committed_mover_in_visual_cache_232309() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 64, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(192, 1, 67, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(240, 1, 67, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(240, 1, 55, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(289, 1, 55, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 289));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  loop.invalidateDisplayCaches();
+  loop.rebuildVisualCacheFromPasses();
+  TEST_ASSERT_EQUAL(3u, loop.visualCache.notes.size());
+  NoteId moverId = kInvalidNoteId;
+  for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {
+    if (note.note == 55 && note.startTick == 240) {
+      moverId = note.noteId;
+      break;
+    }
+  }
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, moverId);
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshot()->findNote(moverId, 55).get());
+
+  auto newEnd = std::remove_if(loop.visualCache.notes.begin(), loop.visualCache.notes.end(),
+                               [moverId](const NoteUtils::DisplayNote& note) {
+                                 return note.noteId == moverId;
+                               });
+  loop.visualCache.notes.erase(newEnd, loop.visualCache.notes.end());
+  TEST_ASSERT_EQUAL(2u, loop.visualCache.notes.size());
+  TEST_ASSERT_NULL(findDisplayNoteById(loop.visualCache.notes, moverId));
+
+  loop.keepCommittedMoverInVisualCache(moverId, 55);
+  TEST_ASSERT_EQUAL(3u, loop.visualCache.notes.size());
+  const NoteUtils::DisplayNote* kept = findDisplayNoteById(loop.visualCache.notes, moverId);
+  TEST_ASSERT_NOT_NULL(kept);
+  TEST_ASSERT_EQUAL_UINT8(55, kept->note);
+  TEST_ASSERT_EQUAL_UINT32(240u, kept->startTick);
+}
+
 void test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4791,6 +4837,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_playback_gather_reads_published_snapshot_with_fallback);
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
   RUN_TEST(test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes);
+  RUN_TEST(test_keep_committed_mover_in_visual_cache_232309);
   RUN_TEST(test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans);
   RUN_TEST(test_rematerialize_edit_view_uses_snapshot_span_note_ids);
   RUN_TEST(test_copy_note_edit_commit_base_uses_snapshot_span_note_ids);

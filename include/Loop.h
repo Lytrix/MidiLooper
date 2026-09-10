@@ -662,6 +662,8 @@ struct Loop {
   void retireSupersededPitchDisplayNote(uint8_t previousPitch, uint32_t startTick, uint32_t endTick,
                                         uint8_t settledPitch, const uint32_t* retainedEndTicks = nullptr,
                                         size_t retainedEndTickCount = 0);
+  /// After pass flatten drops a committed mover that snapshot spans still have (`232309`).
+  void keepCommittedMoverInVisualCache(NoteId noteId, uint8_t pitchHint);
   void ensureVisualCacheBuilt();
   void markDisplayCachesStale();
   /// Dirty only bars touched by `committedPassId` and companion edit rows. Used by overdub stop

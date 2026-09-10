@@ -141,6 +141,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
     loop.retireSupersededPitchDisplayNote(previousHome.pitch, previousHome.startTick,
                                           previousHome.endTick, settled.pitch, retainedEndTicks,
                                           retainedEndTickCount);
+    loop.keepCommittedMoverInVisualCache(editSession.focus.movingNoteId, settled.pitch);
 
     track.invalidateCaches();
 

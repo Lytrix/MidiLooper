@@ -30,7 +30,7 @@ Each stage lists its owner and the only inputs it may trust. Same table as contr
 | 6 | Driver gate | see [Driver gate](#driver-gate-stage-6) — validate/rebuild Focus before geometry | stages 1 + 2 + 3 |
 | 7 | Geometry resolution | `NoteGeometryResolver` → `buildEditSessionActions` | Active participants + `baselineMap` + `EditedGeometry` |
 | 8 | Apply / write | `applyEditSessionActions` → current-state mutation → store projection | stage 7 actions only |
-| 9 | Commit | macro commit / `commitNoteEditPass` / `buildCommitRowsFromCurrentState` | stage 2 vs committed baseline |
+| 9 | Commit | macro commit / `commitNoteEditPass` / `buildCommitRowsFromCurrentState` | stage 2 vs committed baseline, plus parked Visible dirty rows; apply-owned if that build is empty |
 
 ### `NoteEditCurrentState` writers (split)
 
@@ -243,15 +243,24 @@ Owned by constrained-target determination + `constrainedGeometryFromRestoreCandi
 
 ## Commit / macro seal
 
-**Path:** `commitAllPendingNoteEditActions` → when current state non-empty, `buildCommitRowsFromCurrentState` (overlap rows only for Active participants).
+**Path:** `commitAllPendingNoteEditActions` → when current state non-empty, `buildCommitRowsFromCurrentState`. Same owner on empty-step deselect, F1 note-changed select (when not grace-deferred), overdub entry, and NOTE_EDIT exit (`cycleEditSession` / `exitEditMode`).
+
+Row sources, in order:
+
+1. Active overlap participants in `baselineMap` (hide / shorten / add). Pitch-only overlap diffs are skipped here.
+2. Current mover: `focus.last` vs `focus.commitBaseline`.
+3. Other Existing Visible current-state rows whose `currentSpan` differs from `committedSpan` — a parked previous mover after select-away. Skips the current `movingNoteId`, `Ended` participation, and unpainted loop-end Length (same skip as overlap RC3).
+4. If that build is empty and `applyOwnedEditPassRows` is not, `buildCommitRowsFromApplyOwned` — do not clear apply-owned without a `commitEditAction`.
 
 - Macro commit seals overlap geometry into passes and may `syncCommittedSpan` so leave-restore does not flash a pre-shorten length.
 - **An active overlap closure does not defer the seal.** A parked mover still covers the span it shortened, so gating the row on closure meant the shorten never sealed at the commit the user triggers. Closure defers **leave-restore** only. `commitEditAction` reloads the session store from committed passes, so a skipped row is lost, not postponed.
 - A sealed row must replay **as stored** — see the row payload invariant in [`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](LOOP_MIDI_STORAGE_AND_VALIDATION.md). A note edited across two commits (moved in one session, shortened or moved again in a later one) has two rows for the same `targetNoteId`; the newer row's span wins.
-- F1 select / empty-step deselect may seal pending mover geometry when bracket-aligned (`isMacroCommitAlignedWithSelectTarget`).
+- F1 select / empty-step deselect may seal pending mover geometry when bracket-aligned (`isMacroCommitAlignedWithSelectTarget`). Select during `NOTE_SELECTION_GRACE_PERIOD` (750 ms after geometry) skips that seal; exit must still persist the parked note’s current span ([`223532`](../../captures/session_20260909_223532.log)).
 - Empty-step deselect can call sticky clear (`Ended`) without rewriting shortened `currentSpan`.
+- Close bake keeps already-committed `editPassIds` (DEC-037). Display-diff replace must not invent persist when the commit builder dropped a parked row.
+- After `commitEditAction`, `rebuildVisualCacheFromPasses` then `retireSupersededPitchDisplayNote` may leave the settled mover out of `visualCache.notes` while snapshot spans still have it (`232309` `pairrows,at=spans,count=8` vs `VCACHE,full notes,7`). `Loop::keepCommittedMoverInVisualCache` copies that `NoteId` from `publishedSnapshot()` (else `unpublishedSnapshot()`) onto the same post-commit cache. It does not rematerialize the session store and is not a second display owner.
 
-Legacy `buildPreCommitEditPasses` (live-store diff) remains a fallback/parity path and also gates overlap rows on current-state participation when provided.
+Legacy `buildPreCommitEditPasses` (live-store diff) remains a fallback/parity path and also gates overlap rows on current-state participation when provided. It uses the same parked-Visible append as `buildCommitRowsFromCurrentState`.
 
 ---
 
