@@ -10,13 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.5 — cross-gate verify.** HITL `base` PASS
-([`122812`](../../captures/session_20260910_122812.log)); `overdub_occupy_paint`
-PASS ([`123445`](../../captures/session_20260910_123445.log)). Compose `02`
-FAIL 13/14: same-pitch hold OK; `GEOM_APPLY,resolve` **61442 µs > 20000**
+**Now — Immutable OpenSpec 4.5 — compose PASS after RC-A.** HITL
+`note_edit_overdub_compose` STIM-NE-OD-COMPOSE-02 **14/14**
+([`142119`](../../captures/note_edit_overdub_compose_20260910_142119_serial.log)):
+`resolve` 8123 µs, `reconstruct` 2837 µs. RC1: preview not in committed-base
+key; bump does not full-invalidate. RC-A: selector is Snapshot|VisualCache
+only — no PassMaterialize on the Runtime Request. Plan:
+[`note_edit_apply_passmaterialize_deferral_bugfix.md`](../Plans/note_edit_apply_passmaterialize_deferral_bugfix.md).
+Prior compose fail: resolve 61442
 ([`124645`](../../captures/note_edit_overdub_compose_20260910_124645_serial.log)).
-Plan:
-[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
+`base` PASS [`122812`](../../captures/session_20260910_122812.log);
+`overdub_occupy_paint` PASS [`123445`](../../captures/session_20260910_123445.log).
 
 **Prior — HITL framework hardening — Stages 0–4 shipped; `base` device PASS.**
 Host-only. Frozen verdict/action contract (`PASS` / `FAIL` /

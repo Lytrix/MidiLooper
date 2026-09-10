@@ -62,15 +62,15 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     const uint32_t previewRevision = sessionPreviewRevision_;
     const uint32_t displayFingerprint =
         noteEditDisplayCacheFingerprint(focus, &editSession.noteEditCurrentState);
-    const bool committedBaseKeysMatch =
-        previewRevision == noteEditSelectableDisplayCachePreviewRevision_ &&
-        loopLength == noteEditSelectableDisplayCacheLoopLength_ &&
-        playbackRevision == noteEditSelectableDisplayCachePlaybackRevision_ &&
-        visualRevision == noteEditSelectableDisplayCacheVisualRevision_;
-    const bool paintKeysMatch =
-        displayFingerprint == noteEditSelectableDisplayCacheFingerprint_ &&
-        selectedNoteIdx == noteEditSelectableDisplayCacheSelectedNoteIdx_ &&
-        captureRevision == noteEditSelectableDisplayCacheCaptureRevision_;
+    const bool committedBaseKeysMatch = DisplayWindowUtils::noteEditCommittedBaseKeysMatch(
+        loopLength, noteEditSelectableDisplayCacheLoopLength_, playbackRevision,
+        noteEditSelectableDisplayCachePlaybackRevision_, visualRevision,
+        noteEditSelectableDisplayCacheVisualRevision_);
+    const bool paintKeysMatch = DisplayWindowUtils::noteEditPaintKeysMatch(
+        displayFingerprint, noteEditSelectableDisplayCacheFingerprint_, selectedNoteIdx,
+        noteEditSelectableDisplayCacheSelectedNoteIdx_, captureRevision,
+        noteEditSelectableDisplayCacheCaptureRevision_, previewRevision,
+        noteEditSelectableDisplayCachePreviewRevision_);
     const DisplayWindowUtils::NoteEditProjectionCacheReuse cacheReuse =
         DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
             !noteEditCommittedDisplayCacheNotes_.empty(), committedBaseKeysMatch,
@@ -80,10 +80,11 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     }
 
     if (cacheReuse == DisplayWindowUtils::NoteEditProjectionCacheReuse::RebuildCommittedBase) {
-        // Snapshot / visual cache / pass materialize only. Live Capture is
-        // capturePreview overlay on paint and overlap analyze — do not
-        // rebuildDisplayNotesInWindow([0, loopLength)) here (`170818`).
-        // Do not rematerialize EditSession.store.
+        // Snapshot when dirty+current; otherwise VisualCache (may be stale —
+        // dirty is idle debt). Live Capture is capturePreview overlay on paint —
+        // do not rebuildDisplayNotesInWindow([0, loopLength)) here (`170818`).
+        // Do not rematerialize EditSession.store. Request path must not
+        // PassMaterialize / materializeToEventVector (RC-A).
         NoteUtils::DisplayNoteVec materializedCommittedBase;
         const NoteUtils::DisplayNoteVec* committedBase = nullptr;
         const DisplayWindowUtils::NoteEditCommittedBaseKind baseKind =
@@ -97,14 +98,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
                 committedBase = &materializedCommittedBase;
             }
             break;
-        case DisplayWindowUtils::NoteEditCommittedBaseKind::PassMaterialize: {
-            MidiEventVec flat;
-            loop.passes.materializeToEventVector(flat, loopLength);
-            materializedCommittedBase =
-                NoteUtils::reconstructDisplayNotes(flat, loopLength, false, false);
-            committedBase = &materializedCommittedBase;
-            break;
-        }
         case DisplayWindowUtils::NoteEditCommittedBaseKind::VisualCache:
             committedBase = &track.getVisualNotesForSlot(slot);
             break;
@@ -113,12 +106,12 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
             committedBase = &track.getVisualNotesForSlot(slot);
         }
         noteEditCommittedDisplayCacheNotes_ = *committedBase;
-        noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
         noteEditSelectableDisplayCacheLoopLength_ = loopLength;
         noteEditSelectableDisplayCachePlaybackRevision_ = playbackRevision;
         noteEditSelectableDisplayCacheVisualRevision_ = loop.visualCache.revision;
     }
 
+    noteEditSelectableDisplayCachePreviewRevision_ = previewRevision;
     noteEditSelectableDisplayCacheFingerprint_ = displayFingerprint;
     noteEditSelectableDisplayCacheSelectedNoteIdx_ = selectedNoteIdx;
     noteEditSelectableDisplayCacheCaptureRevision_ = captureRevision;

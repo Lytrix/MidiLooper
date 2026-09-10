@@ -126,8 +126,10 @@ inline bool shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
                                             visualCacheDirty);
 }
 
-/// NOTE_EDIT paint/select dirty committed base. A current snapshot replaces
-/// pass materialize for that base only. Commit rematerialize stays on passes.
+/// NOTE_EDIT paint/select committed base for the Runtime Request.
+/// Current snapshot when dirty+current; otherwise VisualCache (may be stale —
+/// dirty records idle maintenance debt). Request path must not PassMaterialize.
+/// Commit rematerialize stays on explicit non-request owners.
 /// Live Capture is `capturePreview` overlay — not a committed-base rebuild.
 inline bool shouldResolveNoteEditCommittedBaseFromSnapshot(bool visualCacheDirty,
                                                            bool publishedSnapshotIsCurrent) {
@@ -136,20 +138,42 @@ inline bool shouldResolveNoteEditCommittedBaseFromSnapshot(bool visualCacheDirty
 
 enum class NoteEditCommittedBaseKind {
   Snapshot,
-  PassMaterialize,
   VisualCache,
-  CaptureAwareGather,
+  CaptureAwareGather,  // leftover; selector never returns this
 };
 
 /// Live Capture does not pick the committed-base kind. `CaptureAwareGather` is
-/// leftover: apply overlays `capturePreview` on Snapshot / VisualCache /
-/// PassMaterialize (`170818` full-loop gather on every capture revision).
+/// leftover: apply overlays `capturePreview` on Snapshot / VisualCache
+/// (`170818` full-loop gather on every capture revision).
 /// `145634`: fingerprint / selected-note changes must not rebuild the base.
+/// RC1 / compose `124645`: `sessionPreviewRevision` is a paint key only — not a
+/// committed-base key.
+/// RC-A: selector result space is Snapshot | VisualCache only — never
+/// PassMaterialize (stale snapshot must not force content-sized rebuild).
 enum class NoteEditProjectionCacheReuse {
   FullHit,
   ReprojectFromCommittedBase,
   RebuildCommittedBase,
 };
+
+inline bool noteEditCommittedBaseKeysMatch(uint32_t loopLength, uint32_t cachedLoopLength,
+                                           uint32_t playbackRevision,
+                                           uint32_t cachedPlaybackRevision,
+                                           uint32_t visualRevision,
+                                           uint32_t cachedVisualRevision) {
+    return loopLength == cachedLoopLength && playbackRevision == cachedPlaybackRevision &&
+           visualRevision == cachedVisualRevision;
+}
+
+inline bool noteEditPaintKeysMatch(uint32_t displayFingerprint, uint32_t cachedFingerprint,
+                                   int selectedNoteIdx, int cachedSelectedNoteIdx,
+                                   uint16_t captureRevision, uint16_t cachedCaptureRevision,
+                                   uint32_t previewRevision, uint32_t cachedPreviewRevision) {
+    return displayFingerprint == cachedFingerprint &&
+           selectedNoteIdx == cachedSelectedNoteIdx &&
+           captureRevision == cachedCaptureRevision &&
+           previewRevision == cachedPreviewRevision;
+}
 
 inline NoteEditProjectionCacheReuse selectNoteEditProjectionCacheReuse(
     bool committedBasePresent, bool committedBaseKeysMatch, bool paintPresent,
@@ -163,6 +187,8 @@ inline NoteEditProjectionCacheReuse selectNoteEditProjectionCacheReuse(
     return NoteEditProjectionCacheReuse::RebuildCommittedBase;
 }
 
+/// Runtime Request consumes an already-available representation; it may not
+/// create a content-sized representation. Result space: Snapshot | VisualCache.
 inline NoteEditCommittedBaseKind selectNoteEditCommittedBaseKind(bool captureActive,
                                                                  bool visualCacheDirty,
                                                                  bool publishedSnapshotIsCurrent) {
@@ -171,8 +197,7 @@ inline NoteEditCommittedBaseKind selectNoteEditCommittedBaseKind(bool captureAct
                                                        publishedSnapshotIsCurrent)) {
         return NoteEditCommittedBaseKind::Snapshot;
     }
-    return visualCacheDirty ? NoteEditCommittedBaseKind::PassMaterialize
-                            : NoteEditCommittedBaseKind::VisualCache;
+    return NoteEditCommittedBaseKind::VisualCache;
 }
 
 /// `225243`: playhead tails (`endTick = currentTick`) are paint-only. RC5a

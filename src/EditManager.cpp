@@ -207,8 +207,12 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::sessionMidiEvents() const
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPreviewRevision() {
+    // Advance paint/select keys only. Do not call
+    // invalidateProjectedNoteEditDisplayCache() — that clears the committed
+    // base and forces RebuildCommittedBase / resolveDisplayNotes on every
+    // apply (RC1 / compose 124645). Explicit full invalidation stays on
+    // invalidateProjectedNoteEditDisplayCache callers.
     ++sessionPreviewRevision_;
-    invalidateProjectedNoteEditDisplayCache();
 }
 
 EDIT_MANAGER_IMPL_MEM void EditManager::bumpSessionPlaybackPreviewRevision() {
