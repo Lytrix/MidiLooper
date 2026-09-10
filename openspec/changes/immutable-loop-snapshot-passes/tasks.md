@@ -303,9 +303,13 @@ cursors rather than treating that locality as an execution bound.
       [`142119`](../../../captures/note_edit_overdub_compose_20260910_142119_serial.log)
       (after RC1+RC-A PassMaterialize deferral). Native 1820/1; RAM1 locals **7008**.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
-      Plan (inventory + Stage 1 VisualCache stamp):
+      Plan (inventory + stages):
       [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
-      Undo/load format remains §5; materialize retirement §6.
+      **Stage 1 SHIPPED (2026-09-10):** `VisualCache::builtFromSnapshotIdentity` +
+      `visualCacheIsCurrentPublishedSnapshot`; native A→B@R;
+      `test_overdub_source_view` wrap-append skip stamps identity; RAM1 **7008**;
+      native **1821 succeeded, 1 skipped**. Undo/load format remains §5;
+      materialize retirement §6. Stage 2+ (`DrawSourceGatherKey`, …) remain.
 
 ## 4b. Post-stop MIDI stability
 

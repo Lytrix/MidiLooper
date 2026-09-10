@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-10 (OpenSpec 4.5 SHIPPED; 4.6 Stage 1 next)
+Last updated: 2026-09-10 (OpenSpec 4.6 Stage 1 VisualCache identity stamp SHIPPED)
 
 ---
 
@@ -132,7 +132,8 @@ Plans:
 DEC-054 Stage 1 admission remains in tree; [`204458`](../../captures/session_20260908_204458.log)
 failed the select-cadence gate. Parent 4.4 closed (inventory
 2026-09-09). **4.5 SHIPPED** (2026-09-10): `base` / occupy / compose `02`
-PASS. **4.6** snapshot-identity freshness is now implementing (Stage 1
+PASS. **4.6** Stage 1 VisualCache `builtFromSnapshotIdentity` SHIPPED
+(A→B@R native; RAM1 **7008**; native **1821/1**). Stage 2+ remain.
 VisualCache stamp). Persistence and snapshot-identity undo (§5) remain
 later. Hydrate 4b–5 and raise `N` stay parked.
 The following publication-admission paragraphs retain historical intermediate

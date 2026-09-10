@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (OpenSpec 4.5 SHIPPED; 4.6 Stage 1 next)
+Last updated: 2026-09-10 (OpenSpec 4.6 Stage 1 VisualCache identity stamp)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.6 — snapshot-identity freshness (Stage 1).**
-Stage 0 inventory complete. First firmware slice: stamp `VisualCache` with
-`publishedSnapshotIdentity()` (mirror playback `builtFromSnapshotIdentity`).
-Plan:
+**Now — Immutable OpenSpec 4.6 Stage 1 device HITL still open; Stage 2 not started.**
+Stage 1 firmware+native: `VisualCache::builtFromSnapshotIdentity` +
+`visualCacheIsCurrentPublishedSnapshot`; A→B@R native proof;
+`153517` green; RAM1 **7008**; native **1821 succeeded, 1 skipped**.
+Device `base`/`occupy` not PASS this session (see plan closeout).
+OpenSpec `4.6` stays open. Plan:
 [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
 `N` in this slice.
+
+**Prior — Immutable OpenSpec 4.6 Stage 1 — VisualCache identity stamp SHIPPED.**
+See Now implementing above.
 
 **Prior — Immutable OpenSpec 4.5 — SHIPPED.** HITL `base` PASS
 ([`122812`](../../captures/session_20260910_122812.log)); `overdub_occupy_paint`

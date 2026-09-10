@@ -30,6 +30,7 @@
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
+#include "NoteEditCurrentState.h"
 #include "PendingNoteChange.h"
 #include "MidiEvent.h"
 #include "Globals.h"
@@ -410,6 +411,34 @@ void test_prewarm_span_cache_then_session_open_has_source_notes() {
   loop.beginCapture(CapturePhase::Overdub, 0);
   TEST_ASSERT_FALSE(loop.overdubSourceViewNotes().empty());
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
+}
+
+void test_note_edit_shorten_clips_overdub_source_view_134549() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 3;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 2102, 1, 48, 100, 58));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(2212, 1, 48, 0)));
+  loop.seedRecordPassFromStore(store);
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
+  const NoteUtils::DisplayNote* before = findDisplayNoteById(loop.overdubSourceViewNotes(), 58);
+  TEST_ASSERT_NOT_NULL(before);
+  TEST_ASSERT_EQUAL_UINT32(2102u, before->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2212u, before->endTick);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(58, {48, 100, 2102, 2212}, {48, 100, 2102, 2111},
+                         NoteEditPresenceType::Visible);
+  loop.applyNoteEditCurrentStateToOverdubSourceView(currentState);
+
+  const NoteUtils::DisplayNote* after = findDisplayNoteById(loop.overdubSourceViewNotes(), 58);
+  TEST_ASSERT_NOT_NULL(after);
+  TEST_ASSERT_EQUAL_UINT32(2102u, after->startTick);
+  TEST_ASSERT_EQUAL_UINT32(2111u, after->endTick);
 }
 
 void test_overdub_start_establishes_source_view() {
@@ -3723,6 +3752,12 @@ void test_deferred_wrap_append_skips_when_current_source_already_built() {
   TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 12, 0));
 
   loop.playbackRevision += 1;
+  // Snapshot-current skip requires a non-null matching identity (OpenSpec 4.6).
+  loop.storePublishedSnapshotForTest(
+      LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick, 1, 1),
+      loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshotIdentity());
   NoteUtils::DisplayNote currentSource{};
   currentSource.noteId = 99;
   currentSource.note = 64;
@@ -3732,6 +3767,7 @@ void test_deferred_wrap_append_skips_when_current_source_already_built() {
   loop.visualCache.notes.clear();
   loop.visualCache.notes.push_back(currentSource);
   loop.visualCache.builtFromRevision = loop.playbackRevision;
+  loop.visualCache.builtFromSnapshotIdentity = loop.publishedSnapshotIdentity();
   loop.visualCacheDirty = false;
 
   loop.applyDeferredVisualCacheWrapAppend();
@@ -4584,6 +4620,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_source_view_rejects_partial_prior_span_cache);
   RUN_TEST(test_overdub_restamp_miss_reopens_from_visual_cache);
   RUN_TEST(test_prewarm_span_cache_then_session_open_has_source_notes);
+  RUN_TEST(test_note_edit_shorten_clips_overdub_source_view_134549);
   RUN_TEST(test_overdub_start_establishes_source_view);
   RUN_TEST(test_overdub_enter_rebuilds_source_view_not_visual_cache);
   RUN_TEST(test_overdub_begin_makes_restore_flatten_unreachable);

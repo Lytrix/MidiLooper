@@ -530,6 +530,10 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
             lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared,
             fallbackGatherComplete)) {
       visualCache.builtFromRevision = playbackRevision;
+      // Current-root Snapshot gather stamps identity; prepared/fallback do not
+      // (`nullptr` is never snapshot-current — OpenSpec 4.6 Stage 1).
+      visualCache.builtFromSnapshotIdentity =
+          usedSnapshot ? publishedSnapshotIdentity() : nullptr;
     }
     emitVisualCacheState("slice_clean", -1);
   }
@@ -549,8 +553,9 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
           deferredVisualCacheWrapAppendPending_, deferredVisualCacheWrapAppendFromRevision_,
           playbackRevision)) {
     emitVisualCacheState("append_skip", -1);
-    if (!DisplayWindowUtils::visualCacheIsCurrentSourceRevision(visualCache.builtFromRevision,
-                                                                playbackRevision)) {
+    if (!DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
+            visualCache.builtFromRevision, playbackRevision,
+            visualCache.builtFromSnapshotIdentity, publishedSnapshotIdentity())) {
       rebuildVisualCacheFromPasses();
     } else {
       clearDeferredVisualCacheWrapAppend(*this);
@@ -832,6 +837,10 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(overlayRejected, usedSnapshot,
                                                                   false, !usedSnapshot)) {
     visualCache.builtFromRevision = rebuildGatherRevision;
+    // Current-root Snapshot gather stamps identity; fallback does not
+    // (`nullptr` is never snapshot-current — OpenSpec 4.6 Stage 1).
+    visualCache.builtFromSnapshotIdentity =
+        usedSnapshot ? publishedSnapshotIdentity() : nullptr;
   }
   visualCacheDirty = false;
   emitVisualCacheState("full", static_cast<int32_t>(flat.size()));

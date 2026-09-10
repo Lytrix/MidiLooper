@@ -556,9 +556,23 @@ inline bool shouldApplyDeferredVisualCacheWrapAppend(bool pending,
 
 /// After a source mismatch, the cache is already the current-source frame
 /// when it was built at the current playback revision. Do not append.
+/// Revision-only: legacy usable check for fallback caches that stamped R but
+/// carry no snapshot identity. Snapshot-current consumers use
+/// `visualCacheIsCurrentPublishedSnapshot`.
 inline bool visualCacheIsCurrentSourceRevision(uint32_t builtFromRevision,
                                                uint32_t playbackRevision) {
     return builtFromRevision == playbackRevision;
+}
+
+/// Snapshot-current VisualCache (OpenSpec 4.6 Stage 1): revision matches and the
+/// cache was stamped from the same non-null published root identity. Nullptr is
+/// never current (`nullptr == nullptr` must not pass).
+inline bool visualCacheIsCurrentPublishedSnapshot(uint32_t builtFromRevision,
+                                                  uint32_t playbackRevision,
+                                                  const void* builtFromSnapshotIdentity,
+                                                  const void* publishedSnapshotIdentity) {
+    return builtFromRevision == playbackRevision && builtFromSnapshotIdentity != nullptr &&
+           builtFromSnapshotIdentity == publishedSnapshotIdentity;
 }
 
 /// Pending Shorten needs the committed source row before paint. VisualCache
