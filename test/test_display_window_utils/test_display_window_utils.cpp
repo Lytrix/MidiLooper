@@ -187,7 +187,34 @@ void test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather(
                         false, true, true, true)));
 }
 
+void test_preview_revision_is_paint_key_not_committed_base_key() {
+  // RC1 / compose 124645: same loopLength/playbackRevision/visualRevision with a
+  // changed sessionPreviewRevision must ReprojectFromCommittedBase — not
+  // RebuildCommittedBase / resolveDisplayNotes.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::noteEditCommittedBaseKeysMatch(2304, 2304, 3, 3, 9, 9));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::noteEditPaintKeysMatch(11, 11, 0, 0, 1, 1, /*preview*/ 2, /*cached*/ 1));
+
+  const bool committedBaseKeysMatch =
+      DisplayWindowUtils::noteEditCommittedBaseKeysMatch(2304, 2304, 3, 3, 9, 9);
+  const bool paintKeysMatch =
+      DisplayWindowUtils::noteEditPaintKeysMatch(11, 11, 0, 0, 1, 1, 2, 1);
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::NoteEditProjectionCacheReuse::ReprojectFromCommittedBase),
+      static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+          true, committedBaseKeysMatch, true, paintKeysMatch)));
+
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::noteEditCommittedBaseKeysMatch(2304, 2304, 3, 3, /*visual*/ 10, 9));
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(DisplayWindowUtils::NoteEditProjectionCacheReuse::RebuildCommittedBase),
+      static_cast<int>(DisplayWindowUtils::selectNoteEditProjectionCacheReuse(
+          true, false, true, true)));
+}
+
 void test_select_note_edit_committed_base_kind_capture_vs_playing() {
+  // RC-A: selector result space is Snapshot | VisualCache only. dirty∧¬current
+  // must not PassMaterialize (stale VisualCache is a legal request state).
   using Kind = DisplayWindowUtils::NoteEditCommittedBaseKind;
   TEST_ASSERT_EQUAL(static_cast<int>(Kind::Snapshot),
                     static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
@@ -198,9 +225,12 @@ void test_select_note_edit_committed_base_kind_capture_vs_playing() {
   TEST_ASSERT_EQUAL(static_cast<int>(Kind::Snapshot),
                     static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
                         false, true, true)));
-  TEST_ASSERT_EQUAL(static_cast<int>(Kind::PassMaterialize),
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::VisualCache),
                     static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
                         false, true, false)));
+  TEST_ASSERT_EQUAL(static_cast<int>(Kind::VisualCache),
+                    static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
+                        true, true, false)));
   TEST_ASSERT_EQUAL(static_cast<int>(Kind::VisualCache),
                     static_cast<int>(DisplayWindowUtils::selectNoteEditCommittedBaseKind(
                         false, false, true)));
@@ -1931,6 +1961,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_prefer_preserved_overdub_stop_handoff_while_cache_dirty);
   RUN_TEST(test_resolve_note_edit_committed_base_from_snapshot);
   RUN_TEST(test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather);
+  RUN_TEST(test_preview_revision_is_paint_key_not_committed_base_key);
   RUN_TEST(test_select_note_edit_committed_base_kind_capture_vs_playing);
   RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);

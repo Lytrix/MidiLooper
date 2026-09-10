@@ -63,6 +63,8 @@ MOTOR_SYNC_VALUE_ONLY_RE = re.compile(
 MIN_VALUE_ONLY_NOTEGATE_HOLD_US = 80000
 # 170818 PLAYING resolve 3.6–4.0 ms; overdub gather was 91–234 ms.
 MAX_OVERDUB_RESOLVE_US = 20000
+# Architectural confirm (183453 ~3.5 ms). Fail ~33 ms reconstruct even if resolve dips under 20 ms.
+MAX_OVERDUB_RECONSTRUCT_US = 10000
 EDIT_SESSION_ACTION_RE = re.compile(
     r"EditSessionAction: type=(\d+) noteId="
 )
@@ -441,23 +443,33 @@ def _case_overdub_apply_reuses_committed_base(lines: list[str]) -> dict[str, Any
     issues: list[str] = []
     ranges = _overdubbing_index_ranges(lines)
     resolve_us: list[int] = []
+    reconstruct_us: list[int] = []
     for index, line in enumerate(lines):
         if not _index_in_ranges(index, ranges):
             continue
-        match = GEOM_APPLY_RESOLVE_RE.search(line)
-        if match is None:
-            continue
-        resolve_us.append(int(match.group(1)))
+        resolve_match = GEOM_APPLY_RESOLVE_RE.search(line)
+        if resolve_match is not None:
+            resolve_us.append(int(resolve_match.group(1)))
+        phase_match = GEOM_APPLY_PHASE_RE.search(line)
+        if phase_match is not None and phase_match.group(1) == "reconstruct":
+            reconstruct_us.append(int(phase_match.group(2)))
     max_us = max(resolve_us) if resolve_us else 0
+    max_reconstruct_us = max(reconstruct_us) if reconstruct_us else 0
     if resolve_us and max_us > MAX_OVERDUB_RESOLVE_US:
         issues.append(
             f"overdub_resolve_us={max_us} max={MAX_OVERDUB_RESOLVE_US}"
+        )
+    if reconstruct_us and max_reconstruct_us > MAX_OVERDUB_RECONSTRUCT_US:
+        issues.append(
+            f"overdub_reconstruct_us={max_reconstruct_us} max={MAX_OVERDUB_RECONSTRUCT_US}"
         )
     return {
         "ok": not issues,
         "issues": issues,
         "overdub_resolve_count": len(resolve_us),
         "max_overdub_resolve_us": max_us,
+        "overdub_reconstruct_count": len(reconstruct_us),
+        "max_overdub_reconstruct_us": max_reconstruct_us,
     }
 
 
