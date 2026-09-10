@@ -278,7 +278,7 @@ This does not add a new unbounded owner; idle uses
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
 Task 4.4 is closed (2026-09-09 inventory). **4.5** cross-gate verify is
-closed (2026-09-10). **4.6** remains open. **Stage 1** VisualCache `builtFromSnapshotIdentity` + `visualCacheIsCurrentPublishedSnapshot` SHIPPED (2026-09-10): native A→B@R; RAM1 **7008**; native **1821/1**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log). Stage 2+ remain.
+closed (2026-09-10). **4.6** remains open. **Stage 1** VisualCache `builtFromSnapshotIdentity` + `visualCacheIsCurrentPublishedSnapshot` SHIPPED (2026-09-10): native A→B@R; RAM1 **7008**; native **1821/1**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log); occupy PASS [`151700`](../../../captures/session_20260910_151700.log). Stage 2+ remain.
 
 ### Phase 3 implementation review (4.4 display only)
 

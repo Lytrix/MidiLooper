@@ -175,7 +175,7 @@ None — Stage 1 is ready to implement.
 | Full `pio test -e native` | **1821 succeeded, 1 skipped** |
 | RAM1 locals | **7008** |
 | HITL `base` | **PASS** [`151433`](../../captures/session_20260910_151433.log) — first-note 11/10, persistence `result=ok`, undo/redo 1/1. Earlier noisy attempts (`144648` persistence backlog; later first-note flakes) superseded. |
-| HITL occupy | Not required after `base` PASS (plan: `base` or occupy smoke). |
+| HITL occupy | **PASS** [`151700`](../../captures/session_20260910_151700.log) — shorten=9 hide=12 undo=2 redo=2. |
 
 OpenSpec `4.6` remains **unchecked** until remaining Stage 2+ freshness
 consumers (and §5 exclusion note) are done.
