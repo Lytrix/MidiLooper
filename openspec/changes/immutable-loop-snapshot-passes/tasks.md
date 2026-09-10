@@ -2,13 +2,14 @@
 
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
-Progress checkpoint (2026-09-09): sections 1–3 are complete. Tasks 3.5/3.6
+Progress checkpoint (2026-09-10): sections 1–3 are complete. Tasks 3.5/3.6
 closed: wrap-journal publication is in tree; the remaining-interval yield
 proof is parked (`kSnapshotIdleReserveYieldEnabled` is false; yield logs
-stay). In section 4, 4.1–4.4 and 4.5a are complete (4.4a–4.4h shipped;
-parent 4.4 closed by inventory closeout). In section 4b, 4b.0, 4b.1,
-4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b, and 4b.4 are complete under Ring B
-round-robin. Open now: 4.5, 4.6, 4b.3, 5.1–5.6, and 6.1–6.5.
+stay). In section 4, 4.1–4.5 and 4.5a are complete (4.4a–4.4h shipped;
+parent 4.4 closed by inventory; **4.5** cross-gate verify SHIPPED
+2026-09-10). In section 4b, 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b,
+and 4b.4 are complete under Ring B round-robin. Open now: **4.6**, 4b.3,
+5.1–5.6, and 6.1–6.5.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -293,8 +294,18 @@ cursors rather than treating that locality as an execution bound.
         Device [`201106`](../../../captures/session_20260908_201106.log):
         second overdub open `from=snapshot` `root_rev=5` `play_rev=5`.
         NOTE_EDIT open `current=1` `root_rev=6` **137** / `only_*=0`.
-- [ ] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
+- [x] 4.5 Verify record, overdub, wrap, short/long loop, slot, load, undo/redo, active-capture separation, same-`NoteId` geometry versioning, old-snapshot stability, and latest-selected-version behavior with existing HITL and native gates.
+      Plan:
+      [`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
+      Device 2026-09-10: `base` PASS [`122812`](../../../captures/session_20260910_122812.log);
+      `overdub_occupy_paint` PASS [`123445`](../../../captures/session_20260910_123445.log);
+      `note_edit_overdub_compose` `02` PASS **14/14**
+      [`142119`](../../../captures/note_edit_overdub_compose_20260910_142119_serial.log)
+      (after RC1+RC-A PassMaterialize deferral). Native 1820/1; RAM1 locals **7008**.
 - [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
+      Plan (inventory + Stage 1 VisualCache stamp):
+      [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
+      Undo/load format remains §5; materialize retirement §6.
 
 ## 4b. Post-stop MIDI stability
 

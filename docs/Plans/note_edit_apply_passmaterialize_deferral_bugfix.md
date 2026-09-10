@@ -247,7 +247,7 @@ Falsify if `PassMaterialize` (or materialize-class work) appears on in-edit over
 - Mark shipped with capture ids + F1–F5 (note F1/F2/F3 as architectural).
 - Update [`geom_apply_reconstruct_cost_bugfix.md`](geom_apply_reconstruct_cost_bugfix.md): RC1 insufficient alone; RC-A closes wrap-forced flatten.
 - Update [`Display.md`](../Authority/Architecture/Display.md) NOTE_EDIT sentence: dirty ∧ ¬current uses VisualCache handoff (stale legal); rematerialize-when-dirty on the request is forbidden.
-- [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) / 4.5 when compose PASS.
+- [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md) — 4.5 SHIPPED; 4.6 Stage 1 next.
 
 ## Sequencing
 

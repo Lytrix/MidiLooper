@@ -469,7 +469,8 @@ slice. Parent 4.4 is closed after 4.4a–4.4h + inventory
       4.4 (→ 4.6 / §5 / §6).
 - [x] Parent task 4.4 checked off. Plan:
       [`immutable_loop_snapshot_4_4_closeout_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_4_closeout_refinement.md).
-- [ ] 4.5 and 4.6 remain open; do not start hydrate 4b–5 or raise `N`.
+- [x] 4.5 closed 2026-09-10 (`base` / occupy / compose `02` PASS).
+- [ ] 4.6 remains open; do not start hydrate 4b–5 or raise `N`.
 
 ### Close-publish NoteRange pitch reuse
 

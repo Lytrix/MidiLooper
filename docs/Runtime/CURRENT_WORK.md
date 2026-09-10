@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (HITL hardening shipped; OpenSpec 4.5 device gates)
+Last updated: 2026-09-10 (OpenSpec 4.5 SHIPPED; 4.6 Stage 1 next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,25 +10,25 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.5 — compose PASS after RC-A.** HITL
-`note_edit_overdub_compose` STIM-NE-OD-COMPOSE-02 **14/14**
-([`142119`](../../captures/note_edit_overdub_compose_20260910_142119_serial.log)):
-`resolve` 8123 µs, `reconstruct` 2837 µs. RC1: preview not in committed-base
-key; bump does not full-invalidate. RC-A: selector is Snapshot|VisualCache
-only — no PassMaterialize on the Runtime Request. Plan:
-[`note_edit_apply_passmaterialize_deferral_bugfix.md`](../Plans/note_edit_apply_passmaterialize_deferral_bugfix.md).
-Prior compose fail: resolve 61442
-([`124645`](../../captures/note_edit_overdub_compose_20260910_124645_serial.log)).
-`base` PASS [`122812`](../../captures/session_20260910_122812.log);
-`overdub_occupy_paint` PASS [`123445`](../../captures/session_20260910_123445.log).
+**Now — Immutable OpenSpec 4.6 — snapshot-identity freshness (Stage 1).**
+Stage 0 inventory complete. First firmware slice: stamp `VisualCache` with
+`publishedSnapshotIdentity()` (mirror playback `builtFromSnapshotIdentity`).
+Plan:
+[`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
+Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
+`N` in this slice.
 
-**Prior — HITL framework hardening — Stages 0–4 shipped; `base` device PASS.**
-Host-only. Frozen verdict/action contract (`PASS` / `FAIL` /
-`INCONCLUSIVE_CAPTURE`; `CONFIRMED` / `ALREADY_SATISFIED` /
-`RECOVERY_FAILED` / `EVIDENCE_UNAVAILABLE`). Disproof only after the
-action wait timeout. Clear/arm/stop path: ARMED → transport → RECORDING
-(Record button 36; no Loops-row arm). Plan:
-[`hitl_framework_hardening_refinement.md`](../Plans/hitl_framework_hardening_refinement.md).
+**Prior — Immutable OpenSpec 4.5 — SHIPPED.** HITL `base` PASS
+([`122812`](../../captures/session_20260910_122812.log)); `overdub_occupy_paint`
+PASS ([`123445`](../../captures/session_20260910_123445.log)); compose `02`
+PASS **14/14** ([`142119`](../../captures/note_edit_overdub_compose_20260910_142119_serial.log))
+after RC1+RC-A. Plan:
+[`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](../Plans/immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md).
+
+**Prior — NOTE_EDIT apply PassMaterialize deferral — RC-A shipped.**
+Selector Snapshot|VisualCache only; stale VisualCache legal on the request.
+Commit `33f21150`. Plan:
+[`note_edit_apply_passmaterialize_deferral_bugfix.md`](../Plans/note_edit_apply_passmaterialize_deferral_bugfix.md).
 
 **Prior — NOTE_EDIT F1 select display lag — RC1 shipped (device PASS).**
 One `resolveFader1SelectTarget` per inbound F1 pitchbend.
