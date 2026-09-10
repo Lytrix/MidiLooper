@@ -2978,6 +2978,7 @@ def _build_serial_verification(
             ),
         )
     issues: list[str] = []
+    timing_warnings: list[str] = []
     if record["phase_missing"] or (not record_only and overdub["phase_missing"]):
         issues.append("missing_phase_boundaries")
     if record["unmatched_open_notes"] > 0 and not getattr(args, "occupy_paint_pattern", False):
@@ -2997,7 +2998,9 @@ def _build_serial_verification(
     if record_offset_clocks is None:
         issues.append("record_first_note_missing")
     elif record_offset_clocks > args.record_first_note_max_clocks:
-        issues.append("record_first_note_too_late")
+        # Advisory only: host stream anchors on transport press + 300ms debounce
+        # while verify anchors on ST→RECORDING; skew routinely exceeds 12 clocks.
+        timing_warnings.append("record_first_note_too_late")
     if not record_only:
         overdub_latency_max = args.overdub_first_note_max_clocks
         # Serial #CAP ST vs MI,U skew can add a few clocks after grid-delay subtraction.
@@ -3006,7 +3009,7 @@ def _build_serial_verification(
         if overdub_offset_clocks is None:
             issues.append("overdub_first_note_missing")
         elif overdub_offset_clocks > overdub_latency_max:
-            issues.append("overdub_first_note_too_late")
+            timing_warnings.append("overdub_first_note_too_late")
     if record_loop_length is not None:
         if record_loop_length.get("recs_missing"):
             if "record_recs_missing" not in issues:
@@ -3136,7 +3139,7 @@ def _build_serial_verification(
         if second_offset_clocks is None:
             issues.append("second_overdub_first_note_missing")
         elif second_offset_clocks > args.overdub_first_note_max_clocks:
-            issues.append("second_overdub_first_note_too_late")
+            timing_warnings.append("second_overdub_first_note_too_late")
         if loop_length_ticks > 0:
             memory_note_count = _extract_overdub_memory_note_count(
                 lines, overdub_stop_ts=boundaries.get("second_overdub_stop_ts")
@@ -3212,6 +3215,7 @@ def _build_serial_verification(
         "cap_sparse": cap_sparse,
         "runtime_stats_ok": runtime_ok,
         "issues": issues,
+        "timing_warnings": timing_warnings,
         "ok": len(issues) == 0 and not cap_sparse,
     }
 
@@ -3902,13 +3906,20 @@ def run() -> int:
         "--record-first-note-max-clocks",
         type=int,
         default=12,
-        help="Max allowed MIDI clocks from RECORDING entry to first record note-on (default: 12)",
+        help=(
+            "Advisory max MIDI clocks from RECORDING entry to first record note-on "
+            "(default: 12). Exceeding this emits a timing warning only — it does not fail the run "
+            "(host stream vs ST skew / 300ms transport debounce)."
+        ),
     )
     parser.add_argument(
         "--overdub-first-note-max-clocks",
         type=int,
         default=12,
-        help="Max allowed MIDI clocks from OVERDUBBING entry to first overdub note-on (default: 12)",
+        help=(
+            "Advisory max MIDI clocks from OVERDUBBING entry to first overdub note-on "
+            "after grid-delay subtraction (default: 12). Exceeding this is a timing warning only."
+        ),
     )
     parser.add_argument(
         "--long-run-bar-threshold",
@@ -5377,6 +5388,12 @@ def run() -> int:
                 )
             if serial_verification["issues"]:
                 print(f"  VERIFY issues: {', '.join(serial_verification['issues'])}")
+            timing_warnings = serial_verification.get("timing_warnings") or []
+            if timing_warnings:
+                print(
+                    "  VERIFY timing warnings (advisory; do not fail): "
+                    f"{', '.join(timing_warnings)}"
+                )
     if phase_note_failures:
         for row in phase_note_failures:
             print(

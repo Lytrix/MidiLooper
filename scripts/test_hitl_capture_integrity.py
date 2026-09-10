@@ -170,6 +170,46 @@ class FollowCaptureIntegrityTests(unittest.TestCase):
             finally:
                 collector.stop()
 
+    def test_partial_line_does_not_drop_publish_stage(self) -> None:
+        """Growing-file readline without \\n must not advance offset past the line."""
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = Path(tmp) / "session.log"
+            log_path.write_bytes(b"#CAP,1,RECS,stage,seal,1,0,0,0,0,0,ok\n")
+            collector = ExternalSerialFollowCollector(log_path, poll_interval_s=0.02)
+            collector.start()
+            try:
+                deadline = time.monotonic() + 2.0
+                while time.monotonic() < deadline:
+                    if any("seal" in line for line in collector.snapshot()):
+                        break
+                    time.sleep(0.02)
+                # Append an incomplete CAP line (no terminator), then complete it.
+                with log_path.open("ab") as log_file:
+                    log_file.write(b"#CAP,2,RECS,stage,publish,2,0,0,0,0,0,ok")
+                    log_file.flush()
+                time.sleep(0.08)
+                self.assertFalse(
+                    any("publish" in line for line in collector.snapshot()),
+                    "partial publish line must not be consumed yet",
+                )
+                with log_path.open("ab") as log_file:
+                    log_file.write(b"\n#CAP,3,RECS,stage,finalize,3,0,0,0,0,0,published\n")
+                    log_file.flush()
+                deadline = time.monotonic() + 2.0
+                saw_publish = False
+                saw_finalize = False
+                while time.monotonic() < deadline:
+                    snap = collector.snapshot()
+                    saw_publish = any("RECS,stage,publish" in line and ",ok" in line for line in snap)
+                    saw_finalize = any("finalize" in line for line in snap)
+                    if saw_publish and saw_finalize:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(saw_publish, collector.snapshot()[-5:])
+                self.assertTrue(saw_finalize, collector.snapshot()[-5:])
+            finally:
+                collector.stop()
+
 
 class ManagedCaptureActiveTests(unittest.TestCase):
     def test_poll_none_when_process_missing(self) -> None:
