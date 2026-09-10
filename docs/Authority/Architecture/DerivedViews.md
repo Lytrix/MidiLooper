@@ -194,7 +194,7 @@ Paint does **not** rebuild on window move: `resolveWindowedDisplayNotes` filters
 
 What is **not** per-bar yet:
 
-- `rebuildVisualCacheFromPasses` on a current published root fills `visualCache.notes` from `resolveDisplayNotes(*snapshot)`, which copies note-span membership (`appendSnapshotNotesForBarRange`). Event-flat reconstruct is not the display interpreter (`155257`). No-current-root still pass-resolves. `visualCache` stays a cache.
+- `rebuildVisualCacheFromPasses` on a current published root fills `visualCache.notes` from `resolveDisplayNotes(*snapshot)`, which copies note-span membership (`appendSnapshotNotesForBarRange`). Event-flat reconstruct is not the display interpreter (`155257`). No-current-root still pass-resolves. `visualCache` stays a cache. After NOTE_EDIT `commitEditAction`, if the settled mover `NoteId` is in snapshot spans and missing from that cache, `keepCommittedMoverInVisualCache` copies it from `publishedSnapshot()` (else `unpublishedSnapshot()`) (`232309`).
 - `rematerializeEditView` on a current published root loads `EditSession.store` from that root’s events whose `NoteId`s are in the same span set. Event-only membership is dropped (`170211` Q3). No-current-root still `passes.materialize`. `commitEditAction` rematerialize uses `copyNoteEditCommitBase` (that same span set plus this session’s edit rows, pinned across save revision bumps).
 - `markDisplayCachesStale` still marks every bar dirty.
 

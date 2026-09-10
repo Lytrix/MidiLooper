@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-10 (control-plane RC8 F1 linear outbound shipped)
+Last updated: 2026-09-10 (F1 one-resolve + stacked keep-committed-mover RC1 PASS)
 
 ---
 

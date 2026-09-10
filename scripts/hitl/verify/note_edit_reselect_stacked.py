@@ -6,6 +6,7 @@ import re
 from typing import Any, Optional
 
 from hitl.control_constants import TICKS_PER_16TH_STEP
+from hitl.verify.note_edit_overdub_compose import _case_value_only_notegate_held
 
 SELECT_APPLY_RE = re.compile(
     r"select_apply selected_tick=(\d+) note_idx=(-?\d+) .* apply=(\d+)"
@@ -17,8 +18,11 @@ MOTOR_SYNC_SEQUENCE_RE = re.compile(
     r"(?:select_motor_sync|geometry_motor_sync).*sequence=(\S+)"
 )
 MIDI_GAP_RE = re.compile(r"#CAP,(\d+),DIAG,midi_gap,(\d+),")
+DNTE_RE = re.compile(r"#CAP,\d+,DNTE,")
+VCACHE_FULL_NOTES_RE = re.compile(r"VCACHE,full,ev,-?\d+,notes,(\d+)")
 MOVE_NOTE_TYPE = 3
 MAX_PLAYING_MOTOR_MIDI_GAP_US = 200000
+SELECT_APPLY_HIGHLIGHT_MIN_APPLIES = 10
 
 PITCHBEND_MIN = -8192
 PITCHBEND_MAX = 8192
@@ -219,6 +223,50 @@ def _case_playing_motor_value_only(lines: list[str]) -> dict[str, Any]:
     }
 
 
+def _case_select_apply_highlight_follows(lines: list[str]) -> dict[str, Any]:
+    apply_count = 0
+    for line in lines:
+        parsed = parse_select_apply(line)
+        if parsed is None:
+            continue
+        _tick, note_idx, applied = parsed
+        if applied == 1 and note_idx >= 0:
+            apply_count += 1
+    dnte_count = sum(1 for line in lines if DNTE_RE.search(line))
+    issues: list[str] = []
+    if apply_count >= SELECT_APPLY_HIGHLIGHT_MIN_APPLIES and dnte_count * 2 < apply_count:
+        issues.append(f"select_apply_highlight_starved={dnte_count}/{apply_count}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "select_apply_note_changed": apply_count,
+        "dnte_count": dnte_count,
+    }
+
+
+def _case_moved_note_kept_after_deselect(lines: list[str], empty_idx: int) -> dict[str, Any]:
+    before: Optional[int] = None
+    after: Optional[int] = None
+    for index, line in enumerate(lines):
+        match = VCACHE_FULL_NOTES_RE.search(line)
+        if match is None:
+            continue
+        notes = int(match.group(1))
+        if index <= empty_idx:
+            before = notes
+        elif after is None:
+            after = notes
+    issues: list[str] = []
+    if before is not None and after is not None and after < before:
+        issues.append(f"moved_note_dropped_from_vcache={before}->{after}")
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "vcache_notes_before_deselect": before,
+        "vcache_notes_after_deselect": after,
+    }
+
+
 def _applied_note_idxs_at_tick(
     lines: list[str], tick: int, *, after_index: int
 ) -> list[int]:
@@ -263,6 +311,12 @@ def verify_note_edit_reselect_stacked(
         issues.append("stacked_reselect_after_deselect")
     motor = _case_playing_motor_value_only(lines)
     issues.extend(motor["issues"])
+    held = _case_value_only_notegate_held(lines)
+    issues.extend(held["issues"])
+    highlight = _case_select_apply_highlight_follows(lines)
+    issues.extend(highlight["issues"])
+    kept = _case_moved_note_kept_after_deselect(lines, empty_idx)
+    issues.extend(kept["issues"])
     return {
         "ok": not issues,
         "issues": issues,
@@ -274,4 +328,7 @@ def verify_note_edit_reselect_stacked(
         "dest_tick": dest_tick,
         "empty_tick": empty_tick,
         "playing_motor_value_only": motor,
+        "value_only_notegate_held": held,
+        "select_apply_highlight_follows": highlight,
+        "moved_note_kept_after_deselect": kept,
     }
