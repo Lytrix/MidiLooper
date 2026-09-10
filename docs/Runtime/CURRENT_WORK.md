@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-10 (OpenSpec 4.6 Stage 4 SHIPPED — HITL base [`172224`](../../captures/session_20260910_172224.log); wrap playhead-tail plan parked)
+Last updated: 2026-09-10 (Overdub live wrap playhead-tail plan APPROVED (c); Stage 0 next; 4.6 Stage 4 SHIPPED)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,19 +10,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.6 Stage 4 SHIPPED** (NOTE_EDIT committed-base cache
-identity). Next: evaluate `legacyMidiEventsFromCommitted` (may need design).
-`noteEditSelectableDisplayCachePublishedSnapshotIdentity_` +
-`noteEditCommittedBaseKeysMatch` identity compare; native A→B@R; RAM1 **7008**;
-HITL `base` PASS [`172224`](../../captures/session_20260910_172224.log).
-OpenSpec `4.6` stays open. Plan:
-[`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
-Do not start §5 undo/load, §6 materialize retirement, hydrate 4b–5, or raise
-`N` in this slice.
+**Now — Overdub live wrap playhead-tail display — plan APPROVED (c).**
+Pin: pre-wrap `On→currentTick` **and** post-wrap `On→loopEnd` + `0→currentTick`;
+STOPPED geometry-equivalent. Stage 0 = A/B/C capture proofs next.
+Plan: [`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
+Do not touch 4.6, DEC-051 seal, gather stash, or Occupy.
 
-**Parked — Overdub live wrap playhead-tail display** (plan only).
-[`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
-Pin desired OD wrap-continuation before coding.
+**Prior — Immutable OpenSpec 4.6 Stage 4 SHIPPED** (NOTE_EDIT committed-base cache
+identity). Next 4.6: evaluate `legacyMidiEventsFromCommitted` (may need design).
+HITL `base` PASS [`172224`](../../captures/session_20260910_172224.log).
+Plan: [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 
 **Prior — LOOP_EDIT length/start fader ignored during RECORD/OVERDUB — SHIPPED.**
 `766d1b33`; HITL base PASS [`171420`](../../captures/session_20260910_171420.log).
