@@ -531,7 +531,11 @@ closed for `DisplayResolveLiveCapture`.
       post-save reboot `LoadLoopJob done 4/0` [`182529`](../../../captures/session_20260911_182529.log).
       SD `LSV1` byte probe: advisory (`scripts/probe_lsv1_slot_body.py`). Plan:
       [`immutable_loop_snapshot_5_4_lsv1_verification_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_4_lsv1_verification_refinement.md).
-- [ ] 5.5 Verify deferred persistence remains owned by `StorageManager` without blocking playback or `handleMidiInput()`.
+- [x] 5.5 Verify deferred persistence remains owned by `StorageManager` without blocking playback or `handleMidiInput()`.
+      (2026-09-11) Call-site gate: persist execute is `processDeferredSaveState` from
+      `main.cpp` remainder; HITL `base` PASS [`200657`](../../../captures/session_20260911_200657.log)
+      `VERIFY deferred persist nonblocking` `loop_persist=295 sliced=True drain=0 mo=600 ok=True`.
+      Plan: [`immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md).
 - [ ] 5.6 Verify large-loop save and migration progress, overrun/failure preservation, active-snapshot availability, and absence of content-sized synchronous work at stop, input dispatch, clock dispatch, and track-tick paths.
 
 ## 6. Compatibility retirement and closeout

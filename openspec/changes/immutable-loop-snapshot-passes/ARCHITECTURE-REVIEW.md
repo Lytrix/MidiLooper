@@ -298,7 +298,8 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       (LoopSnapshot body format version 1; wire discriminator `LSV1` +
       `formatVersion == 1`; dual-write; docs/decision only). Plan:
       [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
-- [ ] Tasks **5.3–5.6** remain open (reader/writer, migration, load, persistence bounds).
+- [x] Tasks **5.3–5.5** closed (reader/writer, load, persistence ownership).
+- [ ] Task **5.6** remains open (large-loop save/migration progress, overrun, content-sized work).
 
 ### Phase 4 implementation review (task 5.2 only — docs/decision)
 
@@ -310,7 +311,18 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       fallback when required `LoopSnapshot` is missing/unparseable.
 - [x] DEC-057, `design.md` open question closed, `Storage.md` updated, `tasks.md`
       5.2 checked, runtime docs updated.
-- [ ] No firmware in 5.2 — task **5.3** implements reader/writer + deferred migration.
+- [x] No firmware in 5.2 — task **5.3** implements reader/writer + deferred migration.
+
+### Phase 4 implementation review (task 5.5 only — verification)
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership NO; transition NO; execution-bound NO (rows 14/15 unchanged).
+- [x] Host call-site gate: persist execute is `StorageManager::processDeferredSaveState`
+      from `main.cpp` remainder; `saveState()` only on clear-track race drain and SavedSet.
+- [x] HITL `base` PASS [`200657`](../../../captures/session_20260911_200657.log):
+      `VERIFY deferred persist nonblocking` `loop_persist=295 sliced=True drain=0 mo=600 ok=True`;
+      persistence `result=ok`.
+- [x] Runtime docs, `tasks.md` 5.5, and plan updated. Task **5.6** remains open.
 
 ### Phase 3 implementation review (4.4 display only)
 

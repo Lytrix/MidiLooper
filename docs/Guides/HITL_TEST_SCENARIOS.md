@@ -190,6 +190,8 @@ Default second overdub pass is on (2 bars, C0–B1). Undo/redo after last overdu
 
 Opt-in firmware flash before run: add `--build-upload` (restarts Teensy — restart capture after).
 
+OpenSpec 5.5 adds `VERIFY deferred persist nonblocking` on this preset: sliced `LoopPersist` `PERS,work` after record stop and no `PERS,drain` on the `base` path.
+
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
 
 ### `overdub_occupy_paint` (source OD1 + occupy OD2 + GUS)
