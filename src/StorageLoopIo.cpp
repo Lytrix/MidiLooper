@@ -3,6 +3,11 @@
 
 #include "StorageLoopIo.h"
 
+#if !defined(PIO_UNIT_TEST_NATIVE)
+#include "Track.h"
+#include "TrackUndo.h"
+#endif
+
 #if defined(ARDUINO)
 #include <Arduino.h>
 #define STORAGE_LOOP_IO_MEM FLASHMEM
@@ -1329,6 +1334,27 @@ bool STORAGE_LOOP_IO_MEM readLoopPersisted(const StorageIo& io, Loop& loop) {
 
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot) {
   loop.adoptPersistedSnapshot(snapshot);
+}
+
+void STORAGE_LOOP_IO_MEM applyLoadedLoopSlotBodyCommit(
+    Loop& loop, Track& track, uint8_t slotIndex, bool usesLoopSnapshotBodyFormatV1,
+    PersistedLoopSnapshot& persistedOracle, ImmutableLoopSnapshotRef loadedLoopSnapshot) {
+  applySnapshotToLoop(loop, persistedOracle);
+  if (usesLoopSnapshotBodyFormatV1) {
+    if (!loadedLoopSnapshot) {
+      return;
+    }
+    loop.storePublishedSnapshot(std::move(loadedLoopSnapshot), 0);
+#if !defined(PIO_UNIT_TEST_NATIVE)
+    TrackUndo::clearUndoHistoryForSlot(track, slotIndex);
+#endif
+    return;
+  }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  testRecordRebuildSlotFromLoopContentCall();
+#else
+  TrackUndo::rebuildSlotFromLoopContent(track, slotIndex);
+#endif
 }
 
 void applyLoopSlotMetadataToLoop(Loop& loop, const PersistedLoopSnapshot& metadata) {

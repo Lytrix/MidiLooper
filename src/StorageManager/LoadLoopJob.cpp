@@ -17,6 +17,7 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 #include <Arduino.h>
 #include <SD.h>
+#include <cstring>
 
 extern bool sequencerRunning;
 
@@ -42,6 +43,9 @@ struct LoadLoopJob {
     std::vector<uint8_t, ExternalMemoryFirstAllocator<uint8_t>> buffer;
     PersistedLoopSnapshot snapshot{};
     PersistedLoopParseState parseState{};
+    bool usesLoopSnapshotBodyFormatV1 = false;
+    LoopSnapshotBodyFormatV1LoadParseState lsv1ParseState{};
+    ImmutableLoopSnapshotRef loadedLoopSnapshot;
     SlotLoadSession* session = nullptr;
 };
 #if defined(__IMXRT1062__)
@@ -70,6 +74,9 @@ STORAGE_PERSIST_MEM void clearLoadLoopJobInstance(LoadLoopJob& job) {
     }
     releasePersistedLoopSnapshotChunks(job.snapshot);
     job.parseState = PersistedLoopParseState{};
+    job.usesLoopSnapshotBodyFormatV1 = false;
+    job.lsv1ParseState = LoopSnapshotBodyFormatV1LoadParseState{};
+    job.loadedLoopSnapshot = nullptr;
     job.phase = LoadLoopJobPhase::Reading;
     job.buffer.clear();
     job.buffer.shrink_to_fit();
@@ -99,6 +106,9 @@ STORAGE_PERSIST_MEM void swapLoadLoopJobs(LoadLoopJob& a, LoadLoopJob& b) {
     swap(a.buffer, b.buffer);
     swap(a.snapshot, b.snapshot);
     swap(a.parseState, b.parseState);
+    swap(a.usesLoopSnapshotBodyFormatV1, b.usesLoopSnapshotBodyFormatV1);
+    swap(a.lsv1ParseState, b.lsv1ParseState);
+    swap(a.loadedLoopSnapshot, b.loadedLoopSnapshot);
     swap(a.session, b.session);
 }
 
@@ -385,9 +395,9 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
 #if defined(PERF_TELEMETRY)
     const uint32_t applyStartUs = micros();
 #endif
-    applySnapshotToLoop(loop, loadLoopJob_.snapshot);
-    TrackUndo::rebuildSlotFromLoopContent(trackManager.getTrack(loadLoopJob_.track),
-                                          loadLoopJob_.slot);
+    applyLoadedLoopSlotBodyCommit(loop, trackManager.getTrack(loadLoopJob_.track),
+                                  loadLoopJob_.slot, loadLoopJob_.usesLoopSnapshotBodyFormatV1,
+                                  loadLoopJob_.snapshot, std::move(loadLoopJob_.loadedLoopSnapshot));
 #if defined(PERF_TELEMETRY)
     const uint32_t applyUs = micros() - applyStartUs;
     if (applyUs > LoadLoopBudget::FocusRestoreUs && loadLoopJobIsFocusSlot()) {
@@ -398,6 +408,9 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     // Snapshot ownership moved onto Loop — drop empty shell without releaseChunkRefs.
     loadLoopJob_.snapshot = PersistedLoopSnapshot{};
     loadLoopJob_.parseState = PersistedLoopParseState{};
+    loadLoopJob_.usesLoopSnapshotBodyFormatV1 = false;
+    loadLoopJob_.lsv1ParseState = LoopSnapshotBodyFormatV1LoadParseState{};
+    loadLoopJob_.loadedLoopSnapshot = nullptr;
 
     markLoopCommittedChunksPersistedFromSdLoad(loop);
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
@@ -433,24 +446,50 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJobParse(uint32_t deadline
 #if defined(PERF_TELEMETRY)
     const uint32_t parseStartUs = micros();
 #endif
-    const PersistedLoopParseStepResult result = stepPersistedLoopSnapshotParse(
-        loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size(), loadLoopJob_.snapshot,
-        loadLoopJob_.parseState, deadlineUs);
+    if (loadLoopJob_.usesLoopSnapshotBodyFormatV1) {
+        const LoopSnapshotBodyFormatV1LoadStepResult lsv1Result =
+            stepLoopSnapshotBodyFormatV1LoadParse(loadLoopJob_.buffer.data(),
+                                                  loadLoopJob_.buffer.size(),
+                                                  loadLoopJob_.snapshot,
+                                                  loadLoopJob_.lsv1ParseState, deadlineUs);
 #if defined(PERF_TELEMETRY)
-    const uint32_t parseUs = micros() - parseStartUs;
-    (void)parseUs;
+        const uint32_t parseUs = micros() - parseStartUs;
+        (void)parseUs;
 #endif
-    if (result == PersistedLoopParseStepResult::Failed) {
-        Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
-        Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
-        resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
-        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
-        clearLoadLoopJobInstance(loadLoopJob_);
-        return SlotLoadAdvanceResult::Failed;
+        if (lsv1Result == LoopSnapshotBodyFormatV1LoadStepResult::Failed) {
+            Serial.println("[StorageManager] WARN: LoadLoopJob LSV1 parse failed");
+            Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
+            resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            clearLoadLoopJobInstance(loadLoopJob_);
+            return SlotLoadAdvanceResult::Failed;
+        }
+        if (lsv1Result == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+            return SlotLoadAdvanceResult::MoreWork;
+        }
+        loadLoopJob_.loadedLoopSnapshot = std::move(loadLoopJob_.lsv1ParseState.loopSnapshot);
+        loadLoopJob_.lsv1ParseState.loopSnapshot = nullptr;
+    } else {
+        const PersistedLoopParseStepResult result = stepPersistedLoopSnapshotParse(
+            loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size(), loadLoopJob_.snapshot,
+            loadLoopJob_.parseState, deadlineUs);
+#if defined(PERF_TELEMETRY)
+        const uint32_t parseUs = micros() - parseStartUs;
+        (void)parseUs;
+#endif
+        if (result == PersistedLoopParseStepResult::Failed) {
+            Serial.println("[StorageManager] WARN: LoadLoopJob parse failed");
+            Loop& loop = trackManager.getTrack(loadLoopJob_.track).getLoop(loadLoopJob_.slot);
+            resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+            markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+            clearLoadLoopJobInstance(loadLoopJob_);
+            return SlotLoadAdvanceResult::Failed;
+        }
+        if (result == PersistedLoopParseStepResult::MoreWork) {
+            return SlotLoadAdvanceResult::MoreWork;
+        }
     }
-    if (result == PersistedLoopParseStepResult::MoreWork) {
-        return SlotLoadAdvanceResult::MoreWork;
-    }
+
     // Parse complete — drop SD payload bytes before Commit so EXTMEM can absorb adopt +
     // pressure reclaim on the next frame (000205: 57KB buffer still held into Committing).
     loadLoopJob_.buffer.clear();
@@ -545,6 +584,23 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
         loadLoopJob_.file.close();
     }
     // SD fill done — enter Parsing next frame (do not parse on the same turn as last read).
+    const LoopSnapshotBodyFormatProbeResult bodyProbe = probeLoopSnapshotBodyFormat(
+        loadLoopJob_.buffer.data(), loadLoopJob_.buffer.size());
+    const bool looksLikeLsv1Prefix =
+        loadLoopJob_.buffer.size() >= 4 &&
+        std::memcmp(loadLoopJob_.buffer.data(), "LSV1", 4) == 0;
+    if (bodyProbe == LoopSnapshotBodyFormatProbeResult::UnsupportedVersion ||
+        (bodyProbe == LoopSnapshotBodyFormatProbeResult::Truncated && looksLikeLsv1Prefix)) {
+        Serial.println("[StorageManager] WARN: LoadLoopJob LSV1 probe failed");
+        resetLoopSlotToEmpty(loop, loadLoopJob_.slot);
+        markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
+        clearLoadLoopJobInstance(loadLoopJob_);
+        return SlotLoadAdvanceResult::Failed;
+    }
+    loadLoopJob_.usesLoopSnapshotBodyFormatV1 =
+        (bodyProbe == LoopSnapshotBodyFormatProbeResult::SupportedV1);
+    loadLoopJob_.lsv1ParseState = LoopSnapshotBodyFormatV1LoadParseState{};
+    loadLoopJob_.loadedLoopSnapshot = nullptr;
     loadLoopJob_.phase = LoadLoopJobPhase::Parsing;
     loadLoopJob_.parseState = PersistedLoopParseState{};
     releasePersistedLoopSnapshotChunks(loadLoopJob_.snapshot);

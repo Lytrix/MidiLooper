@@ -187,9 +187,49 @@ bool writeLoopSnapshotBodyFormatV1SavePreamble(const StorageIo& io,
 bool writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
                                            const LoopSnapshot& loopSnapshot);
 
+enum class LoopSnapshotBodyFormatV1LoadStepResult : uint8_t {
+  MoreWork = 0,
+  Completed = 1,
+  Failed = 2,
+};
+
+struct LoopSnapshotBodyFormatV1LoadParseState {
+  size_t pos = 0;
+  bool headerValidated = false;
+  bool expectPersistedOracle = false;
+  bool sawLoopMetadata = false;
+  bool sawPersistedLoopSnapshot = false;
+  bool sawLoopSnapshot = false;
+  enum class Phase : uint8_t {
+    ScanSections = 0,
+    PersistedOracle = 1,
+    LoopSnapshotPayload = 2,
+  };
+  Phase phase = Phase::ScanSections;
+  size_t activePayloadStart = 0;
+  size_t activePayloadEnd = 0;
+  PersistedLoopParseState persistedParseState{};
+  PersistedLoopSnapshot metadata{};
+  ImmutableLoopSnapshotRef loopSnapshot;
+};
+
+/// Resumable LSV1 slot-body parse for LoadLoopJob. Never publishes.
+LoopSnapshotBodyFormatV1LoadStepResult stepLoopSnapshotBodyFormatV1LoadParse(
+    const uint8_t* data, size_t size, PersistedLoopSnapshot& persistedOracleOut,
+    LoopSnapshotBodyFormatV1LoadParseState& state, uint32_t deadlineUs = 0,
+    uint32_t maxGrains = 0);
+
+class Track;
+/// LoadLoopJob publish: legacy rebuilds GUS from passes; LSV1 stores published snapshot only.
+void applyLoadedLoopSlotBodyCommit(Loop& loop, Track& track, uint8_t slotIndex,
+                                   bool usesLoopSnapshotBodyFormatV1,
+                                   PersistedLoopSnapshot& persistedOracle,
+                                   ImmutableLoopSnapshotRef loadedLoopSnapshot);
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 uint32_t testRebuildSlotFromLoopContentCallCount();
 void testResetRebuildSlotFromLoopContentCallCount();
+void testRecordRebuildSlotFromLoopContentCall();
 #endif
 
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);
