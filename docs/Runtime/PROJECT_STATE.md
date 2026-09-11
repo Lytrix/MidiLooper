@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-11 (Immutable OpenSpec 5.3 SHIPPED; 5.4 verification in progress)
+Last updated: 2026-09-11 (Immutable OpenSpec 5.4 SHIPPED — LSV1 verification; 5.5–5.6 next)
 
 ---
 

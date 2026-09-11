@@ -526,10 +526,11 @@ closed for `DisplayResolveLiveCapture`.
       Native **1822/1**; device smoke
       [`175309`](../../../captures/session_20260911_175309.log). Plan:
       [`immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md).
-- [ ] 5.4 Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. After load, undo depth is 0 and redo is empty.
-      (2026-09-11) **5.4.1 native matrix PASS** — see
+- [x] 5.4 Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. After load, undo depth is 0 and redo is empty.
+      (2026-09-11) Native matrix + HITL `base` PASS [`181945`](../../../captures/session_20260911_181945.log);
+      post-save reboot `LoadLoopJob done 4/0` [`182529`](../../../captures/session_20260911_182529.log).
+      SD `LSV1` byte probe: advisory (`scripts/probe_lsv1_slot_body.py`). Plan:
       [`immutable_loop_snapshot_5_4_lsv1_verification_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_4_lsv1_verification_refinement.md).
-      **OPEN:** SD LSV1 byte probe (5.4.2), reboot LSV1 reload + undo depth 0 (5.4.3).
 - [ ] 5.5 Verify deferred persistence remains owned by `StorageManager` without blocking playback or `handleMidiInput()`.
 - [ ] 5.6 Verify large-loop save and migration progress, overrun/failure preservation, active-snapshot availability, and absence of content-sized synchronous work at stop, input dispatch, clock dispatch, and track-tick paths.
 
