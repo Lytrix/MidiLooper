@@ -1,15 +1,14 @@
 # Overdub start — current snapshot omits bar-crossing record note
 
-**Status:** Stages 3–6 containment **unwound** (membership Stage 5,
-2026-09-11) — visual/adopt/idle `mergeOmitted` removed
-[`110457`](../../captures/session_20260911_110457.log); Stages 5–6 earlier
-[`104115`](../../captures/session_20260911_104115.log) /
-[`105156`](../../captures/session_20260911_105156.log). Helper KEEP.  
-**Architectural marker:** Stages 1–2 remaining compensations still **containment
-only**. End-state invariant and unwind order:
+**Status:** Stages 1 + 3–6 containment **unwound** (membership Stage 5,
+2026-09-11) — incomplete-current retain removed
+[`113043`](../../captures/session_20260911_113043.log). Stage 2 source-view
+`from=snapshot` merge remains.  
+**Architectural marker:** Last remaining compensation is Stage 2 only. End-state
+invariant and unwind order:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](overdub_snapshot_bar_crossing_membership_bugfix.md).
 
-**Next:** unwind consumer Stage 1 retain predicate, then Stage 2 source-view `from=snapshot` merge.  
+**Next:** unwind consumer Stage 2 `from=snapshot` merge in `rebuildOverdubSourceSpanCache` (keep non-snapshot origins).  
 **Fail pin (OD open omit):** [`session_20260910_194531.log`](../../captures/session_20260910_194531.log)  
 **Parent / adjacent:** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) Option C (snapshot membership).
 
@@ -92,6 +91,9 @@ Add `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` (or extend the 
 Wire in `resolveDisplayNotesByDrawSource` after `gatherCommittedDrawSourceBars` (same site as unpublished retain). Pending Hide/Shorten overlays still run on the retained visual base.
 
 Native: DWU truth table + gather fixture if present.
+
+**Unwound (membership Stage 5.4, 2026-09-11):** predicate and call sites removed.
+Gate [`113043`](../../captures/session_20260911_113043.log).
 
 ### Stage 2 — Source-view merge
 

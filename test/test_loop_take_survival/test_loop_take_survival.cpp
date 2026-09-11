@@ -3123,10 +3123,7 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
     if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
             loop.publishedSnapshotIsCurrent(), captureActive || loop.hasOverdubSession(),
             loop.visualCache.notes.size(), prefixEnd,
-            loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) ||
-        DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-            loop.publishedSnapshotIsCurrent(), captureActive || loop.hasOverdubSession(),
-            loop.visualCacheDirty, loop.visualCache.notes.size(), prefixEnd)) {
+            loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered())) {
       out.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
       prefixEnd = out.size();
     }

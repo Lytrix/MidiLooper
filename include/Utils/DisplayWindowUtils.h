@@ -528,20 +528,6 @@ inline bool shouldRetainUnpublishedVisualCacheOverStaleGather(bool publishedSnap
     return retainedVisualCacheCount > 0 && retainedVisualCacheCount > thisStaleGatherCount;
 }
 
-/// During capture/overdub, a **current** published snapshot can still omit
-/// committed spans (`194531` id=27). Retain a **clean** visual when **this**
-/// gather is smaller. Dirty visual (`204344` wrap) must not override freshness
-/// once snapshot membership is complete (membership Stage 5 unwind restores
-/// this veto). Pending Hide/Shorten overlays still apply after retain.
-inline bool shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-    bool publishedSnapshotIsCurrent, bool captureOrOverdubActive, bool visualCacheDirty,
-    size_t visualCacheCount, size_t snapshotGatherCount) {
-    if (!publishedSnapshotIsCurrent || !captureOrOverdubActive || visualCacheDirty) {
-        return false;
-    }
-    return visualCacheCount > 0 && visualCacheCount > snapshotGatherCount;
-}
-
 /// Transport stop hops every playing track (`214900`). Only the selected
 /// track may `resolveDisplayNotes` into shared `liveDisplayNotes`.
 inline bool shouldWriteLiveDisplayNotesOnTransportStop(bool isSelectedTrack) {
