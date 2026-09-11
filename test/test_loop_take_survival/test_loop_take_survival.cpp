@@ -1388,6 +1388,39 @@ void test_overdub_idle_advances_in_flight_construction_only() {
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 }
 
+void test_playback_session_exit_publication_gap_predicate() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
+
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
+
+  Loop passOnly;
+  passOnly.loopId = 8;
+  passOnly.loopLengthTicks = 3072;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(store, 100, 1, 60, 100, 1));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(200, 1, 60, 0)));
+  passOnly.seedRecordPassFromStore(store);
+  TEST_ASSERT_NULL(passOnly.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(passOnly.isPlaybackSessionExitPublicationGap());
+}
+
 void test_overdub_wrap_ahead_does_not_publish_until_session_exit() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5398,6 +5431,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_exit_pass_change_skips_note_already_on_parent);
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
+  RUN_TEST(test_playback_session_exit_publication_gap_predicate);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
   RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
   RUN_TEST(test_snapshot_yield_retains_then_retries_to_publish);

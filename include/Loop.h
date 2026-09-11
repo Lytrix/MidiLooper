@@ -607,6 +607,9 @@ struct Loop {
   uint8_t pendingSnapshotWrapFragmentCount() const;
   uint32_t pendingSnapshotWrapParentRevision() const;
   bool pendingSnapshotSessionExitQueued() const;
+  /// True when playback rebuild may use session-exit compatibility gather: no
+  /// published root yet while session-exit snapshot publication is queued/in flight.
+  bool isPlaybackSessionExitPublicationGap() const;
   bool pendingSnapshotFromLoadedPasses() const;
   const EditPassIdList* pendingSnapshotCompanionIds() const;
   LoadedSnapshotHydrationPhase loadedSnapshotHydrationPhase() const;

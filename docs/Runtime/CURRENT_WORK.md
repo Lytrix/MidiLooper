@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (OpenSpec 6.2 plan APPROVED — B1 next)
+Last updated: 2026-09-11 (OpenSpec 6.2.1b SHIPPED — B1 narrow C1-a)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.2.1b (B1 firmware — C1-a strategy).**
-6.2.1 C1 inventory **SHIPPED** (read-only): [`190525`](../../captures/session_20260911_190525.log)
-shows **759 ms** PLAYING with `root=0x0` after record stop; B1 compat required today unless
-sync-publish or hold-empty is chosen. Tool:
-[`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b1_c1_gather_miss_inventory.py).
-Plan:
+**Now — Immutable OpenSpec 6.2.2 (B3/B4 visual/display).**
+6.2.1b SHIPPED: B1 generic compat fallback retired; C1-a bridge via
+`Loop::isPlaybackSessionExitPublicationGap()` + `#CAP playback_b1`. Native **1824/1829**;
+host gates PASS. **HITL `base` pending** on device. Plan:
 [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
 
-**Prior — Immutable OpenSpec 6.2.1 C1 inventory (2026-09-11).**
+**Prior — OpenSpec 6.2.1 C1 inventory (2026-09-11).**
+Tool: [`analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b1_c1_gather_miss_inventory.py);
+[`190525`](../../captures/session_20260911_190525.log) gap **759 ms**.
 
 **Prior — Immutable OpenSpec 6.1 SHIPPED / APPROVED (2026-09-11).**
 
