@@ -101,11 +101,50 @@ Today:
 
 | Topic | Decision |
 |---|---|
-| Overlay at B1 | Keep accepting Overlay in 6.2.1 unless capture proves it causes incorrect playback vs compat |
-| C1 on empty slot | TBD from fixture inventory — likely hold empty merged window, not compat flatten |
+| Overlay at B1 | Keep accepting Overlay in 6.2.1 unless capture proves incorrect playback vs compat |
+| C1-a session-exit gap | **Confirmed** on [`190525`](../../captures/session_20260911_190525.log): first PLAYING after record stop runs **~759 ms** with `snapshot_idle root=0x0`; **131/163 MO** ticks in that window correlate to C1. B1 compat fallback is **required today** unless stop path publishes before `startPlaying` or playback **holds empty** until root exists. |
+| C1-b legacy pass-only | Out of HITL `base` happy path when hydration publishes; keep for SD/boot until 6.2.2+ |
+| C1-c empty loop | Hold empty merged window; no compat flatten |
 | C3 detection | Parity hook: compare event count vs `publishedSnapshot` membership for same window in native only |
+| C4 at B1 | Overlay returns **true** — not C1; B1 does **not** compat-fallback on Overlay today |
 
-**Proceed?** YES for investigation + policy pin; firmware edit blocked until C1 policy row is filled from fixtures.
+**Proceed?** YES for **6.2.1 design pin**; firmware edit blocked until chosen C1-a strategy (sync publish vs hold-empty vs narrow compat) is explicit.
+
+## C1 inventory (6.2.1 — SHIPPED read-only)
+
+Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b1_c1_gather_miss_inventory.py)
+
+```bash
+.venv/bin/python scripts/analyze_b1_c1_gather_miss_inventory.py captures/session_20260911_190525.log
+.venv/bin/python scripts/analyze_b1_c1_gather_miss_inventory.py --test
+```
+
+### Mechanical C1 subclasses (B1)
+
+| Subclass | Condition | HITL `base`-class evidence | B1 compat today? | 6.2.1 removal strategy |
+|---|---|---|---|---|
+| **C1-a** | `!publishedSnapshot()` after session-exit queue, **PLAYING/OVERDUBBING** | [`190525`](../../captures/session_20260911_190525.log): PLAYING#1 `C1_MOs=131/163`, first non-zero root **759 ms** after PLAYING start | **Yes** — `gatherCommittedEvents*` on `tryGather` **false** | **Choose one:** (1) sync `tryPublishSessionExitSnapshot` before `startPlaying` on stop path, (2) hold-empty merged window until root (HITL verify first-note), (3) retain **narrow** C1-a compat with `#CAP` evidence — not blanket removal |
+| **C1-b** | Pass-only / no hydration root | Native `test_idle_slice_without_snapshot_uses_fallback` (display class) | Indirect via gather | Defer to 6.2.2 / load hydration |
+| **C1-c** | Empty loop / `resetPassTimeline` | Native empty-loop gather false | N/A at B1 if no PLAYING | Hold empty |
+| **C4** | Stale root — gather **true** / `Overlay` | [`190525`](../../captures/session_20260911_190525.log): PLAYING#2 `C4_MOs=158/1320`, roots non-zero | **No** at B1 — Overlay accepted | Preserve; do not conflate with C1 |
+| **C3** | Root exists, gather **true** / `Snapshot`, output incomplete vs invariant | No capture evidence; native parity tests | Must **not** fallback | Assert / `#CAP` diagnostic |
+
+### Native fixture anchors (tryGather false)
+
+| Fixture | File | C1 meaning |
+|---|---|---|
+| Empty loop | `test_loop_take_survival` gather block | C1-c |
+| `resetPassTimeline` | same | C1-c teardown |
+| `test_live_record_starts_snapshot_before_session_exit` | same | C1-a construction |
+| `test_overdub_idle_advances_in_flight_construction_only` | same | C1-a queued publish |
+| `test_session_exit_handoff_when_live_record_notes_fit_sealed_length` | same | C1-a pre-drain |
+
+**Gap:** no native test calls `ensurePlaybackMergedMidiEventsBuilt` — add a **6.2.1 fixture** from capture slice before deleting B1 fallback.
+
+### Capture note on [`203803`](../../captures/session_20260911_203803.log)
+
+203803 is a valid 5.6 persist-bounds sign-off capture but **not** a full record→play→overdub baseline (record stop → `STOPPED`, not `PLAYING`). Use **190525** for B1 C1-a timing evidence; keep **203803** as regression baseline after B1 ships.
+
 
 ## Verification matrix (6.2 parent)
 
