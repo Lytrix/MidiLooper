@@ -138,6 +138,8 @@ size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot);
 
 // --- LoopSnapshot body format version 1 (LSV1) — DEC-057 ---
 
+struct Loop;
+
 constexpr size_t kLsv1LoopSnapshotMidiEventBytes = sizeof(MidiEvent);
 
 enum class LoopSnapshotBodyFormatProbeResult : uint8_t {
@@ -173,18 +175,27 @@ bool writeLoopSnapshotBodyFormatV1(const StorageIo& io,
                                      const PersistedLoopSnapshot& persistedOracle,
                                      const LoopSnapshot& loopSnapshot);
 
+/// True when save should emit LSV1 dual-write (current published root available).
+bool loopUsesLoopSnapshotBodyFormatV1ForSave(const Loop& loop);
+
+/// LSV1 save preamble: body header + `LoopMetadata` + `PersistedLoopSnapshot` section frame.
+bool writeLoopSnapshotBodyFormatV1SavePreamble(const StorageIo& io,
+                                                 const PersistedLoopSnapshot& metadata,
+                                                 uint32_t persistedOracleSectionBytes);
+
+/// LSV1 save tail: `LoopSnapshot` section only (after streamed oracle payload).
+bool writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
+                                           const LoopSnapshot& loopSnapshot);
+
 #if defined(PIO_UNIT_TEST_NATIVE)
 uint32_t testRebuildSlotFromLoopContentCallCount();
 void testResetRebuildSlotFromLoopContentCallCount();
 #endif
 
-struct Loop;
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);
 /// Apply persisted geometry/ids only; leave passes unloaded until full SD restore.
 void applyLoopSlotMetadataToLoop(Loop& loop, const PersistedLoopSnapshot& metadata);
 
-#if !defined(PIO_UNIT_TEST_NATIVE)
 size_t measureLoopSlotFileBytes(const Loop& loop);
 bool writeLoopPersisted(const StorageIo& io, const Loop& loop);
 bool readLoopPersisted(const StorageIo& io, Loop& loop);
-#endif

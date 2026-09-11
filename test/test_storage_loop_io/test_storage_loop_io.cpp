@@ -1169,6 +1169,67 @@ void test_lsv1_unknown_section_is_skipped() {
   releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
 }
 
+void drainPendingSnapshotPublish(Loop& loop) {
+  size_t steps = 0;
+  while (loop.hasPendingSnapshotPublish() && steps < 10000) {
+    loop.stepPendingSnapshotPublish(1);
+    ++steps;
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+}
+
+void test_write_loop_persisted_emits_lsv1_when_published_snapshot_current() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+
+  Loop loop;
+  loop.loopId = 3;
+  loop.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loopUsesLoopSnapshotBodyFormatV1ForSave(loop));
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), loop));
+  TEST_ASSERT_EQUAL(buffer.size(), measureLoopSlotFileBytes(loop));
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::SupportedV1,
+                    probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()));
+
+  LoopSnapshotBodyFormatV1ReadResult readResult{};
+  TEST_ASSERT_TRUE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), readResult));
+  TEST_ASSERT_TRUE(readResult.ok);
+  TEST_ASSERT_NOT_NULL(readResult.loopSnapshot.get());
+  releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
+}
+
+void test_write_loop_persisted_stays_legacy_without_published_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopId = 4;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(50, 1, 64, 100)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 100));
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loopUsesLoopSnapshotBodyFormatV1ForSave(loop));
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), loop));
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::Legacy,
+                    probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()));
+}
+
 void test_lsv1_rejects_duplicate_loop_snapshot_section() {
   const ImmutableLoopSnapshotRef snapshot =
       LoopSnapshot::createEmpty(1, Config::TICKS_PER_BAR, 0, 2, 2);
@@ -1269,6 +1330,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_serialize_reload_content_undo_units_match);
   RUN_TEST(test_write_read_overdub_session_index_tail_roundtrip);
   RUN_TEST(test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped);
+  RUN_TEST(test_write_loop_persisted_emits_lsv1_when_published_snapshot_current);
+  RUN_TEST(test_write_loop_persisted_stays_legacy_without_published_snapshot);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
   RUN_TEST(test_lsv1_probe_legacy_and_unsupported);
   RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);
