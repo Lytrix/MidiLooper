@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Immutable OpenSpec 6.1 SHIPPED — compatibility consumer inventory)
+Last updated: 2026-09-11 (OpenSpec 6.2 plan APPROVED — B1 next)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.2 (compatibility retirement — per-caller migration).**
-6.1 SHIPPED (2026-09-11): consumer inventory + host gate
-`scripts/test_compatibility_consumer_inventory.py` (hot paths **PASS**; B1–B8
-fallback sites frozen). Plan:
-[`immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md`](../Plans/immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md).
-Next: migrate one blocker owner at a time (B1 playback gather fallback first candidate).
+**Now — Immutable OpenSpec 6.2.1 (B1 — `TrackPlaybackWindowBuild`).**
+6.1 **APPROVED** (2026-09-11). 6.2 plan approved with snapshot taxonomy C1–C4:
+[`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
+Next: C1 fixture inventory for playback gather-miss, then remove B1 compat fallback
+owner-by-owner (not bulk). Baseline HITL [`203803`](../../captures/session_20260911_203803.log).
+
+**Prior — Immutable OpenSpec 6.1 SHIPPED / APPROVED (2026-09-11).**
 
 **Prior — Immutable OpenSpec 5.6 SHIPPED (2026-09-11).**
 Large-loop persist progress, slice bounds, active snapshot during PLAYING save,
