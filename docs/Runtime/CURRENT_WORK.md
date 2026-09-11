@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Membership Stage 5.4: incomplete-current retain REMOVED)
+Last updated: 2026-09-11 (Membership Stage 5 COMPLETE — consumer containment unwound)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,13 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub snapshot membership Stage 5 unwind — last layer: consumer
-Stage 2 `from=snapshot` source-view merge.** Layers **6 / 5 / 3 / 1 done**
-(2026-09-11). HITL [`113043`](../../captures/session_20260911_113043.log):
-`from=snapshot notes=32`, no `draw_src→0`. Keep non-snapshot merge origins.
-Do not bundle RC-B. Plan:
+**Now — Overdub snapshot bar-crossing membership Stage 5 COMPLETE.**
+RC-A hand-off + Stage 4 triangulation + full consumer unwind (6→5→3→1→2)
+**SHIPPED** (2026-09-11). Final HITL [`114744`](../../captures/session_20260911_114744.log):
+`from=snapshot notes=32`, id=27 crosses 1536, no `draw_src→0`. Instrumentation
+and Stage 4 sealed apply kept. Do not start RC-B unless explicitly scoped.
+Plan:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](../Plans/overdub_snapshot_bar_crossing_membership_bugfix.md).
-Consumer reference:
-[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
 
 **Prior — Overdub snapshot membership Stage 2 RC-A + Stage 4 SHIPPED.**
 `handoffLiveRecordProgressToCommittedPass`; HITL

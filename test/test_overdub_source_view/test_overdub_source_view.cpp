@@ -3982,9 +3982,9 @@ void test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151
   TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 16));
 }
 
-/// 194531: current snapshot OD open omitted bar-crossing id=27 (74@1500–1554)
-/// while committed events still pair. from=snapshot must mergeOmitted.
-void test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531() {
+/// After membership RC-A + Stage 5.5 unwind, `from=snapshot` trusts published
+/// NoteRefs and does not mergeOmitted over an incomplete planted root.
+void test_snapshot_span_cache_trusts_published_membership_without_merge_omitted() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -4010,18 +4010,14 @@ void test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531() {
 
   loop.openOverdubSession(0);
   TEST_ASSERT_EQUAL_STRING("snapshot", loop.rebuildOverdubSourceSpanCacheForTest());
-  const NoteUtils::DisplayNote* restored = findSpanCacheNote(loop, 27);
-  TEST_ASSERT_NOT_NULL_MESSAGE(restored,
-                               "from=snapshot must merge omitted bar-crossing id=27");
-  TEST_ASSERT_EQUAL_UINT32(74u, restored->note);
-  TEST_ASSERT_EQUAL_UINT32(1500u, restored->startTick);
-  TEST_ASSERT_EQUAL_UINT32(1554u, restored->endTick);
   TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 26));
+  TEST_ASSERT_NULL_MESSAGE(findSpanCacheNote(loop, 27),
+                           "from=snapshot must not mergeOmitted omitted id=27");
 }
 
 /// After membership RC-A, visual rebuild trusts published snapshot NoteRefs.
 /// An artificially incomplete snapshot must not be healed here (consumer
-/// Stage 3 unwind). Source-view merge for `from=snapshot` remains Stage 2.
+/// Stage 3 unwind).
 void test_visual_cache_trusts_published_snapshot_membership_without_merge_omitted() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4061,9 +4057,9 @@ void test_visual_cache_trusts_published_snapshot_membership_without_merge_omitte
                            "adopt must not mergeOmitted omitted id=27");
 }
 
-/// `202713`: Stage 3 reconstruct upsert re-admitted sealed Hide targets at OD2.
-/// Span cache must restore publication-miss id=27 and keep sealed Delete id=26 out.
-void test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713() {
+/// `202713`: sealed Hide must still apply on `from=snapshot` without event merge
+/// (Stage 4 KEEP). Complete published membership supplies id=27 — not mergeOmitted.
+void test_snapshot_span_cache_keeps_sealed_hide_without_merge_omitted_202713() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -4077,9 +4073,27 @@ void test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713() {
   loop.seedRecordPassFromStore(store);
   loop.nextNoteId_ = 28;
 
-  loop.storePublishedSnapshotForTest(
-      buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 26, 73, 1452, 1500),
-      loop.playbackRevision);
+  auto empty = std::make_shared<const LoopSnapshot>(
+      LoopSnapshot(loop.loopId, loop.loopLengthTicks, 0, 100, 100));
+  LoopSnapshotChangeSet changes;
+  for (const auto& geometry :
+       {std::tuple<NoteId, uint8_t, uint32_t, uint32_t>{26, 73, 1452, 1500},
+        std::tuple<NoteId, uint8_t, uint32_t, uint32_t>{27, 74, 1500, 1554}}) {
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = std::get<0>(geometry);
+    add.next.pitch = std::get<1>(geometry);
+    add.next.velocity = 100;
+    add.next.startTick = std::get<2>(geometry);
+    add.next.endTick = std::get<3>(geometry);
+    changes.notes.push_back(add);
+  }
+  LoopSnapshotConstruction construction(empty, changes);
+  TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
+  const ImmutableLoopSnapshotRef completeSnap = construction.freeze();
+  TEST_ASSERT_TRUE(static_cast<bool>(completeSnap));
+  loop.storePublishedSnapshotForTest(completeSnap, loop.playbackRevision);
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 
   EditPass hide{};
@@ -4096,16 +4110,18 @@ void test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713() {
   companions.push_back(hideId);
   loop.recordLastOverdubSeal(1, companions, loop.playbackRevision);
   TEST_ASSERT_TRUE(loop.hasSealedCompanionOverlay());
+  // Seal must not drop snapshot currency or the test falls to passes+merge.
+  loop.storePublishedSnapshotForTest(completeSnap, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 
   loop.openOverdubSession(0);
   const char* from = loop.rebuildOverdubSourceSpanCacheForTest();
-  TEST_ASSERT_TRUE_MESSAGE(std::strcmp(from, "snapshot") == 0 || std::strcmp(from, "passes") == 0,
-                           from);
+  TEST_ASSERT_EQUAL_STRING("snapshot", from);
   TEST_ASSERT_NULL_MESSAGE(findSpanCacheNote(loop, 26),
-                           "sealed Hide must win over snapshot+merge upsert");
-  const NoteUtils::DisplayNote* restored = findSpanCacheNote(loop, 27);
-  TEST_ASSERT_NOT_NULL_MESSAGE(restored, "publication-miss id=27 must still merge in");
-  TEST_ASSERT_EQUAL_UINT32(74u, restored->note);
+                           "sealed Hide must win on snapshot span cache");
+  const NoteUtils::DisplayNote* kept = findSpanCacheNote(loop, 27);
+  TEST_ASSERT_NOT_NULL_MESSAGE(kept, "complete snapshot NoteRef id=27 must remain");
+  TEST_ASSERT_EQUAL_UINT32(74u, kept->note);
 }
 
 void test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared() {
@@ -4870,9 +4886,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_idle_slice_keeps_untouched_next_bar_note);
   RUN_TEST(test_draw_source_snapshot_miss_recovers_pending_shorten_212700);
   RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
-  RUN_TEST(test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531);
+  RUN_TEST(test_snapshot_span_cache_trusts_published_membership_without_merge_omitted);
   RUN_TEST(test_visual_cache_trusts_published_snapshot_membership_without_merge_omitted);
-  RUN_TEST(test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713);
+  RUN_TEST(test_snapshot_span_cache_keeps_sealed_hide_without_merge_omitted_202713);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);
   RUN_TEST(test_ready_fallback_cache_does_not_override_current_snapshot);
