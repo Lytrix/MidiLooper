@@ -1,35 +1,28 @@
-# OpenSpec 5.5 — StorageManager deferred persistence ownership (non-blocking)
+# OpenSpec 5.6 — Large-loop persist bounds verification
 
-**Status:** **5.5 SHIPPED** (2026-09-11)  
-**OpenSpec:** `immutable-loop-snapshot-passes` task **5.5**  
-**Depends on:** [5.4 plan](immutable_loop_snapshot_5_4_lsv1_verification_refinement.md) (SHIPPED), [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)  
+**Status:** **5.6 SHIPPED** (2026-09-11)  
+**OpenSpec:** `immutable-loop-snapshot-passes` task **5.6**  
+**Depends on:** [5.5 plan](immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md) (SHIPPED), [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)  
 **Kind:** verification (no firmware owner change)
 
-## North star (task 5.5)
+## North star (task 5.6)
 
-Verify deferred persistence **remains owned by `StorageManager`** and does **not block playback or `handleMidiInput()`**.
+Verify **large-loop save and migration progress**, **overrun/failure preservation**, **active-snapshot availability during save**, and **absence of content-sized synchronous work** at record/overdub **stop**, **`handleMidiInput()`**, **clock dispatch**, and **track-tick** paths.
 
-LSV1 dual-write (5.3) and the slot-routing fix ([`deferred_persist_loopid_track_routing_bugfix.md`](deferred_persist_loopid_track_routing_bugfix.md)) still execute as deferred `StorageManager` units. Record/overdub stop **admits** work; it does not serialize the slot file on the stop stack.
+5.5 proved owner + sliced runtime execute. 5.6 proves the **bounds contract** on rows **14** / **15** and timing-critical call sites.
 
-## Split vs 5.6
-
-| Task | Verifies |
-|---|---|
-| **5.5** (this plan) | Owner is still `StorageManager`. Runtime execute is `processDeferredSaveState` after MIDI/playback. Persist work is sliced `PERS,work` with no `PERS,drain` on the HITL `base` path. Playback/`handleMidiInput` keep running. |
-| **5.6** | Large-loop save/migration **progress**, overrun/failure preservation, active-snapshot availability during save, and **absence of content-sized synchronous work** at stop, input dispatch, clock dispatch, and track-tick (including whether `handleClearTrack` / SavedSet `saveState()` drains must change). |
-
-## Architecture gate (Phase 4 / task 5.5)
+## Architecture gate (Phase 4 / task 5.6)
 
 | Question | Answer |
 |---|---|
-| **Owner module** | `StorageManager::processDeferredSaveState` (execute); `StorageManager::requestDeferredSaveState` / `admitLoopSlotPersist` (admit); `src/main.cpp` remainder + `MidiServiceDrain::allowDeferredSave` (when). `StorageLoopIo` is the writer called from StorageManager work items. |
-| **Primary invariant** | Snapshot serialization, deferred save, load, and compatibility migration stay on `StorageManager`. LSV1 does not add a second persist owner and does not run content-sized save from `handleMidiInput()`, playback, or clock dispatch. |
+| **Owner module** | `StorageManager::processDeferredSaveState` / `LoadLoopJob` (rows 14/15); stop admits via `requestDeferredSaveState` only |
+| **Primary invariant** | Save/load/migration advance in declared deferred units; failure keeps prior snapshot + valid persisted state; consumers keep reading published snapshot while save is pending; stop/input/clock/tick paths do not run content-sized persist |
 | **Ownership change?** | NO |
 | **State transition change?** | NO |
-| **Execution bound change?** | NO — verify existing ExecutionBounds rows **14** / **15** |
+| **Execution bound change?** | NO — verify existing rows 14/15 |
 | **Behavior-preserving?** | YES |
-| **Reuse** | YES — extend HITL `base` persistence handoff; add host sliced-work / no-drain check; add source call-site gate. No new Manager, scheduler, or HITL stimulus. |
-| **Phase scope** | Task 5.5 verification only |
+| **Reuse** | YES — extend HITL `base` verify + host gates + native matrix from 5.3/5.4/5.5 |
+| **Phase scope** | Task 5.6 verification only |
 
 ### Architecture checkpoint
 
@@ -41,41 +34,48 @@ LSV1 dual-write (5.3) and the slot-routing fix ([`deferred_persist_loopid_track_
 
 | Requirement | Gate | Status |
 |---|---|---|
-| Persist execute owner is `StorageManager::processDeferredSaveState` | `scripts/test_deferred_persist_nonblocking.py` call-site allowlist | **PASS** |
-| Record/overdub stop admits, does not `saveState()` | Same gate (`TrackCaptureStopCommit.cpp` has zero execute calls) | **PASS** |
-| `handleMidiInput` / playback do not execute persist | Same gate (`MidiHandler.cpp`, `TrackPlaybackHotPath.cpp` have zero execute calls) | **PASS** |
-| Deferred slices, not a blocking drain, on HITL `base` | `LoopPersist` `PERS,work` ≥ 2 with `start`; `PERS,drain` = 0; `persistence_handoff` `result=ok` | **PASS** [`200657`](../../captures/session_20260911_200657.log) `loop_persist=295 sliced=True drain=0` |
-| Playback continues across persist | HITL `base` clock/note PASS; `MO=600` during LoopPersist windows | **PASS** [`200657`](../../captures/session_20260911_200657.log) |
-| ExecutionBounds rows 14/15 unchanged | No new bound class | **PASS** |
+| Save progresses in LoopPersist phases | HITL: `start` → `payload_slice*` → `payload_done` → `finalize_slice*` → `done` | **PASS** [`200657`](../../captures/session_20260911_200657.log) 13 windows |
+| Per-turn persist slice bounded (not full-loop sync) | HITL: max `DIAG,persist_save` ≤ **100 ms**; max `PERS,work` ≤ **100 ms** per line | **PASS** max_pers=48408 µs, max_save=48746 µs |
+| Migration progress (save-time LSV1) | Native `test_legacy_slot_migrates_to_lsv1_after_loaded_hydration` | **PASS** (`test_storage_loop_io`) |
+| Failure / reject preserves state | Native `test_lsv1_rejects_*`, `test_persistence_failure_policy` | **PASS** (47 cases) |
+| Active snapshot during save | HITL: `playback_build,snapshot` or `MO` within ±500 ms of each LoopPersist window while PLAYING/OVERDUBBING | **PASS** 6/6 playback-active windows |
+| Stop path admits only (no execute) | Source gate: `TrackCaptureStopCommit.cpp` has `requestDeferredSaveState` / `admitLoopSlotPersist`, no execute | **PASS** |
+| No execute on input/clock/tick | Source gate: `MidiHandler`, `ClockManager`, `TrackManagerTransportTick`, stop path | **PASS** |
+| Record stop defers save | HITL: `RECS,stage,save_request` outcome `requested`; slowest stop stage ≤ **100 ms** | **PASS** slowest=12752 µs |
+| Row 14/15 substeps documented | `ExecutionBounds.md` unchanged | **PASS** |
 
-### Device / host evidence
+**Threshold note:** 100 ms caps catch **content-sized** stop-stack or interval-path persist (historical 73–83 ms+ finalize classes). Empirically bounded SD steps such as `VerifyAndRename` (~48 ms in [`200657`](../../captures/session_20260911_200657.log)) remain allowed on the deferred remainder path.
 
-| Step | Evidence | Result |
-|---|---|---|
-| Host call-site + unit tests | `.venv/bin/python scripts/test_deferred_persist_nonblocking.py` (8 tests) | **PASS** |
-| HITL `base` track 5 / slot 1 | [`200657`](../../captures/session_20260911_200657.log) / report [`200742`](../../captures/host_midi_automation_baseline_20260911_200742.json) | **PASS** — `LoopPersist,slot:4:0` sliced; 5× `PERS,result` ok; `MO` during persist |
-| Prior HITL `base` (pre-slot-key) | [`181945`](../../captures/session_20260911_181945.log) | **PASS** (sliced, no drain; `MO` not required) |
-| Prior manual LSV1 | [`192637`](../../captures/session_20260911_192637.log) | **PASS** (sliced + `MO` interleave) |
+**Active snapshot note:** Idle or STOPPED persist windows (slot hydration, post-stop saves) do not require MO/`playback_build,snapshot`. Playback-active windows use ±500 ms padding so short persist gaps between MO ticks still pass when PLAYING continues.
 
 ## Stages
 
 | Stage | Scope | Status |
 |---|---|---|
-| **5.5.1** | Host call-site gate + unit tests | **SHIPPED** |
-| **5.5.2** | HITL `base` persistence handoff: sliced `LoopPersist`, no `PERS,drain` | **SHIPPED** |
-| **5.5.3** | Device HITL `base` PASS | **SHIPPED** [`200657`](../../captures/session_20260911_200657.log) |
-| **5.5.4** | Close `tasks.md` 5.5 + runtime docs | **SHIPPED** |
+| **5.6.1** | Host gates + HITL verifier (`deferred_persist_large_loop_bounds`) | **SHIPPED** |
+| **5.6.2** | Native matrix sign-off (`pio test -e native` filters) | **SHIPPED** — **1823/1** |
+| **5.6.3** | HITL `base` PASS (reuse [`200657`](../../captures/session_20260911_200657.log)) | **SHIPPED** verify-only [`202341`](../../captures/host_midi_hitl_verify_20260911_202341.json) |
+| **5.6.4** | Close `tasks.md` 5.6 + runtime docs | **SHIPPED** |
 
-## Explicit non-goals (5.5)
+### Device / host evidence
 
-- Bounding or removing `handleClearTrack` / SavedSet `saveState()` drains (5.6)
-- Large-loop progress, overrun policy, active-snapshot-during-save proof (5.6)
+| Step | Evidence | Result |
+|---|---|---|
+| Host call-site + unit tests | `.venv/bin/python scripts/test_deferred_persist_nonblocking.py` (12 tests) | **PASS** |
+| Native persistence matrix | `test_storage_loop_io`, `test_persistence_sync_drain_budget`, `test_persistence_failure_policy` | **PASS** (47 cases) |
+| Full native | `pio test -e native` | **PASS** **1823/1** |
+| HITL `base` verify-only | [`200657`](../../captures/session_20260911_200657.log) / report [`202341`](../../captures/host_midi_hitl_verify_20260911_202341.json) | **PASS** — `windows=13 progress=True max_pers=48408us max_save=48746us active=True stop=True` |
+
+## Explicit non-goals (5.6)
+
+- Removing `handleClearTrack` / SavedSet `saveState()` drains (document only; bounded sync drain is maintenance)
 - Boot sync load LSV1 (`CurrentSetBootLoad`)
+- Long-run bar threshold HITL (`--record-bars 48+`) — optional follow-up; 2-bar `base` + native matrix suffice for 5.6 closeout
 - Dropping `PersistedLoopSnapshot` dual-write (6.x)
-- New persist owner, scheduler, or stimulus
+- New persist owner or scheduler
 
 ## Pre-implementation review
 
 ### Proceed?
 
-**YES** — verification complete.
+**YES** — verification only; extend 5.5 host/HITL patterns.
