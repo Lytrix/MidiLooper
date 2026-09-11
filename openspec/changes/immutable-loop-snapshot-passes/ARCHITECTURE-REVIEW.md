@@ -278,7 +278,8 @@ This does not add a new unbounded owner; idle uses
       `PROJECT_STATE.md`, `PREFLIGHT.md`, and `tasks.md`.
 
 Task 4.4 is closed (2026-09-09 inventory). **4.5** cross-gate verify is
-closed (2026-09-10). **4.6** remains open. **Stage 1** VisualCache `builtFromSnapshotIdentity` + `visualCacheIsCurrentPublishedSnapshot` SHIPPED (2026-09-10): native A→B@R; RAM1 **7008**; native **1821/1**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log); occupy PASS [`151700`](../../../captures/session_20260910_151700.log). Stage 2+ remain.
+closed (2026-09-10). **4.6** closed (2026-09-11 Stages 1–6; §5 undo/load
+excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + `visualCacheIsCurrentPublishedSnapshot` SHIPPED (2026-09-10): native A→B@R; RAM1 **7008**; native **1821/1**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log); occupy PASS [`151700`](../../../captures/session_20260910_151700.log). Stage 6 HITL `base` PASS [`141547`](../../../captures/session_20260911_141547.log).
 
 ### Phase 3 implementation review (4.4 display only)
 
@@ -469,7 +470,7 @@ slice. Parent 4.4 is closed after 4.4a–4.4h + inventory
 - [x] Parent task 4.4 checked off. Plan:
       [`immutable_loop_snapshot_4_4_closeout_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_4_closeout_refinement.md).
 - [x] 4.5 closed 2026-09-10 (`base` / occupy / compose `02` PASS).
-- [ ] 4.6 remains open; do not start hydrate 4b–5 or raise `N`.
+- [x] 4.6 closed (Stages 1–6 + §5 exclusion note); do not start hydrate 4b–5 or raise `N`.
 
 ### Close-publish NoteRange pitch reuse
 
