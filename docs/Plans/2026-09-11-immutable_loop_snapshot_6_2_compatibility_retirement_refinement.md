@@ -3,7 +3,7 @@
 **Status:** **6.2.1b SHIPPED** (2026-09-11) — B1 narrow C1-a exception; **6.2.2 next**  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.2**  
 **Depends on:** [6.1 plan](immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md) (**APPROVED**), [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED)  
-**Regression baseline:** HITL `base` PASS [`203803`](../../captures/session_20260911_203803.log)
+**Regression baseline:** HITL `base` PASS [`231439`](../../captures/session_20260911_231439.log) (C1-a slimmed re-ship). Prior persist-bounds baseline [`203803`](../../captures/session_20260911_203803.log).
 
 ## Planning checkpoint (approved direction)
 
@@ -138,8 +138,8 @@ Today:
 | Condition | B1 behavior |
 |---|---|
 | Published root exists | Snapshot / Overlay path |
-| No root, **not** C1-a | Hold empty + `#CAP,DIAG,playback_b1,hold_empty,...` |
-| No root, **C1-a session-exit gap** | `gatherCommittedEvents*` + `#CAP,DIAG,playback_b1,session_exit_compat,...` |
+| No root, **not** C1-a | Hold empty + `#CAP,DIAG,playback_build,hold_empty,...` |
+| No root, **C1-a session-exit gap** | `gatherCommittedEvents*` + `#CAP,DIAG,playback_build,session_exit_compat,...` |
 | Root exists, gather `Snapshot`, wrong content | No compat (C3 — native parity elsewhere) |
 | `Overlay` | Snapshot path (`StaleRootOverlay` telemetry) |
 
@@ -153,10 +153,17 @@ Telemetry: `PlaybackRebuildPath::SessionExitPublicationGap` → `session_exit_co
 | Host `scripts/test_b1_narrow_session_exit_compat_gate.py` (5 tests) | **PASS** |
 | Host `scripts/test_compatibility_consumer_inventory.py` (B1 → C1-a exception) | **PASS** |
 | Full `pio test -e native` | **1824/1829 PASS** |
-| RAM1 `teensy41-capture-serial` | **2784** locals (below 4000 floor — pre-existing branch pressure; not a 6.2.1b regression target) |
-| HITL `base` on device | **pending** — flash + run to confirm `session_exit_compat` in post-record PLAYING window |
+| RAM1 `teensy41-capture-serial` (clean) | **6880** locals (PASS ≥ 4000). Incremental 2930bce7 report of **2784** was a section-shift artifact, not a new 4 KB C1-a symbol |
+| HITL `base` record-start | **PASS** [`231439`](../../captures/session_20260911_231439.log) — `STOPPED→ARMED→RECORDING` with **no** `#CAPTURE_RECONNECT` |
+| HITL C1-a post-record PLAYING | **PASS** — `#CAP,42270719,DIAG,playback_build,session_exit_compat,615,0,2304,1,4,0,6` immediately after `STOPPED_RECORDING→PLAYING` |
 
 **Architectural label:** B1 **normal-consumer generic fallback retired**; **C1-a session-exit bridge retained** as explicit bounded exception.
+
+### Record-start RC (2026-09-11)
+
+[`224714`](../../captures/session_20260911_224714.log) reset after `STOPPED→ARMED` (USB drop → `#CAPTURE_RECONNECT`). No `playback_b1` / `session_exit_compat` lines — B1 gather-miss did not run on the empty armed slot (`ensurePlaybackMergedEventsForSlot` requires committed passes + length).
+
+Control: uncommitted revert of 2930bce7 ran HITL [`225352`](../../captures/session_20260911_225352.log) through RECORDING (no reconnect). Clean rebuild of slimmed C1-a recovered RAM1 locals **6880**. Removed synchronous `playbackB1GatherMissPolicy`; policy stays on existing deferred `#CAP,DIAG,playback_build,<path>`. Re-ship HITL [`231439`](../../captures/session_20260911_231439.log) **PASS**.
 
 ## Stage table
 
@@ -179,7 +186,7 @@ Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b
 
 | Subclass | Condition | HITL `base`-class evidence | B1 compat today? | 6.2.1 removal strategy |
 |---|---|---|---|---|
-| **C1-a** | `!publishedSnapshot()` after session-exit queue, **PLAYING/OVERDUBBING** | [`190525`](../../captures/session_20260911_190525.log): PLAYING#2 `C1_MOs=131/163`, gap **759 ms** | **Narrow exception only** — `isPlaybackSessionExitPublicationGap()` | **SHIPPED 6.2.1b** — `#CAP playback_b1,session_exit_compat` |
+| **C1-a** | `!publishedSnapshot()` after session-exit queue, **PLAYING/OVERDUBBING** | [`190525`](../../captures/session_20260911_190525.log): PLAYING#2 `C1_MOs=131/163`, gap **759 ms** | **Narrow exception only** — `isPlaybackSessionExitPublicationGap()` | **SHIPPED 6.2.1b** — `#CAP playback_build,session_exit_compat` [`231439`](../../captures/session_20260911_231439.log) |
 | **C1-b** | Pass-only / no hydration root | Native `test_idle_slice_without_snapshot_uses_fallback` (display class) | Indirect via gather | Defer to 6.2.2 / load hydration |
 | **C1-c** | Empty loop / `resetPassTimeline` | Native empty-loop gather false | N/A at B1 if no PLAYING | Hold empty |
 | **C4** | Stale root — gather **true** / `Overlay` | [`190525`](../../captures/session_20260911_190525.log): PLAYING#2 `C4_MOs=158/1320`, roots non-zero | **No** at B1 — Overlay accepted | Preserve; do not conflate with C1 |
@@ -209,7 +216,7 @@ Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b
 | 6.1 inventory frozen | Host gate + plan | **PASS** |
 | Snapshot taxonomy documented | This plan § taxonomy | **PASS** |
 | Owner-by-owner commits | Git + shrinking `_6_2_BLOCKER_SITES` | **open** |
-| HITL `base` after each slice | [`203803`](../../captures/session_20260911_203803.log) baseline | **required per slice** |
+| HITL `base` after each slice | [`231439`](../../captures/session_20260911_231439.log) (6.2.1b) | **required per slice** |
 | `pio test -e native` | Full suite per slice | **required per slice** |
 
 ## Explicit non-goals (6.2 parent)

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (OpenSpec 6.2.1b SHIPPED — B1 narrow C1-a)
+Last updated: 2026-09-11 (OpenSpec 6.2.1b HITL PASS — slimmed C1-a re-ship)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,9 +11,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Now — Immutable OpenSpec 6.2.2 (B3/B4 visual/display).**
-6.2.1b SHIPPED: B1 generic compat fallback retired; C1-a bridge via
-`Loop::isPlaybackSessionExitPublicationGap()` + `#CAP playback_b1`. Native **1824/1829**;
-host gates PASS. **HITL `base` pending** on device. Plan:
+6.2.1b SHIPPED (slimmed re-ship): B1 generic compat retired; C1-a via
+`Loop::isPlaybackSessionExitPublicationGap()`; policy on
+`#CAP,DIAG,playback_build,session_exit_compat|hold_empty`. RAM1 locals **6880**.
+Native **1824/1829**. HITL `base` PASS
+[`231439`](../../captures/session_20260911_231439.log)
+(`ARMED→RECORDING` no reconnect; C1-a line after record-stop PLAYING). Plan:
 [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
 
 **Prior — OpenSpec 6.2.1 C1 inventory (2026-09-11).**
