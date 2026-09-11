@@ -511,7 +511,13 @@ closed for `DisplayResolveLiveCapture`.
 
 ## 5. Undo, load, and persistence
 
-- [ ] 5.1 Make `TrackUndo` and clear-slot restore select before/after snapshot identities while preserving strict LIFO, runtime-only undo/redo, and redo-branch clearing after new work.
+- [x] 5.1 Make `TrackUndo` and clear-slot restore select before/after snapshot identities while preserving strict LIFO, runtime-only undo/redo, and redo-branch clearing after new work.
+      (2026-09-11) `beforePublishedSnapshot` / `afterPublishedSnapshot` on `UndoEntry`;
+      deferred after-attach by originating `UndoEntryId` (Pin A); before = session-start
+      published root (Pin B); pass/ClearSlot restore retained (Pin C). Native
+      **1841/1**; RAM1 **6880**; HITL `base` PASS
+      [`150709`](../../../captures/session_20260911_150709.log). Plan:
+      `docs/Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md`.
 - [ ] 5.2 Approve the physical storage version/layout for immutable objects, the latest saved snapshot, metadata, and local handle rebuild. Do not persist undo history or post-reboot undo lineage.
 - [ ] 5.3 Implement the new content-only storage reader/writer through existing `StorageManager` deferred units and compatibility migration with rollback behavior; classify any interval-path unit in `ExecutionBounds.md` and keep runtime addresses and derived representations out of the format.
 - [ ] 5.4 Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. After load, undo depth is 0 and redo is empty.

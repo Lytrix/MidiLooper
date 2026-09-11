@@ -281,6 +281,21 @@ Task 4.4 is closed (2026-09-09 inventory). **4.5** cross-gate verify is
 closed (2026-09-10). **4.6** closed (2026-09-11 Stages 1–6; §5 undo/load
 excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + `visualCacheIsCurrentPublishedSnapshot` SHIPPED (2026-09-10): native A→B@R; RAM1 **7008**; native **1821/1**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log); occupy PASS [`151700`](../../../captures/session_20260910_151700.log). Stage 6 HITL `base` PASS [`141547`](../../../captures/session_20260911_141547.log).
 
+### Phase 4 implementation review (task 5.1 only)
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership NO; transition YES (snapshot selection); no new unbounded owner.
+- [x] Native invariant checks pass (`test_loop_take_survival` attach-by-id +
+      clear-slot retain); full native **1841/1**.
+- [x] Capture-serial RAM1 locals **6880**.
+- [x] HITL `base` PASS [`150709`](../../../captures/session_20260911_150709.log)
+      (undo/redo 1/1; persistence `result=ok`).
+- [x] Pass Active/Disabled and ClearSlot `PersistedLoopSnapshot` restore retained
+      (Pin C coexistence).
+- [x] Deferred after-attach uses originating `UndoEntryId` only (Pin A).
+- [x] Runtime scope recorded in `CURRENT_WORK.md`, `PROJECT_STATE.md`, `tasks.md`.
+- [ ] Tasks **5.2–5.6** remain open (storage format / load / persistence bounds).
+
 ### Phase 3 implementation review (4.4 display only)
 
 - [x] Phase architecture gate posted in the session transcript.

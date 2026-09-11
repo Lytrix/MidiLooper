@@ -6,6 +6,7 @@
 
 #include "LoopPasses.h"
 #include "EditPass.h"
+#include "LoopSnapshot.h"
 #include "StorageLoopIo.h"
 #include "TrackState.h"
 #include "UndoLoopGeometry.h"
@@ -13,6 +14,8 @@
 #include "Utils/ExternalMemoryFirstAllocator.h"
 
 using UndoEntryId = uint32_t;
+/// `GlobalUndoStack::nextEntryId` starts at 1; zero never names a live entry.
+constexpr UndoEntryId kInvalidUndoEntryId = 0;
 
 enum class UndoEntryKind : uint8_t {
   RecordPassAdded = 0,
@@ -37,6 +40,11 @@ struct UndoEntry {
 
   LoopSnapshotRef beforeSnapshot;
   LoopSnapshotRef afterSnapshot;
+  /// Published immutable roots retained while this entry is on the live GUS
+  /// branch (OpenSpec 5.1). Distinct from `beforeSnapshot`/`afterSnapshot`
+  /// (`PersistedLoopSnapshot` compatibility DTOs). RAM-only — not in STK wire.
+  ImmutableLoopSnapshotRef beforePublishedSnapshot;
+  ImmutableLoopSnapshotRef afterPublishedSnapshot;
   UndoLoopGeometry beforeGeometry;
   UndoLoopGeometry afterGeometry;
 

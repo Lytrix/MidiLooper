@@ -437,6 +437,9 @@ private:
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
   bool hasRecordCaptureBaselineGeometry_ = false;
+  /// Published root at overdub session open (GUS OverdubPassAdded before — Pin B).
+  ImmutableLoopSnapshotRef overdubSessionBeforePublished_;
+  bool hasOverdubSessionBeforePublished_ = false;
   MidiEventVec committedMidiScratch_;
   uint32_t committedMidiScratchRevision_ = UINT32_MAX;
   const void* committedMidiScratchPublishedIdentity_ = nullptr;

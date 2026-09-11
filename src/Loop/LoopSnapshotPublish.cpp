@@ -1833,7 +1833,10 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
     emitSnapshotUnitCapture(*this, "publish", heapBefore);
 #endif
+    const uint32_t attachEntryId = box.sessionExitUndoAttachEntryId;
+    const ImmutableLoopSnapshotRef published = publishedSnapshot();
     clearPendingSnapshotPublish();
+    notifySessionExitPublishedUndoAttach(published, attachEntryId);
     return false;
   }
   return hasPendingSnapshotPublish();
