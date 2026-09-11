@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Overdub snapshot membership Stage 2 RC-A + Stage 4 SHIPPED)
+Last updated: 2026-09-11 (Membership Stage 5 unwind: consumer Stage 6 heal REMOVED)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,18 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub snapshot bar-crossing membership — Stage 5 open (consumer
-unwind).** Stage 2 RC-A + Stage 4 triangulation **SHIPPED** (2026-09-11).
-`handoffLiveRecordProgressToCommittedPass` preserves live-record `openNotes`
-across session-exit; HITL `base` PASS
-[`102837`](../../captures/session_20260911_102837.log): `from=snapshot
-notes=32`, bar crosses id=12@768 / id=25@1536, no record-id
-`draw_src … new,0,0,0`. Accepted on 3-bar (`live=2304`) seeds. Next: unwind
-consumer containment **one layer per change** (6 → 5 → 3 → 1 → 2). Do not
-bundle RC-B. Plan:
+**Now — Overdub snapshot membership Stage 5 unwind — next: restore
+`visualCacheDirty` veto (consumer Stage 5).** Layer **6 REMOVED**
+(2026-09-11): no draw-source NoteId heal in `gatherCommittedDrawSourceBars`.
+HITL `base` PASS [`104115`](../../captures/session_20260911_104115.log)
+(`from=snapshot notes=32`, id=27 crosses 1536, no record `draw_src→0`).
+Remaining order: **5 → 3 → 1 → 2**. Do not bundle RC-B. Plan:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](../Plans/overdub_snapshot_bar_crossing_membership_bugfix.md).
-Consumer containment reference:
+Consumer reference:
 [`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
+
+**Prior — Overdub snapshot membership Stage 2 RC-A + Stage 4 SHIPPED.**
+`handoffLiveRecordProgressToCommittedPass`; HITL
+[`102837`](../../captures/session_20260911_102837.log).
 
 **Prior — Overdub live wrap Stage 2b SHIPPED** (shared NoteId head/tail collapse).
 Device [`193615`](../../captures/session_20260910_193615.log): STOPPED

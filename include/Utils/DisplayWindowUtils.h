@@ -669,15 +669,6 @@ inline void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
     }
 }
 
-/// Current-snapshot draw-source gather can omit bar-crossing NoteRefs while
-/// visual still holds them (`205031` OD1: visual=30 has id 26, snap gather same
-/// count without it → count-based retain fails). Heal after snapshot bar append.
-inline bool shouldHealCurrentSnapshotDrawSourceMembership(bool publishedSnapshotIsCurrent,
-                                                          bool captureOrOverdubActive,
-                                                          bool usedPublishedSnapshotGather) {
-    return publishedSnapshotIsCurrent && captureOrOverdubActive && usedPublishedSnapshotGather;
-}
-
 /// Every sealed preview row must be present in `visualCache` before coverage
 /// may release the handoff. Revision alone is not membership.
 inline bool sealedCapturePreviewRowCoveredByVisualCache(NoteId noteId, uint8_t pitch,

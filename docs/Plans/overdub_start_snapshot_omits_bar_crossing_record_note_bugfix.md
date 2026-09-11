@@ -1,15 +1,15 @@
 # Overdub start — current snapshot omits bar-crossing record note
 
-**Status:** Stage 6 SHIPPED (last consumer containment) — HITL `base` PASS
-[`210310`](../../captures/session_20260910_210310.log): **id26→0 = 0**, **id27→0 = 0**
-(was sustained id26 hide on [`205031`](../../captures/session_20260910_205031.log)).  
-**Architectural marker:** Stages 1–6 are **containment/diagnostic only**. They must
-**not** be accepted as proof that snapshot membership is architecturally complete.
-End-state invariant and publish RC:
+**Status:** Stage 6 containment **REMOVED** (membership Stage 5 unwind,
+2026-09-11) — HITL `base` PASS
+[`104115`](../../captures/session_20260911_104115.log): `from=snapshot notes=32`,
+id=27 bar-cross present, no record `draw_src→0` without draw-source heal.
+Prior containment ship [`210310`](../../captures/session_20260910_210310.log).  
+**Architectural marker:** Stages 1–5 remaining compensations still **containment
+only**. End-state invariant and unwind order:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](overdub_snapshot_bar_crossing_membership_bugfix.md).
 
-**Next:** upstream membership RC (why published snapshot omits the NoteRef), then
-unwind Stage 5–6 compensations.  
+**Next:** unwind consumer Stage 5 (`visualCacheDirty` veto restore), then 3 → 1 → 2.  
 **Fail pin (OD open omit):** [`session_20260910_194531.log`](../../captures/session_20260910_194531.log)  
 **Parent / adjacent:** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) Option C (snapshot membership).
 
@@ -165,16 +165,19 @@ visual (sealed adds) and still omit the bar-crossing NoteId.
 merge omitted committed NoteOns and union missing `NoteId`s from visual before
 overlays. Sealed/pending Hide/Shorten still apply after (Stage 4).
 
-**Shipped:** HITL [`210310`](../../captures/session_20260910_210310.log) id26/id27
-draw_src→0 counts **0**; native heal test PASS; RAM1 **7008**.
+**Shipped (containment):** HITL [`210310`](../../captures/session_20260910_210310.log)
+id26/id27 draw_src→0 counts **0**; native heal test PASS; RAM1 **7008**.
+
+**Removed (membership Stage 5 unwind, 2026-09-11):** draw-source heal call site
+and `shouldHealCurrentSnapshotDrawSourceMembership`. Gate
+[`104115`](../../captures/session_20260911_104115.log).
 
 **Architecture checkpoint:** Ownership NO · Transitions NO · Unbounded NO —
 extend `gatherCommittedDrawSourceBars` with existing `mergeOmitted` + NoteId union.
 
 **Stopping rule:** After Stage 6 ships and HITL is stable, **no further consumer
-exception stages** unless a new independent failure demands one. Next work is
-upstream membership ([`overdub_snapshot_bar_crossing_membership_bugfix.md`](overdub_snapshot_bar_crossing_membership_bugfix.md)),
-then remove/relax Stage 5–6 compensations where membership is complete.
+exception stages** unless a new independent failure demands one. Membership RC
+shipped; unwind remaining Stage 5→3→1→2 compensations one layer at a time.
 
 ### Out of scope (moved to membership plan)
 

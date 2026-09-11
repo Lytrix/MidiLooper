@@ -249,16 +249,9 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t f
             appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
         }
     }
-    // Snapshot bar membership can omit committed NoteIds that visual still has
-    // (`205031` OD1 id=26; same class as OD open id=27). Count-based retain
-    // fails when gather size == visual size. Merge omitted events + union
-    // visual NoteIds; sealed/pending Hide still apply on the compose path.
-    if (DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
-            loop.publishedSnapshotIsCurrent(),
-            loop.captureActive() || loop.hasOverdubSession(), usePublishedSnapshot)) {
-        loop.mergeOmittedCommittedNoteOnIdentitiesInto(out);
-        DisplayWindowUtils::mergeDisplayNotesByNoteId(out, loop.visualCache.notes);
-    }
+    // Membership RC-A (`handoffLiveRecordProgressToCommittedPass`) keeps
+    // bar-crossing NoteRefs in the published snapshot. Do not re-heal draw
+    // source from visual/events here (consumer Stage 6 unwind).
     committedEnd = out.size();
 }
 

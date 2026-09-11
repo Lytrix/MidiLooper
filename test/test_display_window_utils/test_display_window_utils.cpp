@@ -630,17 +630,8 @@ void test_should_retain_visual_cache_over_incomplete_current_snapshot_gather() {
       true, true, false, 31u, 32u));
 }
 
-void test_should_heal_current_snapshot_draw_source_membership_205031() {
-  // OD1/OD2: current snapshot gather selected during capture — heal membership.
-  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
-      true, true, true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
-      false, true, true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
-      true, false, true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldHealCurrentSnapshotDrawSourceMembership(
-      true, true, false));
-
+void test_merge_display_notes_by_note_id_upserts_missing_ids() {
+  // Helper remains for non-draw-source origins (source-view / visual rebuild).
   NoteUtils::DisplayNoteVec dest;
   NoteUtils::DisplayNote a{};
   a.noteId = 26;
@@ -655,7 +646,6 @@ void test_should_heal_current_snapshot_draw_source_membership_205031() {
   b.startTick = 1514;
   b.endTick = 1570;
   visual.push_back(b);
-  // Snapshot dest missing id 27; visual still has it (equal-count retain miss).
   DisplayWindowUtils::mergeDisplayNotesByNoteId(dest, visual);
   TEST_ASSERT_TRUE(DisplayWindowUtils::displayNotesContainNoteId(dest, 26));
   TEST_ASSERT_TRUE(DisplayWindowUtils::displayNotesContainNoteId(dest, 27));
@@ -2181,7 +2171,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
   RUN_TEST(test_should_retain_unpublished_visual_cache_over_stale_gather);
   RUN_TEST(test_should_retain_visual_cache_over_incomplete_current_snapshot_gather);
-  RUN_TEST(test_should_heal_current_snapshot_draw_source_membership_205031);
+  RUN_TEST(test_merge_display_notes_by_note_id_upserts_missing_ids);
   RUN_TEST(test_should_write_live_display_notes_on_transport_stop);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);

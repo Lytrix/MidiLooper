@@ -1,11 +1,14 @@
 # Overdub — published LoopSnapshot omits bar-crossing NoteRef
 
-**Status:** Stage 2 RC-A **SHIPPED** + Stage 4 HITL triangulation **SHIPPED** (2026-09-11). Next: Stage 5 consumer unwind (6 → 5 → 3 → 1 → 2), one layer per change. RC-B remains latent / separate.  
+**Status:** Stage 2 RC-A **SHIPPED** + Stage 4 HITL triangulation **SHIPPED** +
+Stage 5 unwind layer **6 REMOVED** (2026-09-11). Next: restore `visualCacheDirty`
+veto (consumer Stage 5), then 3 → 1 → 2. RC-B remains latent / separate.  
 **Consumer containment (do not treat as end state):**  
-[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md) Stages 1–6  
+[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md) Stages 1–5 remaining  
 **Evidence:** [`194531`](../../captures/session_20260910_194531.log) id 27 p74 (pre-fix 31);  
 [`205031`](../../captures/session_20260910_205031.log) id 26 p73 @ 1480–1541;  
-Stage 4 gate [`102837`](../../captures/session_20260911_102837.log) (`from=snapshot notes=32`, bar crosses id=12@768 / id=25@1536, `live=2304`)
+Stage 4 gate [`102837`](../../captures/session_20260911_102837.log);  
+Stage 5.1 gate [`104115`](../../captures/session_20260911_104115.log) (`from=snapshot notes=32`, id=27@1513–1573)
 
 ## Architectural marker
 
@@ -400,11 +403,15 @@ snapshot hand-off
 | 3 — `mergeOmittedCommittedNoteOnIdentitiesInto` at visual/idle-slice/adopt | `LoopVisualCache.cpp`, `LoopCapture.cpp` | **REMOVE-LATER** (helper itself **KEEP**) | The call sites are membership repair. The helper stays useful for non-snapshot origins and as a diagnostic |
 | 4 — reapply pending/sealed after any event merge | `applyPendingNoteChangesToDisplayNotes` / `applyPendingSnapshotCompanionsToDisplayNotes` after merge | **KEEP — REQUIRED** | Independent correctness rule: raw-event or reconstruct merge must not resurrect sealed Hide/Shorten. True regardless of snapshot completeness |
 | 5 — drop the `visualCacheDirty` veto | `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` | **TEMPORARY** | Weakens a real freshness signal. Restore the veto once membership is complete |
-| 6 — NoteId heal on draw source | `gatherCommittedDrawSourceBars` + `mergeDisplayNotesByNoteId` | **TEMPORARY** | Heals a consumer view, not the snapshot. Also proven insufficient (`210514`: residual hide occurs at `snap,0`, outside this predicate) |
+| 6 — NoteId heal on draw source | `gatherCommittedDrawSourceBars` + `mergeDisplayNotesByNoteId` | **REMOVED (2026-09-11)** | Unwound after RC-A + Stage 4. Gate [`104115`](../../captures/session_20260911_104115.log): `from=snapshot notes=32`, id=27 crosses 1536, no record `draw_src→0` without the heal |
 | Instrumentation (`DIAG,lcr,src`/`srcspan`, `draw_src,diff|layers`) | `DisplayNoteResolve.cpp` | **KEEP** | Only reason this RC is provable. Gated by `SESSION_CAPTURE` |
 
 Order of unwind after the membership fix: 6 → 5 → 3 call sites → 1 → 2.
-Keep Stage 4 and the instrumentation permanently.
+Keep Stage 4 triangulation criteria and the instrumentation permanently.
+
+**Stage 5 progress:** layer **6 REMOVED** (2026-09-11). Next layer: restore
+`visualCacheDirty` veto in
+`shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` (consumer Stage 5).
 
 ## Regression risks
 
@@ -503,6 +510,6 @@ snapshot completeness.
 
 - Stage 1A–4: **SHIPPED** (2026-09-11). Stage 4 accepted on 3-bar (`live=2304`)
   triangulation [`102837`](../../captures/session_20260911_102837.log).
-- **YES** for Stage 5 consumer unwind only — one layer per change
-  (6 → 5 → 3 → 1 → 2). Do not start RC-B or ISR `queuedPassIds` reserve in the
-  same commit.
+- Stage 5 unwind layer **6 REMOVED** — HITL [`104115`](../../captures/session_20260911_104115.log).
+- **YES** for next unwind layer only — restore `visualCacheDirty` veto
+  (consumer Stage 5). Then 3 → 1 → 2. Do not start RC-B in the same commit.
