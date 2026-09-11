@@ -194,14 +194,8 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     } else if (loop.isPlaybackSessionExitPublicationGap()) {
       loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
       usedSessionExitCompat = true;
-#if defined(SESSION_CAPTURE)
-      DebugSessionCapture::playbackB1GatherMissPolicy(winStart, winLen, "session_exit_compat");
-#endif
     } else {
       runtime.mergedMidiEvents.mergedEvents.clear();
-#if defined(SESSION_CAPTURE)
-      DebugSessionCapture::playbackB1GatherMissPolicy(winStart, winLen, "hold_empty");
-#endif
     }
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
@@ -212,15 +206,8 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     } else if (loop.isPlaybackSessionExitPublicationGap()) {
       loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
       usedSessionExitCompat = true;
-#if defined(SESSION_CAPTURE)
-      DebugSessionCapture::playbackB1GatherMissPolicy(0, loop.loopLengthTicks,
-                                                      "session_exit_compat");
-#endif
     } else {
       runtime.mergedMidiEvents.mergedEvents.clear();
-#if defined(SESSION_CAPTURE)
-      DebugSessionCapture::playbackB1GatherMissPolicy(0, loop.loopLengthTicks, "hold_empty");
-#endif
     }
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;

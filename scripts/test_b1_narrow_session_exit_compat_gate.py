@@ -27,8 +27,8 @@ class B1NarrowSessionExitCompatGateTests(unittest.TestCase):
 
     def test_b1_emits_hold_empty_policy_on_unbounded_miss(self) -> None:
         text = _B1.read_text(encoding="utf-8", errors="replace")
-        self.assertIn("hold_empty", text)
-        self.assertIn("playbackB1GatherMissPolicy", text)
+        self.assertIn("GatherMissHoldEmpty", text)
+        self.assertIn("SessionExitPublicationGap", text)
 
     def test_b1_does_not_label_gather_miss_as_generic_compatibility(self) -> None:
         text = _B1.read_text(encoding="utf-8", errors="replace")
