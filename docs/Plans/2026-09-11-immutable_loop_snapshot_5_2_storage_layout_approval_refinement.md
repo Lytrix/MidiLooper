@@ -150,7 +150,7 @@ Footer GUS remains empty headers only (DEC-035 Stage 3).
 
 ## 5.2 deliverables (shipped with this approval)
 
-1. [x] Plan → [`docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md) + [`docs/Plans/latest.md`](docs/Plans/latest.md); Architect webhook if env set.
+1. [x] Plan → [`docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md) (+ optional dated copy).
 2. [x] **DEC-057:** LoopSnapshot body format version 1; wire discriminator `LSV1`; `formatVersion == 1` only; dual-write; load undo depth 0; legacy = absence of `LSV1`; unsupported = wrong `formatVersion`; no `LoopSnap01`; exclusions.
 3. [x] Close open question in change [`design.md`](openspec/changes/immutable-loop-snapshot-passes/design.md); point to DEC-057.
 4. [x] Note in [`Storage.md`](docs/Authority/Architecture/Storage.md).

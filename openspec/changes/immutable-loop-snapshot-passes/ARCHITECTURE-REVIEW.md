@@ -329,9 +329,11 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
 - [x] Phase architecture gate posted in the session transcript.
 - [x] Ownership NO; transition NO; execution-bound NO (rows 14/15 unchanged).
 - [x] Host gates: timing-critical paths forbid persist execute; stop path admits only.
-- [x] HITL verify-only PASS [`200657`](../../../captures/session_20260911_200657.log):
-      `VERIFY deferred persist large-loop bounds` `windows=13 progress=True max_pers=48408us
-      max_save=48746us active=True stop=True`.
+- [x] HITL `base` PASS [`203803`](../../../captures/session_20260911_203803.log):
+      `VERIFY deferred persist large-loop bounds` `windows=5 progress=True max_pers=44624us
+      max_save=44931us active=True stop=True ok=True`; report
+      [`203843`](../../../captures/host_midi_automation_baseline_20260911_203843.json).
+      Prior verify-only replay [`200657`](../../../captures/session_20260911_200657.log).
 - [x] Native matrix + full `pio test -e native` **1823/1**.
 - [x] Runtime docs, `tasks.md` 5.6, and plan updated. Phase **5.x** complete; **6.x** next.
 

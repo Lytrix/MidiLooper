@@ -12,10 +12,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Now — Immutable OpenSpec 6.x (compatibility retirement).**
 5.6 SHIPPED (2026-09-11): large-loop persist progress, slice bounds, active snapshot during
-PLAYING save, stop-path admit-only, timing-critical call-site gates. HITL verify-only
-[`200657`](../../captures/session_20260911_200657.log)
-`VERIFY deferred persist large-loop bounds` `windows=13 progress=True max_pers=48408us
-max_save=48746us active=True stop=True`. Native **1823/1**. Plan:
+PLAYING save, stop-path admit-only, timing-critical call-site gates. HITL `base` PASS
+[`203803`](../../captures/session_20260911_203803.log)
+`VERIFY deferred persist large-loop bounds` `windows=5 progress=True max_pers=44624us
+max_save=44931us active=True stop=True ok=True`. Report
+[`203843`](../../captures/host_midi_automation_baseline_20260911_203843.json). Plan:
 [`immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md`](../Plans/immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md).
 
 **Prior — Immutable OpenSpec 5.5 SHIPPED (2026-09-11).**

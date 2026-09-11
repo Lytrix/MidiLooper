@@ -18,7 +18,7 @@ Authority order: [`Authority/README.md`](../Authority/README.md) â†’ OpenSpec â†
 
 Add `Status: Active | Done | FROZEN` at the top when a plan's lifecycle matters. Do not bulk-edit old files merely to add status.
 
-**New human-written plans:** `docs/Plans/<topic>_<kind>.md` (see [FEATURE_PLANS.md](../FEATURE_PLANS.md)).
+**New human-written plans:** `docs/Plans/<topic>_<kind>.md` (see [FEATURE_PLANS.md](../FEATURE_PLANS.md)). Optional dated snapshot: `docs/Plans/YYYY-MM-DD-<slug>.md`. Do **not** maintain `docs/Plans/latest.md`.
 
 **Cursor exports:** `cp ~/.cursor/plans/*.plan.md docs/Plans/` when you want them versioned.
 

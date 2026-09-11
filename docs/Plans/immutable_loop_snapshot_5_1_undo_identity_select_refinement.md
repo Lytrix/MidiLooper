@@ -3,7 +3,7 @@ name: OpenSpec 5.1 Undo
 overview: "OpenSpec task 5.1: TrackUndo and clear-slot retain/select before/after published LoopSnapshot identities, with deferred after-attach for session-exit publish, while keeping pass Active/Disabled and ClearSlot PersistedLoopSnapshot restore until §6."
 todos:
   - id: stage-0-docs
-    content: Write 5.1 plan to docs/Plans + latest.md, Architect webhook, CURRENT_WORK Now implementing
+    content: Write 5.1 plan to docs/Plans + dated copy; CURRENT_WORK Now implementing
     status: in_progress
   - id: stage-1-schema
     content: Add beforePublishedSnapshot/afterPublishedSnapshot + select/capture helpers in TrackUndo
@@ -138,7 +138,7 @@ These are the named-root retains from design.md. Identity for freshness remains 
 
 ### Stage 0 — Plan + runtime scope (docs only)
 
-- Write plan to `docs/Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md` and `docs/Plans/latest.md`; Architect webhook.
+- Write plan to `docs/Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md` (optional dated copy under `docs/Plans/YYYY-MM-DD-…`).
 - Update [`CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md) § Now implementing to 5.1.
 
 ### Stage 1 — Schema + select helper
