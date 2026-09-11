@@ -1,16 +1,18 @@
 # Overdub — published LoopSnapshot omits bar-crossing NoteRef
 
 **Status:** Stage 2 RC-A **SHIPPED** + Stage 4 HITL triangulation **SHIPPED** +
-Stage 5 unwind **6 / 5 / 3 done** (2026-09-11). Next: consumer Stage 1 retain,
-then Stage 2 source-view merge. RC-B remains latent / separate.  
+Stage 5 unwind **6 / 5 / 3 / 1 done** (2026-09-11). Next: consumer Stage 2
+source-view `from=snapshot` merge (last containment). RC-B remains latent /
+separate.  
 **Consumer containment (do not treat as end state):**  
-[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md) Stages 1–2 remaining  
+[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md) Stage 2 remaining  
 **Evidence:** [`194531`](../../captures/session_20260910_194531.log) id 27 p74 (pre-fix 31);  
 [`205031`](../../captures/session_20260910_205031.log) id 26 p73 @ 1480–1541;  
-Stage 4 gate [`102837`](../../captures/session_20260911_102837.log);  
-Stage 5.1–5.3 gates [`104115`](../../captures/session_20260911_104115.log) /
+Stage 4–5.4 gates [`102837`](../../captures/session_20260911_102837.log) /
+[`104115`](../../captures/session_20260911_104115.log) /
 [`105156`](../../captures/session_20260911_105156.log) /
-[`110457`](../../captures/session_20260911_110457.log)
+[`110457`](../../captures/session_20260911_110457.log) /
+[`113043`](../../captures/session_20260911_113043.log)
 
 ## Architectural marker
 
@@ -400,7 +402,7 @@ snapshot hand-off
 
 | Stage | Owner touched | Verdict | Rationale |
 |---|---|---|---|
-| 1 — retain clean visual over smaller current gather | `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` | **REMOVE-LATER** | Exists only because a current snapshot can be incomplete. Membership fix removes the premise |
+| 1 — retain clean visual over smaller current gather | `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` | **REMOVED (2026-09-11)** | Predicate deleted; draw-source trusts current snapshot membership. Gate [`113043`](../../captures/session_20260911_113043.log): `from=snapshot notes=32`, no `draw_src→0` |
 | 2 — source-view merge for `from=snapshot` | `rebuildOverdubSourceSpanCache` | **REMOVE-LATER** | Same premise. Keep the `!= "snapshot"` origins (prepared/visual/passes/prior) — those are genuinely partial by design |
 | 3 — `mergeOmittedCommittedNoteOnIdentitiesInto` at visual/idle-slice/adopt | `LoopVisualCache.cpp` | **REMOVED (2026-09-11)** | Visual/adopt/idle no longer heal incomplete snapshot membership. Helper KEEP for source-view. Gate [`110457`](../../captures/session_20260911_110457.log): `from=snapshot notes=32`, no `draw_src→0` |
 | 4 — reapply pending/sealed after any event merge | `applyPendingNoteChangesToDisplayNotes` / `applyPendingSnapshotCompanionsToDisplayNotes` after merge | **KEEP — REQUIRED** | Independent correctness rule: raw-event or reconstruct merge must not resurrect sealed Hide/Shorten. True regardless of snapshot completeness |
@@ -411,10 +413,9 @@ snapshot hand-off
 Order of unwind after the membership fix: 6 → 5 → 3 call sites → 1 → 2.
 Keep Stage 4 triangulation criteria and the instrumentation permanently.
 
-**Stage 5 progress:** layers **6 REMOVED**, **5 veto RESTORED**, **3 call
-sites REMOVED** (helper KEEP) (2026-09-11). Next: remove incomplete-current
-retain predicate (consumer Stage 1), then Stage 2 source-view `from=snapshot`
-merge.
+**Stage 5 progress:** layers **6 / 5 / 3 / 1 done** (2026-09-11). Next: remove
+`from=snapshot` merge in `rebuildOverdubSourceSpanCache` (consumer Stage 2;
+keep non-snapshot origins).
 
 ## Regression risks
 
@@ -511,9 +512,10 @@ snapshot completeness.
 
 ### Proceed?
 
-- Stage 1A–4: **SHIPPED**. Stage 5 unwind: **6 REMOVED**, **5 veto RESTORED**,
-  **3 call sites REMOVED** — HITL [`104115`](../../captures/session_20260911_104115.log) /
+- Stage 1A–4: **SHIPPED**. Stage 5 unwind: **6 / 5 / 3 / 1 done** — HITL
+  [`104115`](../../captures/session_20260911_104115.log) /
   [`105156`](../../captures/session_20260911_105156.log) /
-  [`110457`](../../captures/session_20260911_110457.log).
-- **YES** for next unwind layer only — consumer Stage 1 retain predicate.
-  Then Stage 2. Do not start RC-B in the same commit.
+  [`110457`](../../captures/session_20260911_110457.log) /
+  [`113043`](../../captures/session_20260911_113043.log).
+- **YES** for last unwind layer — consumer Stage 2 `from=snapshot` source-view
+  merge only. Do not start RC-B in the same commit.

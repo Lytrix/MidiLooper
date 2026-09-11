@@ -597,6 +597,10 @@ void test_should_retain_unpublished_visual_cache_over_stale_gather() {
       false, true, 65u, 56u, true));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
       true, true, 65u, 56u, false));
+  // 194531-class: current snapshot must not use unpublished-stale retain
+  // (incomplete-current retain predicate removed in membership Stage 5.4).
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
+      true, true, 32u, 31u, false));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
       false, false, 65u, 56u, false));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
@@ -605,29 +609,6 @@ void test_should_retain_unpublished_visual_cache_over_stale_gather() {
       false, true, 0u, 56u, false));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
       false, true, 56u, 65u, false));
-}
-
-void test_should_retain_visual_cache_over_incomplete_current_snapshot_gather() {
-  // 194531: current snapshot OD open notes=31 vs visual=32 (bar-crossing
-  // id 27). Unpublished-stale retain stays false when snapshot is current.
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
-      true, true, 32u, 31u, false));
-  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, true, false, 32u, 31u));
-  // Membership Stage 5 unwind: dirty visual must not retain over current
-  // snapshot (restores freshness veto dropped in consumer Stage 5 / 204344).
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, true, true, 50u, 48u));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      false, true, false, 32u, 31u));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, false, false, 32u, 31u));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, true, false, 31u, 31u));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, true, false, 0u, 31u));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-      true, true, false, 31u, 32u));
 }
 
 void test_merge_display_notes_by_note_id_upserts_missing_ids() {
@@ -2170,7 +2151,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_sealed_capture_preview_row_covered_by_visual_cache);
   RUN_TEST(test_should_retain_record_stop_handoff_seed);
   RUN_TEST(test_should_retain_unpublished_visual_cache_over_stale_gather);
-  RUN_TEST(test_should_retain_visual_cache_over_incomplete_current_snapshot_gather);
   RUN_TEST(test_merge_display_notes_by_note_id_upserts_missing_ids);
   RUN_TEST(test_should_write_live_display_notes_on_transport_stop);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);

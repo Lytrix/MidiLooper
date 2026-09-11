@@ -671,10 +671,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         if (DisplayWindowUtils::shouldRetainUnpublishedVisualCacheOverStaleGather(
                 loop.publishedSnapshotIsCurrent(), captureOrOverdubActive,
                 loop.visualCache.notes.size(), committedDisplayEnd,
-                loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered()) ||
-            DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-                loop.publishedSnapshotIsCurrent(), captureOrOverdubActive,
-                loop.visualCacheDirty, loop.visualCache.notes.size(), committedDisplayEnd)) {
+                loop.hasSealedCapturePreview() && !loop.sealedCapturePreviewIsCovered())) {
             candidate.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             committedDisplayEnd = candidate.size();
         }
