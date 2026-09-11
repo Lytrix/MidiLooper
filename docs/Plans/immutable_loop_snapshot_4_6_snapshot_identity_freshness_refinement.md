@@ -1,7 +1,7 @@
 # Immutable loop snapshot — OpenSpec 4.6 snapshot-identity freshness
 
-**Status:** Stage 4 **SHIPPED** (2026-09-10) — NOTE_EDIT committed-base cache keys. Stages 1–3 **SHIPPED**. Next: evaluate `legacyMidiEventsFromCommitted` (may need design).  
-**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open — remaining consumers / §5 exclusion)  
+**Status:** Stages 1–5 **SHIPPED**. Stage 5 (2026-09-11) — `legacyMidiEventsFromCommitted` snapshot fill + identity. Stage 6 separate.  
+**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open — Stage 6 / §5 exclusion)  
 **Parent:** 4.5 SHIPPED ([`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md)).  
 **Does not start:** §5 undo/load format, §6 compatibility retirement, hydrate 4b–5, raise `N`, new scheduler / `RuntimeWorkBudget::admit`, Phase 2/3 of the PassMaterialize deferral roadmap.
 **Related (separate):** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) — plan only.
@@ -17,7 +17,7 @@
 | DrawSource uses revision + current flag | **Closed Stage 2** — `publishedSnapshotIdentity` on `DrawSourceGatherKey` |
 | Overdub span reuse | **Closed Stage 3** — `overdubSourceSpanCachePublishedIdentity_` |
 | NOTE_EDIT projection keys | `playbackRevision` + `visualCache.revision` + `publishedSnapshotIdentity` (Stage 4) |
-| `legacyMidiEventsFromCommitted` | Always `materializeEditViewFromPasses` keyed by `playbackRevision` |
+| `legacyMidiEventsFromCommitted` | Snapshot fill + revision/identity via `CommittedMidiScratch` (Stage 5) |
 
 RC-A did **not** close any 4.6 freshness gap. PassMaterialize removal from the NOTE_EDIT selector is ownership of **request rebuild**, not derived-rep identity stamps.
 
@@ -76,7 +76,7 @@ Reuse: **YES** — extend `publishedSnapshotIdentity()` + stamp pattern from `en
 | Overdub span cache reuse | `Loop` | playback + published **revision** numbers | **Yes** | Fill already snapshot |
 | NOTE_EDIT projection caches | `EditManager` | revision **+** `publishedSnapshotIdentity` | **Closed Stage 4** | Source Snapshot\|VisualCache (RC-A) |
 | `materializedLoopEventsForNoteEditFocus` | `EditManager` | `playbackRevision` | **Yes** | Later |
-| `legacyMidiEventsFromCommitted` | `Track` | `playbackRevision`; always pass materialize | **Yes — large** | Named in 4.4 closeout |
+| `legacyMidiEventsFromCommitted` | `Track` | revision **+** `committedMidiScratchPublishedIdentity_` | **Closed Stage 5** | Snapshot fill; pass fallback stamps `nullptr` |
 | `passesMaterializedStore_` / `midiEvents()` | `Loop` | dirty flag | **Yes → §6 overlap** | Don’t over-invest |
 | Undo / clear / SD load | `TrackUndo` / `StorageManager` | — | **Out — §5** | |
 | LCR prepared window | `LoopContentResolution` | `preparedPlaybackRevision` | Defer / §6 | |
@@ -216,10 +216,111 @@ OpenSpec `4.6` remains **unchecked** until remaining freshness consumers
 (`materializedLoopEventsForNoteEditFocus`, `legacyMidiEventsFromCommitted`, …)
 and §5 exclusion note are done.
 
-### Stage 5+ (ordered, separate commits)
+### Stage 5 — `legacyMidiEventsFromCommitted` content + freshness — APPROVED WITH TIGHTENING
 
-1. Evaluate `legacyMidiEventsFromCommitted` (may need design if source + freshness)
-2. Then `materializedLoopEventsForNoteEditFocus` / remaining inventory rows
+**Architect (2026-09-11):** proceed after tightenings below. Genuine **content-source correction plus freshness correction**, not stamp-only. Keep Stage 5 and Stage 6 as **separate commits**. Do not broaden inventory during Stage 5.
+
+**Root cause (one commit):** revision-only freshness and pass-effective content instead of published-snapshot content/provenance.
+
+**Ownership (unchanged):**
+
+- `Track` owns `committedMidiScratch_` and freshness/provenance stamp
+- `Loop` owns snapshot access/copy
+- No new cache, manager, scheduler, or interval owner
+
+#### Provenance / validity
+
+```text
+scratch provenance =
+    committedMidiScratchPublishedIdentity_ != nullptr
+    iff scratch contents came from that published snapshot
+
+scratch valid iff
+    committedMidiScratchRevision_ == playbackRevision
+    AND committedMidiScratchPublishedIdentity_ == currentPublishedSnapshotIdentity
+
+For non-snapshot fallback:
+    committedMidiScratchPublishedIdentity_ == nullptr
+```
+
+`nullptr` = scratch built from non-snapshot material (never “current”).
+
+#### Snapshot-copy precondition
+
+Helper path acceptable **only when** it copies the **currently published** snapshot corresponding to the **current committed state** (`publishedSnapshotIsCurrent()` / `revision == playbackRevision`).
+
+Ordering:
+
+```text
+published LoopSnapshot → copy existing snapshot edit view from that observed snapshot
+→ If the currently published snapshot cannot supply the requested edit-view events,
+  retain the existing materializeEditViewFromPasses() fallback and stamp
+  committedMidiScratchPublishedIdentity_ = nullptr.
+```
+
+Failure = **No usable published snapshot for this request → existing pass-materialization fallback.** Must not copy a merely available but stale snapshot.
+
+#### Single publication observation
+
+```text
+observe published snapshot once (ref + identity) under current-root precondition
+→ attempt copy from that observed snapshot
+→ if successful: stamp exactly that observed identity + playbackRevision
+→ otherwise: materializeEditViewFromPasses() + stamp nullptr + playbackRevision
+```
+
+Do not match on one identity observation, copy via a second lookup, then stamp a third `publishedSnapshotIdentity()` call.
+
+#### Atomic invalidation
+
+Every clear path (`invalidateLoopDerivedCaches`, `tryClearCommittedMidiScratch`, any other revision reset):
+
+```text
+committedMidiScratchRevision_ = UINT32_MAX
+committedMidiScratchPublishedIdentity_ = nullptr
+```
+
+Successful fill assigns revision and identity in the same logical operation.
+
+#### Native exit criteria (all four required)
+
+| Case | Expected |
+|---|---|
+| same R + same published identity | reuse scratch; no snapshot copy; no pass materialization |
+| same R + A→B identity change | rebuild; returned events are **B**, not A |
+| revision change | rebuild |
+| no usable published snapshot @ R | pass materialization; `identity == nullptr` |
+
+A→B@R must prove **source correctness** (events are B), not only that rebuild occurs.
+
+#### Stage 5 commit boundary
+
+**Include:** identity member, all invalidation updates, fill ordering, native four-case fixtures, Stage 5 doc notes (leave OpenSpec `4.6` unchecked).
+
+**Exclude:** Stage 6, OpenSpec 4.6 checkbox, §5/§6 work.
+
+#### Device gates (after native exit criteria)
+
+`pio run -e teensy41-capture-serial` (RAM1 ≥ 4000), `pio test -e native`, HITL `base`.
+
+#### Stage 5 closeout (2026-09-11) — SHIPPED
+
+| Gate | Result |
+|---|---|
+| Native four-case exit | PASS (`test_legacy_committed_scratch_snapshot_identity_freshness`) |
+| RAM1 locals | **6976** (`teensy41-capture-serial`) |
+| Full `pio test -e native` | **1838 succeeded, 1 skipped** |
+| HITL `base` | **PASS** [`140021`](../../captures/session_20260911_140021.log) — persistence `result=ok`; undo/redo 1/1. Earlier [`135920`](../../captures/session_20260911_135920.log) FAIL was `persistence_stage_missing:dispatch` (not Stage 5 identity). |
+
+**Shipped:** `CommittedMidiScratch::refresh` / `invalidate`; `Track::committedMidiScratchPublishedIdentity_`; `Loop::tryCopyCurrentSnapshotEditViewEvents(..., observedIdentity)`; atomic clear in `invalidateLoopDerivedCaches` + `tryClearCommittedMidiScratch`.
+
+OpenSpec `4.6` remains **unchecked** until Stage 6 + §5 exclusion note.
+
+### Stage 6 (separate commit after Stage 5)
+
+1. Stamp identity on `materializedLoopEventsForNoteEditFocus` / remaining inventory rows
+2. Document persistence/undo/load as **§5**; check off OpenSpec `4.6`
+3. Leave `passesMaterializedStore_` / `Loop::midiEvents()` to **§6**
 
 ## Explicit non-goals
 

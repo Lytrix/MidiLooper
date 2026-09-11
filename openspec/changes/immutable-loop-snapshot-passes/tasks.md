@@ -311,7 +311,15 @@ cursors rather than treating that locality as an execution bound.
       native **1821 succeeded, 1 skipped**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log);
       `overdub_occupy_paint` PASS [`151700`](../../../captures/session_20260910_151700.log).
       Undo/load format remains §5; materialize retirement §6.
-      Stage 2+ (`DrawSourceGatherKey`, …) remain.
+      **Stage 5 in tree (2026-09-11):** `CommittedMidiScratch` refresh for
+      `legacyMidiEventsFromCommitted` (snapshot fill + revision/identity;
+      pass fallback stamps `nullptr`);
+      `tryCopyCurrentSnapshotEditViewEvents(..., observedIdentity)`;
+      native four-case
+      `test_legacy_committed_scratch_snapshot_identity_freshness`; RAM1 **6976**.
+      HITL `base` PASS [`140021`](../../../captures/session_20260911_140021.log).
+      Stage 6 (`materializedLoopEventsForNoteEditFocus`
+      + §5 exclusion) remains before checking off 4.6.
 
 ## 4b. Post-stop MIDI stability
 

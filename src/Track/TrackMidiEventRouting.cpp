@@ -6,20 +6,16 @@
 #include "EditManager.h"
 #include "Globals.h"
 #include "TrackManager.h"
+#include "Utils/CommittedMidiScratch.h"
 
 extern TrackManager trackManager;
 
 MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
   // Display and playback use SessionMidiEventVec via getMidiEvents().
-  Loop& loop = getActiveLoop();
-  const uint32_t revision = loop.playbackRevision;
-  if (committedMidiScratchRevision_ != revision) {
-    loop.materializeEditViewFromPasses();
-    const SessionMidiEventVec& committedLoopMidi = loop.midiEvents();
-    committedMidiScratch_.assign(committedLoopMidi.begin(), committedLoopMidi.end());
-    committedMidiScratchRevision_ = revision;
-  }
+  // OpenSpec 4.6 Stage 5: published-snapshot content + revision/identity freshness.
+  (void)CommittedMidiScratch::refresh(committedMidiScratch_, committedMidiScratchRevision_,
+                                      committedMidiScratchPublishedIdentity_, getActiveLoop());
   return committedMidiScratch_;
 }
 
@@ -36,7 +32,8 @@ const MidiEventVec& Track::editAwareMidiEvents() const {
 }
 
 void Track::invalidateLoopDerivedCaches() {
-  committedMidiScratchRevision_ = UINT32_MAX;
+  CommittedMidiScratch::invalidate(committedMidiScratchRevision_,
+                                   committedMidiScratchPublishedIdentity_);
   Loop& activeLoop = getActiveLoop();
   activeLoop.invalidateCaches();
   activeLoop.playbackOrderDirty = true;

@@ -13,10 +13,12 @@
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
+#include "../../src/Utils/CommittedMidiScratch.cpp"
 
 #include "Loop.h"
 #include "LoopInternal.h"
 #include "LoopSnapshot.h"
+#include "Utils/CommittedMidiScratch.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "EditPass.h"
@@ -1552,6 +1554,119 @@ void test_visual_cache_identity_stale_when_published_root_replaced_same_revision
       revisionR, revisionR, nullptr, nullptr));
   TEST_ASSERT_FALSE(DisplayWindowUtils::visualCacheIsCurrentPublishedSnapshot(
       revisionR, revisionR, nullptr, identityB));
+}
+
+ImmutableLoopSnapshotRef buildLegacyScratchSnapshot(LoopId loopId, uint32_t loopLength,
+                                                    NoteId noteId, uint8_t pitch,
+                                                    uint32_t startTick, uint32_t endTick) {
+  auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loopId, loopLength, 0, 8, 8));
+  LoopSnapshotChangeSet changes;
+  SnapshotNoteChange add{};
+  add.kind = SnapshotChangeKind::Add;
+  add.next.loopId = loopId;
+  add.next.noteId = noteId;
+  add.next.pitch = pitch;
+  add.next.velocity = 100;
+  add.next.startTick = startTick;
+  add.next.endTick = endTick;
+  changes.notes.push_back(add);
+  LoopSnapshotConstruction construction(empty, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  const ImmutableLoopSnapshotRef snapshot = construction.freeze();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  return snapshot;
+}
+
+bool scratchHasNoteOffAt(const MidiEventVec& events, uint8_t pitch, uint32_t tick) {
+  for (const MidiEvent& evt : events) {
+    if (evt.isNoteOff() && evt.data.noteData.note == pitch && evt.tick == tick) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// OpenSpec 4.6 Stage 5: reuse, A→B@R source=B, revision rebuild, pass fallback.
+void test_legacy_committed_scratch_snapshot_identity_freshness() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const uint32_t revisionR = loop.playbackRevision;
+
+  MidiEventVec scratch;
+  uint32_t scratchRevision = UINT32_MAX;
+  const void* scratchIdentity = nullptr;
+
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(CommittedMidiScratch::RefreshKind::FromSnapshot),
+      static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
+                                                     loop)));
+  const void* identityA = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_EQUAL_PTR(identityA, scratchIdentity);
+  TEST_ASSERT_EQUAL_UINT32(revisionR, scratchRevision);
+  TEST_ASSERT_TRUE(scratchHasNoteOffAt(scratch, 60, 200));
+  const MidiEventVec eventsFromA = scratch;
+  const size_t scratchSizeA = scratch.size();
+
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(CommittedMidiScratch::RefreshKind::Reused),
+      static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
+                                                     loop)));
+  TEST_ASSERT_EQUAL_PTR(identityA, scratchIdentity);
+  TEST_ASSERT_EQUAL(scratchSizeA, scratch.size());
+
+  const ImmutableLoopSnapshotRef snapshotB =
+      buildLegacyScratchSnapshot(loop.loopId, loop.loopLengthTicks, 1, 60, 100, 176);
+  TEST_ASSERT_TRUE(snapshotB.get() != identityA);
+  loop.storePublishedSnapshotForTest(snapshotB, revisionR);
+  TEST_ASSERT_EQUAL_UINT32(revisionR, loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const void* identityB = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_EQUAL_PTR(snapshotB.get(), identityB);
+
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(CommittedMidiScratch::RefreshKind::FromSnapshot),
+      static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
+                                                     loop)));
+  TEST_ASSERT_EQUAL_PTR(identityB, scratchIdentity);
+  TEST_ASSERT_EQUAL_UINT32(revisionR, scratchRevision);
+  SessionMidiEventVec expectedFromB;
+  const void* observedB = nullptr;
+  TEST_ASSERT_TRUE(loop.tryCopyCurrentSnapshotEditViewEvents(expectedFromB, observedB));
+  TEST_ASSERT_EQUAL_PTR(identityB, observedB);
+  TEST_ASSERT_EQUAL(expectedFromB.size(), scratch.size());
+  TEST_ASSERT_TRUE(scratch.size() != eventsFromA.size() ||
+                   scratch[0].tick != eventsFromA[0].tick ||
+                   !scratchHasNoteOffAt(scratch, 60, 200));
+  for (size_t i = 0; i < scratch.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expectedFromB[i].tick, scratch[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(expectedFromB[i].type), static_cast<int>(scratch[i].type));
+    if (expectedFromB[i].isNoteOn() || expectedFromB[i].isNoteOff()) {
+      TEST_ASSERT_EQUAL_UINT8(expectedFromB[i].data.noteData.note, scratch[i].data.noteData.note);
+    }
+  }
+  TEST_ASSERT_FALSE(scratchHasNoteOffAt(scratch, 60, 200));
+
+  ++loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(
+      static_cast<int>(CommittedMidiScratch::RefreshKind::FromPasses),
+      static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
+                                                     loop)));
+  TEST_ASSERT_NULL(scratchIdentity);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, scratchRevision);
+  TEST_ASSERT_TRUE(scratchHasNoteOffAt(scratch, 60, 200));
+
+  CommittedMidiScratch::invalidate(scratch, scratchRevision, scratchIdentity);
+  TEST_ASSERT_TRUE(scratch.empty());
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, scratchRevision);
+  TEST_ASSERT_NULL(scratchIdentity);
 }
 
 void test_keep_committed_mover_in_visual_cache_232309() {
@@ -5153,6 +5268,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_visual_cache_reads_published_snapshot_with_fallback);
   RUN_TEST(test_rebuild_visual_cache_from_passes_uses_snapshot_resolve_notes);
   RUN_TEST(test_visual_cache_identity_stale_when_published_root_replaced_same_revision);
+  RUN_TEST(test_legacy_committed_scratch_snapshot_identity_freshness);
   RUN_TEST(test_keep_committed_mover_in_visual_cache_232309);
   RUN_TEST(test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans);
   RUN_TEST(test_rematerialize_edit_view_uses_snapshot_span_note_ids);

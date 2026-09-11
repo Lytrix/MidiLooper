@@ -191,6 +191,10 @@ struct Loop {
 
   void rematerializeEditView(LoopEventStore& store) const;
   bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
+  /// Current-root edit-view copy with a single publication observation: on
+  /// success `observedIdentity` is the snapshot pointer used for the copy.
+  bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out,
+                                            const void*& observedIdentity) const;
   /// Windowed display fallback: current-root span notes in `[windowStart,
   /// windowStart + windowLength)`, else false.
   bool tryCopyCurrentSnapshotDisplayNotesInWindow(NoteUtils::DisplayNoteVec& out,

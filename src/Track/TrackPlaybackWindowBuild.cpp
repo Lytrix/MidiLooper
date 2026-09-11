@@ -18,6 +18,7 @@
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "PlaybackMergedMidiEvents.h"
+#include "Utils/CommittedMidiScratch.h"
 
 extern TrackManager trackManager;
 
@@ -458,7 +459,7 @@ TRACK_COLD_MEM bool Track::tryClearCommittedMidiScratch() {
   if (committedMidiScratch_.empty()) {
     return false;
   }
-  committedMidiScratch_.clear();
-  committedMidiScratchRevision_ = UINT32_MAX;
+  CommittedMidiScratch::invalidate(committedMidiScratch_, committedMidiScratchRevision_,
+                                   committedMidiScratchPublishedIdentity_);
   return true;
 }

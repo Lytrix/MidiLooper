@@ -324,16 +324,13 @@ LOOP_COLD_MEM void applySessionEditPassesToEvents(const Loop& loop,
   }
 }
 
-LOOP_COLD_MEM bool copyPublishedSnapshotEditViewEvents(const Loop& loop, SessionMidiEventVec& out) {
+LOOP_COLD_MEM bool copyEditViewEventsFromSnapshot(const LoopSnapshot& snapshot,
+                                                  SessionMidiEventVec& out) {
   out.clear();
-  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
-  if (!snapshot) {
-    return false;
-  }
   NoteUtils::DisplayNoteVec spanNotes;
-  LoopContentResolution::resolveDisplayNotes(*snapshot, spanNotes);
+  LoopContentResolution::resolveDisplayNotes(snapshot, spanNotes);
   SessionMidiEventVec events;
-  LoopContentResolution::resolveWindow(*snapshot, 0, snapshot->loopLengthTicks(), events);
+  LoopContentResolution::resolveWindow(snapshot, 0, snapshot.loopLengthTicks(), events);
   for (const MidiEvent& evt : events) {
     if (!evt.isNoteOn() && !evt.isNoteOff()) {
       out.push_back(evt);
@@ -344,6 +341,15 @@ LOOP_COLD_MEM bool copyPublishedSnapshotEditViewEvents(const Loop& loop, Session
     }
   }
   return true;
+}
+
+LOOP_COLD_MEM bool copyPublishedSnapshotEditViewEvents(const Loop& loop, SessionMidiEventVec& out) {
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  if (!snapshot) {
+    out.clear();
+    return false;
+  }
+  return copyEditViewEventsFromSnapshot(*snapshot, out);
 }
 
 LOOP_COLD_MEM bool shouldUsePublishedSnapshotForNoteEditCommit(
@@ -361,11 +367,26 @@ LOOP_COLD_MEM bool shouldUsePublishedSnapshotForNoteEditCommit(
 }  // namespace
 
 LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const {
+  const void* unusedIdentity = nullptr;
+  return tryCopyCurrentSnapshotEditViewEvents(out, unusedIdentity);
+}
+
+LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotEditViewEvents(
+    SessionMidiEventVec& out, const void*& observedIdentity) const {
+  observedIdentity = nullptr;
+  out.clear();
   if (!publishedSnapshotIsCurrent()) {
-    out.clear();
     return false;
   }
-  return copyPublishedSnapshotEditViewEvents(*this, out);
+  const ImmutableLoopSnapshotRef observed = publishedSnapshot();
+  if (!observed) {
+    return false;
+  }
+  if (!copyEditViewEventsFromSnapshot(*observed, out)) {
+    return false;
+  }
+  observedIdentity = observed.get();
+  return true;
 }
 
 LOOP_COLD_MEM bool Loop::tryCopyCurrentSnapshotDisplayNotesInWindow(
