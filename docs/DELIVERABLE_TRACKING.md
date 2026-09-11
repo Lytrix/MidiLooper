@@ -6,7 +6,7 @@
 
 **Shipped** (in firmware on `dev`):
 
-- **Overdub snapshot bar-crossing membership — Stage 2 RC-A + Stage 4 + Stage 5.1 (Sep 2026):** hand-off preserves live-record open notes; draw-source NoteId heal removed after triangulation. HITL [`102837`](../captures/session_20260911_102837.log) / [`104115`](../captures/session_20260911_104115.log). Remaining unwind: consumer Stages 5 → 3 → 1 → 2. Plan: [`overdub_snapshot_bar_crossing_membership_bugfix.md`](Plans/overdub_snapshot_bar_crossing_membership_bugfix.md).
+- **Overdub snapshot bar-crossing membership — Stage 2 RC-A + Stage 4 + Stage 5.1–5.2 (Sep 2026):** hand-off preserves live-record open notes; draw-source heal removed; `visualCacheDirty` veto restored. HITL [`102837`](../captures/session_20260911_102837.log) / [`104115`](../captures/session_20260911_104115.log) / [`105156`](../captures/session_20260911_105156.log). Remaining unwind: consumer Stages 3 → 1 → 2. Plan: [`overdub_snapshot_bar_crossing_membership_bugfix.md`](Plans/overdub_snapshot_bar_crossing_membership_bugfix.md).
 - **Overdub start bar-crossing snapshot omit — consumer Stages 1–3 (Sep 2026):** retain clean visual over incomplete current snapshot gather; full-loop `from=snapshot` mergeOmitted + reconstruct NoteId upsert; visual/idle/adopt merge omitted identities. Device PASS [`202323`](../captures/session_20260910_202323.log) (`visual=33`, id 27 OD1+OD2). Plan: [`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
 
 - 8 tracks × 8 loop slots: per-slot record, overdub, clear, mute, quantized switching, multi-slot hold layering (`Track`, `TrackManager`, `SlotStateMachine`)

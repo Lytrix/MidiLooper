@@ -1,15 +1,13 @@
 # Overdub start — current snapshot omits bar-crossing record note
 
-**Status:** Stage 6 containment **REMOVED** (membership Stage 5 unwind,
-2026-09-11) — HITL `base` PASS
-[`104115`](../../captures/session_20260911_104115.log): `from=snapshot notes=32`,
-id=27 bar-cross present, no record `draw_src→0` without draw-source heal.
-Prior containment ship [`210310`](../../captures/session_20260910_210310.log).  
-**Architectural marker:** Stages 1–5 remaining compensations still **containment
+**Status:** Stages 5–6 containment **unwound** (membership Stage 5,
+2026-09-11) — draw-source heal removed [`104115`](../../captures/session_20260911_104115.log);
+`visualCacheDirty` veto restored [`105156`](../../captures/session_20260911_105156.log).  
+**Architectural marker:** Stages 1–3 remaining compensations still **containment
 only**. End-state invariant and unwind order:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](overdub_snapshot_bar_crossing_membership_bugfix.md).
 
-**Next:** unwind consumer Stage 5 (`visualCacheDirty` veto restore), then 3 → 1 → 2.  
+**Next:** unwind consumer Stage 3 call sites (`mergeOmitted…` at visual/idle/adopt; helper KEEP), then 1 → 2.  
 **Fail pin (OD open omit):** [`session_20260910_194531.log`](../../captures/session_20260910_194531.log)  
 **Parent / adjacent:** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) Option C (snapshot membership).
 
@@ -140,12 +138,15 @@ upsert for `LoopContentResolution::resolveDisplayNotes`.
 while the current snapshot gather still omitted the bar-crossing NoteRef. Sealed
 preview overlays already re-enter after retain.
 
-**Invariant:** During capture/OD, if current-snapshot gather note count is smaller
+**Invariant (containment):** During capture/OD, if current-snapshot gather note count is smaller
 than nonempty visual, retain visual even when dirty. Pending/sealed overlays still
 apply after.
 
 **Architecture checkpoint:** Ownership NO · Transitions NO · Unbounded NO — extend
 `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` only.
+
+**Unwound (membership Stage 5.2, 2026-09-11):** `visualCacheDirty` veto restored.
+Gate [`105156`](../../captures/session_20260911_105156.log).
 
 ### Stage 6 — Last consumer containment: NoteId heal on draw-source (`205031`)
 

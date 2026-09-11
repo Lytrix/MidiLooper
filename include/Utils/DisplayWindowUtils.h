@@ -529,16 +529,14 @@ inline bool shouldRetainUnpublishedVisualCacheOverStaleGather(bool publishedSnap
 }
 
 /// During capture/overdub, a **current** published snapshot can still omit
-/// committed spans (`194531` id=27 pitch 74 @ 1500–1554 bar-crossing; OD open
-/// `from=snapshot` notes=31 while visual=32). Retain visual when **this** gather
-/// is smaller — including when visual is dirty after wrap (`204344`: wrap marks
-/// `visualCacheDirty`, then `draw_src` hides id 27 until the next settle;
-/// sealed/capture overlays still apply after retain). Pending Hide/Shorten
-/// overlays still apply after retain. Not a global VC preference; not STOPPED.
+/// committed spans (`194531` id=27). Retain a **clean** visual when **this**
+/// gather is smaller. Dirty visual (`204344` wrap) must not override freshness
+/// once snapshot membership is complete (membership Stage 5 unwind restores
+/// this veto). Pending Hide/Shorten overlays still apply after retain.
 inline bool shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
-    bool publishedSnapshotIsCurrent, bool captureOrOverdubActive, bool /*visualCacheDirty*/,
+    bool publishedSnapshotIsCurrent, bool captureOrOverdubActive, bool visualCacheDirty,
     size_t visualCacheCount, size_t snapshotGatherCount) {
-    if (!publishedSnapshotIsCurrent || !captureOrOverdubActive) {
+    if (!publishedSnapshotIsCurrent || !captureOrOverdubActive || visualCacheDirty) {
         return false;
     }
     return visualCacheCount > 0 && visualCacheCount > snapshotGatherCount;

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Membership Stage 5 unwind: consumer Stage 6 heal REMOVED)
+Last updated: 2026-09-11 (Membership Stage 5.2: visualCacheDirty veto RESTORED)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,12 +10,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub snapshot membership Stage 5 unwind — next: restore
-`visualCacheDirty` veto (consumer Stage 5).** Layer **6 REMOVED**
-(2026-09-11): no draw-source NoteId heal in `gatherCommittedDrawSourceBars`.
-HITL `base` PASS [`104115`](../../captures/session_20260911_104115.log)
-(`from=snapshot notes=32`, id=27 crosses 1536, no record `draw_src→0`).
-Remaining order: **5 → 3 → 1 → 2**. Do not bundle RC-B. Plan:
+**Now — Overdub snapshot membership Stage 5 unwind — next: consumer Stage 3
+call sites.** Layers **6 REMOVED** + **5 veto RESTORED** (2026-09-11).
+HITL [`104115`](../../captures/session_20260911_104115.log) /
+[`105156`](../../captures/session_20260911_105156.log): `from=snapshot notes=32`,
+id=27 crosses 1536. Remaining order: **3 → 1 → 2**. Do not bundle RC-B. Plan:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](../Plans/overdub_snapshot_bar_crossing_membership_bugfix.md).
 Consumer reference:
 [`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
