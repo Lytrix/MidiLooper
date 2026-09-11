@@ -580,7 +580,162 @@ bool readLoopSnapshotPayload(BufferReader& reader, Lsv1GatheredLoopSnapshotPaylo
   return reader.remaining() == 0;
 }
 
+void mergeLsv1LoopMetadataIntoOracle(const PersistedLoopSnapshot& metadata,
+                                     PersistedLoopSnapshot& oracle) {
+  oracle.loopId = metadata.loopId;
+  oracle.startLoopTick = metadata.startLoopTick;
+  oracle.loopLengthTicks = metadata.loopLengthTicks;
+  oracle.loopStartTick = metadata.loopStartTick;
+  oracle.nextPassId = metadata.nextPassId;
+  oracle.nextNoteId = metadata.nextNoteId;
+  oracle.nextMergeSequence = metadata.nextMergeSequence;
+  oracle.lastCommittedPassId = metadata.lastCommittedPassId;
+}
+
+LoopSnapshotBodyFormatV1LoadStepResult stepLoopSnapshotBodyFormatV1LoadParseImpl(
+    const uint8_t* data, size_t size, PersistedLoopSnapshot& persistedOracleOut,
+    LoopSnapshotBodyFormatV1LoadParseState& state, uint32_t deadlineUs, uint32_t maxGrains) {
+  if (data == nullptr || size == 0) {
+    return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+  }
+
+  if (!state.headerValidated) {
+    const LoopSnapshotBodyFormatProbeResult probe = probeLoopSnapshotBodyFormat(data, size);
+    if (probe != LoopSnapshotBodyFormatProbeResult::SupportedV1) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    uint16_t flags = 0;
+    std::memcpy(&flags, data + 6, sizeof(flags));
+    if ((flags & ~kLsv1HeaderFlagHasPersistedLoopSnapshot) != 0) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    state.expectPersistedOracle = (flags & kLsv1HeaderFlagHasPersistedLoopSnapshot) != 0;
+    state.pos = kLsv1BodyHeaderBytes;
+    state.headerValidated = true;
+  }
+
+  uint32_t grainsDone = 0;
+  const uint32_t grainLimit = (maxGrains == 0) ? UINT32_MAX : maxGrains;
+
+  while (state.pos < size) {
+    if (grainsDone >= grainLimit) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+    }
+
+    if (state.phase == LoopSnapshotBodyFormatV1LoadParseState::Phase::PersistedOracle) {
+      const size_t payloadLen = state.activePayloadEnd - state.activePayloadStart;
+      const PersistedLoopParseStepResult parseResult = stepPersistedLoopSnapshotParse(
+          data + state.activePayloadStart, payloadLen, persistedOracleOut,
+          state.persistedParseState, deadlineUs, 1);
+      ++grainsDone;
+      if (parseResult == PersistedLoopParseStepResult::Failed) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      if (parseResult == PersistedLoopParseStepResult::MoreWork) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+      }
+      if (state.persistedParseState.pos != payloadLen) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      state.sawPersistedLoopSnapshot = true;
+      state.pos = state.activePayloadEnd;
+      state.phase = LoopSnapshotBodyFormatV1LoadParseState::Phase::ScanSections;
+      continue;
+    }
+
+    if (state.phase == LoopSnapshotBodyFormatV1LoadParseState::Phase::LoopSnapshotPayload) {
+      Lsv1GatheredLoopSnapshotPayload payload{};
+      BufferReader reader{data, size, state.activePayloadStart};
+      if (!readLoopSnapshotPayload(reader, payload)) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      state.loopSnapshot = buildLoopSnapshotFromValidatedPayload(payload);
+      if (!state.loopSnapshot) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      state.sawLoopSnapshot = true;
+      state.pos = state.activePayloadEnd;
+      state.phase = LoopSnapshotBodyFormatV1LoadParseState::Phase::ScanSections;
+      ++grainsDone;
+      continue;
+    }
+
+    BufferReader reader{data, size, state.pos};
+    uint8_t nameLength = 0;
+    if (!reader.read(&nameLength, sizeof(nameLength))) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    if (nameLength == 0 || nameLength > kLsv1MaxSectionNameLength) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    if (nameLength > reader.remaining()) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    std::string sectionName(reinterpret_cast<const char*>(data + reader.pos), nameLength);
+    if (!reader.skip(nameLength)) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    uint32_t payloadByteLength = 0;
+    if (!reader.read(&payloadByteLength, sizeof(payloadByteLength))) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+    if (payloadByteLength > reader.remaining() || payloadByteLength > kLsv1MaxSectionPayloadBytes) {
+      return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+    }
+
+    const size_t payloadStart = reader.pos;
+    const size_t payloadEnd = payloadStart + payloadByteLength;
+
+    if (sectionName == kLsv1SectionLoopMetadata) {
+      if (state.sawLoopMetadata || payloadByteLength != kLsv1LoopMetadataPayloadBytes) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      if (!readLoopMetadataPayload(reader, state.metadata)) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      state.sawLoopMetadata = true;
+      state.pos = payloadEnd;
+    } else if (sectionName == kLsv1SectionPersistedLoopSnapshot) {
+      if (state.sawPersistedLoopSnapshot) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      state.activePayloadStart = payloadStart;
+      state.activePayloadEnd = payloadEnd;
+      state.persistedParseState = PersistedLoopParseState{};
+      state.phase = LoopSnapshotBodyFormatV1LoadParseState::Phase::PersistedOracle;
+      return LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+    } else if (sectionName == kLsv1SectionLoopSnapshot) {
+      if (state.sawLoopSnapshot) {
+        return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+      }
+      state.activePayloadStart = payloadStart;
+      state.activePayloadEnd = payloadEnd;
+      state.phase = LoopSnapshotBodyFormatV1LoadParseState::Phase::LoopSnapshotPayload;
+      return LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+    } else {
+      state.pos = payloadEnd;
+    }
+    ++grainsDone;
+  }
+
+  if (!state.sawLoopMetadata || !state.sawLoopSnapshot) {
+    return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+  }
+  if (state.expectPersistedOracle && !state.sawPersistedLoopSnapshot) {
+    return LoopSnapshotBodyFormatV1LoadStepResult::Failed;
+  }
+  mergeLsv1LoopMetadataIntoOracle(state.metadata, persistedOracleOut);
+  return LoopSnapshotBodyFormatV1LoadStepResult::Completed;
+}
+
 }  // namespace
+
+LoopSnapshotBodyFormatV1LoadStepResult LSV1_IO_MEM stepLoopSnapshotBodyFormatV1LoadParse(
+    const uint8_t* data, size_t size, PersistedLoopSnapshot& persistedOracleOut,
+    LoopSnapshotBodyFormatV1LoadParseState& state, uint32_t deadlineUs, uint32_t maxGrains) {
+  return stepLoopSnapshotBodyFormatV1LoadParseImpl(data, size, persistedOracleOut, state,
+                                                   deadlineUs, maxGrains);
+}
 
 LoopSnapshotBodyFormatProbeResult LSV1_IO_MEM probeLoopSnapshotBodyFormat(const uint8_t* data,
                                                                           size_t size) {
@@ -839,5 +994,9 @@ uint32_t testRebuildSlotFromLoopContentCallCount() {
 
 void testResetRebuildSlotFromLoopContentCallCount() {
   g_testRebuildSlotFromLoopContentCallCount = 0;
+}
+
+void testRecordRebuildSlotFromLoopContentCall() {
+  ++g_testRebuildSlotFromLoopContentCallCount;
 }
 #endif

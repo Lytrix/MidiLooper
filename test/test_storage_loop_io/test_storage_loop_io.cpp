@@ -30,6 +30,8 @@
 #include "MidiEvent.h"
 #include "Utils/NoteUtils.h"
 
+class Track;
+
 namespace {
 
 template <typename T>
@@ -1087,6 +1089,113 @@ void test_lsv1_body_format_roundtrip_dual_write() {
   releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
 }
 
+void test_lsv1_stepped_parse_matches_full_read() {
+  resetSnapshotAllocCounters();
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1RoundTripSnapshotFixture();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 3;
+  metadata.startLoopTick = 480;
+  metadata.loopLengthTicks = snapshot->loopLengthTicks();
+  metadata.loopStartTick = 12;
+  metadata.nextPassId = 8;
+  metadata.nextNoteId = snapshot->nextNoteId();
+  metadata.nextMergeSequence = 1;
+  metadata.lastCommittedPassId = 7;
+
+  PersistedLoopSnapshot persistedOracle{};
+  persistedOracle.loopId = metadata.loopId;
+  persistedOracle.loopLengthTicks = metadata.loopLengthTicks;
+  persistedOracle.loopStartTick = metadata.loopStartTick;
+  persistedOracle.nextPassId = metadata.nextPassId;
+  persistedOracle.nextNoteId = metadata.nextNoteId;
+  persistedOracle.nextMergeSequence = metadata.nextMergeSequence;
+  persistedOracle.lastCommittedPassId = metadata.lastCommittedPassId;
+  persistedOracle.passes.recordPass =
+      makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(
+      writeLoopSnapshotBodyFormatV1(mem.io(), metadata, persistedOracle, *snapshot));
+
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot steppedOracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult =
+      LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(),
+                                                       steppedOracle, parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1LoadStepResult::Completed, stepResult);
+
+  LoopSnapshotBodyFormatV1ReadResult readResult{};
+  TEST_ASSERT_TRUE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), readResult));
+  TEST_ASSERT_TRUE(readResult.ok);
+  assertSnapshotsEquivalent(*snapshot, *parseState.loopSnapshot);
+  assertSnapshotsEquivalent(*snapshot, *readResult.loopSnapshot);
+  TEST_ASSERT_EQUAL(metadata.loopId, steppedOracle.loopId);
+  TEST_ASSERT_EQUAL(metadata.startLoopTick, steppedOracle.startLoopTick);
+  releasePersistedLoopSnapshotChunks(steppedOracle);
+  releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
+}
+
+void test_lsv1_load_commit_skips_rebuild() {
+  resetSnapshotAllocCounters();
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1RoundTripSnapshotFixture();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 3;
+  metadata.loopLengthTicks = snapshot->loopLengthTicks();
+  metadata.nextPassId = 8;
+  metadata.nextNoteId = snapshot->nextNoteId();
+
+  PersistedLoopSnapshot persistedOracle{};
+  persistedOracle.loopId = metadata.loopId;
+  persistedOracle.loopLengthTicks = metadata.loopLengthTicks;
+  persistedOracle.nextPassId = metadata.nextPassId;
+  persistedOracle.nextNoteId = metadata.nextNoteId;
+  persistedOracle.passes.recordPass =
+      makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(
+      writeLoopSnapshotBodyFormatV1(mem.io(), metadata, persistedOracle, *snapshot));
+
+  LoopSnapshotBodyFormatV1LoadParseState parseState{};
+  PersistedLoopSnapshot oracle{};
+  LoopSnapshotBodyFormatV1LoadStepResult stepResult =
+      LoopSnapshotBodyFormatV1LoadStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1LoadStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1LoadParse(buffer.data(), buffer.size(), oracle,
+                                                       parseState, 0, 1);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1LoadStepResult::Completed, stepResult);
+
+  Loop loop;
+  alignas(16) static unsigned char trackStorage[16] = {};
+  Track& track = *reinterpret_cast<Track*>(trackStorage);
+
+  testResetRebuildSlotFromLoopContentCallCount();
+  ImmutableLoopSnapshotRef loadedSnapshot = parseState.loopSnapshot;
+  parseState.loopSnapshot = nullptr;
+  applyLoadedLoopSlotBodyCommit(loop, track, 0, true, oracle, std::move(loadedSnapshot));
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(0u, testRebuildSlotFromLoopContentCallCount());
+
+  testResetRebuildSlotFromLoopContentCallCount();
+  PersistedLoopSnapshot legacyOracle = metadata;
+  legacyOracle.passes.recordPass =
+      makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
+  applyLoadedLoopSlotBodyCommit(loop, track, 0, false, legacyOracle, nullptr);
+  TEST_ASSERT_EQUAL(1u, testRebuildSlotFromLoopContentCallCount());
+  releasePersistedLoopSnapshotChunks(legacyOracle);
+}
+
 void test_lsv1_probe_legacy_and_unsupported() {
   PersistedLoopSnapshot legacy{};
   legacy.loopId = 1;
@@ -1333,6 +1442,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_loop_persisted_emits_lsv1_when_published_snapshot_current);
   RUN_TEST(test_write_loop_persisted_stays_legacy_without_published_snapshot);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
+  RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
+  RUN_TEST(test_lsv1_load_commit_skips_rebuild);
   RUN_TEST(test_lsv1_probe_legacy_and_unsupported);
   RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);
   RUN_TEST(test_lsv1_unknown_section_is_skipped);

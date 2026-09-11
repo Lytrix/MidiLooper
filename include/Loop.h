@@ -768,6 +768,8 @@ struct Loop {
 
  private:
   friend class TrackUndo;
+  friend void applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
+                                            PersistedLoopSnapshot&, ImmutableLoopSnapshotRef);
 
   PassesMaterializedEventStore passesMaterializedStore_;
   bool passesMaterializedStoreStale_ = true;
