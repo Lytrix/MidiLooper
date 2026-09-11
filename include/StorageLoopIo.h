@@ -13,6 +13,7 @@
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "LoopEventStore.h"
+#include "LoopSnapshot.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 
 #include <cstdlib>
@@ -134,6 +135,48 @@ bool readPersistedLoopSnapshotHeader(const StorageIo& io, PersistedLoopSnapshot&
 
 /// Byte length of loop slot file body produced by writePersistedLoopSnapshot / writeLoopPersisted.
 size_t measureLoopSnapshotSlotFileBytes(const PersistedLoopSnapshot& snapshot);
+
+// --- LoopSnapshot body format version 1 (LSV1) — DEC-057 ---
+
+constexpr size_t kLsv1LoopSnapshotMidiEventBytes = sizeof(MidiEvent);
+
+enum class LoopSnapshotBodyFormatProbeResult : uint8_t {
+  Legacy = 0,
+  SupportedV1 = 1,
+  UnsupportedVersion = 2,
+  Truncated = 3,
+};
+
+/// First-four-byte probe only. Absence of `LSV1` ⇒ Legacy.
+LoopSnapshotBodyFormatProbeResult probeLoopSnapshotBodyFormat(const uint8_t* data, size_t size);
+
+struct LoopSnapshotBodyFormatV1ReadResult {
+  bool ok = false;
+  bool legacy = false;
+  bool unsupportedVersion = false;
+  PersistedLoopSnapshot metadata{};
+  PersistedLoopSnapshot persistedOracle{};
+  bool hasPersistedOracle = false;
+  ImmutableLoopSnapshotRef loopSnapshot;
+};
+
+/// Parse + validate LSV1 bytes. Never publishes; returns candidate snapshot or failure.
+bool readLoopSnapshotBodyFormatV1(const uint8_t* data, size_t size,
+                                  LoopSnapshotBodyFormatV1ReadResult& out);
+
+size_t measureLoopSnapshotBodyFormatV1Bytes(const PersistedLoopSnapshot& metadata,
+                                              const PersistedLoopSnapshot& persistedOracle,
+                                              const LoopSnapshot& loopSnapshot);
+
+bool writeLoopSnapshotBodyFormatV1(const StorageIo& io,
+                                     const PersistedLoopSnapshot& metadata,
+                                     const PersistedLoopSnapshot& persistedOracle,
+                                     const LoopSnapshot& loopSnapshot);
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+uint32_t testRebuildSlotFromLoopContentCallCount();
+void testResetRebuildSlotFromLoopContentCallCount();
+#endif
 
 struct Loop;
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);

@@ -10,15 +10,20 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 5.2 APPROVED (docs/decision only).**
+**Now — Immutable OpenSpec 5.3 Stage 5.3.1 SHIPPED; next 5.3.2 save hook.**
+LoopSnapshot body format reader/writer (`probeLoopSnapshotBodyFormat`,
+`writeLoopSnapshotBodyFormatV1`, `readLoopSnapshotBodyFormatV1`,
+`measureLoopSnapshotBodyFormatV1Bytes`) in `StorageLoopIoBodyFormatV1.cpp`; native
+**1846/1**; RAM1 **6880**. No SD path change yet. Plan:
+[`immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md`](../Plans/immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md).
+Next: **5.3.2** save → **5.3.3** load authority → **5.3.4** migration + bounds/docs.
+Authority: [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write).
+
+**Prior — Immutable OpenSpec 5.2 APPROVED (docs/decision only).**
 [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write):
-LoopSnapshot body format version 1; wire discriminator `LSV1` +
-`formatVersion == 1`; dual-write `PersistedLoopSnapshot` + `LoopSnapshot`;
-load undo depth 0; absence of `LSV1` = legacy; wrong `formatVersion` =
-unsupported reject. **Do not start 5.3 firmware in the same approval.**
+LoopSnapshot body format version 1; `LSV1` + `formatVersion == 1`; dual-write.
 Plan:
 [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
-Next open in §5: **5.3** reader/writer + deferred migration.
 
 **Prior — Immutable OpenSpec 5.1 SHIPPED.**
 `beforePublishedSnapshot` / `afterPublishedSnapshot` on GUS; deferred after-attach

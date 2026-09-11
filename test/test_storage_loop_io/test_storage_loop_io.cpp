@@ -12,6 +12,8 @@
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/Loop/LoopContentHistory.cpp"
 #include "../../src/StorageLoopIo.cpp"
+#include "../../src/StorageLoopIoBodyFormatV1.cpp"
+#include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"
@@ -23,7 +25,10 @@
 #include "LoopContentHistory.h"
 #include "EditPass.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
+#include "LoopContentResolution.h"
+#include "LoopSnapshot.h"
 #include "MidiEvent.h"
+#include "Utils/NoteUtils.h"
 
 namespace {
 
@@ -959,6 +964,231 @@ void test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped() {
   releasePersistedLoopSnapshotChunks(restored);
 }
 
+ImmutableLoopSnapshotRef buildLsv1RoundTripSnapshotFixture() {
+  const uint32_t loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  auto parent = LoopSnapshot::createEmpty(3, loopLengthTicks, 12, 10, 6);
+  LoopSnapshotChangeSet changes;
+
+  SnapshotNoteChange wrapNote{};
+  wrapNote.kind = SnapshotChangeKind::Add;
+  wrapNote.next = {3, 5, 60, 100, Config::TICKS_PER_BAR - 48, 96};
+  changes.notes.push_back(wrapNote);
+
+  SnapshotNoteChange samePitch{};
+  samePitch.kind = SnapshotChangeKind::Add;
+  samePitch.next = {3, 6, 60, 90, 200, 320};
+  changes.notes.push_back(samePitch);
+
+  SnapshotNoteChange otherPitch{};
+  otherPitch.kind = SnapshotChangeKind::Add;
+  otherPitch.next = {3, 7, 64, 80, 400, 520};
+  changes.notes.push_back(otherPitch);
+
+  MidiEvent noteOn = MidiEvent::NoteOn(200, 2, 60, 90);
+  noteOn.noteId = 6;
+  SnapshotEventChange noteOnChange{};
+  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.next = {3, 1, 0, noteOn};
+  changes.events.push_back(noteOnChange);
+
+  MidiEvent noteOff = MidiEvent::NoteOff(320, 2, 60);
+  noteOff.noteId = 6;
+  SnapshotEventChange noteOffChange{};
+  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.next = {3, 2, 1, noteOff};
+  changes.events.push_back(noteOffChange);
+
+  MidiEvent unpairedOn = MidiEvent::NoteOn(700, 2, 64, 80);
+  unpairedOn.noteId = 7;
+  SnapshotEventChange unpairedOnChange{};
+  unpairedOnChange.kind = SnapshotChangeKind::Add;
+  unpairedOnChange.next = {3, 3, 2, unpairedOn};
+  changes.events.push_back(unpairedOnChange);
+
+  LoopSnapshotConstruction construction(parent, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  return construction.freeze();
+}
+
+void assertSnapshotsEquivalent(const LoopSnapshot& expected, const LoopSnapshot& actual) {
+  TEST_ASSERT_EQUAL(expected.loopId(), actual.loopId());
+  TEST_ASSERT_EQUAL(expected.loopLengthTicks(), actual.loopLengthTicks());
+  TEST_ASSERT_EQUAL(expected.loopStartTick(), actual.loopStartTick());
+  TEST_ASSERT_EQUAL(expected.nextNoteId(), actual.nextNoteId());
+  TEST_ASSERT_EQUAL(expected.nextEventId(), actual.nextEventId());
+
+  NoteUtils::DisplayNoteVec expectedNotes;
+  NoteUtils::DisplayNoteVec actualNotes;
+  LoopContentResolution::resolveDisplayNotes(expected, expectedNotes);
+  LoopContentResolution::resolveDisplayNotes(actual, actualNotes);
+  TEST_ASSERT_EQUAL(expectedNotes.size(), actualNotes.size());
+  for (size_t index = 0; index < expectedNotes.size(); ++index) {
+    TEST_ASSERT_EQUAL(expectedNotes[index].noteId, actualNotes[index].noteId);
+    TEST_ASSERT_EQUAL_UINT8(expectedNotes[index].note, actualNotes[index].note);
+    TEST_ASSERT_EQUAL(expectedNotes[index].startTick, actualNotes[index].startTick);
+    TEST_ASSERT_EQUAL(expectedNotes[index].endTick, actualNotes[index].endTick);
+  }
+
+  SessionMidiEventVec expectedEvents;
+  SessionMidiEventVec actualEvents;
+  LoopContentResolution::resolveWindow(expected, 0, expected.loopLengthTicks(), expectedEvents);
+  LoopContentResolution::resolveWindow(actual, 0, actual.loopLengthTicks(), actualEvents);
+  TEST_ASSERT_EQUAL(expectedEvents.size(), actualEvents.size());
+}
+
+void test_lsv1_body_format_roundtrip_dual_write() {
+  resetSnapshotAllocCounters();
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1RoundTripSnapshotFixture();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 3;
+  metadata.startLoopTick = 480;
+  metadata.loopLengthTicks = snapshot->loopLengthTicks();
+  metadata.loopStartTick = 12;
+  metadata.nextPassId = 8;
+  metadata.nextNoteId = snapshot->nextNoteId();
+  metadata.nextMergeSequence = 1;
+  metadata.lastCommittedPassId = 7;
+
+  PersistedLoopSnapshot persistedOracle{};
+  persistedOracle.loopId = metadata.loopId;
+  persistedOracle.loopLengthTicks = metadata.loopLengthTicks;
+  persistedOracle.loopStartTick = metadata.loopStartTick;
+  persistedOracle.nextPassId = metadata.nextPassId;
+  persistedOracle.nextNoteId = metadata.nextNoteId;
+  persistedOracle.nextMergeSequence = metadata.nextMergeSequence;
+  persistedOracle.lastCommittedPassId = metadata.lastCommittedPassId;
+  persistedOracle.passes.recordPass =
+      makeRecordPassWithEvents(7, 0, CapturePassState::Active, 0, 10);
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(
+      writeLoopSnapshotBodyFormatV1(mem.io(), metadata, persistedOracle, *snapshot));
+  TEST_ASSERT_EQUAL(buffer.size(),
+                    measureLoopSnapshotBodyFormatV1Bytes(metadata, persistedOracle, *snapshot));
+
+  testResetRebuildSlotFromLoopContentCallCount();
+  LoopSnapshotBodyFormatV1ReadResult readResult{};
+  TEST_ASSERT_TRUE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), readResult));
+  TEST_ASSERT_TRUE(readResult.ok);
+  TEST_ASSERT_FALSE(readResult.legacy);
+  TEST_ASSERT_FALSE(readResult.unsupportedVersion);
+  TEST_ASSERT_TRUE(readResult.hasPersistedOracle);
+  TEST_ASSERT_EQUAL(metadata.loopId, readResult.metadata.loopId);
+  TEST_ASSERT_EQUAL(metadata.startLoopTick, readResult.metadata.startLoopTick);
+  TEST_ASSERT_EQUAL(metadata.loopLengthTicks, readResult.metadata.loopLengthTicks);
+  TEST_ASSERT_NOT_NULL(readResult.loopSnapshot.get());
+  assertSnapshotsEquivalent(*snapshot, *readResult.loopSnapshot);
+  TEST_ASSERT_EQUAL(0u, testRebuildSlotFromLoopContentCallCount());
+  releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
+}
+
+void test_lsv1_probe_legacy_and_unsupported() {
+  PersistedLoopSnapshot legacy{};
+  legacy.loopId = 1;
+  legacy.loopLengthTicks = Config::TICKS_PER_BAR;
+  legacy.nextPassId = 2;
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), legacy));
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::Legacy,
+                    probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()));
+
+  std::vector<uint8_t> unsupported = {'L', 'S', 'V', '1', 2, 0, 0, 0};
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::UnsupportedVersion,
+                    probeLoopSnapshotBodyFormat(unsupported.data(), unsupported.size()));
+
+  std::vector<uint8_t> truncated = {'L', 'S', 'V'};
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::Truncated,
+                    probeLoopSnapshotBodyFormat(truncated.data(), truncated.size()));
+}
+
+void test_lsv1_rejects_missing_loop_snapshot_section() {
+  const ImmutableLoopSnapshotRef snapshot =
+      LoopSnapshot::createEmpty(1, Config::TICKS_PER_BAR, 0, 2, 2);
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 1;
+  metadata.loopLengthTicks = Config::TICKS_PER_BAR;
+  metadata.nextPassId = 2;
+  PersistedLoopSnapshot persistedOracle = metadata;
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(
+      writeLoopSnapshotBodyFormatV1(mem.io(), metadata, persistedOracle, *snapshot));
+
+  LoopSnapshotBodyFormatV1ReadResult parsed{};
+  TEST_ASSERT_TRUE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), parsed));
+  releasePersistedLoopSnapshotChunks(parsed.persistedOracle);
+
+  for (size_t index = 0; index < buffer.size(); ++index) {
+    if (buffer[index] == 'L' && index + 11 < buffer.size() &&
+        std::memcmp(buffer.data() + index, "LoopSnapshot", 12) == 0) {
+      buffer[index] = 'X';
+      break;
+    }
+  }
+
+  LoopSnapshotBodyFormatV1ReadResult rejected{};
+  TEST_ASSERT_FALSE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), rejected));
+}
+
+void test_lsv1_unknown_section_is_skipped() {
+  const ImmutableLoopSnapshotRef snapshot =
+      LoopSnapshot::createEmpty(1, Config::TICKS_PER_BAR, 0, 2, 2);
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 1;
+  metadata.loopLengthTicks = Config::TICKS_PER_BAR;
+  metadata.nextPassId = 2;
+  PersistedLoopSnapshot persistedOracle = metadata;
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(
+      writeLoopSnapshotBodyFormatV1(mem.io(), metadata, persistedOracle, *snapshot));
+
+  std::vector<uint8_t> withUnknown;
+  withUnknown.insert(withUnknown.end(), buffer.begin(), buffer.begin() + 8);
+  const char* unknownName = "FutureSection";
+  const uint8_t unknownNameLength = static_cast<uint8_t>(std::strlen(unknownName));
+  withUnknown.push_back(unknownNameLength);
+  withUnknown.insert(withUnknown.end(), unknownName, unknownName + unknownNameLength);
+  const uint32_t unknownPayloadLength = 4;
+  appendRaw(withUnknown, unknownPayloadLength);
+  withUnknown.insert(withUnknown.end(), {1, 2, 3, 4});
+  withUnknown.insert(withUnknown.end(), buffer.begin() + 8, buffer.end());
+
+  LoopSnapshotBodyFormatV1ReadResult readResult{};
+  TEST_ASSERT_TRUE(
+      readLoopSnapshotBodyFormatV1(withUnknown.data(), withUnknown.size(), readResult));
+  TEST_ASSERT_TRUE(readResult.ok);
+  releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
+}
+
+void test_lsv1_rejects_duplicate_loop_snapshot_section() {
+  const ImmutableLoopSnapshotRef snapshot =
+      LoopSnapshot::createEmpty(1, Config::TICKS_PER_BAR, 0, 2, 2);
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 1;
+  metadata.loopLengthTicks = Config::TICKS_PER_BAR;
+  metadata.nextPassId = 2;
+  PersistedLoopSnapshot persistedOracle = metadata;
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(
+      writeLoopSnapshotBodyFormatV1(mem.io(), metadata, persistedOracle, *snapshot));
+  const std::vector<uint8_t> original = buffer;
+  buffer.insert(buffer.end(), original.begin() + 8, original.end());
+
+  LoopSnapshotBodyFormatV1ReadResult rejected{};
+  TEST_ASSERT_FALSE(readLoopSnapshotBodyFormatV1(buffer.data(), buffer.size(), rejected));
+}
+
 void test_serialize_reload_content_undo_units_match() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1039,5 +1269,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_serialize_reload_content_undo_units_match);
   RUN_TEST(test_write_read_overdub_session_index_tail_roundtrip);
   RUN_TEST(test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped);
+  RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
+  RUN_TEST(test_lsv1_probe_legacy_and_unsupported);
+  RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);
+  RUN_TEST(test_lsv1_unknown_section_is_skipped);
+  RUN_TEST(test_lsv1_rejects_duplicate_loop_snapshot_section);
   return UNITY_END();
 }
