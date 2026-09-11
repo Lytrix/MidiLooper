@@ -80,7 +80,9 @@ metadata, and the latest saved complete snapshot. It does not serialize runtime
 addresses, derived representations, playback cursor/order, active ledgers, undo
 history, or abandoned-branch lineage sufficient to restore post-reboot undo.
 Outer CurrentSet / epoch / `SAVE` / `REVPK02` / `CONTAINER_VERSION` are unchanged
-by DEC-057. Firmware reader/writer implementation is OpenSpec task **5.3**.
+by DEC-057. Firmware reader/writer, save hook, and runtime `LoadLoopJob` load
+authority shipped in OpenSpec task **5.3** (5.3.1–5.3.4). Boot sync load
+(`CurrentSetBootLoad`) remains legacy-only.
 
 The logical membership is the approved Phase 0 boundary; the physical
 pitch/bar directory that provides structural sharing remains a Phase 1

@@ -1318,6 +1318,54 @@ void test_write_loop_persisted_emits_lsv1_when_published_snapshot_current() {
   releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
 }
 
+void test_legacy_slot_migrates_to_lsv1_after_loaded_hydration() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  resetSnapshotAllocCounters();
+
+  Loop source;
+  source.loopId = 5;
+  source.loopLengthTicks = Config::TICKS_PER_BAR;
+  source.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(source.appendCaptureEvent(MidiEvent::NoteOn(50, 1, 64, 100)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    source.commitCapturePass(CommitReason::RecordStop, 100));
+  TEST_ASSERT_FALSE(source.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loopUsesLoopSnapshotBodyFormatV1ForSave(source));
+
+  std::vector<uint8_t> legacyBuffer;
+  MemoryStorageIo legacyMem(&legacyBuffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(legacyMem.io(), source));
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::Legacy,
+                    probeLoopSnapshotBodyFormat(legacyBuffer.data(), legacyBuffer.size()));
+
+  Loop loaded;
+  MemoryStorageIo readMem(&legacyBuffer);
+  readMem.resetRead();
+  TEST_ASSERT_TRUE(readLoopPersisted(readMem.io(), loaded));
+  TEST_ASSERT_FALSE(loaded.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loopUsesLoopSnapshotBodyFormatV1ForSave(loaded));
+
+  TEST_ASSERT_TRUE(loaded.queueLoadedSnapshotPublish());
+  drainPendingSnapshotPublish(loaded);
+  TEST_ASSERT_TRUE(loaded.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loopUsesLoopSnapshotBodyFormatV1ForSave(loaded));
+
+  std::vector<uint8_t> migratedBuffer;
+  MemoryStorageIo migratedMem(&migratedBuffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(migratedMem.io(), loaded));
+  TEST_ASSERT_EQUAL(migratedBuffer.size(), measureLoopSlotFileBytes(loaded));
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatProbeResult::SupportedV1,
+                    probeLoopSnapshotBodyFormat(migratedBuffer.data(), migratedBuffer.size()));
+
+  LoopSnapshotBodyFormatV1ReadResult readResult{};
+  TEST_ASSERT_TRUE(readLoopSnapshotBodyFormatV1(migratedBuffer.data(), migratedBuffer.size(),
+                                                readResult));
+  TEST_ASSERT_TRUE(readResult.ok);
+  TEST_ASSERT_NOT_NULL(readResult.loopSnapshot.get());
+  releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
+}
+
 void test_write_loop_persisted_stays_legacy_without_published_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1440,6 +1488,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_read_overdub_session_index_tail_roundtrip);
   RUN_TEST(test_legacy_snapshot_without_overdub_session_index_tail_stays_ungrouped);
   RUN_TEST(test_write_loop_persisted_emits_lsv1_when_published_snapshot_current);
+  RUN_TEST(test_legacy_slot_migrates_to_lsv1_after_loaded_hydration);
   RUN_TEST(test_write_loop_persisted_stays_legacy_without_published_snapshot);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);

@@ -52,7 +52,7 @@ Boot: `loadState` → `MidiLooper/current/`; on failure → latest recovery chec
 
 ```text
 [epoch header]  optional 16 B when v6 epoch wrapper present
-[payload]       StorageLoopIo v5 slot file body (loop passes on SD) OR runtime bundle body
+[payload]       StorageLoopIo slot body: legacy pass stream **or** LSV1 dual-write (DEC-057)
 [4 B]           SAVE
 ```
 
@@ -86,7 +86,8 @@ Data lives in two places — name which one you mean:
 | **FileBytes** | Exact SD bytes (CRC / streaming) | `revisionChunkHeaderFileBytes`, `measureLoopSlotFileBytes` |
 | **Chunk** | Variable REVPK02 section or RAM PSRAM event chunk — always qualify | revision **LoopSlot** chunk; RAM **chunk** ID |
 | **Epoch** | Workspace save generation counter | `currentEpoch`, `sourceEpoch` |
-| **Slot file** | One loop on SD (`loop_TT_SS.bin`) | `writeLoopPersisted` / `readLoopPersisted` |
+| **Slot file** | One loop on SD (`loop_TT_SS.bin`) | `writeLoopPersisted` / `readLoopPersisted`; LSV1 when `loopUsesLoopSnapshotBodyFormatV1ForSave` |
+| **LoopSnapshot body format** | LSV1 payload inside slot file (not the epoch wrapper) | `writeLoopSnapshotBodyFormatV1` / `stepLoopSnapshotBodyFormatV1LoadParse` |
 
 **Naming rule:** prefer the **longer spelled-out identifier** so the entity and scope are readable (`CapturePassSlotFileHeader`, not `PassHeader`). Directory/index rows end in **`Entry`** (`RevisionLoopSlotDirectoryEntry`, not `SlotIndexEntry`).
 
