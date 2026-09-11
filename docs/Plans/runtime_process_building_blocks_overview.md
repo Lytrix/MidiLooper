@@ -229,7 +229,7 @@ Derived event representation (materialized passes ± active capture; NOTE_EDIT u
 
 **Building blocks:** `EditManager` / `NoteEditSession`, `NoteEditCurrentState` (geometry + presence + `overlapParticipation`), `NoteGeometryResolver` → `EditSessionAction` apply, `NoteEditFocus` (driver + `baselineMap`; `overlapNotes` scratch only), `ControlSurfaceManager` (NOTE_EDIT hardware), fader/button FSM (`EditNoteState`)
 
-Faders drive the geometry pipeline; apply mutates current state then projects to the session store. Macro commit seals into `passes.editPasses[]`. Display uses `projectNoteEditDisplayNotes`. Guide: [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md).
+Faders drive the geometry pipeline; apply mutates current state then projects to the session store. Macro commit seals into `passes.editPasses[]` from current-state vs committed (current mover, Active overlap, parked Visible dirty rows) and does not drop `applyOwnedEditPassRows` when that build is empty. Display uses `projectNoteEditDisplayNotes`. Guide: [`docs/Guides/MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md).
 
 **Owner:** `EditManager` owns live RAM, session lifecycle, and edit geometry. `ControlSurfaceManager` owns NOTE_EDIT hardware ingress/egress (faders, motor sync, audition) and reacts to `EditEvent` notifications — no edit state.
 

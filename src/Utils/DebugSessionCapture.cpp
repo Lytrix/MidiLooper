@@ -501,6 +501,19 @@ SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond) {
                 (unsigned long)pulsesPerSecond);
 }
 
+SC_MEM_ATTR void runtimeTimingUsbBatch(uint32_t maxSize, uint32_t saturatedCount, uint32_t maxClocks,
+                                       uint32_t maxConsecutive) {
+  emitCapPrintf("#CAP,%lu,DIAG,usb_batch,%lu,%lu,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)maxSize, (unsigned long)saturatedCount, (unsigned long)maxClocks,
+                (unsigned long)maxConsecutive);
+}
+
+SC_MEM_ATTR void runtimeTimingUsbBatchBuckets(const char* kind, const uint32_t buckets[5]) {
+  emitCapPrintf("#CAP,%lu,DIAG,%s,%lu,%lu,%lu,%lu,%lu\r\n", (unsigned long)micros(), kind,
+                (unsigned long)buckets[0], (unsigned long)buckets[1], (unsigned long)buckets[2],
+                (unsigned long)buckets[3], (unsigned long)buckets[4]);
+}
+
 SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick) {
   emitCapPrintf("#CAP,%lu,DIAG,late_event,%s,%lu,%lu\r\n", (unsigned long)micros(), midiClass,
                 (unsigned long)latenessUs, (unsigned long)tick);

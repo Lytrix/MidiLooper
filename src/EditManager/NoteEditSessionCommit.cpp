@@ -6,6 +6,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "ApplyOwnedEditPassRows.h"
 #include "EditApply.h"
 #include "EditManager.h"
 #include "Globals.h"
@@ -13,6 +14,7 @@
 #include "NoteEditFocus.h"
 #include "NoteEditCurrentState.h"
 #include "NoteEditSessionState.h"
+#include "ParticipatingNoteSession.h"
 #include "NoteEditSessionUndo.h"
 #include "TrackManager.h"
 #include "Utils/LoopEventValidation.h"
@@ -40,7 +42,20 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
             editSession.focus, sessionStoreEvents, channel, loopLength,
             editSession.noteEditCurrentState.empty() ? nullptr
                                                      : &editSession.noteEditCurrentState);
-    if (!hasPendingMoverCommit && !hasPendingOverlapCommit) {
+    bool hasPendingCurrentStateCommit = false;
+    if (!editSession.noteEditCurrentState.empty()) {
+        for (const auto& [noteId, row] : editSession.noteEditCurrentState.rows()) {
+            if (noteId == kInvalidNoteId) {
+                continue;
+            }
+            if (currentStateRowIsExistingAndVisible(row) &&
+                currentStateRowGeometryDiffersFromCommitted(row)) {
+                hasPendingCurrentStateCommit = true;
+                break;
+            }
+        }
+    }
+    if (!hasPendingMoverCommit && !hasPendingOverlapCommit && !hasPendingCurrentStateCommit) {
         return;
     }
     pruneOverlapNotesBeforePreCommit(editSession.focus, sessionStoreEvents, channel);
@@ -83,9 +98,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
                    static_cast<unsigned>(macroInvariantResult.firstFailure));
     }
 
-#if defined(SESSION_CAPTURE)
     const EditPassVec applyOwnedRows = editSession.applyOwnedEditPassRows;
-#endif
     const NoteUtils::DisplayNoteVec& committedDisplayNotes =
         visualCacheNotesForSelectedSlot(track);
     EditPassVec rows;
@@ -108,6 +121,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::commitAllPendingNoteEditActions(Track& t
         logApplyOwnedCommitParity(rows, applyOwnedRows, "apply_owned");
     }
 #endif
+    if (rows.empty() && !applyOwnedRows.empty()) {
+        rows = buildCommitRowsFromApplyOwned(applyOwnedRows, editSession.focus);
+    }
     if (rows.empty()) {
         return;
     }
@@ -411,12 +427,13 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
     loop.copyNoteEditCommitBase(editSession.editPassIds, loopMidiEventsFromPasses,
                                 editSession.openedOnCurrentSnapshot,
                                 editSession.openedSnapshotRevision);
-    logChangeLengthCommitTrace("replay_flat", loopMidiEventsFromPasses, loopLength, homePitch,
-                               homeStart);
-
-    MidiEventVec takeOnlyFlat;
-    loop.mergeActiveCapturePasses(takeOnlyFlat);
-    logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch, homeStart);
+    if (kNoteEditCommitTraceReconstructEnabled) {
+        logChangeLengthCommitTrace("replay_flat", loopMidiEventsFromPasses, loopLength, homePitch,
+                                   homeStart);
+        MidiEventVec takeOnlyFlat;
+        loop.mergeActiveCapturePasses(takeOnlyFlat);
+        logChangeLengthCommitTrace("take_only", takeOnlyFlat, loopLength, homePitch, homeStart);
+    }
 
     if (applySessionOverlay) {
         const EditPassVec sessionOverlay =
@@ -429,11 +446,12 @@ EDIT_MANAGER_IMPL_MEM EditPassId EditManager::commitEditAction(Track& track, Edi
 
     editSession.store.mutStore().loadFromEvents(loopMidiEventsFromPasses);
     editSession.store.discardEventsCache();
-    logChangeLengthCommitTrace("session_store", editSession.store.readEvents(), loopLength,
-                               homePitch, homeStart);
-
-    logChangeLengthCommitTrace("loop_materialized", loopMidiEventsFromPasses, loopLength, homePitch,
-                               homeStart);
+    if (kNoteEditCommitTraceReconstructEnabled) {
+        logChangeLengthCommitTrace("session_store", editSession.store.readEvents(), loopLength,
+                                   homePitch, homeStart);
+        logChangeLengthCommitTrace("loop_materialized", loopMidiEventsFromPasses, loopLength,
+                                   homePitch, homeStart);
+    }
     track.invalidateCaches();
     return lastId;
 }

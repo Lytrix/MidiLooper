@@ -1,6 +1,6 @@
 # Overdub paint — frame must realize already-correct effective resolution
 
-**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS. **RC1d Loop pin shipped:** not RC1d-a, not RC1d-b. **RC1d-c host + device recapture [`162325`](../../captures/session_20260905_162325.log):** `52@2172` gone. HITL FAIL is one 1-tick key (`52@2180` f=46 e=47, E=R=47). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). RC2 / RC3 stay gated.  
+**Status:** RC1 / RC1b host shipped. RC1c host shipped; device recapture [`153848`](../../captures/session_20260905_153848.log): `E` is not reconstruct-shaped and frame has no `F == R` remnant. Occupy holds PASS when `startLoopTick == 0`. **RC1d Loop pin shipped:** not RC1d-a, not RC1d-b. **RC1d-c host + device recapture [`162325`](../../captures/session_20260905_162325.log):** `52@2172` gone. **RC1d-d occupy-paint PASS** [`172213`](../../captures/session_20260905_172213.log): mid-pass closed Off takes sealed Off; `rc1b.mismatches=[]`. Process exit 2 is baseline `persistence_stage_missing:dispatch` only. **Occupy hold phase frame** is a separate slice — [`overdub_occupy_hold_phase_frame_bugfix.md`](overdub_occupy_hold_phase_frame_bugfix.md) (`162652` origin-0 `holdStart`). RC4 / RC5 device PASS [`141142`](../../captures/session_20260905_141142.log). **RC2 / RC3 withdrawn** — [`140729`](../../captures/session_20260903_140729.log) leftovers (`77@336`, `69@5328`) cannot be remade; occupy-paint [`172213`](../../captures/session_20260905_172213.log) is the RC1 close.  
 **Date:** 2026-09-05  
 **Kind:** convergence bugfix (display realization) + occupy eligibility  
 **Evidence:** fail leftovers on [`140729`](../../captures/session_20260903_140729.log) after Shorten sibling-drop PASS; RC1 first-STOPPED two-length regression on [`154310`](../../captures/session_20260903_154310.log); occupy stop `oh` shorten=0 on [`134436`](../../captures/session_20260905_134436.log)  
@@ -53,12 +53,14 @@ sealedCompanionOverlayIds_ (display)      ← RC1 kept
 stop-only sealed skip                     ← RC1b ([`154310`](../../captures/session_20260903_154310.log))
 occupy On present-at-hold                 ← RC4 ([`134436`](../../captures/session_20260905_134436.log))
 wrap seal oh (diagnostic only)            ← RC5
-sealed upsert 77@336                      ← RC2 if recapture still 48
-69@5328 admission miss                    ← RC3 separate
+sealed upsert 77@336                      ← RC2 withdrawn (cannot remake `140729`)
+69@5328 admission miss                    ← RC3 withdrawn (same inventory)
 keepShortest on gather                    ← still forbidden
 suffix sibling-drop                       ← still forbidden (`150650`)
 RC1d pin (host Loop path)                 ← not a, not b
 RC1d-c first STOPPED playhead tail        ← live 2230 + RC1b skip; sealed Off 2231
+RC1d-d mid-pass closed Off                ← `165050` 2192/2607 take sealed 2193/2608; no end+1
+occupy holdStart origin 0                 ← sibling RC (`162652`); not this plan
 ```
 
 ---
@@ -69,11 +71,11 @@ First STOPPED `src,frame` 159 then settle 135. Effective 133. Reconstruct 145. 2
 
 | Key | reconstruct | effective | frame | Class |
 |-----|-------------|-----------|-------|-------|
-| `77@336` | 16 | 16 | **48** | RC2 if RC1 recapture still 48 |
-| `63@1680` | 432 | **absent** | **288** | RC1 remnant |
+| `77@336` | 16 | 16 | **48** | **Withdrawn** — cannot remake [`140729`](../../captures/session_20260903_140729.log) |
+| `63@1680` | 432 | **absent** | **288** | RC1 remnant (occupy-paint close is [`172213`](../../captures/session_20260905_172213.log)) |
 | `69@3888` | 48 | **absent** | **48** | RC1 if EditPass Delete exists |
 | `69@4656` | 48 | **absent** | **48** | RC1 if EditPass Delete exists |
-| `69@5328` | 48 | 48 | **absent** | RC3 admission; parked `69@3024` class |
+| `69@5328` | 48 | 48 | **absent** | **Withdrawn** with RC3 — cannot remake `140729` |
 
 ---
 
@@ -304,6 +306,31 @@ Host pins in `test_display_window_utils`: `test_stopped_playhead_tail_takes_clos
 
 Device [`162325`](../../captures/session_20260905_162325.log) / [`host_midi_hitl_occupy_paint_20260905_162429.json`](../../captures/host_midi_hitl_occupy_paint_20260905_162429.json): flashed `fedcc25f`. Occupy holds PASS (OD1 `shorten=0 hide=0`; OD2 `shorten=3 hide=11`, `from=snapshot`, visual 22). Dumps reconstruct 39 / effective 28 / frame 26. No two-length. `52@2172` absent. Leftover `52@2180` R=E=47 / F=46.
 
+### Architecture checkpoint (RC1d-c)
+
+| Question | Answer |
+|----------|--------|
+| Ownership change? | **NO** — stop display handoff still owns the composed frame |
+| State transition change? | **NO** — same commit-then-refresh order |
+| Unbounded interval owner? | **NO** — walk is live notes × sealed preview rows; stop path only |
+| Reuse | **YES** — extend `refreshViewportAfterOverdubStop`; helper on `DisplayWindowUtils` |
+
+## RC1d-d — STOPPED frame uses the already-resolved closed Off
+
+**Plan:** [`overdub_paint_closed_off_one_tick_bugfix.md`](overdub_paint_closed_off_one_tick_bugfix.md)
+
+**Intended invariant:**
+
+```text
+live OVERDUBBING paint may grow open notes to currentTick
+liveDisplayNotes stays at capture-preview / sealed closed Off
+this-pass STOPPED rows copy that Off; RC1b remnants stay
+```
+
+`endTick+1` / `stopPhase-1` is not a product end. Mid-pass closes (`165050` Off 2193 / 2608) never matched the RC1d-c stop-phase guard.
+
+Host pins: `test_stopped_closed_off_takes_sealed_165050_52`, `test_stopped_closed_off_takes_sealed_165050_48`; `153848` still 2231; `154310` still 143.
+
 ### Architecture checkpoint
 
 | Question | Answer |
@@ -386,13 +413,13 @@ Do not move +1/4 onto lap 1. Do not count `draw_src hidden=`.
 | Unbounded interval owner? | **NO** |
 | Reuse | **YES** — extract On/Off recount; `commitOverdubWrap` emits then seals |
 
-## RC2 — gated on recapture
+## RC2 — withdrawn
 
-`77@336 == 16` after RC1 → stop. Else sealed upsert (`existing = sealedRow`) is a projection RC, not effective. No gather `keepShortest`.
+Gate was `77@336` frame still **48** after RC1 recapture. That leftover lives only on [`140729`](../../captures/session_20260903_140729.log). Occupy-paint [`172213`](../../captures/session_20260905_172213.log) has no `77@336`. The session cannot remake `140729`. Do not start sealed upsert (`existing = sealedRow`). No gather `keepShortest`.
 
-## RC3 — separate
+## RC3 — withdrawn
 
-`ledger+effective exist`, `draw_src+frame absent`. Do not start until RC1 recapture.
+`69@5328` (`ledger+effective exist`, `draw_src+frame absent`) is the same `140729` inventory. Withdrawn with RC2. Do not start admission-miss work from occupy-paint PASS.
 
 ---
 

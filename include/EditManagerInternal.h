@@ -31,6 +31,10 @@ EDIT_MANAGER_IMPL_MEM NoteIdList collectCommittedOverlapDeleteIds(const NoteEdit
 EDIT_MANAGER_IMPL_MEM std::vector<std::pair<NoteId, NoteBaseline>> collectCommittedOverlapUpdateBaselines(
     const NoteEditFocus& focus, const EditPassVec& rows);
 
+// Four-view reconstructNotes traces on commitEditAction. Off on the live
+// path — each call rematerializes the loop just to print one line.
+constexpr bool kNoteEditCommitTraceReconstructEnabled = false;
+
 EDIT_MANAGER_IMPL_MEM void logChangeLengthCommitTrace(const char* stage, const SessionMidiEventVec& flat,
                                                       uint32_t loopLength, uint8_t homePitch,
                                                       uint32_t homeStart);

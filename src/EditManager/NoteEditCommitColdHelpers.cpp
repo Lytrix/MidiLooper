@@ -182,6 +182,9 @@ EDIT_MANAGER_IMPL_MEM std::vector<std::pair<NoteId, NoteBaseline>> collectCommit
 EDIT_MANAGER_IMPL_MEM void logChangeLengthCommitTrace(const char* stage, const SessionMidiEventVec& flat,
                                                       uint32_t loopLength, uint8_t homePitch,
                                                       uint32_t homeStart) {
+    if (!kNoteEditCommitTraceReconstructEnabled) {
+        return;
+    }
     const std::vector<DisplayNote> notes = NoteUtils::reconstructNotes(flat, loopLength, false);
     for (const DisplayNote& n : notes) {
         if (n.note == homePitch && n.startTick == homeStart) {
@@ -202,6 +205,9 @@ EDIT_MANAGER_IMPL_MEM void logChangeLengthCommitTrace(const char* stage, const S
 EDIT_MANAGER_IMPL_MEM void logChangeLengthCommitTrace(const char* stage, const MidiEventVec& flat,
                                                       uint32_t loopLength, uint8_t homePitch,
                                                       uint32_t homeStart) {
+    if (!kNoteEditCommitTraceReconstructEnabled) {
+        return;
+    }
     const std::vector<DisplayNote> notes = NoteUtils::reconstructNotes(flat, loopLength, false);
     for (const DisplayNote& n : notes) {
         if (n.note == homePitch && n.startTick == homeStart) {

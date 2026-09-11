@@ -874,9 +874,9 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             const uint32_t tailsStartUs = micros();
             const uint32_t playheadCloseTick =
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
-            // Growing RECORD has no sealed loop wrap. Stage 1 keeps OVERDUBBING
-            // wrap continuation off (012925 note 30 linear close). Stage 2 flips
-            // OVERDUBBING+PLAYING under shouldAllowCapturePlayheadWrapContinuation.
+            // Growing RECORD has no sealed loop wrap. OVERDUBBING+PLAYING enables
+            // wrap continuation via shouldAllowCapturePlayheadWrapContinuation
+            // (`175831` pitch 18 @2095 → head@6).
             const bool allowWrapContinuation =
                 DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
                     track.isRecording(), track.isPlaying() || track.isOverdubbing(),

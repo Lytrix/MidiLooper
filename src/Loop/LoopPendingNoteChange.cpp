@@ -5,6 +5,7 @@
 
 #include "EditSessionAction.h"
 #include "EditSessionInteraction.h"
+#include "NoteEditCurrentState.h"
 #include "Globals.h"
 #include "LoopContentResolution.h"
 #include "OverlapCandidateLookup.h"
@@ -13,6 +14,7 @@
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/InvestigationCaptureLog.h"
 #include "Utils/LoopMem.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
@@ -1110,6 +1112,54 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToOverdubSourceView() {
   }
 }
 
+LOOP_COLD_MEM void Loop::applyNoteEditCurrentStateToOverdubSourceView(
+    const NoteEditCurrentState& currentState) {
+  if (!hasOverdubSourceView() || currentState.empty() || overdubSourceViewNotes_.empty()) {
+    return;
+  }
+
+  PendingNoteChangeVec transforms;
+  for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
+    if (note.noteId == kInvalidNoteId) {
+      continue;
+    }
+    const NoteEditCurrentNoteState* row = currentState.find(note.noteId);
+    if (row == nullptr) {
+      continue;
+    }
+    PendingNoteChange change{};
+    change.noteId = note.noteId;
+    change.pitch = row->currentSpan.pitch;
+    change.velocity = row->currentSpan.velocity;
+    change.startTick = row->currentSpan.startTick;
+    change.endTick = row->currentSpan.endTick;
+    if (currentState.isRowHiddenOrDeleted(note.noteId)) {
+      change.kind = PendingNoteChangeKind::Hide;
+    } else if (currentState.rowIsVisible(note.noteId) &&
+               row->currentSpan.pitch == note.note &&
+               row->currentSpan.startTick == note.startTick &&
+               row->currentSpan.endTick < note.endTick) {
+      change.kind = PendingNoteChangeKind::Shorten;
+    } else {
+      continue;
+    }
+    insertOrReplaceSourceTransformSorted(transforms, change);
+  }
+  if (transforms.empty()) {
+    return;
+  }
+
+  const uint32_t loopLen =
+      overdubSourceViewLoopLengthTicks_ != 0 ? overdubSourceViewLoopLengthTicks_ : loopLengthTicks;
+  const NoteUtils::DisplayNoteVec emptyPreview;
+  applyPendingHideAndShortenToNotes(overdubSourceViewNotes_, transforms, loopLen, false,
+                                    static_cast<size_t>(-1), false, emptyPreview);
+  if (overdubSourceSpanCacheValid_) {
+    applyPendingHideAndShortenToNotes(overdubSourceSpanCacheNotes_, transforms, loopLen, false,
+                                      static_cast<size_t>(-1), false, emptyPreview);
+  }
+}
+
 namespace {
 
 const EditPass* findActiveSealedCompanionRow(const Loop& loop, EditPassId id) {
@@ -1304,16 +1354,10 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
       sealedIds.push_back(id);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
       if (companionRowsLogged < kMaxCompanionRowsLogged) {
-        char line[128];
-        const char* kind =
-            (change.kind == PendingNoteChangeKind::Hide) ? "hide" : "shorten";
-        snprintf(line, sizeof(line),
-                 LOOP_NOTECHANGE_DIAG_FMT(
-                     "#CAP,%lu,DIAG,seal_companion,id=%u,target=%u,kind=%s,end=%u"),
-                 static_cast<unsigned long>(micros()), static_cast<unsigned>(id),
-                 static_cast<unsigned>(change.noteId), kind,
-                 static_cast<unsigned>(change.endTick));
-        DebugSessionCapture::appendCaptureTextLine(line);
+        InvestigationCaptureLog::logSealCompanionRow(
+            static_cast<unsigned>(id), static_cast<unsigned>(change.noteId),
+            change.kind == PendingNoteChangeKind::Hide,
+            static_cast<unsigned>(change.endTick));
         ++companionRowsLogged;
       }
 #endif
@@ -1321,14 +1365,9 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   }
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   if (companionRowsToSeal > 0) {
-    char line[160];
-    snprintf(line, sizeof(line),
-             LOOP_NOTECHANGE_DIAG_FMT("#CAP,%lu,DIAG,seal_companion_batch,rows=%u,sealed=%u,us=%lu"),
-             static_cast<unsigned long>(micros()),
-             static_cast<unsigned>(companionRowsToSeal),
-             static_cast<unsigned>(sealedIds.size()),
-             static_cast<unsigned long>(micros() - companionSealStartUs));
-    DebugSessionCapture::appendCaptureTextLine(line);
+    InvestigationCaptureLog::logSealCompanionBatch(
+        static_cast<unsigned>(companionRowsToSeal), static_cast<unsigned>(sealedIds.size()),
+        micros() - companionSealStartUs);
   }
 #endif
   if (!sealedIds.empty()) {

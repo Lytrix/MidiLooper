@@ -17,6 +17,13 @@
 
 namespace {
 
+NOTE_EDIT_MEM bool endTickIsLoopEnd(uint32_t endTick, uint32_t loopLength) {
+  if (loopLength == 0) {
+    return false;
+  }
+  return endTick == loopLength || endTick == loopLength - 1;
+}
+
 NOTE_EDIT_MEM bool committedDisplayNotesPaintLoopEnd(
     const NoteUtils::DisplayNoteVec* committedDisplayNotes, NoteId noteId, uint32_t loopLength) {
   if (committedDisplayNotes == nullptr) {
@@ -24,7 +31,7 @@ NOTE_EDIT_MEM bool committedDisplayNotesPaintLoopEnd(
   }
   for (const NoteUtils::DisplayNote& displayNote : *committedDisplayNotes) {
     if (displayNote.noteId == noteId && displayNote.endTick != displayNote.startTick &&
-        displayNote.endTick == loopLength) {
+        endTickIsLoopEnd(displayNote.endTick, loopLength)) {
       return true;
     }
   }
@@ -34,7 +41,7 @@ NOTE_EDIT_MEM bool committedDisplayNotesPaintLoopEnd(
 NOTE_EDIT_MEM bool shouldSkipOverlapDiffToLoopEnd(
     const NoteBaseline& live, uint32_t loopLength, NoteId noteId,
     const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
-  if (loopLength == 0 || live.endTick != loopLength) {
+  if (!endTickIsLoopEnd(live.endTick, loopLength)) {
     return false;
   }
   return !committedDisplayNotesPaintLoopEnd(committedDisplayNotes, noteId, loopLength);
@@ -135,8 +142,9 @@ NOTE_EDIT_MEM bool isPlausibleMoverLinearSpan(uint32_t startTick, uint32_t endTi
   return isPlausibleStorageSpan(startTick, endTick, loopLength);
 }
 
-NOTE_EDIT_MEM bool shouldRejectMoverPreCommitRow(const EditPass& row, const NoteEditFocus& focus,
-                                                 uint32_t loopLength) {
+NOTE_EDIT_MEM bool shouldRejectMoverPreCommitRow(
+    const EditPass& row, const NoteEditFocus& focus, uint32_t loopLength,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   if (!focus.active || row.targetNoteId != focus.movingNoteId) {
     return false;
   }
@@ -162,17 +170,96 @@ NOTE_EDIT_MEM bool shouldRejectMoverPreCommitRow(const EditPass& row, const Note
     if (focus.commitBaseline.endTick >= loopLength && focus.last.endTick < loopLength) {
       return true;
     }
+    // 192140: wrap-head select 80–80, close wrote Length 80–2303 after normalizeAll
+    // closeOpenTails. Same emit filter as overlap RC3 — skip unless paint is loop-end.
+    if (endTickIsLoopEnd(row.endTick, loopLength) &&
+        !endTickIsLoopEnd(focus.commitBaseline.endTick, loopLength) &&
+        !committedDisplayNotesPaintLoopEnd(committedDisplayNotes, focus.movingNoteId,
+                                           loopLength)) {
+      return true;
+    }
     return !isPlausibleMoverLinearSpan(row.startTick, row.endTick, loopLength);
   }
   return false;
 }
 
-NOTE_EDIT_MEM void removeInvalidMoverPreCommitRows(EditPassVec& rows, const NoteEditFocus& focus,
-                                                   uint32_t loopLength) {
+NOTE_EDIT_MEM void removeInvalidMoverPreCommitRows(
+    EditPassVec& rows, const NoteEditFocus& focus, uint32_t loopLength,
+    const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
   const auto invalid = [&](const EditPass& row) {
-    return shouldRejectMoverPreCommitRow(row, focus, loopLength);
+    return shouldRejectMoverPreCommitRow(row, focus, loopLength, committedDisplayNotes);
   };
   rows.erase(std::remove_if(rows.begin(), rows.end(), invalid), rows.end());
+}
+
+NOTE_EDIT_MEM bool commitRowsContainTarget(const EditPassVec& rows, NoteId noteId) {
+  if (noteId == kInvalidNoteId) {
+    return false;
+  }
+  for (const EditPass& row : rows) {
+    if (row.targetNoteId == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+NOTE_EDIT_MEM void appendGeometryDiffRows(EditPassVec& rows, NoteId noteId,
+                                          const NoteBaseline& committed,
+                                          const NoteBaseline& live) {
+  if (noteId == kInvalidNoteId) {
+    return;
+  }
+  const bool startChanged = live.startTick != committed.startTick;
+  const bool endChanged = live.endTick != committed.endTick;
+  const bool pitchChanged = live.pitch != committed.pitch;
+  if (startChanged) {
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
+    row.targetNoteId = noteId;
+    row.startTick = live.startTick;
+    row.endTick = live.endTick;
+    rows.push_back(row);
+  } else if (endChanged) {
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
+    row.targetNoteId = noteId;
+    row.startTick = committed.startTick;
+    row.endTick = live.endTick;
+    rows.push_back(row);
+  }
+  if (pitchChanged) {
+    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Pitch);
+    row.targetNoteId = noteId;
+    row.pitch = live.pitch;
+    rows.push_back(row);
+  }
+}
+
+NOTE_EDIT_MEM void appendUncommittedVisibleCurrentStateRows(
+    EditPassVec& rows, const NoteEditFocus& focus, const NoteEditCurrentState& currentState,
+    uint32_t loopLength, const NoteUtils::DisplayNoteVec* committedDisplayNotes) {
+  for (const auto& [noteId, row] : currentState.rows()) {
+    if (noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (focus.active && noteId == focus.movingNoteId) {
+      continue;
+    }
+    if (!currentStateRowIsExistingAndVisible(row) ||
+        !currentStateRowGeometryDiffersFromCommitted(row)) {
+      continue;
+    }
+    if (row.overlapParticipation == NoteEditOverlapParticipationType::Ended) {
+      continue;
+    }
+    if (commitRowsContainTarget(rows, noteId)) {
+      continue;
+    }
+    if (shouldSkipOverlapDiffToLoopEnd(row.currentSpan, loopLength, noteId,
+                                       committedDisplayNotes)) {
+      continue;
+    }
+    appendGeometryDiffRows(rows, noteId, row.committedSpan, row.currentSpan);
+  }
 }
 
 }  // namespace
@@ -267,38 +354,17 @@ NOTE_EDIT_MEM EditPassVec buildCommitRowsFromCurrentState(
     rows = buildCommitOverlapRowsFromCurrentState(focus, currentState, channel, loopLength,
                                                   committedDisplayNotes);
   }
-  if (!focus.active) {
-    return rows;
+  if (focus.active) {
+    (void)channel;
+    appendGeometryDiffRows(rows, focus.movingNoteId, focus.commitBaseline, focus.last);
   }
-  (void)channel;
-
-  const bool startChanged = focus.last.startTick != focus.commitBaseline.startTick;
-  const bool endChanged = focus.last.endTick != focus.commitBaseline.endTick;
-  const bool pitchChanged = focus.last.pitch != focus.commitBaseline.pitch;
-
-  if (startChanged) {
-    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
-    row.targetNoteId = focus.movingNoteId;
-    row.startTick = focus.last.startTick;
-    row.endTick = focus.last.endTick;
-    rows.push_back(row);
-  } else if (endChanged) {
-    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
-    row.targetNoteId = focus.movingNoteId;
-    row.startTick = focus.commitBaseline.startTick;
-    row.endTick = focus.last.endTick;
-    rows.push_back(row);
-  }
-
-  if (pitchChanged) {
-    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Pitch);
-    row.targetNoteId = focus.movingNoteId;
-    row.pitch = focus.last.pitch;
-    rows.push_back(row);
+  if (!currentState.empty()) {
+    appendUncommittedVisibleCurrentStateRows(rows, focus, currentState, loopLength,
+                                            committedDisplayNotes);
   }
 
   if (loopLength > 0) {
-    removeInvalidMoverPreCommitRows(rows, focus, loopLength);
+    removeInvalidMoverPreCommitRows(rows, focus, loopLength, committedDisplayNotes);
   }
 
   return rows;
@@ -314,38 +380,17 @@ NOTE_EDIT_MEM EditPassVec buildPreCommitEditPasses(
                                                        loopLength, currentState,
                                                        committedDisplayNotes);
   }
-  if (!focus.active) {
-    return rows;
+  if (focus.active) {
+    (void)channel;
+    appendGeometryDiffRows(rows, focus.movingNoteId, focus.commitBaseline, focus.last);
   }
-  (void)channel;
-
-  const bool startChanged = focus.last.startTick != focus.commitBaseline.startTick;
-  const bool endChanged = focus.last.endTick != focus.commitBaseline.endTick;
-  const bool pitchChanged = focus.last.pitch != focus.commitBaseline.pitch;
-
-  if (startChanged) {
-    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::NoteRange);
-    row.targetNoteId = focus.movingNoteId;
-    row.startTick = focus.last.startTick;
-    row.endTick = focus.last.endTick;
-    rows.push_back(row);
-  } else if (endChanged) {
-    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Length);
-    row.targetNoteId = focus.movingNoteId;
-    row.startTick = focus.commitBaseline.startTick;
-    row.endTick = focus.last.endTick;
-    rows.push_back(row);
-  }
-
-  if (pitchChanged) {
-    EditPass row = makeNoteEditRow(EditActionType::Update, EditPropertyType::Pitch);
-    row.targetNoteId = focus.movingNoteId;
-    row.pitch = focus.last.pitch;
-    rows.push_back(row);
+  if (currentState != nullptr && !currentState->empty()) {
+    appendUncommittedVisibleCurrentStateRows(rows, focus, *currentState, loopLength,
+                                            committedDisplayNotes);
   }
 
   if (loopLength > 0) {
-    removeInvalidMoverPreCommitRows(rows, focus, loopLength);
+    removeInvalidMoverPreCommitRows(rows, focus, loopLength, committedDisplayNotes);
   }
 
   return rows;

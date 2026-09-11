@@ -65,6 +65,10 @@ takeDeferredIdleOwnerTurn(bool postOverdubPlayingMidiDrain) {
 }
 
 // noinline: a single call site would otherwise inline this into loop() and stay in ITCM.
+FLASHMEM __attribute__((noinline)) static void processKindBoundaryUndoWarmAfterDisplay() {
+  editManager.processKindBoundaryUndoWarm(trackManager.getSelectedTrack());
+}
+
 FLASHMEM __attribute__((noinline)) static void finishAdmittedDisplayPaintTurn(
     uint32_t now, uint32_t& lastDisplayUpdate) {
 #if defined(SESSION_CAPTURE)
@@ -76,6 +80,7 @@ FLASHMEM __attribute__((noinline)) static void finishAdmittedDisplayPaintTurn(
 #endif
   if (!displayManager.hasPendingPaintPhase()) {
     lastDisplayUpdate = now;
+    processKindBoundaryUndoWarmAfterDisplay();
   }
 }
 
@@ -95,6 +100,7 @@ FLASHMEM __attribute__((noinline)) static void maybeUpdateDisplayForNoteEditSele
   displayManager.update();
   if (!displayManager.hasPendingPaintPhase()) {
     lastDisplayUpdate = now;
+    processKindBoundaryUndoWarmAfterDisplay();
   }
 }
 
@@ -324,12 +330,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  const Loop& focusLoop = trackManager.getTrack(focusTrack).getLoop(focusSlot);
-  const bool focusVisualCacheReady =
-      !focusLoop.hasCommittedPasses() ||
-      (!focusLoop.visualCacheDirty && !focusLoop.visualCache.notes.empty());
-  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady() &&
-      focusVisualCacheReady) {
+  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
 #if defined(SESSION_CAPTURE)
     const uint32_t bootCommitStartUs = micros();
 #endif
@@ -404,6 +405,11 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       sStoppedIdleTrackCursor = 0;
     }
     if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
+      if (!MidiServiceDrain::allowSnapshotIdleDuringBootTitleDrain(
+              StorageManager::isBootTitleLoadDrain(),
+              StorageManager::bootInteractiveReady())) {
+        return;
+      }
       const uint8_t trackIndex = MidiServiceDrain::selectStoppedSnapshotTrack(
           sStoppedIdleTrackCursor, trackCount, pendingSnapshotByTrack);
       trackManager.getTrack(trackIndex)
@@ -424,13 +430,22 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       }
       return;
     }
-    // Boot title drain: keep idle on the focus track until its visual cache is
-    // clean. 161148 round-robined small slots first and first-painted the
-    // 68-bar focus slot with an empty cache (boot_commit=70 s).
-    if (StorageManager::isBootTitleLoadDrain()) {
-      const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
-      trackManager.getTrack(focusTrack)
-          .processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+    // Boot title drain: keep non-Snapshot idle on the focus track. Loaded
+    // snapshot hydration stays off after boot (`023222`). After title, fill
+    // the viewed loop's empty dirty cache before walking neighbors (`021247`).
+    const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
+    Track& focusTrackRef = trackManager.getTrack(focusTrack);
+    bool focusVisualCacheNeedsFirstPaint = false;
+    if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
+        focusTrackRef.loopsAllocated()) {
+      const Loop& focusLoop = focusTrackRef.getActiveLoop();
+      focusVisualCacheNeedsFirstPaint = focusLoop.hasCommittedPasses() &&
+                                        focusLoop.visualCacheDirty &&
+                                        focusLoop.visualCache.notes.empty();
+    }
+    if (StorageManager::isBootTitleLoadDrain() || focusVisualCacheNeedsFirstPaint) {
+      focusTrackRef.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain,
+                                                   deferredOwner);
       return;
     }
     trackManager.getTrack(sStoppedIdleTrackCursor)
@@ -457,7 +472,17 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   }
 }
 
-void setup() {
+#if defined(SESSION_CAPTURE)
+FLASHMEM __attribute__((noinline)) static void emitBootResetCapture(bool hadCrashReport) {
+  char line[64];
+  snprintf(line, sizeof(line), "#CAP,%lu,DIAG,boot_reset,crash=%u",
+           static_cast<unsigned long>(micros()), hadCrashReport ? 1u : 0u);
+  Serial.println(line);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
+FLASHMEM void setup() {
   HOT_PATH_TELEMETRY_RESET();
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
@@ -475,6 +500,9 @@ void setup() {
     }
     delay(500);
   }
+#if defined(SESSION_CAPTURE)
+  emitBootResetCapture(static_cast<bool>(CrashReport));
+#endif
 
   // Initialise the global MIDI event pool now that the Teensy core has completed
   // PSRAM hardware initialisation. This must happen before any Track/Loop allocations.

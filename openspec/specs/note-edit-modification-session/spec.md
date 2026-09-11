@@ -87,6 +87,14 @@ Legacy store-diff builders MAY remain during migration only as parity checks. Th
 - **THEN** the persisted **`noteEditPass`** batch is serialized from current state compared to committed baseline
 - **AND** legacy store-diff diagnostic output is not used as persistence authority
 
+#### Scenario: Exit persists a parked mover without empty-step deselect
+
+- **GIVEN** a note’s current-state span differs from its committed baseline
+- **AND** focus has moved to a different **`NoteId`** (select-away during geometry grace, or NOTE_EDIT exit with that note still dirty)
+- **WHEN** **`commitAllPendingNoteEditActions`** runs
+- **THEN** the persisted **`noteEditPass`** batch includes an **`EditPass`** row for the parked **`NoteId`** at its current span
+- **AND** a non-empty **`applyOwnedEditPassRows`** batch is not cleared without a **`commitEditAction`** when current-state/focus built no rows
+
 ### Requirement: Overlap and focus use derived length at macro commit
 
 After **`normalizeAll`** at macro commit, focus moving-note length SHALL equal the current-state span length for **`EditorSelection.primaryNote`**.

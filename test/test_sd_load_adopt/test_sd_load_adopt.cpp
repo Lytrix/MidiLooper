@@ -22,6 +22,7 @@
 #include "LoopEventStore.h"
 #include "PersistenceQueue.h"
 #include "StorageLoopIo.h"
+#include "Utils/DisplayWindowUtils.h"
 
 namespace {
 
@@ -77,7 +78,7 @@ void test_apply_snapshot_adopts_chunks_without_duplicating_pool() {
   TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
   TEST_ASSERT_EQUAL(snapshotChunks, countChunksInPasses(loop.passes));
   TEST_ASSERT_EQUAL(static_cast<uint16_t>(snapshotChunks), LoopEventStore::usedChunkCount());
-  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
 }
 
@@ -98,7 +99,7 @@ void test_restore_passes_snapshot_still_deep_clones_for_undo() {
   TEST_ASSERT_NOT_EQUAL(snapshotRefs[0], loop.passes.recordPass.committedChunkIds[0]);
   TEST_ASSERT_EQUAL(static_cast<uint16_t>(snapshotRefs.size() * 2u),
                     LoopEventStore::usedChunkCount());
-  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
 }
 
@@ -152,7 +153,7 @@ void test_sd_read_roundtrip_adopts_single_pool_copy() {
   TEST_ASSERT_TRUE(loop.passes.hasRecordPass());
   TEST_ASSERT_EQUAL(2u, countChunksInPasses(loop.passes));
   TEST_ASSERT_EQUAL(2u, LoopEventStore::usedChunkCount());
-  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
 }
 
@@ -218,7 +219,7 @@ void drainPendingSnapshotPublish(Loop& loop) {
   TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
 }
 
-void test_adopt_queues_loaded_snapshot_publish_until_idle() {
+void test_adopt_does_not_queue_loaded_snapshot_publish() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
 
@@ -238,17 +239,53 @@ void test_adopt_queues_loaded_snapshot_publish_until_idle() {
 
   Loop dest;
   dest.adoptPersistedSnapshot(*shared);
-  TEST_ASSERT_TRUE(dest.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(dest.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(dest.pendingSnapshotFromLoadedPasses());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadedSnapshotHydrationPhase::None),
+                    static_cast<int>(dest.loadedSnapshotHydrationPhase()));
   TEST_ASSERT_FALSE(dest.publishedSnapshotIsCurrent());
   TEST_ASSERT_EQUAL(0u, dest.publishedSnapshotRevision());
+  TEST_ASSERT_FALSE(DisplayWindowUtils::snapshotBackedDisplayReady(
+      dest.hasCommittedPasses(), dest.publishedSnapshotIsCurrent()));
+
+  dest.invalidateDisplayCaches();
+  dest.rebuildVisualCacheIdleSlice(4, 0);
+  TEST_ASSERT_FALSE(dest.lastVisualCacheIdleCopiedSnapshotNotes());
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::None),
+                        static_cast<int>(dest.lastVisualCacheIdleGatherSource()));
+  TEST_ASSERT_NOT_EQUAL(static_cast<int>(Loop::VisualCacheIdleGatherSource::Snapshot),
+                        static_cast<int>(dest.lastVisualCacheIdleGatherSource()));
+
+  TEST_ASSERT_TRUE(dest.queueLoadedSnapshotPublish());
+  TEST_ASSERT_TRUE(dest.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(dest.pendingSnapshotFromLoadedPasses());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadedSnapshotHydrationPhase::Queued),
+                    static_cast<int>(dest.loadedSnapshotHydrationPhase()));
+
+  dest.stepPendingSnapshotPublish(1);
+  TEST_ASSERT_FALSE(dest.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadedSnapshotHydrationPhase::Constructing),
+                    static_cast<int>(dest.loadedSnapshotHydrationPhase()));
 
   drainPendingSnapshotPublish(dest);
   TEST_ASSERT_TRUE(dest.publishedSnapshotIsCurrent());
   TEST_ASSERT_NOT_EQUAL(0u, dest.publishedSnapshotRevision());
+  TEST_ASSERT_EQUAL(static_cast<int>(LoadedSnapshotHydrationPhase::None),
+                    static_cast<int>(dest.loadedSnapshotHydrationPhase()));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::snapshotBackedDisplayReady(
+      dest.hasCommittedPasses(), dest.publishedSnapshotIsCurrent()));
 
   dest.invalidateDisplayCaches();
   dest.rebuildVisualCacheIdleSlice(4, 0);
   TEST_ASSERT_TRUE(dest.lastVisualCacheIdleCopiedSnapshotNotes());
+}
+
+void test_empty_loop_snapshot_display_is_ready() {
+  Loop loop;
+  TEST_ASSERT_FALSE(loop.hasCommittedPasses());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(DisplayWindowUtils::snapshotBackedDisplayReady(
+      loop.hasCommittedPasses(), loop.publishedSnapshotIsCurrent()));
 }
 
 void test_restore_empty_does_not_queue_loaded_snapshot_publish() {
@@ -261,7 +298,7 @@ void test_restore_empty_does_not_queue_loaded_snapshot_publish() {
 
   Loop loop;
   loop.restorePassesSnapshot(snapshot);
-  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
 
   PersistedLoopSnapshot empty{};
   loop.restorePassesSnapshot(empty);
@@ -276,7 +313,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_restore_passes_snapshot_still_deep_clones_for_undo);
   RUN_TEST(test_sd_read_roundtrip_adopts_single_pool_copy);
   RUN_TEST(test_sd_read_under_staging_does_not_enqueue_mid_pass);
-  RUN_TEST(test_adopt_queues_loaded_snapshot_publish_until_idle);
+  RUN_TEST(test_adopt_does_not_queue_loaded_snapshot_publish);
+  RUN_TEST(test_empty_loop_snapshot_display_is_ready);
   RUN_TEST(test_restore_empty_does_not_queue_loaded_snapshot_publish);
   return UNITY_END();
 }

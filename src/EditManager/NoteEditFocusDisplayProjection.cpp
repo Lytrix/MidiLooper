@@ -151,7 +151,14 @@ bool currentStateRowMatchesCommittedDisplayNote(
 }
 
 bool currentStateRowAllowedAsPaintExtra(const NoteEditCurrentNoteState& row,
-                                        const NoteUtils::DisplayNoteVec& committedBaseNotes) {
+                                        const NoteUtils::DisplayNoteVec& committedBaseNotes,
+                                        NoteId noteId, NoteId movingNoteId) {
+  // RC2 snapshot / visual-cache committed base can omit a capture-session
+  // mover (`190408` note 94 @2481). The mover must still paint from
+  // currentState / focus.last after overlap Hide + Pitch/Move.
+  if (noteId != kInvalidNoteId && noteId == movingNoteId) {
+    return true;
+  }
   return currentStateRowLifecycleIsAdded(row) ||
          currentStateRowMatchesCommittedDisplayNote(row, committedBaseNotes);
 }
@@ -295,7 +302,9 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
         continue;
       }
       const bool inCommittedBase = committedIds.find(noteId) != committedIds.end();
-      if (!inCommittedBase && !currentStateRowAllowedAsPaintExtra(row, committedBaseNotes)) {
+      if (!inCommittedBase &&
+          !currentStateRowAllowedAsPaintExtra(row, committedBaseNotes, noteId,
+                                              focus.movingNoteId)) {
         continue;
       }
       if (std::find(participants.begin(), participants.end(), noteId) == participants.end()) {
@@ -313,7 +322,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
     const NoteEditCurrentNoteState* storeRow =
         currentState != nullptr ? currentState->find(evt.noteId) : nullptr;
     if (storeRow == nullptr ||
-        !currentStateRowAllowedAsPaintExtra(*storeRow, committedBaseNotes)) {
+        !currentStateRowAllowedAsPaintExtra(*storeRow, committedBaseNotes, evt.noteId,
+                                            focus.movingNoteId)) {
       continue;
     }
     if (focus.baselineMap.find(evt.noteId) != focus.baselineMap.end()) {
@@ -463,7 +473,8 @@ NOTE_EDIT_MEM NoteUtils::DisplayNoteVec projectNoteEditDisplayNotes(
       const NoteEditCurrentNoteState* extraRow =
           currentState != nullptr ? currentState->find(noteId) : nullptr;
       if (extraRow == nullptr ||
-          !currentStateRowAllowedAsPaintExtra(*extraRow, committedBaseNotes)) {
+          !currentStateRowAllowedAsPaintExtra(*extraRow, committedBaseNotes, noteId,
+                                              focus.movingNoteId)) {
         continue;
       }
     }

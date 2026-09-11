@@ -1,9 +1,9 @@
 # First record-pass note display vs loop-end Off
 
-**Status:** Parked — watch HITL did not reproduce; no firmware patch  
+**Status:** RC1 implementing — [`192140`](../../captures/session_20260909_192140.log) close commit  
 **Kind:** bugfix  
-**Evidence:** [`session_20260909_123953.log`](../../captures/session_20260909_123953.log)  
-**Does not reopen:** compose Stage 1/2, wrap-head RC1–RC3 (`wrap_head_last_off_pairing_bugfix.md` is closed), hydrate 4b–5
+**Evidence:** [`session_20260909_192140.log`](../../captures/session_20260909_192140.log) (unpark); [`session_20260909_123953.log`](../../captures/session_20260909_123953.log) (select remap)  
+**Does not reopen:** compose Stage 1/2, wrap-head RC1–RC3 (`wrap_head_last_off_pairing_bugfix.md` is closed), hydrate 4b–5, control-plane RC6 paint extra
 
 ## Debugging boundary
 
@@ -90,3 +90,52 @@ Do not patch until those three are **no** for a named owner, or stop for a desig
 Watch HITL [`132708`](../../captures/session_20260909_132708.log) did not
 reproduce a first record-pass note Off at `loopEndTick`. Skip until a new
 capture shows that row. Do not put this back in Now implementing.
+
+## Unpark — [`192140`](../../captures/session_20260909_192140.log)
+
+After in-edit overdub stop, NOTE_EDIT close writes the wrap-head mover to inclusive loop end.
+
+| Clock | Fact |
+|---|---|
+| 57.331 s | Select remaps to note 55 at tick 80; focus `noteId=58 presence=0` |
+| 57.350 s | `DNTE,48,80,80,0` — painted length 0 |
+| 66.437 s | `OVERDUBBING → PLAYING` (in-edit fold) |
+| 67.000 s | `ChangeLength targetNoteId=58 start=80 moverBaselineEnd=80 newEnd=2303` |
+
+`2303` is `loopLength - 1`. The first record-pass pair stays `48@125–142`. The invented Off is the close-commit Length row from `focus.last` after `normalizeAll` `closeOpenTails`.
+
+### Architecture checkpoint (RC1)
+
+| Question | Answer |
+|---|---|
+| Ownership change? | NO — extend `shouldRejectMoverPreCommitRow` / `shouldSkipOverlapDiffToLoopEnd` |
+| State transition change? | NO — same NOTE_EDIT close commit |
+| Unbounded interval owner? | NO — same pre-commit walk |
+
+### RC1 — mover Length to unpainted loop end
+
+**Invariant:** Close must not emit mover `ChangeLength` to `loopLength` or `loopLength - 1` unless `commitBaseline` or committed display already ends there.
+
+**Owner:** `shouldRejectMoverPreCommitRow` in [`NoteEditFocusPreCommit.cpp`](../../src/EditManager/NoteEditFocusPreCommit.cpp). Inclusive loop-end is the same skip as overlap RC3 (`192755` / `201948`).
+
+**Test:** `test_commit_skips_unpainted_mover_loop_end_length_192140`. HITL `commit_skips_unpainted_mover_loop_end`. Do not edit compose `01`/`02`/`03`/`04`.
+
+## Pre-implementation review
+
+### Ready
+- `shouldSkipOverlapDiffToLoopEnd` already skips overlap Length to exclusive `loopLength` when paint is not loop-end
+- `shouldRejectMoverPreCommitRow` already filters mover Length / NoteRange; it did not treat inclusive `loopLength - 1`
+- `buildCommitRowsFromCurrentState` / `buildPreCommitEditPasses` already receive committed display notes. Parked Visible append uses the same unpainted loop-end Length skip as overlap RC3 (`shouldSkipOverlapDiffToLoopEnd`).
+
+### Resolved (user / code)
+| Topic | Decision |
+|---|---|
+| Owner | Extend mover pre-commit reject — do not change `normalizeAll` closeOpenTails |
+| Inclusive vs exclusive | Both are loop-end Off (`2303` and `2304` on a 2304 loop) |
+| Intentional lengthen | Still emits when committed display paints loop-end |
+
+### Open before coding
+1. None — implementer pin is inclusive loop-end on the mover Length row only
+
+### Proceed?
+- YES

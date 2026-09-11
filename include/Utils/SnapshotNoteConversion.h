@@ -25,7 +25,13 @@ inline void appendDisplayNoteUniqueById(NoteUtils::DisplayNoteVec& out,
                                         const NoteUtils::DisplayNote& note) {
   if (note.noteId != kInvalidNoteId) {
     for (const auto& existing : out) {
-      if (existing.noteId == note.noteId) {
+      if (existing.noteId != note.noteId) {
+        continue;
+      }
+      // Wrap On→loopEnd + head share one NoteId with different starts. Treating
+      // id as globally unique drops the second segment (`193108` STOPPED frame
+      // kept head @0 only while reconstruct had On@2151).
+      if (existing.startTick == note.startTick) {
         return;
       }
     }

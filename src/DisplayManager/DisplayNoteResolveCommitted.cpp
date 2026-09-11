@@ -99,6 +99,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
                 snapshot && loop.publishedSnapshotIsCurrent()) {
                 DIAG_COUNTER_INC(DisplayIncrementalUpdate);
                 LoopContentResolution::resolveDisplayNotes(*snapshot, liveDisplayNotes);
+                // Spans omit wrap-held On→loopEnd that pass append restores
+                // (`183321`: reconstruct/effective 59 vs STOPPED frame 56).
+                // STOPPED only — PLAYING keeps span-only current-root paint.
+                if (track.isStopped()) {
+                    mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
+                }
                 liveMergePlaybackRevision_ = loop.playbackRevision;
                 liveMergeCaptureRevision_ = loop.captureDisplayRevision;
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
@@ -125,8 +131,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
             }
             if (track.isStopped()) {
                 DIAG_COUNTER_INC(DisplayIncrementalUpdate);
+                // Same order as PLAYING / window-gather fallback: LCR passes then
+                // wrap-held fill. Omitting append drops On→loopEnd
+                // (`180916` reconstruct 58 vs frame/effective 56).
                 LoopContentResolution::resolveDisplayNotes(loop.passes, loopLength,
                                                            liveDisplayNotes);
+                mutLoop.appendOverdubPassDisplayNotes(liveDisplayNotes);
                 liveMergePlaybackRevision_ = loop.playbackRevision;
                 liveMergeCaptureRevision_ = loop.captureDisplayRevision;
                 liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();

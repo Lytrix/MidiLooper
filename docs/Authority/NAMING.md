@@ -113,6 +113,10 @@ MIDI Input is timing-critical. The owner is `MidiHandler`; the operation is `han
 | **MIDI Input handling duration** | Time spent inside `handleMidiInput()` (`DIAG,midi_input`) |
 | **MIDI Input Gap (MIG)** | Time between consecutive `handleMidiInput()` entries (`DIAG,midi_gap`) |
 | **MIDI deadline lateness** | `lateness_us = sendMidiEvent() − scheduled_deadline` for each required note-on, note-off, and MIDI clock (scored independently). Equality is on time. This is **product correctness**, not a synonym for MIDI Input Gap |
+| **T_RT_reserve** | Snapshot-idle construction contract: maximum construction-attributable time from idle-turn start to the next timing-critical `handleMidiInput()` entry while `RECORDING` / `PLAYING` / `OVERDUBBING`. [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary). Not `60% × T_clock`. **STOPPED is excluded.** |
+| **T_RT_reserve_ceiling** | Fixed policy cap on construction-attributable work per snapshot-idle turn. Initial value **10,000 µs**. Independent of BPM. Not an observed unit. |
+| **reserve_us** | Per-turn measured availability on `DIAG,snapshot_idle,child`: idle start to the next timing-critical `handleMidiInput()` enter. Authoritative per-turn admission bound. Not `DIAG,midi_gap`. |
+| **T_RT_safety_margin** | Margin subtracted from `reserve_us` before comparing to the ceiling. Not frozen; 1,000 µs is a working hypothesis only. |
 | **RuntimeTimingTelemetry** | Instrumentation for MIDI Input Gap, `handleMidiInput()` duration, and (when hooked) MIDI deadline lateness — not a MIDI owner |
 | **Runtime admission** | Future coordinator of which bounded runtime units may execute between MIDI Input handling opportunities |
 | **Interval path** | Work between consecutive `handleMidiInput()` entries, including clock dispatch that runs inside that gap |

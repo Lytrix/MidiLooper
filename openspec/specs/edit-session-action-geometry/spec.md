@@ -401,13 +401,21 @@ Transaction baseline (**`baselineMap`**) SHALL refresh when **`EditorSelection.p
 
 ### Requirement: Macro commit one noteEditPass batch
 
-At **`commitAllPendingNoteEditActions`**, the system SHALL produce **one `noteEditPass` batch** containing **`EditPass` rows for every `NoteId` changed** compared to transaction baseline — mover, overlap targets, add, delete.
+At **`commitAllPendingNoteEditActions`**, the system SHALL produce **one `noteEditPass` batch** containing **`EditPass` rows for every `NoteId` changed** compared to transaction baseline — current mover, Active overlap targets, add, delete, and other Existing Visible current-state rows whose current span still differs from committed span (parked previous mover after select-away). When that current-state/focus build is empty, a remaining **`applyOwnedEditPassRows`** batch SHALL be committed instead of discarded.
 
 #### Scenario: Macro commit batches changed notes
 
 - **WHEN** macro commit runs after one mover edit and one hidden overlap target
 - **THEN** one **`noteEditPass`** batch is created
 - **AND** the batch contains rows for both changed **`NoteId`** values
+
+#### Scenario: Exit persists a parked mover without empty-step deselect
+
+- **GIVEN** a note’s current-state span differs from its committed baseline
+- **AND** focus has moved to a different **`NoteId`**
+- **WHEN** **`commitAllPendingNoteEditActions`** runs
+- **THEN** the persisted **`noteEditPass`** batch includes an **`EditPass`** row for the parked **`NoteId`** at its current span
+- **AND** a non-empty **`applyOwnedEditPassRows`** batch is not cleared without a **`commitEditAction`** when current-state/focus built no rows
 
 ### Requirement: overlapNotes and persistent registry removed
 

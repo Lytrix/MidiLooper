@@ -81,6 +81,13 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   for (const MidiEvent& evt : heldOns) {
     loop.appendCaptureEvent(evt);
   }
+  // Re-opened holds crossed loop end — Stage 2 wrap split must not depend only on
+  // playhead-vs-on inference after beginCapture cleared preview (`191636` pitch 18).
+  for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {
+    if (previewNoteIndex < loop.capturePreview.noteStates.size()) {
+      loop.capturePreview.noteStates[previewNoteIndex].wrapHeld = true;
+    }
+  }
   loop.noteOverdubWrapCommitted();
   logger.logTrackEvent("Overdub wrap committed", clockManager.getCurrentTick());
   return wrapped;

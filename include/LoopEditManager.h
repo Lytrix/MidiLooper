@@ -48,6 +48,8 @@ public:
 
     /** Cancel pending loop-start grace work and ignore motor feedback briefly. */
     void onLeaveLoopEditSession();
+    /** Ignore inbound loop-start/length faders for LOOP_EDIT_FEEDBACK_IGNORE_MS. */
+    void armLoopFaderFeedbackIgnore();
     /** Push loop fader positions to DROID without applying input. */
     void onEnterLoopEditSession(Track& track);
     /// Rebind loop edit session to the selected slot after focus change.

@@ -1,9 +1,11 @@
 # Note Edit Singular Commit Pipeline
 
+**Living commit row sources (Sep 2026):** current-state vs committed baseline is still primary. When that build is empty, `commitAllPendingNoteEditActions` commits remaining `applyOwnedEditPassRows` instead of discarding them. See [`MOVE_NOTE_LOGIC.md`](../Guides/MOVE_NOTE_LOGIC.md) § Commit / macro seal and [`note_edit_exit_persist_selected_mover_bugfix.md`](note_edit_exit_persist_selected_mover_bugfix.md). The bullets below that say apply-owned is never persistence authority describe the migration-era contract, not the shipped exit fallback.
+
 ## Architectural Decision
 - Canonical post-apply `NoteEditSession.store` is the single source of truth during NOTE_EDIT.
-- `commitAllPendingNoteEditActions` derives persistent `EditPass` rows exclusively from the transaction baseline and canonical post-apply session state.
-- Apply-owned rows are temporary diagnostics during migration and are never persistence authority.
+- `commitAllPendingNoteEditActions` derives persistent `EditPass` rows primarily from the transaction baseline and current-state / focus diff.
+- Apply-owned rows remain diagnostic/parity when current-state built rows; they are the persist fallback when that build is empty.
 
 ## Architecture
 
@@ -19,13 +21,13 @@
 - Commit: `commitAllPendingNoteEditActions` serializes canonical state diff into `EditPass`.
 - Selection: resolves logical `EditorSelection` onto projected display state; it does not write persistence.
 - Undo: replays committed `EditPass`; it does not depend on action-builder history.
-- Apply-owned rows: diagnostics and parity validation only while migrating.
+- Apply-owned rows: diagnostics and parity when current-state built rows; persist fallback when that build is empty.
 
 ### Source of Truth
 - During editing: canonical `NoteEditSession.store`.
 - During display: canonical `NoteEditSession.store` plus `EditorSelection`.
 - During commit: transaction baseline plus canonical `NoteEditSession.store`.
-- Never use `applyOwnedEditPassRows` as source of truth for persistence.
+- Prefer current-state vs committed baseline for persistence. Use `applyOwnedEditPassRows` only when that build is empty (exit / grace-deferred select-away).
 
 ### Consumer Responsibilities
 - Every downstream consumer derives its output independently from the canonical state appropriate to its responsibility.

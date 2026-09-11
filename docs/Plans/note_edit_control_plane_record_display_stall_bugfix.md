@@ -44,6 +44,12 @@ ValueOnly notegate NoteOn then NoteOff in the same millisecond
 resolveTargetPitchbend maps neighborhood slot index onto full F1 travel
     → tick 2640 / 6 slots → pb −4915 (`234815`)
     ← RC8
+
+handleSelectFaderInput duplicate slot rebuild / missing F1 DNTE (`235958`)
+    ← not this plan — [`note_edit_fader1_select_display_lag_bugfix.md`](note_edit_fader1_select_display_lag_bugfix.md)
+
+stacked move + deselect visual cache 8→7 (`232309`)
+    ← not this plan — [`note_edit_stacked_move_deselect_display_drop_bugfix.md`](note_edit_stacked_move_deselect_display_drop_bugfix.md)
 ```
 
 ## Architecture checkpoint

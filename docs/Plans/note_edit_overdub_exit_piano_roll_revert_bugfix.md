@@ -1,9 +1,9 @@
 # NOTE_EDIT exit during overdub must keep the live piano roll
 
-**Status:** RC1+RC2 native shipped; device recapture of `214900` still open  
+**Status:** RC1+RC2 device PASS [`223532`](../../captures/session_20260909_223532.log)  
 **Kind:** bugfix  
-**Evidence:** [`session_20260909_214900.log`](../../captures/session_20260909_214900.log)  
-**Does not reopen:** DEC-056 stale-parent publish skip, replace-on-retrigger, compose `STIM-NE-OD-COMPOSE-01` / `02` / `03` / `04`, occupy hide/ledger, OpenSpec `3.5` / `3.6`, wrap `004351` dirty→last-snapshot rule
+**Evidence:** [`session_20260909_214900.log`](../../captures/session_20260909_214900.log) (bug), [`session_20260909_223532.log`](../../captures/session_20260909_223532.log) (fix)  
+**Does not reopen:** DEC-056 stale-parent publish skip, replace-on-retrigger, compose `STIM-NE-OD-COMPOSE-01` / `02` / `03` / `04`, occupy hide/ledger, OpenSpec `3.5` / `3.6`, wrap `004351` dirty→last-snapshot rule. Persist of a parked mover is a sibling RC ([`note_edit_exit_persist_selected_mover_bugfix.md`](note_edit_exit_persist_selected_mover_bugfix.md)), not this display owner.
 
 ## Debugging boundary
 
@@ -162,6 +162,17 @@ Do not edit compose `01` / `02` / `03` / `04`. Add verifier cases on a log that 
 - `stop_selected_slot_not_foreign_loop` — first selected-slot STOPPED `DISP,0` after `OVERDUBBING→STOPPED` is the overdub `loopLength` (2304), not 6144 / 50688
 
 Device gate is a recapture of this manual exit-during-overdub, or a later dedicated stimulus if compose cannot hit the close-while-overdub window without editing 01–04.
+
+## Device recapture [`223532`](../../captures/session_20260909_223532.log)
+
+Short-press Edit Mode at `453.984` while OVERDUBBING. Close keeps DEC-056 (`skip stale-parent publish`, `root_rev=3`, `pending=1`). Last in-edit `DFRAME` is **64**. First LOOP_EDIT paint:
+
+```
+draw_src,layers,visual,65,preview,0,sealed,0,snap,0,frame,65,hidden,0
+DISP,0,OVERDUBBING,2304,65,65,65,65
+```
+
+`DFRAME` stays **65** through overdub stop (`OVERDUBBING→PLAYING` `2304/65`) and transport hop (`PLAYING→STOPPED` then `DISP,0,STOPPED,2304,65`). No `6144` / `50688` STOPPED frames. RC2 hop was `PLAYING→STOPPED` after overdub already returned to PLAYING; the compose verifier `stop_selected_slot_not_foreign_loop` looks for `OVERDUBBING→STOPPED` and is vacuous on this log.
 
 ## Out of scope
 

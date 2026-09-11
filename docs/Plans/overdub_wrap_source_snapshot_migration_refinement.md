@@ -1,6 +1,6 @@
 # Overdub Wrap Source Snapshot Migration Refinement
 
-**Status:** 3.5 firmware in progress on `feature/overdub-wrap-snapshot-publication`; 3.6 verification open. Snapshot admission starvation fix is in tree; device recapture remains open.
+**Status:** 3.5 firmware in progress on `feature/overdub-wrap-snapshot-publication`; 3.6 native wrap-journal parity in tree; `T_RT_reserve` policy recorded as [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary); device recapture open.
 
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/)
 
@@ -94,9 +94,11 @@ Stages 6–8 are follow-on work and are not activated by this refinement.
   persistence/reconstruction belongs to the later storage phase.
 - The global overdub undo entry remains pass-based while construction is
   pending. Snapshot-identity attachment belongs to the later undo migration.
-- The device gate closes only against a measured `T_RT_reserve` contract:
-  construction-attributable MIDI gap and deadline lateness must remain within
-  that reserve, with an explicit overrun/retry result.
+- The device gate closes only against the [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+  `T_RT_reserve` contract: `T_RT_reserve_ceiling` 10,000 µs, per-turn
+  `reserve_us` to the next timing-critical `handleMidiInput()` entry, and
+  yield/retry without prefix publication. `60% × T_clock` is diagnostic only.
+  Do not freeze an observed unit.
 
 ### Admission starvation finding — 2026-08-27
 
@@ -210,12 +212,28 @@ complete gate. Device recapture remains open.
      oracle without making the oracle the runtime source.
    - Measure maximum MIDI gap attributable to snapshot construction,
      maintenance time per slice, and total construction wall time.
-   - Measure and freeze `T_RT_reserve` before firmware publication. Pass only
-     when construction-attributable MIDI gap and deadline lateness remain
-     within that reserve; total wall time alone is not sufficient.
+   - Score the [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)
+     `T_RT_reserve` contract before checking off 3.5/3.6. Policy ceiling is
+     10,000 µs. Pass only when construction-attributable MIDI gap and deadline
+     lateness remain within `min(ceiling, reserve_us − T_RT_safety_margin)`;
+     total wall time alone is not sufficient. Capture-gated `reserve_us`
+     telemetry is required; `T_RT_safety_margin` is not frozen.
    - Extend the existing snapshot/take-survival native tests with repeated
      same-`NoteId` updates, wrap NoteOn/NoteOff replacement, Hide, equal-tick
-     ordering, and non-note events.
+     ordering, and non-note events. Wrap-journal fixtures (2026-09-08):
+     `test_wrap_journal_repeated_same_note_id_replace`,
+     `test_wrap_journal_replaces_wrap_note_on_off_pair`,
+     `test_wrap_journal_hide_removes_published_note`,
+     `test_wrap_journal_equal_tick_non_note_event_order`,
+     `test_skipped_overdub_stop_retains_in_flight_wrap_journals`,
+     `test_queue_session_exit_keeps_wrap_journals_without_new_pass`. Focused
+     native **83/83**. Device wrap-retain recapture
+     [`101815`](../../captures/session_20260908_101815.log): `seal=skipped`
+     still, but journals retained, `fragment` advanced, `root_rev=3`
+     matches `playback_rev=3` (`pending=0`). Prior fail class
+     [`094930`](../../captures/session_20260908_094930.log) /
+     [`094228`](../../captures/session_20260908_094228.log). Do not check
+     off 3.5/3.6 until the `T_RT_reserve` device recapture against DEC-053.
    - Run native, firmware-size, and capture-serial device verification before
      beginning consumer migration.
    - Device `snapshot_idle` must report wrap-journal state separately from
@@ -280,8 +298,10 @@ or undo/load. Stages 6–8 begin only after that gate.
 - The first implementation slice ends after this parity gate and does not
   migrate playback, display, NOTE_EDIT, analysis, validation, persistence, or
   undo/load.
-- The device gate records maximum MIDI gap attributable to snapshot
-  construction, maintenance time per slice, and total construction wall time.
+- The device gate records per-turn `reserve_us` (idle start → next
+  timing-critical `handleMidiInput()` enter), construction-attributable MIDI
+  gap, maintenance time per slice, and total construction wall time. Parent
+  `snapshot_idle` wall time is not the acceptance metric. [DEC-053](../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary).
 - All later consumers match the materialization oracle while using the
   snapshot as the normal source.
 - Pair `NoteId`s and non-note `EventId`s are runtime-only in this slice;

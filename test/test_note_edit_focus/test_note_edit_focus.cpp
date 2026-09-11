@@ -3741,6 +3741,151 @@ void test_project_pitch_move_hides_persist_twin_at_commit_baseline() {
   TEST_ASSERT_FALSE(hasHome);
 }
 
+void test_project_pitch_overlap_keeps_mover_and_highlight_190408() {
+  // session_20260909_190408 @121.284: HideNote occupant 60 on pitch 73 then
+  // ChangePitch mover 94 63→73. The mover must stay in paint at 2481–2953 and
+  // remain highlightable. Occupant Hide is expected; mover drop is not.
+  constexpr uint32_t kLoopLength = 3840;
+  constexpr uint8_t channel = 4;
+  constexpr NoteId kOccupantId = 60;
+  constexpr NoteId kMoverId = 94;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {63, 100, 2481, 2953};
+  focus.last = {73, 100, 2481, 2953};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kOccupantId] = {73, 100, 2832, 2872};
+
+  MidiEventVec committedEvents;
+  committedEvents.push_back(noteOnWithNoteId(2481, channel, 63, 100, kMoverId));
+  MidiEvent moverOff = MidiEvent::NoteOff(2953, channel, 63, 0);
+  moverOff.noteId = kMoverId;
+  committedEvents.push_back(moverOff);
+  committedEvents.push_back(noteOnWithNoteId(2832, channel, 73, 100, kOccupantId));
+  MidiEvent occupantOff = MidiEvent::NoteOff(2872, channel, 73, 0);
+  occupantOff.noteId = kOccupantId;
+  committedEvents.push_back(occupantOff);
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(committedEvents, kLoopLength, false);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(2481, channel, 73, 100, kMoverId));
+  MidiEvent storeOff = MidiEvent::NoteOff(2953, channel, 73, 0);
+  storeOff.noteId = kMoverId;
+  store.push_back(storeOff);
+
+  EditSessionActions actions;
+  EditSessionAction hide{};
+  hide.type = EditSessionActionType::HideNote;
+  hide.targetNoteId = kOccupantId;
+  hide.startTick = 2832;
+  hide.endTick = 2872;
+  hide.pitch = 73;
+  hide.velocity = 100;
+  actions.push_back(hide);
+  EditSessionAction pitch{};
+  pitch.type = EditSessionActionType::ChangePitch;
+  pitch.targetNoteId = kMoverId;
+  pitch.startTick = 2481;
+  pitch.endTick = 2953;
+  pitch.pitch = 73;
+  pitch.velocity = 100;
+  actions.push_back(pitch);
+
+  NoteEditCurrentState currentState;
+  seedCurrentStateFromFocus(currentState, focus);
+  applyActionsToCurrentState(currentState, actions);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength,
+                                  &currentState);
+
+  bool foundMover = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kOccupantId);
+    if (dn.noteId == kMoverId) {
+      foundMover = true;
+      TEST_ASSERT_EQUAL_UINT8(73, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(2481u, dn.startTick);
+      TEST_ASSERT_EQUAL_UINT32(2953u, dn.endTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMover);
+
+  EditorSelection selection;
+  selection.primaryNote = kMoverId;
+  selection.selectedTick = 2481;
+  selection.selectedNotes.push_back(kMoverId);
+  const int highlight = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+      selection, projected, focus, 0, kLoopLength, false);
+  TEST_ASSERT_TRUE(highlight >= 0);
+  TEST_ASSERT_EQUAL(kMoverId, projected[static_cast<size_t>(highlight)].noteId);
+  TEST_ASSERT_EQUAL_UINT8(73, projected[static_cast<size_t>(highlight)].note);
+}
+
+void test_project_pitch_capture_only_mover_not_in_snapshot_190408() {
+  // RC2 committed base is snapshot / visual cache. A capture-session mover
+  // (190408 note 94 at 2481 on a 3840 loop) may be absent from that base.
+  // Current-state extra reject must not drop the mover after ChangePitch.
+  constexpr uint32_t kLoopLength = 3840;
+  constexpr uint8_t channel = 4;
+  constexpr NoteId kOccupantId = 60;
+  constexpr NoteId kMoverId = 94;
+
+  NoteEditFocus focus;
+  focus.active = true;
+  focus.movingNoteId = kMoverId;
+  focus.commitBaseline = {63, 100, 2481, 2953};
+  focus.last = {73, 100, 2481, 2953};
+  focus.baselineMap[kMoverId] = focus.commitBaseline;
+  focus.baselineMap[kOccupantId] = {73, 100, 2832, 2872};
+
+  MidiEventVec occupantOnly;
+  occupantOnly.push_back(noteOnWithNoteId(2832, channel, 73, 100, kOccupantId));
+  MidiEvent occupantOff = MidiEvent::NoteOff(2872, channel, 73, 0);
+  occupantOff.noteId = kOccupantId;
+  occupantOnly.push_back(occupantOff);
+  const NoteUtils::DisplayNoteVec committedBase =
+      NoteUtils::reconstructDisplayNotes(occupantOnly, kLoopLength, false);
+
+  MidiEventVec store;
+  store.push_back(noteOnWithNoteId(2481, channel, 73, 100, kMoverId));
+  MidiEvent storeOff = MidiEvent::NoteOff(2953, channel, 73, 0);
+  storeOff.noteId = kMoverId;
+  store.push_back(storeOff);
+
+  NoteEditCurrentState currentState;
+  currentState.upsertRow(kOccupantId, focus.baselineMap[kOccupantId],
+                         focus.baselineMap[kOccupantId], NoteEditPresenceType::Hidden);
+  currentState.upsertRow(kMoverId, focus.commitBaseline, focus.last,
+                         NoteEditPresenceType::Visible);
+
+  const NoteUtils::DisplayNoteVec projected =
+      projectNoteEditDisplayNotes(committedBase, store, focus, channel, kLoopLength,
+                                  &currentState);
+
+  bool foundMover = false;
+  for (const NoteUtils::DisplayNote& dn : projected) {
+    TEST_ASSERT_FALSE(dn.noteId == kOccupantId);
+    if (dn.noteId == kMoverId) {
+      foundMover = true;
+      TEST_ASSERT_EQUAL_UINT8(73, dn.note);
+      TEST_ASSERT_EQUAL_UINT32(2481u, dn.startTick);
+    }
+  }
+  TEST_ASSERT_TRUE(foundMover);
+
+  EditorSelection selection;
+  selection.primaryNote = kMoverId;
+  selection.selectedTick = 2481;
+  selection.selectedNotes.push_back(kMoverId);
+  const int highlight = NoteEditDisplaySnapshot::resolveNoteEditHighlightIndex(
+      selection, projected, focus, 0, kLoopLength, false);
+  TEST_ASSERT_TRUE(highlight >= 0);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_baseline_map_includes_moving_note_at_select);
@@ -3856,5 +4001,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_focus_apply_display_note_uses_current_state_span_not_cache_tick_181114);
   RUN_TEST(test_mover_wrap_length_jump_names_first_writer_193838);
   RUN_TEST(test_project_pitch_move_hides_persist_twin_at_commit_baseline);
+  RUN_TEST(test_project_pitch_overlap_keeps_mover_and_highlight_190408);
+  RUN_TEST(test_project_pitch_capture_only_mover_not_in_snapshot_190408);
   return UNITY_END();
 }
