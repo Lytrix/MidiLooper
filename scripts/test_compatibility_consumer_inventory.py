@@ -51,7 +51,6 @@ _MIDI_EVENTS_ALLOW = frozenset(
     {
         "src/Loop/LoopMaterialization.cpp",
         "src/Utils/CommittedMidiScratch.cpp",
-        "src/EditManager/NoteEditSessionLifecycle.cpp",
         "include/Loop.h",
         "include/Track.h",
     }
@@ -78,13 +77,11 @@ _PASSES_MATERIALIZED_STORE_ALLOW = frozenset(
     }
 )
 
-# Named 6.2 fallback sites (plan B1–B8). B1/B3/B4 use narrow C1-a exceptions — see
-# scripts/test_b1_narrow_session_exit_compat_gate.py and
-# scripts/test_b3_b4_narrow_session_exit_compat_gate.py.
+# Named 6.2 fallback sites (plan B1–B8). B1/B3/B4/B2/B5 use narrow C1-a exceptions —
+# see scripts/test_b1_narrow_session_exit_compat_gate.py,
+# scripts/test_b3_b4_narrow_session_exit_compat_gate.py, and
+# scripts/test_b2_b5_b6_narrow_session_exit_compat_gate.py.
 _6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {
-    "B2": ("src/Utils/CommittedMidiScratch.cpp", _MATERIALIZE_EDIT_VIEW_RE),
-    "B5": ("src/Track/TrackDeferredMaintenance.cpp", _MATERIALIZE_EDIT_VIEW_RE),
-    "B6": ("src/EditManager/NoteEditSessionLifecycle.cpp", _MIDI_EVENTS_RE),
     "B7": ("src/LoopContentResolution.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE),
     "B8": ("src/Loop/LoopCapture.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE),
 }
@@ -95,6 +92,8 @@ _B4_C1_A_SITES = (
     ("src/DisplayManager/DisplayNoteResolveCommitted.cpp", _GATHER_COMMITTED_RE),
     ("src/DisplayManager/DisplayColdHelpers.cpp", _GATHER_COMMITTED_RE),
 )
+_B2_C1_A_SITE = ("src/Utils/CommittedMidiScratch.cpp", _MATERIALIZE_EDIT_VIEW_RE)
+_B5_C1_A_SITE = ("src/Track/TrackDeferredMaintenance.cpp", _MATERIALIZE_EDIT_VIEW_RE)
 
 _EXPECTED_BLOCKER_COUNT = len(_6_2_BLOCKER_SITES)
 
@@ -228,6 +227,26 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
             self.assertIn(rel_path, hits, f"B4 C1-a exception must retain guarded gather in {rel_path}")
             text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
             self.assertIn("isPlaybackSessionExitPublicationGap", text)
+
+    def test_b2_c1_a_exception_site_retained(self) -> None:
+        rel_path, pattern = _B2_C1_A_SITE
+        hits = _scan_cpp_headers(pattern)
+        self.assertIn(rel_path, hits, "B2 C1-a exception must retain guarded materialize")
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
+        self.assertIn("isPlaybackSessionExitPublicationGap", text)
+        self.assertIn("RefreshKind::HoldEmpty", text)
+
+    def test_b5_c1_a_exception_site_retained(self) -> None:
+        rel_path, pattern = _B5_C1_A_SITE
+        hits = _scan_cpp_headers(pattern)
+        self.assertIn(rel_path, hits, "B5 C1-a exception must retain guarded materialize")
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
+        self.assertIn("isPlaybackSessionExitPublicationGap", text)
+
+    def test_b6_note_edit_lifecycle_has_no_midi_events_consumer(self) -> None:
+        rel_path = "src/EditManager/NoteEditSessionLifecycle.cpp"
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
+        self.assertNotRegex(text, r"\.midiEvents\s*\(")
 
 
 if __name__ == "__main__":

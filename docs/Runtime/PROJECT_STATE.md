@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-11 (Immutable OpenSpec 6.2.2 SHIPPED — B3/B4 C1-a; 6.2.3 next)
+Last updated: 2026-09-12 (Immutable OpenSpec 6.2.3 B2/B5/B6 shipped; 6.2.4 next)
 
 ---
 
@@ -559,7 +559,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.6** SHIPPED; **6.1** inventory **SHIPPED**; **6.2.1b** B1 + **6.2.2** B3/B4 C1-a narrow compat **SHIPPED** ([DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)); next open: **4b.3**, **6.2.3–6.5**; boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.6** SHIPPED; **5.7** persist work-queue stall hardening **queued**; **6.1** inventory **SHIPPED**; **6.2.1b** B1 + **6.2.2** B3/B4 + **6.2.3** B2/B5/B6 C1-a narrow compat **SHIPPED** (native **1825/1830**; HITL core [`002259`](../captures/session_20260912_002259.log); persist verifier open → **5.7**; [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)); next open: **4b.3**, **5.7**, **6.2.4–6.5**; boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

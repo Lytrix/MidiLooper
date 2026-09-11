@@ -11,8 +11,10 @@ parent 4.4 closed by inventory; **4.5** cross-gate verify SHIPPED
 §5 exclusion). In section 4b, 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b,
 and 4b.4 are complete under Ring B round-robin. Phase **5.x** complete.
 **6.1** consumer inventory SHIPPED 2026-09-11. **6.2.1b** B1 C1-a SHIPPED 2026-09-11
-(HITL `231439`). **6.2.2** B3/B4 C1-a SHIPPED 2026-09-11. Open now: **4b.3**,
-**6.2.3–6.5**.
+(HITL `231439`). **6.2.2** B3/B4 C1-a SHIPPED 2026-09-11 (HITL re-run PASS
+[`001343`](../../../captures/session_20260912_001343.log)). **6.2.3** B2/B5/B6
+C1-a / stale-root SHIPPED 2026-09-12 (native **1825/1830**; HITL eval in progress).
+Open now: **4b.3**, **5.7**, **6.2.4–6.5**.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -546,6 +548,22 @@ closed for `DisplayResolveLiveCapture`.
       report [`203843`](../../../captures/host_midi_automation_baseline_20260911_203843.json).
       Prior verify-only replay [`200657`](../../../captures/session_20260911_200657.log).
       Plan: [`immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md).
+- [ ] 5.7 Harden `PersistenceWorkQueue` against boot-save stall when a work item is
+      left `Writing` without an active `PersistenceWorkItemJob` (pre-record wedge
+      caused false 5.5/5.6 HITL failure on otherwise PASS core baseline).
+      - **Evidence:** FAIL [`000210`](../../../captures/session_20260912_000210.log)
+        (`SlotMeta,start` only; `persist_save` 1 µs no-ops); flake PASS
+        [`001343`](../../../captures/session_20260912_001343.log)
+        (`persistence_handoff result=ok`, `loop_persist=231`).
+      - **5.7.1** Detect + recover in `stepPersistenceWorkItem`; session-capture
+        telemetry on recovery.
+      - **5.7.2** Audit `requeueWritingItem` / `resetPersistenceWorkItemJobState` /
+        post-`start` defer paths so `Writing` cannot outlive `itemActive`.
+      - **5.7.3** Native fixture for wedged `Writing`/inactive job.
+      - **5.7.4** (optional) Host boot-save stall warning in
+        `parse_persistence_buildup.py` or HITL.
+      - Plan:
+        [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 
 ## 6. Compatibility retirement and closeout
 
@@ -559,7 +577,8 @@ to immutable snapshot content.
   - HITL unchanged from 5.6 sign-off [`203803`](../../../captures/session_20260911_203803.log).
 - [ ] 6.2 Remove superseded maintained-LCR state and replay APIs only after caller migration and rollback gates pass.
   - **6.2.1b SHIPPED:** B1 generic compat retired; C1-a via `isPlaybackSessionExitPublicationGap`; HITL [`231439`](../../../captures/session_20260911_231439.log).
-  - **6.2.2 SHIPPED:** B3/B4 generic compat retired; C1-a via `isPlaybackSessionExitPublicationGap`; `PassesResolve` on Overlay-reject / pass-only miss. Next **6.2.3** B2/B5/B6.
+  - **6.2.2 SHIPPED:** B3/B4 generic compat retired; C1-a via `isPlaybackSessionExitPublicationGap`; `PassesResolve` on Overlay-reject / pass-only miss. HITL re-run PASS [`001343`](../../../captures/session_20260912_001343.log).
+  - **6.2.3 SHIPPED:** B2 `HoldEmpty` on non-C1-a/C4 miss; B5 idle materialize C1-a only; B6 `copyEffectiveCommittedEvents` replaces `loop.midiEvents()`. Host `test_b2_b5_b6_narrow_session_exit_compat_gate.py` + inventory (B7/B8 blockers remain). Next **6.2.4** B7/B8. Persist wedge follow-up: **5.7**.
 - [ ] 6.3 Remove compatibility effective-state derivation and old readers only after documented triggers close.
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
 - [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.

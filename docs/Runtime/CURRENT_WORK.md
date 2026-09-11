@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (OpenSpec 6.2.2 B3/B4 SHIPPED — narrow C1-a visual/display)
+Last updated: 2026-09-12 (OpenSpec 6.2.3 B2/B5/B6 shipped; HITL eval in progress)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,15 +10,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.2.3 (B2/B5/B6 edit/idle).**
-6.2.2 SHIPPED: B3/B4 generic compat retired; C1-a via
-`Loop::isPlaybackSessionExitPublicationGap()` only; Overlay-reject and pass-only
-misses use `PassesResolve` / existing hold gates. Host gates
-`test_b3_b4_narrow_session_exit_compat_gate.py` + inventory **PASS**. RAM1 locals
-**6880**. Native **1824/1829**. HITL `base` core baseline PASS
-[`000210`](../../captures/session_20260912_000210.log); persist verifier **open**.
-Plan:
+**Now — Immutable OpenSpec 6.2.4 (B7/B8 construction consumers).**
+6.2.3 SHIPPED: B2 `CommittedMidiScratch::HoldEmpty` on non-C1-a/C4 miss; B5 idle
+`materializeEditViewFromPasses` C1-a only; B6 `copyEffectiveCommittedEvents`
+replaces `loop.midiEvents()`. Host `test_b2_b5_b6_narrow_session_exit_compat_gate.py`
++ inventory (B7/B8 blockers remain) **PASS**. RAM1 **6880**. Native **1825/1830**.
+HITL `base` core **PASS** [`002259`](../../captures/session_20260912_002259.log); persist verifier **open**
+(5.7 wedge — `already_pending`, not 6.2.3). Plan:
 [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
+
+**Prior — OpenSpec 6.2.2 (2026-09-11).**
+B3/B4 narrow C1-a; HITL **PASS** [`001343`](../../captures/session_20260912_001343.log).
+
+**Queued — OpenSpec 5.7 (persist work-queue stall hardening).**
+Follow-up to 5.5/5.6 false `FIRMWARE_CONTRADICTION` when boot save stalls after
+`PERS,work,...,start` (`000210`). Plan:
+[`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 
 **Prior — OpenSpec 6.2.1b B1 C1-a (2026-09-11).**
 HITL `base` PASS

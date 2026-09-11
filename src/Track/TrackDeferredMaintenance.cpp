@@ -1084,7 +1084,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       const bool avoidFullVisual =
           loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) || deferHeavyDerivedView;
       const bool visualCacheCleanAtTurnStart = !loop.visualCacheDirty;
-      if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual) {
+      if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual &&
+          loop.isPlaybackSessionExitPublicationGap()) {
         loop.materializeEditViewFromPasses();
       }
         if (loop.visualCacheDirty) {
