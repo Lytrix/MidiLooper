@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-057](#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write) | 2026-09-11 | LoopSnapshot body format version 1 (`LSV1` wire discriminator); dual-write `PersistedLoopSnapshot` + `LoopSnapshot`; load undo depth 0 | Accepted — OpenSpec task 5.2 docs/decision only; firmware is 5.3 |
 | [DEC-056](#dec-056--note-edit-rows-enter-the-existing-pending-companion-set-when-the-published-root-is-stale) | 2026-09-08 | NOTE_EDIT `saveNoteEditPass` admits the row into `pendingSnapshotPublishBox.companionIds` when the published root is already stale; not a new publication owner | Accepted — miss-path device PASS [`000740`](../captures/session_20260909_000740.log); current-root close [`000237`](../captures/session_20260909_000237.log) |
 | [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 3 device PASS [`221906`](../captures/session_20260908_221906.log); Stage 2 device PASS [`220445`](../captures/session_20260908_220445.log); Stage 1 device PASS [`212850`](../captures/session_20260908_212850.log) |
 | [DEC-054](#dec-054--note-edit-playing-display-stall-remainder-units) | 2026-09-08 | NOTE_EDIT playing display stall: coalesce/post-display undo warm and deferred open/close | Accepted — Stage 1 admission in tree; Option B rejected by DEC-055; Stage 2 still separate |
@@ -70,7 +71,68 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-057 -->
+<!-- Append new entries below (newest first). Next ID: DEC-058 -->
+
+## DEC-057 — LoopSnapshot body format version 1 (LSV1) dual-write
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-09-11 |
+| **OpenSpec** | `immutable-loop-snapshot-passes` task **5.2** (approval only). Firmware reader/writer + deferred migration = task **5.3**. |
+| **Plan** | [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md) |
+
+### Decision
+
+Approve the physical CurrentSet **loop slot body** layout for content-only persistence of the latest complete immutable `LoopSnapshot`, with migration dual-write of the compatibility `PersistedLoopSnapshot` stream.
+
+| Role | Name |
+|------|------|
+| Human / DEC name | **LoopSnapshot body format version 1** |
+| Wire discriminator | **`LSV1`** — 4-byte ASCII, encoded using the existing fixed-token wire convention (`EPT3` / `GEO1` / `OSI1` in [`StorageLoopIo.cpp`](../src/StorageLoopIo.cpp)) |
+| Body format version field | **`uint16_t formatVersion = 1`** immediately after `LSV1` |
+| Flags | **`uint16_t flags`** after `formatVersion` (bit0 = `hasPersistedLoopSnapshot`; must be 1 during migration dual-write) |
+
+Vocabulary: **format identifier** / **wire discriminator** — not “magic.” Rejected draft tags (not on wire): `LSP1`, `LoopSnap01`, `META`, `PASS`, `SNAP`.
+
+### File shape
+
+```text
+[optional EpochFileHeader 10 B]     # unchanged
+LSV1 + uint16 formatVersion(=1) + uint16 flags
+section "LoopMetadata"
+section "PersistedLoopSnapshot"     # dual-write migration material
+section "LoopSnapshot"              # sole persisted complete/root snapshot
+[SAVE 4 B]                           # unchanged
+```
+
+Sections use length-framed names (`uint8 nameLength` + name + `uint32 payloadByteLength` + payload). Unknown names skip by length. Nested `EPT3` / `GEO1` / `OSI1` inside the `PersistedLoopSnapshot` payload stay unchanged. Outer CurrentSet / epoch / `SAVE` / `REVPK02` / `CONTAINER_VERSION` are unchanged.
+
+### Authority and load contract (binds 5.3)
+
+- **`LoopSnapshot` section** is the sole persisted complete snapshot/root and load authority.
+- **`PersistedLoopSnapshot` section** is compatibility / migration material only — not authority when an `LSV1` + `formatVersion == 1` body is present.
+- **Absence of `LSV1`** ⇒ **legacy** bare `PersistedLoopSnapshot` body; deferred migration path.
+- **`LSV1` present and `formatVersion != 1`** ⇒ **unsupported / reject** slot load — never treat as legacy.
+- Load rebuilds loop-local handles from logical refs; selects the loaded `LoopSnapshot` as published root; **runtime undo depth = 0**, redo empty. Do not invent `U:` depth from passes.
+- Missing or unparseable required `LoopSnapshot` section on a valid `LSV1` + `formatVersion == 1` body ⇒ **load failure** for that slot. **Must not** fall back to `PersistedLoopSnapshot` as authority.
+- Failed/partial write retains the previously valid card file.
+- On disk: logical ids/refs only; no RAM page packing, runtime addresses, VisualCache, ledgers, cursors, GUS / undo lineage, or `beforePublishedSnapshot` / `afterPublishedSnapshot`.
+
+### What this does not change
+
+- Ownership: `StorageManager` / `StorageLoopIo` / `Loop` remain owners (no new persistence owner).
+- State transitions / execution bounds in 5.2 (docs only). 5.3 classifies deferred units in `ExecutionBounds.md`.
+- No pre-approval of `formatVersion >= 2` body semantics.
+- Dropping the `PersistedLoopSnapshot` section / retiring `LoopPasses` remains §6.
+
+### Related
+
+- [DEC-035](#dec-035-loop-persists-content-only) — content-only persist; undo not persisted
+- [DEC-044](#dec-044-immutable-loop-snapshot-model-replaces-maintained-lcr-direction) — immutable snapshot direction
+- OpenSpec 5.1 — runtime published-identity select on GUS (RAM-only; not this wire format)
+
+---
 
 ## DEC-056 — NOTE_EDIT rows enter the existing pending companion set when the published root is stale
 
