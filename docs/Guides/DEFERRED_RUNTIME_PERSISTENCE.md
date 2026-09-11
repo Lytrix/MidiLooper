@@ -132,7 +132,7 @@ flowchart TB
 | `Track::advanceStateAfterRecordStop` / overdub entry paths | State advance with optional heap sample |
 | `TrackUndo.cpp` | After undo/redo applied |
 | `TrackManager.cpp` | Clear slot, track lifecycle |
-| `MidiButtonActions.cpp` | Clear / destructive actions |
+| `MidiButtonActions.cpp` | Clear / destructive actions (`requestDeferredSaveState` after clear; pending-save race may `saveState()` drain first) |
 | `LoopEditManager.cpp` | Loop length edit debounce flush |
 | `ClockManager.cpp` | Clock source transition |
 | `StorageManager::processEditAutosave` | Periodic edit dirty flush |

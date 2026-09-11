@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Immutable OpenSpec 5.2 APPROVED — LoopSnapshot body format v1 / LSV1)
+Last updated: 2026-09-11 (Immutable OpenSpec 5.5 SHIPPED — StorageManager persist ownership)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,8 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 5.5–5.6 verification (deferred persistence bounds).**
-5.4 SHIPPED (2026-09-11): native matrix, HITL `base` [`181945`](../../captures/session_20260911_181945.log),
+**Now — Immutable OpenSpec 5.6 verification (large-loop persist bounds).**
+5.5 SHIPPED (2026-09-11): persist execute stays on `StorageManager::processDeferredSaveState`;
+HITL `base` [`200657`](../../captures/session_20260911_200657.log)
+`VERIFY deferred persist nonblocking` `loop_persist=295 sliced=True drain=0 mo=600`.
+Host call-site gate + `scripts/test_deferred_persist_nonblocking.py`. Plan:
+[`immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md`](../Plans/immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md).
+
+**Prior — Immutable OpenSpec 5.4 SHIPPED.**
+Native matrix, HITL `base` [`181945`](../../captures/session_20260911_181945.log),
 reboot `LoadLoopJob` [`182529`](../../captures/session_20260911_182529.log), SD LSV1 byte probe
 [`192637`](../../captures/session_20260911_192637.log) after routing fix
 [`deferred_persist_loopid_track_routing_bugfix.md`](../Plans/deferred_persist_loopid_track_routing_bugfix.md).

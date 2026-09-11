@@ -6,6 +6,7 @@
 
 **Shipped** (in firmware on `dev`):
 
+- **Immutable OpenSpec 5.5 persist ownership (Sep 2026):** deferred save execute stays on `StorageManager::processDeferredSaveState`; HITL `base` [`200657`](../captures/session_20260911_200657.log) sliced `LoopPersist` (`drain=0`, `MO=600`). Plan: [`immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md`](Plans/immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md).
 - **Overdub snapshot bar-crossing membership — Stage 2 RC-A + Stage 4 + Stage 5 complete (Sep 2026):** hand-off preserves live-record open notes; all consumer containment layers unwound (6→5→3→1→2). Final HITL [`114744`](../captures/session_20260911_114744.log) (`from=snapshot notes=32`, id=27 bar-cross). Latent RC-B separate. Plan: [`overdub_snapshot_bar_crossing_membership_bugfix.md`](Plans/overdub_snapshot_bar_crossing_membership_bugfix.md).
 - **Overdub start bar-crossing snapshot omit — consumer Stages 1–6 unwound (Sep 2026):** containment shipped then removed after membership RC-A. Final gate [`114744`](../captures/session_20260911_114744.log). Plan: [`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
 
