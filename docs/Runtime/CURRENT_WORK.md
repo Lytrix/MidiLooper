@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Immutable OpenSpec 4.6 Stage 6 SHIPPED — task 4.6 closed)
+Last updated: 2026-09-11 (Immutable OpenSpec 5.1 SHIPPED — snapshot-identity undo select)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 4.6 Stage 6 SHIPPED (task 4.6 closed).**
+**Now — Immutable OpenSpec 5.1 SHIPPED.**
+`beforePublishedSnapshot` / `afterPublishedSnapshot` on GUS; deferred after-attach
+by originating `UndoEntryId`; pass/ClearSlot restore retained. Native **1841/1**;
+RAM1 **6880**; HITL `base` PASS [`150709`](../../captures/session_20260911_150709.log).
+Next open in §5: **5.2** storage format approval. Plan:
+[`immutable_loop_snapshot_5_1_undo_identity_select_refinement.md`](../Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md).
+
+**Prior — Immutable OpenSpec 4.6 Stage 6 SHIPPED (task 4.6 closed).**
 `noteEditFocusMaterializePublishedSnapshotIdentity_` + key match; §5 exclusion
 documented (undo/load remain 5.1–5.6). Native **1839/1**; RAM1 **6976**; HITL
 `base` PASS [`141547`](../../captures/session_20260911_141547.log). Plan:

@@ -568,6 +568,17 @@ struct Loop {
                                      const EditPassIdList& companionIds = {});
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
+  /// OpenSpec 5.1 Pin A: bind deferred after-root attach to this GUS entry id
+  /// (`UndoEntryId`; 0 clears). No-op when no session-exit pending box exists.
+  void setPendingSessionExitUndoAttachEntryId(uint32_t entryId);
+  uint32_t pendingSessionExitUndoAttachEntryId() const;
+  /// Firmware registers `TrackUndo::attachAfterPublishedSnapshot` here. Native
+  /// Loop-only tests leave the hook null (attach is a no-op).
+  using SessionExitPublishedUndoAttachFn =
+      void (*)(Loop& loop, ImmutableLoopSnapshotRef published, uint32_t entryId);
+  static void setSessionExitPublishedUndoAttachFn(SessionExitPublishedUndoAttachFn fn);
+  void notifySessionExitPublishedUndoAttach(ImmutableLoopSnapshotRef published,
+                                            uint32_t entryId);
   /// Queue publication of every active committed pass. Explicit selected-slot
   /// hydration only — adopt/restore do not call this (`023222`). Does not
   /// construct. Empty loops clear pending and do not queue.

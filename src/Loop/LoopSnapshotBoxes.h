@@ -67,10 +67,17 @@ struct PublishedSnapshotBox {
 
 struct PendingSnapshotPublishBox {
   bool sessionExitQueued = false;
+  /// Loaded adopt/restore: pass events are new to an empty-then-successor
+  /// parent. Do not call `findNoteAtPitch` (005731 stack overflow).
+  bool fromLoadedPasses = false;
+  LoadedSnapshotHydrationPhase loadedHydrationPhase = LoadedSnapshotHydrationPhase::None;
   bool companionsApplied = false;
   bool applyingCompanions = false;
   bool wrapJournalInFlight = false;
   CommitReason sessionExitReason = CommitReason::RecordStop;
+  /// Runtime-only GUS entry id for deferred after-root attach (OpenSpec 5.1
+  /// Pin A). Zero means no pending attach. Not persisted.
+  uint32_t sessionExitUndoAttachEntryId = 0;
   EditPassIdList companionIds;
   std::vector<PassId> queuedPassIds;
   std::vector<PassId> appliedPassIds;

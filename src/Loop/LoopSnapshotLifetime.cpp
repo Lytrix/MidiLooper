@@ -8,9 +8,26 @@
 
 #include <utility>
 
+namespace {
+Loop::SessionExitPublishedUndoAttachFn s_sessionExitPublishedUndoAttachFn = nullptr;
+}
+
 LOOP_COLD_MEM Loop::Loop() {}
 
 LOOP_COLD_MEM Loop::~Loop() {}
+
+LOOP_COLD_MEM void Loop::setSessionExitPublishedUndoAttachFn(
+    SessionExitPublishedUndoAttachFn fn) {
+  s_sessionExitPublishedUndoAttachFn = fn;
+}
+
+LOOP_COLD_MEM void Loop::notifySessionExitPublishedUndoAttach(
+    ImmutableLoopSnapshotRef published, uint32_t entryId) {
+  if (entryId == 0 || !published || s_sessionExitPublishedUndoAttachFn == nullptr) {
+    return;
+  }
+  s_sessionExitPublishedUndoAttachFn(*this, std::move(published), entryId);
+}
 
 LOOP_COLD_MEM ImmutableLoopSnapshotRef Loop::publishedSnapshot() const {
   return publishedSnapshotBox_ ? publishedSnapshotBox_->snapshot
@@ -52,4 +69,18 @@ LOOP_COLD_MEM void Loop::storePublishedSnapshot(ImmutableLoopSnapshotRef snapsho
   }
   publishedSnapshotBox_->snapshot = std::move(snapshot);
   publishedSnapshotBox_->revision = revision != 0 ? revision : playbackRevision;
+}
+
+LOOP_COLD_MEM void Loop::setPendingSessionExitUndoAttachEntryId(uint32_t entryId) {
+  if (!pendingSnapshotPublishBox_ || !pendingSnapshotPublishBox_->sessionExitQueued) {
+    return;
+  }
+  pendingSnapshotPublishBox_->sessionExitUndoAttachEntryId = entryId;
+}
+
+LOOP_COLD_MEM uint32_t Loop::pendingSessionExitUndoAttachEntryId() const {
+  if (!pendingSnapshotPublishBox_ || !pendingSnapshotPublishBox_->sessionExitQueued) {
+    return 0;
+  }
+  return pendingSnapshotPublishBox_->sessionExitUndoAttachEntryId;
 }

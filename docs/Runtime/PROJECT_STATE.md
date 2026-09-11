@@ -559,7 +559,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed (4.4a–4.4h + inventory; 4.5a; 4.5 cross-gate; 4.6 Stages 1–6 identity freshness with §5 exclusion); next open: **4b.3**, **5.1–5.6**, **6.x**; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1** snapshot-identity undo select SHIPPED (2026-09-11); next open: **4b.3**, **5.2–5.6**, **6.x**; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

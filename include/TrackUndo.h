@@ -7,6 +7,8 @@
 #include "Track.h"
 #include "TrackStateMachine.h"
 #include "MidiEvent.h"
+#include "GlobalUndoStack.h"
+#include "LoopSnapshot.h"
 #include "Utils/MemoryPool.h"
 
 class TrackUndo {
@@ -19,10 +21,25 @@ public:
     static void pushOverdubSessionOnStop(Track& track, uint8_t slotIndex, PassId lastPassId,
                                          EditPassIdList lastCompanionIds, bool includeLastPass);
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
-                                       EditPassIdList editPassIds);
+                                       EditPassIdList editPassIds,
+                                       ImmutableLoopSnapshotRef beforePublishedSnapshot = {});
     static void pushEditPassClosed(Track& track, uint8_t editPassIndex,
                                    EditPassIdList editPassIds, EditPassType editPassType,
-                                   uint8_t slotIndex);
+                                   uint8_t slotIndex,
+                                   ImmutableLoopSnapshotRef beforePublishedSnapshot = {});
+    /// OpenSpec 5.1: attach `after` onto the GUS entry named by `originatingEntryId`
+    /// (Pin A — never tip/slot inference).
+    static void attachAfterPublishedSnapshot(Track& track, Loop& loop,
+                                             ImmutableLoopSnapshotRef after,
+                                             UndoEntryId originatingEntryId);
+    /// Resolves the owning track via `trackManager`, then attaches.
+    static void attachAfterPublishedSnapshot(Loop& loop,
+                                             ImmutableLoopSnapshotRef after,
+                                             UndoEntryId originatingEntryId);
+    /// Bind deferred after-attach to the current GUS tip when session-exit is queued.
+    static void bindTipSessionExitUndoAttach(Track& track, Loop& loop);
+    /// Friend-capable published-root select used by undo/redo apply (Pin C).
+    static void selectPublishedSnapshotForEntry(Loop& loop, ImmutableLoopSnapshotRef ref);
     static void beginOverdubSession(Track& track);
     static bool undoOverdubSession(Track& track, Loop& loop);
     static bool redoOverdubSession(Track& track, Loop& loop);

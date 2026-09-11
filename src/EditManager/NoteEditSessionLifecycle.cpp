@@ -14,6 +14,7 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "Loop.h"
+#include "LoopEditManager.h"
 #include "LoopEventStore.h"
 #include "NoteEditFocus.h"
 #include "NoteEditSessionState.h"
@@ -249,6 +250,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
             NoteEditCurrentState::buildFromSessionStore(editSession.store.readEvents(),
                                                         track.getMidiChannel());
         ensureCurrentStateVisibleRowsFromVisualCache(track);
+        editSession.noteEditCurrentState.sealRematerializeBaseline();
         DIAG_EVENT(Diagnostics::Edit::AfterAssignNoteIds);
     } else {
 #if defined(SESSION_CAPTURE)
@@ -313,6 +315,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditPass(Track& track) {
         Loop& loop = trackManager.getSelectedLoop(track);
         // DEC-056: do not publish NOTE_EDIT rows onto a predecessor-stale parent.
         // Opened-current (or now-current) close keeps today's synchronous publish.
+        const ImmutableLoopSnapshotRef beforePublished = loop.publishedSnapshot();
         if (editSession.openedOnCurrentSnapshot || loop.publishedSnapshotIsCurrent()) {
             loop.tryPublishNoteEditSnapshot(editSession.editPassIds);
         } else {
@@ -327,8 +330,14 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditPass(Track& track) {
             editSession.openedOnCurrentSnapshot = false;
             editSession.openedSnapshotRevision = 0;
         }
-    }
-    if (!idsToPush.empty()) {
+        if (!idsToPush.empty()) {
+            TrackUndo::pushNoteEditPassClosed(track, editSession.editPassIndex, idsToPush,
+                                              beforePublished);
+            logger.log(CAT_TRACK, LOG_INFO, "NoteEditPassClosed editPass=%u edits=%u",
+                       static_cast<unsigned>(editSession.editPassIndex),
+                       static_cast<unsigned>(idsToPush.size()));
+        }
+    } else if (!idsToPush.empty()) {
         TrackUndo::pushNoteEditPassClosed(track, editSession.editPassIndex, idsToPush);
         logger.log(CAT_TRACK, LOG_INFO, "NoteEditPassClosed editPass=%u edits=%u",
                    static_cast<unsigned>(editSession.editPassIndex),
@@ -383,6 +392,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::closeNoteEditSession(Track& track) {
     editSession.applyOwnedEditPassRows.clear();
     editSession.openedOnCurrentSnapshot = false;
     editSession.openedSnapshotRevision = 0;
+    loopEditManager.armLoopFaderFeedbackIgnore();
     editSession.active = false;
     editSession.sessionType = EditSessionType::Loop;
     editSession.editPassIndex = 0;
@@ -423,6 +433,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::revertNoteEditSessionForLoopClear(Track&
         currentState = nullptr;
     }
 
+    loopEditManager.armLoopFaderFeedbackIgnore();
     editSession.sessionType = EditSessionType::Loop;
     sendEditSessionChange(EditSessionType::Loop);
     track.invalidateCaches();

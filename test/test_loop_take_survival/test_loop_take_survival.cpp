@@ -18,6 +18,7 @@
 #include "Loop.h"
 #include "LoopInternal.h"
 #include "LoopSnapshot.h"
+#include "GlobalUndoStack.h"
 #include "Utils/CommittedMidiScratch.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
@@ -4775,6 +4776,106 @@ void test_session_exit_pass_starts_as_journal_capped_fragments() {
   TEST_ASSERT_EQUAL(kNoteCount, foundNoteOns);
 }
 
+namespace {
+GlobalUndoStack* g_testSessionExitUndoAttachStack = nullptr;
+
+void testAttachAfterByOriginatingEntryId(Loop& loop, ImmutableLoopSnapshotRef published,
+                                         uint32_t entryId) {
+  (void)loop;
+  if (g_testSessionExitUndoAttachStack == nullptr || !published || entryId == 0) {
+    return;
+  }
+  for (UndoEntry& entry : g_testSessionExitUndoAttachStack->entries) {
+    if (entry.id != entryId) {
+      continue;
+    }
+    if (entry.kind != UndoEntryKind::RecordPassAdded &&
+        entry.kind != UndoEntryKind::OverdubPassAdded) {
+      return;
+    }
+    if (!entry.afterPublishedSnapshot) {
+      entry.afterPublishedSnapshot = std::move(published);
+    }
+    return;
+  }
+}
+}  // namespace
+
+void test_session_exit_published_undo_attach_targets_originating_entry_id() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopId = 42;
+  loop.loopLengthTicks = 768;
+  recordLinearNote(loop, 10, 20, 60);
+  const ImmutableLoopSnapshotRef afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+
+  GlobalUndoStack stack;
+  UndoEntry entryA{};
+  entryA.id = 11;
+  entryA.kind = UndoEntryKind::OverdubPassAdded;
+  entryA.loopId = loop.loopId;
+  entryA.beforePublishedSnapshot = afterRecord;
+  UndoEntry entryB{};
+  entryB.id = 22;
+  entryB.kind = UndoEntryKind::NoteEditPassClosed;
+  entryB.loopId = loop.loopId;
+  stack.entries.push_back(std::move(entryA));
+  stack.entries.push_back(std::move(entryB));
+  stack.cursor = 2;
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(40, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(50, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 50));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  loop.setPendingSessionExitUndoAttachEntryId(11);
+  TEST_ASSERT_EQUAL_UINT32(11u, loop.pendingSessionExitUndoAttachEntryId());
+
+  g_testSessionExitUndoAttachStack = &stack;
+  Loop::setSessionExitPublishedUndoAttachFn(testAttachAfterByOriginatingEntryId);
+  drainPendingSnapshotPublish(loop);
+  Loop::setSessionExitPublishedUndoAttachFn(nullptr);
+  g_testSessionExitUndoAttachStack = nullptr;
+
+  const ImmutableLoopSnapshotRef afterOverdub = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterOverdub.get());
+  TEST_ASSERT_TRUE(afterOverdub.get() != afterRecord.get());
+  // Pin A: originating entry A received after; tip entry B unchanged.
+  TEST_ASSERT_EQUAL_PTR(afterOverdub.get(), stack.entries[0].afterPublishedSnapshot.get());
+  TEST_ASSERT_NULL(stack.entries[1].afterPublishedSnapshot.get());
+
+  loop.storePublishedSnapshotForTest(stack.entries[0].beforePublishedSnapshot,
+                                     loop.playbackRevision);
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  loop.storePublishedSnapshotForTest(stack.entries[0].afterPublishedSnapshot,
+                                     loop.playbackRevision);
+  TEST_ASSERT_EQUAL_PTR(afterOverdub.get(), loop.publishedSnapshot().get());
+}
+
+void test_clear_slot_before_published_snapshot_field_retains_root() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 768;
+  recordLinearNote(loop, 10, 20, 60);
+  const ImmutableLoopSnapshotRef beforeClear = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(beforeClear.get());
+
+  UndoEntry clearEntry{};
+  clearEntry.kind = UndoEntryKind::ClearSlot;
+  clearEntry.loopId = loop.loopId;
+  clearEntry.beforePublishedSnapshot = beforeClear;
+  loop.resetPassTimeline();
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  loop.storePublishedSnapshotForTest(clearEntry.beforePublishedSnapshot, loop.playbackRevision);
+  TEST_ASSERT_EQUAL_PTR(beforeClear.get(), loop.publishedSnapshot().get());
+}
+
 void test_overdub_without_parent_does_not_invent_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5347,6 +5448,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);
   RUN_TEST(test_session_exit_pass_starts_as_journal_capped_fragments);
+  RUN_TEST(test_session_exit_published_undo_attach_targets_originating_entry_id);
+  RUN_TEST(test_clear_slot_before_published_snapshot_field_retains_root);
   RUN_TEST(test_overdub_without_parent_does_not_invent_snapshot);
   return UNITY_END();
 }

@@ -100,13 +100,63 @@ TRACK_COLD_MEM void refreshNoteEditSessionAfterPassStateChange(Loop& loop) {
     editManager.getEditSession().undoStack.clear();
 }
 
+TRACK_COLD_MEM void ensureSessionExitPublishedUndoAttachRegistered() {
+    static bool registered = false;
+    if (registered) {
+        return;
+    }
+    Loop::setSessionExitPublishedUndoAttachFn(
+        [](Loop& loop, ImmutableLoopSnapshotRef published, uint32_t entryId) {
+            TrackUndo::attachAfterPublishedSnapshot(loop, std::move(published), entryId);
+        });
+    registered = true;
+}
+
 TRACK_COLD_MEM void pushUndoEntry(Track& track, UndoEntry&& entry) {
+    ensureSessionExitPublishedUndoAttachRegistered();
     GlobalUndoStack& stack = track.getGlobalUndoStack();
     dropRedoBranch(stack);
     entry.id = stack.nextEntryId++;
     stack.entries.push_back(std::move(entry));
     stack.cursor = stack.entries.size();
     trimUndoStackForMemory(track);
+}
+
+TRACK_COLD_MEM UndoEntryId tipUndoEntryId(const Track& track) {
+    const GlobalUndoStack& stack = track.getGlobalUndoStack();
+    if (stack.cursor == 0 || stack.cursor > stack.entries.size()) {
+        return kInvalidUndoEntryId;
+    }
+    return stack.entries[stack.cursor - 1].id;
+}
+
+TRACK_COLD_MEM ImmutableLoopSnapshotRef capturePublishedSnapshot(const Loop& loop) {
+    return loop.publishedSnapshot();
+}
+
+TRACK_COLD_MEM void bindSessionExitAfterAttach(Loop& loop, UndoEntryId entryId) {
+    if (entryId == kInvalidUndoEntryId) {
+        return;
+    }
+    if (!loop.pendingSnapshotSessionExitQueued()) {
+        return;
+    }
+    loop.setPendingSessionExitUndoAttachEntryId(static_cast<uint32_t>(entryId));
+}
+
+TRACK_COLD_MEM void applyPublishedSnapshotSelect(Loop& loop, const UndoEntry& entry, bool undo) {
+    if (entry.kind == UndoEntryKind::LoopBoundaryChange) {
+        return;
+    }
+    const ImmutableLoopSnapshotRef& ref =
+        undo ? entry.beforePublishedSnapshot : entry.afterPublishedSnapshot;
+    if (ref) {
+        TrackUndo::selectPublishedSnapshotForEntry(loop, ref);
+        return;
+    }
+    if (!undo && entry.kind == UndoEntryKind::ClearSlot) {
+        TrackUndo::selectPublishedSnapshotForEntry(loop, {});
+    }
 }
 
 TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex,
@@ -213,10 +263,12 @@ TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, Edit
 
 TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
+    bool applied = false;
     switch (entry.kind) {
         case UndoEntryKind::ClearSlot:
             entry.afterSnapshot = loop.sharePassesSnapshot();
             entry.afterGeometry = captureGeometry(loop);
+            entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
             if (entry.hasTrackState) {
                 entry.afterTrackState = track.getState();
             }
@@ -225,7 +277,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                 track.forceSetState(entry.beforeTrackState);
             }
             entry.hasRedoPayload = true;
-            return true;
+            applied = true;
+            break;
         case UndoEntryKind::LoopBoundaryChange:
             entry.afterLoopStartTick = loop.loopStartTick;
             entry.afterLoopLengthTicks = loop.loopLengthTicks;
@@ -239,7 +292,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             track.invalidateCaches();
             loopEditManager.onGlobalGeometryRestored(track);
             entry.hasRedoPayload = true;
-            return true;
+            applied = true;
+            break;
         case UndoEntryKind::RecordPassAdded:
             entry.afterGeometry = captureGeometry(loop);
             entry.hasRedoPayload = true;
@@ -254,7 +308,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             track.invalidateCaches();
             refreshNoteEditSessionAfterPassStateChange(loop);
-            return true;
+            applied = true;
+            break;
         case UndoEntryKind::OverdubPassAdded: {
             PassIdList overdubIds;
             appendOverdubCapturePassIds(entry, overdubIds);
@@ -284,7 +339,8 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             loop.refreshVisualCacheAfterPassStateChange();
             refreshNoteEditSessionAfterPassStateChange(loop);
             entry.hasRedoPayload = true;
-            return true;
+            applied = true;
+            break;
         }
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
@@ -312,9 +368,13 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
                        static_cast<unsigned>(entry.editPassType),
                        static_cast<unsigned>(entry.editPassIndex),
                        static_cast<unsigned>(entry.editPassIds.size()));
-            return true;
+            applied = true;
+            break;
     }
-    return false;
+    if (applied) {
+        applyPublishedSnapshotSelect(loop, entry, true);
+    }
+    return applied;
 }
 
 TRACK_COLD_MEM uint8_t resolveSlotIndexForLoop(const Track& track, const Loop& loop) {
@@ -332,6 +392,7 @@ TRACK_COLD_MEM bool loopHasLiveOverdubCapture(const Loop& loop) {
 
 TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
     Loop& loop = track.getLoop(entry.slotIndex);
+    bool applied = false;
     switch (entry.kind) {
         case UndoEntryKind::ClearSlot:
             if (!entry.hasRedoPayload) {
@@ -343,7 +404,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             if (entry.hasTrackState) {
                 track.forceSetState(entry.afterTrackState);
             }
-            return true;
+            applied = true;
+            break;
         case UndoEntryKind::LoopBoundaryChange:
             if (!entry.hasRedoPayload) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo boundary payload missing for entry %lu",
@@ -359,7 +421,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             track.invalidateCaches();
             loopEditManager.onGlobalGeometryRestored(track);
-            return true;
+            applied = true;
+            break;
         case UndoEntryKind::RecordPassAdded:
             if (!entry.hasRedoPayload) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for record pass entry %lu",
@@ -376,7 +439,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             loop.invalidateCaches();
             track.invalidateCaches();
             refreshNoteEditSessionAfterPassStateChange(loop);
-            return true;
+            applied = true;
+            break;
         case UndoEntryKind::OverdubPassAdded: {
             if (!entry.hasRedoPayload) {
                 logger.log(CAT_TRACK, LOG_WARNING, "Redo payload missing for overdub pass entry %lu",
@@ -410,7 +474,8 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
             refreshPlaybackAfterCapturePassStateChange(track, entry.slotIndex);
             loop.refreshVisualCacheAfterPassStateChange();
             refreshNoteEditSessionAfterPassStateChange(loop);
-            return true;
+            applied = true;
+            break;
         }
         case UndoEntryKind::NoteEditPassClosed:
         case UndoEntryKind::ControlChangeEditPassClosed:
@@ -437,9 +502,13 @@ TRACK_COLD_MEM bool applyRedoEntry(Track& track, UndoEntry& entry) {
                        static_cast<unsigned>(entry.editPassType),
                        static_cast<unsigned>(entry.editPassIndex),
                        static_cast<unsigned>(entry.editPassIds.size()));
-            return true;
+            applied = true;
+            break;
     }
-    return false;
+    if (applied) {
+        applyPublishedSnapshotSelect(loop, entry, false);
+    }
+    return applied;
 }
 
 TRACK_COLD_MEM void restorePlaybackAfterSlotClear(uint8_t trackIndex, Track& track, uint32_t now) {
@@ -531,12 +600,18 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
                    "Record pass undo reset for slot %u: removed=%u",
                    static_cast<unsigned>(slotIndex), static_cast<unsigned>(pruned));
     }
-    const Loop& loop = track.getLoop(slotIndex);
+    Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
     entry.kind = UndoEntryKind::RecordPassAdded;
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
     entry.passId = passId;
+    // Record start clears the published root (`startRecording` → resetPassTimeline).
+    // before remains empty; after is the current published tip when already current.
+    entry.beforePublishedSnapshot = {};
+    if (loop.publishedSnapshotIsCurrent()) {
+        entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
+    }
     if (track.hasRecordCaptureBaselineGeometry_) {
         entry.beforeGeometry = track.recordCaptureBaselineGeometry_;
     } else {
@@ -545,7 +620,11 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     entry.afterGeometry = captureGeometry(loop);
     track.hasRecordCaptureBaselineGeometry_ = false;
     track.recordCaptureBaselineGeometry_ = {};
+    const bool needsDeferredAfter = !entry.afterPublishedSnapshot;
     pushUndoEntry(track, std::move(entry));
+    if (needsDeferredAfter) {
+        bindSessionExitAfterAttach(loop, tipUndoEntryId(track));
+    }
 }
 
 TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIndex,
@@ -564,7 +643,7 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     if (validIds.empty()) {
         return;
     }
-    const Loop& loop = track.getLoop(slotIndex);
+    Loop& loop = track.getLoop(slotIndex);
     UndoEntry entry;
     entry.kind = UndoEntryKind::OverdubPassAdded;
     entry.slotIndex = slotIndex;
@@ -576,7 +655,29 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     entry.editPassType = EditPassType::Note;
     entry.editPassIndex = kOverdubCompanionEditPassIndex;
     entry.editPassIds = std::move(companionEditPassIds);
+    if (track.hasOverdubSessionBeforePublished_) {
+        entry.beforePublishedSnapshot = track.overdubSessionBeforePublished_;
+    } else {
+        entry.beforePublishedSnapshot = capturePublishedSnapshot(loop);
+    }
+    track.hasOverdubSessionBeforePublished_ = false;
+    track.overdubSessionBeforePublished_ = {};
+    // after attaches when session-exit publish completes (Pin A).
+    entry.afterPublishedSnapshot = {};
     pushUndoEntry(track, std::move(entry));
+}
+
+TRACK_COLD_MEM void TrackUndo::bindTipSessionExitUndoAttach(Track& track, Loop& loop) {
+    bindSessionExitAfterAttach(loop, tipUndoEntryId(track));
+}
+
+TRACK_COLD_MEM void TrackUndo::selectPublishedSnapshotForEntry(Loop& loop,
+                                                               ImmutableLoopSnapshotRef ref) {
+    if (ref) {
+        loop.storePublishedSnapshot(std::move(ref));
+    } else {
+        loop.clearPublishedSnapshot();
+    }
 }
 
 TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t slotIndex,
@@ -620,14 +721,16 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t sl
 }
 
 TRACK_COLD_MEM void TrackUndo::pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
-                                       EditPassIdList editPassIds) {
+                                       EditPassIdList editPassIds,
+                                       ImmutableLoopSnapshotRef beforePublishedSnapshot) {
     pushEditPassClosed(track, noteEditPassIndex, std::move(editPassIds), EditPassType::Note,
-                       track.getActiveLoopIndex());
+                       track.getActiveLoopIndex(), std::move(beforePublishedSnapshot));
 }
 
 TRACK_COLD_MEM void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPassIndex,
                                    EditPassIdList editPassIds, EditPassType editPassType,
-                                   uint8_t slotIndex) {
+                                   uint8_t slotIndex,
+                                   ImmutableLoopSnapshotRef beforePublishedSnapshot) {
     if (editPassIds.empty() || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
         return;
     }
@@ -641,14 +744,66 @@ TRACK_COLD_MEM void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPass
     entry.editPassIndex = editPassIndex;
     entry.editPassType = editPassType;
     entry.editPassIds = std::move(editPassIds);
+    entry.beforePublishedSnapshot = std::move(beforePublishedSnapshot);
+    if (loop.publishedSnapshotIsCurrent()) {
+        entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
+    }
     pushUndoEntry(track, std::move(entry));
+}
+
+TRACK_COLD_MEM void TrackUndo::attachAfterPublishedSnapshot(Track& track, Loop& loop,
+                                                            ImmutableLoopSnapshotRef after,
+                                                            UndoEntryId originatingEntryId) {
+    if (!after || originatingEntryId == kInvalidUndoEntryId) {
+        return;
+    }
+    GlobalUndoStack& stack = track.getGlobalUndoStack();
+    for (UndoEntry& entry : stack.entries) {
+        if (entry.id != originatingEntryId) {
+            continue;
+        }
+        if (entry.loopId != loop.loopId) {
+            return;
+        }
+        if (entry.kind != UndoEntryKind::RecordPassAdded &&
+            entry.kind != UndoEntryKind::OverdubPassAdded) {
+            return;
+        }
+        if (!entry.afterPublishedSnapshot) {
+            entry.afterPublishedSnapshot = std::move(after);
+        }
+        return;
+    }
+}
+
+TRACK_COLD_MEM void TrackUndo::attachAfterPublishedSnapshot(Loop& loop,
+                                                            ImmutableLoopSnapshotRef after,
+                                                            UndoEntryId originatingEntryId) {
+    if (!after || originatingEntryId == kInvalidUndoEntryId) {
+        return;
+    }
+    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+        Track& track = trackManager.getTrack(trackIndex);
+        for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+            if (!track.loopsAllocated()) {
+                break;
+            }
+            if (&track.getLoop(slotIndex) != &loop) {
+                continue;
+            }
+            attachAfterPublishedSnapshot(track, loop, std::move(after), originatingEntryId);
+            return;
+        }
+    }
 }
 
 TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
     if (editManager.isNoteEditActive()) {
         editManager.commitAllPendingNoteEditActions(track);
     }
-    (void)track;
+    Loop& loop = track.getActiveLoop();
+    track.overdubSessionBeforePublished_ = capturePublishedSnapshot(loop);
+    track.hasOverdubSessionBeforePublished_ = true;
 }
 
 TRACK_COLD_MEM bool TrackUndo::undoOverdubSession(Track& track, Loop& loop) {
@@ -982,6 +1137,7 @@ TRACK_COLD_MEM void TrackUndo::pushClearTrackSnapshot(Track& track) {
     entry.slotIndex = slotIndex;
     entry.loopId = loop.loopId;
     entry.beforeSnapshot = loop.sharePassesSnapshot();
+    entry.beforePublishedSnapshot = capturePublishedSnapshot(loop);
     entry.beforeGeometry = captureGeometry(loop);
     entry.beforeTrackState = track.getState();
     entry.hasTrackState = true;
