@@ -524,6 +524,24 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
 
     switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
+            if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
+                const LoopSnapshotRef persistedOracle = loop.sharePassesSnapshot();
+                if (!persistedOracle) {
+                    return false;
+                }
+                const uint32_t persistedOracleBytes =
+                    static_cast<uint32_t>(measureLoopSnapshotSlotFileBytes(*persistedOracle));
+                if (persistedOracleBytes == 0) {
+                    return false;
+                }
+                const StorageIo preambleIo = crcMode == LoopPersistPayloadCrc::RevisionCommit
+                                                 ? storageIoFromFileWriteWithRevisionPayloadCrc(file)
+                                                 : storageIoFromFileWrite(file);
+                if (!writeLoopSnapshotBodyFormatV1SavePreamble(preambleIo, *persistedOracle,
+                                                               persistedOracleBytes)) {
+                    return false;
+                }
+            }
             if (!writeDeferredLoopHeader(file, loop.loopId, loop.startLoopTick,
                                          loop.reconcileLoopLengthWithCommittedPasses(loop.loopLengthTicks),
                                          loop.loopStartTick, loop.nextPassId_, loop.nextNoteId_,
@@ -582,6 +600,13 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             if (!writePersistedEditsTail(io, loop.nextPassId_, loop.passes.editPasses,
                                          loop.passes.loopGeometries, loop.passes.overdubPasses)) {
                 return false;
+            }
+            if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
+                const ImmutableLoopSnapshotRef loopSnapshot = loop.publishedSnapshot();
+                if (!loopSnapshot ||
+                    !writeLoopSnapshotBodyFormatV1SaveTail(io, *loopSnapshot)) {
+                    return false;
+                }
             }
             resetDeferredLoopWriteState();
             loopDone = true;

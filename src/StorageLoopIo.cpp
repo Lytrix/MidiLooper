@@ -1238,11 +1238,14 @@ bool readPersistedLoopSnapshotHeader(const StorageIo& io, PersistedLoopSnapshot&
   return skipPersistedEditsTailPayload(io);
 }
 
-#if !defined(PIO_UNIT_TEST_NATIVE)
-
 #include "Loop.h"
 
-bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
+bool STORAGE_LOOP_IO_MEM loopUsesLoopSnapshotBodyFormatV1ForSave(const Loop& loop) {
+  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
+  return snapshot != nullptr && loop.publishedSnapshotIsCurrent();
+}
+
+static bool writeLegacyLoopPersisted(const StorageIo& io, const Loop& loop) {
   if (!ioWrite(io, &loop.loopId, sizeof(loop.loopId))) return false;
   if (!ioWrite(io, &loop.startLoopTick, sizeof(loop.startLoopTick))) return false;
   if (!ioWrite(io, &loop.loopLengthTicks, sizeof(loop.loopLengthTicks))) return false;
@@ -1289,7 +1292,19 @@ bool writeLoopPersisted(const StorageIo& io, const Loop& loop) {
                                 loop.passes.loopGeometries, loop.passes.overdubPasses);
 }
 
-size_t measureLoopSlotFileBytes(const Loop& loop) {
+bool STORAGE_LOOP_IO_MEM writeLoopPersisted(const StorageIo& io, const Loop& loop) {
+  if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
+    const LoopSnapshotRef persistedOracle = loop.sharePassesSnapshot();
+    const ImmutableLoopSnapshotRef loopSnapshot = loop.publishedSnapshot();
+    if (!persistedOracle || !loopSnapshot) {
+      return false;
+    }
+    return writeLoopSnapshotBodyFormatV1(io, *persistedOracle, *persistedOracle, *loopSnapshot);
+  }
+  return writeLegacyLoopPersisted(io, loop);
+}
+
+size_t STORAGE_LOOP_IO_MEM measureLoopSlotFileBytes(const Loop& loop) {
   size_t nbytes = 0;
   StorageIo io{
       [&nbytes](const void* data, size_t size) -> bool {
@@ -1303,7 +1318,7 @@ size_t measureLoopSlotFileBytes(const Loop& loop) {
   return nbytes;
 }
 
-bool readLoopPersisted(const StorageIo& io, Loop& loop) {
+bool STORAGE_LOOP_IO_MEM readLoopPersisted(const StorageIo& io, Loop& loop) {
   PersistedLoopSnapshot snapshot{};
   if (!readPersistedLoopSnapshot(io, snapshot)) {
     return false;
@@ -1311,10 +1326,6 @@ bool readLoopPersisted(const StorageIo& io, Loop& loop) {
   applySnapshotToLoop(loop, snapshot);
   return true;
 }
-
-#endif  // !PIO_UNIT_TEST_NATIVE
-
-#include "Loop.h"
 
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot) {
   loop.adoptPersistedSnapshot(snapshot);

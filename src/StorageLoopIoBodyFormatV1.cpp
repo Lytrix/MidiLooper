@@ -598,6 +598,58 @@ LoopSnapshotBodyFormatProbeResult LSV1_IO_MEM probeLoopSnapshotBodyFormat(const 
   return LoopSnapshotBodyFormatProbeResult::SupportedV1;
 }
 
+bool LSV1_IO_MEM writeLoopSnapshotBodyFormatV1SavePreamble(
+    const StorageIo& io, const PersistedLoopSnapshot& metadata,
+    uint32_t persistedOracleSectionBytes) {
+  if (persistedOracleSectionBytes > kLsv1MaxSectionPayloadBytes) {
+    return false;
+  }
+
+  std::vector<uint8_t> metadataSection;
+  if (!writeSectionToBuffer(
+          [&](const StorageIo& sectionIo) { return writeLoopMetadataPayload(sectionIo, metadata); },
+          metadataSection) ||
+      metadataSection.size() != kLsv1LoopMetadataPayloadBytes) {
+    return false;
+  }
+
+  if (!lsv1IoWrite(io, kLoopSnapshotBodyFormatIdentifier, 4)) return false;
+  const uint16_t formatVersion = kLoopSnapshotBodyFormatVersion;
+  if (!lsv1IoWrite(io, &formatVersion, sizeof(formatVersion))) return false;
+  const uint16_t flags = kLsv1HeaderFlagHasPersistedLoopSnapshot;
+  if (!lsv1IoWrite(io, &flags, sizeof(flags))) return false;
+  if (!writeSectionPayload(io, kLsv1SectionLoopMetadata, metadataSection)) {
+    return false;
+  }
+
+  const size_t nameLength = std::strlen(kLsv1SectionPersistedLoopSnapshot);
+  const uint8_t nameLengthByte = static_cast<uint8_t>(nameLength);
+  if (!lsv1IoWrite(io, &nameLengthByte, 1)) return false;
+  if (!lsv1IoWrite(io, kLsv1SectionPersistedLoopSnapshot, nameLength)) return false;
+  if (!lsv1IoWrite(io, &persistedOracleSectionBytes, sizeof(persistedOracleSectionBytes))) {
+    return false;
+  }
+  return true;
+}
+
+bool LSV1_IO_MEM writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
+                                                        const LoopSnapshot& loopSnapshot) {
+  Lsv1GatheredLoopSnapshotPayload gatheredPayload{};
+  if (!gatherLoopSnapshotPayload(loopSnapshot, gatheredPayload)) {
+    return false;
+  }
+  std::vector<uint8_t> loopSnapshotSection;
+  if (!writeSectionToBuffer(
+          [&](const StorageIo& sectionIo) {
+            return writeLoopSnapshotPayload(sectionIo, gatheredPayload);
+          },
+          loopSnapshotSection) ||
+      loopSnapshotSection.empty()) {
+    return false;
+  }
+  return writeSectionPayload(io, kLsv1SectionLoopSnapshot, loopSnapshotSection);
+}
+
 size_t LSV1_IO_MEM measureLoopSnapshotBodyFormatV1Bytes(
     const PersistedLoopSnapshot& metadata, const PersistedLoopSnapshot& persistedOracle,
     const LoopSnapshot& loopSnapshot) {

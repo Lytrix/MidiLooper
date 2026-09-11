@@ -10,13 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 5.3 Stage 5.3.1 SHIPPED; next 5.3.2 save hook.**
-LoopSnapshot body format reader/writer (`probeLoopSnapshotBodyFormat`,
-`writeLoopSnapshotBodyFormatV1`, `readLoopSnapshotBodyFormatV1`,
-`measureLoopSnapshotBodyFormatV1Bytes`) in `StorageLoopIoBodyFormatV1.cpp`; native
-**1846/1**; RAM1 **6880**. No SD path change yet. Plan:
+**Now — Immutable OpenSpec 5.3 Stage 5.3.2 SHIPPED; next 5.3.3 load authority.**
+Save path: `writeLoopPersisted` / `measureLoopSlotFileBytes` / `stepDeferredLoopPersist`
+emit LSV1 when `publishedSnapshotIsCurrent()`, else legacy. Preamble/tail helpers for
+deferred streaming. Load path unchanged (5.3.3). Plan:
 [`immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md`](../Plans/immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md).
-Next: **5.3.2** save → **5.3.3** load authority → **5.3.4** migration + bounds/docs.
+Next: **5.3.3** load → **5.3.4** migration + bounds/docs.
 Authority: [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write).
 
 **Prior — Immutable OpenSpec 5.2 APPROVED (docs/decision only).**

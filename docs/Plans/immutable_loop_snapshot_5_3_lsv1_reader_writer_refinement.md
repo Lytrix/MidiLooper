@@ -1,6 +1,6 @@
 # OpenSpec 5.3 — LoopSnapshot body format LSV1 reader/writer + migration
 
-**Status:** **5.3.1 SHIPPED** — 5.3.2 save hook next  
+**Status:** **5.3.2 SHIPPED** — 5.3.3 load authority next  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **5.3**  
 **Authority:** [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write), [5.2 plan](immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md)  
 **Architect:** APPROVED WITH TIGHTENING (2026-09-11)
@@ -38,7 +38,7 @@ Not one mega-commit. Commit boundaries:
 | Commit | Scope |
 |---|---|
 | **5.3.1** | LoopSnapshot body format reader/writer + native tests only (no SD behavior change) — **SHIPPED** |
-| **5.3.2** | Save integration (sizing + writer + legacy fallback + deferred verify) |
+| **5.3.2** | Save integration (sizing + writer + legacy fallback + deferred verify) — **SHIPPED** |
 | **5.3.3** | Load authority (probe + stepped parse + candidate + atomic publish + depth 0) |
 | **5.3.4** | Save-time migration + ExecutionBounds + runtime docs + RAM1 + native + HITL smoke |
 
