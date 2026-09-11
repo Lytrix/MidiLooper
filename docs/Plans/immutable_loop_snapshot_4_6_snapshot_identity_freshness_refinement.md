@@ -1,7 +1,7 @@
 # Immutable loop snapshot — OpenSpec 4.6 snapshot-identity freshness
 
-**Status:** Stages 1–5 **SHIPPED**. Stage 5 (2026-09-11) — `legacyMidiEventsFromCommitted` snapshot fill + identity. Stage 6 separate.  
-**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` (still open — Stage 6 / §5 exclusion)  
+**Status:** Stages 1–6 **SHIPPED** (2026-09-11). OpenSpec task `4.6` closed for derived-rep identity freshness; persistence/undo/load remain **§5**; materialize retirement **§6**.  
+**OpenSpec:** `immutable-loop-snapshot-passes` task `4.6` — checkoff after Stage 6 + §5 exclusion.  
 **Parent:** 4.5 SHIPPED ([`immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md`](immutable_loop_snapshot_4_5_cross_gate_verify_refinement.md)).  
 **Does not start:** §5 undo/load format, §6 compatibility retirement, hydrate 4b–5, raise `N`, new scheduler / `RuntimeWorkBudget::admit`, Phase 2/3 of the PassMaterialize deferral roadmap.
 **Related (separate):** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) — plan only.
@@ -75,7 +75,7 @@ Reuse: **YES** — extend `publishedSnapshotIdentity()` + stamp pattern from `en
 | `DrawSourceGatherKey` | `DisplayManager` | revision + `publishedSnapshotRevision` + current flag | **Yes** | After VisualCache |
 | Overdub span cache reuse | `Loop` | playback + published **revision** numbers | **Yes** | Fill already snapshot |
 | NOTE_EDIT projection caches | `EditManager` | revision **+** `publishedSnapshotIdentity` | **Closed Stage 4** | Source Snapshot\|VisualCache (RC-A) |
-| `materializedLoopEventsForNoteEditFocus` | `EditManager` | `playbackRevision` | **Yes** | Later |
+| `materializedLoopEventsForNoteEditFocus` | `EditManager` | revision + slot + length **+** `publishedSnapshotIdentity` | **Closed Stage 6** | Content already via `copyNoteEditCommitBase` |
 | `legacyMidiEventsFromCommitted` | `Track` | revision **+** `committedMidiScratchPublishedIdentity_` | **Closed Stage 5** | Snapshot fill; pass fallback stamps `nullptr` |
 | `passesMaterializedStore_` / `midiEvents()` | `Loop` | dirty flag | **Yes → §6 overlap** | Don’t over-invest |
 | Undo / clear / SD load | `TrackUndo` / `StorageManager` | — | **Out — §5** | |
@@ -316,11 +316,26 @@ A→B@R must prove **source correctness** (events are B), not only that rebuild 
 
 OpenSpec `4.6` remains **unchecked** until Stage 6 + §5 exclusion note.
 
-### Stage 6 (separate commit after Stage 5)
+### Stage 6 — focus materialize identity + §5 exclusion — SHIPPED
 
-1. Stamp identity on `materializedLoopEventsForNoteEditFocus` / remaining inventory rows
-2. Document persistence/undo/load as **§5**; check off OpenSpec `4.6`
-3. Leave `passesMaterializedStore_` / `Loop::midiEvents()` to **§6**
+**Root cause:** `materializedLoopEventsForNoteEditFocus` keyed revision/slot/length only.
+
+**Shipped:**
+
+1. `noteEditFocusMaterializePublishedSnapshotIdentity_` + `noteEditFocusMaterializeKeysMatch`
+2. Stamp `Loop::publishedSnapshotIdentity()` on rebuild; clear identity on `invalidateNoteEditDerivedCaches`
+3. Native A→B@R: `test_rebuild_note_edit_focus_materialize_on_snapshot_identity_same_revision`
+4. **§5 exclusion:** OpenSpec task `4.6` text names persistence, undo, redo, clear-slot, and load. Those remain **tasks 5.1–5.6** (snapshot-identity undo / storage format). Stage 1–6 of this plan close **derived-representation identity freshness** only. Checking off `4.6` documents that exclusion — it does **not** implement §5.
+5. Leave `passesMaterializedStore_` / `Loop::midiEvents()` to OpenSpec **§6** (compatibility retirement).
+
+#### Stage 6 closeout (2026-09-11)
+
+| Gate | Result |
+|---|---|
+| Native A→B@R focus materialize keys | PASS (`test_rebuild_note_edit_focus_materialize_on_snapshot_identity_same_revision`) |
+| RAM1 locals | **6976** |
+| Full `pio test -e native` | **1839 succeeded, 1 skipped** |
+| HITL `base` | **PASS** [`141547`](../../captures/session_20260911_141547.log) — persistence `result=ok`. Earlier [`141205`](../../captures/session_20260911_141205.log) FAIL was `persistence_stage_missing:dispatch` (not Stage 6 identity). |
 
 ## Explicit non-goals
 

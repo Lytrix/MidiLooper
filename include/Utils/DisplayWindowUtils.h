@@ -174,6 +174,22 @@ inline bool noteEditCommittedBaseKeysMatch(uint32_t loopLength, uint32_t cachedL
            publishedSnapshotIdentity == cachedPublishedSnapshotIdentity;
 }
 
+/// NOTE_EDIT focus materialize freshness: playback revision + slot + loop length
+/// + published snapshot identity (OpenSpec 4.6 Stage 6). Same playbackRevision
+/// with a replaced root must miss. `nullptr == nullptr` is a valid "no current
+/// root" match (DrawSource-style).
+inline bool noteEditFocusMaterializeKeysMatch(uint32_t playbackRevision,
+                                              uint32_t cachedPlaybackRevision, uint8_t slot,
+                                              uint8_t cachedSlot, uint32_t loopLength,
+                                              uint32_t cachedLoopLength,
+                                              const void* publishedSnapshotIdentity,
+                                              const void* cachedPublishedSnapshotIdentity,
+                                              bool cacheNonempty) {
+    return cacheNonempty && playbackRevision == cachedPlaybackRevision && slot == cachedSlot &&
+           loopLength == cachedLoopLength &&
+           publishedSnapshotIdentity == cachedPublishedSnapshotIdentity;
+}
+
 inline bool noteEditPaintKeysMatch(uint32_t displayFingerprint, uint32_t cachedFingerprint,
                                    int selectedNoteIdx, int cachedSelectedNoteIdx,
                                    uint16_t captureRevision, uint16_t cachedCaptureRevision,

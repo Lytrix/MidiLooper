@@ -280,6 +280,25 @@ void test_rebuild_note_edit_committed_base_on_snapshot_identity_same_revision() 
           true, true)));
 }
 
+void test_rebuild_note_edit_focus_materialize_on_snapshot_identity_same_revision() {
+  // OpenSpec 4.6 Stage 6: same revision/slot/length with replaced published root
+  // identity must miss the focus materialize cache.
+  const void* identityA = reinterpret_cast<const void*>(0xA);
+  const void* identityB = reinterpret_cast<const void*>(0xB);
+  TEST_ASSERT_TRUE(DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+      3, 3, 1, 1, 2304, 2304, identityA, identityA, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+      3, 3, 1, 1, 2304, 2304, identityB, identityA, true));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+      3, 3, 1, 1, 2304, 2304, nullptr, nullptr, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+      3, 3, 1, 1, 2304, 2304, identityA, nullptr, true));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+      3, 3, 1, 1, 2304, 2304, identityA, identityA, false));
+  TEST_ASSERT_FALSE(DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+      4, 3, 1, 1, 2304, 2304, identityA, identityA, true));
+}
+
 void test_select_note_edit_committed_base_kind_capture_vs_playing() {
   // RC-A: selector result space is Snapshot | VisualCache only. dirty∧¬current
   // must not PassMaterialize (stale VisualCache is a legal request state).
@@ -2127,6 +2146,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_select_note_edit_projection_cache_reuse_fingerprint_does_not_regather);
   RUN_TEST(test_preview_revision_is_paint_key_not_committed_base_key);
   RUN_TEST(test_rebuild_note_edit_committed_base_on_snapshot_identity_same_revision);
+  RUN_TEST(test_rebuild_note_edit_focus_materialize_on_snapshot_identity_same_revision);
   RUN_TEST(test_select_note_edit_committed_base_kind_capture_vs_playing);
   RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);

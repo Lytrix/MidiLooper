@@ -175,6 +175,7 @@ EDIT_MANAGER_IMPL_MEM void EditManager::invalidateNoteEditDerivedCaches() {
     noteEditFocusMaterializeLoopRevision_ = UINT32_MAX;
     noteEditFocusMaterializeSlot_ = 255;
     noteEditFocusMaterializeLoopLength_ = 0;
+    noteEditFocusMaterializePublishedSnapshotIdentity_ = nullptr;
     noteEditFocusMaterializedLoopEvents_.clear();
     invalidateProjectedNoteEditDisplayCache();
 }
@@ -217,14 +218,18 @@ EDIT_MANAGER_IMPL_MEM const MidiEventVec& EditManager::materializedLoopEventsFor
     const uint8_t slot = trackManager.getSelectedSlotIndex(trackManager.getSelectedTrackIndex());
     const uint32_t loopLength = noteEditLoopLengthTicks(track);
     const uint32_t revision = loop.playbackRevision;
-    if (revision == noteEditFocusMaterializeLoopRevision_ && slot == noteEditFocusMaterializeSlot_ &&
-        loopLength == noteEditFocusMaterializeLoopLength_ &&
-        !noteEditFocusMaterializedLoopEvents_.empty()) {
+    const void* publishedSnapshotIdentity = loop.publishedSnapshotIdentity();
+    if (DisplayWindowUtils::noteEditFocusMaterializeKeysMatch(
+            revision, noteEditFocusMaterializeLoopRevision_, slot, noteEditFocusMaterializeSlot_,
+            loopLength, noteEditFocusMaterializeLoopLength_, publishedSnapshotIdentity,
+            noteEditFocusMaterializePublishedSnapshotIdentity_,
+            !noteEditFocusMaterializedLoopEvents_.empty())) {
         return noteEditFocusMaterializedLoopEvents_;
     }
     noteEditFocusMaterializeLoopRevision_ = revision;
     noteEditFocusMaterializeSlot_ = slot;
     noteEditFocusMaterializeLoopLength_ = loopLength;
+    noteEditFocusMaterializePublishedSnapshotIdentity_ = publishedSnapshotIdentity;
     noteEditFocusMaterializedLoopEvents_.clear();
     loop.copyNoteEditCommitBase(editSession.editPassIds, noteEditFocusMaterializedLoopEvents_,
                                 editSession.openedOnCurrentSnapshot,
