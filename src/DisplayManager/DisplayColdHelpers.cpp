@@ -81,7 +81,7 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
         eventBuffer.clear();
         usedSnapshot = false;
     }
-    if (!usedSnapshot) {
+    if (!usedSnapshot && mutLoop.isPlaybackSessionExitPublicationGap()) {
         if (includeActiveCapture && loop.captureActive()) {
             mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart,
                                                             windowLength);
