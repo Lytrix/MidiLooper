@@ -40,7 +40,12 @@ bool shouldDeferTransportFlush(bool savePending, bool transportActive, uint32_t 
 }
 
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
+                                        bool prioritizeWorkspaceSaveDrain,
                                         bool otherSdIoActive) {
+  if (prioritizeWorkspaceSaveDrain &&
+      (queueDepth > 0 || writingWorkItemCount > 0)) {
+    return true;
+  }
   return (queueDepth > 0 || writingWorkItemCount > 0) && !otherSdIoActive;
 }
 

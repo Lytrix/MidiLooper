@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-12 (OpenSpec 5.7 persist queue stall hardening SHIPPED)
+Last updated: 2026-09-12 (OpenSpec 5.7 + 5.7.5 SHIPPED; HITL sign-off PASS; next 6.3)
 
 ---
 

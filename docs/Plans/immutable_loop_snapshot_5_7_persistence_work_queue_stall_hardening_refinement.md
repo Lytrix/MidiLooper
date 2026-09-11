@@ -50,6 +50,7 @@ Boot and post-clear workspace saves must **not wedge** when a `PersistenceWorkQu
 | **5.7.2** | **Audit silent paths** in `requeueWritingItem`, `resetPersistenceWorkItemJobState`, defer-requeue after `start` telemetry — ensure `Writing` never survives without `itemActive` | **SHIPPED** |
 | **5.7.3** | **Native fixture** simulating wedged `Writing`/inactive job; assert recovery unblocks `stepPersistenceWorkItem` | **SHIPPED** |
 | **5.7.4** | **Host observability** (optional): `parse_persistence_buildup.py` or HITL warning when boot save has `start` without matching `bundle_done` before record stop | **SHIPPED** |
+| **5.7.5** | **Active-job stall** (HITL [`005127`](../../captures/session_20260912_005127.log)): continue boot drain across slot-load SD gate and transport defer; bypass idle-owner / load-frame gates in `main.cpp`; `shouldRunPersistenceWorkItemWriter(..., prioritizeWorkspaceSaveDrain)`; defer `start,ok` until after transport defer check | **SHIPPED** |
 
 ## Verification matrix
 
@@ -57,7 +58,7 @@ Boot and post-clear workspace saves must **not wedge** when a `PersistenceWorkQu
 |---|---|---|
 | Happy path unchanged | `pio test -e native` full suite | **1828/1833** |
 | Wedged queue recovered | Native 5.7.3 fixture (`test_persistence_work_queue`) | **PASS** (13/13) |
-| Boot save completes on HITL `base` | HITL post-fix run | **pending** device sign-off |
+| Boot save completes on HITL `base` | HITL post-5.7.5 [`012147`](../../captures/session_20260912_012147.log) | **PASS** (`loop_persist=217 sliced=True`; report [`012230`](../../captures/host_midi_automation_baseline_20260912_012230.json)) |
 | Stall telemetry when recovery fires | `PERS,work,...,work_queue_stall,recover` on recover path | **SHIPPED** |
 | Host stall warning | `parse_persistence_buildup.py` on [`000210`](../../captures/session_20260912_000210.log) | **PASS** |
 | RAM1 floor | `teensy41-capture-serial` locals ≥ 4000 | **6880** |

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 5.7 SHIPPED; HITL sign-off pending; next 6.3)
+Last updated: 2026-09-12 (OpenSpec 5.7 + 5.7.5 SHIPPED; HITL sign-off PASS; next 6.3)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,16 +10,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — OpenSpec 5.7 HITL sign-off, then 6.3.**
-5.7 **SHIPPED** (2026-09-12): `recoverOrphanedWritingItem` when `Writing` without
-`itemActive`; `#CAP PERS,work,...,work_queue_stall,recover`; native **13/13**;
-`parse_persistence_buildup.py` stall warning on [`000210`](../../captures/session_20260912_000210.log).
-RAM1 **6880**; native **1828/1833**. Post-fix HITL `base` **pending**. Plan:
-[`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
-
-**Next — Immutable OpenSpec 6.3 (compatibility machinery removal).**
+**Now — Immutable OpenSpec 6.3 (compatibility machinery removal).**
 6.2 **SHIPPED**: B1–B8 consumer compat retired; construction APIs remain until 6.3.
 Plan: [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
+
+**Prior — OpenSpec 5.7 + 5.7.5 (2026-09-12).**
+Boot-drain stall fix: prioritize workspace save drain bypasses slot-load SD gate
+between work items, transport defer on new items, and `otherSdIoActive` writer
+policy. HITL `base` PASS [`012147`](../../captures/session_20260912_012147.log)
+(`loop_persist=217 sliced=True`). Plan:
+[`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 
 **Prior — OpenSpec 6.2.1b B1 C1-a (2026-09-11).**
 HITL `base` PASS
