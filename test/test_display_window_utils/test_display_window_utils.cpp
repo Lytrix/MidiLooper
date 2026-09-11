@@ -614,9 +614,9 @@ void test_should_retain_visual_cache_over_incomplete_current_snapshot_gather() {
       true, true, 32u, 31u, false));
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, true, false, 32u, 31u));
-  // 204344: wrap marks visual dirty; incomplete current snapshot gather must
-  // still lose to the larger visual so id 27 does not blink out at lap start.
-  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
+  // Membership Stage 5 unwind: dirty visual must not retain over current
+  // snapshot (restores freshness veto dropped in consumer Stage 5 / 204344).
+  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       true, true, true, 50u, 48u));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather(
       false, true, false, 32u, 31u));
