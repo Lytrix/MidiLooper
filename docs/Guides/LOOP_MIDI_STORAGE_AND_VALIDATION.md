@@ -439,6 +439,26 @@ GPIO **Button A double-press** and MIDI record double-tap call `handleUndo()`. `
 
 **Files:** `src/StorageManager.cpp`, `include/StorageLoopIo.h`, `src/StorageLoopIo.cpp`
 
+### LoopSnapshot body format (LSV1) — OpenSpec 5.3 / [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)
+
+Slot **payload** (inside epoch wrapper + **SAVE** footer) may be:
+
+| Probe | Body | Load authority | Save |
+|-------|------|----------------|------|
+| No `LSV1` prefix | Legacy bare `PersistedLoopSnapshot` + pass stream + edit tail | Passes via `applyLoadedLoopSlotBodyCommit` → `rebuildSlotFromLoopContent` | Legacy until `publishedSnapshotIsCurrent()` |
+| `LSV1` + `formatVersion == 1` | Dual-write: `LoopMetadata` + `PersistedLoopSnapshot` (oracle) + `LoopSnapshot` | `LoopSnapshot` section via `storePublishedSnapshot`; oracle non-authoritative; GUS depth **0** | When `loopUsesLoopSnapshotBodyFormatV1ForSave` |
+| `LSV1` + `formatVersion != 1` | — | **Reject** slot load | — |
+
+**Save-time migration (no eager owner):** legacy file on SD → runtime load adopts passes →
+`queueLoadedSnapshotPublish` + idle snapshot construction → next successful
+`writeLoopPersisted` / deferred save emits LSV1. Slots saved before hydration
+stay legacy on disk until a current published root exists.
+
+**Owners:** `readLoopSnapshotBodyFormatV1` / `stepLoopSnapshotBodyFormatV1LoadParse`
+(parse only, never publish); `LoadLoopJob` commit via `applyLoadedLoopSlotBodyCommit`;
+deferred save LSV1 preamble/tail in `stepDeferredLoopPersist`. Boot sync load
+(`CurrentSetBootLoad`) is still legacy-only.
+
 - Per-slot loop pool entries persist **`LoopPasses`** (capture passes + **editPasses** tail) via `writeLoopPersisted` / `readLoopPersisted`.
 - `writeLoopPersisted` streams capture-pass events in bounded batches and records max batch size through storage-loop-io test hooks; the deferred save path writes live loop pool entries as metadata, capture-pass headers, and one capture chunk per main-loop iteration.
 - **STORAGE_VERSION** **5** (when **`scoped-edit-pass-payload`** ships): **loadState** rejects v1–v4; firmware starts empty. **No** edit-tail migration.
@@ -508,7 +528,7 @@ Rationale:
 | `test/test_noteutils_reconstruct` | Display note pairing vs loop length |
 | `test/test_take_capture` | Capture pass seal/publish, record vs overdub routing |
 | `test/test_loop_take_survival` | Pass timeline survives rematerialize and stop finalize |
-| `test/test_storage_loop_io` | SD v5 pass round-trip, **startLoopTick** apply, truncated edit tail |
+| `test/test_storage_loop_io` | SD v5 pass round-trip, **startLoopTick** apply, truncated edit tail, LSV1 round-trip / reject matrix, save-time migration fixture |
 | `test/test_capture_state_guards` | Overdub **beginCapture** idempotency |
 | `test/test_loop_pool` | **findById** null + slot-index fallback |
 | `test/test_playback_prewarm` | Playback runtime / order prealloc stability |

@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-11 (Immutable OpenSpec 5.2 APPROVED — LSV1 / DEC-057)
+Last updated: 2026-09-11 (Immutable OpenSpec 5.3 SHIPPED — LSV1 reader/writer + migration)
 
 ---
 
@@ -559,7 +559,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1** snapshot-identity undo select SHIPPED; **5.2** storage layout APPROVED ([DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write), `LSV1`); next open: **4b.3**, **5.3–5.6**, **6.x**; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1** snapshot-identity undo select SHIPPED; **5.2** storage layout APPROVED; **5.3** LSV1 reader/writer + save/load + migration **SHIPPED** ([DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)); next open: **4b.3**, **5.4–5.6**, **6.x**; boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

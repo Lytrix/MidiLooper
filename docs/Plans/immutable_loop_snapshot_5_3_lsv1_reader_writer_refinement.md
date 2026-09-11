@@ -1,6 +1,6 @@
 # OpenSpec 5.3 — LoopSnapshot body format LSV1 reader/writer + migration
 
-**Status:** **5.3.3 SHIPPED** — 5.3.4 migration + bounds/docs next  
+**Status:** **5.3.4 SHIPPED** — OpenSpec 5.3 complete; 5.4–5.6 verification next  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **5.3**  
 **Authority:** [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write), [5.2 plan](immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md)  
 **Architect:** APPROVED WITH TIGHTENING (2026-09-11)
@@ -40,7 +40,7 @@ Not one mega-commit. Commit boundaries:
 | **5.3.1** | LoopSnapshot body format reader/writer + native tests only (no SD behavior change) — **SHIPPED** |
 | **5.3.2** | Save integration (sizing + writer + legacy fallback + deferred verify) — **SHIPPED** |
 | **5.3.3** | Load authority (probe + stepped parse + candidate + atomic publish + depth 0) — **SHIPPED** |
-| **5.3.4** | Save-time migration + ExecutionBounds + runtime docs + RAM1 + native + HITL smoke |
+| **5.3.4** | Save-time migration + ExecutionBounds + runtime docs + RAM1 + native + HITL smoke — **SHIPPED** |
 
 **5.4–5.6** remain separate verification tasks.
 
@@ -260,9 +260,30 @@ Extend `LoadLoopJob` substeps (row 15): probe → parse section → construct ca
 
 ---
 
-## ExecutionBounds (5.3.4)
+## ExecutionBounds (5.3.4) — SHIPPED
 
-Extend row **14** (`processDeferredSaveState`) and row **15** (`LoadLoopJob`) with named LSV1 substeps and existing µs caps. **Do not** create a new bound class. LoopSnapshot body-format read work is **bounded per step** even when total slot file exceeds one slice.
+Extended row **14** (`processDeferredSaveState`) and row **15** (`LoadLoopJob`) with named LSV1 substeps in [`ExecutionBounds.md`](../Authority/Architecture/ExecutionBounds.md). No new bound class.
+
+**Shipped:** native `test_legacy_slot_migrates_to_lsv1_after_loaded_hydration`; runtime docs (`LOOP_MIDI_STORAGE_AND_VALIDATION`, `DEFERRED_RUNTIME_PERSISTENCE`, `Storage.md`).
+
+### Final validation — device smoke (manual session)
+
+**Capture:** [`session_20260911_175309.log`](../../captures/session_20260911_175309.log) (~62 s, manual — not `#HITL`).
+
+| Check | Evidence |
+|---|---|
+| Boot load | `LoadLoopJob done 4/0` (L243); no LSV1 probe/parse failure lines |
+| Transport | `STOPPED→ARMED→RECORDING→STOPPED_RECORDING→PLAYING→OVERDUBBING→PLAYING` (`ST,Track` lines) |
+| Record publish | `RECS,stage,publish,…,ok` (L4846); `root_rev=1` + `playback_build,snapshot` (L5496–5502) |
+| Overdub stop / successor | `root_rev=2` published (L7431); overdub `lcr,src,why=stop` (L6411) |
+| Deferred persistence | 8× `LoopPersist,loop:0,done,ok` (first L5105 pre-`root_rev=1`; remainder after publish) |
+| Snapshot playback | `playback_build,snapshot` after `root_rev=1` (L5502); overdub open `from=snapshot` (L5546) |
+
+**Migration timing (inferred — no LSV1 serial tag on disk):** first two `LoopPersist,done` complete before `root_rev=1` → expected **legacy** body; saves from ~51 s onward are after `root_rev=2` → expected **LSV1** on next save (SD byte probe deferred to 5.4).
+
+**Non-blocking:** `sets/index.bin` reconcile WARN (L47); boot `load_frame` ~255 ms; `midi_gap` max ~256 ms (L9610).
+
+**Explicit gap for 5.4:** no reboot + LSV1 reload cycle in this capture; `CurrentSetBootLoad` remains legacy-only.
 
 ---
 

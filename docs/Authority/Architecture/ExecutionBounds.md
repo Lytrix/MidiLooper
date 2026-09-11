@@ -218,6 +218,50 @@ add a new interval owner and does not convert row 2 to a bounded class:
 short-loop full gather and the no-snapshot fallback remain content-sized.
 `playbackEventPhase` stays the clock-facing scalar.
 
+### Deferred loop save — LSV1 dual-write substeps (row 14)
+
+**Row 14 goal:** `StorageManager::processDeferredSaveState` →
+`stepDeferredLoopPersist` (and synchronous `writeLoopPersisted` /
+`measureLoopSlotFileBytes`) advance one deferred slice per turn under the
+existing **300 µs / 3000 µs** between-step caps. LSV1 does not add a new bound
+class.
+
+| Substep | Owner | When | Indivisible unit |
+|---------|-------|------|------------------|
+| `lsv1_preamble` | `writeLoopSnapshotBodyFormatV1SavePreamble` | `loopUsesLoopSnapshotBodyFormatV1ForSave` at `DeferredLoopWriteStage::Header` | Body header + `LoopMetadata` + `PersistedLoopSnapshot` section frame (oracle payload streamed next) |
+| `legacy_oracle_header` | `writeDeferredLoopHeader` | Every save | Loop header scalars + capture-pass count |
+| `capture_pass_header` / `capture_pass_chunk` | `writeDeferredCapturePassHeader` / `writeDeferredCapturePassChunk` | Per pass, per chunk | One pass header or one PSRAM chunk batch (unchanged) |
+| `edit_tail` | `writePersistedEditsTail` | `DeferredLoopWriteStage::EditTail` | One edit/geometry tail write |
+| `lsv1_loop_snapshot_tail` | `writeLoopSnapshotBodyFormatV1SaveTail` | After edit tail when LSV1 save | One `LoopSnapshot` section payload |
+
+**Save-time migration (no eager owner):** legacy body on disk → load adopts passes →
+`queueLoadedSnapshotPublish` + idle construction → `publishedSnapshotIsCurrent()` →
+next successful deferred save emits LSV1. Pre-hydration slots keep writing legacy
+until a current published root exists.
+
+### Deferred slot load — LSV1 authority substeps (row 15)
+
+**Row 15 goal:** `DeferredJobScheduler::runFrame` → `LoadLoopJob` advances one
+phase slice per turn under **250 / 1200 / 5000 µs** between-step caps. LSV1 parse
+is resumable; oracle stepping reuses `stepPersistedLoopSnapshotParse` grains.
+
+| Substep | Owner | When | Indivisible unit |
+|---------|-------|------|------------------|
+| `sd_read` | `stepLoadLoopJob` Reading | Until payload + SAVE token | One `LoadLoopBudget::ReadChunkBytes` read (or token verify) |
+| `body_probe` | `probeLoopSnapshotBodyFormat` | Enter Parsing | First-four-byte + version probe; reject unsupported/truncated LSV1 |
+| `legacy_parse` | `stepPersistedLoopSnapshotParse` | Legacy body | One parse grain (unchanged) |
+| `lsv1_scan_section` | `stepLoopSnapshotBodyFormatV1LoadParse` ScanSections | LSV1 body | One section header (+ inline `LoopMetadata` or handoff) |
+| `lsv1_oracle_parse` | `stepLoopSnapshotBodyFormatV1LoadParse` PersistedOracle | LSV1 body | One `stepPersistedLoopSnapshotParse` grain inside oracle section |
+| `lsv1_snapshot_payload` | `stepLoopSnapshotBodyFormatV1LoadParse` LoopSnapshotPayload | LSV1 body | One validated `LoopSnapshot` section → candidate ref (never publishes) |
+| `commit_publish` | `applyLoadedLoopSlotBodyCommit` | Committing | Legacy: `rebuildSlotFromLoopContent`. LSV1: `storePublishedSnapshot` + `clearUndoHistoryForSlot` (depth 0); **no** rebuild |
+
+LoopSnapshot body-format validation caps (`kLsv1MaxSnapshotObjects`, membership
+ref limits, section payload cap) are **format guards** inside the parse substeps,
+not new interval-path owners.
+
+**Boot sync load** (`CurrentSetBootLoad`) remains legacy-only; runtime
+`LoadLoopJob` carries LSV1 authority (5.3.3).
+
 ---
 
 ## Rejected
