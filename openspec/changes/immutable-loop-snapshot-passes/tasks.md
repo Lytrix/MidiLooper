@@ -302,7 +302,7 @@ cursors rather than treating that locality as an execution bound.
       `note_edit_overdub_compose` `02` PASS **14/14**
       [`142119`](../../../captures/note_edit_overdub_compose_20260910_142119_serial.log)
       (after RC1+RC-A PassMaterialize deferral). Native 1820/1; RAM1 locals **7008**.
-- [ ] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
+- [x] 4.6 Update every migrated derived representation to use snapshot identity for source freshness while retaining its existing owner, invalidation, bounded build, and stale/fallback policy. Playback, display, NOTE_EDIT, analysis, validation, persistence, undo, redo, clear-slot restore, and load must use snapshot content as their normal source. Compatibility replay/materialization remains only an oracle or rollback path and is not optimized.
       Plan (inventory + stages):
       [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
       **Stage 1 SHIPPED (2026-09-10):** `VisualCache::builtFromSnapshotIdentity` +
@@ -310,16 +310,20 @@ cursors rather than treating that locality as an execution bound.
       `test_overdub_source_view` wrap-append skip stamps identity; RAM1 **7008**;
       native **1821 succeeded, 1 skipped**; HITL `base` PASS [`151433`](../../../captures/session_20260910_151433.log);
       `overdub_occupy_paint` PASS [`151700`](../../../captures/session_20260910_151700.log).
-      Undo/load format remains §5; materialize retirement §6.
-      **Stage 5 in tree (2026-09-11):** `CommittedMidiScratch` refresh for
+      **Stage 5 SHIPPED (2026-09-11):** `CommittedMidiScratch` refresh for
       `legacyMidiEventsFromCommitted` (snapshot fill + revision/identity;
       pass fallback stamps `nullptr`);
       `tryCopyCurrentSnapshotEditViewEvents(..., observedIdentity)`;
       native four-case
-      `test_legacy_committed_scratch_snapshot_identity_freshness`; RAM1 **6976**.
-      HITL `base` PASS [`140021`](../../../captures/session_20260911_140021.log).
-      Stage 6 (`materializedLoopEventsForNoteEditFocus`
-      + §5 exclusion) remains before checking off 4.6.
+      `test_legacy_committed_scratch_snapshot_identity_freshness`; RAM1 **6976**;
+      native **1838/1**; HITL `base` PASS [`140021`](../../../captures/session_20260911_140021.log).
+      **Stage 6 SHIPPED (2026-09-11):** `noteEditFocusMaterializePublishedSnapshotIdentity_`
+      + `noteEditFocusMaterializeKeysMatch`; native A→B@R focus materialize keys;
+      RAM1 **6976**; native **1839/1**; HITL `base` PASS
+      [`141547`](../../../captures/session_20260911_141547.log).
+      **§5 exclusion:** persistence / undo / redo / clear-slot / load format remain
+      tasks **5.1–5.6** — not implemented in 4.6 Stages 1–6. Materialize /
+      `passesMaterializedStore_` retirement remains **§6**.
 
 ## 4b. Post-stop MIDI stability
 

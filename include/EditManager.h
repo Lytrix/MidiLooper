@@ -353,6 +353,9 @@ private:
     uint32_t noteEditFocusMaterializeLoopRevision_ = UINT32_MAX;
     uint8_t noteEditFocusMaterializeSlot_ = 255;
     uint32_t noteEditFocusMaterializeLoopLength_ = 0;
+    /// `Loop::publishedSnapshotIdentity()` when the focus materialize cache was
+    /// built; nullptr when no published root (OpenSpec 4.6 Stage 6).
+    const void* noteEditFocusMaterializePublishedSnapshotIdentity_ = nullptr;
     MidiEventVec noteEditFocusMaterializedLoopEvents_;
     mutable uint32_t noteEditSelectableDisplayCachePreviewRevision_ = UINT32_MAX;
     mutable uint32_t noteEditSelectableDisplayCacheFingerprint_ = static_cast<uint32_t>(-1);
