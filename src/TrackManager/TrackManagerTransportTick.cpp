@@ -109,7 +109,10 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
 
   for (uint8_t i = 0; i < Config::NUM_TRACKS; i++) {
 #if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_BEGIN_TRACK_PATH_NESTED();
     const uint32_t trackStartUs = micros();
+    const uint32_t slotSendBeforeUs = RUNTIME_TIMING_TRACK_PATH_SEND_US();
+    const uint32_t slotStartUs = micros();
 #endif
     // Commit multi-hold selection (enabled set + start at next 16th).
     if (pendingMultiSlotCommit[i] &&
@@ -122,7 +125,11 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
           pendingSlotEnabled[i][s] = false;
         }
 #if RUNTIME_TIMING_ENABLED
-        RUNTIME_TIMING_NOTE_TRACK_UPDATE(i, micros() - trackStartUs);
+        RUNTIME_TIMING_ADD_TRACK_PATH_SLOT(RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(
+            micros() - slotStartUs, slotSendBeforeUs));
+        const uint32_t trackDurationUs = micros() - trackStartUs;
+        RUNTIME_TIMING_NOTE_TRACK_UPDATE(i, trackDurationUs);
+        RUNTIME_TIMING_COMMIT_TRACK_PATH_NESTED(trackDurationUs);
 #endif
         continue;
       }
@@ -257,6 +264,11 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
 
     const uint8_t activeSlot = tracks[i].getActiveLoopIndex();
 
+#if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_ADD_TRACK_PATH_SLOT(RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(
+        micros() - slotStartUs, slotSendBeforeUs));
+#endif
+
     // Primary (active) slot playback. Mute/solo/slot-mute suppress MIDI send, not the engine.
     if (PlaybackMidiOutput::engineShouldRun(slotEnabled[i][activeSlot])) {
       tracks[i].playMidiEvents(
@@ -272,7 +284,9 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       }
     }
 #if RUNTIME_TIMING_ENABLED
-    RUNTIME_TIMING_NOTE_TRACK_UPDATE(i, micros() - trackStartUs);
+    const uint32_t trackDurationUs = micros() - trackStartUs;
+    RUNTIME_TIMING_NOTE_TRACK_UPDATE(i, trackDurationUs);
+    RUNTIME_TIMING_COMMIT_TRACK_PATH_NESTED(trackDurationUs);
 #endif
   }
 #if RUNTIME_TIMING_ENABLED

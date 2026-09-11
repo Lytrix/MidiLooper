@@ -29,6 +29,15 @@ uint32_t snapshotAllocNodeCount();
 uint32_t snapshotAllocByteCount();
 uint32_t snapshotAllocSlabCount();
 void emitSnapshotAllocCounters();
+void emitSnapshotAllocFailure(const char* site, size_t bytes);
+
+/// Loaded adopt/restore publication on `PendingSnapshotPublishBox`.
+/// Session-exit work stays `None`.
+enum class LoadedSnapshotHydrationPhase : uint8_t {
+  None = 0,
+  Queued = 1,
+  Constructing = 2,
+};
 constexpr uint16_t kSnapshotWrapJournalMaxChanges = 32;
 constexpr uint16_t kSnapshotWrapJournalMaxAffectedBars = 32;
 constexpr uint16_t kSnapshotWrapJournalMaxMembershipEntries = 64;

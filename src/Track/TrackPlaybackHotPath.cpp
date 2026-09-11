@@ -206,16 +206,26 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
+#if RUNTIME_TIMING_ENABLED
+  const uint32_t rebuildStartUs = micros();
+#endif
   const bool rebuilt =
       ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
   if (rebuilt) {
     reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime);
   }
+#if RUNTIME_TIMING_ENABLED
+  RUNTIME_TIMING_ADD_TRACK_PATH_REBUILD(micros() - rebuildStartUs);
+#endif
   const SessionMidiEventVec& mergedEvents = runtime.mergedMidiEvents.mergedEvents;
   if (mergedEvents.empty()) {
     return;
   }
 
+#if RUNTIME_TIMING_ENABLED
+  const uint32_t orderSendBeforeUs = RUNTIME_TIMING_TRACK_PATH_SEND_US();
+  const uint32_t orderStartUs = micros();
+#endif
   ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
   if (loop.playbackOrderDirty) {
 #if defined(SESSION_CAPTURE)
@@ -252,6 +262,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   if (prevTickInLoop == UINT32_MAX && tickInLoop > Config::TICKS_PER_BAR) {
     loop.nextEventIndex = 0;
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+#if RUNTIME_TIMING_ENABLED
+    RUNTIME_TIMING_ADD_TRACK_PATH_ORDER(RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(
+        micros() - orderStartUs, orderSendBeforeUs));
+#endif
     return;
   }
 
@@ -292,6 +306,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
 
   runtime.syncRevision(loop.playbackRevision, playbackGeneration);
+#if RUNTIME_TIMING_ENABLED
+  RUNTIME_TIMING_ADD_TRACK_PATH_ORDER(RUNTIME_TIMING_TRACK_PATH_EXCLUSIVE(
+      micros() - orderStartUs, orderSendBeforeUs));
+#endif
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
@@ -349,6 +367,9 @@ bool Track::applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotI
 void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   if (trackState != TRACK_PLAYING && trackState != TRACK_OVERDUBBING) return;
   if (playbackSlotIndex >= Config::MAX_LOOPS_PER_TRACK) return;
+#if RUNTIME_TIMING_ENABLED
+  const uint32_t sendStartUs = micros();
+#endif
   ignorePlaybackMidiInput = true;  // Suppress playback-echo MIDI during overdub capture
   MidiEvent evtCopy = evt;
   evtCopy.channel = remappedPlaybackChannel(evt, midiChannel);
@@ -375,6 +396,9 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
     }
   }
   ignorePlaybackMidiInput = false;  // Reset playback state
+#if RUNTIME_TIMING_ENABLED
+  RUNTIME_TIMING_ADD_TRACK_PATH_SEND(micros() - sendStartUs);
+#endif
 }
 
 TRACK_COLD_MEM __attribute__((noinline)) void Track::silenceTrackMidiOutput() {

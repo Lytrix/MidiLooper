@@ -87,6 +87,18 @@ TRACK_COLD_MEM bool Track::hasPendingSnapshotPublishOnAnySlot() const {
   return false;
 }
 
+TRACK_COLD_MEM bool Track::hasInFlightSnapshotConstructionOnAnySlot() const {
+  if (!loopsAllocated()) {
+    return false;
+  }
+  for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+    if (getLoop(s).hasInFlightSnapshotConstruction()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 TRACK_COLD_MEM bool Track::hasSnapshotPublicationBacklogOnAnySlot() const {
   if (!loopsAllocated()) {
     return false;

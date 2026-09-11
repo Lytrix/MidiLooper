@@ -15,6 +15,7 @@
 #include "ControlSurfaceManager.h"
 #include "Utils/DebugSessionCapture.h"
 #include "LooperState.h"
+#include "Utils/MidiBatchComposition.h"
 #include "Utils/MidiDispatchOrder.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
@@ -179,28 +180,32 @@ void MidiHandler::handleMidiInput() {
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_BEGIN_USB_DEVICE_NESTED();
   uint32_t segmentStartUs = micros();
-  uint32_t usbClockCount = 0;
+  uint8_t usbTypes[kMidiInputBatchMax];
 #endif
   while (count < midiInputBatchMax && usbMIDI.read()) {
     batch[count] = {usbMIDI.getType(), usbMIDI.getChannel(), usbMIDI.getData1(),
                     usbMIDI.getData2(), SOURCE_USB};
 #if RUNTIME_TIMING_ENABLED
-    if (batch[count].type == midi::Clock) {
-      ++usbClockCount;
-    }
+    usbTypes[count] = batch[count].type;
 #endif
     ++count;
   }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_NOTE_USB_DEVICE_READ(micros() - segmentStartUs);
   const uint32_t dispatchStartUs = micros();
+  const MidiBatchComposition::Summary usbComposition =
+      MidiBatchComposition::summarize(usbTypes, count);
   RUNTIME_TIMING_NOTE_EXTERNAL_CLOCK_BATCH(
-      dispatchStartUs, usbClockCount,
+      dispatchStartUs, usbComposition.clockCount,
       clockManager.getMicrosPerTick() * Config::TICKS_PER_CLOCK);
 #endif
   dispatchMidiBatch(batch, count);
 #if RUNTIME_TIMING_ENABLED
-  RUNTIME_TIMING_NOTE_USB_DEVICE_DISPATCH(micros() - dispatchStartUs);
+  const uint32_t dispatchUs = micros() - dispatchStartUs;
+  RUNTIME_TIMING_NOTE_USB_DEVICE_DISPATCH(dispatchUs);
+  RUNTIME_TIMING_NOTE_USB_DEVICE_BATCH_COMPOSITION(
+      usbComposition.size, usbComposition.clockCount, usbComposition.nonClockCount,
+      usbComposition.maxConsecutiveClocks, count == midiInputBatchMax, dispatchUs);
   RUNTIME_TIMING_COMMIT_USB_DEVICE_NESTED();
   RUNTIME_TIMING_NOTE_USB_DEVICE_DRAIN(micros() - segmentStartUs);
 #endif
@@ -592,6 +597,7 @@ void MidiHandler::handleNoteOn(byte channel, byte note, byte velocity, uint32_t 
   if (channel == MidiConfig::Channels::TRACK_SELECT) {
     midiButtonManager.handleMidiNote(channel, note, velocity, true);
   }
+  // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOn(channel, note, velocity, tickNow);
   }
@@ -605,6 +611,7 @@ void MidiHandler::handleNoteOff(byte channel, byte note, byte velocity, uint32_t
   if (channel == MidiConfig::Channels::TRACK_SELECT) {
     midiButtonManager.handleMidiNote(channel, note, velocity, false);
   }
+  // Route to track recording (skip control channels 13-16)
   if (!isControlChannel(channel)) {
   trackManager.getSelectedTrack().noteOff(channel, note, velocity, tickNow);
   }

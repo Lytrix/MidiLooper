@@ -667,8 +667,10 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
       // occupancy convergence does not LIFO-steal another pass's Off (`211440`).
       deferredStoredVerificationEvents.clear();
       loop.gatherCommittedEvents(deferredStoredVerificationEvents);
+      // Match STOPPED paint: LCR passes + wrap-held append (`180916` parity).
       LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks,
                                                  deferredStoredVerificationNotes);
+      loop.appendOverdubPassDisplayNotes(deferredStoredVerificationNotes);
       char header[128];
       snprintf(header, sizeof(header),
                "#CAP,%lu,DIAG,dnte,src,effective,count,%u",

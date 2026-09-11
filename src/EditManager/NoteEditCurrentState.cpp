@@ -190,6 +190,15 @@ NOTE_EDIT_MEM void NoteEditCurrentState::ensureVisibleRowsForDisplayNotes(
       row->committedSpan = row->currentSpan;
       continue;
     }
+    // Display may be shorter than rematerialize off-pairing (175621). A longer
+    // same-start visual end must not undo a rematerialize Shorten (134549).
+    if (span.pitch == row->currentSpan.pitch &&
+        span.startTick == row->currentSpan.startTick &&
+        !isWrapSpan(span.startTick, span.endTick) &&
+        !isWrapSpan(row->currentSpan.startTick, row->currentSpan.endTick) &&
+        span.endTick > row->currentSpan.endTick) {
+      continue;
+    }
     row->committedSpan = span;
     row->currentSpan = span;
   }
@@ -414,6 +423,16 @@ NOTE_EDIT_MEM void NoteEditCurrentState::applyEditSessionAction(const EditSessio
       }
       row->currentSpan = span;
       return;
+  }
+}
+
+NOTE_EDIT_MEM void NoteEditCurrentState::sealRematerializeBaseline() {
+  for (auto& [noteId, row] : rows_) {
+    if (noteId == kInvalidNoteId || !currentStateRowIsVisible(row)) {
+      continue;
+    }
+    row.committedSpan = row.currentSpan;
+    row.overlapParticipation = NoteEditOverlapParticipationType::Ended;
   }
 }
 

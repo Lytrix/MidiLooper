@@ -1,6 +1,6 @@
 # Display visual-cache snapshot fill
 
-**Status:** Stage 2.1 host shipped. Stage 2.0 load publish in progress.
+**Status:** Stage 2.1 host shipped. Stage 2.0 load publish uses snapshot-authoritative boot hydration.
 **Host:** Stage 2.1 `teensy41-capture-serial` RAM1 locals **6848**. Native **1727/1728** (1 skipped).
 **Kind:** refinement  
 **GitHub:** [#41](https://github.com/Lytrix/MidiLooper/issues/41) Stage 2  
@@ -32,7 +32,7 @@ Boot `adoptPersistedSnapshot` used to `markDisplayCachesStale()` and **not** pub
 
 ## Stage 2.0 change
 
-`adoptPersistedSnapshot` and `restorePassesSnapshot` call `queueLoadedSnapshotPublish` after the revision bump and stale mark.
+`adoptPersistedSnapshot` and `restorePassesSnapshot` no longer call `queueLoadedSnapshotPublish` after the revision bump and stale mark (`023222`). The function stays for an explicit later selected-slot trigger. See [`loaded_hydration_stability_bugfix.md`](loaded_hydration_stability_bugfix.md).
 
 1. No-op when `publishedSnapshotIsCurrent()`.
 2. Empty / no committed passes: `clearPendingSnapshotPublish()` and do not queue.
@@ -48,12 +48,31 @@ Boot `adoptPersistedSnapshot` used to `markDisplayCachesStale()` and **not** pub
    its snapshot publication is pending. [`005044`](../../captures/session_20260908_005044.log)
    showed the 66-bar loop continuing snapshot allocation while pass-based
    VisualCache maintenance was still taking 100–187 ms per turn.
+9. Loaded-pass fragments set `fromLoadedPasses` and skip
+   `findNoteAtPitch` and `eventAlreadyInSnapshot` (same skip as live-record
+   `fromCaptureStore` for lookup). Pairing stays on `openNotes`. Live
+   session-exit clears the flag so record-stop still looks up notes already
+   on the unpublished parent.
+   [`005731`](../../captures/session_20260908_005731.log) `CrashReport`:
+   `CFSR: 82`, accessed `0x20016544` (stack), PC first instruction of
+   `LoopSnapshot::findNoteAtPitch` during title-boot construction
+   (`nodes=1754`).
+   [`010922`](../../captures/session_20260908_010922.log) uploaded that skip
+   and still reset at the same freeze (`nodes=1754`, three boots). Snapshot
+   idle is withheld while `isBootTitleLoadDrain()`. One `stepPendingSnapshotPublish`
+   call starts or finishes one construction, not both. [`012242`](../../captures/session_20260908_012242.log)
+   then showed the title readiness deadlock: VisualCache was also withheld
+   while the pending publication remained.    Boot title no longer admits pass-based VisualCache fallback. Title exit
+   waits for restore plus a current focus `LoopSnapshot` (or empty content).
+   Loaded hydration is the Snapshot owner after restore is empty.
+   See [`display_snapshot_boot_hydration_refinement.md`](display_snapshot_boot_hydration_refinement.md).
 
-Native pins: `test_adopt_queues_loaded_snapshot_publish_until_idle`,
+Native pins: `test_adopt_does_not_queue_loaded_snapshot_publish`,
 `test_restore_empty_does_not_queue_loaded_snapshot_publish`,
-`test_stopped_track_snapshot_pauses_during_realtime`.
+`test_stopped_track_snapshot_pauses_during_realtime`,
+`test_session_exit_pass_change_skips_note_already_on_parent`.
 
-Device gate: after boot STOPPED idle, T6/S0 `root_rev!=0` and VisualCache `idle_src,SnapshotNotes` before first record when idle had time.
+Device gate: after boot STOPPED idle, T6/S0 `root_rev!=0` and VisualCache `idle_src,SnapshotNotes` before first record when idle had time. No `CrashReport` / `CAPTURE_RECONNECT` on title boot while the 66-bar loop publishes.
 
 ---
 

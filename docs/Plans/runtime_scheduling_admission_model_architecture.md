@@ -1,6 +1,6 @@
 # Runtime Scheduling — Timing Telemetry Contract and Admission Prerequisites
 
-**Status:** Contract stable. S0 telemetry **shipped** (observation only); S0b–S0e **attributed**; RC-K1–K3 / RC-L1 **device-verified**. Owner-Boundary Gate **not complete**. Interval reservation **not authorized**.  
+**Status:** Contract stable. S0 telemetry **shipped** (observation only); S0b–S0e **attributed**; RC-K1–K3 / RC-L1 **device-verified**. Owner-Boundary Gate **not complete**. Interval reservation **not authorized**. Snapshot-authoritative boot hydration reuses `DeferredIdleOwner` and does not complete this gate.  
 **Date:** 2026-08-13  
 **Decision:** Do not implement interval reservation or add extra `handleMidiInput()` call sites until the Owner-Boundary Gate has removed or bounded pathological owners and the resulting MIDI Input Gap and path durations are measured.  
 **Parent:** [`realtime_incremental_work_capture_overdub_architecture.md`](realtime_incremental_work_capture_overdub_architecture.md)  
@@ -365,7 +365,8 @@ Chronological narrative: [investigation log](archive/refinements/runtime_schedul
 | PLAYING overdub-stop dump | **Open** — deferred `LoopUndoHistory` bundle | [`105505`](../../captures/session_20260813_105505.log), [`112104`](../../captures/session_20260813_112104.log) |
 | `begin_capture` | **Open** — sibling source-view plan | 77–83 ms clean ([`225803`](../../captures/session_20260812_225803.log)); multi-second later entries ([`105505`](../../captures/session_20260813_105505.log), [`112104`](../../captures/session_20260813_112104.log)) |
 | Interval reservation | **Not authorized** | Requires Owner-Boundary Gate + OpenSpec + DEC |
-| Overdub boundary Stage 1 `extclk_*` / `clk_batch` / `service_period` | **In tree** | Observation only. Plan: [`overdub_midi_boundary_timing_refinement.md`](overdub_midi_boundary_timing_refinement.md). Device recapture open. |
+| Overdub boundary Stage 1 `extclk_*` / `clk_batch` / `service_period` | **In tree** | [`165045`](../../captures/session_20260907_165045.log) emits the tags; clock-batch fields stay 0 on internal clock. |
+| Overdub boundary Stage 2 `usb_batch` / `usb_bkt_*` | **Measured** | Slave-clock [`170537`](../../captures/session_20260907_170537.log): all clock batches in 1–8; OD `clk_batch` max 1; saturated 0. Does not authorize Stage 3 FIFO. Plan: [`overdub_midi_boundary_timing_refinement.md`](overdub_midi_boundary_timing_refinement.md). |
 | First-record idle `LoopSnapshotConstruction::step(1)` vs `MI`/`MO` | **Measured** | [`233308`](../../captures/session_20260825_233308.log) — PLAYING p50 **2.825 ms** (max 7.273 ms); OD1-to-publish p50 **3.333 ms** (max 7.649 ms); **0** note-timestamp overlaps; no `snapshot_idle` after first publish until STOPPED. Full table: [`runtime_scheduling_owner_boundary_admission_refinement.md`](runtime_scheduling_owner_boundary_admission_refinement.md) § `LoopSnapshotConstruction::step`, [`loop_pass_snapshot_effective_state_refinement.md`](loop_pass_snapshot_effective_state_refinement.md) § Device measurement. Contrast [`232329`](../../captures/session_20260825_232329.log) |
 
 S0 exit is **partial**: MIDI-path attribution is complete; telemetry trust (Tier-A delivery, remainder coverage, post-stop windows) and an evidence-based MIDI Input Gap ceiling are not.

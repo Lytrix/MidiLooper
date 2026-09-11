@@ -77,9 +77,21 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,extclk_dispatch,", 21) == 0 ||
          strncmp(tag, "DIAG,clk_batch,", 15) == 0 ||
          strncmp(tag, "DIAG,service_period,", 20) == 0 ||
+         strncmp(tag, "DIAG,usb_batch,", 15) == 0 ||
+         strncmp(tag, "DIAG,usb_bkt_size,", 18) == 0 ||
+         strncmp(tag, "DIAG,usb_bkt_clk,", 17) == 0 ||
+         strncmp(tag, "DIAG,usb_bkt_disp,", 18) == 0 ||
+         strncmp(tag, "DIAG,track_rebuild,", 19) == 0 ||
+         strncmp(tag, "DIAG,track_order,", 17) == 0 ||
+         strncmp(tag, "DIAG,track_send,", 16) == 0 ||
+         strncmp(tag, "DIAG,track_slot,", 16) == 0 ||
+         strncmp(tag, "DIAG,track_resid,", 17) == 0 ||
          strncmp(tag, "DIAG,playback_build,", 20) == 0 ||
          strncmp(tag, "DIAG,playback_order,", 20) == 0 ||
-         strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0
+         strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0 ||
+         strncmp(tag, "DIAG,snapshot_unit,", 19) == 0 ||
+         strncmp(tag, "DIAG,snapshot_slab_fail,", 24) == 0 ||
+         strncmp(tag, "DIAG,boot_reset,", 16) == 0
 #if SESSION_CAPTURE_SNAPSHOT_IDLE
          || strncmp(tag, "DIAG,snapshot_idle,", 19) == 0
 #endif

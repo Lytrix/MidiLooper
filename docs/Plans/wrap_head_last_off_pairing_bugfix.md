@@ -1,6 +1,6 @@
 # Wrap-head vs last-Off pairing
 
-**Status:** Native RC1–RC3 shipped; device recapture open
+**Status:** Closed — native RC1–RC3 shipped; 174646 device recapture waived (2026-09-08)
 
 
 **Date:** 2026-09-08  
@@ -179,4 +179,18 @@ Linear-closer veto is reconstruct-only (`InSpanBuild` + `isWrapHeldOpenNote`). P
 
 RC3 remaps overflow NoteOns (`tick % loopLength`) then drops remaining overflow. `setState` / finalize order is unchanged.
 
-Capture-serial RAM1 locals **6848**. Device recapture still required (no `draw_src` `81,0,192` from `4752`; D# frame `0,191` + `192,384` or occupy-equivalent).
+Capture-serial RAM1 locals **6848**.
+
+## Device recapture
+
+### [`185428`](../../captures/session_20260908_185428.log)
+
+Loop **3840** (not 174646’s 5376). Transitions: `ARMED → RECORDING → STOPPED_RECORDING → PLAYING → OVERDUBBING → STOPPED`.
+
+| Gate | Result |
+|---|---|
+| RC1 `draw_src` `81,0,192` from `4752` | **Not reproduced.** Last USB 81 is at 22.517 s and is released before stop. No `4752`. Only 81 `draw_src` is record grow `912–960`. |
+| RC3 overflow On at record stop | **PASS (analog).** Last USB 77 held through stop. `raw=4176` `final=3840` `phase=336`. `SEVT` `N,336` + `F,336` + `F,384`. reconstruct / effective / frame `77@336` length **48**. No `draw_src` `77@0`. |
+| RC2 D# frame `0,576` + hidden 192 | **Frame occupy-equivalent PASS; 174646 store shape not reproduced.** `SEVT` has `N,0` (174646 did not). One `F,576`, not two. reconstruct `63@0` length **576**. effective + frame `63@0` length **95** plus `63@96` length **96** and `63@288` length **240**. Not `0,576` + `192,0`. |
+
+174646-specific RC1 recapture **waived** (user accepted native + `185428` RC3 analog). Reopen only if a later capture matches `N,4752` + leftover head Off + `draw_src` `81,0,192`.

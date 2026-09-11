@@ -130,13 +130,18 @@ SC_MEM_ATTR void passReclaim(uint16_t chunksFreeBefore, uint16_t chunksFreeAfter
                              uint32_t durationUs, const char* pressure, uint8_t transport);
 SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32_t sampleCount);
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
-/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. */
+/** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period|track_rebuild|track_order|track_send|track_slot|track_resid},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. Stage 4a track_* spans are one `updateAllTracks` iteration; residual is track_update minus attributed spans. */
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
 /** Per-track S0 timing telemetry: DIAG,track_update,<track>,<maxUs>,<overCount> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
                                           uint32_t overCount);
 /** S0 timing telemetry: DIAG,clockrate,<pulsesPerSecond> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingClockrate(uint32_t pulsesPerSecond);
+/** USB-device batch composition maxima: DIAG,usb_batch,<maxSize>,<saturated>,<maxClocks>,<maxConsecutive> (Tier-A). */
+SC_MEM_ATTR void runtimeTimingUsbBatch(uint32_t maxSize, uint32_t saturatedCount, uint32_t maxClocks,
+                                       uint32_t maxConsecutive);
+/** USB-device batch buckets: DIAG,{usb_bkt_size|usb_bkt_clk|usb_bkt_disp},<b1_8>,<b9_16>,<b17_32>,<b33_64>,<b65_128> (Tier-A). */
+SC_MEM_ATTR void runtimeTimingUsbBatchBuckets(const char* kind, const uint32_t buckets[5]);
 /** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick> (Tier-A). */
 SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick);
 /** Playback gather rebuild: DIAG,playback_build,<path>,<durationUs>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count> (Tier-A). `path` is the branch actually taken: snapshot, overlay, compatibility, incremental, or note_edit. The sample is the maximum rebuild since the last emit; count is all rebuilds since the last emit. */

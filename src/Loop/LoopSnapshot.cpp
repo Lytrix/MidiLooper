@@ -77,6 +77,7 @@ LOOP_SNAPSHOT_COLD_MEM void snapshotSlabFree(void* pointer) {
 LOOP_SNAPSHOT_COLD_MEM SnapshotSlab* snapshotSlabOpen() {
   void* memory = snapshotSlabMalloc(kSnapshotSlabBytes);
   if (memory == nullptr) {
+    emitSnapshotAllocFailure("slab_open", kSnapshotSlabBytes);
     return nullptr;
   }
   auto* slab = new (memory) SnapshotSlab();
@@ -98,6 +99,7 @@ LOOP_SNAPSHOT_COLD_MEM bool snapshotSlabHasRoom(const SnapshotSlab* slab, size_t
 
 LOOP_SNAPSHOT_COLD_MEM bool snapshotSlabEnsureCapacity(size_t bytes) {
   if (bytes > snapshotSlabPayloadBytes()) {
+    emitSnapshotAllocFailure("slab_too_large", bytes);
     return false;
   }
   if (snapshotSlabHasRoom(g_currentSnapshotSlab, bytes)) {
@@ -168,6 +170,7 @@ class SnapshotSlabAllocator {
   Type* allocate(std::size_t count) {
     void* pointer = snapshotSlabAllocate(count * sizeof(Type));
     if (pointer == nullptr) {
+      emitSnapshotAllocFailure("slab_allocate", count * sizeof(Type));
 #if defined(ARDUINO)
       abort();
 #else
@@ -1338,5 +1341,21 @@ void emitSnapshotAllocCounters() {
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)0;
+#endif
+}
+
+LOOP_SNAPSHOT_COLD_MEM void emitSnapshotAllocFailure(const char* site, size_t bytes) {
+#if defined(SESSION_CAPTURE)
+  char line[160];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,snapshot_slab_fail,site=%s,bytes=%lu,nodes=%lu,slabs=%lu",
+           static_cast<unsigned long>(micros()), site != nullptr ? site : "unknown",
+           static_cast<unsigned long>(bytes),
+           static_cast<unsigned long>(snapshotAllocNodeCount()),
+           static_cast<unsigned long>(snapshotAllocSlabCount()));
+  DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)site;
+  (void)bytes;
 #endif
 }
