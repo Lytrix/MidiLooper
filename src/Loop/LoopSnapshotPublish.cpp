@@ -649,6 +649,49 @@ LOOP_COLD_MEM void refillCaptureStoreBatch(const Loop& loop,
   }
 }
 
+LOOP_COLD_MEM bool handoffLiveRecordProgressToCommittedPass(PendingSnapshotPublishBox& box,
+                                                         const LoopSnapshot& parent) {
+  PendingPassChangeProgress& progress = box.passChangeProgress;
+  if (!box.sessionExitQueued || !progress.active || !progress.fromCaptureStore ||
+      box.queuedPassIds.empty()) {
+    return false;
+  }
+  const PassId expectedPassId = box.queuedPassIds.front();
+  if (expectedPassId == kInvalidPassId) {
+    return false;
+  }
+
+  const uint8_t preservedOpenCount = progress.openNoteCount;
+  NoteId preservedNoteIds[kSnapshotWrapJournalMaxChanges];
+  for (uint8_t i = 0; i < preservedOpenCount; ++i) {
+    preservedNoteIds[i] = progress.openNotes[i].noteId;
+  }
+
+  box.persistLiveRecordCursor();
+  box.queuedPassIds.erase(box.queuedPassIds.begin());
+  progress.fromCaptureStore = false;
+  progress.passId = expectedPassId;
+  progress.batch.clear();
+  progress.batchIndex = 0;
+  CommittedEventRange::resetWindowTraversalCursor(progress.cursor);
+  progress.storeWindowComplete = false;
+  progress.nextStoreIndex = 0;
+  progress.includeUntil = 0;
+  progress.nextEventId = parent.nextEventId();
+  progress.nextCanonicalOrder = parent.nextEventId();
+
+  bool identityPreserved = !progress.fromCaptureStore && progress.passId == expectedPassId &&
+                           progress.openNoteCount == preservedOpenCount;
+  for (uint8_t i = 0; i < preservedOpenCount; ++i) {
+    if (progress.openNotes[i].noteId != preservedNoteIds[i]) {
+      identityPreserved = false;
+      break;
+    }
+  }
+  (void)identityPreserved;
+  return true;
+}
+
 LOOP_COLD_MEM bool prepareLiveRecordWindow(Loop& loop, PendingSnapshotPublishBox& box,
                                            const LoopSnapshot& parent,
                                            uint32_t liveRecordCompletedTicks) {
@@ -937,8 +980,12 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
   }
 
   if (box.passChangeProgress.active) {
-    if (box.passChangeProgress.fromCaptureStore &&
-        box.passChangeProgress.captureWindowConsumed()) {
+    if (box.sessionExitQueued && box.passChangeProgress.fromCaptureStore) {
+      if (!handoffLiveRecordProgressToCommittedPass(box, *parent)) {
+        return false;
+      }
+    } else if (box.passChangeProgress.fromCaptureStore &&
+               box.passChangeProgress.captureWindowConsumed()) {
       if (!prepareLiveRecordWindow(loop, box, *parent, liveRecordCompletedTicks)) {
         return false;
       }
@@ -1546,10 +1593,6 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
     pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   }
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
-  if (box.passChangeProgress.fromCaptureStore) {
-    box.persistLiveRecordCursor();
-    box.passChangeProgress.reset();
-  }
   box.sessionExitQueued = true;
   box.fromLoadedPasses = false;
   box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::None;

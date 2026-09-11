@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-10 (Overdub start bar-crossing Stages 1–3 SHIPPED — HITL [`202323`](../../captures/session_20260910_202323.log); wrap Stage 2b; OpenSpec 4.6 Stage 4)
+Last updated: 2026-09-11 (Overdub snapshot membership Stage 2 RC-A + Stage 4 SHIPPED; Stage 5 unwind next)
 
 ---
 

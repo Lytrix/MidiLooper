@@ -279,6 +279,9 @@ def stream_pattern_for_bars(
         held_notes = still_held
 
         if emit_immediate_first_step and not immediate_step_emitted:
+            # First grid step now — advance next_step_clock so this does not also
+            # fire again at step_clocks (that double-count made 2-bar record 33
+            # notes: immediate 48 + full 6..192 grid ending in another 48).
             note = select_grid_note()
             if note is not None:
                 out_port.send(mido.Message("note_on", channel=ch, note=note, velocity=98))
@@ -290,6 +293,7 @@ def stream_pattern_for_bars(
                 note_index += 1
                 cc_val = (cc_val + cc_step) % 128
             immediate_step_emitted = True
+            next_step_clock = phase_clock_count + step_clocks
 
         if phase_clock_count >= next_step_clock:
             note = select_grid_note()

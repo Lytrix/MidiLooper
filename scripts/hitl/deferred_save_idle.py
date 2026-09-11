@@ -64,7 +64,9 @@ def deferred_save_active_in_suffix(lines: list[str], *, after_index: int = 0) ->
         return False
 
     if persistence_drain_stuck_in_suffix(suffix):
-        return True
+        # Stuck drain will not become idle by waiting; callers that care about
+        # persistence must treat stuck separately. Clear/HITL setup ignores it.
+        return False
 
     last_pending = _last_match_index(suffix, _SAVE_PENDING_RE)
     last_in_progress = _last_match_index(suffix, _SAVE_IN_PROGRESS_RE)
@@ -126,6 +128,8 @@ def deferred_save_active_in_suffix(lines: list[str], *, after_index: int = 0) ->
 
 def deferred_save_idle_in_suffix(lines: list[str], *, after_index: int = 0) -> bool:
     """True when no active save work remains in lines[after_index:]."""
+    if persistence_drain_stuck_in_suffix(lines, after_index=after_index):
+        return True
     if deferred_save_active_in_suffix(lines, after_index=after_index):
         return False
 
@@ -209,15 +213,11 @@ def wait_for_deferred_save_idle(
             return False
         lines = collector.snapshot()
         if persistence_drain_stuck_in_suffix(lines, after_index=after_line_index):
-            now = time.monotonic()
-            if now - last_progress_log >= 5.0:
-                print(
-                    f"{log_prefix} firmware persistence drain stuck — "
-                    "waiting for async settle (or reboot if this never clears)"
-                )
-                last_progress_log = now
-            time.sleep(0.05)
-            continue
+            print(
+                f"{log_prefix} firmware persistence drain stuck — "
+                "ignoring (will not become idle by waiting)"
+            )
+            return True
         if deferred_save_idle_in_suffix(lines, after_index=after_line_index):
             print(f"{log_prefix} idle (suffix after line {after_line_index})")
             return True

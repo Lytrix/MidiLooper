@@ -131,12 +131,13 @@ IC_LOG_MEM void appendSnapshotIdleLines(Loop& snapshotLoop, uint32_t snapshotIdl
   queueCaptureLine(childLine);
   snprintf(childLine, sizeof(childLine),
            IC_LOG_FMT("#CAP,%lu,DIAG,snapshot_idle,inner,refill=%lu,event_scan=%lu,"
-                      "note_lookup=%lu,change_build=%lu,construct=%lu"),
+                      "note_lookup=%lu,change_build=%lu,construct=%lu,open=%u"),
            nowUs, static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleRefillUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleEventScanUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleNoteLookupUs()),
            static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleChangeBuildUs()),
-           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleConstructUs()));
+           static_cast<unsigned long>(snapshotLoop.lastSnapshotIdleConstructUs()),
+           snapshotLoop.liveRecordOpenNoteCount());
   queueCaptureLine(childLine);
 
   if (g_snapshotIdleReservePending) {
