@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (OpenSpec 6.2.1b HITL PASS — slimmed C1-a re-ship)
+Last updated: 2026-09-11 (OpenSpec 6.2.2 B3/B4 SHIPPED — narrow C1-a visual/display)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,14 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.2.2 (B3/B4 visual/display).**
-6.2.1b SHIPPED (slimmed re-ship): B1 generic compat retired; C1-a via
-`Loop::isPlaybackSessionExitPublicationGap()`; policy on
-`#CAP,DIAG,playback_build,session_exit_compat|hold_empty`. RAM1 locals **6880**.
-Native **1824/1829**. HITL `base` PASS
-[`231439`](../../captures/session_20260911_231439.log)
-(`ARMED→RECORDING` no reconnect; C1-a line after record-stop PLAYING). Plan:
+**Now — Immutable OpenSpec 6.2.3 (B2/B5/B6 edit/idle).**
+6.2.2 SHIPPED: B3/B4 generic compat retired; C1-a via
+`Loop::isPlaybackSessionExitPublicationGap()` only; Overlay-reject and pass-only
+misses use `PassesResolve` / existing hold gates. Host gates
+`test_b3_b4_narrow_session_exit_compat_gate.py` + inventory **PASS**. RAM1 locals
+**6880**. Native **1824/1829**. HITL `base` core baseline PASS
+[`000210`](../../captures/session_20260912_000210.log); persist verifier **open**.
+Plan:
 [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
+
+**Prior — OpenSpec 6.2.1b B1 C1-a (2026-09-11).**
+HITL `base` PASS
+[`231439`](../../captures/session_20260911_231439.log).
 
 **Prior — OpenSpec 6.2.1 C1 inventory (2026-09-11).**
 Tool: [`analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b1_c1_gather_miss_inventory.py);

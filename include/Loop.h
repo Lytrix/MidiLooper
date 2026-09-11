@@ -537,7 +537,10 @@ struct Loop {
     None = 0,
     Snapshot = 1,
     Prepared = 2,
+    /// Session-exit C1-a compatibility gather only (OpenSpec 6.2.2).
     Fallback = 3,
+    /// LCR pass resolve when snapshot/prepared miss and compat is not allowed.
+    PassesResolve = 4,
   };
   VisualCacheIdleGatherSource lastVisualCacheIdleGatherSource() const {
     return lastVisualCacheIdleGatherSource_;

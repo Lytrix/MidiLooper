@@ -1,6 +1,6 @@
 # OpenSpec 6.2 — Compatibility retirement (owner-by-owner)
 
-**Status:** **6.2.1b SHIPPED** (2026-09-11) — B1 narrow C1-a exception; **6.2.2 next**  
+**Status:** **6.2.2 SHIPPED** (2026-09-11) — B3/B4 narrow C1-a; **6.2.3 next**  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.2**  
 **Depends on:** [6.1 plan](immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md) (**APPROVED**), [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED)  
 **Regression baseline:** HITL `base` PASS [`231439`](../../captures/session_20260911_231439.log) (C1-a slimmed re-ship). Prior persist-bounds baseline [`203803`](../../captures/session_20260911_203803.log).
@@ -165,13 +165,57 @@ Telemetry: `PlaybackRebuildPath::SessionExitPublicationGap` → `session_exit_co
 
 Control: uncommitted revert of 2930bce7 ran HITL [`225352`](../../captures/session_20260911_225352.log) through RECORDING (no reconnect). Clean rebuild of slimmed C1-a recovered RAM1 locals **6880**. Removed synchronous `playbackB1GatherMissPolicy`; policy stays on existing deferred `#CAP,DIAG,playback_build,<path>`. Re-ship HITL [`231439`](../../captures/session_20260911_231439.log) **PASS**.
 
+## 6.2.2 — B3/B4 visual/display (SHIPPED)
+
+**Decision:** Mirror B1 Option 3 — retain `gatherCommittedEvents*` only during
+`isPlaybackSessionExitPublicationGap()`; all other gather-miss / Overlay-reject
+paths use LCR `resolveDisplayNotes(passes)` (`PassesResolve`) or existing hold
+gates (`holdUntilCurrentSnapshot` on B4 paint).
+
+### Architecture gate (6.2.2)
+
+| Question | Answer |
+|---|---|
+| **Owner** | `LoopVisualCache`, `DisplayNoteResolveCommitted`, `DisplayColdHelpers` |
+| **Invariant** | Generic B3/B4 compat retired; C1-a session-exit bridge only |
+| **Ownership change?** | NO |
+| **Transition change?** | NO |
+| **Execution bound change?** | NO |
+| **Behavior-preserving?** | YES — native overdub/visual-cache fixtures |
+
+### B3/B4 policy table (implemented)
+
+| Condition | B3 idle | B3 full rebuild | B4 paint | B4 window gather |
+|---|---|---|---|---|
+| Current / Snapshot gather | Snapshot / SnapshotNotes | `resolveDisplayNotes(*snapshot)` | incremental snapshot path | `tryCopyCurrentSnapshot…` |
+| Overlay (C4) | Reject → Prepared or `PassesResolve` | Reject → `PassesResolve` | Reject → hold or `PassesResolve` | Reject → `PassesResolve` |
+| No root, C1-a | `gatherCommittedEventsInWindow` (budgeted) | `gatherCommittedEvents` | `gatherCommittedEvents*` | `gatherCommittedEventsInWindow*` |
+| No root, not C1-a | `PassesResolve` | `PassesResolve` | `PassesResolve` / hold | `PassesResolve` |
+
+`VisualCacheIdleGatherSource::PassesResolve` added for telemetry. Idle slice does
+not stamp `builtFromRevision` on passes-resolve; full rebuild does when not
+overlay-rejected.
+
+### Verification (6.2.2)
+
+| Gate | Status |
+|---|---|
+| Host `scripts/test_b3_b4_narrow_session_exit_compat_gate.py` (6 tests) | **PASS** |
+| Host `scripts/test_compatibility_consumer_inventory.py` (10 tests; B3/B4 → C1-a) | **PASS** |
+| Native `test_overdub_source_view` + `test_loop_take_survival` | **PASS** |
+| Full `pio test -e native` | **1823/1829** (linker flake on 4 unrelated suites in one run; re-run clean) |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` core baseline | **PASS** [`000210`](../../captures/session_20260912_000210.log) — transitions, notes, undo/redo, DISP |
+| HITL persist verifier | **open** — `FIRMWARE_CONTRADICTION` (`dispatch` / `loop_persist_not_sliced`) on short 2-bar run |
+
 ## Stage table
 
 | Stage | Scope | Status |
 |---|---|---|
 | **6.2.1** | C1 inventory | **SHIPPED** |
 | **6.2.1b** | B1 narrow C1-a firmware + gates | **SHIPPED** |
-| **6.2.2** | B3/B4 visual/display | **next** |
+| **6.2.2** | B3/B4 visual/display | **SHIPPED** |
+| **6.2.3** | B2/B5/B6 edit/idle | **next** |
 
 ## C1 inventory (6.2.1 — SHIPPED read-only)
 

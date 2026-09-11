@@ -1,6 +1,6 @@
 # OpenSpec 6.2 — Compatibility retirement (owner-by-owner)
 
-**Status:** **6.2.1b SHIPPED** (2026-09-11) — B1 narrow C1-a exception; **6.2.2 next**  
+**Status:** **6.2.2 SHIPPED** (2026-09-11) — B3/B4 narrow C1-a; **6.2.3 next**  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.2**  
 **Depends on:** [6.1 plan](immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md) (**APPROVED**), [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED)  
 **Regression baseline:** HITL `base` PASS [`231439`](../../captures/session_20260911_231439.log) (C1-a slimmed re-ship). Prior persist-bounds baseline [`203803`](../../captures/session_20260911_203803.log).

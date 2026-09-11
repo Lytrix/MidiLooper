@@ -277,16 +277,21 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
         }
         const bool holdUntilCurrentSnapshot = loop.pendingSnapshotSessionExitQueued() &&
                                               !loop.publishedSnapshotIsCurrent();
-        if (!usedSnapshot && !holdUntilCurrentSnapshot) {
+        bool usedSessionExitCompatGather = false;
+        if (!usedSnapshot && !holdUntilCurrentSnapshot &&
+            loop.isPlaybackSessionExitPublicationGap()) {
             if (loop.captureActive()) {
                 mutLoop.gatherCommittedEventsWithCapture(liveDisplayEventBuffer);
             } else {
                 mutLoop.gatherCommittedEvents(liveDisplayEventBuffer);
             }
+            usedSessionExitCompatGather = true;
         }
 #if defined(SESSION_CAPTURE)
         {
-            const char* source = usedSnapshot ? "Snapshot" : "Fallback";
+            const char* source = usedSnapshot ? "Snapshot"
+                                              : (usedSessionExitCompatGather ? "SessionExitCompat"
+                                                                             : "PassesResolve");
             const char* path =
                 snapshotPath == Loop::SnapshotWindowGatherPath::Overlay ? "OverlayRejected"
                                                                         : source;
