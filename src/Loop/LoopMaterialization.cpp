@@ -190,6 +190,14 @@ void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
   out.assign(events.begin(), events.end());
 }
 
+LOOP_COLD_MEM void Loop::copyCommittedPassReplayEvents(SessionMidiEventVec& out) const {
+  if (loopLengthTicks == 0) {
+    out.clear();
+    return;
+  }
+  passes.materializeToEventVector(out, loopLengthTicks);
+}
+
 LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out,
                                                              uint32_t windowStart,
                                                              uint32_t windowLength,

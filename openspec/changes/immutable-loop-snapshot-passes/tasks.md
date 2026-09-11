@@ -12,9 +12,10 @@ parent 4.4 closed by inventory; **4.5** cross-gate verify SHIPPED
 and 4b.4 are complete under Ring B round-robin. Phase **5.x** complete.
 **6.1** consumer inventory SHIPPED 2026-09-11. **6.2.1b** B1 C1-a SHIPPED 2026-09-11
 (HITL `231439`). **6.2.2** B3/B4 C1-a SHIPPED 2026-09-11 (HITL re-run PASS
-[`001343`](../../../captures/session_20260912_001343.log)). **6.2.3** B2/B5/B6
-C1-a / stale-root SHIPPED 2026-09-12 (native **1825/1830**; HITL eval in progress).
-Open now: **4b.3**, **5.7**, **6.2.4–6.5**.
+[`001343`](../../../captures/session_20260912_001343.log)). **6.2.3** B2/B5/B6 C1-a / stale-root SHIPPED 2026-09-12. **6.2.4** B7/B8 +
+**6.2 parent closeout** SHIPPED 2026-09-12 (`_6_2_BLOCKER_SITES` empty; native
+**1825/1830**; HITL core [`002259`](../../../captures/session_20260912_002259.log)).
+Open now: **4b.3**, **5.7**, **6.3–6.5**.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -575,10 +576,12 @@ to immutable snapshot content.
   - Plan [`immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md).
   - Host gate `scripts/test_compatibility_consumer_inventory.py` (7 tests): hot paths forbid compat execute; fallback allowlists; B1–B8 site inventory stable.
   - HITL unchanged from 5.6 sign-off [`203803`](../../../captures/session_20260911_203803.log).
-- [ ] 6.2 Remove superseded maintained-LCR state and replay APIs only after caller migration and rollback gates pass.
+- [x] 6.2 Remove superseded maintained-LCR state and replay APIs only after caller migration and rollback gates pass.
   - **6.2.1b SHIPPED:** B1 generic compat retired; C1-a via `isPlaybackSessionExitPublicationGap`; HITL [`231439`](../../../captures/session_20260911_231439.log).
   - **6.2.2 SHIPPED:** B3/B4 generic compat retired; C1-a via `isPlaybackSessionExitPublicationGap`; `PassesResolve` on Overlay-reject / pass-only miss. HITL re-run PASS [`001343`](../../../captures/session_20260912_001343.log).
-  - **6.2.3 SHIPPED:** B2 `HoldEmpty` on non-C1-a/C4 miss; B5 idle materialize C1-a only; B6 `copyEffectiveCommittedEvents` replaces `loop.midiEvents()`. Host `test_b2_b5_b6_narrow_session_exit_compat_gate.py` + inventory (B7/B8 blockers remain). Next **6.2.4** B7/B8. Persist wedge follow-up: **5.7**.
+  - **6.2.3 SHIPPED:** B2 `HoldEmpty` on non-C1-a/C4 miss; B5 idle materialize C1-a only; B6 `copyEffectiveCommittedEvents` replaces `loop.midiEvents()`. HITL core [`002259`](../../../captures/session_20260912_002259.log).
+  - **6.2.4 SHIPPED:** B7 LCR device-gate construction-only; B8 `copyCommittedPassReplayEvents` in capture (no direct `materializeToEventVector` in `LoopCapture`). `_6_2_BLOCKER_SITES` empty.
+  - **6.2 parent closeout SHIPPED:** all B1–B8 consumer fallbacks retired; construction machinery remains for **6.3**. Persist wedge follow-up: **5.7**.
 - [ ] 6.3 Remove compatibility effective-state derivation and old readers only after documented triggers close.
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
 - [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.

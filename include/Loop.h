@@ -176,6 +176,9 @@ struct Loop {
   /// Lazy full flatten for edit/MIDI paths that still require the entire loop.
   void ensureEffectiveEventStoreCurrent() const;
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
+  /// Pass replay flatten for source-view / count hints without touching
+  /// `passesMaterializedStore_` or `effectiveEventStoreRevision_`.
+  void copyCommittedPassReplayEvents(SessionMidiEventVec& out) const;
   /// Range query of committed content (chunk window + optional edit projection).
   /// Active Note rows apply per committed pass layer, then layers merge.
   /// Does not flatten the loop. Companion fast path copies a ready Overdub

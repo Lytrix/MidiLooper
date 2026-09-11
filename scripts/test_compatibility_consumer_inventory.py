@@ -32,7 +32,6 @@ _MATERIALIZE_TO_EVENT_VECTOR_ALLOW = frozenset(
         "src/Loop/LoopMaterialization.cpp",
         "src/Loop/LoopPasses.cpp",
         "src/LoopContentResolution.cpp",
-        "src/Loop/LoopCapture.cpp",
         "src/Loop/LoopEditPasses.cpp",
         "include/LoopPasses.h",
     }
@@ -77,14 +76,10 @@ _PASSES_MATERIALIZED_STORE_ALLOW = frozenset(
     }
 )
 
-# Named 6.2 fallback sites (plan B1–B8). B1/B3/B4/B2/B5 use narrow C1-a exceptions —
-# see scripts/test_b1_narrow_session_exit_compat_gate.py,
-# scripts/test_b3_b4_narrow_session_exit_compat_gate.py, and
-# scripts/test_b2_b5_b6_narrow_session_exit_compat_gate.py.
-_6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {
-    "B7": ("src/LoopContentResolution.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE),
-    "B8": ("src/Loop/LoopCapture.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE),
-}
+# Named 6.2 fallback sites (plan B1–B8). B1/B3/B4/B2/B5 use narrow C1-a exceptions;
+# B7 is construction-only (LCR device gate); B8 retired direct materialize in capture.
+# See scripts/test_b7_b8_construction_consumer_gate.py.
+_6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {}
 
 _B1_C1_A_SITE = ("src/Track/TrackPlaybackWindowBuild.cpp", _GATHER_COMMITTED_RE)
 _B3_C1_A_SITE = ("src/Loop/LoopVisualCache.cpp", _GATHER_COMMITTED_RE)
@@ -94,6 +89,7 @@ _B4_C1_A_SITES = (
 )
 _B2_C1_A_SITE = ("src/Utils/CommittedMidiScratch.cpp", _MATERIALIZE_EDIT_VIEW_RE)
 _B5_C1_A_SITE = ("src/Track/TrackDeferredMaintenance.cpp", _MATERIALIZE_EDIT_VIEW_RE)
+_B7_CONSTRUCTION_SITE = ("src/LoopContentResolution.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE)
 
 _EXPECTED_BLOCKER_COUNT = len(_6_2_BLOCKER_SITES)
 
@@ -247,6 +243,18 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
         rel_path = "src/EditManager/NoteEditSessionLifecycle.cpp"
         text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
         self.assertNotRegex(text, r"\.midiEvents\s*\(")
+
+    def test_b7_construction_materialize_site_retained(self) -> None:
+        rel_path, pattern = _B7_CONSTRUCTION_SITE
+        hits = _scan_cpp_headers(pattern)
+        self.assertIn(rel_path, hits, "B7 construction must retain device-gate materialize")
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
+        self.assertIn("Phase::Materialize", text)
+
+    def test_b8_capture_has_no_materialize_to_event_vector(self) -> None:
+        rel_path = "src/Loop/LoopCapture.cpp"
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
+        self.assertNotRegex(text, r"\bmaterializeToEventVector\s*\(")
 
 
 if __name__ == "__main__":
