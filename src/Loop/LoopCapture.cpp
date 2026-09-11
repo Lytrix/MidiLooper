@@ -764,13 +764,7 @@ LOOP_COLD_MEM void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
 }
 
 bool shouldMaterializeCaptureCompatFromPasses(const Loop& loop) {
-  if (loop.isPlaybackSessionExitPublicationGap()) {
-    return true;
-  }
-  if (loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent()) {
-    return true;
-  }
-  return false;
+  return loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent();
 }
 
 bool gatherSnapshotFirstCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {

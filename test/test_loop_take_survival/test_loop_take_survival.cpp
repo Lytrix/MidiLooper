@@ -1721,6 +1721,30 @@ void test_committed_scratch_hold_empty_without_snapshot_or_c1_a() {
   TEST_ASSERT_NULL(scratchIdentity);
 }
 
+void test_committed_scratch_hold_empty_during_session_exit_gap() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
+
+  MidiEventVec scratch;
+  uint32_t scratchRevision = UINT32_MAX;
+  const void* scratchIdentity = nullptr;
+  const CommittedMidiScratch::RefreshKind refresh =
+      CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity, loop);
+  TEST_ASSERT_EQUAL(CommittedMidiScratch::RefreshKind::HoldEmpty, refresh);
+  TEST_ASSERT_TRUE(scratch.empty());
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, scratchRevision);
+  TEST_ASSERT_NULL(scratchIdentity);
+}
+
 void test_keep_committed_mover_in_visual_cache_232309() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5422,6 +5446,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_visual_cache_identity_stale_when_published_root_replaced_same_revision);
   RUN_TEST(test_legacy_committed_scratch_snapshot_identity_freshness);
   RUN_TEST(test_committed_scratch_hold_empty_without_snapshot_or_c1_a);
+  RUN_TEST(test_committed_scratch_hold_empty_during_session_exit_gap);
   RUN_TEST(test_keep_committed_mover_in_visual_cache_232309);
   RUN_TEST(test_rebuild_visual_cache_from_passes_skips_wrap_held_append_on_snapshot_spans);
   RUN_TEST(test_rematerialize_edit_view_uses_snapshot_span_note_ids);

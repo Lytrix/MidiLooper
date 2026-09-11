@@ -8,13 +8,7 @@
 namespace {
 
 bool shouldMaterializeCommittedScratchFromPasses(const Loop& loop) {
-  if (loop.isPlaybackSessionExitPublicationGap()) {
-    return true;
-  }
-  if (loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent()) {
-    return true;
-  }
-  return false;
+  return loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent();
 }
 
 }  // namespace
