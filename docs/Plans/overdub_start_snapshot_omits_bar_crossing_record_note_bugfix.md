@@ -1,13 +1,15 @@
 # Overdub start — current snapshot omits bar-crossing record note
 
-**Status:** Stages 5–6 containment **unwound** (membership Stage 5,
-2026-09-11) — draw-source heal removed [`104115`](../../captures/session_20260911_104115.log);
-`visualCacheDirty` veto restored [`105156`](../../captures/session_20260911_105156.log).  
-**Architectural marker:** Stages 1–3 remaining compensations still **containment
+**Status:** Stages 3–6 containment **unwound** (membership Stage 5,
+2026-09-11) — visual/adopt/idle `mergeOmitted` removed
+[`110457`](../../captures/session_20260911_110457.log); Stages 5–6 earlier
+[`104115`](../../captures/session_20260911_104115.log) /
+[`105156`](../../captures/session_20260911_105156.log). Helper KEEP.  
+**Architectural marker:** Stages 1–2 remaining compensations still **containment
 only**. End-state invariant and unwind order:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](overdub_snapshot_bar_crossing_membership_bugfix.md).
 
-**Next:** unwind consumer Stage 3 call sites (`mergeOmitted…` at visual/idle/adopt; helper KEEP), then 1 → 2.  
+**Next:** unwind consumer Stage 1 retain predicate, then Stage 2 source-view `from=snapshot` merge.  
 **Fail pin (OD open omit):** [`session_20260910_194531.log`](../../captures/session_20260910_194531.log)  
 **Parent / adjacent:** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) Option C (snapshot membership).
 
@@ -106,6 +108,11 @@ Native: source-view / take-survival fixture — snapshot missing one closed pair
 3. Full-loop `from=snapshot` also `mergeDisplayNotesByNoteId` from reconstruct (same as visual/prior origins) so OD2 source recovers identities mergeOmitted misses.
 
 Device [`202323`](../../captures/session_20260910_202323.log): OD1 `visual=33`; id 27 in OD1+OD2; native `test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405`.
+
+**Unwound (membership Stage 5.3, 2026-09-11):** removed visual/idle/adopt
+`mergeOmittedCommittedNoteOnIdentitiesInto` call sites; helper kept.
+Native `test_visual_cache_trusts_published_snapshot_membership_without_merge_omitted`.
+Gate [`110457`](../../captures/session_20260911_110457.log).
 
 ### Stage 4 — Do not reintroduce sealed Hide via reconstruct merge (`202713`)
 

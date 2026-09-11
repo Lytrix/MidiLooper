@@ -4019,10 +4019,10 @@ void test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531() {
   TEST_ASSERT_NOT_NULL(findSpanCacheNote(loop, 26));
 }
 
-/// `200405`: after OD1 stop, visual/adopt stayed without id=27 (pitch 74) even
-/// though source-view merge restored it at OD1 open. Snapshot-sourced visual
-/// rebuild must merge omitted identities before the next OD open.
-void test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405() {
+/// After membership RC-A, visual rebuild trusts published snapshot NoteRefs.
+/// An artificially incomplete snapshot must not be healed here (consumer
+/// Stage 3 unwind). Source-view merge for `from=snapshot` remains Stage 2.
+void test_visual_cache_trusts_published_snapshot_membership_without_merge_omitted() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -4036,15 +4036,16 @@ void test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405() {
   loop.seedRecordPassFromStore(store);
   loop.nextNoteId_ = 28;
 
+  // Incomplete published root (pre-RC-A shape): only id=26.
   loop.storePublishedSnapshotForTest(
       buildOccupySnapshot(loop.loopId, loop.loopLengthTicks, 26, 73, 1452, 1500),
       loop.playbackRevision);
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
 
   loop.rebuildVisualCacheFromPasses();
-  TEST_ASSERT_NOT_NULL_MESSAGE(findDisplayNoteById(loop.visualCache.notes, 27),
-                               "snapshot visual rebuild must merge omitted id=27");
   TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.visualCache.notes, 26));
+  TEST_ASSERT_NULL_MESSAGE(findDisplayNoteById(loop.visualCache.notes, 27),
+                           "visual must not mergeOmitted over incomplete snapshot");
 
   NoteUtils::DisplayNoteVec composed;
   NoteUtils::DisplayNote keep{};
@@ -4055,8 +4056,9 @@ void test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405() {
   keep.endTick = 1500;
   composed.push_back(keep);
   loop.adoptComposedDisplayNotesFromViewport(composed);
-  TEST_ASSERT_NOT_NULL_MESSAGE(findDisplayNoteById(loop.visualCache.notes, 27),
-                               "adopt must merge omitted id=27 into visual");
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.visualCache.notes, 26));
+  TEST_ASSERT_NULL_MESSAGE(findDisplayNoteById(loop.visualCache.notes, 27),
+                           "adopt must not mergeOmitted omitted id=27");
 }
 
 /// `202713`: Stage 3 reconstruct upsert re-admitted sealed Hide targets at OD2.
@@ -4869,7 +4871,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_draw_source_snapshot_miss_recovers_pending_shorten_212700);
   RUN_TEST(test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151);
   RUN_TEST(test_snapshot_span_cache_merges_omitted_bar_crossing_note_194531);
-  RUN_TEST(test_visual_cache_merges_omitted_bar_crossing_note_from_snapshot_200405);
+  RUN_TEST(test_visual_cache_trusts_published_snapshot_membership_without_merge_omitted);
   RUN_TEST(test_snapshot_span_cache_keeps_sealed_hide_after_merge_202713);
   RUN_TEST(test_occupy_predicate_true_uses_snapshot_not_visual_or_prepared);
   RUN_TEST(test_snapshot_source_uses_bounded_overdub_window);

@@ -645,8 +645,8 @@ struct Loop {
   /// body notes stay off the piano-roll list (204132 / NOTE_EDIT open).
   void appendOverdubPassDisplayNotes(NoteUtils::DisplayNoteVec& notes) const;
   /// Closed NoteOn identities in committed events but missing from `dest`
-  /// (snapshot NoteRef / resolve miss). Cold path only — `200405` visual=32
-  /// while source merge already restored id=27.
+  /// (snapshot NoteRef / resolve miss). Cold path — kept for non-snapshot
+  /// source-view origins and diagnostics; visual/adopt call sites unwound.
   void mergeOmittedCommittedNoteOnIdentitiesInto(NoteUtils::DisplayNoteVec& dest) const;
   /// Rebuild up to `maxBarsPerSlice` dirty bars, preferring `priorityBar`.
   /// When `maxBarDistanceFromPriority` is finite, skip dirty bars outside that neighborhood
