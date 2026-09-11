@@ -763,6 +763,41 @@ LOOP_COLD_MEM void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
   }
 }
 
+bool shouldMaterializeCaptureCompatFromPasses(const Loop& loop) {
+  if (loop.isPlaybackSessionExitPublicationGap()) {
+    return true;
+  }
+  if (loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent()) {
+    return true;
+  }
+  return false;
+}
+
+bool gatherSnapshotFirstCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
+  const void* observedIdentity = nullptr;
+  return loop.tryCopyCurrentSnapshotEditViewEvents(out, observedIdentity);
+}
+
+bool gatherConstructionCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
+  if (gatherSnapshotFirstCommittedEvents(loop, out)) {
+    return true;
+  }
+  loop.copyCommittedPassReplayEvents(out);
+  return !out.empty();
+}
+
+bool gatherNarrowCompatCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
+  if (gatherSnapshotFirstCommittedEvents(loop, out)) {
+    return true;
+  }
+  if (!shouldMaterializeCaptureCompatFromPasses(loop)) {
+    out.clear();
+    return false;
+  }
+  loop.copyCommittedPassReplayEvents(out);
+  return !out.empty();
+}
+
 LOOP_COLD_MEM bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
   if (noteId == kInvalidNoteId) {
     return false;
@@ -829,7 +864,9 @@ LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesInto(
     return;
   }
   SessionMidiEventVec committedEvents;
-  passes.materializeToEventVector(committedEvents, loopLengthTicks);
+  if (!gatherNarrowCompatCommittedEvents(*this, committedEvents)) {
+    return;
+  }
   mergeOmittedCommittedNoteOnIdentities(dest, committedEvents);
   // Raw-event merge can reintroduce sealed Delete targets (`202713`).
   applyPendingNoteChangesToDisplayNotes(dest, dest.size());
@@ -1079,18 +1116,19 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
     // (`test_snapshot_source_uses_bounded_overdub_window`).
     if (std::strcmp(sourceOrigin, "snapshot") != 0) {
       SessionMidiEventVec committedEvents;
-      passes.materializeToEventVector(committedEvents, loopLengthTicks);
-      // Upsert missing NoteIds from pass resolve (honors sealed Delete/Length),
-      // not raw reconstruct — reconstruct re-admits Hidden shorts (`202713`).
-      if (std::strcmp(sourceOrigin, "passes") != 0) {
-        NoteUtils::DisplayNoteVec committedNotes;
-        LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, committedNotes);
-        appendOverdubPassWrapPairedNotes(committedNotes);
-        mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
-      }
-      mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
-      if (!overdubSourceSpanCacheNotes_.empty()) {
-        overdubSourceSpanCacheFullLoop_ = true;
+      if (gatherConstructionCommittedEvents(*this, committedEvents)) {
+        // Upsert missing NoteIds from pass resolve (honors sealed Delete/Length),
+        // not raw reconstruct — reconstruct re-admits Hidden shorts (`202713`).
+        if (std::strcmp(sourceOrigin, "passes") != 0) {
+          NoteUtils::DisplayNoteVec committedNotes;
+          LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, committedNotes);
+          appendOverdubPassWrapPairedNotes(committedNotes);
+          mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
+        }
+        mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
+        if (!overdubSourceSpanCacheNotes_.empty()) {
+          overdubSourceSpanCacheFullLoop_ = true;
+        }
       }
     }
     // Sealed Hide/Shorten + pending must apply after any snapshot or merge seed
@@ -1694,8 +1732,8 @@ bool Loop::captureHasNoteOffAfter(uint8_t channel, uint8_t note, uint32_t onTick
 }
 
 size_t Loop::liveEventCount() const {
-  MidiEventVec flat;
-  passes.materializeToEventVector(flat, loopLengthTicks);
+  SessionMidiEventVec flat;
+  copyCommittedPassReplayEvents(flat);
   size_t count = flat.size();
   if (captureActive()) {
     count += capture.store.size();

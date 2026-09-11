@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 6.2.3 B2/B5/B6 shipped; HITL eval in progress)
+Last updated: 2026-09-12 (OpenSpec 6.2 SHIPPED; next 6.3)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,13 +10,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.2.4 (B7/B8 construction consumers).**
-6.2.3 SHIPPED: B2 `CommittedMidiScratch::HoldEmpty` on non-C1-a/C4 miss; B5 idle
-`materializeEditViewFromPasses` C1-a only; B6 `copyEffectiveCommittedEvents`
-replaces `loop.midiEvents()`. Host `test_b2_b5_b6_narrow_session_exit_compat_gate.py`
-+ inventory (B7/B8 blockers remain) **PASS**. RAM1 **6880**. Native **1825/1830**.
-HITL `base` core **PASS** [`002259`](../../captures/session_20260912_002259.log); persist verifier **open**
-(5.7 wedge — `already_pending`, not 6.2.3). Plan:
+**Now — Immutable OpenSpec 6.3 (compatibility machinery removal).**
+6.2 **SHIPPED** (2026-09-12): B1–B8 normal-consumer compat retired; `_6_2_BLOCKER_SITES`
+empty; construction APIs remain (`materializeToEventVector`, `passesMaterializedStore_`,
+LCR device gate). Native **1825/1830**; RAM1 **6880**; HITL core [`002259`](../../captures/session_20260912_002259.log).
+Persist verifier flake → **5.7**. Plan:
 [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
 
 **Prior — OpenSpec 6.2.2 (2026-09-11).**

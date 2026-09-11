@@ -1,6 +1,6 @@
 # OpenSpec 6.2 — Compatibility retirement (owner-by-owner)
 
-**Status:** **6.2.3 SHIPPED** (2026-09-12) — B2/B5/B6 narrow C1-a / stale-root; **6.2.4 next**  
+**Status:** **6.2 SHIPPED** (2026-09-12) — B1–B8 consumer compat retired; construction machinery remains for **6.3**  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.2**  
 **Depends on:** [6.1 plan](immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md) (**APPROVED**), [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED)  
 **Regression baseline:** HITL `base` PASS [`231439`](../../captures/session_20260911_231439.log) (C1-a slimmed re-ship). Prior persist-bounds baseline [`203803`](../../captures/session_20260911_203803.log).
@@ -256,7 +256,54 @@ instead of `loop.midiEvents()`.
 | **6.2.1b** | B1 narrow C1-a firmware + gates | **SHIPPED** |
 | **6.2.2** | B3/B4 visual/display | **SHIPPED** |
 | **6.2.3** | B2/B5/B6 edit/idle | **SHIPPED** |
-| **6.2.4** | B7/B8 construction | **next** |
+| **6.2.4** | B7/B8 construction | **SHIPPED** |
+| **6.2.5** | Parent verification / closeout | **SHIPPED** |
+
+## 6.2.4 — B7/B8 construction consumers (SHIPPED)
+
+**Decision:** B7 `materializeToEventVector` stays in LCR **device-gate construction only**
+(`Phase::Materialize`). B8 removes direct `materializeToEventVector` from `LoopCapture`:
+source-view span merge uses `gatherConstructionCommittedEvents` (snapshot-first, else
+`copyCommittedPassReplayEvents` via `LoopMaterialization`); narrow helper paths use
+`gatherNarrowCompatCommittedEvents` (C1-a / stale-root only). `liveEventCount` delegates to
+`copyCommittedPassReplayEvents`.
+
+### Architecture gate (6.2.4)
+
+| Question | Answer |
+|---|---|
+| **Owner** | `LoopContentResolution` (device gate), `LoopCapture` (source view) |
+| **Invariant** | No direct pass flatten in capture; construction API confined to machinery owners |
+| **Ownership change?** | NO |
+| **Transition change?** | NO |
+| **Execution bound change?** | NO |
+| **Behavior-preserving?** | YES — `test_overdub_source_view` **110/110** |
+
+### Verification (6.2.4)
+
+| Gate | Status |
+|---|---|
+| Host `scripts/test_b7_b8_construction_consumer_gate.py` (3 tests) | **PASS** |
+| Host `scripts/test_compatibility_consumer_inventory.py` (15 tests; `_6_2_BLOCKER_SITES` empty) | **PASS** |
+| Native `test_overdub_source_view` + full suite | **1825/1830** |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` core baseline | **PASS** [`002259`](../../captures/session_20260912_002259.log) (6.2.3 sign-off; 6.2.4 native-only) |
+| HITL persist verifier | **open** — `already_pending` wedge → OpenSpec **5.7** |
+
+## 6.2.5 — Parent closeout (SHIPPED)
+
+All B1–B8 normal-consumer fallback sites retired (`_6_2_BLOCKER_SITES` empty). Narrow
+C1-a bridges retained at B1/B3/B4/B2/B5; B7 construction-only; B8 routes through
+`copyCommittedPassReplayEvents`. Construction APIs (`materializeToEventVector`,
+`passesMaterializedStore_`, LCR device gate) remain until **6.3**.
+
+| Gate | Status |
+|---|---|
+| Owner-by-owner commits (6.2.1b–6.2.4) | **PASS** |
+| Host inventory + slice gates (B1–B8) | **PASS** |
+| Native `pio test -e native` | **1825/1830** |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` core | **PASS** [`002259`](../../captures/session_20260912_002259.log) |
 
 ## C1 inventory (6.2.1 — SHIPPED read-only)
 
@@ -300,9 +347,9 @@ Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b
 |---|---|---|
 | 6.1 inventory frozen | Host gate + plan | **PASS** |
 | Snapshot taxonomy documented | This plan § taxonomy | **PASS** |
-| Owner-by-owner commits | Git + shrinking `_6_2_BLOCKER_SITES` | **open** |
-| HITL `base` after each slice | [`231439`](../../captures/session_20260911_231439.log) (6.2.1b); [`001343`](../../captures/session_20260912_001343.log) (6.2.2) | **required per slice** |
-| `pio test -e native` | Full suite per slice | **required per slice** |
+| Owner-by-owner commits | Git + shrinking `_6_2_BLOCKER_SITES` | **PASS** (empty) |
+| HITL `base` after each slice | [`231439`](../../captures/session_20260911_231439.log); [`001343`](../../captures/session_20260912_001343.log); [`002259`](../../captures/session_20260912_002259.log) | **PASS** (core); persist verifier open → **5.7** |
+| `pio test -e native` | Full suite per slice | **1825/1830** |
 
 ## Follow-up (outside 6.2 scope)
 
