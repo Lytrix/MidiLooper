@@ -160,6 +160,57 @@ void test_loop_persist_slot_key_is_distinct_per_track() {
   TEST_ASSERT_FALSE(persistKeysEqual(trackFiveSlotZero, trackZeroSlotZero));
 }
 
+void test_recover_orphaned_writing_item_requeues_at_head() {
+  resetQueue();
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::SlotMeta, persistKeyForSlot(4, 0)));
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::TrackMeta, persistKeyForTrack(1)));
+
+  PersistWorkItem writingItem{};
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(writingItem));
+  TEST_ASSERT_EQUAL(1u, PersistenceWorkQueue::writingWorkItemCount());
+  TEST_ASSERT_EQUAL(1u, PersistenceWorkQueue::queueDepth());
+
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::recoverOrphanedWritingItem());
+  TEST_ASSERT_EQUAL(0u, PersistenceWorkQueue::writingWorkItemCount());
+  TEST_ASSERT_EQUAL(2u, PersistenceWorkQueue::queueDepth());
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistWorkState::Queued),
+                    static_cast<int>(PersistenceWorkQueue::workState(PersistWorkType::SlotMeta,
+                                                                     persistKeyForSlot(4, 0))));
+
+  PersistWorkItem queued[2] = {};
+  TEST_ASSERT_EQUAL(2u, PersistenceWorkQueue::queuedWorkItems(queued, 2));
+  TEST_ASSERT_TRUE(persistWorkItemsEqual(queued[0], writingItem));
+}
+
+void test_recover_orphaned_writing_unblocks_begin_write() {
+  resetQueue();
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::SlotMeta, persistKeyForSlot(4, 0)));
+
+  PersistWorkItem writingItem{};
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(writingItem));
+  TEST_ASSERT_FALSE(PersistenceWorkQueue::beginWriteQueuedItem(writingItem));
+
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::recoverOrphanedWritingItem());
+
+  PersistWorkItem resumed{};
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(resumed));
+  TEST_ASSERT_TRUE(persistWorkItemsEqual(resumed, writingItem));
+  TEST_ASSERT_EQUAL(1u, PersistenceWorkQueue::writingWorkItemCount());
+}
+
+void test_try_get_writing_item_reports_active_writer() {
+  resetQueue();
+  PersistWorkItem item{};
+  TEST_ASSERT_FALSE(PersistenceWorkQueue::tryGetWritingItem(item));
+
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::SlotMeta, persistKeyForSlot(4, 0)));
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(item));
+
+  PersistWorkItem observed{};
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::tryGetWritingItem(observed));
+  TEST_ASSERT_TRUE(persistWorkItemsEqual(observed, item));
+}
+
 void test_loop_undo_history_slot_key_is_distinct_per_track() {
   resetQueue();
   const PersistKey trackFiveSlotZero = persistKeyForSlot(5, 0);
@@ -185,5 +236,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_loop_persist_slot_key_differs_from_loop_id_key);
   RUN_TEST(test_loop_persist_slot_key_is_distinct_per_track);
   RUN_TEST(test_loop_undo_history_slot_key_is_distinct_per_track);
+  RUN_TEST(test_recover_orphaned_writing_item_requeues_at_head);
+  RUN_TEST(test_recover_orphaned_writing_unblocks_begin_write);
+  RUN_TEST(test_try_get_writing_item_reports_active_writer);
   return UNITY_END();
 }

@@ -266,25 +266,61 @@ void markItemPersisted(const PersistWorkItem& item) {
   }
 }
 
+bool requeueWritingEntryByIndex(QueueState& state, uint16_t entryIndex) {
+  if (entryIndex >= kMaxWorkEntries ||
+      state.entries[entryIndex].state != PersistWorkState::Writing) {
+    return false;
+  }
+  state.entries[entryIndex].state = PersistWorkState::Queued;
+  if (state.writingEntryIndex == entryIndex) {
+    state.writingEntryIndex = kInvalidEntryIndex;
+  }
+  if (!queuePushFront(state, entryIndex)) {
+    state.entries[entryIndex].state = PersistWorkState::Writing;
+    state.writingEntryIndex = entryIndex;
+    return false;
+  }
+  return true;
+}
+
 void requeueWritingItem(const PersistWorkItem& item) {
   QueueState* state = queueState();
   if (state == nullptr) {
     return;
   }
 
-  const uint16_t entryIndex = findEntryIndex(*state, item.type, item.key);
-  if (entryIndex == kInvalidEntryIndex ||
-      state->entries[entryIndex].state != PersistWorkState::Writing) {
+  uint16_t entryIndex = findEntryIndex(*state, item.type, item.key);
+  if (entryIndex == kInvalidEntryIndex && state->writingEntryIndex != kInvalidEntryIndex &&
+      state->writingEntryIndex < kMaxWorkEntries &&
+      state->entries[state->writingEntryIndex].state == PersistWorkState::Writing &&
+      persistWorkItemsEqual(state->entries[state->writingEntryIndex].item, item)) {
+    entryIndex = state->writingEntryIndex;
+  }
+  if (entryIndex == kInvalidEntryIndex) {
     return;
   }
-  state->entries[entryIndex].state = PersistWorkState::Queued;
-  if (state->writingEntryIndex == entryIndex) {
-    state->writingEntryIndex = kInvalidEntryIndex;
+  (void)requeueWritingEntryByIndex(*state, entryIndex);
+}
+
+bool tryGetWritingItem(PersistWorkItem& itemOut) {
+  QueueState* state = queueState();
+  if (state == nullptr || state->writingEntryIndex == kInvalidEntryIndex ||
+      state->writingEntryIndex >= kMaxWorkEntries) {
+    return false;
   }
-  if (!queuePushFront(*state, entryIndex)) {
-    state->entries[entryIndex].state = PersistWorkState::Writing;
-    state->writingEntryIndex = entryIndex;
+  if (state->entries[state->writingEntryIndex].state != PersistWorkState::Writing) {
+    return false;
   }
+  itemOut = state->entries[state->writingEntryIndex].item;
+  return true;
+}
+
+bool recoverOrphanedWritingItem() {
+  QueueState* state = queueState();
+  if (state == nullptr || state->writingEntryIndex == kInvalidEntryIndex) {
+    return false;
+  }
+  return requeueWritingEntryByIndex(*state, state->writingEntryIndex);
 }
 
 void resetForTests() {

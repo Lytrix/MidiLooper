@@ -73,6 +73,12 @@ void markItemPersisted(const PersistWorkItem& item);
 /// Return a Writing item to the queue head after a failed SD write.
 void requeueWritingItem(const PersistWorkItem& item);
 
+/// Current Writing entry when `writingWorkItemCount() > 0`.
+bool tryGetWritingItem(PersistWorkItem& itemOut);
+
+/// Requeue the orphaned Writing entry using `writingEntryIndex` (OpenSpec 5.7).
+bool recoverOrphanedWritingItem();
+
 void resetForTests();
 
 using PersistWorkVisitor = void (*)(const PersistWorkItem& item, void* context);

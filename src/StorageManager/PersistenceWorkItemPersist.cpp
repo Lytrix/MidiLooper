@@ -124,6 +124,21 @@ STORAGE_PERSIST_MEM void emitPersistenceWorkTelemetry(const PersistWorkItem& ite
 #endif
 }
 
+STORAGE_PERSIST_MEM bool recoverPersistenceWorkQueueStall(PersistenceWorkItemJob& job) {
+  if (job.itemActive || PersistenceWorkQueue::writingWorkItemCount() == 0) {
+    return false;
+  }
+  PersistWorkItem stalled{};
+  if (!PersistenceWorkQueue::tryGetWritingItem(stalled)) {
+    return false;
+  }
+  if (!PersistenceWorkQueue::recoverOrphanedWritingItem()) {
+    return false;
+  }
+  emitPersistenceWorkTelemetry(stalled, "work_queue_stall", "recover");
+  return true;
+}
+
 STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& job) {
   job.itemActive = false;
   job.bundleWriteActive = false;
@@ -436,6 +451,8 @@ STORAGE_PERSIST_MEM void resetPersistenceWorkItemJobState() {
   PersistenceWorkItemJob& job = storageSession.persistenceWorkItem;
   if (job.itemActive) {
     PersistenceWorkQueue::requeueWritingItem(job.item);
+  } else {
+    (void)recoverPersistenceWorkQueueStall(job);
   }
   job.sdIoActive = false;
   job.bundleWriteActive = false;
@@ -453,12 +470,13 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
 #endif
   maybeAdmitFinalizeWorkspaceAfterDrain();
 
+  PersistenceWorkItemJob& job = storageSession.persistenceWorkItem;
+  (void)recoverPersistenceWorkQueueStall(job);
+
   if (PersistenceWorkQueue::queueDepth() == 0 && PersistenceWorkQueue::writingWorkItemCount() == 0 &&
-      !storageSession.persistenceWorkItem.itemActive) {
+      !job.itemActive) {
     return true;
   }
-
-  PersistenceWorkItemJob& job = storageSession.persistenceWorkItem;
   if (deferFlushForTransport()) {
     return true;
   }

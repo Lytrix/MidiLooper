@@ -15,7 +15,7 @@ and 4b.4 are complete under Ring B round-robin. Phase **5.x** complete.
 [`001343`](../../../captures/session_20260912_001343.log)). **6.2.3** B2/B5/B6 C1-a / stale-root SHIPPED 2026-09-12. **6.2.4** B7/B8 +
 **6.2 parent closeout** SHIPPED 2026-09-12 (`_6_2_BLOCKER_SITES` empty; native
 **1825/1830**; HITL core [`002259`](../../../captures/session_20260912_002259.log)).
-Open now: **4b.3**, **5.7**, **6.3–6.5**.
+Open now: **4b.3**, **6.3–6.5** (5.7 HITL sign-off pending).
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -549,20 +549,18 @@ closed for `DisplayResolveLiveCapture`.
       report [`203843`](../../../captures/host_midi_automation_baseline_20260911_203843.json).
       Prior verify-only replay [`200657`](../../../captures/session_20260911_200657.log).
       Plan: [`immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md).
-- [ ] 5.7 Harden `PersistenceWorkQueue` against boot-save stall when a work item is
+- [x] 5.7 Harden `PersistenceWorkQueue` against boot-save stall when a work item is
       left `Writing` without an active `PersistenceWorkItemJob` (pre-record wedge
       caused false 5.5/5.6 HITL failure on otherwise PASS core baseline).
       - **Evidence:** FAIL [`000210`](../../../captures/session_20260912_000210.log)
         (`SlotMeta,start` only; `persist_save` 1 µs no-ops); flake PASS
         [`001343`](../../../captures/session_20260912_001343.log)
         (`persistence_handoff result=ok`, `loop_persist=231`).
-      - **5.7.1** Detect + recover in `stepPersistenceWorkItem`; session-capture
-        telemetry on recovery.
-      - **5.7.2** Audit `requeueWritingItem` / `resetPersistenceWorkItemJobState` /
-        post-`start` defer paths so `Writing` cannot outlive `itemActive`.
-      - **5.7.3** Native fixture for wedged `Writing`/inactive job.
-      - **5.7.4** (optional) Host boot-save stall warning in
-        `parse_persistence_buildup.py` or HITL.
+      - **SHIPPED 2026-09-12:** `recoverOrphanedWritingItem` + `recoverPersistenceWorkQueueStall`
+        in `stepPersistenceWorkItem` / `resetPersistenceWorkItemJobState`; `requeueWritingItem`
+        writing-index fallback; native `test_persistence_work_queue` (13/13); host stall warning
+        in `parse_persistence_buildup.py`; RAM1 **6880**; native **1828/1833**. HITL post-fix
+        sign-off **pending**.
       - Plan:
         [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 
