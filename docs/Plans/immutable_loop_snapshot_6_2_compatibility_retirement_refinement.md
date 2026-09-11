@@ -1,6 +1,6 @@
 # OpenSpec 6.2 — Compatibility retirement (owner-by-owner)
 
-**Status:** **6.2.2 SHIPPED** (2026-09-11) — B3/B4 narrow C1-a; **6.2.3 next**  
+**Status:** **6.2.3 SHIPPED** (2026-09-12) — B2/B5/B6 narrow C1-a / stale-root; **6.2.4 next**  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.2**  
 **Depends on:** [6.1 plan](immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md) (**APPROVED**), [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED)  
 **Regression baseline:** HITL `base` PASS [`231439`](../../captures/session_20260911_231439.log) (C1-a slimmed re-ship). Prior persist-bounds baseline [`203803`](../../captures/session_20260911_203803.log).
@@ -206,7 +206,47 @@ overlay-rejected.
 | Full `pio test -e native` | **1823/1829** (linker flake on 4 unrelated suites in one run; re-run clean) |
 | RAM1 `teensy41-capture-serial` | **6880** locals |
 | HITL `base` core baseline | **PASS** [`000210`](../../captures/session_20260912_000210.log) — transitions, notes, undo/redo, DISP |
-| HITL persist verifier | **open** — `FIRMWARE_CONTRADICTION` (`dispatch` / `loop_persist_not_sliced`) on short 2-bar run |
+| HITL persist verifier | **PASS** on re-run [`001343`](../../captures/session_20260912_001343.log); flake [`000210`](../../captures/session_20260912_000210.log) → OpenSpec **5.7** |
+
+## 6.2.3 — B2/B5/B6 edit/idle (SHIPPED)
+
+**Decision:** Mirror B1/B3 Option 3 — retain `materializeEditViewFromPasses` only during
+`isPlaybackSessionExitPublicationGap()` (C1-a) or stale-root overlay (C4:
+`publishedSnapshot() && !publishedSnapshotIsCurrent()`). All other B2 misses return
+`RefreshKind::HoldEmpty` (clear scratch, stamp revision). B5 idle maintenance materializes
+only on C1-a. B6 `openNoteEditSession` rematerialize uses `copyEffectiveCommittedEvents`
+instead of `loop.midiEvents()`.
+
+### Architecture gate (6.2.3)
+
+| Question | Answer |
+|---|---|
+| **Owner** | `CommittedMidiScratch`, `TrackDeferredMaintenance`, `NoteEditSessionLifecycle` |
+| **Invariant** | Generic B2/B5 pass materialize and B6 `midiEvents()` consumer retired; C1-a / C4 only |
+| **Ownership change?** | NO |
+| **Transition change?** | NO |
+| **Execution bound change?** | NO |
+| **Behavior-preserving?** | YES — NOTE_EDIT source semantics unchanged; parity oracle only |
+
+### B2/B5/B6 policy table (implemented)
+
+| Condition | B2 `CommittedMidiScratch::refresh` | B5 idle maintenance | B6 note-edit open rematerialize |
+|---|---|---|---|
+| Current snapshot copy | `FromSnapshot` | N/A (freshness guards) | `copyEffectiveCommittedEvents` |
+| C1-a session-exit gap | `FromPasses` | `materializeEditViewFromPasses` | via `copyEffectiveCommittedEvents` path |
+| C4 stale root | `FromPasses` | hold (no materialize) | via `copyEffectiveCommittedEvents` path |
+| No root, not C1-a / C4 | `HoldEmpty` | hold | `copyEffectiveCommittedEvents` (may hold empty) |
+
+### Verification (6.2.3)
+
+| Gate | Status |
+|---|---|
+| Host `scripts/test_b2_b5_b6_narrow_session_exit_compat_gate.py` (4 tests) | **PASS** |
+| Host `scripts/test_compatibility_consumer_inventory.py` (13 tests; B2/B5 → C1-a, B6 no `midiEvents`) | **PASS** |
+| Native `test_committed_scratch_hold_empty_without_snapshot_or_c1_a` + full suite | **1825/1830** |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` core baseline | **PASS** [`002259`](../../captures/session_20260912_002259.log) — transitions, notes, undo/redo, DISP |
+| HITL persist verifier | **open** — `already_pending` wedge (OpenSpec **5.7**); same class as [`000210`](../../captures/session_20260912_000210.log) |
 
 ## Stage table
 
@@ -215,7 +255,8 @@ overlay-rejected.
 | **6.2.1** | C1 inventory | **SHIPPED** |
 | **6.2.1b** | B1 narrow C1-a firmware + gates | **SHIPPED** |
 | **6.2.2** | B3/B4 visual/display | **SHIPPED** |
-| **6.2.3** | B2/B5/B6 edit/idle | **next** |
+| **6.2.3** | B2/B5/B6 edit/idle | **SHIPPED** |
+| **6.2.4** | B7/B8 construction | **next** |
 
 ## C1 inventory (6.2.1 — SHIPPED read-only)
 
@@ -260,8 +301,14 @@ Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b
 | 6.1 inventory frozen | Host gate + plan | **PASS** |
 | Snapshot taxonomy documented | This plan § taxonomy | **PASS** |
 | Owner-by-owner commits | Git + shrinking `_6_2_BLOCKER_SITES` | **open** |
-| HITL `base` after each slice | [`231439`](../../captures/session_20260911_231439.log) (6.2.1b) | **required per slice** |
+| HITL `base` after each slice | [`231439`](../../captures/session_20260911_231439.log) (6.2.1b); [`001343`](../../captures/session_20260912_001343.log) (6.2.2) | **required per slice** |
 | `pio test -e native` | Full suite per slice | **required per slice** |
+
+## Follow-up (outside 6.2 scope)
+
+- **OpenSpec 5.7** — boot-save `PersistenceWorkQueue` wedge after `PERS,work,start` (flake on
+  [`000210`](../../captures/session_20260912_000210.log); not a 6.2.2 regression). Plan:
+  [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 
 ## Explicit non-goals (6.2 parent)
 

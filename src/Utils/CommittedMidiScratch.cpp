@@ -5,6 +5,20 @@
 
 #include "Loop.h"
 
+namespace {
+
+bool shouldMaterializeCommittedScratchFromPasses(const Loop& loop) {
+  if (loop.isPlaybackSessionExitPublicationGap()) {
+    return true;
+  }
+  if (loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent()) {
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 namespace CommittedMidiScratch {
 
 RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
@@ -24,12 +38,19 @@ RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
     return RefreshKind::FromSnapshot;
   }
 
-  loop.materializeEditViewFromPasses();
-  const SessionMidiEventVec& committedLoopMidi = loop.midiEvents();
-  scratch.assign(committedLoopMidi.begin(), committedLoopMidi.end());
+  if (shouldMaterializeCommittedScratchFromPasses(loop)) {
+    loop.materializeEditViewFromPasses();
+    const SessionMidiEventVec& committedLoopMidi = loop.midiEvents();
+    scratch.assign(committedLoopMidi.begin(), committedLoopMidi.end());
+    scratchRevision = revision;
+    scratchIdentity = nullptr;
+    return RefreshKind::FromPasses;
+  }
+
+  scratch.clear();
   scratchRevision = revision;
   scratchIdentity = nullptr;
-  return RefreshKind::FromPasses;
+  return RefreshKind::HoldEmpty;
 }
 
 }  // namespace CommittedMidiScratch

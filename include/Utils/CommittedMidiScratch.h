@@ -18,6 +18,7 @@ enum class RefreshKind : uint8_t {
   Reused = 0,
   FromSnapshot = 1,
   FromPasses = 2,
+  HoldEmpty = 3,
 };
 
 inline bool isFresh(uint32_t scratchRevision, uint32_t playbackRevision,
@@ -37,8 +38,9 @@ inline void invalidate(MidiEventVec& scratch, uint32_t& scratchRevision,
 }
 
 /// Refresh scratch from the currently published snapshot when usable; otherwise
-/// `materializeEditViewFromPasses`. Fill uses one publication observation for
-/// copy + stamp. Match uses the current published identity for this call.
+/// pass materialize only on session-exit publication gap (C1-a) or stale-root
+/// overlay (C4). Other misses hold empty. Fill uses one publication observation
+/// for copy + stamp. Match uses the current published identity for this call.
 RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
                     const void*& scratchIdentity, Loop& loop);
 

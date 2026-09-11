@@ -243,7 +243,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
 #if defined(SESSION_CAPTURE)
         logNoteEditOpenQ3(loop, editSession.store.readStore());
 #endif
-        loop.assignMissingNoteIds(loop.midiEvents());
+        SessionMidiEventVec committedFlat;
+        loop.copyEffectiveCommittedEvents(committedFlat);
+        loop.assignMissingNoteIds(committedFlat);
         loop.assignMissingNoteIds(editSession.store.mutEvents());
         stampNoteIdsOntoPairedNoteOffs(editSession.store.mutEvents());
         editSession.noteEditCurrentState =
