@@ -40,6 +40,38 @@ def _peak_row(rows: list[dict[str, object]], key: str) -> dict[str, object] | No
     return max(rows, key=lambda row: int(row[key]))
 
 
+_BOOT_BUNDLE_WORK_TYPES = frozenset(
+    {"GlobalMeta", "TrackMeta", "SlotMeta", "WorkspaceFooter"}
+)
+
+
+def _detect_work_queue_stalls(work_rows: list[dict[str, object]]) -> list[str]:
+    warnings: list[str] = []
+    open_starts: dict[tuple[str, str], int] = {}
+    for row in work_rows:
+        work_type = str(row["work_type"])
+        key_label = str(row["key_label"])
+        phase = str(row["phase"])
+        outcome = str(row["outcome"])
+        key = (work_type, key_label)
+        if phase == "start" and outcome == "ok":
+            open_starts[key] = int(row["timestamp"])
+        elif phase == "bundle_done" and outcome == "ok":
+            open_starts.pop(key, None)
+        elif phase == "done" and outcome == "ok":
+            open_starts.pop(key, None)
+        elif phase == "work_queue_stall" and outcome == "recover":
+            warnings.append(f"recovered orphaned Writing entry for {work_type}/{key_label}")
+    for (work_type, key_label), timestamp_us in open_starts.items():
+        if work_type not in _BOOT_BUNDLE_WORK_TYPES:
+            continue
+        warnings.append(
+            f"boot bundle work started without bundle_done: {work_type}/{key_label} "
+            f"@ {_us_to_s(timestamp_us):.1f}s"
+        )
+    return warnings
+
+
 def _print_backlog_timeline(rows: list[dict[str, object]], limit: int) -> None:
     if not rows:
         print("  (no PERS,backlog lines — flash teensy41-capture-serial with backlog telemetry)")
@@ -118,6 +150,11 @@ def summarize_session(lines: list[str], backlog_limit: int) -> None:
         completed = sum(1 for row in work_rows if row["phase"] == "complete" and row["outcome"] == "ok")
         started = sum(1 for row in work_rows if row["phase"] == "start")
         print(f"Work items (PERS,work): start={started}, complete_ok={completed}, total={len(work_rows)}")
+        stall_warnings = _detect_work_queue_stalls(work_rows)
+        if stall_warnings:
+            print("  work-queue stall warnings:")
+            for warning in stall_warnings:
+                print(f"    - {warning}")
         print()
 
     if drain_rows:

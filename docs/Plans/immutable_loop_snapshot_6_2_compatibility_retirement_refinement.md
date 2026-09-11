@@ -353,8 +353,7 @@ Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b
 
 ## Follow-up (outside 6.2 scope)
 
-- **OpenSpec 5.7** — boot-save `PersistenceWorkQueue` wedge after `PERS,work,start` (flake on
-  [`000210`](../../captures/session_20260912_000210.log); not a 6.2.2 regression). Plan:
+- **OpenSpec 5.7** — **SHIPPED** (2026-09-12). Plan:
   [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 
 ## Explicit non-goals (6.2 parent)
