@@ -81,14 +81,6 @@ DISP_COLD_MEM void rebuildDisplayNotesInWindow(Loop& mutLoop, const Loop& loop, 
         eventBuffer.clear();
         usedSnapshot = false;
     }
-    if (!usedSnapshot && mutLoop.isPlaybackSessionExitPublicationGap()) {
-        if (includeActiveCapture && loop.captureActive()) {
-            mutLoop.gatherCommittedEventsInWindowWithCapture(eventBuffer, windowStart,
-                                                            windowLength);
-        } else {
-            mutLoop.gatherCommittedEventsInWindow(eventBuffer, windowStart, windowLength);
-        }
-    }
     if (usedSnapshot && !eventBuffer.empty()) {
         const NoteUtils::DisplayNoteVec reconstructed =
             NoteUtils::reconstructDisplayNotes(eventBuffer, loopLength, false, false);

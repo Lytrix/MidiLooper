@@ -1084,10 +1084,6 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       const bool avoidFullVisual =
           loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks) || deferHeavyDerivedView;
       const bool visualCacheCleanAtTurnStart = !loop.visualCacheDirty;
-      if (!loop.isPassesMaterializedStoreFresh() && !deferHeavyDerivedView && !avoidFullVisual &&
-          loop.isPlaybackSessionExitPublicationGap()) {
-        loop.materializeEditViewFromPasses();
-      }
         if (loop.visualCacheDirty) {
         // One idle slice per call. Do not ensureVisualCacheBuilt here — short
         // loops use the same resumable owner as long loops (Slice 4c).

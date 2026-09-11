@@ -10,8 +10,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.3 (compatibility machinery removal).**
-6.2 **SHIPPED**: B1–B8 consumer compat retired; construction APIs remain until 6.3.
+**Now — OpenSpec 6.3.2+ (machinery removal).**
+6.3.1 **SHIPPED:** C1-a session-exit compat bridges retired; hold-empty until idle
+publish. HITL `base` PASS [`013611`](../../captures/session_20260912_013611.log).
+Next: `passesMaterializedStore_` / `gatherCommittedEvents*` API removal. Plan:
+[`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md).
+
+**Prior — OpenSpec 6.3.1 C1-a hold-empty (2026-09-12).**
+Retired B1/B3/B4 `gatherCommittedEvents*` and B2/B5 gap `materializeEditViewFromPasses`;
+DEC-045 idle-stepped session-exit publish unchanged.
+
+**Prior — OpenSpec 6.2 compatibility consumer retirement (2026-09-12).**
+B1–B8 consumer compat retired; construction APIs remain until 6.3.2+.
 Plan: [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
 
 **Prior — OpenSpec 5.7 + 5.7.5 (2026-09-12).**

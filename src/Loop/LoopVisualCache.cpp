@@ -359,7 +359,6 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   NoteUtils::DisplayNoteVec sliceNotes;
   bool usedSnapshot = false;
   bool usedPrepared = false;
-  bool usedSessionExitCompatGather = false;
   bool fallbackGatherComplete = true;
   if (publishedSnapshotIsCurrent()) {
     if (const ImmutableLoopSnapshotRef snapshot = publishedSnapshot()) {
@@ -387,17 +386,6 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     }
     if (usedSnapshot || usedPrepared) {
       resetFallbackGatherSession();
-    } else if (isPlaybackSessionExitPublicationGap()) {
-      const bool includeActiveEditRows = !constrainFallbackGather;
-      usedSessionExitCompatGather = true;
-      if (fallbackGatherEventBudget == 0) {
-        resetFallbackGatherSession();
-        gatherCommittedEventsInWindow(flat, windowStart, windowLength, includeActiveEditRows);
-        fallbackGatherComplete = true;
-      } else {
-        fallbackGatherComplete = advanceFallbackGatherSession(
-            fallbackGatherEventBudget, windowStart, windowLength, includeActiveEditRows, flat);
-      }
     } else {
       resetFallbackGatherSession();
       flat.clear();
@@ -408,8 +396,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Snapshot;
   } else if (usedPrepared) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Prepared;
-  } else if (usedSessionExitCompatGather && fallbackGatherComplete) {
-    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::Fallback;
+  } else if (isPlaybackSessionExitPublicationGap()) {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
   } else if (fallbackGatherComplete) {
     lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::PassesResolve;
   } else {
@@ -434,6 +422,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (!lastVisualCacheIdleCopiedSnapshotNotes_) {
     if (usedSnapshot || usedPrepared) {
       sliceNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
+    } else if (isPlaybackSessionExitPublicationGap()) {
+      sliceNotes.clear();
     } else {
       NoteUtils::DisplayNoteVec paired;
       LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, paired);
@@ -542,8 +532,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
     visualCache.dirtyBars.clear();
     ++visualCache.revision;
     if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
-            lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared,
-            usedSessionExitCompatGather && fallbackGatherComplete)) {
+            lastVisualCacheIdleOverlayRejected_, usedSnapshot, usedPrepared, false)) {
       visualCache.builtFromRevision = playbackRevision;
       // Current-root Snapshot gather stamps identity; prepared/fallback do not
       // (`nullptr` is never snapshot-current — OpenSpec 4.6 Stage 1).
@@ -814,12 +803,7 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
     flat.clear();
     usedSnapshot = false;
   }
-  bool usedSessionExitCompatGather = false;
-  if (!usedSnapshot && isPlaybackSessionExitPublicationGap()) {
-    gatherCommittedEvents(flat);
-    usedSessionExitCompatGather = true;
-  }
-  materializedEventCount_ = usedSessionExitCompatGather ? flat.size() : 0;
+  materializedEventCount_ = 0;
   NoteUtils::DisplayNoteVec rebuiltNotes;
   if (usedSnapshot) {
     // Current-root gather names the usable snapshot; display notes come from
@@ -830,6 +814,8 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
     } else {
       rebuiltNotes = NoteUtils::reconstructDisplayNotes(flat, loopLengthTicks, false, false);
     }
+  } else if (isPlaybackSessionExitPublicationGap()) {
+    rebuiltNotes.clear();
   } else {
     LoopContentResolution::resolveDisplayNotes(passes, loopLengthTicks, rebuiltNotes);
   }
@@ -852,10 +838,9 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
   }
   ++visualCache.revision;
   const bool passesResolveCoverage =
-      !usedSnapshot && !overlayRejected && !usedSessionExitCompatGather;
+      !usedSnapshot && !overlayRejected && !isPlaybackSessionExitPublicationGap();
   if (DisplayWindowUtils::visualCacheGatherCoversPlaybackRevision(
-          overlayRejected, usedSnapshot, false,
-          usedSessionExitCompatGather || passesResolveCoverage)) {
+          overlayRejected, usedSnapshot, false, passesResolveCoverage)) {
     visualCache.builtFromRevision = rebuildGatherRevision;
     // Current-root Snapshot gather stamps identity; fallback does not
     // (`nullptr` is never snapshot-current — OpenSpec 4.6 Stage 1).

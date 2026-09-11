@@ -58,13 +58,19 @@ _MIDI_EVENTS_ALLOW = frozenset(
 _GATHER_COMMITTED_ALLOW = frozenset(
     {
         "src/Loop/LoopMaterialization.cpp",
-        "src/Loop/LoopVisualCache.cpp",
-        "src/Track/TrackPlaybackWindowBuild.cpp",
         "src/Track/TrackDeferredMaintenance.cpp",
-        "src/DisplayManager/DisplayNoteResolveCommitted.cpp",
-        "src/DisplayManager/DisplayColdHelpers.cpp",
         "src/DisplayManager/DisplayNoteWindowGather.cpp",
         "include/Loop.h",
+    }
+)
+
+# OpenSpec 6.3.1 — C1-a session-exit gather retired at these owners.
+_C1_A_GATHER_RETIRED_SITES = frozenset(
+    {
+        "src/Track/TrackPlaybackWindowBuild.cpp",
+        "src/Loop/LoopVisualCache.cpp",
+        "src/DisplayManager/DisplayNoteResolveCommitted.cpp",
+        "src/DisplayManager/DisplayColdHelpers.cpp",
     }
 )
 
@@ -81,14 +87,6 @@ _PASSES_MATERIALIZED_STORE_ALLOW = frozenset(
 # See scripts/test_b7_b8_construction_consumer_gate.py.
 _6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {}
 
-_B1_C1_A_SITE = ("src/Track/TrackPlaybackWindowBuild.cpp", _GATHER_COMMITTED_RE)
-_B3_C1_A_SITE = ("src/Loop/LoopVisualCache.cpp", _GATHER_COMMITTED_RE)
-_B4_C1_A_SITES = (
-    ("src/DisplayManager/DisplayNoteResolveCommitted.cpp", _GATHER_COMMITTED_RE),
-    ("src/DisplayManager/DisplayColdHelpers.cpp", _GATHER_COMMITTED_RE),
-)
-_B2_C1_A_SITE = ("src/Utils/CommittedMidiScratch.cpp", _MATERIALIZE_EDIT_VIEW_RE)
-_B5_C1_A_SITE = ("src/Track/TrackDeferredMaintenance.cpp", _MATERIALIZE_EDIT_VIEW_RE)
 _B7_CONSTRUCTION_SITE = ("src/LoopContentResolution.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE)
 
 _EXPECTED_BLOCKER_COUNT = len(_6_2_BLOCKER_SITES)
@@ -203,41 +201,21 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
         )
         self.assertEqual(missing, [], missing)
 
-    def test_b1_c1_a_exception_site_retained(self) -> None:
-        rel_path, pattern = _B1_C1_A_SITE
-        hits = _scan_cpp_headers(pattern)
-        self.assertIn(rel_path, hits, "B1 C1-a exception must retain guarded gather")
-        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
-        self.assertIn("isPlaybackSessionExitPublicationGap", text)
-
-    def test_b3_c1_a_exception_site_retained(self) -> None:
-        rel_path, pattern = _B3_C1_A_SITE
-        hits = _scan_cpp_headers(pattern)
-        self.assertIn(rel_path, hits, "B3 C1-a exception must retain guarded gather")
-        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
-        self.assertIn("isPlaybackSessionExitPublicationGap", text)
-
-    def test_b4_c1_a_exception_sites_retained(self) -> None:
+    def test_c1_a_gather_retired_at_b1_b3_b4_sites(self) -> None:
         hits = _scan_cpp_headers(_GATHER_COMMITTED_RE)
-        for rel_path, _pattern in _B4_C1_A_SITES:
-            self.assertIn(rel_path, hits, f"B4 C1-a exception must retain guarded gather in {rel_path}")
-            text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
-            self.assertIn("isPlaybackSessionExitPublicationGap", text)
+        for rel_path in _C1_A_GATHER_RETIRED_SITES:
+            self.assertNotIn(
+                rel_path,
+                hits,
+                f"{rel_path} must not call gatherCommittedEvents after 6.3.1",
+            )
 
-    def test_b2_c1_a_exception_site_retained(self) -> None:
-        rel_path, pattern = _B2_C1_A_SITE
-        hits = _scan_cpp_headers(pattern)
-        self.assertIn(rel_path, hits, "B2 C1-a exception must retain guarded materialize")
-        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
-        self.assertIn("isPlaybackSessionExitPublicationGap", text)
+    def test_b2_does_not_materialize_on_session_exit_gap(self) -> None:
+        text = (_REPO_ROOT / "src/Utils/CommittedMidiScratch.cpp").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        self.assertNotIn("isPlaybackSessionExitPublicationGap", text)
         self.assertIn("RefreshKind::HoldEmpty", text)
-
-    def test_b5_c1_a_exception_site_retained(self) -> None:
-        rel_path, pattern = _B5_C1_A_SITE
-        hits = _scan_cpp_headers(pattern)
-        self.assertIn(rel_path, hits, "B5 C1-a exception must retain guarded materialize")
-        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
-        self.assertIn("isPlaybackSessionExitPublicationGap", text)
 
     def test_b6_note_edit_lifecycle_has_no_midi_events_consumer(self) -> None:
         rel_path = "src/EditManager/NoteEditSessionLifecycle.cpp"
