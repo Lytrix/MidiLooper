@@ -196,6 +196,27 @@ bool StorageManager::hasPendingLoopSlotRestore() {
            StorageManagerInternal::anyLoadLoopJobActive();
 }
 
+bool StorageManager::hasActivePersistenceWorkItem() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    return StorageManagerInternal::storageSession.persistenceWorkItem.itemActive;
+#endif
+}
+
+bool StorageManager::shouldPrioritizeWorkspaceSaveDrain() {
+#if BYPASS_STOP_UNDO_SAVE
+    return false;
+#else
+    if (!StorageManagerInternal::storageSession.currentWorkspaceSave.pending) {
+        return false;
+    }
+    return StorageManagerInternal::storageSession.persistenceWorkItem.itemActive ||
+           PersistenceWorkQueue::queueDepth() > 0 ||
+           PersistenceWorkQueue::writingWorkItemCount() > 0;
+#endif
+}
+
 bool STORAGE_PERSIST_MEM StorageManager::isFocusedLoopSlotRestoreWork() {
     if (trackManager.getTrackCount() == 0) {
         return false;

@@ -33,7 +33,7 @@ bool shouldDeferTransportFlush(bool savePending, bool transportActive, uint32_t 
 
 /// True when the semantic work-item writer may take one budgeted deferred slice.
 bool shouldRunPersistenceWorkItemWriter(uint16_t queueDepth, uint16_t writingWorkItemCount,
-                                        bool otherSdIoActive);
+                                        bool prioritizeWorkspaceSaveDrain, bool otherSdIoActive);
 
 /// Headroom for one persistence work-item slice (native-testable).
 /// Active slices and urgent capture-stop saves proceed below the internal-heap floor.

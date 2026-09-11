@@ -64,6 +64,9 @@ public:
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();
     static bool hasDeferredSaveWork();
+    static bool hasActivePersistenceWorkItem();
+    /// True while a pending workspace save still has queued or in-flight work items.
+    static bool shouldPrioritizeWorkspaceSaveDrain();
     /// True while boot-time loop slot payloads are still queued for idle restore.
     static bool hasPendingLoopSlotRestore();
     /// True when the in-flight, parked, or next queued restore targets the selected track/slot.

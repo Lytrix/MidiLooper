@@ -732,12 +732,18 @@ void loop() {
   const uint32_t persistSaveStartUs = micros();
 #endif
   const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
-  const bool allowDeferredSaveAfterLoadFrame = MidiServiceDrain::allowDeferredSaveAfterLoadFrame(
-      timingCriticalTrackActive, loadFrameUs);
-  if (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::Persistence &&
-      deferredIdleOwnerAllowed && allowDeferredSaveAfterLoadFrame &&
-      MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending) &&
-      deferredSavePending) {
+  const bool prioritizeWorkspaceSaveDrain = StorageManager::shouldPrioritizeWorkspaceSaveDrain();
+  const bool activePersistenceWorkItem = StorageManager::hasActivePersistenceWorkItem();
+  const bool allowDeferredSaveAfterLoadFrame =
+      prioritizeWorkspaceSaveDrain ||
+      MidiServiceDrain::allowDeferredSaveAfterLoadFrame(timingCriticalTrackActive, loadFrameUs);
+  const bool runDeferredSaveState =
+      deferredSavePending &&
+      (prioritizeWorkspaceSaveDrain ||
+       (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::Persistence &&
+        deferredIdleOwnerAllowed && allowDeferredSaveAfterLoadFrame &&
+        MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending)));
+  if (runDeferredSaveState) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
   }
 #if defined(SESSION_CAPTURE)

@@ -15,7 +15,7 @@ and 4b.4 are complete under Ring B round-robin. Phase **5.x** complete.
 [`001343`](../../../captures/session_20260912_001343.log)). **6.2.3** B2/B5/B6 C1-a / stale-root SHIPPED 2026-09-12. **6.2.4** B7/B8 +
 **6.2 parent closeout** SHIPPED 2026-09-12 (`_6_2_BLOCKER_SITES` empty; native
 **1825/1830**; HITL core [`002259`](../../../captures/session_20260912_002259.log)).
-Open now: **4b.3**, **6.3–6.5** (5.7 HITL sign-off pending).
+Open now: **4b.3**, **6.3–6.5**.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -559,8 +559,13 @@ closed for `DisplayResolveLiveCapture`.
       - **SHIPPED 2026-09-12:** `recoverOrphanedWritingItem` + `recoverPersistenceWorkQueueStall`
         in `stepPersistenceWorkItem` / `resetPersistenceWorkItemJobState`; `requeueWritingItem`
         writing-index fallback; native `test_persistence_work_queue` (13/13); host stall warning
-        in `parse_persistence_buildup.py`; RAM1 **6880**; native **1828/1833**. HITL post-fix
-        sign-off **pending**.
+        in `parse_persistence_buildup.py`; RAM1 **6880**; native **1828/1833**.
+      - **5.7.5 SHIPPED 2026-09-12:** boot drain continues across slot-load SD gate between
+        work items, transport defer on new items, and `otherSdIoActive` when
+        `prioritizeWorkspaceSaveDrain`; HITL `base` PASS
+        [`012147`](../../../captures/session_20260912_012147.log)
+        (`loop_persist=217 sliced=True`; report
+        [`012230`](../../../captures/host_midi_automation_baseline_20260912_012230.json)).
       - Plan:
         [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
 

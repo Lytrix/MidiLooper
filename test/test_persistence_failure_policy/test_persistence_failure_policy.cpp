@@ -38,10 +38,11 @@ void test_should_run_mid_pass_writer_when_queue_non_empty() {
 }
 
 void test_should_run_persistence_work_item_writer() {
-  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(1, 0, false));
-  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(0, 1, false));
-  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(0, 0, false));
-  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(2, 0, true));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(1, 0, false, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(0, 1, false, false));
+  TEST_ASSERT_TRUE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(2, 0, true, true));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(0, 0, false, false));
+  TEST_ASSERT_FALSE(PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(2, 0, false, true));
 }
 
 void test_has_persistence_slice_headroom() {

@@ -31,7 +31,12 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     // LoadLoopJob owns the SD session through Parsing/Committing (file may be closed
     // between grains). Catalog sync / revision / work-item must not run until Commit
     // finishes — overlapping SD during parse hung after edits grain (235129).
-    if (deferredSaveBlockedByActiveSlotLoadSd()) {
+    const bool inFlightPersistenceWork =
+        storageSession.persistenceWorkItem.itemActive ||
+        PersistenceWorkQueue::writingWorkItemCount() > 0;
+    const bool prioritizeWorkspaceSaveDrain = shouldPrioritizeWorkspaceSaveDrain();
+    if (deferredSaveBlockedByActiveSlotLoadSd() && !inFlightPersistenceWork &&
+        !prioritizeWorkspaceSaveDrain) {
         return;
     }
     // Same-frame after Commit deletes SlotLoadSession — save must still wait for prewarm
@@ -209,8 +214,13 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
             break;
         }
 
+        const bool prioritizeWorkspaceSaveDrain =
+            storageSession.currentWorkspaceSave.pending &&
+            (storageSession.persistenceWorkItem.itemActive || workQueueDepth > 0 ||
+             writingWorkItemCount > 0);
         if (PersistenceFailurePolicy::shouldRunPersistenceWorkItemWriter(
-                workQueueDepth, writingWorkItemCount, otherSdIoActive)) {
+                workQueueDepth, writingWorkItemCount, prioritizeWorkspaceSaveDrain,
+                otherSdIoActive)) {
             const uint32_t currentHeap = MemoryMonitor::getInternalHeapFreeBytes();
             if (!PersistenceFailurePolicy::hasPersistenceSliceHeadroom(
                     currentHeap, storageSession.persistenceWorkItem.itemActive,

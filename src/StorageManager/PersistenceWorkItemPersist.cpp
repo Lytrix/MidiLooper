@@ -3,6 +3,7 @@
 
 #include "StorageManagerInternal.h"
 
+#include "StorageManager.h"
 #include "CurrentSetStorage.h"
 #include "CurrentWorkspaceStorage.h"
 #include "Loop.h"
@@ -204,6 +205,17 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
   if (!PersistenceWorkQueue::beginWriteQueuedItem(job.item)) {
     return true;
   }
+
+  const bool deferBeginForTransport =
+      deferFlushForTransport() &&
+      (isRuntimeBundleWorkType(job.item.type) ||
+       job.item.type == PersistWorkType::FinalizeWorkspace);
+  if (deferBeginForTransport) {
+    PersistenceWorkQueue::requeueWritingItem(job.item);
+    resetActivePersistenceWorkItem(job);
+    return true;
+  }
+
   job.itemActive = true;
   job.stateSnapshot = state;
   emitPersistenceWorkTelemetry(job.item, "start", "ok");
@@ -227,11 +239,6 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
   }
 
   if (isRuntimeBundleWorkType(job.item.type)) {
-    if (deferFlushForTransport()) {
-      PersistenceWorkQueue::requeueWritingItem(job.item);
-      resetActivePersistenceWorkItem(job);
-      return true;
-    }
     job.bundleWriteActive = true;
     job.skipLoopSlotStage = true;
     if (!beginDeferredRuntimeBundleWrite(state)) {
@@ -250,11 +257,6 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
   }
 
   if (job.item.type == PersistWorkType::FinalizeWorkspace) {
-    if (deferFlushForTransport()) {
-      PersistenceWorkQueue::requeueWritingItem(job.item);
-      resetActivePersistenceWorkItem(job);
-      return true;
-    }
     job.flushStartedAtUs = micros();
     job.flushHeapBefore = MemoryMonitor::getInternalHeapFreeBytes();
     storageSession.currentWorkspaceSave.startedAtUs = job.flushStartedAtUs;
@@ -477,7 +479,8 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
       !job.itemActive) {
     return true;
   }
-  if (deferFlushForTransport()) {
+  if (deferFlushForTransport() && !job.itemActive &&
+      !StorageManager::shouldPrioritizeWorkspaceSaveDrain()) {
     return true;
   }
   if (!job.itemActive) {
