@@ -1,0 +1,17 @@
+---
+description: Plan files live under docs/Plans with dated slugs — not latest.md or Architect webhook
+alwaysApply: true
+---
+
+# Plan authoring (repo)
+
+When creating or materially updating an implementation plan:
+
+1. Write **`docs/Plans/<main>_<sub>_<kind>.md`** (canonical).
+2. Optionally add **`docs/Plans/YYYY-MM-DD-<slug>.md`** as a dated snapshot.
+
+**Do not** create, update, or cite **`docs/Plans/latest.md`**.
+
+**Do not** use Architect webhook env vars or curl POST flows for plan review.
+
+Before firmware from an approved plan, follow [Plan-Pre-Implementation-Review.mdc](Plan-Pre-Implementation-Review.mdc).

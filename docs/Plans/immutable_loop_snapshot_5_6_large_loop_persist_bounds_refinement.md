@@ -34,17 +34,17 @@ Verify **large-loop save and migration progress**, **overrun/failure preservatio
 
 | Requirement | Gate | Status |
 |---|---|---|
-| Save progresses in LoopPersist phases | HITL: `start` → `payload_slice*` → `payload_done` → `finalize_slice*` → `done` | **PASS** [`200657`](../../captures/session_20260911_200657.log) 13 windows |
-| Per-turn persist slice bounded (not full-loop sync) | HITL: max `DIAG,persist_save` ≤ **100 ms**; max `PERS,work` ≤ **100 ms** per line | **PASS** max_pers=48408 µs, max_save=48746 µs |
+| Save progresses in LoopPersist phases | HITL: `start` → `payload_slice*` → `payload_done` → `finalize_slice*` → `done` | **PASS** [`203803`](../../captures/session_20260911_203803.log) 5/5 windows |
+| Per-turn persist slice bounded (not full-loop sync) | HITL: max `DIAG,persist_save` ≤ **100 ms**; max `PERS,work` ≤ **100 ms** per line | **PASS** max_pers=44624 µs, max_save=44931 µs |
 | Migration progress (save-time LSV1) | Native `test_legacy_slot_migrates_to_lsv1_after_loaded_hydration` | **PASS** (`test_storage_loop_io`) |
 | Failure / reject preserves state | Native `test_lsv1_rejects_*`, `test_persistence_failure_policy` | **PASS** (47 cases) |
-| Active snapshot during save | HITL: `playback_build,snapshot` or `MO` within ±500 ms of each LoopPersist window while PLAYING/OVERDUBBING | **PASS** 6/6 playback-active windows |
+| Active snapshot during save | HITL: `playback_build,snapshot` or `MO` within ±500 ms of each LoopPersist window while PLAYING/OVERDUBBING | **PASS** |
 | Stop path admits only (no execute) | Source gate: `TrackCaptureStopCommit.cpp` has `requestDeferredSaveState` / `admitLoopSlotPersist`, no execute | **PASS** |
 | No execute on input/clock/tick | Source gate: `MidiHandler`, `ClockManager`, `TrackManagerTransportTick`, stop path | **PASS** |
-| Record stop defers save | HITL: `RECS,stage,save_request` outcome `requested`; slowest stop stage ≤ **100 ms** | **PASS** slowest=12752 µs |
+| Record stop defers save | HITL: `RECS,stage,save_request` outcome `requested`; slowest stop stage ≤ **100 ms** | **PASS** slowest publish=1683 µs |
 | Row 14/15 substeps documented | `ExecutionBounds.md` unchanged | **PASS** |
 
-**Threshold note:** 100 ms caps catch **content-sized** stop-stack or interval-path persist (historical 73–83 ms+ finalize classes). Empirically bounded SD steps such as `VerifyAndRename` (~48 ms in [`200657`](../../captures/session_20260911_200657.log)) remain allowed on the deferred remainder path.
+**Threshold note:** 100 ms caps catch **content-sized** stop-stack or interval-path persist (historical 73–83 ms+ finalize classes). Empirically bounded SD steps such as `VerifyAndRename` (~44–48 ms in [`203803`](../../captures/session_20260911_203803.log) / [`200657`](../../captures/session_20260911_200657.log)) remain allowed on the deferred remainder path.
 
 **Active snapshot note:** Idle or STOPPED persist windows (slot hydration, post-stop saves) do not require MO/`playback_build,snapshot`. Playback-active windows use ±500 ms padding so short persist gaps between MO ticks still pass when PLAYING continues.
 
@@ -54,7 +54,7 @@ Verify **large-loop save and migration progress**, **overrun/failure preservatio
 |---|---|---|
 | **5.6.1** | Host gates + HITL verifier (`deferred_persist_large_loop_bounds`) | **SHIPPED** |
 | **5.6.2** | Native matrix sign-off (`pio test -e native` filters) | **SHIPPED** — **1823/1** |
-| **5.6.3** | HITL `base` PASS (reuse [`200657`](../../captures/session_20260911_200657.log)) | **SHIPPED** verify-only [`202341`](../../captures/host_midi_hitl_verify_20260911_202341.json) |
+| **5.6.3** | HITL `base` PASS | **SHIPPED** [`203803`](../../captures/session_20260911_203803.log) / report [`203843`](../../captures/host_midi_automation_baseline_20260911_203843.json) |
 | **5.6.4** | Close `tasks.md` 5.6 + runtime docs | **SHIPPED** |
 
 ### Device / host evidence
@@ -64,7 +64,8 @@ Verify **large-loop save and migration progress**, **overrun/failure preservatio
 | Host call-site + unit tests | `.venv/bin/python scripts/test_deferred_persist_nonblocking.py` (12 tests) | **PASS** |
 | Native persistence matrix | `test_storage_loop_io`, `test_persistence_sync_drain_budget`, `test_persistence_failure_policy` | **PASS** (47 cases) |
 | Full native | `pio test -e native` | **PASS** **1823/1** |
-| HITL `base` verify-only | [`200657`](../../captures/session_20260911_200657.log) / report [`202341`](../../captures/host_midi_hitl_verify_20260911_202341.json) | **PASS** — `windows=13 progress=True max_pers=48408us max_save=48746us active=True stop=True` |
+| HITL `base` (canonical sign-off) | [`203803`](../../captures/session_20260911_203803.log) / report [`203843`](../../captures/host_midi_automation_baseline_20260911_203843.json) | **PASS** — full `base` (2+2+second OD + undo/redo); `VERIFY deferred persist large-loop bounds` `windows=5 progress=True max_pers=44624us max_save=44931us active=True stop=True ok=True`; `persistence_handoff result=ok` |
+| Prior verify-only replay | [`200657`](../../captures/session_20260911_200657.log) / report [`202341`](../../captures/host_midi_hitl_verify_20260911_202341.json) | **PASS** (13 windows; pre-live-run regression anchor) |
 
 ## Explicit non-goals (5.6)
 
