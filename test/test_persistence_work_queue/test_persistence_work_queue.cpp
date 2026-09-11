@@ -140,6 +140,15 @@ void test_writing_work_item_count_tracks_active_writer() {
   TEST_ASSERT_EQUAL(0u, PersistenceWorkQueue::writingWorkItemCount());
 }
 
+void test_loop_persist_slot_key_differs_from_loop_id_key() {
+  const PersistKey loopIdZero = persistKeyForLoop(0);
+  const PersistKey trackFourSlotZero = persistKeyForSlot(4, 0);
+
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistKeyKind::LoopId), static_cast<int>(loopIdZero.kind));
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistKeyKind::Slot), static_cast<int>(trackFourSlotZero.kind));
+  TEST_ASSERT_FALSE(persistKeysEqual(loopIdZero, trackFourSlotZero));
+}
+
 void test_loop_persist_slot_key_is_distinct_per_track() {
   resetQueue();
   const PersistKey trackFiveSlotZero = persistKeyForSlot(5, 0);
@@ -173,6 +182,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_re_admit_after_persisted_requeues_at_tail);
   RUN_TEST(test_requeue_writing_item_returns_to_head);
   RUN_TEST(test_writing_work_item_count_tracks_active_writer);
+  RUN_TEST(test_loop_persist_slot_key_differs_from_loop_id_key);
   RUN_TEST(test_loop_persist_slot_key_is_distinct_per_track);
   RUN_TEST(test_loop_undo_history_slot_key_is_distinct_per_track);
   return UNITY_END();

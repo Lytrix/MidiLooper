@@ -1,55 +1,110 @@
-# OpenSpec 5.4 — LSV1 persistence verification matrix
+# Deferred persist loopId track routing bugfix
 
-**Status:** IN PROGRESS  
-**OpenSpec:** `immutable-loop-snapshot-passes` task **5.4**  
-**Depends on:** [5.3 plan](immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md) (SHIPPED), [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)
+**Status:** **FROZEN / SHIPPED** (2026-09-11) — RC1–RC4 complete  
+**Kind:** bugfix (persistence / LSV1 verification blocker)  
+**Evidence:** [`session_20260911_190525.log`](../../captures/session_20260911_190525.log), SD probes on `loop_00_00.bin` / `loop_04_00.bin`
 
-## North star (task 5.4)
+## Symptom
 
-Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. **After load, undo depth is 0 and redo is empty.**
+Manual session on **track 5 / slot 0** (boot `focus track=4`, overdub `track=4`):
 
-## Verification matrix
+- Serial shows `LoopPersist,loop:0,done,ok` (twice).
+- SD **`loop_00_00.bin`** updated (mtime 19:06) — **78-byte legacy empty slot**.
+- SD **`loop_04_00.bin`** unchanged (mtime 15:07) — still 78-byte empty.
+- OpenSpec **5.4** LSV1 byte probe cannot pass until the correct slot file is written.
 
-| Requirement | Native gate | Device / HITL gate | Status |
-|---|---|---|---|
-| LSV1 write/read round trip + dual-write | `test_lsv1_body_format_roundtrip_dual_write` (`assertSnapshotsEquivalent`) | — | **PASS** |
-| Stepped parse ≡ full read | `test_lsv1_stepped_parse_matches_full_read` | — | **PASS** |
-| Save emits LSV1 when `publishedSnapshotIsCurrent()` | `test_write_loop_persisted_emits_lsv1_when_published_snapshot_current` | Post-`root_rev=2` saves in [`175309`](../../captures/session_20260911_175309.log) (timing only) | **PASS** native; device timing **INFERRED** |
-| Legacy slot → hydrate → LSV1 save | `test_legacy_slot_migrates_to_lsv1_after_loaded_hydration` | — | **PASS** |
-| LSV1 load skips `rebuildSlotFromLoopContent` | `test_lsv1_load_commit_skips_rebuild` | — | **PASS** |
-| Legacy probe / reject unsupported | `test_lsv1_probe_legacy_and_unsupported`, reject fixtures | — | **PASS** |
-| Legacy body round trip (compatibility) | `test_write_read_loop_snapshot_roundtrip`, `test_serialize_reload_content_undo_units_match` | — | **PASS** |
-| Clear-slot `PersistedLoopSnapshot` restore | `test_clear_slot_before_published_snapshot_field_retains_root` (5.1) | 5.1 HITL [`150709`](../../captures/session_20260911_150709.log) | **PASS** (5.1) |
-| Load → undo depth 0, redo empty | *Not on native* — `clearUndoHistoryForSlot` gated `#if !PIO_UNIT_TEST_NATIVE` in `applyLoadedLoopSlotBodyCommit` | Reboot + `LoadLoopJob` with LSV1 slot file; or dedicated HITL reload slice | **OPEN** |
-| LSV1 bytes on SD after post-publish save | — | `hexdump` / probe `loop_*_*.bin` for `LSV1` magic | **OPEN** |
-| Boot `CurrentSetBootLoad` LSV1 | — | Out of scope until boot path migrated (5.3 non-goal) | **N/A** |
+## Root cause (RC1)
 
-## Architecture gate (verification only)
+**`LoopId` is per-track slot index, not globally unique.**
+
+`LoopPool::assignStableIds1To1` sets `loops_[i].loopId = i` on **each** track. Every track’s slot 0 has `loopId == 0`.
+
+Hot paths call `StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex))`, which queues `persistKeyForLoop(loopId)`.
+
+`resolveTrackSlotForLoopId` scans tracks and returns the **first** `(track, slot)` with matching `loopId`. For `loopId == 0` that is always **track 0, slot 0**. A fallback also forces `trackIndexOut = 0`, `slotIndexOut = loopId`.
+
+`stepLoopPersistWorkItem` then writes `trackManager.getTrack(0).getLoop(0)` to `loop_00_00.bin`, not the capturing track’s loop.
+
+**Correct API already exists:** `StorageManager::admitLoopSlotPersist(trackIndex, slotIndex)` uses `persistKeyForSlot` and resolves unambiguously.
+
+## Architecture checkpoint
 
 | Question | Answer |
 |---|---|
-| **Owner** | Verification only — no firmware change in 5.4 unless a gate fails |
-| **Ownership change?** | NO |
-| **Transition change?** | NO |
-| **Execution bound change?** | NO |
+| **Ownership change?** | NO — extend `StorageManager` admission; same deferred save owner |
+| **State transition change?** | NO |
+| **Unbounded interval owner?** | NO |
+| **Reuse** | YES — route callers to `admitLoopSlotPersist`; tighten `resolveTrackSlotForLoopId` |
+
+## Invariant (post-fix)
+
+`LoopPersist` work keyed by **`(trackIndex, slotIndex)`** must read/write `loop_TT_SS.bin` for that same pair. `loopId` alone must not admit or resolve loop body persistence when multiple tracks share the same slot-local id.
 
 ## Stages
 
-| Stage | Scope | Status |
+| Stage | Scope | Verification |
 |---|---|---|
-| **5.4.1** | Native matrix sign-off (table above) | **DONE** — `pio test -e native` **1822/1** at 5.3.4 close |
-| **5.4.2** | SD byte probe on device slot after LSV1 save | OPEN |
-| **5.4.3** | Reboot + runtime `LoadLoopJob` LSV1 reload; assert GUS depth 0 / redo empty | OPEN |
-| **5.4.4** | Check off `tasks.md` 5.4 + `ARCHITECTURE-REVIEW.md` when 5.4.2–5.4.3 pass | OPEN |
+| **RC1** | Replace every `admitLoopPersist(loopIdForSlot(...))` with `admitLoopSlotPersist(trackIndex, slotIndex)` where track+slot are known | Native; grep shows zero hot-path `admitLoopPersist(` except deprecated wrapper |
+| **RC2** | `resolveTrackSlotForLoopId`: remove track-0 fallback; return false on ambiguous/missing id (queue item fails resolve telemetry) | Native fixture |
+| **RC3** | Deprecate `admitLoopPersist(LoopId)` — thin wrapper only if legacy callers remain; prefer delete | Build |
+| **RC4** | Device: record+overdub on track 5 slot 0; `probe_lsv1_slot_body.py loop_04_00.bin` non-empty; `loop_00_00.bin` unchanged if track 0 unused | Capture + SD copy |
 
-## Next actions
+### RC1 call sites (implementer checklist)
 
-1. After flash with 5.3 firmware: save loop with `publishedSnapshotIsCurrent()`, pull `loop_TT_SS.bin`, confirm `LSV1` at body offset.
-2. Reboot Teensy; confirm `LoadLoopJob` parses LSV1, `publishedSnapshotIsCurrent()`, no `rebuildSlotFromLoopContent` log, undo stack empty for slot.
-3. Optional: extend HITL verify module with LSV1 probe helper (no new canonical stimulus required for 5.4.2).
+| File | Symbol / context |
+|---|---|
+| `TrackCaptureStopCommit.cpp` | overdub/record stop — has `persistTrackIndex`, `persistSlotIndex` |
+| `TrackStopTelemetryColdHelpers.cpp` | stop telemetry persist admit |
+| `TrackManagerCaptureQueue.cpp` | capture queue |
+| `TrackUndo.cpp` | undo/redo — has `resolveTrackIndexForPersistence` |
+| `LoopEditManager.cpp` | edit autosave admit |
+| `PersistenceAdmit.cpp` | `processEditAutosave` — already has `trackIndex` / `slotIndex` in loop |
 
-## Explicit non-goals (5.4)
+Use `admitLoopSlotPersist` (includes slot meta admit). Callers that already `markLoopSlotMaterialDirty` stay unchanged; duplicate slot-meta admit is queue-deduped.
 
-- Boot sync load LSV1 (`CurrentSetBootLoad`)
-- 5.5 / 5.6 deferred persistence bounds (separate tasks)
-- Dropping `PersistedLoopSnapshot` dual-write (task 6.x)
+### RC2 — resolve hardening
+
+In `resolveTrackSlotForLoopId`:
+
+- Keep scan for unique match.
+- **Delete** block that sets `trackIndexOut = 0`, `slotIndexOut = loopId` when scan fails.
+- If multiple tracks share same `loopId`, treat as **resolve failure** (log + complete work item `resolve,false`).
+
+Optional follow-up (out of RC1): globally unique `LoopId` at pool init — not required if all admits use slot keys.
+
+## Tests
+
+| Test | Owner |
+|---|---|
+| Native: admit `persistKeyForSlot(4,0)` resolves to track 4 slot 0; `persistKeyForLoop(0)` with two tracks’ slot 0 both `loopId==0` must **not** resolve to track 0 when admit used slot key for track 4 | `test_persistence_work_queue` or new `test_persistence_loop_slot_resolve` |
+| Existing `test_persistence_work_queue` key equality unchanged for slot keys | regression |
+| Device: [`session_20260911_190525.log`](../../captures/session_20260911_190525.log) class repro — track 5, verify `loop_04_00.bin` mtime + size >> 78 | HITL manual or `base` on track 5 |
+
+## Observability (RC1)
+
+After fix, `#CAP` persist lines should show `LoopPersist,slot:4:0,...` (not `loop:0`) when track 5 slot 0 saves.
+
+## Explicit non-goals
+
+- Globally unique `LoopId` pool redesign (unless RC2 leaves orphan `persistKeyForLoop` users)
+- Boot `CurrentSetBootLoad` LSV1
+- Changing `loop_TT_SS` path layout
+
+## Pre-implementation review
+
+### Ready
+
+- Root cause confirmed in code + capture + SD artifacts.
+- Fix reuses `admitLoopSlotPersist` / `persistKeyForSlot` — no new persistence owner.
+
+### Resolved
+
+| Topic | Decision |
+|---|---|
+| Fix shape | Slot-keyed admit at all call sites; remove dangerous loopId resolve fallback |
+| API | Prefer `admitLoopSlotPersist`; deprecate `admitLoopPersist(LoopId)` |
+| 5.4 impact | Re-open SD byte probe after RC4 device gate |
+
+### Proceed?
+
+**YES** — RC1 implementation may start.

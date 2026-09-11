@@ -23,7 +23,7 @@ uint8_t resolveTrackIndex(const Track& track) {
 void requestLoopSlotPersistForTrackSlot(const Track& track, uint8_t trackIndex,
                                         uint8_t slotIndex) {
     StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
-    StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+    StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
 }
 
 void requestLoopSlotPersistForSelectedSlot(const Track& track) {
