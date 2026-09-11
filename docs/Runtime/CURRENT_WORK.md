@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Immutable OpenSpec 5.5 SHIPPED — StorageManager persist ownership)
+Last updated: 2026-09-11 (Immutable OpenSpec 5.6 SHIPPED — large-loop persist bounds)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,11 +10,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 5.6 verification (large-loop persist bounds).**
-5.5 SHIPPED (2026-09-11): persist execute stays on `StorageManager::processDeferredSaveState`;
-HITL `base` [`200657`](../../captures/session_20260911_200657.log)
+**Now — Immutable OpenSpec 6.x (compatibility retirement).**
+5.6 SHIPPED (2026-09-11): large-loop persist progress, slice bounds, active snapshot during
+PLAYING save, stop-path admit-only, timing-critical call-site gates. HITL verify-only
+[`200657`](../../captures/session_20260911_200657.log)
+`VERIFY deferred persist large-loop bounds` `windows=13 progress=True max_pers=48408us
+max_save=48746us active=True stop=True`. Native **1823/1**. Plan:
+[`immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md`](../Plans/immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md).
+
+**Prior — Immutable OpenSpec 5.5 SHIPPED (2026-09-11).**
+Persist execute stays on `StorageManager::processDeferredSaveState`; HITL `base`
+[`200657`](../../captures/session_20260911_200657.log)
 `VERIFY deferred persist nonblocking` `loop_persist=295 sliced=True drain=0 mo=600`.
-Host call-site gate + `scripts/test_deferred_persist_nonblocking.py`. Plan:
+Plan:
 [`immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md`](../Plans/immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md).
 
 **Prior — Immutable OpenSpec 5.4 SHIPPED.**

@@ -536,7 +536,12 @@ closed for `DisplayResolveLiveCapture`.
       `main.cpp` remainder; HITL `base` PASS [`200657`](../../../captures/session_20260911_200657.log)
       `VERIFY deferred persist nonblocking` `loop_persist=295 sliced=True drain=0 mo=600 ok=True`.
       Plan: [`immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_5_deferred_persistence_ownership_refinement.md).
-- [ ] 5.6 Verify large-loop save and migration progress, overrun/failure preservation, active-snapshot availability, and absence of content-sized synchronous work at stop, input dispatch, clock dispatch, and track-tick paths.
+- [x] 5.6 Verify large-loop save and migration progress, overrun/failure preservation, active-snapshot availability, and absence of content-sized synchronous work at stop, input dispatch, clock dispatch, and track-tick paths.
+      (2026-09-11) Host gates + HITL verifier `deferred_persist_large_loop_bounds`; native matrix
+      (`test_storage_loop_io`, `test_persistence_sync_drain_budget`, `test_persistence_failure_policy`);
+      full native **1823/1**; HITL verify-only PASS [`200657`](../../../captures/session_20260911_200657.log)
+      `windows=13 progress=True max_pers=48408us max_save=48746us active=True stop=True`.
+      Plan: [`immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md).
 
 ## 6. Compatibility retirement and closeout
 

@@ -65,6 +65,10 @@ from hitl.verify.deferred_persist_nonblocking import (
     deferred_persist_nonblocking_issues,
     summarize_deferred_persist_nonblocking,
 )
+from hitl.verify.deferred_persist_large_loop_bounds import (
+    deferred_persist_large_loop_bounds_issues,
+    summarize_deferred_persist_large_loop_bounds,
+)
 from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
     DEFAULT_LONG_RUN_BAR_THRESHOLD,
@@ -3126,6 +3130,10 @@ def _build_serial_verification(
         lines,
         record_stop_ts=boundaries.get("record_stop_ts"),
     )
+    deferred_persist_large_loop_bounds = summarize_deferred_persist_large_loop_bounds(
+        lines,
+        record_stop_ts=boundaries.get("record_stop_ts"),
+    )
     is_long_record_run = bool(args.record_bars and args.record_bars >= args.long_run_bar_threshold)
     ram2_headroom = _summarize_ram2_headroom(record_stop_stage_rows, persistence_rows)
     record_stop_ram2_floor = _verify_record_stop_ram2_floor(
@@ -3294,6 +3302,9 @@ def _build_serial_verification(
             else:
                 issues.append("persistence_result_failed")
         issues.extend(deferred_persist_nonblocking_issues(deferred_persist_nonblocking))
+        issues.extend(
+            deferred_persist_large_loop_bounds_issues(deferred_persist_large_loop_bounds)
+        )
     if not record_stop_ram2_floor.get("phase_disabled", True):
         if record_stop_ram2_floor.get("record_stop_row_missing", False):
             issues.append("record_stop_ram2_heap_missing")
@@ -3446,6 +3457,7 @@ def _build_serial_verification(
         "record_stop_stage_trace": record_stop_stage_trace,
         "persistence_handoff": persistence_handoff,
         "deferred_persist_nonblocking": deferred_persist_nonblocking,
+        "deferred_persist_large_loop_bounds": deferred_persist_large_loop_bounds,
         "ram2_headroom": ram2_headroom,
         "record_stop_ram2_floor": record_stop_ram2_floor,
         "long_run_persistence_result": long_run_persistence_result,
@@ -5517,6 +5529,20 @@ def run() -> int:
                     f"drain={deferred_persist_nonblocking.get('sync_drain_count')} "
                     f"mo={deferred_persist_nonblocking.get('mo_during_loop_persist')} "
                     f"ok={deferred_persist_nonblocking.get('ok')}"
+                )
+            deferred_persist_large_loop_bounds = serial_verification.get(
+                "deferred_persist_large_loop_bounds"
+            )
+            if deferred_persist_large_loop_bounds:
+                print(
+                    "  VERIFY deferred persist large-loop bounds: "
+                    f"windows={deferred_persist_large_loop_bounds.get('loop_persist_windows')} "
+                    f"progress={deferred_persist_large_loop_bounds.get('progress_ok')} "
+                    f"max_pers={deferred_persist_large_loop_bounds.get('max_pers_work_us')}us "
+                    f"max_save={deferred_persist_large_loop_bounds.get('max_persist_save_us')}us "
+                    f"active={deferred_persist_large_loop_bounds.get('active_snapshot_ok')} "
+                    f"stop={deferred_persist_large_loop_bounds.get('stop_path_ok')} "
+                    f"ok={deferred_persist_large_loop_bounds.get('ok')}"
                 )
             ram2_headroom = serial_verification.get("ram2_headroom")
             if ram2_headroom and not ram2_headroom.get("phase_disabled"):

@@ -192,6 +192,8 @@ Opt-in firmware flash before run: add `--build-upload` (restarts Teensy — rest
 
 OpenSpec 5.5 adds `VERIFY deferred persist nonblocking` on this preset: sliced `LoopPersist` `PERS,work` after record stop and no `PERS,drain` on the `base` path.
 
+OpenSpec 5.6 adds `VERIFY deferred persist large-loop bounds`: full LoopPersist phase progress, per-slice caps (max `PERS,work` / `DIAG,persist_save` ≤ 100 ms), active snapshot during PLAYING/OVERDUBBING save (±500 ms MO/`playback_build,snapshot` padding), and record-stop `save_request=requested` with slowest stop stage ≤ 100 ms.
+
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
 
 ### `overdub_occupy_paint` (source OD1 + occupy OD2 + GUS)

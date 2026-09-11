@@ -298,8 +298,8 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       (LoopSnapshot body format version 1; wire discriminator `LSV1` +
       `formatVersion == 1`; dual-write; docs/decision only). Plan:
       [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
-- [x] Tasks **5.3–5.5** closed (reader/writer, load, persistence ownership).
-- [ ] Task **5.6** remains open (large-loop save/migration progress, overrun, content-sized work).
+- [x] Tasks **5.3–5.6** closed (reader/writer, load, persistence ownership, large-loop bounds).
+- [ ] Task **6.x** remains open (compatibility retirement).
 
 ### Phase 4 implementation review (task 5.2 only — docs/decision)
 
@@ -322,7 +322,18 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
 - [x] HITL `base` PASS [`200657`](../../../captures/session_20260911_200657.log):
       `VERIFY deferred persist nonblocking` `loop_persist=295 sliced=True drain=0 mo=600 ok=True`;
       persistence `result=ok`.
-- [x] Runtime docs, `tasks.md` 5.5, and plan updated. Task **5.6** remains open.
+- [x] Runtime docs, `tasks.md` 5.5, and plan updated.
+
+### Phase 4 implementation review (task 5.6 only — verification)
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership NO; transition NO; execution-bound NO (rows 14/15 unchanged).
+- [x] Host gates: timing-critical paths forbid persist execute; stop path admits only.
+- [x] HITL verify-only PASS [`200657`](../../../captures/session_20260911_200657.log):
+      `VERIFY deferred persist large-loop bounds` `windows=13 progress=True max_pers=48408us
+      max_save=48746us active=True stop=True`.
+- [x] Native matrix + full `pio test -e native` **1823/1**.
+- [x] Runtime docs, `tasks.md` 5.6, and plan updated. Phase **5.x** complete; **6.x** next.
 
 ### Phase 3 implementation review (4.4 display only)
 
