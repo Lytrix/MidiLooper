@@ -2,13 +2,14 @@
 
 Phase 0 is documentation only. Later sections are blocked until 1.1–1.8 are complete.
 
-Progress checkpoint (2026-09-10): sections 1–3 are complete. Tasks 3.5/3.6
+Progress checkpoint (2026-09-11): sections 1–3 are complete. Tasks 3.5/3.6
 closed: wrap-journal publication is in tree; the remaining-interval yield
 proof is parked (`kSnapshotIdleReserveYieldEnabled` is false; yield logs
-stay). In section 4, 4.1–4.5 and 4.5a are complete (4.4a–4.4h shipped;
+stay). In section 4, 4.1–**4.6** and 4.5a are complete (4.4a–4.4h shipped;
 parent 4.4 closed by inventory; **4.5** cross-gate verify SHIPPED
-2026-09-10). In section 4b, 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b,
-and 4b.4 are complete under Ring B round-robin. Open now: **4.6**, 4b.3,
+2026-09-10; **4.6** Stages 1–6 identity freshness SHIPPED 2026-09-11 with
+§5 exclusion). In section 4b, 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b,
+and 4b.4 are complete under Ring B round-robin. Open now: **4b.3**,
 5.1–5.6, and 6.1–6.5.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
