@@ -10,13 +10,12 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 5.3 SHIPPED (5.3.1–5.3.4). Next: 5.4 verification.**
-LoopSnapshot body format LSV1: reader/writer (5.3.1), save dual-write when
-`publishedSnapshotIsCurrent()` (5.3.2), `LoadLoopJob` load authority (5.3.3),
-save-time migration fixture + ExecutionBounds rows 14/15 + runtime docs (5.3.4).
-Device smoke [`175309`](../../captures/session_20260911_175309.log). Boot sync load
-(`CurrentSetBootLoad`) remains legacy-only. Plan:
-[`immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md`](../Plans/immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md).
+**Now — Immutable OpenSpec 5.4 verification (5.4.1 native PASS; 5.4.2–5.4.3 device OPEN).**
+Native matrix signed off; next: SD `LSV1` byte probe after post-publish save, then
+reboot + `LoadLoopJob` LSV1 reload (undo depth 0 / redo empty). Prior 5.3 SHIPPED
+(5.3.1–5.3.4); device smoke [`175309`](../../captures/session_20260911_175309.log).
+Boot sync load (`CurrentSetBootLoad`) remains legacy-only. Plan:
+[`immutable_loop_snapshot_5_4_lsv1_verification_refinement.md`](../Plans/immutable_loop_snapshot_5_4_lsv1_verification_refinement.md).
 Authority: [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write).
 
 **Prior — Immutable OpenSpec 5.2 APPROVED (docs/decision only).**
