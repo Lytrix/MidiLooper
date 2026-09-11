@@ -9,8 +9,8 @@ stay). In section 4, 4.1–**4.6** and 4.5a are complete (4.4a–4.4h shipped;
 parent 4.4 closed by inventory; **4.5** cross-gate verify SHIPPED
 2026-09-10; **4.6** Stages 1–6 identity freshness SHIPPED 2026-09-11 with
 §5 exclusion). In section 4b, 4b.0, 4b.1, 4b.1a, 4b.1b, 4b.2, 4b.2a, 4b.2b,
-and 4b.4 are complete under Ring B round-robin. Open now: **4b.3**,
-5.1–5.6, and 6.1–6.5.
+and 4b.4 are complete under Ring B round-robin. Phase **5.x** complete.
+**6.1** consumer inventory SHIPPED 2026-09-11. Open now: **4b.3**, **6.2–6.5**.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -551,7 +551,10 @@ Compatibility sources are not an implementation target. They remain only long
 enough to prove parity and provide rollback while each normal consumer migrates
 to immutable snapshot content.
 
-- [ ] 6.1 Prove no normal consumer depends on maintained LCR history, `passesMaterializedStore_`, or full replay before removing each path.
+- [x] 6.1 Prove no normal consumer depends on maintained LCR history, `passesMaterializedStore_`, or full replay before removing each path.
+  - Plan [`immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md).
+  - Host gate `scripts/test_compatibility_consumer_inventory.py` (7 tests): hot paths forbid compat execute; fallback allowlists; B1–B8 site inventory stable.
+  - HITL unchanged from 5.6 sign-off [`203803`](../../../captures/session_20260911_203803.log).
 - [ ] 6.2 Remove superseded maintained-LCR state and replay APIs only after caller migration and rollback gates pass.
 - [ ] 6.3 Remove compatibility effective-state derivation and old readers only after documented triggers close.
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.

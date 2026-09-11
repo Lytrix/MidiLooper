@@ -299,7 +299,8 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       `formatVersion == 1`; dual-write; docs/decision only). Plan:
       [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
 - [x] Tasks **5.3–5.6** closed (reader/writer, load, persistence ownership, large-loop bounds).
-- [ ] Task **6.x** remains open (compatibility retirement).
+- [x] Task **6.1** closed (compatibility consumer inventory — host gate only).
+- [ ] Task **6.2–6.5** remain open (compatibility retirement).
 
 ### Phase 4 implementation review (task 5.2 only — docs/decision)
 
@@ -336,6 +337,15 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       Prior verify-only replay [`200657`](../../../captures/session_20260911_200657.log).
 - [x] Native matrix + full `pio test -e native` **1823/1**.
 - [x] Runtime docs, `tasks.md` 5.6, and plan updated. Phase **5.x** complete; **6.x** next.
+
+### Phase 5 implementation review (task 6.1 only — verification)
+
+- [x] Phase architecture gate posted in plan doc.
+- [x] Ownership NO; transition NO; execution-bound NO; no firmware edits.
+- [x] Host gate `scripts/test_compatibility_consumer_inventory.py`: hot paths forbid compat
+      execute; fallback allowlists; B1–B8 site inventory stable (7 tests PASS).
+- [x] HITL unchanged from 5.6 sign-off [`203803`](../../../captures/session_20260911_203803.log).
+- [x] Runtime docs, `tasks.md` 6.1, and plan updated. **6.2** next (per-caller migration).
 
 ### Phase 3 implementation review (4.4 display only)
 
