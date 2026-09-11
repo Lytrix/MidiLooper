@@ -132,7 +132,10 @@ Plans:
 DEC-054 Stage 1 admission remains in tree; [`204458`](../../captures/session_20260908_204458.log)
 failed the select-cadence gate. Parent 4.4 closed (inventory
 2026-09-09). **4.5 SHIPPED** (2026-09-10): `base` / occupy / compose `02`
-PASS. **4.6** Stage 1 VisualCache `builtFromSnapshotIdentity` SHIPPED
+PASS. **4.6** Stages 1–5 SHIPPED (`CommittedMidiScratch` /
+`legacyMidiEventsFromCommitted`; native 1838/1; RAM1 **6976**; HITL `base`
+[`140021`](../../captures/session_20260911_140021.log)). Stage 6 + §5 exclusion
+remain before 4.6 checkoff.
 (A→B@R native; RAM1 **7008**; native **1821/1**). Stage 2+ remain.
 VisualCache stamp). Persistence and snapshot-identity undo (§5) remain
 later. Hydrate 4b–5 and raise `N` stay parked.
@@ -557,7 +560,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.5 closed (4.4a–4.4h + inventory; 4.5a; 4.5 cross-gate 2026-09-10); **4.6** in progress (VisualCache identity stamp first); persistence and snapshot-identity undo remain; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
+| **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–4.5 closed (4.4a–4.4h + inventory; 4.5a; 4.5 cross-gate 2026-09-10); **4.6** Stages 1–5 SHIPPED; Stage 6 + §5 exclusion remain; persistence and snapshot-identity undo remain; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
 | **`hitl-cli-rebuild`** | **Phase 3 in progress** — layered `base` + `edit_full`; 3.2 bridge done; next: 3.3 device PASS |

@@ -317,6 +317,7 @@ public:
   Loop& getActiveLoop() { return getLoop(activeLoopIndex); }
   const Loop& getActiveLoop() const { return getLoop(activeLoopIndex); }
   bool hasPendingSnapshotPublishOnAnySlot() const;
+  bool hasInFlightSnapshotConstructionOnAnySlot() const;
   /// True when any slot has pending publication and the published root lags
   /// `playbackRevision`. Boolean backlog-present only; not a size or cost.
   bool hasSnapshotPublicationBacklogOnAnySlot() const;
@@ -438,6 +439,7 @@ private:
   bool hasRecordCaptureBaselineGeometry_ = false;
   MidiEventVec committedMidiScratch_;
   uint32_t committedMidiScratchRevision_ = UINT32_MAX;
+  const void* committedMidiScratchPublishedIdentity_ = nullptr;
   static const uint32_t TICKS_PER_BAR;
 
   void resetDeferredRecordRevts();

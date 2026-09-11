@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Membership Stage 5 COMPLETE — consumer containment unwound)
+Last updated: 2026-09-11 (Immutable OpenSpec 4.6 Stage 5 SHIPPED)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,7 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Overdub snapshot bar-crossing membership Stage 5 COMPLETE.**
+**Now — Immutable OpenSpec 4.6 Stage 5 SHIPPED.**
+`CommittedMidiScratch` for `legacyMidiEventsFromCommitted` (snapshot fill +
+revision/identity; pass fallback `nullptr`). Native four-case PASS; RAM1
+**6976**; native **1838/1**; HITL `base` PASS
+[`140021`](../../captures/session_20260911_140021.log). Leave OpenSpec `4.6`
+unchecked; Stage 6 separate. Plan:
+[`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
+
+**Prior — Overdub snapshot bar-crossing membership Stage 5 COMPLETE.**
 RC-A hand-off + Stage 4 triangulation + full consumer unwind (6→5→3→1→2)
 **SHIPPED** (2026-09-11). Final HITL [`114744`](../../captures/session_20260911_114744.log):
 `from=snapshot notes=32`, id=27 crosses 1536, no `draw_src→0`. Instrumentation
@@ -29,8 +37,7 @@ PASS [`194531`](../../captures/session_20260910_194531.log). Plan:
 [`overdub_live_wrap_playhead_tail_display_bugfix.md`](../Plans/overdub_live_wrap_playhead_tail_display_bugfix.md).
 
 **Prior — Immutable OpenSpec 4.6 Stage 4 SHIPPED** (NOTE_EDIT committed-base cache
-identity). Next 4.6: evaluate `legacyMidiEventsFromCommitted` (may need design).
-HITL `base` PASS [`172224`](../../captures/session_20260910_172224.log).
+identity). HITL `base` PASS [`172224`](../../captures/session_20260910_172224.log).
 Plan: [`immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md`](../Plans/immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md).
 
 **Prior — LOOP_EDIT length/start fader ignored during RECORD/OVERDUB — SHIPPED.**
