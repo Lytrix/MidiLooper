@@ -1,6 +1,6 @@
 # OpenSpec 6.1 — Compatibility consumer inventory
 
-**Status:** **6.1 SHIPPED** (2026-09-11)  
+**Status:** **APPROVED** (2026-09-11) — proceed to [6.2 plan](immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md)  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.1**  
 **Depends on:** [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED), [4.6 plan](immutable_loop_snapshot_4_6_snapshot_identity_freshness_refinement.md) (SHIPPED)  
 **Kind:** verification / inventory (no compatibility removal — tasks **6.2–6.3**)
@@ -84,7 +84,7 @@ Prove which **normal consumers** still reach maintained LCR history, `passesMate
 | **6.1.1** | Plan + inventory table | **SHIPPED** |
 | **6.1.2** | Host gate `test_compatibility_consumer_inventory.py` | **SHIPPED** |
 | **6.1.3** | Close `tasks.md` 6.1 + runtime docs | **SHIPPED** |
-| **6.2** | Remove blockers one owner at a time | **next** |
+| **6.2** | Remove blockers one owner at a time | **next** — [plan](immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md) |
 
 ## Explicit non-goals (6.1)
 
