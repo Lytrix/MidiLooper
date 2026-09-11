@@ -519,8 +519,17 @@ closed for `DisplayResolveLiveCapture`.
       [`150709`](../../../captures/session_20260911_150709.log). Plan:
       `docs/Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md`.
 - [x] 5.2 Approve the physical storage version/layout for immutable objects, the latest saved snapshot, metadata, and local handle rebuild. Do not persist undo history or post-reboot undo lineage. **APPROVED 2026-09-11 — [DEC-057](../../../docs/DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)** (`LSV1` + `formatVersion == 1`, dual-write). Firmware = **5.3**. Plan: [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
-- [ ] 5.3 Implement the new content-only storage reader/writer through existing `StorageManager` deferred units and compatibility migration with rollback behavior; classify any interval-path unit in `ExecutionBounds.md` and keep runtime addresses and derived representations out of the format.
+- [x] 5.3 Implement the new content-only storage reader/writer through existing `StorageManager` deferred units and compatibility migration with rollback behavior; classify any interval-path unit in `ExecutionBounds.md` and keep runtime addresses and derived representations out of the format.
+      (2026-09-11) Stages 5.3.1–5.3.4 SHIPPED: LSV1 reader/writer, save dual-write when
+      `publishedSnapshotIsCurrent()`, `LoadLoopJob` load authority (no rebuild on LSV1),
+      migration fixture + ExecutionBounds rows 14/15. Commits `0d45bdb7`–`6b2eba89`.
+      Native **1822/1**; device smoke
+      [`175309`](../../../captures/session_20260911_175309.log). Plan:
+      [`immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_3_lsv1_reader_writer_refinement.md).
 - [ ] 5.4 Verify save/load round trips, selected-snapshot equivalence, clear-slot restore, and old-format migration with existing persistence gates plus invariant-protecting checks. After load, undo depth is 0 and redo is empty.
+      (2026-09-11) **5.4.1 native matrix PASS** — see
+      [`immutable_loop_snapshot_5_4_lsv1_verification_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_4_lsv1_verification_refinement.md).
+      **OPEN:** SD LSV1 byte probe (5.4.2), reboot LSV1 reload + undo depth 0 (5.4.3).
 - [ ] 5.5 Verify deferred persistence remains owned by `StorageManager` without blocking playback or `handleMidiInput()`.
 - [ ] 5.6 Verify large-loop save and migration progress, overrun/failure preservation, active-snapshot availability, and absence of content-sized synchronous work at stop, input dispatch, clock dispatch, and track-tick paths.
 
