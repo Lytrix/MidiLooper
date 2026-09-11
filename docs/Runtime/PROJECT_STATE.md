@@ -2,7 +2,7 @@
 
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
-Last updated: 2026-09-11 (Membership Stage 5.4: incomplete-current retain REMOVED; next Stage 2 source-view)
+Last updated: 2026-09-11 (Membership Stage 5 COMPLETE — consumer containment unwound; RC-B latent)
 
 ---
 

@@ -1,14 +1,14 @@
 # Overdub start — current snapshot omits bar-crossing record note
 
-**Status:** Stages 1 + 3–6 containment **unwound** (membership Stage 5,
-2026-09-11) — incomplete-current retain removed
-[`113043`](../../captures/session_20260911_113043.log). Stage 2 source-view
-`from=snapshot` merge remains.  
-**Architectural marker:** Last remaining compensation is Stage 2 only. End-state
-invariant and unwind order:
+**Status:** Consumer Stages 1–6 **fully unwound** (membership Stage 5 complete,
+2026-09-11) — final gate [`114744`](../../captures/session_20260911_114744.log).
+Containment was diagnostic only; end-state is RC-A membership + Stage 4 sealed
+apply.  
+**Architectural marker:** No remaining bar-crossing snapshot omit consumer
+compensations. Parent:
 [`overdub_snapshot_bar_crossing_membership_bugfix.md`](overdub_snapshot_bar_crossing_membership_bugfix.md).
 
-**Next:** unwind consumer Stage 2 `from=snapshot` merge in `rebuildOverdubSourceSpanCache` (keep non-snapshot origins).  
+**Next:** none for this containment track (latent RC-B separate if pursued).  
 **Fail pin (OD open omit):** [`session_20260910_194531.log`](../../captures/session_20260910_194531.log)  
 **Parent / adjacent:** [`overdub_live_wrap_playhead_tail_display_bugfix.md`](overdub_live_wrap_playhead_tail_display_bugfix.md) Option C (snapshot membership).
 
@@ -100,6 +100,10 @@ Gate [`113043`](../../captures/session_20260911_113043.log).
 In `rebuildOverdubSourceSpanCache`, run `mergeOmittedCommittedNoteOnIdentities` for `sourceOrigin == "snapshot"` as well (same materialize path as prepared/visual/passes).
 
 Native: source-view / take-survival fixture — snapshot missing one closed pair that events still contain → after `establishOverdubSourceView`, note present.
+
+**Unwound (membership Stage 5.5, 2026-09-11):** `from=snapshot` skips event
+merge/NoteId upsert; non-snapshot origins keep merge; sealed apply kept.
+Gate [`114744`](../../captures/session_20260911_114744.log).
 
 ### Stage 3 — Visual + adopt + full-loop snapshot reconstruct upsert (`200405`) — SHIPPED
 

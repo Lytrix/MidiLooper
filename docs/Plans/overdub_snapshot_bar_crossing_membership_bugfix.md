@@ -1,18 +1,12 @@
 # Overdub — published LoopSnapshot omits bar-crossing NoteRef
 
-**Status:** Stage 2 RC-A **SHIPPED** + Stage 4 HITL triangulation **SHIPPED** +
-Stage 5 unwind **6 / 5 / 3 / 1 done** (2026-09-11). Next: consumer Stage 2
-source-view `from=snapshot` merge (last containment). RC-B remains latent /
-separate.  
-**Consumer containment (do not treat as end state):**  
-[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md) Stage 2 remaining  
-**Evidence:** [`194531`](../../captures/session_20260910_194531.log) id 27 p74 (pre-fix 31);  
-[`205031`](../../captures/session_20260910_205031.log) id 26 p73 @ 1480–1541;  
-Stage 4–5.4 gates [`102837`](../../captures/session_20260911_102837.log) /
-[`104115`](../../captures/session_20260911_104115.log) /
-[`105156`](../../captures/session_20260911_105156.log) /
-[`110457`](../../captures/session_20260911_110457.log) /
-[`113043`](../../captures/session_20260911_113043.log)
+**Status:** Stage 2 RC-A **SHIPPED** + Stage 4 triangulation **SHIPPED** +
+Stage 5 consumer unwind **COMPLETE** (2026-09-11). Latent RC-B separate.  
+**Consumer containment:** unwound — see
+[`overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).  
+**Evidence:** [`194531`](../../captures/session_20260910_194531.log) pre-fix notes=31;  
+final Stage 5 gate [`114744`](../../captures/session_20260911_114744.log)
+(`from=snapshot notes=32`, id=27@1511–1570, no `draw_src→0`)
 
 ## Architectural marker
 
@@ -403,7 +397,7 @@ snapshot hand-off
 | Stage | Owner touched | Verdict | Rationale |
 |---|---|---|---|
 | 1 — retain clean visual over smaller current gather | `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` | **REMOVED (2026-09-11)** | Predicate deleted; draw-source trusts current snapshot membership. Gate [`113043`](../../captures/session_20260911_113043.log): `from=snapshot notes=32`, no `draw_src→0` |
-| 2 — source-view merge for `from=snapshot` | `rebuildOverdubSourceSpanCache` | **REMOVE-LATER** | Same premise. Keep the `!= "snapshot"` origins (prepared/visual/passes/prior) — those are genuinely partial by design |
+| 2 — source-view merge for `from=snapshot` | `rebuildOverdubSourceSpanCache` | **REMOVED (2026-09-11)** | Snapshot origin no longer mergeOmitted/NoteId-upserts from events; prepared/visual/passes/prior keep merge. Stage 4 sealed apply kept. Gate [`114744`](../../captures/session_20260911_114744.log): `from=snapshot notes=32`, id=27 crosses 1536, no `draw_src→0` |
 | 3 — `mergeOmittedCommittedNoteOnIdentitiesInto` at visual/idle-slice/adopt | `LoopVisualCache.cpp` | **REMOVED (2026-09-11)** | Visual/adopt/idle no longer heal incomplete snapshot membership. Helper KEEP for source-view. Gate [`110457`](../../captures/session_20260911_110457.log): `from=snapshot notes=32`, no `draw_src→0` |
 | 4 — reapply pending/sealed after any event merge | `applyPendingNoteChangesToDisplayNotes` / `applyPendingSnapshotCompanionsToDisplayNotes` after merge | **KEEP — REQUIRED** | Independent correctness rule: raw-event or reconstruct merge must not resurrect sealed Hide/Shorten. True regardless of snapshot completeness |
 | 5 — drop the `visualCacheDirty` veto | `shouldRetainVisualCacheOverIncompleteCurrentSnapshotGather` | **RESTORED (2026-09-11)** | Freshness veto back: dirty visual no longer overrides current snapshot. Gate [`105156`](../../captures/session_20260911_105156.log): `from=snapshot notes=32`, id=27 crosses 1536; zero-length id1/id2 `draw_src→0` only (not bar-crossing) |
@@ -413,9 +407,9 @@ snapshot hand-off
 Order of unwind after the membership fix: 6 → 5 → 3 call sites → 1 → 2.
 Keep Stage 4 triangulation criteria and the instrumentation permanently.
 
-**Stage 5 progress:** layers **6 / 5 / 3 / 1 done** (2026-09-11). Next: remove
-`from=snapshot` merge in `rebuildOverdubSourceSpanCache` (consumer Stage 2;
-keep non-snapshot origins).
+**Stage 5 progress:** **COMPLETE** (2026-09-11) — unwind order 6 → 5 → 3 → 1 → 2
+all landed. Consumer containment for this RC is removed. Instrumentation + Stage 4
+sealed apply kept. RC-B remains latent / separate.
 
 ## Regression risks
 
@@ -512,10 +506,8 @@ snapshot completeness.
 
 ### Proceed?
 
-- Stage 1A–4: **SHIPPED**. Stage 5 unwind: **6 / 5 / 3 / 1 done** — HITL
-  [`104115`](../../captures/session_20260911_104115.log) /
-  [`105156`](../../captures/session_20260911_105156.log) /
-  [`110457`](../../captures/session_20260911_110457.log) /
-  [`113043`](../../captures/session_20260911_113043.log).
-- **YES** for last unwind layer — consumer Stage 2 `from=snapshot` source-view
-  merge only. Do not start RC-B in the same commit.
+- Stage 1A–5: **SHIPPED** (2026-09-11). Final Stage 5 gate
+  [`114744`](../../captures/session_20260911_114744.log).
+- **STOP** consumer containment for this RC. Next only if a new independent
+  failure appears, or when picking up latent RC-B / ISR `queuedPassIds` as a
+  separate RC.

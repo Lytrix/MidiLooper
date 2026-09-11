@@ -1072,16 +1072,12 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
   }
   }
   if (loopLengthTicks > 0) {
-    // Span-list miss is not committed-content absence (`174151` id=112;
-    // `194531` id=27 from=snapshot notes=31 vs visual 32). Reconstruct can omit
-    // a tail-window On closed by an untagged Off at L-1; a current **full-loop**
-    // snapshot can omit a bar-crossing NoteRef while events still pair. Do not
-    // merge into a bounded snapshot window cache (`test_snapshot_source_uses_
-    // bounded_overdub_window`) — that would mark partial caches full-loop ready
-    // and pull out-of-window identities into the span list.
-    const bool mergeOmittedFromEvents =
-        std::strcmp(sourceOrigin, "snapshot") != 0 || overdubSourceSpanCacheFullLoop_;
-    if (mergeOmittedFromEvents) {
+    // Span-list miss is not committed-content absence for prepared/visual/passes/
+    // prior origins (`174151` id=112). A current full-loop snapshot must not be
+    // healed from materialize — membership RC-A owns published NoteRefs
+    // (consumer Stage 2 unwind). Bounded snapshot windows still skip merge
+    // (`test_snapshot_source_uses_bounded_overdub_window`).
+    if (std::strcmp(sourceOrigin, "snapshot") != 0) {
       SessionMidiEventVec committedEvents;
       passes.materializeToEventVector(committedEvents, loopLengthTicks);
       // Upsert missing NoteIds from pass resolve (honors sealed Delete/Length),
@@ -1093,16 +1089,14 @@ LOOP_COLD_MEM const char* Loop::rebuildOverdubSourceSpanCache(uint32_t requested
         mergeDisplayNotesByNoteId(overdubSourceSpanCacheNotes_, committedNotes);
       }
       mergeOmittedCommittedNoteOnIdentities(overdubSourceSpanCacheNotes_, committedEvents);
-      // mergeOmitted walks materialize events and can reintroduce NoteIds that
-      // sealed Delete already removed from the snapshot. Always re-apply sealed
-      // + pending Hide/Shorten after merge (`202713` OD2 ghosts).
-      applyPendingNoteChangesToDisplayNotes(overdubSourceSpanCacheNotes_,
-                                            overdubSourceSpanCacheNotes_.size());
-      if (std::strcmp(sourceOrigin, "snapshot") != 0 &&
-          !overdubSourceSpanCacheNotes_.empty()) {
+      if (!overdubSourceSpanCacheNotes_.empty()) {
         overdubSourceSpanCacheFullLoop_ = true;
       }
     }
+    // Sealed Hide/Shorten + pending must apply after any snapshot or merge seed
+    // (`202713` OD2 ghosts) — Stage 4 KEEP.
+    applyPendingNoteChangesToDisplayNotes(overdubSourceSpanCacheNotes_,
+                                          overdubSourceSpanCacheNotes_.size());
   }
   for (const PendingNoteChange& change : pendingNoteChanges_) {
     if (change.kind != PendingNoteChangeKind::Add || change.noteId == kInvalidNoteId) {
