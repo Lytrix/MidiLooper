@@ -1,6 +1,6 @@
 # OpenSpec 6.2 — Compatibility retirement (owner-by-owner)
 
-**Status:** **APPROVED — planning checkpoint** (2026-09-11)  
+**Status:** **6.2.1b SHIPPED** (2026-09-11) — B1 narrow C1-a exception; **6.2.2 next**  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.2**  
 **Depends on:** [6.1 plan](immutable_loop_snapshot_6_1_compatibility_consumer_inventory_refinement.md) (**APPROVED**), [5.6 plan](immutable_loop_snapshot_5_6_large_loop_persist_bounds_refinement.md) (SHIPPED)  
 **Regression baseline:** HITL `base` PASS [`203803`](../../captures/session_20260911_203803.log)
@@ -108,7 +108,63 @@ Today:
 | C3 detection | Parity hook: compare event count vs `publishedSnapshot` membership for same window in native only |
 | C4 at B1 | Overlay returns **true** — not C1; B1 does **not** compat-fallback on Overlay today |
 
-**Proceed?** YES for **6.2.1 design pin**; firmware edit blocked until chosen C1-a strategy (sync publish vs hold-empty vs narrow compat) is explicit.
+**Proceed?** YES — **Option 3 approved** (narrow C1-a). **6.2.1b SHIPPED.**
+
+## 6.2.1b — B1 narrow C1-a compatibility (SHIPPED)
+
+**Decision:** Option 3 — retain `gatherCommittedEvents*` **only** during the measured session-exit publication gap; all other gather-miss paths hold empty with `#CAP` evidence.
+
+### Architecture gate (6.2.1b)
+
+| Question | Answer |
+|---|---|
+| **Owner** | `Loop::isPlaybackSessionExitPublicationGap` + `TrackPlaybackWindowBuild` |
+| **Invariant** | Generic `if (!snapshot) gather…` retired; compat only when session-exit publish is queued and no root exists |
+| **Ownership change?** | NO |
+| **Transition change?** | NO |
+| **Execution bound change?** | NO |
+| **Behavior-preserving?** | YES for HITL-class record→play (C1-a bridge retained) |
+
+### Mechanical predicate
+
+`Loop::isPlaybackSessionExitPublicationGap()`:
+
+```text
+!publishedSnapshot() && pendingSnapshotSessionExitQueued() && hasPendingSnapshotPublish()
+```
+
+### B1 policy table (implemented)
+
+| Condition | B1 behavior |
+|---|---|
+| Published root exists | Snapshot / Overlay path |
+| No root, **not** C1-a | Hold empty + `#CAP,DIAG,playback_b1,hold_empty,...` |
+| No root, **C1-a session-exit gap** | `gatherCommittedEvents*` + `#CAP,DIAG,playback_b1,session_exit_compat,...` |
+| Root exists, gather `Snapshot`, wrong content | No compat (C3 — native parity elsewhere) |
+| `Overlay` | Snapshot path (`StaleRootOverlay` telemetry) |
+
+Telemetry: `PlaybackRebuildPath::SessionExitPublicationGap` → `session_exit_compat`; `GatherMissHoldEmpty` → `hold_empty`. Generic `CompatibilityPasses` **removed from B1**.
+
+### Verification (6.2.1b)
+
+| Gate | Status |
+|---|---|
+| Native `test_playback_session_exit_publication_gap_predicate` | **PASS** |
+| Host `scripts/test_b1_narrow_session_exit_compat_gate.py` (5 tests) | **PASS** |
+| Host `scripts/test_compatibility_consumer_inventory.py` (B1 → C1-a exception) | **PASS** |
+| Full `pio test -e native` | **1824/1829 PASS** |
+| RAM1 `teensy41-capture-serial` | **2784** locals (below 4000 floor — pre-existing branch pressure; not a 6.2.1b regression target) |
+| HITL `base` on device | **pending** — flash + run to confirm `session_exit_compat` in post-record PLAYING window |
+
+**Architectural label:** B1 **normal-consumer generic fallback retired**; **C1-a session-exit bridge retained** as explicit bounded exception.
+
+## Stage table
+
+| Stage | Scope | Status |
+|---|---|---|
+| **6.2.1** | C1 inventory | **SHIPPED** |
+| **6.2.1b** | B1 narrow C1-a firmware + gates | **SHIPPED** |
+| **6.2.2** | B3/B4 visual/display | **next** |
 
 ## C1 inventory (6.2.1 — SHIPPED read-only)
 
@@ -123,7 +179,7 @@ Tool: [`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b
 
 | Subclass | Condition | HITL `base`-class evidence | B1 compat today? | 6.2.1 removal strategy |
 |---|---|---|---|---|
-| **C1-a** | `!publishedSnapshot()` after session-exit queue, **PLAYING/OVERDUBBING** | [`190525`](../../captures/session_20260911_190525.log): PLAYING#1 `C1_MOs=131/163`, first non-zero root **759 ms** after PLAYING start | **Yes** — `gatherCommittedEvents*` on `tryGather` **false** | **Choose one:** (1) sync `tryPublishSessionExitSnapshot` before `startPlaying` on stop path, (2) hold-empty merged window until root (HITL verify first-note), (3) retain **narrow** C1-a compat with `#CAP` evidence — not blanket removal |
+| **C1-a** | `!publishedSnapshot()` after session-exit queue, **PLAYING/OVERDUBBING** | [`190525`](../../captures/session_20260911_190525.log): PLAYING#2 `C1_MOs=131/163`, gap **759 ms** | **Narrow exception only** — `isPlaybackSessionExitPublicationGap()` | **SHIPPED 6.2.1b** — `#CAP playback_b1,session_exit_compat` |
 | **C1-b** | Pass-only / no hydration root | Native `test_idle_slice_without_snapshot_uses_fallback` (display class) | Indirect via gather | Defer to 6.2.2 / load hydration |
 | **C1-c** | Empty loop / `resetPassTimeline` | Native empty-loop gather false | N/A at B1 if no PLAYING | Hold empty |
 | **C4** | Stale root — gather **true** / `Overlay` | [`190525`](../../captures/session_20260911_190525.log): PLAYING#2 `C4_MOs=158/1320`, roots non-zero | **No** at B1 — Overlay accepted | Preserve; do not conflate with C1 |

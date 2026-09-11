@@ -144,10 +144,14 @@ SC_MEM_ATTR void runtimeTimingUsbBatch(uint32_t maxSize, uint32_t saturatedCount
 SC_MEM_ATTR void runtimeTimingUsbBatchBuckets(const char* kind, const uint32_t buckets[5]);
 /** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick> (Tier-A). */
 SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick);
-/** Playback gather rebuild: DIAG,playback_build,<path>,<durationUs>,<winStart>,<winLen>,<revision>,<track>,<slot>,<count> (Tier-A). `path` is the branch actually taken: snapshot, overlay, compatibility, incremental, or note_edit. The sample is the maximum rebuild since the last emit; count is all rebuilds since the last emit. */
+/** Playback gather rebuild: DIAG,playback_build,<path>,... Tier-A path labels include
+ * snapshot, overlay, session_exit_compat, hold_empty, compatibility, incremental, note_edit. */
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
                                  uint8_t slotIndex, uint32_t rebuildCount, const char* path);
+/// B1 gather-miss policy: `session_exit_compat` or `hold_empty` (Tier-A).
+SC_MEM_ATTR void playbackB1GatherMissPolicy(uint32_t windowStartTick, uint32_t windowLengthTicks,
+                                            const char* policy);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */

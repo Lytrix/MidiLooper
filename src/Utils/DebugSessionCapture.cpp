@@ -529,6 +529,12 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                 static_cast<unsigned>(slotIndex), static_cast<unsigned long>(rebuildCount));
 }
 
+SC_MEM_ATTR void playbackB1GatherMissPolicy(uint32_t windowStartTick, uint32_t windowLengthTicks,
+                                            const char* policy) {
+  emitCapPrintf("#CAP,%lu,DIAG,playback_b1,%s,%lu,%lu\r\n", (unsigned long)micros(), policy,
+                (unsigned long)windowStartTick, (unsigned long)windowLengthTicks);
+}
+
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
   emitCapPrintf("#CAP,%lu,DIAG,playback_order,%lu,%lu\r\n", (unsigned long)micros(),
                 (unsigned long)durationUs, (unsigned long)eventCount);

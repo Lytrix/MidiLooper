@@ -1318,6 +1318,13 @@ LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued;
 }
 
+LOOP_COLD_MEM bool Loop::isPlaybackSessionExitPublicationGap() const {
+  if (publishedSnapshot()) {
+    return false;
+  }
+  return pendingSnapshotSessionExitQueued() && hasPendingSnapshotPublish();
+}
+
 LOOP_COLD_MEM bool Loop::pendingSnapshotFromLoadedPasses() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->fromLoadedPasses;
 }

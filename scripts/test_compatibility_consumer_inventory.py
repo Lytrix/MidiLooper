@@ -78,9 +78,9 @@ _PASSES_MATERIALIZED_STORE_ALLOW = frozenset(
     }
 )
 
-# Named 6.2 fallback sites (plan B1–B8). 6.2 shrinks this set deliberately.
+# Named 6.2 fallback sites (plan B1–B8). B1 uses narrow C1-a exception — see
+# scripts/test_b1_narrow_session_exit_compat_gate.py.
 _6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {
-    "B1": ("src/Track/TrackPlaybackWindowBuild.cpp", _GATHER_COMMITTED_RE),
     "B2": ("src/Utils/CommittedMidiScratch.cpp", _MATERIALIZE_EDIT_VIEW_RE),
     "B3": ("src/Loop/LoopVisualCache.cpp", _GATHER_COMMITTED_RE),
     "B4": ("src/DisplayManager/DisplayNoteResolveCommitted.cpp", _GATHER_COMMITTED_RE),
@@ -89,6 +89,8 @@ _6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {
     "B7": ("src/LoopContentResolution.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE),
     "B8": ("src/Loop/LoopCapture.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE),
 }
+
+_B1_C1_A_SITE = ("src/Track/TrackPlaybackWindowBuild.cpp", _GATHER_COMMITTED_RE)
 
 _EXPECTED_BLOCKER_COUNT = len(_6_2_BLOCKER_SITES)
 
@@ -201,6 +203,13 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
             "update _6_2_BLOCKER_SITES when adding/removing blockers",
         )
         self.assertEqual(missing, [], missing)
+
+    def test_b1_c1_a_exception_site_retained(self) -> None:
+        rel_path, pattern = _B1_C1_A_SITE
+        hits = _scan_cpp_headers(pattern)
+        self.assertIn(rel_path, hits, "B1 C1-a exception must retain guarded gather")
+        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
+        self.assertIn("isPlaybackSessionExitPublicationGap", text)
 
 
 if __name__ == "__main__":

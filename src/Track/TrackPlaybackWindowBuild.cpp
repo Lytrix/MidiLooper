@@ -174,6 +174,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   DIAG_COUNTER_INC(PlaybackMergedMidiEventsRebuild);
   const void* usedSnapshotIdentity = nullptr;
   Loop::SnapshotWindowGatherPath gatherPath = Loop::SnapshotWindowGatherPath::None;
+  bool usedSessionExitCompat = false;
   if (noteEditPreview) {
     const MidiEventVec& preview = editManager.sessionMidiEvents();
     runtime.mergedMidiEvents.mergedEvents.assign(preview.begin(), preview.end());
@@ -190,8 +191,17 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents,
                                                       winStart, winLen, &gatherPath)) {
       usedSnapshotIdentity = snapshotIdentity;
-    } else {
+    } else if (loop.isPlaybackSessionExitPublicationGap()) {
       loop.gatherCommittedEventsInWindow(runtime.mergedMidiEvents.mergedEvents, winStart, winLen);
+      usedSessionExitCompat = true;
+#if defined(SESSION_CAPTURE)
+      DebugSessionCapture::playbackB1GatherMissPolicy(winStart, winLen, "session_exit_compat");
+#endif
+    } else {
+      runtime.mergedMidiEvents.mergedEvents.clear();
+#if defined(SESSION_CAPTURE)
+      DebugSessionCapture::playbackB1GatherMissPolicy(winStart, winLen, "hold_empty");
+#endif
     }
     runtime.mergedMidiEvents.windowStartTick = winStart;
     runtime.mergedMidiEvents.windowLengthTicks = winLen;
@@ -199,8 +209,18 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
     if (loop.tryGatherPublishedSnapshotEventsInWindow(runtime.mergedMidiEvents.mergedEvents, 0,
                                                       loop.loopLengthTicks, &gatherPath)) {
       usedSnapshotIdentity = snapshotIdentity;
-    } else {
+    } else if (loop.isPlaybackSessionExitPublicationGap()) {
       loop.gatherCommittedEventsForDerivedView(runtime.mergedMidiEvents.mergedEvents);
+      usedSessionExitCompat = true;
+#if defined(SESSION_CAPTURE)
+      DebugSessionCapture::playbackB1GatherMissPolicy(0, loop.loopLengthTicks,
+                                                      "session_exit_compat");
+#endif
+    } else {
+      runtime.mergedMidiEvents.mergedEvents.clear();
+#if defined(SESSION_CAPTURE)
+      DebugSessionCapture::playbackB1GatherMissPolicy(0, loop.loopLengthTicks, "hold_empty");
+#endif
     }
     runtime.mergedMidiEvents.windowStartTick = 0;
     runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
@@ -216,13 +236,17 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
       playbackBuildUs, runtime.mergedMidiEvents.windowStartTick,
       runtime.mergedMidiEvents.windowLengthTicks, windowRevision,
       playbackRebuildTrackIndex(track), playbackRebuildSlotIndex(track, loop),
-      noteEditPreview ? RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview
-                      : (gatherPath == Loop::SnapshotWindowGatherPath::Snapshot
-                             ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
-                             : (gatherPath == Loop::SnapshotWindowGatherPath::Overlay
-                                    ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
-                                    : RuntimeTimingTelemetry::PlaybackRebuildPath::
-                                          CompatibilityPasses)));
+      noteEditPreview
+          ? RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview
+          : (gatherPath == Loop::SnapshotWindowGatherPath::Snapshot
+                 ? RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot
+                 : (gatherPath == Loop::SnapshotWindowGatherPath::Overlay
+                        ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
+                        : (usedSessionExitCompat
+                               ? RuntimeTimingTelemetry::PlaybackRebuildPath::
+                                     SessionExitPublicationGap
+                               : RuntimeTimingTelemetry::PlaybackRebuildPath::
+                                     GatherMissHoldEmpty))));
   mergedMidiEventsBuildInProgress = false;
   return true;
 }
