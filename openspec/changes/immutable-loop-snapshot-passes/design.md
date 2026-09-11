@@ -533,12 +533,14 @@ persistent snapshot content
     latest saved complete snapshot only
 ```
 
-The storage boundary is content-only: the future format stores immutable
-objects, stable logical references, the selected snapshot root, loop metadata,
-and the serialized latest complete snapshot. It does not store runtime
+The storage boundary is content-only: the approved format ([DEC-057](../../../docs/DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write))
+stores immutable objects, stable logical references, the selected snapshot root,
+loop metadata, and the serialized latest complete snapshot under wire
+discriminator `LSV1` with `formatVersion == 1` (dual-write of
+`PersistedLoopSnapshot` during migration). It does not store runtime
 addresses, derived representations, playback cursor/order, active ledgers,
 undo history, or abandoned-branch lineage sufficient to restore post-reboot
-undo.
+undo. Firmware implementation is task **5.3**.
 
 After load or unplanned reboot:
 
@@ -900,6 +902,11 @@ reserve.
 
 ## Open Questions
 
-- What exact storage version/layout and compatibility migration are required?
+- ~~What exact storage version/layout and compatibility migration are required?~~
+  **Closed 2026-09-11 — [DEC-057](../../../docs/DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write):**
+  LoopSnapshot body format version 1; wire discriminator `LSV1` + `formatVersion == 1`;
+  dual-write `PersistedLoopSnapshot` + `LoopSnapshot` during migration; load undo depth 0;
+  absence of `LSV1` = legacy; wrong `formatVersion` = unsupported reject.
+  Firmware reader/writer and deferred migration remain task **5.3**.
 - Which optional indexes are justified without becoming a second authority?
 - Which phase and work identity authorize each consumer migration?

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-11 (Immutable OpenSpec 5.1 SHIPPED — snapshot-identity undo select)
+Last updated: 2026-09-11 (Immutable OpenSpec 5.2 APPROVED — LoopSnapshot body format v1 / LSV1)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,11 +10,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 5.1 SHIPPED.**
+**Now — Immutable OpenSpec 5.2 APPROVED (docs/decision only).**
+[DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write):
+LoopSnapshot body format version 1; wire discriminator `LSV1` +
+`formatVersion == 1`; dual-write `PersistedLoopSnapshot` + `LoopSnapshot`;
+load undo depth 0; absence of `LSV1` = legacy; wrong `formatVersion` =
+unsupported reject. **Do not start 5.3 firmware in the same approval.**
+Plan:
+[`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
+Next open in §5: **5.3** reader/writer + deferred migration.
+
+**Prior — Immutable OpenSpec 5.1 SHIPPED.**
 `beforePublishedSnapshot` / `afterPublishedSnapshot` on GUS; deferred after-attach
 by originating `UndoEntryId`; pass/ClearSlot restore retained. Native **1841/1**;
 RAM1 **6880**; HITL `base` PASS [`150709`](../../captures/session_20260911_150709.log).
-Next open in §5: **5.2** storage format approval. Plan:
+Plan:
 [`immutable_loop_snapshot_5_1_undo_identity_select_refinement.md`](../Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md).
 
 **Prior — Immutable OpenSpec 4.6 Stage 6 SHIPPED (task 4.6 closed).**

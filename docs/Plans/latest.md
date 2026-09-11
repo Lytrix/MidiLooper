@@ -1,208 +1,166 @@
----
-name: OpenSpec 5.1 Undo
-overview: "OpenSpec task 5.1: TrackUndo and clear-slot retain/select before/after published LoopSnapshot identities, with deferred after-attach for session-exit publish, while keeping pass Active/Disabled and ClearSlot PersistedLoopSnapshot restore until §6."
-todos:
-  - id: stage-0-docs
-    content: Write 5.1 plan to docs/Plans + latest.md, Architect webhook, CURRENT_WORK Now implementing
-    status: in_progress
-  - id: stage-1-schema
-    content: Add beforePublishedSnapshot/afterPublishedSnapshot + select/capture helpers in TrackUndo
-    status: pending
-  - id: stage-2-push-apply
-    content: Capture at push + select on undo/redo/clear; keep pass toggles and ClearSlot clone
-    status: pending
-  - id: stage-3-deferred-attach
-    content: Attach after by originating UndoEntryId on session-exit publish only (never tip inference)
-    status: pending
-  - id: stage-4-native
-    content: Native fixtures for sync select, deferred attach to exact entry, LIFO/redo clear, ClearSlot
-    status: pending
-  - id: stage-5-gates
-    content: RAM1 capture-serial, native suite, HITL base; check off tasks.md 5.1 + runtime docs
-    status: pending
-isProject: false
----
+# Immutable LoopSnapshot 5.2 — storage layout approval
 
-# OpenSpec 5.1 — snapshot-identity undo select
+**Status:** APPROVED (docs/decision only) — 2026-09-11  
+**OpenSpec:** `immutable-loop-snapshot-passes` task **5.2**  
+**Decision:** [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)  
+**Firmware:** deferred to task **5.3** (not part of this approval)
 
-**Status:** **SHIPPED** (2026-09-11). Native **1841/1**; RAM1 **6880**; HITL `base`
-PASS [`150709`](../../captures/session_20260911_150709.log).
-**Change:** `immutable-loop-snapshot-passes` task **5.1**  
-**Phase gate:** Phase 4 (Undo, load, and persistence) — first slice only  
-**Decisions (pinned):** Q1=1 coexistence; Q2=1 deferred after-attach  
-**Architect review:** APPROVED WITH TIGHTENING (exact-originating-entry attach; before-capture boundary; identity-vs-compatibility contract)
+**Change:** `immutable-loop-snapshot-passes` task **5.2**  
+**Kind:** Docs / decision approval only (no firmware — that is **5.3**)  
+**Architect:** REVISE applied — `LSV1` throughout; `LoopSnap01` rejected; `formatVersion != 1` unsupported (not legacy).
 
-## Pins (required before Stage 1)
+**Pinned:**
+- Q1=1 breaking body bump with an explicit format identifier
+- Q2=1 dual-write (`PersistedLoopSnapshot` + latest `LoopSnapshot`) during migration
+- Leading format identifier = **`LSV1`** (fixed 4-byte ASCII tag)
+- Body format version field = **`uint16_t formatVersion = 1`** immediately after `LSV1`
+- **`LoopSnap01`:** rejected / not part of the wire format
 
-### Pin A — Deferred attach targets the originating GUS entry
+**Rationale (user):** `LoopSnapshot` is the new canonical representation; dual-write keeps the compatibility `PersistedLoopSnapshot` wire for migration without requiring old readers to understand the `LoopSnapshot` section.
 
-Deferred after-attach must target **the exact GUS entry created by the originating session-exit push**. It must **never** infer the target solely from current cursor/tip + `loopId`/`slotIndex`.
+## Format identity (keep distinction explicit)
 
-Reuse the existing runtime entry identity: [`UndoEntry::id`](include/GlobalUndoStack.h) (`UndoEntryId`). No new persistent ID and no wire-format field.
+| Role | Name |
+|---|---|
+| Human / DEC name | **LoopSnapshot body format version 1** |
+| Wire discriminator | **`LSV1`** — 4-byte ASCII, encoded using the existing fixed-token wire convention (`EPT3` / `GEO1` / `OSI1`) |
+| Body format version field | **`uint16_t formatVersion = 1`** immediately after `LSV1` |
+| Metadata section | **`LoopMetadata`** |
+| Compatibility section | **`PersistedLoopSnapshot`** |
+| Authority section | **`LoopSnapshot`** |
 
-At the originating push (when `afterPublishedSnapshot` is left empty for deferred publish), record that entry’s `id` on the pending session-exit publish context (extend [`PendingSnapshotPublishBox`](src/Loop/LoopSnapshotBoxes.h) with a runtime-only `UndoEntryId`, or an equivalent Loop-owned pending-attach token already tied to that queue). On session-exit `storePublishedSnapshot`, `TrackUndo::attachAfterPublishedSnapshot(...)` looks up **that id** in the live stack and fills `afterPublishedSnapshot` only on that entry.
+Vocabulary in DEC/docs: **format identifier** / **wire discriminator** — not “magic.”
 
-```text
-Overdub A stops → push entry A (id=A), after empty → queue publish(token=A)
-operation B     → push entry B → tip changes
-publish A done  → attach after onto entry id=A (not tip B)
-```
+DEC-057 defines: **`LSV1` = LoopSnapshot body format version 1** (wire discriminator for that named format).  
+`formatVersion` after `LSV1` is an extensibility field for v1 readers: **only `1` is supported**. Values other than `1` are **unsupported/rejected** — they do **not** fall through to legacy handling, and 5.2 does **not** pre-approve a version-2 body interpretation.
 
-No-op when the id is missing, the entry was dropped by `dropRedoBranch`, kind mismatch, or `afterPublishedSnapshot` already set.
+Rejected draft tags (not on wire): `LSP1`, `LoopSnap01`, `META`, `PASS`, `SNAP`.
 
-### Pin B — `beforePublishedSnapshot` capture boundary
+## Current format identifier (today)
 
-`beforePublishedSnapshot` is the **currently published root immediately before the operation represented by the GUS entry changes the live branch** — the published root the operation started from — not “whatever `publishedSnapshot()` contains at some later point.”
+**There is none on the loop slot body.**
 
-```text
-capture beforePublishedSnapshot
-        ↓
-existing pass mutation / commit
-        ↓
-publish, if synchronous
-        ↓
-push GUS entry (after = published, or empty if deferred)
-```
+[`writePersistedLoopSnapshot`](src/StorageLoopIo.cpp) starts the body at `loopId` / geometry / allocator scalars. Nested fixed 4-byte markers appear later: `EPT3`, `GEO1`, `OSI1`. Outer CurrentSet uses `SAVE` / `REVPK02` elsewhere — those are not the loop-body format identifier.
 
-Overdub (deferred after):
+**Legacy rule (explicit):** absence of leading **`LSV1`** means **legacy** `PersistedLoopSnapshot` body, routed through the deferred migration path in 5.3. Not merely “old format” wording — **legacy**.
 
-```text
-capture before = current published parent
-        ↓
-existing overdub stop mutation
-        ↓
-push GUS entry (after empty, record entry id for attach)
-        ↓
-session-exit publish
-        ↓
-attach after to exact originating entry id
-```
-
-### Pin C — Identity select vs compatibility restore
-
-**Identity selection establishes the published immutable root; existing pass/ClearSlot restoration remains in place for compatibility and behavior preservation.**
-
-Implementers must not treat pass/ClearSlot restore as redundant, remove it, or reorder it away because identity select exists. Both run: select published root **and** keep today’s Active/Disabled / `restorePassesSnapshot` paths.
-
-## Architecture gate (Phase 4 / task 5.1)
+## Architecture gate (Phase 4 / task 5.2)
 
 | Question | Answer |
 |---|---|
-| **Owner module** | `TrackUndo` selects; `Loop::storePublishedSnapshot` remains publish owner; ClearSlot keeps `sharePassesSnapshot` / `restorePassesSnapshot` |
-| **Primary invariant** | Live-branch GUS entries retain before/after **published** `LoopSnapshot` roots (before = start root, Pin B); undo/redo/clear **select** those roots while pass/ClearSlot restore remain (Pin C); deferred after attaches by originating `UndoEntryId` only (Pin A); LIFO + `dropRedoBranch` unchanged; stack stays runtime-only (no new wire fields) |
+| **Owner** | Approval artifacts: `DECISION_LOG` + change `design.md` + layout plan; runtime owners unchanged (`StorageManager` / `StorageLoopIo` / `Loop`) |
+| **Primary invariant** | Approved on-disk contract for content-only persist of latest complete `LoopSnapshot` + migration dual-write; no undo lineage |
 | **Ownership change?** | NO |
-| **State transition change?** | YES — snapshot selection on undo/redo/clear (Phase 0 / Phase 4 approved) |
-| **Execution bound change?** | NO — cold-path select + ref attach only |
-| **Behavior-preserving?** | YES — pass Active/Disabled and ClearSlot deep-clone remain |
-| **Reuse** | YES — extend `UndoEntry`, `push*` / `applyUndoEntry` / `applyRedoEntry`, and session-exit publish path |
-| **Phase scope** | Task **5.1 only** — not 5.2–5.6 storage/load, not E:/O: provisional select, not §6 retirement |
+| **State transition change?** | NO for 5.2 (approval only); load undo-depth-0 is contracted for 5.3 |
+| **Execution bound change?** | NO in 5.2; 5.3 classifies deferred units |
+| **Reuse** | YES — extend existing CurrentSet slot path and deferred stages; do not invent a second persistence owner |
 
-## Invariant
+## Approved layout (concrete)
+
+### Identity
+
+- **Format name:** LoopSnapshot body format version 1
+- **Leading format identifier (wire discriminator):** 4-byte ASCII `LSV1`, encoded using the existing fixed-token wire convention
+- **Body format version:** `uint16_t formatVersion = 1` immediately after `LSV1`
+- **Flags:** `uint16_t flags` after `formatVersion` (bit0 = `hasPersistedLoopSnapshot`, must be 1 during migration dual-write)
+- **Outer container:** CurrentSet / epoch / `SAVE` / `REVPK02` unchanged. No `CONTAINER_VERSION` bump for 5.2.
+- **Legacy:** first four body bytes ≠ `LSV1` ⇒ **legacy** `PersistedLoopSnapshot`; deferred migration in 5.3. No silent treat-as-LSV1.
+- **Unsupported:** `LSV1` present but `formatVersion != 1` ⇒ **reject** that slot load (unsupported), **not** legacy fallthrough.
+
+### File shape (CurrentSet slot)
 
 ```text
-beforePublishedSnapshot = published root the operation started from (Pin B).
-GUS entry retains ImmutableLoopSnapshotRef before/after roots.
-Undo/redo: identity select establishes published immutable root;
-           pass/ClearSlot restore remains for compatibility (Pin C).
-New push → dropRedoBranch (unchanged)
-Deferred after attaches to originating UndoEntryId only (Pin A).
+[optional EpochFileHeader 10 B]     # unchanged
+LSV1 + uint16 formatVersion(=1) + uint16 flags
+section "LoopMetadata"
+section "PersistedLoopSnapshot"     # dual-write migration
+section "LoopSnapshot"              # latest complete immutable snapshot
+[SAVE 4 B]                           # unchanged
 ```
 
-```mermaid
-sequenceDiagram
-  participant Push as TrackUndo_push
-  participant Loop as Loop_publish
-  participant GUS as GlobalUndoStack
-  participant Undo as TrackUndo_undo
+### Section framing (actual type/role names)
 
-  Push->>GUS: before equals start published root
-  Note over Push,GUS: after empty; record UndoEntryId on pending publish
-  Loop->>Loop: storePublishedSnapshot successor
-  Loop->>GUS: attach after by originating UndoEntryId
-  Undo->>Loop: selectPublishedSnapshot before
-  Note over Undo: pass or ClearSlot restore still runs
+```text
+uint8_t  nameLength
+char     name[nameLength]     # UTF-8, no NUL required
+uint32_t payloadByteLength
+uint8_t  payload[payloadByteLength]
 ```
 
-## Naming (new fields)
+| Section name | Payload |
+|---|---|
+| `LoopMetadata` | Loop id / geometry / allocator counters |
+| `PersistedLoopSnapshot` | Exact current `writePersistedLoopSnapshot` stream (`EPT3` / `GEO1` / `OSI1` nested as today) |
+| `LoopSnapshot` | Latest complete immutable `LoopSnapshot` (logical objects + membership) |
 
-Do **not** reuse `beforeSnapshot` / `afterSnapshot` (`LoopSnapshotRef` = `PersistedLoopSnapshot` DTO).
+Unknown section names: skip by `payloadByteLength` (forward compatible within supported `LSV1` + `formatVersion == 1`). Nested `EPT3`/`GEO1`/`OSI1` inside the `PersistedLoopSnapshot` payload are unchanged.
 
-Add on [`UndoEntry`](include/GlobalUndoStack.h):
+### `LoopMetadata` payload
 
-- `ImmutableLoopSnapshotRef beforePublishedSnapshot`
-- `ImmutableLoopSnapshotRef afterPublishedSnapshot`
+Same counters/geometry already at the head of [`PersistedLoopSnapshot`](include/StorageLoopIo.h):
 
-These are the named-root retains from design.md. Identity for freshness remains `ref.get()` / `publishedSnapshotIdentity()`.
+- `loopId`, `startLoopTick`, `loopLengthTicks`, `loopStartTick`
+- `nextPassId`, `nextNoteId`, `nextMergeSequence`, `lastCommittedPassId`
 
-## Stages
+No C++ pointers. No published revision (runtime-only).
 
-### Stage 0 — Plan + runtime scope (docs only)
+### `PersistedLoopSnapshot` payload (migration dual-write)
 
-- Write plan to `docs/Plans/immutable_loop_snapshot_5_1_undo_identity_select_refinement.md` and `docs/Plans/latest.md`; Architect webhook.
-- Update [`CURRENT_WORK.md`](docs/Runtime/CURRENT_WORK.md) § Now implementing to 5.1.
+Exact current `writePersistedLoopSnapshot` capture+edit+`EPT3`+`GEO1`+`OSI1` stream. Dual-write supports rebuild of compatibility `LoopPasses` and migrate/oracle during transition; §6 may later drop this section.
 
-### Stage 1 — Schema + select helper
+### `LoopSnapshot` payload (latest complete snapshot)
 
-- Include [`LoopSnapshot.h`](include/LoopSnapshot.h) from [`GlobalUndoStack.h`](include/GlobalUndoStack.h); add the two fields.
-- File-local helpers in [`TrackUndo.cpp`](src/TrackUndo.cpp):
-  - `capturePublishedSnapshot(loop)` → `loop.publishedSnapshot()` when present
-  - `selectPublishedSnapshot(loop, ref)` → `loop.storePublishedSnapshot(ref)` (or `clearPublishedSnapshot()` when ref empty) then existing invalidate/refresh already used after pass-state undo
-- **Do not** change STK1–STK3 / runtime.bundle undo wire layout (5.2+). New refs are RAM-only; load leaves them empty (pass path still restores content).
+Logical content only — sole persisted complete snapshot/root:
 
-### Stage 2 — Capture at push + select on apply (sync cases)
+1. **Root header:** `loopId`, `loopLengthTicks`, allocator high-water / next logical ids
+2. **Immutable objects:** `LoopSnapshotNote` / `LoopSnapshotEvent` with stable logical ids — not RAM chunk IDs
+3. **Membership:** logical `NoteRef` / `EventRef` lists (span + event index), canonical order
+4. **Selected root:** one `LoopSnapshot` section per slot file; no snapshot lineage
 
-Extend existing push/apply in [`TrackUndo.cpp`](src/TrackUndo.cpp); keep all pass disable/enable and ClearSlot clone logic (Pin C).
+**Exclusions** (DEC-035 / DEC-044 / 5.1): GUS / undo lineage / `beforePublishedSnapshot` / `afterPublishedSnapshot` / VisualCache / ledgers / cursors / provisional `E:`/`O:` stacks. Logical refs on disk; RAM page packing is not the file format.
 
-Capture `beforePublishedSnapshot` at the Pin B boundary (published root the operation started from), **before** the mutation that the GUS entry represents changes the live branch. Call sites that today mutate then push must capture before first (e.g. record/overdub stop commit path in [`TrackCaptureStopCommit.cpp`](src/Track/TrackCaptureStopCommit.cpp); NOTE_EDIT in [`NoteEditSessionLifecycle.cpp`](src/EditManager/NoteEditSessionLifecycle.cpp)).
+### Load / handle rebuild contract (binds 5.3)
 
-| Kind | before | after at push |
-|---|---|---|
-| `RecordPassAdded` | published root immediately before record-stop live-branch change; empty if none (first record) | `publishedSnapshot()` if already the post-op current root; else empty + deferred attach id |
-| `OverdubPassAdded` | published parent immediately before overdub-stop live-branch change | empty + record `UndoEntryId` on pending session-exit publish |
-| `NoteEditPassClosed` / CC | parent immediately before `tryPublishNoteEditSnapshot` | published after successful publish |
-| `ClearSlot` | published root immediately before clear + existing `beforeSnapshot` DTO | empty until undo captures post-clear published (usually empty) |
-| `LoopBoundaryChange` | leave published fields empty in 5.1 |
+```text
+LSV1 absent:
+  LEGACY PersistedLoopSnapshot body
+  existing readPersistedLoopSnapshot path
+  deferred migration MAY rebuild a complete LoopSnapshot
+  next successful save writes LSV1 dual-write
 
-NOTE_EDIT: capture `parent = loop.publishedSnapshot()` **before** `tryPublishNoteEditSnapshot`; pass into `pushNoteEditPassClosed`.
+LSV1 present AND formatVersion != 1:
+  UNSUPPORTED — reject slot load
+  do NOT treat as legacy
+  do NOT parse as PersistedLoopSnapshot authority
 
-On `applyUndoEntry` / `applyRedoEntry`: run existing pass/ClearSlot restore **and** `selectPublishedSnapshot` (Pin C). If the chosen published ref is empty, do not invent a root (compatibility path remains authoritative for content).
+LSV1 present AND formatVersion == 1:
+  parse LoopMetadata + PersistedLoopSnapshot + LoopSnapshot
+  Loop rebuilds local handles from LoopSnapshot logical refs
+  Loop selects the LoopSnapshot section as published root
+  runtime undo depth = 0, redo empty
+  do NOT invent U: depth from passes
+```
 
-### Stage 3 — Deferred after-attach (session-exit publish)
+Footer GUS remains empty headers only (DEC-035 Stage 3).
 
-In [`LoopSnapshotPublish.cpp`](src/Loop/LoopSnapshotPublish.cpp), only on the **session-exit** `storePublishedSnapshot(box.unpublishedCandidate)` path (not wrap provisional publish), call:
+### Rollback / read-failure invariant
 
-`TrackUndo::attachAfterPublishedSnapshot(track, loop, publishedRef, originatingEntryId)`
+- Failed/partial `LSV1` write: retain previously valid card file (existing deferred finalize / verify-rename policy).
+- **New-format file (`LSV1` + `formatVersion == 1`) with missing or unparseable required `LoopSnapshot` section: load failure for that slot. Must not fall back to the compatibility `PersistedLoopSnapshot` section as authority.**
 
-Behavior (Pin A):
+## 5.2 deliverables (shipped with this approval)
 
-- Look up GUS entry by **`originatingEntryId`** (`UndoEntry::id` recorded at push on the pending publish box).
-- If found, `afterPublishedSnapshot` empty, and kind is session-exit Record/Overdub, set after to the just-published ref.
-- No-op if id missing, entry gone (e.g. redo-branch drop), wrong kind, or after already set.
-- **Never** choose the target by current cursor/tip + loop/slot alone.
-- Wrap-only `storePublishedSnapshot(..., wrapTargetRevision)` does **not** attach.
-
-Idempotent when after was already filled at push (sync record path).
-
-### Stage 4 — Native tests
-
-Extend existing suites (no new test architecture):
-
-- Record → overdub publish drain → undo selects **before** identity; redo selects **after**; second commit after undo clears redo (`dropRedoBranch`).
-- NOTE_EDIT close: before/after refs set; undo selects before via `storePublishedSnapshot` while pass disable still applies.
-- ClearSlot: `beforePublishedSnapshot` retained; undo selects it **and** `restorePassesSnapshot`.
-- Deferred exact-entry: push overdub A (`after` empty) → push another GUS entry B → complete A’s session-exit publish → **entry A** (by id) has `afterPublishedSnapshot == published`, entry B unchanged.
-- Keep existing Active/Disabled assertions.
-
-### Stage 5 — Device gates + closeout
-
-- `pio run -e teensy41-capture-serial` — RAM1 locals ≥ 4000.
-- `pio test -e native` + HITL `base` (undo/redo already in preset) in parallel after upload per HITL-Implementation-Evaluation.
-- Check off task **5.1** in [`tasks.md`](openspec/changes/immutable-loop-snapshot-passes/tasks.md); update `CURRENT_WORK` / `PROJECT_STATE` / brief ARCHITECTURE-REVIEW Phase 4 note that 5.1 shipped, 5.2+ remain.
+1. [x] Plan → [`docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md) + [`docs/Plans/latest.md`](docs/Plans/latest.md); Architect webhook if env set.
+2. [x] **DEC-057:** LoopSnapshot body format version 1; wire discriminator `LSV1`; `formatVersion == 1` only; dual-write; load undo depth 0; legacy = absence of `LSV1`; unsupported = wrong `formatVersion`; no `LoopSnap01`; exclusions.
+3. [x] Close open question in change [`design.md`](openspec/changes/immutable-loop-snapshot-passes/design.md); point to DEC-057.
+4. [x] Note in [`Storage.md`](docs/Authority/Architecture/Storage.md).
+5. [x] Check off **5.2** in `tasks.md`; update CURRENT_WORK / PROJECT_STATE; ARCHITECTURE-REVIEW Phase 4 note (5.3 still open).
 
 ## Explicit non-goals
 
-- 5.2 storage format approval / 5.3–5.6 load migration
-- Removing pass toggles or ClearSlot `PersistedLoopSnapshot` (§6)
-- E:/O: session undo selecting provisional identities (separate from GUS 5.1)
-- Changing GUS footer serialization
-- New Manager / scheduler / `RuntimeWorkBudget::admit`
+- 5.3 reader/writer firmware, migration units, `ExecutionBounds.md` rows
+- Dropping the `PersistedLoopSnapshot` section / retiring `LoopPasses` (§6)
+- Changing CurrentSet `CONTAINER_VERSION` or `REVPK02`
+- Persisting undo lineage or published-identity GUS fields
+- Specifying RAM page packing as on-disk layout
+- Pre-approving `formatVersion >= 2` body interpretation

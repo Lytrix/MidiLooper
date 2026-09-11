@@ -294,7 +294,23 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       (Pin C coexistence).
 - [x] Deferred after-attach uses originating `UndoEntryId` only (Pin A).
 - [x] Runtime scope recorded in `CURRENT_WORK.md`, `PROJECT_STATE.md`, `tasks.md`.
-- [ ] Tasks **5.2–5.6** remain open (storage format / load / persistence bounds).
+- [x] Task **5.2** APPROVED 2026-09-11 — [DEC-057](../../../docs/DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)
+      (LoopSnapshot body format version 1; wire discriminator `LSV1` +
+      `formatVersion == 1`; dual-write; docs/decision only). Plan:
+      [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
+- [ ] Tasks **5.3–5.6** remain open (reader/writer, migration, load, persistence bounds).
+
+### Phase 4 implementation review (task 5.2 only — docs/decision)
+
+- [x] Phase architecture gate posted in the session transcript.
+- [x] Ownership NO; transition NO for 5.2; execution-bound NO in 5.2 (5.3 owns firmware units).
+- [x] Layout approved: `LSV1` + `formatVersion == 1` + flags; sections
+      `LoopMetadata` / `PersistedLoopSnapshot` / `LoopSnapshot`; legacy =
+      absence of `LSV1`; unsupported = wrong `formatVersion`; no compatibility
+      fallback when required `LoopSnapshot` is missing/unparseable.
+- [x] DEC-057, `design.md` open question closed, `Storage.md` updated, `tasks.md`
+      5.2 checked, runtime docs updated.
+- [ ] No firmware in 5.2 — task **5.3** implements reader/writer + deferred migration.
 
 ### Phase 3 implementation review (4.4 display only)
 

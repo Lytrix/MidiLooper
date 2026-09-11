@@ -56,14 +56,31 @@ rebuilds.
 ## Snapshot persistence boundary
 
 `StorageManager` owns serialization, deferred save work, load, and compatibility
-migration. A future storage version serializes immutable note and non-note
-objects, stable logical `NoteRef` / `EventRef` membership (pitch → bar for
-complete notes; bar → `EventRef` lists as an indexed view of existing
-event-stream order), the selected
-snapshot root, loop metadata,
-and the latest saved complete snapshot. It does not serialize runtime addresses,
-derived representations, playback cursor/order, active ledgers, undo history,
-or abandoned-branch lineage sufficient to restore post-reboot undo.
+migration. **[DEC-057](../../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write)**
+approves the physical loop-slot body as **LoopSnapshot body format version 1**:
+
+- Wire discriminator: 4-byte ASCII **`LSV1`**, encoded using the existing
+  fixed-token wire convention (`EPT3` / `GEO1` / `OSI1`).
+- Immediately after: `uint16_t formatVersion` (supported value **1** only) and
+  `uint16_t flags`.
+- Length-framed sections: `LoopMetadata`, `PersistedLoopSnapshot` (migration
+  dual-write), `LoopSnapshot` (sole persisted complete/root snapshot).
+- Absence of `LSV1` ⇒ **legacy** bare `PersistedLoopSnapshot` body (deferred
+  migration in OpenSpec task 5.3).
+- `LSV1` present with `formatVersion != 1` ⇒ **unsupported / reject** (not
+  legacy).
+- A valid `LSV1` + `formatVersion == 1` body with missing/unparseable required
+  `LoopSnapshot` section must **not** fall back to `PersistedLoopSnapshot` as
+  authority.
+
+The format serializes immutable note and non-note objects, stable logical
+`NoteRef` / `EventRef` membership (pitch → bar for complete notes; bar →
+`EventRef` lists as an indexed view of existing event-stream order), loop
+metadata, and the latest saved complete snapshot. It does not serialize runtime
+addresses, derived representations, playback cursor/order, active ledgers, undo
+history, or abandoned-branch lineage sufficient to restore post-reboot undo.
+Outer CurrentSet / epoch / `SAVE` / `REVPK02` / `CONTAINER_VERSION` are unchanged
+by DEC-057. Firmware reader/writer implementation is OpenSpec task **5.3**.
 
 The logical membership is the approved Phase 0 boundary; the physical
 pitch/bar directory that provides structural sharing remains a Phase 1
