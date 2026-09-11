@@ -143,7 +143,7 @@ TRACK_INTERNAL_MEM uint8_t resolveTrackIndexForPersistence(const Track& track) {
 TRACK_INTERNAL_MEM void requestLoopSlotPersist(Track& track, uint8_t slotIndex) {
   const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(track);
   StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, slotIndex);
-  StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+  StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
 }
 
 TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t slotIndex,

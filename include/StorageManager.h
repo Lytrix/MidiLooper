@@ -29,7 +29,7 @@
  */
 class StorageManager {
 public:
-    /// Admit stale loop payload persistence (record, overdub, undo, edit, …).
+    /// Deprecated — loopId is per-track slot index, not globally unique. Use admitLoopSlotPersist.
     static void admitLoopPersist(LoopId loopId);
     /// Stage 3 no-op — Loop undo history is derived from content at load (DEC-035).
     static void admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex);

@@ -15,7 +15,7 @@ namespace {
 
 void requestLoopSlotPersistAndSaveState(const Track& track, uint8_t trackIndex, uint8_t slotIndex) {
   StorageManager::markLoopSlotMaterialDirty(trackIndex, slotIndex);
-  StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+  StorageManager::admitLoopSlotPersist(trackIndex, slotIndex);
   StorageManager::requestDeferredSaveState(looperState.getLooperState());
 }
 

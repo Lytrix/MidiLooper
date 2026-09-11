@@ -10,18 +10,26 @@ from pathlib import Path
 
 SAVE_TOKEN = b"SAVE"
 LSV1_MAGIC = b"LSV1"
-EPOCH_HEADER_BYTES = 16  # optional v6 epoch wrapper when present
+# CurrentWorkspaceStorage::kEpochFileHeaderByteSize — epoch wrapper before slot body.
+EPOCH_FILE_HEADER_BYTE_SIZE = 10
 
 
 def find_payload_offset(data: bytes) -> int:
-    """Return body offset: 0 or 16 when epoch header is present."""
+    """Return LSV1 body offset: 0 (bare body) or after epoch header when wrapped."""
     if len(data) < 4:
         return 0
     if data[:4] == LSV1_MAGIC:
         return 0
-    if len(data) >= EPOCH_HEADER_BYTES + 4 and data[EPOCH_HEADER_BYTES : EPOCH_HEADER_BYTES + 4] == LSV1_MAGIC:
-        return EPOCH_HEADER_BYTES
-    return 0
+    if (
+        len(data) >= EPOCH_FILE_HEADER_BYTE_SIZE + 4
+        and data[EPOCH_FILE_HEADER_BYTE_SIZE : EPOCH_FILE_HEADER_BYTE_SIZE + 4] == LSV1_MAGIC
+    ):
+        return EPOCH_FILE_HEADER_BYTE_SIZE
+
+    # Defensive: scan for first LSV1 before SAVE trailer (tolerates header drift).
+    body_end = len(data) - len(SAVE_TOKEN) if data.endswith(SAVE_TOKEN) else len(data)
+    idx = data.find(LSV1_MAGIC, 0, body_end)
+    return idx if idx >= 0 else 0
 
 
 def probe_slot_file(path: Path) -> dict[str, object]:

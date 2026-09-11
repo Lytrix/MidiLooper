@@ -148,7 +148,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #if defined(SESSION_CAPTURE)
         const uint32_t admitPersistStartUs = micros();
 #endif
-        StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+        StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_admit_loop_persist",
                                           micros() - admitPersistStartUs, "ok");
@@ -272,7 +272,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #if defined(SESSION_CAPTURE)
         const uint32_t admitPersistStartUs = micros();
 #endif
-        StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+        StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
 #if defined(SESSION_CAPTURE)
         emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_admit_loop_persist",
                                           micros() - admitPersistStartUs, "ok");
@@ -496,7 +496,7 @@ void Track::stopRecording(uint32_t currentTick) {
     const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
     const uint8_t persistSlotIndex = recordedSlotIndex;
     StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-    StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                              MemoryMonitor::getInternalHeapFreeBytes(), true);
   }
@@ -588,7 +588,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
     const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
     const uint8_t persistSlotIndex = recordedSlotIndex;
     StorageManager::markLoopSlotMaterialDirty(persistTrackIndex, persistSlotIndex);
-    StorageManager::admitLoopPersist(loopIdForSlot(persistSlotIndex));
+    StorageManager::admitLoopSlotPersist(persistTrackIndex, persistSlotIndex);
     StorageManager::requestDeferredSaveState(looperState.getLooperState(),
                                              MemoryMonitor::getInternalHeapFreeBytes(), true);
   }

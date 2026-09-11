@@ -12,10 +12,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Now — Immutable OpenSpec 5.5–5.6 verification (deferred persistence bounds).**
 5.4 SHIPPED (2026-09-11): native matrix, HITL `base` [`181945`](../../captures/session_20260911_181945.log),
-post-save reboot `LoadLoopJob` [`182529`](../../captures/session_20260911_182529.log).
-SD `LSV1` byte probe advisory (`scripts/probe_lsv1_slot_body.py` when card copied). Prior 5.3
-SHIPPED. Boot sync load (`CurrentSetBootLoad`) remains legacy-only. Plan:
-[`immutable_loop_snapshot_5_4_lsv1_verification_refinement.md`](../Plans/immutable_loop_snapshot_5_4_lsv1_verification_refinement.md).
+reboot `LoadLoopJob` [`182529`](../../captures/session_20260911_182529.log), SD LSV1 byte probe
+[`192637`](../../captures/session_20260911_192637.log) after routing fix
+[`deferred_persist_loopid_track_routing_bugfix.md`](../Plans/deferred_persist_loopid_track_routing_bugfix.md).
+Plan: [`immutable_loop_snapshot_5_4_lsv1_verification_refinement.md`](../Plans/immutable_loop_snapshot_5_4_lsv1_verification_refinement.md).
 Authority: [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write).
 
 **Prior — Immutable OpenSpec 5.2 APPROVED (docs/decision only).**

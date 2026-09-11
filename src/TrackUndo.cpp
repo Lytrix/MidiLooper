@@ -914,7 +914,7 @@ TRACK_COLD_MEM void TrackUndo::undoForLoop(Track& track, Loop& loop) {
             if (entryKind == UndoEntryKind::ClearSlot) {
                 StorageManager::admitSlotMeta(persistTrackIndex, slotIndex);
             }
-            StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+            StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
             track.armLoopPrefixMeasureAfterUndo();
@@ -984,7 +984,7 @@ TRACK_COLD_MEM void TrackUndo::redoForLoop(Track& track, Loop& loop) {
             if (entryKind == UndoEntryKind::ClearSlot) {
                 StorageManager::admitSlotMeta(persistTrackIndex, slotIndex);
             }
-            StorageManager::admitLoopPersist(track.loopIdForSlot(slotIndex));
+            StorageManager::admitLoopSlotPersist(persistTrackIndex, slotIndex);
             StorageManager::requestDeferredSaveState(looperState.getLooperState(), UINT32_MAX,
                                                      true);
             break;
