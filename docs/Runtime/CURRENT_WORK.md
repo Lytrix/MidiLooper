@@ -10,11 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — Immutable OpenSpec 6.2.1 (B1 — `TrackPlaybackWindowBuild`).**
-6.1 **APPROVED** (2026-09-11). 6.2 plan approved with snapshot taxonomy C1–C4:
+**Now — Immutable OpenSpec 6.2.1b (B1 firmware — C1-a strategy).**
+6.2.1 C1 inventory **SHIPPED** (read-only): [`190525`](../../captures/session_20260911_190525.log)
+shows **759 ms** PLAYING with `root=0x0` after record stop; B1 compat required today unless
+sync-publish or hold-empty is chosen. Tool:
+[`scripts/analyze_b1_c1_gather_miss_inventory.py`](../../scripts/analyze_b1_c1_gather_miss_inventory.py).
+Plan:
 [`immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md`](../Plans/immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md).
-Next: C1 fixture inventory for playback gather-miss, then remove B1 compat fallback
-owner-by-owner (not bulk). Baseline HITL [`203803`](../../captures/session_20260911_203803.log).
+
+**Prior — Immutable OpenSpec 6.2.1 C1 inventory (2026-09-11).**
 
 **Prior — Immutable OpenSpec 6.1 SHIPPED / APPROVED (2026-09-11).**
 
