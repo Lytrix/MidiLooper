@@ -44,8 +44,8 @@ Always load first:
 
 **Required**
 
-- [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
-- [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — overdub overlap candidate / classify / resolve / seal
+- [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — capture/stop/undo; published `LoopSnapshot` membership hand-off (`handoffLiveRecordProgressToCommittedPass`)
+- [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — overdub overlap candidate / classify / resolve / seal; `from=snapshot` source-view trusts published membership (no consumer omit heal)
 - [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — open ledger identities vs source-view covering identities
 - [plans/record_overdub_memory_display_timeline_enhancement.md](Plans/record_overdub_memory_display_timeline_enhancement.md)
 - [plans/overdub_lifecycle_representation_authority.md](Plans/overdub_lifecycle_representation_authority.md) — overdub wrap consume/seal/rebuild authority
@@ -221,7 +221,7 @@ Always load first:
 
 **Required**
 
-- [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) — current geometry / participation / leave-restore / commit workflow
+- [Guides/MOVE_NOTE_LOGIC.md](Guides/MOVE_NOTE_LOGIC.md) — current geometry / participation / leave-restore / commit workflow (exit persists parked Visible `currentSpan` ≠ `committedSpan`; apply-owned is fallback when that build is empty)
 - [Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md](Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) — `resolveConstrainedGeometry` / classify / pending (shared with overdub)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
 - `EditManager`, `NoteGeometryResolver`, `NoteEditCurrentState`, `ControlSurfaceManager`, `EditStates/`
@@ -242,6 +242,7 @@ Always load first:
 - Treating Focus `changedOverlapNoteIds` as authority (removed — DEC-030 / §11 step 5.5)
 - Pre-`NoteEditCurrentState` overlap docs that infer session semantics from live store alone
 - Imperative `findOverlaps` / restore-first chains as the live geometry engine
+- Treating NOTE_EDIT exit as display-only, or treating `applyOwnedEditPassRows` as unused on close — when current-state/focus built no rows, those rows are committed (not discarded)
 
 ---
 

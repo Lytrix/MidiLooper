@@ -277,6 +277,28 @@ not authoritative for a later overlap-source window; the owner falls back to
 committed-pass reconstruction and reports that origin in the existing
 `DIAG,lcr,src` telemetry.
 
+#### Published LoopSnapshot membership (session-exit hand-off)
+
+**Owner:** `handoffLiveRecordProgressToCommittedPass` in `LoopSnapshotPublish`
+(membership RC-A).
+
+When live-record scan progress retargets onto a committed pass at session exit,
+open NoteRefs (including bar-crossing notes still open across the boundary) must
+be preserved on the same `passChangeProgress` open-note array — not dropped and
+re-discovered later by paint/source-view heals.
+
+| Rule | Behavior |
+|---|---|
+| Completeness authority | Published `LoopSnapshot` NoteRefs after a successful hand-off |
+| Freshness | `publishedSnapshotIsCurrent()` — freshness ≠ completeness; do not weaken the predicate to paper over missing NoteRefs |
+| Consumers | `from=snapshot` source-view and draw-source gather **trust** membership; they do not `mergeOmitted` / NoteId-heal incomplete current roots |
+| Sealed overlays | `applyPendingNoteChangesToDisplayNotes` still runs after any source-view seed so Hide/Shorten stay authoritative |
+| Latent / separate | RC-B (`addOpenPassNote` ordering / `addedChanges == 0`); ISR `queuedPassIds` capacity |
+
+Plans: [`../Plans/overdub_snapshot_bar_crossing_membership_bugfix.md`](../Plans/overdub_snapshot_bar_crossing_membership_bugfix.md),
+[`../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md`](../Plans/overdub_start_snapshot_omits_bar_crossing_record_note_bugfix.md).
+Overlap/source-view catalog: [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md).
+
 #### Overdub stop — same-pitch overlap restore (pending-note close)
 
 **Owner:** `Track::finalizePendingNotes`
@@ -525,5 +547,6 @@ Run: `pio test -e native` from project root.
 3. **Treating `midiEvents()` as canonical storage** — **passes** + **NoteEditSession.store** are source of truth; `passesMaterializedStore_` is derived.
 4. **Treating `midiEvents()` writes as canonical** — they are derived-cache-only; canonical loop ownership remains in passes.
 5. **Assuming SD stores chunk IDs** — v4 persists pass-shaped snapshots; do not read/write chunk IDs to disk without a format version bump.
+6. **Healing incomplete current `LoopSnapshot` membership in consumers** — do not restore `mergeOmitted` / NoteId heal on `from=snapshot` source-view, draw-source gather, or visual/idle/adopt. Fix publish hand-off (`handoffLiveRecordProgressToCommittedPass`) instead. Sealed `applyPendingNoteChangesToDisplayNotes` after a seed is still required.
 6. **Confusing `reconstructNotes` with storage validation** — UI wrapping ≠ committed event cleanup.
 7. **Reintroducing Take / `takes[]` / `commitTake()` names** — use **passes**, `commitCapturePass()`, **RecordPassAdded** / **OverdubPassAdded**.

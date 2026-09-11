@@ -106,7 +106,7 @@ Capture overdub emit (`playbackCursorAdvanceSendCapture`) does **not** write the
 | Evaluation | Owner | Reach | Skip |
 |---|---|---|---|
 | Clock path | `playCommittedLoopMidi` → `playbackCursorAdvanceSend` / mute apply | Committed playback On/Off in cursor order | Capture-only emit |
-| USB occupy catch-up gate | `CommittedPlaybackLedgerCatchUp::shouldApply` | `lastTickInLoop != UINT32_MAX` **and** `occupyPhase > lastTickInLoop` **and** not an overdub wrap commit interval | Equal tick (`occupyPhase <= lastTick`); wrap interval — see wrap exclusion below |
+| USB occupy catch-up gate | `CommittedPlaybackLedgerCatchUp::shouldApply` | `lastTickInLoop != UINT32_MAX` **and** `occupyPhase > lastTickInLoop` **and** not an overdub wrap commit interval. `occupyPhase` is `Track::capturePhaseTick(pending.startNoteTick)` from `snapshotOverlapHoldCandidates` | Equal tick (`occupyPhase <= lastTick`); wrap interval — see wrap exclusion below |
 | Interval membership | `IntervalProjection::didPlaybackEventCross` | Event phase in `(lastTickInLoop, occupyPhase]` | Outside the open-closed interval |
 
 ### 2. Catch-up vs clock ownership (lifecycle)
@@ -214,7 +214,7 @@ The open-ledger-identity count is the size of that id set. Capture `#CAP DIAG,lc
 
 ### How ledger feeds occupy resolve
 
-`Track::snapshotOverlapHoldCandidates` builds the On candidate set, then `resolveOccupancyAtNoteOn` writes Shorten/Hide. Ledger is the first source of identities. Source-view covering is the fallback when the ledger set cannot produce rows.
+`Track::snapshotOverlapHoldCandidates` builds the On candidate set, then `resolveOccupancyAtNoteOn` writes Shorten/Hide. Ledger is the first source of identities. Source-view covering is the fallback when the ledger set cannot produce rows. `holdStart` handed to `catchUpCommittedPlaybackLedgerToPhase` is the same shared capture phase (`Track::capturePhaseTick`) used for occupy present-at-hold and capture storage ticks. Origin-0 phase is not catch-up input.
 
 ```mermaid
 flowchart TD
@@ -259,6 +259,7 @@ flowchart TD
 | Pairing Off to On in storage | `reconstructDisplayNotes` |
 | Source-view membership after wrap | `appendLastCommittedOverdubPassToSourceView` | Newly sealed pass notes only; skip NoteIds already present. Does **not** merge the pass into `visualCache` (`205138` wrap 2 `205→271`). Idle slice fills wrap body notes from current committed content (Overlay gather is rejected; `205917`). Wrap-edge / NOTE_EDIT rebuild uses `appendOverdubPassDisplayNotes` (wrap-held heads/tails only). Source-view span cache still uses full `appendOverdubPassWrapPairedNotes`. Span cache restamps to `playbackRevision` so OVERDUBBING idle does not `rebuildOverdubSourceView("idle")` `from=passes`. Full rebuild is idle / later only when the span cache is not ready |
 | Source-view membership after rebuild | `rebuildOverdubSourceView` / `retainValidOverdubSourceViewIdentities` | Identity filter runs only on revision-fresh full-loop merged stream |
+| Source-view membership `from=snapshot` | `rebuildOverdubSourceSpanCache` | Current published NoteRefs only — no `mergeOmitted` / NoteId upsert. Sealed Hide/Shorten still apply after the seed. Publish completeness: `handoffLiveRecordProgressToCommittedPass` (membership RC-A). Non-snapshot origins keep omitted-identity merge. Catalog: [`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`](OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md) § Committed occupy source |
 | Whether open ledger identities should equal source-view covering identities | It must not be forced. Mismatch is a diagnostic, not a coupling license |
 
 An open B that has no recorded NoteOff is not a ledger Entry. Wrap carries it as live capture only.
