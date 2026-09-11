@@ -21,6 +21,9 @@ from host_midi_automation_baseline import (
     _can_skip_clear_before_record,
     _clear_undo_prune_gate_ok,
     _empty_slot_select_started_recording,
+    _evaluate_clear_precondition,
+    _recording_currently_active,
+    _selected_slot_disp_empty,
     _serial_has_clear_completed,
     _track_cleared_for_record,
     _transport_running_before_record_arm,
@@ -81,6 +84,74 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         self.assertTrue(_empty_slot_select_started_recording(after_select))
         self.assertFalse(_empty_slot_select_started_recording(after_clear))
 
+    def test_empty_slot_select_recording_via_disp_without_st(self) -> None:
+        """DISP RECORDING is enough when ST has not arrived yet.
+
+        [`session_20260911_092650.log`] empty Loop-1 select flooded DISP
+        RECORDING; ST-only checks missed the ghost capture.
+        """
+        before = [
+            "#CAP,10070618,DISP,0,STOPPED,0,0,0,0,0,0,0,16,0",
+        ]
+        after_disp = before + [
+            "#CAP,17019208,DISP,0,RECORDING,1,0,0,0,0,0,0,1,0",
+        ]
+        self.assertFalse(_recording_currently_active(before))
+        self.assertFalse(_empty_slot_select_started_recording(before))
+        self.assertTrue(_recording_currently_active(after_disp))
+        self.assertTrue(_empty_slot_select_started_recording(after_disp))
+
+    def test_clear_log_confirmed_without_empty_st_092650(self) -> None:
+        """Successful clear of ghost RECORDING ends STOPPED without EMPTY ST.
+
+        [`session_20260911_092650.log`] Track cleared + Clear selected slot 1;
+        host previously timed out because STOPPED was treated as clear disproof
+        and follow lagged past the clear logs.
+        """
+        baseline = [
+            "#CAP,16978483,ST,Track,STOPPED,RECORDING",
+            "#CAP,17019208,DISP,0,RECORDING,1,0,0,0,0,0,0,1,0",
+        ]
+        after_clear = baseline + [
+            "[20.456] [DEBUG] [TRACK] Track cleared @ tick 1885",
+            "[20.456] [INFO] MIDI: Clear selected slot 1",
+            "#CAP,21000000,ST,Track,RECORDING,STOPPED",
+            "#CAP,21000100,DISP,0,STOPPED,0,0,0,0,0,0,0,1,0",
+        ]
+        satisfied, result = _evaluate_clear_precondition(
+            after_clear, loop_slot=1, after_index=len(baseline)
+        )
+        self.assertTrue(satisfied)
+        self.assertEqual(result, "clear_log_confirmed")
+        self.assertFalse(_recording_currently_active(after_clear))
+        self.assertFalse(
+            _empty_slot_select_started_recording(
+                after_clear, after_index=len(baseline)
+            )
+        )
+
+    def test_selected_slot_empty_after_ghost_record_stop_093852(self) -> None:
+        """After select-started RECORDING stop, DISP length 0 means skip clear.
+
+        [`session_20260911_093852.log`] clear long-press hit PERS,drain,stuck
+        while the slot was already empty.
+        """
+        after_select = [
+            "#CAP,737554413,ST,Track,STOPPED,RECORDING",
+            "#CAP,737604237,DISP,0,RECORDING,18,0,0,0,0,0,0,1,0",
+        ]
+        after_stop = after_select + [
+            "#CAP,738171000,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,738171277,ST,Track,STOPPED_RECORDING,STOPPED",
+            "#CAP,738211245,DISP,0,STOPPED,0,0,0,0,0,0,0,16,0",
+        ]
+        self.assertFalse(
+            _selected_slot_disp_empty(after_select, loop_slot=1, after_index=0)
+        )
+        self.assertTrue(
+            _selected_slot_disp_empty(after_stop, loop_slot=1, after_index=0)
+        )
+
     def test_arm_already_satisfied_ignores_historical_recording_when_stopped(self) -> None:
         """Empty-slot select left RECA in the suffix; clear stopped capture.
 
@@ -112,6 +183,8 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         [`session_20260910_121508.log`] proxy/clock fallback pressed transport
         while STOPPED → PLAYING → arm RECOVERY_FAILED before play→RECORDING.
         """
+        from host_midi_automation_baseline import _transport_running_before_record_arm
+
         lines = [
             "#CAP,1,ST,Track,RECORDING,STOPPED_RECORDING",
             "#CAP,2,ST,Track,STOPPED_RECORDING,STOPPED",

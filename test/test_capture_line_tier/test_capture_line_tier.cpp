@@ -141,7 +141,7 @@ void test_timing_telemetry_lines_are_tier_a() {
       "step=80,finish=40,publish=0,probe=1,enqueue=0,discard=0,emit=40"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,inner,refill=200,event_scan=800,"
-      "note_lookup=18000,change_build=400,construct=300"));
+      "note_lookup=18000,change_build=400,construct=300,open=1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,195718100,DIAG,snapshot_idle,reserve,start=195638831,enter=195718100,"
       "reserve_us=79269"));
@@ -158,7 +158,7 @@ void test_timing_telemetry_lines_are_tier_a() {
       "step=80,finish=40,publish=0,probe=1,enqueue=0,discard=0,emit=40"));
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine(
       "#CAP,195718000,DIAG,snapshot_idle,inner,refill=200,event_scan=800,"
-      "note_lookup=18000,change_build=400,construct=300"));
+      "note_lookup=18000,change_build=400,construct=300,open=1"));
 #endif
 }
 
@@ -188,8 +188,8 @@ void test_snapshot_idle_lines_fit_capture_text_budget() {
   const int innerLen = snprintf(
       inner, sizeof(inner),
       "#CAP,%lu,DIAG,snapshot_idle,inner,refill=%lu,event_scan=%lu,"
-      "note_lookup=%lu,change_build=%lu,construct=%lu",
-      4294967295ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul);
+      "note_lookup=%lu,change_build=%lu,construct=%lu,open=%u",
+      4294967295ul, 999999ul, 999999ul, 999999ul, 999999ul, 999999ul, 32u);
   char reserve[256];
   const int reserveLen = snprintf(
       reserve, sizeof(reserve),

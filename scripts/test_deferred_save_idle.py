@@ -88,19 +88,20 @@ class DeferredSaveIdleTests(unittest.TestCase):
         lines.append("[StorageManager] State saved successfully (v4).")
         self.assertFalse(deferred_save_active_in_suffix(lines))
 
-    def test_persistence_drain_stuck_counts_as_active(self) -> None:
+    def test_persistence_drain_stuck_is_not_waited_as_active(self) -> None:
+        """Stuck drain is observable but must not block HITL clear waits."""
         lines = [
             "[StorageManager] Draining persistence work queue to SD card...",
             "[StorageManager] ERROR: Persistence drain stuck after 256 iterations",
         ]
         self.assertTrue(persistence_drain_stuck_in_suffix(lines))
-        self.assertTrue(deferred_save_active_in_suffix(lines))
-        self.assertFalse(deferred_save_idle_in_suffix(lines))
+        self.assertFalse(deferred_save_active_in_suffix(lines))
+        self.assertTrue(deferred_save_idle_in_suffix(lines))
 
-    def test_cap_pers_drain_stuck_counts_as_active_until_settled(self) -> None:
+    def test_cap_pers_drain_stuck_is_not_waited_as_active(self) -> None:
         lines = ["#CAP,1,PERS,drain,stuck,133,133,2,0,334,5504"]
         self.assertTrue(persistence_drain_stuck_in_suffix(lines))
-        self.assertTrue(deferred_save_active_in_suffix(lines))
+        self.assertFalse(deferred_save_active_in_suffix(lines))
         lines.append("#CAP,2,PERS,result,100,0,0,ok")
         self.assertFalse(persistence_drain_stuck_in_suffix(lines))
         self.assertFalse(deferred_save_active_in_suffix(lines))

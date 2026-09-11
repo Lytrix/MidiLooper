@@ -1132,6 +1132,60 @@ void test_live_record_held_note_pairs_on_next_bar_off() {
   TEST_ASSERT_EQUAL(1u, loop.unpublishedSnapshot()->noteMembership(60, 0)->count);
 }
 
+void test_session_exit_keeps_bar_crossing_live_record_open_note() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+
+  constexpr uint8_t kPitch = 60;
+  constexpr uint32_t kOnTick = 100;
+  const uint32_t offTick = Config::TICKS_PER_BAR + 200;
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(kOnTick, 1, kPitch, 100)));
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  drainInFlightSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_EQUAL(1u, loop.liveRecordOpenNoteCount());
+  TEST_ASSERT_NOT_NULL(loop.unpublishedSnapshot().get());
+  TEST_ASSERT_NULL(loop.unpublishedSnapshot()->noteMembership(kPitch, 0).get());
+
+  const NoteId noteId = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, noteId);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, kPitch, 0)));
+  TEST_ASSERT_EQUAL(1u, loop.liveRecordOpenNoteCount());
+
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, offTick));
+  TEST_ASSERT_EQUAL(1u, loop.liveRecordOpenNoteCount());
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto published = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(published.get());
+
+  const LoopSnapshotNoteRef note = published->findNote(noteId, kPitch);
+  TEST_ASSERT_NOT_NULL(note.get());
+  TEST_ASSERT_EQUAL_UINT32(kOnTick, note->startTick);
+  TEST_ASSERT_EQUAL_UINT32(offTick, note->endTick);
+
+  const auto bar0 = published->noteMembership(kPitch, 0);
+  const auto bar1 = published->noteMembership(kPitch, 1);
+  TEST_ASSERT_NOT_NULL(bar0.get());
+  TEST_ASSERT_NOT_NULL(bar1.get());
+  TEST_ASSERT_TRUE(bar0->count >= 1);
+  TEST_ASSERT_TRUE(bar1->count >= 1);
+  TEST_ASSERT_EQUAL(noteId, bar0->references[0]->noteId);
+  TEST_ASSERT_EQUAL(noteId, bar1->references[0]->noteId);
+
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(
+      loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, loop.loopLengthTicks));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, kPitch));
+}
+
 void test_live_record_dense_bar_keeps_cursor_inside_bar() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5123,6 +5177,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_does_not_rebuild_when_parent_has_no_room);
   RUN_TEST(test_live_record_second_bar_start_changes_are_bar_two_only);
   RUN_TEST(test_live_record_held_note_pairs_on_next_bar_off);
+  RUN_TEST(test_session_exit_keeps_bar_crossing_live_record_open_note);
   RUN_TEST(test_live_record_dense_bar_keeps_cursor_inside_bar);
   RUN_TEST(test_live_record_equal_boundary_event_waits_for_next_window);
   RUN_TEST(test_live_record_same_pitch_second_bar_does_not_duplicate_first);
