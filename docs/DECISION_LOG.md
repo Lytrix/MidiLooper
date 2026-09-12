@@ -906,6 +906,17 @@ until PLAYING because length stayed 0 for the whole RECORDING window.
 at `record_length=768` while bar 1 was still being written, then rebuilt
 on every later length step.
 
+**Amendment (2026-09-12):** Record session-exit retains live-record work when
+`appliedLiveRecordCompletedTicks` is valid (`> 0`, `<= sealedLength`) or when
+mid-window capture progress is still in flight (`unpublishedCandidate`,
+`construction`, or active `passChangeProgress.fromCaptureStore`). Candidate or
+construction `loopLengthTicks` may still differ from the sealed loop until
+`handoffPendingSnapshotLength` runs. Discard only when applied progress exceeds
+the sealed length or handoff fails. Supersedes the discard-on-length-mismatch
+intent of the 2026-08-26 first-bar amendment for successful handoff at record
+stop ([`record_stop_snapshot_publication_gap_display_bugfix.md`](Plans/record_stop_snapshot_publication_gap_display_bugfix.md)
+stage 4 / RC1).
+
 **Amendment (2026-08-26):** First-record live `snapshot_idle` starts only
 when `currentTick - startLoopTick >= TICKS_PER_BAR`. `loopLengthTicks` can
 already be one bar at record start because stop-quantize of a small raw

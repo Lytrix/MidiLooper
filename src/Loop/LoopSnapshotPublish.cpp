@@ -511,19 +511,19 @@ uint32_t liveRecordNewParentLength(uint32_t completedTicks, uint32_t loopLengthT
 
 bool pendingSnapshotFitsSealedLength(const PendingSnapshotPublishBox& box,
                                      uint32_t sealedLength) {
-  if (sealedLength == 0 || box.appliedLiveRecordCompletedTicks == 0 ||
-      box.appliedLiveRecordCompletedTicks > sealedLength) {
+  if (sealedLength == 0) {
     return false;
   }
-  if (box.unpublishedCandidate &&
-      box.unpublishedCandidate->loopLengthTicks() < sealedLength) {
+  if (box.appliedLiveRecordCompletedTicks > sealedLength) {
     return false;
   }
-  if (box.construction &&
-      box.construction->candidate().loopLengthTicks() < sealedLength) {
-    return false;
+  if (box.appliedLiveRecordCompletedTicks > 0) {
+    return true;
   }
-  return true;
+  // Mid-window live-record work at session exit may not have persisted completed
+  // ticks yet; handoff extends candidate/construction to the sealed length (RC1).
+  return box.unpublishedCandidate || box.construction ||
+         (box.passChangeProgress.active && box.passChangeProgress.fromCaptureStore);
 }
 
 bool handoffPendingSnapshotLength(PendingSnapshotPublishBox& box,
