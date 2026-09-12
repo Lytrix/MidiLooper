@@ -544,6 +544,41 @@ bool handoffPendingSnapshotLength(PendingSnapshotPublishBox& box,
   return true;
 }
 
+/// Stage 6C-A: extend idle parent and in-flight construction when the completed-bar
+/// frontier exceeds candidate tick capacity. Reuses root-sharing `withLoopLengthTicks`.
+bool extendLiveRecordCandidateCapacity(PendingSnapshotPublishBox& box,
+                                       uint32_t completedTicks,
+                                       uint32_t loopLengthTicks) {
+  if (completedTicks == 0) {
+    return false;
+  }
+  uint32_t currentLength = 0;
+  if (box.unpublishedCandidate) {
+    currentLength = box.unpublishedCandidate->loopLengthTicks();
+  } else if (box.construction) {
+    currentLength = box.construction->candidate().loopLengthTicks();
+  } else {
+    return true;
+  }
+  const bool constructionShort =
+      box.construction &&
+      box.construction->candidate().loopLengthTicks() < completedTicks;
+  if (currentLength >= completedTicks && !constructionShort) {
+    return true;
+  }
+  const uint32_t targetLength = liveRecordNewParentLength(completedTicks, loopLengthTicks);
+  if (targetLength < completedTicks) {
+    return false;
+  }
+  return handoffPendingSnapshotLength(box, targetLength);
+}
+
+ImmutableLoopSnapshotRef liveRecordFragmentParent(
+    const ImmutableLoopSnapshotRef& resolvedParent,
+    const PendingSnapshotPublishBox& box) {
+  return box.unpublishedCandidate ? box.unpublishedCandidate : resolvedParent;
+}
+
 void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t loopLengthTicks) {
   if (!box.sessionExitQueued) {
     return;
@@ -712,18 +747,20 @@ LOOP_COLD_MEM bool prepareLiveRecordWindow(Loop& loop, PendingSnapshotPublishBox
                                            const LoopSnapshot& parent,
                                            uint32_t liveRecordCompletedTicks) {
   const uint32_t completedTicks = liveRecordCompletedOrOneBar(liveRecordCompletedTicks);
-  if (box.unpublishedCandidate &&
-      box.unpublishedCandidate->loopLengthTicks() < completedTicks) {
+  if (!extendLiveRecordCandidateCapacity(box, completedTicks, loop.loopLengthTicks)) {
     return false;
   }
+  const uint32_t parentLengthTicks =
+      box.unpublishedCandidate ? box.unpublishedCandidate->loopLengthTicks()
+                               : parent.loopLengthTicks();
   const uint32_t previousCompletedTicks = box.appliedLiveRecordCompletedTicks;
   uint32_t targetCompletedTicks = completedTicks;
   if (targetCompletedTicks > previousCompletedTicks + Config::TICKS_PER_BAR) {
     targetCompletedTicks = previousCompletedTicks + Config::TICKS_PER_BAR;
   }
-  const uint32_t includeUntil = targetCompletedTicks < parent.loopLengthTicks()
+  const uint32_t includeUntil = targetCompletedTicks < parentLengthTicks
                                     ? targetCompletedTicks
-                                    : parent.loopLengthTicks();
+                                    : parentLengthTicks;
   if (includeUntil <= previousCompletedTicks) {
     return false;
   }
@@ -919,8 +956,8 @@ LOOP_COLD_MEM bool startNextPassChangeFragment(Loop& loop, PendingSnapshotPublis
   return startNextPassChangeFragmentImpl(loop, box, parent);
 }
 
-LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
-                                                            const PendingSnapshotPublishBox& box,
+LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(Loop& loop,
+                                                            PendingSnapshotPublishBox& box,
                                                             uint32_t liveRecordCompletedTicks) {
   const uint32_t completedTicks = liveRecordCompletedOrOneBar(liveRecordCompletedTicks);
   if (box.unpublishedCandidate &&
@@ -957,10 +994,10 @@ LOOP_COLD_MEM ImmutableLoopSnapshotRef resolvePendingParent(const Loop& loop,
   if (!box.sessionExitQueued && loop.capture.phase == CapturePhase::Record &&
       loop.loopLengthTicks > 0 && !loop.publishedSnapshot()) {
     if (box.unpublishedCandidate) {
-      if (box.unpublishedCandidate->loopLengthTicks() >= completedTicks) {
-        return box.unpublishedCandidate;
+      if (!extendLiveRecordCandidateCapacity(box, completedTicks, loop.loopLengthTicks)) {
+        return {};
       }
-      return {};
+      return box.unpublishedCandidate;
     }
     return LoopSnapshot::createEmpty(
         loop.loopId, liveRecordNewParentLength(completedTicks, loop.loopLengthTicks),
@@ -995,6 +1032,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     return false;
   }
 
+  ImmutableLoopSnapshotRef fragmentParent = parent;
   if (box.passChangeProgress.active) {
     if (box.sessionExitQueued && box.passChangeProgress.fromCaptureStore) {
       if (!handoffLiveRecordProgressToCommittedPass(box, *parent)) {
@@ -1005,8 +1043,9 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
       if (!prepareLiveRecordWindow(loop, box, *parent, liveRecordCompletedTicks)) {
         return false;
       }
+      fragmentParent = liveRecordFragmentParent(parent, box);
     }
-    return startNextPassChangeFragment(loop, box, parent);
+    return startNextPassChangeFragment(loop, box, fragmentParent);
   }
 
   if (!box.queuedPassIds.empty()) {
@@ -1034,7 +1073,8 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     if (!prepareLiveRecordWindow(loop, box, *parent, liveRecordCompletedTicks)) {
       return false;
     }
-    return startNextPassChangeFragment(loop, box, parent);
+    fragmentParent = liveRecordFragmentParent(parent, box);
+    return startNextPassChangeFragment(loop, box, fragmentParent);
   }
 
   if (box.sessionExitQueued && !box.companionsApplied) {
@@ -1549,7 +1589,9 @@ LOOP_COLD_MEM bool Loop::liveRecordCanApplyCompletedTicks(uint32_t completedTick
   if (pendingSnapshotPublishBox_->sessionExitQueued) {
     return true;
   }
-  return pendingSnapshotPublishBox_->unpublishedCandidate->loopLengthTicks() >= completedTicks;
+  // Stage 6C-A: capacity is extendable during live record; admission extends at
+  // prepareLiveRecordWindow / resolvePendingParent rather than rejecting here.
+  return true;
 }
 
 LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {

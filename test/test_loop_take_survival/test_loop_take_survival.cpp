@@ -1013,6 +1013,8 @@ void drainInFlightSnapshotPublish(Loop& loop) {
   }
 }
 
+void applyLiveRecordCompletedTicks(Loop& loop, uint32_t completedTicks);
+
 void test_live_record_does_not_start_in_progress_bar() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -1055,27 +1057,48 @@ void test_live_record_continues_next_completed_bar() {
   TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR * 2, loop.liveRecordAppliedCompletedTicks());
 }
 
-void test_live_record_does_not_rebuild_when_parent_has_no_room() {
+void test_live_record_extends_candidate_past_seventeen_bars() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   loop.loopId = 7;
-  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 30;
   loop.beginCapture(CapturePhase::Record);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
   TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
   drainInFlightSnapshotPublish(loop);
   TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
-  TEST_ASSERT_TRUE(loop.liveRecordCanApplyCompletedTicks(Config::TICKS_PER_BAR * 17));
-  TEST_ASSERT_FALSE(loop.liveRecordCanApplyCompletedTicks(Config::TICKS_PER_BAR * 18));
+  TEST_ASSERT_TRUE(loop.liveRecordCanApplyCompletedTicks(Config::TICKS_PER_BAR * 18));
 
   const uint32_t pastParent = Config::TICKS_PER_BAR * 18;
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(pastParent + 100, 1, 67, 100)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(pastParent + 200, 1, 67, 0)));
-  TEST_ASSERT_FALSE(loop.stepPendingSnapshotPublish(1, true, 0, pastParent));
-  TEST_ASSERT_FALSE(loop.hasInFlightSnapshotConstruction());
-  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR, loop.liveRecordAppliedCompletedTicks());
+  applyLiveRecordCompletedTicks(loop, pastParent);
+  TEST_ASSERT_EQUAL(pastParent, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_GREATER_THAN_UINT32(Config::TICKS_PER_BAR * 17,
+                                  loop.pendingSnapshotCandidateLengthTicks());
+}
+
+void test_live_record_scales_applied_frontier_past_seventeen_bars() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kBars = 25;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * kBars;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t bar = 0; bar < kBars; ++bar) {
+    const uint32_t tick = bar * Config::TICKS_PER_BAR;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(tick + 100, 1, static_cast<uint8_t>(60 + bar), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(tick + 200, 1, static_cast<uint8_t>(60 + bar), 0)));
+  }
+  applyLiveRecordCompletedTicks(loop, Config::TICKS_PER_BAR * kBars);
+  TEST_ASSERT_EQUAL(Config::TICKS_PER_BAR * kBars, loop.liveRecordAppliedCompletedTicks());
+  TEST_ASSERT_GREATER_THAN_UINT32(Config::TICKS_PER_BAR * 17,
+                                  loop.pendingSnapshotCandidateLengthTicks());
 }
 
 void test_live_record_second_bar_start_changes_are_bar_two_only() {
@@ -5531,7 +5554,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_live_record_pending_after_length_reaches_one_bar);
   RUN_TEST(test_live_record_does_not_start_in_progress_bar);
   RUN_TEST(test_live_record_continues_next_completed_bar);
-  RUN_TEST(test_live_record_does_not_rebuild_when_parent_has_no_room);
+  RUN_TEST(test_live_record_extends_candidate_past_seventeen_bars);
+  RUN_TEST(test_live_record_scales_applied_frontier_past_seventeen_bars);
   RUN_TEST(test_live_record_second_bar_start_changes_are_bar_two_only);
   RUN_TEST(test_live_record_held_note_pairs_on_next_bar_off);
   RUN_TEST(test_session_exit_keeps_bar_crossing_live_record_open_note);
