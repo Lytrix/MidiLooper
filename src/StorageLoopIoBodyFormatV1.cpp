@@ -6,20 +6,117 @@
 #if defined(ARDUINO)
 #include <Arduino.h>
 #define LSV1_IO_MEM FLASHMEM
+#define LSV1_SAVE_STEP_MEM FLASHMEM
 #else
 #define LSV1_IO_MEM
+#define LSV1_SAVE_STEP_MEM
 #endif
 
 #include "Globals.h"
 #include "LoopContentResolution.h"
+#include "Utils/DebugSessionCapture.h"
+#include "Utils/ExternalMemoryFirstAllocator.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <map>
+#include <new>
 #include <set>
 #include <string>
 #include <vector>
+
+#if defined(ARDUINO)
+extern "C" void* extmem_malloc(size_t size);
+#else
+#include <cstdlib>
+#endif
+
+struct Lsv1GatheredNote {
+  NoteId noteId = kInvalidNoteId;
+  uint8_t pitch = 0;
+  uint8_t velocity = 0;
+  uint32_t startTick = 0;
+  uint32_t endTick = 0;
+};
+
+struct Lsv1NoteMembershipBar {
+  uint32_t barIndex = 0;
+  std::vector<NoteId, ExternalMemoryFirstAllocator<NoteId>> noteIds;
+};
+
+struct Lsv1PitchMembership {
+  uint8_t pitch = 0;
+  std::vector<Lsv1NoteMembershipBar, ExternalMemoryFirstAllocator<Lsv1NoteMembershipBar>> bars;
+};
+
+struct Lsv1GatheredEvent {
+  EventId eventId = kInvalidEventId;
+  uint32_t canonicalOrder = 0;
+  MidiEvent value{};
+};
+
+struct Lsv1EventMembershipBar {
+  uint32_t barIndex = 0;
+  std::vector<EventId, ExternalMemoryFirstAllocator<EventId>> eventIds;
+};
+
+struct Lsv1GatheredLoopSnapshotPayload {
+  LoopId loopId = kInvalidLoopId;
+  uint32_t loopLengthTicks = 0;
+  uint32_t loopStartTick = 0;
+  uint32_t nextNoteId = 1;
+  uint32_t nextEventId = 1;
+  std::vector<Lsv1GatheredNote, ExternalMemoryFirstAllocator<Lsv1GatheredNote>> notes;
+  std::vector<Lsv1GatheredEvent, ExternalMemoryFirstAllocator<Lsv1GatheredEvent>> events;
+  std::vector<Lsv1PitchMembership, ExternalMemoryFirstAllocator<Lsv1PitchMembership>> pitchMembership;
+  std::vector<Lsv1EventMembershipBar, ExternalMemoryFirstAllocator<Lsv1EventMembershipBar>>
+      eventMembership;
+};
+
+struct LoopSnapshotBodyFormatV1SaveWriteState {
+  enum class Phase : uint8_t {
+    GatherNotePage = 0,
+    GatherEventPage = 1,
+    SortNotes = 2,
+    SortEvents = 3,
+    WriteSectionHeader = 4,
+    WritePayload = 5,
+    Done = 6,
+  };
+
+  Phase phase = Phase::GatherNotePage;
+  uint32_t barCount = 0;
+  uint32_t pitch = 0;
+  uint32_t barIndex = 0;
+  uint32_t membershipPageIndex = 0;
+  uint32_t sortSwapBudget = 0;
+  uint32_t writePayloadBytes = 0;
+  uint32_t writePayloadOffset = 0;
+  enum class PayloadWriteSubphase : uint8_t {
+    RootHeader = 0,
+    Notes = 1,
+    Events = 2,
+    PitchMembership = 3,
+    EventMembership = 4,
+  };
+  PayloadWriteSubphase payloadSubphase = PayloadWriteSubphase::RootHeader;
+  uint32_t emitIndex = 0;
+  uint32_t nestedIndex = 0;
+  uint32_t nestedRefIndex = 0;
+  bool sectionHeaderWritten = false;
+  bool telemetryTailEntered = false;
+  uint32_t tailStepCount = 0;
+  uint32_t lastTelemetrySig = 0;
+  uint8_t lastTelemetryPhase = 0;
+  uint16_t unchangedSigStreak = 0;
+};
+
+struct LoopSnapshotBodyFormatV1SaveScratch {
+  Lsv1GatheredLoopSnapshotPayload payload{};
+  LoopSnapshotBodyFormatV1SaveWriteState writeState{};
+};
 
 namespace {
 
@@ -90,47 +187,6 @@ bool midiEventBytesValidOnRead(const MidiEvent& event) {
   }
   return true;
 }
-
-struct Lsv1GatheredNote {
-  NoteId noteId = kInvalidNoteId;
-  uint8_t pitch = 0;
-  uint8_t velocity = 0;
-  uint32_t startTick = 0;
-  uint32_t endTick = 0;
-};
-
-struct Lsv1NoteMembershipBar {
-  uint32_t barIndex = 0;
-  std::vector<NoteId> noteIds;
-};
-
-struct Lsv1PitchMembership {
-  uint8_t pitch = 0;
-  std::vector<Lsv1NoteMembershipBar> bars;
-};
-
-struct Lsv1GatheredEvent {
-  EventId eventId = kInvalidEventId;
-  uint32_t canonicalOrder = 0;
-  MidiEvent value{};
-};
-
-struct Lsv1EventMembershipBar {
-  uint32_t barIndex = 0;
-  std::vector<EventId> eventIds;
-};
-
-struct Lsv1GatheredLoopSnapshotPayload {
-  LoopId loopId = kInvalidLoopId;
-  uint32_t loopLengthTicks = 0;
-  uint32_t loopStartTick = 0;
-  uint32_t nextNoteId = 1;
-  uint32_t nextEventId = 1;
-  std::vector<Lsv1GatheredNote> notes;
-  std::vector<Lsv1GatheredEvent> events;
-  std::vector<Lsv1PitchMembership> pitchMembership;
-  std::vector<Lsv1EventMembershipBar> eventMembership;
-};
 
 bool gatherLoopSnapshotPayload(const LoopSnapshot& snapshot,
                                Lsv1GatheredLoopSnapshotPayload& out) {
@@ -265,8 +321,8 @@ bool writeLoopMetadataPayload(const StorageIo& io, const PersistedLoopSnapshot& 
   return true;
 }
 
-bool writeLoopSnapshotPayload(const StorageIo& io,
-                              const Lsv1GatheredLoopSnapshotPayload& payload) {
+bool writeLoopSnapshotPayloadToIo(const StorageIo& io,
+                                  const Lsv1GatheredLoopSnapshotPayload& payload) {
   if (!lsv1IoWrite(io, &payload.loopId, sizeof(payload.loopId))) return false;
   if (!lsv1IoWrite(io, &payload.loopLengthTicks, sizeof(payload.loopLengthTicks))) return false;
   if (!lsv1IoWrite(io, &payload.loopStartTick, sizeof(payload.loopStartTick))) return false;
@@ -728,6 +784,547 @@ LoopSnapshotBodyFormatV1LoadStepResult stepLoopSnapshotBodyFormatV1LoadParseImpl
   return LoopSnapshotBodyFormatV1LoadStepResult::Completed;
 }
 
+LSV1_SAVE_STEP_MEM bool saveStepBudgetExhausted(uint32_t deadlineUs) {
+#if defined(ARDUINO)
+  return deadlineUs != 0 && micros() >= deadlineUs;
+#else
+  (void)deadlineUs;
+  return false;
+#endif
+}
+
+LSV1_SAVE_STEP_MEM Lsv1PitchMembership* findOrCreatePitchMembership(
+    Lsv1GatheredLoopSnapshotPayload& payload, uint8_t pitch) {
+  for (Lsv1PitchMembership& entry : payload.pitchMembership) {
+    if (entry.pitch == pitch) {
+      return &entry;
+    }
+  }
+  Lsv1PitchMembership entry{};
+  entry.pitch = pitch;
+  payload.pitchMembership.push_back(entry);
+  return &payload.pitchMembership.back();
+}
+
+LSV1_SAVE_STEP_MEM Lsv1NoteMembershipBar* findOrCreateNoteMembershipBar(
+    Lsv1PitchMembership& pitchMembership, uint32_t barIndex) {
+  for (Lsv1NoteMembershipBar& bar : pitchMembership.bars) {
+    if (bar.barIndex == barIndex) {
+      return &bar;
+    }
+  }
+  Lsv1NoteMembershipBar bar{};
+  bar.barIndex = barIndex;
+  pitchMembership.bars.push_back(bar);
+  return &pitchMembership.bars.back();
+}
+
+LSV1_SAVE_STEP_MEM Lsv1EventMembershipBar* findOrCreateEventMembershipBar(
+    Lsv1GatheredLoopSnapshotPayload& payload, uint32_t barIndex) {
+  for (Lsv1EventMembershipBar& bar : payload.eventMembership) {
+    if (bar.barIndex == barIndex) {
+      return &bar;
+    }
+  }
+  Lsv1EventMembershipBar bar{};
+  bar.barIndex = barIndex;
+  payload.eventMembership.push_back(bar);
+  return &payload.eventMembership.back();
+}
+
+bool noteIdSeenInBar(const Lsv1NoteMembershipBar& bar, NoteId noteId) {
+  for (NoteId existing : bar.noteIds) {
+    if (existing == noteId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool eventIdSeenInBar(const Lsv1EventMembershipBar& bar, EventId eventId) {
+  for (EventId existing : bar.eventIds) {
+    if (existing == eventId) {
+      return true;
+    }
+  }
+  return false;
+}
+
+Lsv1GatheredNote* findGatheredNote(Lsv1GatheredLoopSnapshotPayload& payload, NoteId noteId) {
+  for (Lsv1GatheredNote& note : payload.notes) {
+    if (note.noteId == noteId) {
+      return &note;
+    }
+  }
+  return nullptr;
+}
+
+Lsv1GatheredEvent* findGatheredEvent(Lsv1GatheredLoopSnapshotPayload& payload, EventId eventId) {
+  for (Lsv1GatheredEvent& event : payload.events) {
+    if (event.eventId == eventId) {
+      return &event;
+    }
+  }
+  return nullptr;
+}
+
+LSV1_SAVE_STEP_MEM void advanceNoteGatherCursor(LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  state.membershipPageIndex = 0;
+  ++state.barIndex;
+  if (state.barIndex >= state.barCount) {
+    state.barIndex = 0;
+    ++state.pitch;
+  }
+}
+
+LSV1_SAVE_STEP_MEM const SnapshotMembership<LoopSnapshotNoteRef>* noteMembershipPageAt(
+    const LoopSnapshot& snapshot, const LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  const SnapshotMembershipRef<LoopSnapshotNoteRef> membership =
+      snapshot.noteMembership(static_cast<uint8_t>(state.pitch), state.barIndex);
+  const SnapshotMembership<LoopSnapshotNoteRef>* page = membership.get();
+  for (uint32_t skip = 0; skip < state.membershipPageIndex && page != nullptr; ++skip) {
+    page = page->next.get();
+  }
+  return page;
+}
+
+LSV1_SAVE_STEP_MEM const SnapshotMembership<LoopSnapshotEventRef>* eventMembershipPageAt(
+    const LoopSnapshot& snapshot, const LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  const SnapshotMembershipRef<LoopSnapshotEventRef> membership =
+      snapshot.eventMembership(state.barIndex);
+  const SnapshotMembership<LoopSnapshotEventRef>* page = membership.get();
+  for (uint32_t skip = 0; skip < state.membershipPageIndex && page != nullptr; ++skip) {
+    page = page->next.get();
+  }
+  return page;
+}
+
+LSV1_SAVE_STEP_MEM bool gatherOneNoteMembershipPage(const LoopSnapshot& snapshot,
+                                 Lsv1GatheredLoopSnapshotPayload& payload,
+                                 LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  if (state.barCount == 0) {
+    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherEventPage;
+    state.barIndex = 0;
+    state.membershipPageIndex = 0;
+    return true;
+  }
+  if (state.pitch >= kLoopSnapshotPitchCount) {
+    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherEventPage;
+    state.barIndex = 0;
+    state.membershipPageIndex = 0;
+    return true;
+  }
+
+  const SnapshotMembership<LoopSnapshotNoteRef>* page = noteMembershipPageAt(snapshot, state);
+  if (page == nullptr) {
+    advanceNoteGatherCursor(state);
+    return true;
+  }
+
+  Lsv1PitchMembership* pitchMembership = nullptr;
+  Lsv1NoteMembershipBar* barEntry = nullptr;
+  for (uint8_t index = 0; index < page->count; ++index) {
+    const LoopSnapshotNoteRef& reference = page->references[index];
+    if (!reference || reference->noteId == kInvalidNoteId) {
+      continue;
+    }
+    if (pitchMembership == nullptr) {
+      pitchMembership =
+          findOrCreatePitchMembership(payload, static_cast<uint8_t>(state.pitch));
+      barEntry = findOrCreateNoteMembershipBar(*pitchMembership, state.barIndex);
+    }
+    if (noteIdSeenInBar(*barEntry, reference->noteId)) {
+      continue;
+    }
+    barEntry->noteIds.push_back(reference->noteId);
+    if (findGatheredNote(payload, reference->noteId) == nullptr) {
+      Lsv1GatheredNote gathered{};
+      gathered.noteId = reference->noteId;
+      gathered.pitch = reference->pitch;
+      gathered.velocity = reference->velocity;
+      gathered.startTick = reference->startTick;
+      gathered.endTick = reference->endTick;
+      payload.notes.push_back(gathered);
+    }
+  }
+
+  if (page->next) {
+    ++state.membershipPageIndex;
+  } else {
+    advanceNoteGatherCursor(state);
+  }
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM bool gatherOneEventMembershipPage(const LoopSnapshot& snapshot,
+                                  Lsv1GatheredLoopSnapshotPayload& payload,
+                                  LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  if (state.barCount == 0) {
+    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortNotes;
+    return true;
+  }
+  if (state.barIndex >= state.barCount) {
+    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortNotes;
+    state.sortSwapBudget = 0;
+    return true;
+  }
+
+  const SnapshotMembership<LoopSnapshotEventRef>* page = eventMembershipPageAt(snapshot, state);
+  if (page == nullptr) {
+    state.membershipPageIndex = 0;
+    ++state.barIndex;
+    return true;
+  }
+
+  Lsv1EventMembershipBar* barEntry = nullptr;
+  for (uint8_t index = 0; index < page->count; ++index) {
+    const LoopSnapshotEventRef& reference = page->references[index];
+    if (!reference || reference->eventId == kInvalidEventId) {
+      continue;
+    }
+    if (barEntry == nullptr) {
+      barEntry = findOrCreateEventMembershipBar(payload, state.barIndex);
+    }
+    if (eventIdSeenInBar(*barEntry, reference->eventId)) {
+      continue;
+    }
+    barEntry->eventIds.push_back(reference->eventId);
+    if (findGatheredEvent(payload, reference->eventId) == nullptr) {
+      Lsv1GatheredEvent gathered{};
+      gathered.eventId = reference->eventId;
+      gathered.canonicalOrder = reference->canonicalOrder;
+      gathered.value = reference->value;
+      if (!isPersistableMidiEvent(gathered.value)) {
+        return false;
+      }
+      payload.events.push_back(gathered);
+    }
+  }
+
+  if (page->next) {
+    ++state.membershipPageIndex;
+  } else {
+    state.membershipPageIndex = 0;
+    ++state.barIndex;
+  }
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM bool sortNotesOneGrain(Lsv1GatheredLoopSnapshotPayload& payload,
+                       LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  uint32_t swaps = 0;
+  for (uint32_t index = 0; index + 1 < payload.notes.size() && swaps < kLsv1SaveOrderingFlushBatch;
+       ++index) {
+    if (payload.notes[index].noteId > payload.notes[index + 1].noteId) {
+      std::swap(payload.notes[index], payload.notes[index + 1]);
+      ++swaps;
+    }
+  }
+  if (swaps == 0) {
+    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortEvents;
+    state.sortSwapBudget = 0;
+  }
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM bool sortEventsOneGrain(Lsv1GatheredLoopSnapshotPayload& payload,
+                        LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  uint32_t swaps = 0;
+  for (uint32_t index = 0; index + 1 < payload.events.size() && swaps < kLsv1SaveOrderingFlushBatch;
+       ++index) {
+    const Lsv1GatheredEvent& left = payload.events[index];
+    const Lsv1GatheredEvent& right = payload.events[index + 1];
+    const bool outOfOrder = left.canonicalOrder > right.canonicalOrder ||
+                            (left.canonicalOrder == right.canonicalOrder &&
+                             left.eventId > right.eventId);
+    if (outOfOrder) {
+      std::swap(payload.events[index], payload.events[index + 1]);
+      ++swaps;
+    }
+  }
+  if (swaps == 0) {
+    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::WriteSectionHeader;
+    state.payloadSubphase = LoopSnapshotBodyFormatV1SaveWriteState::PayloadWriteSubphase::RootHeader;
+    state.emitIndex = 0;
+    state.nestedIndex = 0;
+    state.nestedRefIndex = 0;
+    state.writePayloadOffset = 0;
+  }
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM size_t measureGatheredLoopSnapshotPayloadBytes(
+    const Lsv1GatheredLoopSnapshotPayload& payload) {
+  size_t nbytes = 0;
+  StorageIo io{
+      [&nbytes](const void*, size_t size) {
+        nbytes += size;
+        return true;
+      },
+      nullptr};
+  return writeLoopSnapshotPayloadToIo(io, payload) ? nbytes : 0;
+}
+
+LSV1_SAVE_STEP_MEM bool writeLoopSnapshotPayloadByteSlice(const StorageIo& io,
+                                       const Lsv1GatheredLoopSnapshotPayload& payload,
+                                       size_t& byteOffset, size_t maxBytes) {
+  size_t streamPos = 0;
+  size_t written = 0;
+  bool sliceQuotaFilled = false;
+  bool ioWriteFailed = false;
+  StorageIo sliceIo{
+      [&](const void* data, size_t size) {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        size_t chunkIndex = 0;
+        while (chunkIndex < size) {
+          if (streamPos + (size - chunkIndex) <= byteOffset) {
+            streamPos += (size - chunkIndex);
+            break;
+          }
+          if (streamPos < byteOffset) {
+            const size_t skip = byteOffset - streamPos;
+            chunkIndex += skip;
+            streamPos += skip;
+            continue;
+          }
+          if (written >= maxBytes) {
+            sliceQuotaFilled = true;
+            return false;
+          }
+          const size_t allowed = maxBytes - written;
+          const size_t chunk =
+              (size - chunkIndex) <= allowed ? (size - chunkIndex) : allowed;
+          if (!lsv1IoWrite(io, bytes + chunkIndex, chunk)) {
+            ioWriteFailed = true;
+            return false;
+          }
+          written += chunk;
+          chunkIndex += chunk;
+          streamPos += chunk;
+        }
+        return true;
+      },
+      nullptr};
+  if (!writeLoopSnapshotPayloadToIo(sliceIo, payload)) {
+    if (ioWriteFailed) {
+      return false;
+    }
+    if (!sliceQuotaFilled) {
+      return false;
+    }
+  }
+  if (written == 0) {
+    return byteOffset >= measureGatheredLoopSnapshotPayloadBytes(payload);
+  }
+  byteOffset += written;
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM bool writeLoopSnapshotSectionHeader(const StorageIo& io,
+                                                       uint32_t payloadBytes) {
+  const size_t nameLength = std::strlen(kLsv1SectionLoopSnapshot);
+  if (nameLength == 0 || nameLength > kLsv1MaxSectionNameLength) {
+    return false;
+  }
+  const uint8_t nameLengthByte = static_cast<uint8_t>(nameLength);
+  if (!lsv1IoWrite(io, &nameLengthByte, 1)) return false;
+  if (!lsv1IoWrite(io, kLsv1SectionLoopSnapshot, nameLength)) return false;
+  if (!lsv1IoWrite(io, &payloadBytes, sizeof(payloadBytes))) return false;
+  return true;
+}
+
+LSV1_SAVE_STEP_MEM uint32_t loopSnapshotTailProgressSignature(
+    const LoopSnapshotBodyFormatV1SaveWriteState& state) {
+  return static_cast<uint32_t>(state.phase) ^ (state.barIndex * 131u) ^ (state.pitch * 104729u) ^
+         (state.membershipPageIndex * 524287u) ^ (state.emitIndex * 97u) ^
+         (state.nestedIndex * 911u) ^ (state.nestedRefIndex * 3571u) ^
+         (state.writePayloadOffset * 17u) ^
+         (static_cast<uint32_t>(state.payloadSubphase) << 24u);
+}
+
+#if defined(SESSION_CAPTURE)
+LSV1_SAVE_STEP_MEM void emitLoopSnapshotTailStepTelemetry(
+    const LoopSnapshotBodyFormatV1SaveWriteState& state,
+    const Lsv1GatheredLoopSnapshotPayload& payload, uint32_t previousSig, bool sigChanged,
+    bool completed) {
+  constexpr uint32_t kTailStepLogInterval = 64u;
+  constexpr uint16_t kTailStepStallStreak = 64u;
+
+  const uint32_t sig = loopSnapshotTailProgressSignature(state);
+  const bool phaseChanged =
+      static_cast<uint8_t>(state.phase) != state.lastTelemetryPhase;
+  const bool intervalDue =
+      state.tailStepCount == 1u || (state.tailStepCount % kTailStepLogInterval) == 0u;
+  const bool stallDue = state.unchangedSigStreak >= kTailStepStallStreak;
+  if (!completed && !phaseChanged && !intervalDue && !stallDue && !sigChanged) {
+    return;
+  }
+
+  char detail[112];
+  const char* stallTag = stallDue ? ",stall" : "";
+  std::snprintf(
+      detail, sizeof(detail),
+      "LoopPersist,tail_step,p=%u,b=%u,pi=%u,pg=%u,ei=%u,ni=%u,nr=%u,off=%u,pb=%u,n=%u,e=%u,st=%u%s",
+      static_cast<unsigned>(state.phase), static_cast<unsigned>(state.barIndex),
+      static_cast<unsigned>(state.pitch), static_cast<unsigned>(state.membershipPageIndex),
+      static_cast<unsigned>(state.emitIndex), static_cast<unsigned>(state.nestedIndex),
+      static_cast<unsigned>(state.nestedRefIndex),
+      static_cast<unsigned>(state.writePayloadOffset),
+      static_cast<unsigned>(state.writePayloadBytes),
+      static_cast<unsigned>(payload.notes.size()),
+      static_cast<unsigned>(payload.events.size()), static_cast<unsigned>(state.tailStepCount),
+      stallTag);
+  SC_PERSIST("work", state.tailStepCount, previousSig, sig, detail);
+}
+#endif
+
+LSV1_SAVE_STEP_MEM void resetLoopSnapshotBodyFormatV1SaveScratchImpl(
+    LoopSnapshotBodyFormatV1SaveScratch& scratch) {
+  scratch.payload = {};
+  scratch.writeState = {};
+}
+
+LSV1_SAVE_STEP_MEM void beginLoopSnapshotBodyFormatV1SaveGatherImpl(
+    const LoopSnapshot& loopSnapshot, LoopSnapshotBodyFormatV1SaveScratch& scratch) {
+  resetLoopSnapshotBodyFormatV1SaveScratchImpl(scratch);
+  scratch.payload.loopId = loopSnapshot.loopId();
+  scratch.payload.loopLengthTicks = loopSnapshot.loopLengthTicks();
+  scratch.payload.loopStartTick = loopSnapshot.loopStartTick();
+  scratch.payload.nextNoteId = loopSnapshot.nextNoteId();
+  scratch.payload.nextEventId = loopSnapshot.nextEventId();
+  if (scratch.payload.loopLengthTicks == 0 || Config::TICKS_PER_BAR == 0) {
+    scratch.writeState.barCount = 0;
+  } else {
+    scratch.writeState.barCount =
+        (scratch.payload.loopLengthTicks + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  }
+  scratch.writeState.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherNotePage;
+#if defined(SESSION_CAPTURE)
+  char detail[80];
+  std::snprintf(detail, sizeof(detail), "LoopPersist,tail_gather_begin,bc=%u",
+                static_cast<unsigned>(scratch.writeState.barCount));
+  SC_PERSIST("work", 0, 0, 0, detail);
+#endif
+}
+
+LSV1_SAVE_STEP_MEM void recordLoopSnapshotTailStepTelemetry(
+    LoopSnapshotBodyFormatV1SaveWriteState& state,
+    const Lsv1GatheredLoopSnapshotPayload& payload, bool completed) {
+#if defined(SESSION_CAPTURE)
+  const uint32_t previousSig = state.lastTelemetrySig;
+  const uint32_t sig = loopSnapshotTailProgressSignature(state);
+  const bool sigChanged = sig != previousSig;
+  if (sigChanged) {
+    state.unchangedSigStreak = 0;
+    state.lastTelemetrySig = sig;
+    state.lastTelemetryPhase = static_cast<uint8_t>(state.phase);
+  } else if (state.unchangedSigStreak < UINT16_MAX) {
+    ++state.unchangedSigStreak;
+  }
+  emitLoopSnapshotTailStepTelemetry(state, payload, previousSig, sigChanged, completed);
+#else
+  (void)state;
+  (void)payload;
+  (void)completed;
+#endif
+}
+
+LSV1_SAVE_STEP_MEM LoopSnapshotBodyFormatV1SaveStepResult stepLoopSnapshotBodyFormatV1SaveTailImpl(
+    const StorageIo& io, const LoopSnapshot& loopSnapshot,
+    LoopSnapshotBodyFormatV1SaveScratch& scratch, uint32_t deadlineUs, uint32_t maxGrains) {
+  if (maxGrains != 1) {
+    return LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+  }
+  if (saveStepBudgetExhausted(deadlineUs)) {
+    return LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  }
+
+  LoopSnapshotBodyFormatV1SaveWriteState& state = scratch.writeState;
+  Lsv1GatheredLoopSnapshotPayload& payload = scratch.payload;
+  ++state.tailStepCount;
+
+  LoopSnapshotBodyFormatV1SaveStepResult stepResult =
+      LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+
+  switch (state.phase) {
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherNotePage:
+      if (!gatherOneNoteMembershipPage(loopSnapshot, payload, state)) {
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+        break;
+      }
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+      break;
+
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherEventPage:
+      if (!gatherOneEventMembershipPage(loopSnapshot, payload, state)) {
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+        break;
+      }
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+      break;
+
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortNotes:
+      if (!sortNotesOneGrain(payload, state)) {
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+        break;
+      }
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+      break;
+
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortEvents:
+      if (!sortEventsOneGrain(payload, state)) {
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+        break;
+      }
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+      break;
+
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::WriteSectionHeader:
+      state.writePayloadBytes =
+          static_cast<uint32_t>(measureGatheredLoopSnapshotPayloadBytes(payload));
+      if (!writeLoopSnapshotSectionHeader(io, state.writePayloadBytes)) {
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+        break;
+      }
+      state.sectionHeaderWritten = true;
+      state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::WritePayload;
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+      break;
+
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::WritePayload: {
+      size_t payloadOffset = state.writePayloadOffset;
+      if (payloadOffset >= state.writePayloadBytes) {
+        state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::Done;
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Completed;
+        break;
+      }
+      if (!writeLoopSnapshotPayloadByteSlice(io, payload, payloadOffset,
+                                             kLsv1SaveIoChunkBytes)) {
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
+        break;
+      }
+      state.writePayloadOffset = static_cast<uint32_t>(payloadOffset);
+      if (state.writePayloadOffset >= state.writePayloadBytes) {
+        state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::Done;
+        stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Completed;
+        break;
+      }
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+      break;
+    }
+
+    case LoopSnapshotBodyFormatV1SaveWriteState::Phase::Done:
+      stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Completed;
+      break;
+  }
+
+  if (stepResult != LoopSnapshotBodyFormatV1SaveStepResult::Failed) {
+    recordLoopSnapshotTailStepTelemetry(
+        state, payload, stepResult == LoopSnapshotBodyFormatV1SaveStepResult::Completed);
+  }
+  return stepResult;
+}
+
 }  // namespace
 
 LoopSnapshotBodyFormatV1LoadStepResult LSV1_IO_MEM stepLoopSnapshotBodyFormatV1LoadParse(
@@ -796,13 +1393,47 @@ bool LSV1_IO_MEM writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
   std::vector<uint8_t> loopSnapshotSection;
   if (!writeSectionToBuffer(
           [&](const StorageIo& sectionIo) {
-            return writeLoopSnapshotPayload(sectionIo, gatheredPayload);
+            return writeLoopSnapshotPayloadToIo(sectionIo, gatheredPayload);
           },
           loopSnapshotSection) ||
       loopSnapshotSection.empty()) {
     return false;
   }
   return writeSectionPayload(io, kLsv1SectionLoopSnapshot, loopSnapshotSection);
+}
+
+LSV1_IO_MEM LoopSnapshotBodyFormatV1SaveScratch* acquireLoopSnapshotBodyFormatV1SaveScratch() {
+  static LoopSnapshotBodyFormatV1SaveScratch* scratch = nullptr;
+  if (scratch != nullptr) {
+    return scratch;
+  }
+#if defined(ARDUINO)
+  void* memory = extmem_malloc(sizeof(LoopSnapshotBodyFormatV1SaveScratch));
+#else
+  void* memory = std::malloc(sizeof(LoopSnapshotBodyFormatV1SaveScratch));
+#endif
+  if (memory == nullptr) {
+    return nullptr;
+  }
+  scratch = new (memory) LoopSnapshotBodyFormatV1SaveScratch();
+  return scratch;
+}
+
+void LSV1_IO_MEM resetLoopSnapshotBodyFormatV1SaveScratch(
+    LoopSnapshotBodyFormatV1SaveScratch& scratch) {
+  resetLoopSnapshotBodyFormatV1SaveScratchImpl(scratch);
+}
+
+void LSV1_IO_MEM beginLoopSnapshotBodyFormatV1SaveGather(
+    const LoopSnapshot& loopSnapshot, LoopSnapshotBodyFormatV1SaveScratch& scratch) {
+  beginLoopSnapshotBodyFormatV1SaveGatherImpl(loopSnapshot, scratch);
+}
+
+LoopSnapshotBodyFormatV1SaveStepResult LSV1_IO_MEM stepLoopSnapshotBodyFormatV1SaveTail(
+    const StorageIo& io, const LoopSnapshot& loopSnapshot,
+    LoopSnapshotBodyFormatV1SaveScratch& scratch, uint32_t deadlineUs, uint32_t maxGrains) {
+  return stepLoopSnapshotBodyFormatV1SaveTailImpl(io, loopSnapshot, scratch, deadlineUs,
+                                                  maxGrains);
 }
 
 size_t LSV1_IO_MEM measureLoopSnapshotBodyFormatV1Bytes(
@@ -850,7 +1481,7 @@ bool LSV1_IO_MEM writeLoopSnapshotBodyFormatV1(const StorageIo& io,
   std::vector<uint8_t> loopSnapshotSection;
   if (!writeSectionToBuffer(
           [&](const StorageIo& sectionIo) {
-            return writeLoopSnapshotPayload(sectionIo, gatheredPayload);
+            return writeLoopSnapshotPayloadToIo(sectionIo, gatheredPayload);
           },
           loopSnapshotSection) ||
       loopSnapshotSection.empty()) {
@@ -998,5 +1629,32 @@ void testResetRebuildSlotFromLoopContentCallCount() {
 
 void testRecordRebuildSlotFromLoopContentCall() {
   ++g_testRebuildSlotFromLoopContentCallCount;
+}
+
+size_t testMeasureLoopSnapshotGatheredPayloadBytes(const LoopSnapshot& loopSnapshot) {
+  Lsv1GatheredLoopSnapshotPayload payload{};
+  if (!gatherLoopSnapshotPayload(loopSnapshot, payload)) {
+    return 0;
+  }
+  return measureGatheredLoopSnapshotPayloadBytes(payload);
+}
+
+bool testWriteLoopSnapshotGatheredPayloadToIo(const StorageIo& io,
+                                              const LoopSnapshot& loopSnapshot) {
+  Lsv1GatheredLoopSnapshotPayload payload{};
+  if (!gatherLoopSnapshotPayload(loopSnapshot, payload)) {
+    return false;
+  }
+  return writeLoopSnapshotPayloadToIo(io, payload);
+}
+
+bool testWriteLoopSnapshotGatheredPayloadByteSlice(const StorageIo& io,
+                                                   const LoopSnapshot& loopSnapshot,
+                                                   size_t& byteOffset, size_t maxBytes) {
+  Lsv1GatheredLoopSnapshotPayload payload{};
+  if (!gatherLoopSnapshotPayload(loopSnapshot, payload)) {
+    return false;
+  }
+  return writeLoopSnapshotPayloadByteSlice(io, payload, byteOffset, maxBytes);
 }
 #endif

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (record-stop RC1 stage 4 shipped; OpenSpec 6.4)
+Last updated: 2026-09-12 (RC-P1 A4 PASS; 6C-B unblocked)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,9 +11,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Parallel — [`record_stop_snapshot_publication_gap_display_bugfix.md`](../Plans/record_stop_snapshot_publication_gap_display_bugfix.md) (2026-09-12).**
-Stages **1–5 shipped** (through **RC2** first-root overdub construction start). Native **1703/1709**;
-RAM1 **6848**. Next: HITL record → overdub recapture (`124756` RC1 PASS; RC2 fix landed).
-Stage **7** post-closeout after HITL acceptance.
+**Stage 6C-A firmware restored** — `extendLiveRecordCandidateCapacity` at the three live-record gates; `kExtraBars = 16` unchanged. Native `test_loop_take_survival` includes 18-bar and 25-bar fixtures. Device freeze-scaling already shown on [`144434`](../../captures/session_20260912_144434.log).
+**Stage 6B DEFERRED**. **Next:** 6C-B (`kExtraBars` reduction). Stage 7 separate.
+
+**RC-P1 SHIPPED (2026-09-12).** Resumable `LoopSnapshotTail` + A4.2 `writeLoopSnapshotPayloadByteSlice` quota fix. Device A4 PASS [`164947`](../../captures/session_20260912_164947.log): `loop_snapshot_tail,done` → `payload_done` → `SAVE,completed`. Plan frozen:
+[`deferred_persist_lsv1_edittail_slice_bugfix.md`](../Plans/deferred_persist_lsv1_edittail_slice_bugfix.md). RC-P2 / RC-P1.3 **DEFER**. **Not** Clear bypass.
 
 **Now — OpenSpec 6.4 (verification gate).**
 Run `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off.

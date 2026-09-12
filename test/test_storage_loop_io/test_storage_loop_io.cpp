@@ -1014,6 +1014,153 @@ ImmutableLoopSnapshotRef buildLsv1RoundTripSnapshotFixture() {
   return construction.freeze();
 }
 
+ImmutableLoopSnapshotRef buildLsv1SnapshotWithNoteCount(size_t noteCount) {
+  const uint32_t loopLengthTicks = 4u * Config::TICKS_PER_BAR;
+  auto parent = LoopSnapshot::createEmpty(
+      3, loopLengthTicks, 0, static_cast<uint32_t>(noteCount + 10u),
+      static_cast<uint32_t>(noteCount * 2u + 10u));
+  LoopSnapshotChangeSet changes;
+
+  for (size_t index = 0; index < noteCount; ++index) {
+    const NoteId noteId = static_cast<NoteId>(index + 1u);
+    const EventId noteOnEventId = static_cast<EventId>(index * 2u + 1u);
+    const EventId noteOffEventId = static_cast<EventId>(index * 2u + 2u);
+    const uint32_t startTick = static_cast<uint32_t>(index * 10u);
+    const uint32_t endTick = startTick + 80u;
+    const uint8_t pitch = static_cast<uint8_t>(60u + (index % 12u));
+
+    SnapshotNoteChange noteChange{};
+    noteChange.kind = SnapshotChangeKind::Add;
+    noteChange.next = {3, noteId, pitch, 90, startTick, endTick};
+    changes.notes.push_back(noteChange);
+
+    MidiEvent noteOn = MidiEvent::NoteOn(startTick, 1, pitch, 90);
+    noteOn.noteId = noteId;
+    SnapshotEventChange noteOnChange{};
+    noteOnChange.kind = SnapshotChangeKind::Add;
+    noteOnChange.next = {3, noteOnEventId, 0, noteOn};
+    changes.events.push_back(noteOnChange);
+
+    MidiEvent noteOff = MidiEvent::NoteOff(endTick, 1, pitch);
+    noteOff.noteId = noteId;
+    SnapshotEventChange noteOffChange{};
+    noteOffChange.kind = SnapshotChangeKind::Add;
+    noteOffChange.next = {3, noteOffEventId, 1, noteOff};
+    changes.events.push_back(noteOffChange);
+  }
+
+  LoopSnapshotConstruction construction(parent, changes);
+  while (!construction.complete()) {
+    TEST_ASSERT_TRUE(construction.step(128));
+  }
+  return construction.freeze();
+}
+
+class FailAfterWriteStorageIo {
+ public:
+  explicit FailAfterWriteStorageIo(std::vector<uint8_t>* buffer, size_t failAfterBytes)
+      : buffer_(buffer), failAfterBytes_(failAfterBytes) {}
+
+  StorageIo io() {
+    return StorageIo{
+        [this](const void* data, size_t size) { return write(data, size); },
+        nullptr};
+  }
+
+ private:
+  bool write(const void* data, size_t size) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    size_t index = 0;
+    while (index < size) {
+      if (bytesWritten_ >= failAfterBytes_) {
+        return false;
+      }
+      const size_t allowed = failAfterBytes_ - bytesWritten_;
+      const size_t chunk = (size - index) <= allowed ? (size - index) : allowed;
+      buffer_->insert(buffer_->end(), bytes + index, bytes + index + chunk);
+      bytesWritten_ += chunk;
+      index += chunk;
+    }
+    return true;
+  }
+
+  std::vector<uint8_t>* buffer_;
+  size_t failAfterBytes_;
+  size_t bytesWritten_ = 0;
+};
+
+bool writeGatheredPayloadInByteSlices(const LoopSnapshot& snapshot, size_t chunkBytes,
+                                    std::vector<uint8_t>& out,
+                                    std::vector<size_t>* offsetProgress) {
+  const size_t totalBytes = testMeasureLoopSnapshotGatheredPayloadBytes(snapshot);
+  if (totalBytes == 0) {
+    return false;
+  }
+  size_t byteOffset = 0;
+  MemoryStorageIo mem(&out);
+  if (offsetProgress != nullptr) {
+    offsetProgress->clear();
+    offsetProgress->push_back(0);
+  }
+  while (byteOffset < totalBytes) {
+    const size_t before = byteOffset;
+    if (!testWriteLoopSnapshotGatheredPayloadByteSlice(mem.io(), snapshot, byteOffset,
+                                                       chunkBytes)) {
+      return false;
+    }
+    if (byteOffset <= before) {
+      return false;
+    }
+    if (offsetProgress != nullptr) {
+      offsetProgress->push_back(byteOffset);
+    }
+  }
+  return byteOffset == totalBytes;
+}
+
+size_t findNoteCountForPayloadBytesAtLeast(size_t minBytes) {
+  size_t low = 0;
+  size_t high = 1;
+  while (testMeasureLoopSnapshotGatheredPayloadBytes(*buildLsv1SnapshotWithNoteCount(high)) <
+         minBytes) {
+    high *= 2u;
+    TEST_ASSERT_TRUE(high <= 256u);
+  }
+  while (low + 1u < high) {
+    const size_t mid = low + (high - low) / 2u;
+    const size_t bytes =
+        testMeasureLoopSnapshotGatheredPayloadBytes(*buildLsv1SnapshotWithNoteCount(mid));
+    if (bytes < minBytes) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return high;
+}
+
+size_t findNoteCountForExactPayloadBytes(size_t targetBytes) {
+  for (size_t count = 0; count <= 256u; ++count) {
+    if (testMeasureLoopSnapshotGatheredPayloadBytes(*buildLsv1SnapshotWithNoteCount(count)) ==
+        targetBytes) {
+      return count;
+    }
+  }
+  return static_cast<size_t>(-1);
+}
+
+size_t findNoteCountForPayloadBytesOverWithRemainder(size_t minBytes) {
+  for (size_t count = 1; count <= 256u; ++count) {
+    const size_t bytes =
+        testMeasureLoopSnapshotGatheredPayloadBytes(*buildLsv1SnapshotWithNoteCount(count));
+    if (bytes > minBytes && (bytes % kLsv1SaveIoChunkBytes) != 0u) {
+      return count;
+    }
+  }
+  TEST_FAIL_MESSAGE("no snapshot payload > minBytes with non-zero 512 remainder");
+  return 0;
+}
+
 void assertSnapshotsEquivalent(const LoopSnapshot& expected, const LoopSnapshot& actual) {
   TEST_ASSERT_EQUAL(expected.loopId(), actual.loopId());
   TEST_ASSERT_EQUAL(expected.loopLengthTicks(), actual.loopLengthTicks());
@@ -1139,6 +1286,158 @@ void test_lsv1_stepped_parse_matches_full_read() {
   TEST_ASSERT_EQUAL(metadata.startLoopTick, steppedOracle.startLoopTick);
   releasePersistedLoopSnapshotChunks(steppedOracle);
   releasePersistedLoopSnapshotChunks(readResult.persistedOracle);
+}
+
+void test_lsv1_payload_byte_slice_quota_and_io_boundaries() {
+  resetSnapshotAllocCounters();
+
+  const ImmutableLoopSnapshotRef smallSnapshot = buildLsv1RoundTripSnapshotFixture();
+  TEST_ASSERT_NOT_NULL(smallSnapshot.get());
+  const size_t smallBytes = testMeasureLoopSnapshotGatheredPayloadBytes(*smallSnapshot);
+  TEST_ASSERT_GREATER_THAN(0u, smallBytes);
+  TEST_ASSERT_LESS_THAN(kLsv1SaveIoChunkBytes, smallBytes);
+
+  std::vector<uint8_t> smallSliced;
+  std::vector<size_t> smallProgress;
+  TEST_ASSERT_TRUE(writeGatheredPayloadInByteSlices(*smallSnapshot, kLsv1SaveIoChunkBytes,
+                                                    smallSliced, &smallProgress));
+  TEST_ASSERT_EQUAL(2u, smallProgress.size());
+  TEST_ASSERT_EQUAL(0u, smallProgress.front());
+  TEST_ASSERT_EQUAL(smallBytes, smallProgress.back());
+
+  std::vector<uint8_t> smallOracle;
+  MemoryStorageIo smallOracleMem(&smallOracle);
+  TEST_ASSERT_TRUE(testWriteLoopSnapshotGatheredPayloadToIo(smallOracleMem.io(), *smallSnapshot));
+  TEST_ASSERT_EQUAL(smallOracle.size(), smallSliced.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(smallOracle.data(), smallSliced.data(), smallOracle.size());
+
+  const size_t crossingNoteCount =
+      findNoteCountForPayloadBytesAtLeast(kLsv1SaveIoChunkBytes);
+  const ImmutableLoopSnapshotRef crossingSnapshot =
+      buildLsv1SnapshotWithNoteCount(crossingNoteCount);
+  const size_t crossingBytes = testMeasureLoopSnapshotGatheredPayloadBytes(*crossingSnapshot);
+  TEST_ASSERT_GREATER_OR_EQUAL(kLsv1SaveIoChunkBytes, crossingBytes);
+  if (crossingNoteCount > 0u) {
+    const size_t belowBytes = testMeasureLoopSnapshotGatheredPayloadBytes(
+        *buildLsv1SnapshotWithNoteCount(crossingNoteCount - 1u));
+    TEST_ASSERT_LESS_THAN(kLsv1SaveIoChunkBytes, belowBytes);
+  }
+  size_t firstSliceOffset = 0;
+  std::vector<uint8_t> crossingFirstSlice;
+  MemoryStorageIo crossingFirstSliceMem(&crossingFirstSlice);
+  TEST_ASSERT_TRUE(testWriteLoopSnapshotGatheredPayloadByteSlice(
+      crossingFirstSliceMem.io(), *crossingSnapshot, firstSliceOffset, kLsv1SaveIoChunkBytes));
+  TEST_ASSERT_EQUAL(kLsv1SaveIoChunkBytes, firstSliceOffset);
+
+  const size_t exactNoteCount = findNoteCountForExactPayloadBytes(kLsv1SaveIoChunkBytes);
+  if (exactNoteCount != static_cast<size_t>(-1)) {
+    const ImmutableLoopSnapshotRef exactSnapshot =
+        buildLsv1SnapshotWithNoteCount(exactNoteCount);
+    TEST_ASSERT_EQUAL(kLsv1SaveIoChunkBytes,
+                      testMeasureLoopSnapshotGatheredPayloadBytes(*exactSnapshot));
+    std::vector<uint8_t> exactSliced;
+    std::vector<size_t> exactProgress;
+    TEST_ASSERT_TRUE(writeGatheredPayloadInByteSlices(*exactSnapshot, kLsv1SaveIoChunkBytes,
+                                                      exactSliced, &exactProgress));
+    TEST_ASSERT_EQUAL(2u, exactProgress.size());
+    TEST_ASSERT_EQUAL(kLsv1SaveIoChunkBytes, exactProgress[1]);
+  }
+
+  const size_t largeNoteCount =
+      findNoteCountForPayloadBytesOverWithRemainder(kLsv1SaveIoChunkBytes);
+  const ImmutableLoopSnapshotRef largeSnapshot =
+      buildLsv1SnapshotWithNoteCount(largeNoteCount);
+  const size_t largeBytes = testMeasureLoopSnapshotGatheredPayloadBytes(*largeSnapshot);
+  TEST_ASSERT_GREATER_THAN(kLsv1SaveIoChunkBytes, largeBytes);
+
+  std::vector<uint8_t> largeSliced;
+  std::vector<size_t> largeProgress;
+  TEST_ASSERT_TRUE(writeGatheredPayloadInByteSlices(*largeSnapshot, kLsv1SaveIoChunkBytes,
+                                                    largeSliced, &largeProgress));
+  TEST_ASSERT_GREATER_THAN(2u, largeProgress.size());
+  for (size_t index = 1; index < largeProgress.size(); ++index) {
+    const size_t delta = largeProgress[index] - largeProgress[index - 1u];
+    TEST_ASSERT_GREATER_THAN(0u, delta);
+    TEST_ASSERT_LESS_OR_EQUAL(kLsv1SaveIoChunkBytes, delta);
+  }
+  TEST_ASSERT_NOT_EQUAL(0u, largeBytes % kLsv1SaveIoChunkBytes);
+  const size_t finalSliceBytes = largeProgress.back() - largeProgress[largeProgress.size() - 2u];
+  TEST_ASSERT_LESS_THAN(kLsv1SaveIoChunkBytes, finalSliceBytes);
+  TEST_ASSERT_EQUAL(largeBytes, largeProgress.back());
+
+  std::vector<uint8_t> largeOracle;
+  MemoryStorageIo largeOracleMem(&largeOracle);
+  TEST_ASSERT_TRUE(testWriteLoopSnapshotGatheredPayloadToIo(largeOracleMem.io(), *largeSnapshot));
+  TEST_ASSERT_EQUAL(largeOracle.size(), largeSliced.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(largeOracle.data(), largeSliced.data(), largeOracle.size());
+
+  size_t failOffset = 0;
+  std::vector<uint8_t> failBuffer;
+  FailAfterWriteStorageIo failIo(&failBuffer, 100u);
+  TEST_ASSERT_FALSE(testWriteLoopSnapshotGatheredPayloadByteSlice(
+      failIo.io(), *largeSnapshot, failOffset, kLsv1SaveIoChunkBytes));
+  TEST_ASSERT_EQUAL(0u, failOffset);
+  TEST_ASSERT_EQUAL(100u, failBuffer.size());
+
+  size_t zeroQuotaOffset = 0;
+  TEST_ASSERT_FALSE(testWriteLoopSnapshotGatheredPayloadByteSlice(
+      failIo.io(), *largeSnapshot, zeroQuotaOffset, 0u));
+  TEST_ASSERT_EQUAL(0u, zeroQuotaOffset);
+}
+
+void test_lsv1_stepped_save_tail_matches_monolithic() {
+  resetSnapshotAllocCounters();
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1RoundTripSnapshotFixture();
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  std::vector<uint8_t> monolithicBuffer;
+  MemoryStorageIo monolithicMem(&monolithicBuffer);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1SaveTail(monolithicMem.io(), *snapshot));
+
+  std::vector<uint8_t> steppedBuffer;
+  MemoryStorageIo steppedMem(&steppedBuffer);
+  LoopSnapshotBodyFormatV1SaveScratch* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch();
+  TEST_ASSERT_NOT_NULL(scratch);
+  beginLoopSnapshotBodyFormatV1SaveGather(*snapshot, *scratch);
+  LoopSnapshotBodyFormatV1SaveStepResult stepResult =
+      LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork) {
+    stepResult =
+        stepLoopSnapshotBodyFormatV1SaveTail(steppedMem.io(), *snapshot, *scratch, 0, 1);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Completed, stepResult);
+  TEST_ASSERT_EQUAL(monolithicBuffer.size(), steppedBuffer.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(monolithicBuffer.data(), steppedBuffer.data(),
+                                monolithicBuffer.size());
+}
+
+void test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic() {
+  resetSnapshotAllocCounters();
+  const size_t noteCount = findNoteCountForPayloadBytesAtLeast(kLsv1SaveIoChunkBytes + 1u);
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1SnapshotWithNoteCount(noteCount);
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+  TEST_ASSERT_GREATER_THAN(kLsv1SaveIoChunkBytes,
+                           testMeasureLoopSnapshotGatheredPayloadBytes(*snapshot));
+
+  std::vector<uint8_t> monolithicBuffer;
+  MemoryStorageIo monolithicMem(&monolithicBuffer);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1SaveTail(monolithicMem.io(), *snapshot));
+
+  std::vector<uint8_t> steppedBuffer;
+  MemoryStorageIo steppedMem(&steppedBuffer);
+  LoopSnapshotBodyFormatV1SaveScratch* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch();
+  TEST_ASSERT_NOT_NULL(scratch);
+  beginLoopSnapshotBodyFormatV1SaveGather(*snapshot, *scratch);
+  LoopSnapshotBodyFormatV1SaveStepResult stepResult =
+      LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork) {
+    stepResult =
+        stepLoopSnapshotBodyFormatV1SaveTail(steppedMem.io(), *snapshot, *scratch, 0, 1);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Completed, stepResult);
+  TEST_ASSERT_EQUAL(monolithicBuffer.size(), steppedBuffer.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(monolithicBuffer.data(), steppedBuffer.data(),
+                                monolithicBuffer.size());
 }
 
 void test_lsv1_load_commit_skips_rebuild() {
@@ -1492,6 +1791,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_loop_persisted_stays_legacy_without_published_snapshot);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
+  RUN_TEST(test_lsv1_payload_byte_slice_quota_and_io_boundaries);
+  RUN_TEST(test_lsv1_stepped_save_tail_matches_monolithic);
+  RUN_TEST(test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic);
   RUN_TEST(test_lsv1_load_commit_skips_rebuild);
   RUN_TEST(test_lsv1_probe_legacy_and_unsupported);
   RUN_TEST(test_lsv1_rejects_missing_loop_snapshot_section);

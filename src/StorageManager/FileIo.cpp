@@ -154,6 +154,8 @@ STORAGE_PERSIST_MEM const char* deferredLoopWriteStageName(DeferredLoopWriteStag
             return "capture_pass_chunk";
         case DeferredLoopWriteStage::EditTail:
             return "edit_tail";
+        case DeferredLoopWriteStage::LoopSnapshotTail:
+            return "loop_snapshot_tail";
     }
     return "unknown";
 }
