@@ -34,7 +34,6 @@ constexpr uint32_t kEmitIntervalUs = 5000000u;
 /** Representation used by one playback rebuild sample. */
 enum class PlaybackRebuildPath : uint8_t {
   PublishedSnapshot,
-  SessionExitPublicationGap,
   GatherMissHoldEmpty,
   CompatibilityPasses,
   NoteEditPreview,

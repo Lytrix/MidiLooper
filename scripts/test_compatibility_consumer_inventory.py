@@ -16,6 +16,8 @@ _GATHER_COMMITTED_RE = re.compile(
     r"\bgatherCommittedEvents(?:InWindow|WithCapture|ForDerivedView)?\s*\("
 )
 _COPY_COMMITTED_PASS_REPLAY_RE = re.compile(r"\bcopyCommittedPassReplayEvents\s*\(")
+_SESSION_EXIT_GAP_PREDICATE_RE = re.compile(r"\bisPlaybackSessionExitPublicationGap\b")
+_MATERIALIZE_EDIT_VIEW_RE = re.compile(r"\bmaterializeEditViewFromPasses\s*\(")
 
 _HOT_PATH_FORBID = frozenset(
     {
@@ -39,6 +41,16 @@ _GATHER_COMMITTED_ALLOW = frozenset()
 
 # OpenSpec 6.3.6 — copyCommittedPassReplayEvents removed.
 _COPY_COMMITTED_PASS_REPLAY_ALLOW = frozenset()
+
+# OpenSpec 6.3.7 — gap predicate retained for visual hold-only (6.3.2); not gather compat.
+_SESSION_EXIT_GAP_PREDICATE_ALLOW = frozenset(
+    {
+        "include/Loop.h",
+        "src/Loop/LoopSnapshotPublish.cpp",
+        "src/Loop/LoopVisualCache.cpp",
+        "src/DisplayManager/DisplayNoteWindowGather.cpp",
+    }
+)
 
 # OpenSpec 6.3.1 — C1-a session-exit gather retired at these owners.
 _C1_A_GATHER_RETIRED_SITES = frozenset(
@@ -179,6 +191,26 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
         rel_path = "src/Loop/LoopCapture.cpp"
         text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
         self.assertNotRegex(text, r"\bmaterializeToEventVector\s*\(")
+
+    def test_session_exit_gap_predicate_only_in_visual_hold_owners(self) -> None:
+        hits = _scan_cpp_headers(_SESSION_EXIT_GAP_PREDICATE_RE)
+        unexpected = _unexpected(hits, _SESSION_EXIT_GAP_PREDICATE_ALLOW)
+        self.assertEqual(unexpected, {}, unexpected)
+        for rel_path in (
+            "src/Loop/LoopVisualCache.cpp",
+            "src/DisplayManager/DisplayNoteWindowGather.cpp",
+        ):
+            self.assertIn(rel_path, hits, f"{rel_path} must gate on session-exit publication gap")
+
+    def test_b1_does_not_emit_session_exit_compat_telemetry(self) -> None:
+        text = (_REPO_ROOT / "src/Track/TrackPlaybackWindowBuild.cpp").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        self.assertNotIn("SessionExitPublicationGap", text)
+
+    def test_compatibility_materialize_edit_view_removed_from_production(self) -> None:
+        hits = _scan_cpp_headers(_MATERIALIZE_EDIT_VIEW_RE)
+        self.assertEqual(hits, {})
 
 
 if __name__ == "__main__":

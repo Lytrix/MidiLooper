@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 6.3.6 SHIPPED; next 6.3.7)
+Last updated: 2026-09-12 (OpenSpec 6.3 SHIPPED; next 6.4 verification)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,10 +10,15 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — OpenSpec 6.3.7 (machinery removal closeout).**
-Next: delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs +
-OpenSpec 6.4/6.5 handoff. Parent plan:
-[`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md).
+**Now — OpenSpec 6.4 (verification gate).**
+Run `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off.
+Then **6.5** archive/sync. Parent plan:
+[`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md) (**SHIPPED**).
+
+**Prior — OpenSpec 6.3.7 SHIPPED (2026-09-12).**
+`isPlaybackSessionExitPublicationGap` retained for visual hold-only (6.3.2); dead B1
+`session_exit_compat` telemetry removed. Host closeout gates finalized
+(`test_6_3_machinery_closeout_gate.py`). Native **1699/1705**.
 
 **Prior — OpenSpec 6.3.6 SHIPPED (2026-09-12).**
 `copyEffectiveCommittedEvents` snapshot-only; LCR `Phase::Materialize` removed;
