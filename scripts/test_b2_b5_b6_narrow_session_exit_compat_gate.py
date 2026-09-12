@@ -34,9 +34,9 @@ class B2B5B6SessionExitCompatRetiredGateTests(unittest.TestCase):
         )
         self.assertNotRegex(text, _MATERIALIZE_RE)
 
-    def test_b5_oracle_gather_retained_for_verification(self) -> None:
+    def test_b5_oracle_pass_replay_retained_for_verification(self) -> None:
         text = _B5.read_text(encoding="utf-8", errors="replace")
-        self.assertIn("gatherCommittedEventsInWindow", text)
+        self.assertIn("copyEffectiveCommittedEventsInRange", text)
 
     def test_b6_note_edit_open_does_not_call_loop_midi_events(self) -> None:
         text = _B6.read_text(encoding="utf-8", errors="replace")

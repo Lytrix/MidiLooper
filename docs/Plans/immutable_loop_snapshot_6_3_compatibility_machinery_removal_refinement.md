@@ -39,7 +39,7 @@ reintroduce synchronous `tryPublishSessionExitSnapshot` on the MIDI stop path.
 | **6.3.1** | Remove C1-a session-exit compat bridges (B1/B3/B4/B2/B5); hold-empty during `isPlaybackSessionExitPublicationGap` | **SHIPPED** |
 | **6.3.2** | Post-record visual continuity during deferred publication gap (no C1-a restore) | **SHIPPED** — [plan](immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md); deferred record-start preview polish in same plan |
 | **6.3.3** | Remove `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` consumer paths | **SHIPPED** |
-| **6.3.4** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | pending |
+| **6.3.4** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | **SHIPPED** |
 | **6.3.5** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | pending |
 | **6.3.6** | Remove `materializeToEventVector` and LCR maintained-history construction | pending |
 | **6.3.7** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | pending |
@@ -68,6 +68,33 @@ hold empty until idle `stepPendingSnapshotPublish` completes (DEC-045 unchanged)
 | Native `pio test -e native` | **1829/1834** (+`test_committed_scratch_hold_empty_during_session_exit_gap`) |
 | RAM1 `teensy41-capture-serial` | **6880** locals |
 | HITL `base` | **PASS** [`013611`](../../captures/session_20260912_013611.log) / report [`013652`](../../captures/host_midi_automation_baseline_20260912_013652.json) |
+
+## 6.3.4 — gatherCommittedEvents* retirement (SHIPPED)
+
+**Decision:** Delete `gatherCommittedEvents*` / `gatherCommittedEventsForDerivedView` /
+`mergeMaterializedPassesWithCapture` façade APIs. Production callers use
+`copyEffectiveCommittedEvents` / `copyEffectiveCommittedEventsInRange` /
+`copyEffectiveCommittedEventsWithCapture` / `copyEffectiveCommittedEventsInWindowWithCapture`
+directly. Host inventory allowlist for `gatherCommittedEvents*` is empty.
+
+### Files
+
+- `include/Loop.h`, `src/Loop/LoopMaterialization.cpp` — API removal + rename with-capture paths
+- `DisplayNoteWindowGather.cpp` — shorten-row fallback → `copyEffectiveCommittedEventsInRange`
+- `TrackDeferredMaintenance.cpp` — B5 oracle / deferred verification → `copyEffectiveCommittedEvents*`
+- Native tests — migrate call sites
+- Host gates: `test_compatibility_consumer_inventory.py`, `test_b2_b5_b6_*`
+
+### Verification (6.3.4)
+
+| Gate | Status |
+|---|---|
+| Host compatibility inventory (10 tests) | **PASS** |
+| Host B1/B3/B4/B2/B5 gates | **PASS** |
+| Native `pio test -e native` | **1699/1705** (1 skipped) |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` core | **PASS** [`023806`](../../captures/session_20260912_023806.log) — transitions, notes, DISP, undo/redo |
+| HITL persist `result` stage | **flake** — `persistence_stage_missing:result` (5.7 class; not 6.3.4) |
 
 ## Explicit non-goals (6.3 parent)
 

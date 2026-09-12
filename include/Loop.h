@@ -147,28 +147,8 @@ struct Loop {
 
   void mergeActiveCapturePasses(MidiEventVec& out) const;
   void mergeActiveCapturePasses(SessionMidiEventVec& out) const;
-  /// Canonical committed-pass event gathering (full loop). Prefer over display-only helpers.
-  void gatherCommittedEvents(SessionMidiEventVec& out) const;
-  void gatherCommittedEvents(MidiEventVec& out) const;
   static void resetCommittedPitchQueryWork();
   static uint32_t committedEventsFullMaterializeCount();
-  /// Windowed committed gathering — wrap-aware chunk skip + event filter.
-  /// `includeActiveEditRows` controls whether active note edit rows are projected.
-  void gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                     uint32_t windowLength,
-                                     bool includeActiveEditRows = true) const;
-  void gatherCommittedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
-                                     uint32_t windowLength,
-                                     bool includeActiveEditRows = true) const;
-  /// Committed window plus live capture.store events in the same window.
-  void gatherCommittedEventsInWindowWithCapture(SessionMidiEventVec& out, uint32_t windowStart,
-                                                uint32_t windowLength) const;
-  /// DEC-016 policy owner — aliases gatherCommittedEvents (legacy name).
-  void gatherCommittedEventsForDerivedView(SessionMidiEventVec& flat) const;
-  void gatherCommittedEventsForDerivedView(MidiEventVec& flat) const;
-  /// Materialized events policy plus live capture.store merge (playback during record/overdub).
-  void gatherCommittedEventsWithCapture(SessionMidiEventVec& flat) const;
-  void gatherCommittedEventsWithCapture(MidiEventVec& flat) const;
 
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
@@ -185,6 +165,13 @@ struct Loop {
   void copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
                                            uint32_t windowLength,
                                            bool includeActiveEditRows = true) const;
+  /// Committed window plus live capture.store events in the same window.
+  void copyEffectiveCommittedEventsInWindowWithCapture(SessionMidiEventVec& out,
+                                                       uint32_t windowStart,
+                                                       uint32_t windowLength) const;
+  /// Pass replay flatten plus live capture.store merge (playback during record/overdub).
+  void copyEffectiveCommittedEventsWithCapture(SessionMidiEventVec& flat) const;
+  void copyEffectiveCommittedEventsWithCapture(MidiEventVec& flat) const;
   void rematerializeEditView(LoopEventStore& store) const;
   bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
   /// Current-root edit-view copy with a single publication observation: on
@@ -645,8 +632,6 @@ struct Loop {
   /// Committed pass event count + active capture size; builds visual cache if needed. Display/LED only.
   size_t displayEventCountHint() const;
   bool ensureCaptureEventsSorted();
-  void mergeMaterializedPassesWithCapture(MidiEventVec& out) const;
-  void mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const;
   /// Fallback/full rebuild pairs each capture pass (`resolveDisplayNotes`)
   /// before merging rows. Snapshot gather still reconstructs that event vector.
   void rebuildVisualCacheFromPasses();

@@ -605,5 +605,9 @@ to immutable snapshot content.
     `midiEvents()` / `getMidiEvents()` removed; `copyEffectiveCommittedEvents` →
     `copyCommittedPassReplayEvents`; `CommittedMidiScratch` snapshot-only. Native **1830/1835**;
     RAM1 **6880**. HITL `base` PASS [`022843`](../../../captures/session_20260912_022843.log).
+  - **6.3.4 SHIPPED 2026-09-12:** `gatherCommittedEvents*` /
+    `mergeMaterializedPassesWithCapture` removed; callers use `copyEffectiveCommittedEvents*`.
+    Native **1699/1705**; RAM1 **6880**. HITL `base` core PASS
+    [`023806`](../../../captures/session_20260912_023806.log) (persist `result` flake — 5.7).
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
 - [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.

@@ -2983,7 +2983,7 @@ void test_playback_merge_includes_active_edit_passes() {
   TEST_ASSERT_EQUAL_UINT32(20u, noteOffTick(captureOnly));
 
   MidiEventVec materializedPlayback;
-  loop.mergeMaterializedPassesWithCapture(materializedPlayback);
+  loop.copyEffectiveCommittedEventsWithCapture(materializedPlayback);
   TEST_ASSERT_EQUAL_UINT32(28u, noteOffTick(materializedPlayback));
 }
 

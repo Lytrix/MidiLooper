@@ -347,16 +347,16 @@ void test_companion_projection_window_matches_legacy_replay() {
   gatherLegacyWindowReplay(loop, 0, kLoopLen, expected);
 
   SessionMidiEventVec stopped;
-  loop.gatherCommittedEventsInWindow(stopped, 0, kLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(stopped, 0, kLoopLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, stopped));
 
   loop.beginCapture(CapturePhase::Overdub);
   SessionMidiEventVec actual;
-  loop.gatherCommittedEventsInWindow(actual, 0, kLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(actual, 0, kLoopLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
 
   SessionMidiEventVec replayed;
-  loop.gatherCommittedEventsInWindow(replayed, 0, kLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(replayed, 0, kLoopLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, replayed));
 
   const uint32_t windowAStart = 0;
@@ -364,7 +364,7 @@ void test_companion_projection_window_matches_legacy_replay() {
   SessionMidiEventVec expectedWindowA;
   SessionMidiEventVec actualWindowA;
   gatherLegacyWindowReplay(loop, windowAStart, windowALen, expectedWindowA);
-  loop.gatherCommittedEventsInWindow(actualWindowA, windowAStart, windowALen, true);
+  loop.copyEffectiveCommittedEventsInRange(actualWindowA, windowAStart, windowALen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expectedWindowA, actualWindowA));
 
   const uint32_t windowBStart = 7u * Config::TICKS_PER_BAR;
@@ -372,7 +372,7 @@ void test_companion_projection_window_matches_legacy_replay() {
   SessionMidiEventVec expectedWindowB;
   SessionMidiEventVec actualWindowB;
   gatherLegacyWindowReplay(loop, windowBStart, windowBLen, expectedWindowB);
-  loop.gatherCommittedEventsInWindow(actualWindowB, windowBStart, windowBLen, true);
+  loop.copyEffectiveCommittedEventsInRange(actualWindowB, windowBStart, windowBLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expectedWindowB, actualWindowB));
 }
 
@@ -398,7 +398,7 @@ void test_companion_projection_empty_cache_uses_legacy_window_gather() {
   SessionMidiEventVec expected;
   gatherLegacyWindowReplay(loop, 0, kLoopLen, expected);
   SessionMidiEventVec actual;
-  loop.gatherCommittedEventsInWindow(actual, 0, kLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(actual, 0, kLoopLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
 }
 
@@ -431,7 +431,7 @@ void test_companion_projection_clock_path_window_does_not_rebuild() {
   SessionMidiEventVec expected;
   gatherLegacyWindowReplay(loop, windowStart, windowLength, expected);
   SessionMidiEventVec actual;
-  loop.gatherCommittedEventsInWindow(actual, windowStart, windowLength, true);
+  loop.copyEffectiveCommittedEventsInRange(actual, windowStart, windowLength, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
 }
 
@@ -458,7 +458,7 @@ void test_companion_projection_falls_back_with_non_companion_note_rows() {
   gatherLegacyWindowReplay(loop, 0, kLoopLen, expected);
 
   SessionMidiEventVec actual;
-  loop.gatherCommittedEventsInWindow(actual, 0, kLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(actual, 0, kLoopLen, true);
   TEST_ASSERT_TRUE(eventsStrictEqual(expected, actual));
 }
 

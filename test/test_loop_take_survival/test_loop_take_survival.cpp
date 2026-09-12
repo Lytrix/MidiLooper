@@ -132,7 +132,7 @@ void test_gather_committed_preserves_takes() {
   seedCommittedPair(loop);
   const size_t before = loop.nativeTestLiveEventCount();
   SessionMidiEventVec gathered;
-  loop.gatherCommittedEvents(gathered);
+  loop.copyEffectiveCommittedEvents(gathered);
 
   TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(before, loop.nativeTestLiveEventCount());
@@ -162,7 +162,7 @@ void test_readonly_flat_access_preserves_takes() {
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
   SessionMidiEventVec gathered;
-  loop.gatherCommittedEvents(gathered);
+  loop.copyEffectiveCommittedEvents(gathered);
   TEST_ASSERT_EQUAL(4u, gathered.size());
   loop.invalidateCaches();
 
@@ -234,7 +234,7 @@ void test_pass_snapshot_ignores_derived_flat_mutation() {
   TEST_ASSERT_EQUAL(2u, snapshotEventCount(before));
 
   SessionMidiEventVec gathered;
-  loop.gatherCommittedEvents(gathered);
+  loop.copyEffectiveCommittedEvents(gathered);
   gathered.push_back(MidiEvent::NoteOn(48, 1, 60, 80));
   gathered.push_back(MidiEvent::NoteOff(72, 1, 60, 0));
 
@@ -270,7 +270,7 @@ void test_invalidateCaches_gather_reflects_loop_length_change() {
   MidiEventVec expected;
   loop.passes.materializeToEventVector(expected, loop.loopLengthTicks);
   SessionMidiEventVec gathered;
-  loop.gatherCommittedEvents(gathered);
+  loop.copyEffectiveCommittedEvents(gathered);
   TEST_ASSERT_EQUAL(expected.size(), gathered.size());
   TEST_ASSERT_EQUAL(1, countNoteOns(expected, 67));
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 67));
@@ -786,7 +786,7 @@ void test_playback_gather_reads_published_snapshot_with_fallback() {
   SessionMidiEventVec snapshotFull;
   SessionMidiEventVec compatibilityFull;
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotFull, 0, 3072));
-  loop.gatherCommittedEventsInWindow(compatibilityFull, 0, 3072, false);
+  loop.copyEffectiveCommittedEventsInRange(compatibilityFull, 0, 3072, false);
   sortEventsForCompare(snapshotFull);
   sortEventsForCompare(compatibilityFull);
   assertGatheredEventsMatch(snapshotFull, compatibilityFull);
@@ -795,7 +795,7 @@ void test_playback_gather_reads_published_snapshot_with_fallback() {
   SessionMidiEventVec snapshotWindow;
   SessionMidiEventVec compatibilityWindow;
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotWindow, 0, 768));
-  loop.gatherCommittedEventsInWindow(compatibilityWindow, 0, 768, false);
+  loop.copyEffectiveCommittedEventsInRange(compatibilityWindow, 0, 768, false);
   sortEventsForCompare(snapshotWindow);
   sortEventsForCompare(compatibilityWindow);
   assertGatheredEventsMatch(snapshotWindow, compatibilityWindow);
@@ -813,7 +813,7 @@ void test_playback_gather_reads_published_snapshot_with_fallback() {
   SessionMidiEventVec compatibilityAfterOverdub;
   TEST_ASSERT_TRUE(
       loop.tryGatherPublishedSnapshotEventsInWindow(snapshotAfterOverdub, 0, 3072));
-  loop.gatherCommittedEventsInWindow(compatibilityAfterOverdub, 0, 3072, false);
+  loop.copyEffectiveCommittedEventsInRange(compatibilityAfterOverdub, 0, 3072, false);
   sortEventsForCompare(snapshotAfterOverdub);
   sortEventsForCompare(compatibilityAfterOverdub);
   assertGatheredEventsMatch(snapshotAfterOverdub, compatibilityAfterOverdub);
@@ -876,7 +876,7 @@ void test_stale_snapshot_overlays_unpublished_overdub_pass() {
   SessionMidiEventVec snapshotWindow;
   SessionMidiEventVec compatibilityWindow;
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotWindow, 0, 768));
-  loop.gatherCommittedEventsInWindow(compatibilityWindow, 0, 768, false);
+  loop.copyEffectiveCommittedEventsInRange(compatibilityWindow, 0, 768, false);
   sortEventsForCompare(snapshotWindow);
   sortEventsForCompare(compatibilityWindow);
   assertGatheredEventsMatch(snapshotWindow, compatibilityWindow);
@@ -920,7 +920,7 @@ void test_stale_snapshot_applies_unpublished_hide_companion() {
   SessionMidiEventVec snapshotWindow;
   SessionMidiEventVec compatibilityWindow;
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotWindow, 0, 768));
-  loop.gatherCommittedEventsInWindow(compatibilityWindow, 0, 768, true);
+  loop.copyEffectiveCommittedEventsInRange(compatibilityWindow, 0, 768, true);
   sortEventsForCompare(snapshotWindow);
   sortEventsForCompare(compatibilityWindow);
   assertGatheredEventsMatch(snapshotWindow, compatibilityWindow);
@@ -959,7 +959,7 @@ void test_overdub_publish_keeps_pass_events_when_companion_is_missing() {
   SessionMidiEventVec snapshotEvents;
   SessionMidiEventVec compatibilityEvents;
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(snapshotEvents, 0, 3072));
-  loop.gatherCommittedEventsInWindow(compatibilityEvents, 0, 3072, false);
+  loop.copyEffectiveCommittedEventsInRange(compatibilityEvents, 0, 3072, false);
   TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 64));
   TEST_ASSERT_EQUAL(1, countNoteOns(compatibilityEvents, 64));
 }
@@ -3030,7 +3030,7 @@ void test_pass_state_refresh_replaces_cache_when_selected_active_gather_is_compl
   TEST_ASSERT_TRUE(loop.setCapturePassState(overdubPassId, CapturePassState::Disabled));
 
   SessionMidiEventVec selectedFlat;
-  loop.gatherCommittedEvents(selectedFlat);
+  loop.copyEffectiveCommittedEvents(selectedFlat);
   const NoteUtils::DisplayNoteVec selectedNotes =
       NoteUtils::reconstructDisplayNotes(selectedFlat, loop.loopLengthTicks, false, false);
   TEST_ASSERT_FALSE(selectedNotes.empty());
@@ -4723,7 +4723,7 @@ void test_wrap_journal_drain_keeps_first_record_while_session_exit_pending() {
 
   SessionMidiEventVec gathered;
   if (!loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072)) {
-    loop.gatherCommittedEventsInWindow(gathered, 0, 3072, false);
+    loop.copyEffectiveCommittedEventsInRange(gathered, 0, 3072, false);
   }
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
 
@@ -5397,7 +5397,7 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
     usedSnapshot = false;
   }
   if (!usedSnapshot) {
-    loop.gatherCommittedEventsInWindowWithCapture(gatherBuffer, 0, loop.loopLengthTicks);
+    loop.copyEffectiveCommittedEventsInWindowWithCapture(gatherBuffer, 0, loop.loopLengthTicks);
   }
   const NoteUtils::DisplayNoteVec composed =
       NoteUtils::reconstructDisplayNotes(gatherBuffer, loop.loopLengthTicks, false, false);
