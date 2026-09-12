@@ -149,9 +149,10 @@ inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,
 }
 
 /// First-record uses the overdub live-enqueue setup: start on RECORDING after
-/// the playhead has left bar 1, and start on PLAYING. OVERDUBBING only advances
-/// an in-flight candidate unless a wrap journal is pending (`DEC-047`). After a
-/// published root exists, PLAYING / OVERDUBBING may step pending bounded
+/// the playhead has left bar 1, and start on PLAYING. OVERDUBBING advances an
+/// in-flight candidate and may start the next bounded fragment only while no
+/// published root exists and session-exit is queued (`DEC-045` 2026-09-12).
+/// After a published root exists, PLAYING / OVERDUBBING may step pending bounded
 /// successors, including wrap-journal and session-exit pass work.
 /// Empty dirty visualCache still wins on STOPPED / STOPPED_RECORDING (`231632`)
 /// when no snapshot work is pending. Pending session-exit, in-flight, or
@@ -175,6 +176,18 @@ inline bool allowSnapshotIdleStep(bool isRecording, bool isPlaying, bool isOverd
     return hasInFlightConstruction || hasSuccessorJournalWork || hasPendingSnapshotWork;
   }
   return true;
+}
+
+/// Whether `stepPendingSnapshotPublish` may call `startNextPendingConstruction`.
+/// OVERDUBBING normally steps in-flight work only; before the first published
+/// root, session-exit publication must still start the next bounded fragment.
+inline bool allowSnapshotConstructionStart(bool isOverdubbing, bool liveRecordPastFirstBar,
+                                           bool hasWrapJournal, bool havePublishedSnapshot,
+                                           bool sessionExitQueued) {
+  if ((!isOverdubbing && liveRecordPastFirstBar) || hasWrapJournal) {
+    return true;
+  }
+  return !havePublishedSnapshot && sessionExitQueued;
 }
 
 /// STOPPED idle may keep the transport clock running. Snapshot is still

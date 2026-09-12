@@ -917,6 +917,13 @@ intent of the 2026-08-26 first-bar amendment for successful handoff at record
 stop ([`record_stop_snapshot_publication_gap_display_bugfix.md`](Plans/record_stop_snapshot_publication_gap_display_bugfix.md)
 stage 4 / RC1).
 
+**Amendment (2026-09-12):** Before the first published root exists, OVERDUBBING idle
+may `startNextPendingConstruction` when session-exit publication is queued. In-flight
+stepping during OVERDUBBING is unchanged once a root exists; post-root successor
+construction on PLAYING/OVERDUBBING remains frozen per prior amendments
+([`record_stop_snapshot_publication_gap_display_bugfix.md`](Plans/record_stop_snapshot_publication_gap_display_bugfix.md)
+stage 5 / RC2; device trigger [`124756`](../captures/session_20260912_124756.log)).
+
 **Amendment (2026-08-26):** First-record live `snapshot_idle` starts only
 when `currentTick - startLoopTick >= TICKS_PER_BAR`. `loopLengthTicks` can
 already be one bar at record start because stop-quantize of a small raw

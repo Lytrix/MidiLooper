@@ -841,7 +841,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // steps; OD2 BPM 57; OD4 BPM 46). Do not step that work on PLAYING /
   // OVERDUBBING once a root exists. First-record uses the overdub setup:
   // start during RECORDING after the playhead has left bar 1, and start on
-  // PLAYING. OVERDUBBING only advances an in-flight candidate.
+  // PLAYING. OVERDUBBING advances in-flight work and, before the first root
+  // exists, may start the next session-exit fragment (record-stop RC2).
   uint32_t recordElapsedTicks = 0;
   if (snapshotLoop.startLoopTick != UINT32_MAX) {
     const uint32_t currentTick = clockManager.getCurrentTick();
@@ -913,8 +914,10 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
                                 snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
       snapshotLoop.stepPendingSnapshotPublish(
           MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
-          (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal, playheadPhaseTick,
-          liveRecordCompletedTicks);
+          MidiServiceDrain::allowSnapshotConstructionStart(
+              isOverdubbing(), liveRecordPastFirstBar, hasWrapJournal, havePublishedSnapshot,
+              snapshotLoop.pendingSnapshotSessionExitQueued()),
+          playheadPhaseTick, liveRecordCompletedTicks);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
       InvestigationCaptureLog::appendSnapshotIdleLines(snapshotLoop, snapshotIdleStartUs);
 #endif

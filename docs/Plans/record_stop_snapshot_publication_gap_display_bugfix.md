@@ -1,6 +1,6 @@
 # Record-stop snapshot publication gap — display and MIDI consequences
 
-**Status:** Stages 1–4 shipped (2026-09-12); stages 5–6 design-gated / RC2 deferred.
+**Status:** Stages 1–5 shipped (2026-09-12); stage 6 design-gated; stage 7 post-closeout.
 **Priority:** P0 — MIDI timing damage on long loops.
 **Evidence:** [`session_20260912_033502.log`](../../captures/session_20260912_033502.log) (114,083 lines)
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/) — active phase 6.4; related open task `4b.3`
@@ -232,7 +232,7 @@ because any future long gather can re-create it.
 | 2 | RC4 prefix contamination | checkpoint all no | **SHIPPED** — `retainDrawSourceHandoffCommittedPrefix`; native 1700/1706 |
 | 3 | RC6 adopt de-duplication | checkpoint all no | **SHIPPED** — `dedupeComposedDisplayNotesForVisualCacheAdopt`; native 1700/1706 |
 | 4 | RC1 candidate retention across record stop | design session — **SHIPPED** Option A | **SHIPPED** — native 1701/1707; HITL record → overdub pending |
-| 5 | RC2 admission convergence | **deferred** — ship only if RC1 HITL still shows inflight stall / no root | native + HITL; `midi_gap` bound |
+| 5 | RC2 admission convergence | design session — **SHIPPED** Option A (`124756` trigger) | **SHIPPED** — native 1703/1709; HITL pending |
 | 6 | RC5 draw-source execution bound | design session (execution bounds) | `ExecutionBounds.md` entry + HITL |
 | 7 | Preview compose parity (`missed_preview` / `compose_miss`) | checkpoint after 4–6 | HITL recapture; fix only if still present |
 
@@ -385,8 +385,8 @@ const bool allowStartConstruction =
 ### User decisions (2026-09-12)
 
 - **RC1:** Option A — widen `pendingSnapshotFitsSealedLength`; handoff at session-exit; amend DEC-045.
-- **RC2:** Deferred — implement stage 5 only if post-RC1 HITL still shows `root=0` through overdub or
-  `inflight=0` stall with `exit=1`.
+- **RC2:** Shipped stage 5 after [`124756`](../../captures/session_20260912_124756.log) showed
+  `exit=1,inflight=0` through overdub with zero `kind=publish`.
 
 ---
 
