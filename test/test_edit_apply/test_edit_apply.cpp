@@ -2753,6 +2753,7 @@ void test_add_note_rematerialize_session_store() {
   LoopEventStore::initPool();
   Loop loop;
   loop.passes.recordPass = makeRecordPassWithNote(1, 10);
+  loop.loopLengthTicks = 768;
   loop.nextPassId_ = 2;
 
   EditPass add{};

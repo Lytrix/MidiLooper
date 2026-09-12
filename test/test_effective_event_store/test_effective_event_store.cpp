@@ -122,8 +122,12 @@ void test_effective_store_matches_materialize_after_seed() {
   SessionMidiEventVec expected;
   loop.passes.materializeToEventVector(expected, kLoopLen);
 
+  SessionMidiEventVec snapshotOnly;
+  loop.copyEffectiveCommittedEvents(snapshotOnly);
+  TEST_ASSERT_EQUAL(0u, snapshotOnly.size());
+
   SessionMidiEventVec actual;
-  loop.copyEffectiveCommittedEvents(actual);
+  loop.copyEffectiveCommittedEventsInRange(actual, 0, kLoopLen);
   TEST_ASSERT_TRUE(eventsEqual(expected, actual));
 }
 
@@ -134,7 +138,7 @@ void test_effective_store_updates_on_edit_pass_save() {
   seedRecordNote(loop, 10, 58, 60);
 
   SessionMidiEventVec beforeEdit;
-  loop.copyEffectiveCommittedEvents(beforeEdit);
+  loop.copyEffectiveCommittedEventsInRange(beforeEdit, 0, kLoopLen);
 
   const EditPassId editId = loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 67));
   TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, editId);
@@ -142,7 +146,7 @@ void test_effective_store_updates_on_edit_pass_save() {
   SessionMidiEventVec expected;
   loop.passes.materializeToEventVector(expected, kLoopLen);
   SessionMidiEventVec actual;
-  loop.copyEffectiveCommittedEvents(actual);
+  loop.copyEffectiveCommittedEventsInRange(actual, 0, kLoopLen);
   TEST_ASSERT_TRUE(eventsEqual(expected, actual));
   TEST_ASSERT_FALSE(eventsEqual(beforeEdit, actual));
 }
@@ -169,7 +173,7 @@ void test_copy_effective_committed_events_in_range_is_independent() {
   (void)loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 67));
 
   SessionMidiEventVec full;
-  loop.copyEffectiveCommittedEvents(full);
+  loop.passes.materializeToEventVector(full, kLoopLen);
   SessionMidiEventVec windowed;
   loop.copyEffectiveCommittedEventsInRange(windowed, 0, kLoopLen);
   TEST_ASSERT_TRUE(eventsEqual(full, windowed));
@@ -194,7 +198,7 @@ void test_overdub_entry_uses_windowed_source_on_long_loop() {
   loop.seedRecordPassFromStore(store);
 
   SessionMidiEventVec fullFlat;
-  loop.copyEffectiveCommittedEvents(fullFlat);
+  loop.copyEffectiveCommittedEventsInRange(fullFlat, 0, longLoopLen);
   TEST_ASSERT_GREATER_THAN(100u, fullFlat.size());
 
   const uint32_t playhead = 32u * Config::TICKS_PER_BAR;
@@ -317,7 +321,7 @@ void test_undo_pass_toggle_rebuilds_effective_store() {
   SessionMidiEventVec expected;
   loop.passes.materializeToEventVector(expected, kLoopLen);
   SessionMidiEventVec restored;
-  loop.copyEffectiveCommittedEvents(restored);
+  loop.copyEffectiveCommittedEventsInRange(restored, 0, kLoopLen);
   TEST_ASSERT_TRUE(eventsEqual(expected, restored));
 }
 

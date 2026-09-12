@@ -14,15 +14,10 @@ _MATERIALIZE_RE = re.compile(r"\bmaterializeToEventVector\s*\(")
 
 
 class B7B8ConstructionConsumerGateTests(unittest.TestCase):
-    def test_b7_materialize_only_in_device_gate_construction_phase(self) -> None:
+    def test_b7_lcr_has_no_maintained_history_materialize(self) -> None:
         text = _B7.read_text(encoding="utf-8", errors="replace")
-        matches = list(_MATERIALIZE_RE.finditer(text))
-        self.assertEqual(1, len(matches), "B7 must retain a single construction materialize site")
-        self.assertRegex(
-            text,
-            r"case Phase::Materialize:[\s\S]{0,320}?"
-            r"materializeToEventVector\s*\(",
-        )
+        self.assertNotRegex(text, _MATERIALIZE_RE)
+        self.assertNotIn("Phase::Materialize", text)
 
     def test_b8_capture_has_no_direct_materialize_to_event_vector(self) -> None:
         text = _B8.read_text(encoding="utf-8", errors="replace")

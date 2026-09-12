@@ -41,7 +41,7 @@ reintroduce synchronous `tryPublishSessionExitSnapshot` on the MIDI stop path.
 | **6.3.3** | Remove `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` consumer paths | **SHIPPED** |
 | **6.3.4** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | **SHIPPED** |
 | **6.3.5** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | **SHIPPED** |
-| **6.3.6** | Remove `materializeToEventVector` and LCR maintained-history construction | pending |
+| **6.3.6** | Remove `materializeToEventVector` and LCR maintained-history construction | **SHIPPED** |
 | **6.3.7** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | pending |
 
 ## 6.3.1 — C1-a hold-empty (SHIPPED)
@@ -121,6 +121,35 @@ capture store (no `copyCommittedPassReplayEvents` in capture). Host inventory ga
 | RAM1 `teensy41-capture-serial` | **6880** locals |
 | HITL `base` core | **PASS** [`024434`](../../captures/session_20260912_024434.log) — transitions, notes, DISP, undo/redo |
 | HITL persist `result` stage | **flake** — `persistence_stage_missing:result` (5.7 class; not 6.3.5) |
+
+## 6.3.6 — materialize + LCR maintained-history retirement (SHIPPED)
+
+**Decision:** `copyEffectiveCommittedEvents` is snapshot-only
+(`tryCopyCurrentSnapshotEditViewEvents` or clear). `copyCommittedPassReplayEvents` removed.
+`rematerializeEditView` falls back to `copyEffectiveCommittedEventsInRange` + `loadFromEvents`.
+`copyEffectiveCommittedEventsWithCapture` snapshot-first, else InRange with active edit rows.
+LCR device gate drops `Phase::Materialize`; `materializeToEventVector` confined to
+`LoopPasses.cpp` (tests/oracle). `LoopPasses::materializeExcludingEditPassIds` added for
+scoped pass replay in `LoopEditPasses`.
+
+### Files
+
+- `include/Loop.h`, `src/Loop/LoopMaterialization.cpp` — snapshot-only full copy; WithCapture fallback
+- `src/LoopContentResolution.cpp` — remove `Phase::Materialize`; fix idx→win transition slices
+- `include/LoopPasses.h`, `src/Loop/LoopPasses.cpp` — `materializeExcludingEditPassIds`
+- `src/Loop/LoopEditPasses.cpp` — snapshot-first `materializeExcludingEditPassIds`
+- Host gates: `test_compatibility_consumer_inventory.py`, `test_b7_b8_construction_consumer_gate.py`
+- Native: `test_loop_take_survival`, `test_overdub_source_view`, `test_edit_apply`,
+  `test_effective_event_store`, `test_loop_content_resolution`, `test_note_edit_session_undo`
+
+### Verification (6.3.6)
+
+| Gate | Status |
+|---|---|
+| Host compatibility inventory + B7/B8 (11 tests) | **PASS** |
+| Native `pio test -e native` | **1699/1705** (1 skipped) |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` | **PASS** [`030210`](../../captures/session_20260912_030210.log) / report [`030255`](../../captures/host_midi_automation_baseline_20260912_030255.json); persist `result=ok` |
 
 ## Explicit non-goals (6.3 parent)
 

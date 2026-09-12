@@ -132,3 +132,18 @@ LOOP_COLD_MEM __attribute__((noinline)) void LoopPasses::materialize(
     out.loadFromEvents(flat);
   }
 }
+
+LOOP_COLD_MEM void LoopPasses::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
+                                                               SessionMidiEventVec& out,
+                                                               uint32_t loopLengthTicks) const {
+  LoopPasses scopedPasses = *this;
+  for (EditPass& editPass : scopedPasses.editPasses) {
+    for (const EditPassId id : excludeIds) {
+      if (editPass.id == id) {
+        editPass.state = EditPassState::Disabled;
+        break;
+      }
+    }
+  }
+  scopedPasses.materializeToEventVector(out, loopLengthTicks);
+}

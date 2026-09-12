@@ -156,16 +156,10 @@ void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
   mergeActiveCapturePassesInto(passes, out);
 }
 
-void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
-  copyCommittedPassReplayEvents(out);
-}
-
-LOOP_COLD_MEM void Loop::copyCommittedPassReplayEvents(SessionMidiEventVec& out) const {
-  if (loopLengthTicks == 0) {
+LOOP_COLD_MEM void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
+  if (!tryCopyCurrentSnapshotEditViewEvents(out)) {
     out.clear();
-    return;
   }
-  passes.materializeToEventVector(out, loopLengthTicks);
 }
 
 LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out,
@@ -454,7 +448,7 @@ LOOP_COLD_MEM void Loop::copyNoteEditCommitBase(const EditPassIdList& sessionEdi
     applySessionEditPassesToEvents(*this, sessionEditPassIds, out);
     return;
   }
-  passes.materializeToEventVector(out, loopLengthTicks);
+  out.clear();
 }
 
 LOOP_COLD_MEM void Loop::copyNoteEditCommitBase(const EditPassIdList& sessionEditPassIds,
@@ -468,7 +462,7 @@ LOOP_COLD_MEM void Loop::copyNoteEditCommitBase(const EditPassIdList& sessionEdi
     out.assign(sessionEvents.begin(), sessionEvents.end());
     return;
   }
-  passes.materializeToEventVector(out, loopLengthTicks);
+  out.clear();
 }
 
 LOOP_COLD_MEM void Loop::rematerializeEditView(LoopEventStore& store) const {
@@ -480,7 +474,12 @@ LOOP_COLD_MEM void Loop::rematerializeEditView(LoopEventStore& store) const {
       store.loadFromEvents(snapshotEvents);
     }
   } else {
-    passes.materialize(store, loopLengthTicks);
+    SessionMidiEventVec sessionEvents;
+    copyEffectiveCommittedEventsInRange(sessionEvents, 0, loopLengthTicks, true);
+    store.clear();
+    if (!sessionEvents.empty()) {
+      store.loadFromEvents(sessionEvents);
+    }
   }
   LoopEventStore::leaveEphemeralSeal();
 }
@@ -596,7 +595,9 @@ LOOP_COLD_MEM bool Loop::shouldAvoidFullVisualRebuild(uint32_t loopLength) const
 }
 
 LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsWithCapture(SessionMidiEventVec& flat) const {
-  copyEffectiveCommittedEvents(flat);
+  if (!tryCopyCurrentSnapshotEditViewEvents(flat)) {
+    copyEffectiveCommittedEventsInRange(flat, 0, loopLengthTicks, true);
+  }
   mergeCaptureStoreIntoMaterializedEvents(*this, flat);
 }
 

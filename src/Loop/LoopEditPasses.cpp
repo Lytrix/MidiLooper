@@ -217,28 +217,15 @@ void Loop::enableEditPasses(const EditPassIdList& ids) {
 
 void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
                                            SessionMidiEventVec& out) const {
-  LoopPasses scopedPasses = passes;
-  for (EditPass& editPass : scopedPasses.editPasses) {
-    for (const EditPassId id : excludeIds) {
-      if (editPass.id == id) {
-        editPass.state = EditPassState::Disabled;
-        break;
-      }
-    }
+  if (tryCopyCurrentSnapshotEditViewEvents(out)) {
+    return;
   }
-  scopedPasses.materializeToEventVector(out, loopLengthTicks);
+  passes.materializeExcludingEditPassIds(excludeIds, out, loopLengthTicks);
 }
 
 void Loop::materializeExcludingEditPassIds(const EditPassIdList& excludeIds,
                                            MidiEventVec& out) const {
-  LoopPasses scopedPasses = passes;
-  for (EditPass& editPass : scopedPasses.editPasses) {
-    for (const EditPassId id : excludeIds) {
-      if (editPass.id == id) {
-        editPass.state = EditPassState::Disabled;
-        break;
-      }
-    }
-  }
-  scopedPasses.materializeToEventVector(out, loopLengthTicks);
+  SessionMidiEventVec sessionEvents;
+  materializeExcludingEditPassIds(excludeIds, sessionEvents);
+  out.assign(sessionEvents.begin(), sessionEvents.end());
 }
