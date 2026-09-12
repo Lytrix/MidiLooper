@@ -362,52 +362,6 @@ void test_supplement_draw_source_from_unpublished_snapshot_predicate() {
           true, false));
 }
 
-void test_gap_supplement_bar_left_edge_coverage_ticks() {
-  TEST_ASSERT_EQUAL_UINT32(Config::TICKS_PER_BAR / 16u,
-                           DisplayWindowUtils::gapSupplementBarLeftEdgeCoverageTicks(
-                               Config::TICKS_PER_BAR));
-  TEST_ASSERT_EQUAL_UINT32(48u,
-                           DisplayWindowUtils::gapSupplementBarLeftEdgeCoverageTicks(0));
-}
-
-void test_display_bar_adequately_covered_for_gap_supplement() {
-  NoteUtils::DisplayNoteVec frame;
-  const uint32_t loopLength = Config::TICKS_PER_BAR * 8;
-  const uint32_t bar4Start = 4 * Config::TICKS_PER_BAR;
-  frame.push_back({});
-  frame.back().note = 72;
-  frame.back().startTick = bar4Start + 360;
-  frame.back().endTick = bar4Start + 400;
-  TEST_ASSERT_TRUE(DisplayWindowUtils::displayFrameCoversBar(frame, 4, loopLength,
-                                                              Config::TICKS_PER_BAR));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(
-      frame, 4, loopLength, Config::TICKS_PER_BAR));
-
-  NoteUtils::DisplayNoteVec early;
-  early.push_back({});
-  early.back().note = 60;
-  early.back().startTick = bar4Start;
-  early.back().endTick = bar4Start + 48;
-  TEST_ASSERT_TRUE(DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(
-      early, 4, loopLength, Config::TICKS_PER_BAR));
-}
-
-void test_should_supplement_draw_source_during_session_exit_publication_gap() {
-  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldSupplementDrawSourceDuringSessionExitPublicationGap(
-      true));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldSupplementDrawSourceDuringSessionExitPublicationGap(
-      false));
-  TEST_ASSERT_TRUE(
-      DisplayWindowUtils::shouldSupplementDrawSourceFromCommittedPassesDuringPublicationGap(
-          true, true, false));
-  TEST_ASSERT_FALSE(
-      DisplayWindowUtils::shouldSupplementDrawSourceFromCommittedPassesDuringPublicationGap(
-          true, true, true));
-  TEST_ASSERT_FALSE(
-      DisplayWindowUtils::shouldSupplementDrawSourceFromCommittedPassesDuringPublicationGap(
-          false, true, false));
-}
-
 void test_preserve_composed_notes_on_overdub_wrap_invalidate() {
   // session_20260826_011829: wrap invalidate without preserve left no frame for
   // ODUB,stop,display (155 ms gather). RC-W1 still resets bookkeeping.
@@ -2247,9 +2201,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_hold_session_exit_publication_gap_handoff);
   RUN_TEST(test_supplement_draw_source_from_unpublished_snapshot_predicate);
-  RUN_TEST(test_gap_supplement_bar_left_edge_coverage_ticks);
-  RUN_TEST(test_display_bar_adequately_covered_for_gap_supplement);
-  RUN_TEST(test_should_supplement_draw_source_during_session_exit_publication_gap);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
   RUN_TEST(test_should_hold_composed_notes_on_overdub_wrap_revision);
   RUN_TEST(test_committed_display_visual_cache_authoritative);

@@ -11,7 +11,6 @@
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/Diagnostics.h"
-#include "LoopContentResolution.h"
 #include "Utils/DisplayWindowUtils.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/SnapshotNoteConversion.h"
@@ -240,49 +239,54 @@ DISP_CAPTURE_MEM void retainDrawSourceHandoffCommittedPrefix(
     committedEndOut = committedOnlyEnd;
 }
 
-enum class CommittedDrawSourceGatherSource {
-    Default,
-    SessionExitGapPasses,
-};
+DISP_CAPTURE_MEM void supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(
+    const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
+    uint8_t pitchHigh, NoteUtils::DisplayNoteVec& frame, size_t& committedDisplayEnd) {
+    const ImmutableLoopSnapshotRef unpublished = loop.unpublishedSnapshot();
+    if (!DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+            loop.isPlaybackSessionExitPublicationGap(), static_cast<bool>(unpublished))) {
+        return;
+    }
+    const uint32_t loopLength = loop.loopLengthTicks;
+    if (loopLength == 0 || firstBar > lastBar) {
+        return;
+    }
+    const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        bool barCovered = false;
+        for (const NoteUtils::DisplayNote& note : frame) {
+            if (previewNoteIntersectsBar(note, bar, loopLength)) {
+                barCovered = true;
+                break;
+            }
+        }
+        if (barCovered) {
+            continue;
+        }
+        appendSnapshotNotesForBar(*unpublished, bar, pitchLow, resolvedPitchHigh, frame);
+    }
+    if (committedDisplayEnd < frame.size()) {
+        committedDisplayEnd = frame.size();
+    }
+}
 
-DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(
-    const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow, uint8_t pitchHigh,
-    NoteUtils::DisplayNoteVec& out, size_t& committedEnd,
-    CommittedDrawSourceGatherSource gatherSource = CommittedDrawSourceGatherSource::Default) {
+DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t firstBar,
+                                                    uint32_t lastBar, uint8_t pitchLow,
+                                                    uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
+                                                    size_t& committedEnd) {
     const uint32_t loopLength = loop.loopLengthTicks;
     if (loopLength == 0 || firstBar > lastBar) {
         committedEnd = out.size();
         return;
     }
     const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
-    const bool usePublishedSnapshot =
-        gatherSource == CommittedDrawSourceGatherSource::Default &&
-        DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
-            static_cast<bool>(snapshot), loop.captureActive(), loop.hasOverdubSession(),
-            !loop.visualCache.notes.empty(), loop.visualCacheDirty,
-            loop.publishedSnapshotIsCurrent());
+    const bool usePublishedSnapshot = DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
+        static_cast<bool>(snapshot), loop.captureActive(), loop.hasOverdubSession(),
+        !loop.visualCache.notes.empty(), loop.visualCacheDirty,
+        loop.publishedSnapshotIsCurrent());
     const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
     for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-        if (gatherSource == CommittedDrawSourceGatherSource::SessionExitGapPasses) {
-            if (!loop.hasCommittedPasses()) {
-                continue;
-            }
-            const uint32_t barStart = bar * Config::TICKS_PER_BAR;
-            SessionMidiEventVec events;
-            LoopContentResolution::resolveWindow(loop.passes, loopLength, barStart,
-                                                 Config::TICKS_PER_BAR, events);
-            if (events.empty()) {
-                continue;
-            }
-            const NoteUtils::DisplayNoteVec barNotes =
-                NoteUtils::reconstructDisplayNotes(events, loopLength, false, false);
-            for (const NoteUtils::DisplayNote& note : barNotes) {
-                if (note.note < pitchLow || note.note > resolvedPitchHigh) {
-                    continue;
-                }
-                appendDisplayNoteUniqueById(out, note);
-            }
-        } else if (usePublishedSnapshot) {
+        if (usePublishedSnapshot) {
             appendSnapshotNotesForBar(*snapshot, bar, pitchLow, resolvedPitchHigh, out);
         } else {
             appendNotesIntersectingBar(loop.visualCache.notes, bar, loopLength, out);
@@ -292,49 +296,6 @@ DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(
     // bar-crossing NoteRefs in the published snapshot. Do not re-heal draw
     // source from visual/events here (consumer Stage 6 unwind).
     committedEnd = out.size();
-}
-
-DISP_CAPTURE_MEM void supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(
-    const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
-    uint8_t pitchHigh, NoteUtils::DisplayNoteVec& frame, size_t& committedDisplayEnd) {
-    if (!DisplayWindowUtils::shouldSupplementDrawSourceDuringSessionExitPublicationGap(
-            loop.isPlaybackSessionExitPublicationGap())) {
-        return;
-    }
-    const uint32_t loopLength = loop.loopLengthTicks;
-    if (loopLength == 0 || firstBar > lastBar) {
-        return;
-    }
-    const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
-    const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
-    const ImmutableLoopSnapshotRef unpublished = loop.unpublishedSnapshot();
-    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-        if (DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(frame, bar,
-                                                                            loopLength,
-                                                                            ticksPerBar)) {
-            continue;
-        }
-        if (DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
-                true, static_cast<bool>(unpublished))) {
-            appendSnapshotNotesForBar(*unpublished, bar, pitchLow, resolvedPitchHigh, frame);
-        }
-        if (DisplayWindowUtils::shouldSupplementDrawSourceFromCommittedPassesDuringPublicationGap(
-                true, loop.hasCommittedPasses(),
-                DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(
-                    frame, bar, loopLength, ticksPerBar))) {
-            NoteUtils::DisplayNoteVec barRows;
-            size_t barCommittedEnd = 0;
-            gatherCommittedDrawSourceBars(loop, bar, bar, pitchLow, pitchHigh, barRows,
-                                          barCommittedEnd,
-                                          CommittedDrawSourceGatherSource::SessionExitGapPasses);
-            for (const NoteUtils::DisplayNote& note : barRows) {
-                appendDisplayNoteUniqueById(frame, note);
-            }
-        }
-    }
-    if (committedDisplayEnd < frame.size()) {
-        committedDisplayEnd = frame.size();
-    }
 }
 
 DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
