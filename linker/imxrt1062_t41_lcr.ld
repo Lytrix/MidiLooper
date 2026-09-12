@@ -59,6 +59,10 @@ SECTIONS
 
 	.text.progmem : {
 		*(.progmem*)
+		/* Persist telemetry strings: .rodata is DTCM in this script and
+		   the extra ~1 KB from LoopSnapshotTail labels crosses the 4K
+		   _VectorsRam/periodictable align edge (+4 KB RAM1 locals). */
+		*WorkspaceSave*.o(.rodata .rodata.*)
 		. = ALIGN(4);
 	} > FLASH
 
@@ -77,7 +81,7 @@ SECTIONS
 
 	.data : {
 		*(.endpoint_queue)   
-		*(SORT_BY_ALIGNMENT(SORT_BY_NAME(.rodata*)))
+		EXCLUDE_FILE (*WorkspaceSave*) *(SORT_BY_ALIGNMENT(SORT_BY_NAME(.rodata*)))
 		*(SORT_BY_ALIGNMENT(SORT_BY_NAME(.data*)))
 		KEEP(*(.vectorsram))
 	} > DTCM  AT> FLASH

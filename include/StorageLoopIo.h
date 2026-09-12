@@ -187,6 +187,31 @@ bool writeLoopSnapshotBodyFormatV1SavePreamble(const StorageIo& io,
 bool writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
                                            const LoopSnapshot& loopSnapshot);
 
+/// RC-P1: bounded grains for deferred LSV1 snapshot tail save (ExecutionBounds row 14).
+constexpr uint32_t kLsv1SaveIoChunkBytes = 512u;
+constexpr uint32_t kLsv1SaveOrderingFlushBatch = 16u;
+
+enum class LoopSnapshotBodyFormatV1SaveStepResult : uint8_t {
+  MoreWork = 0,
+  Completed = 1,
+  Failed = 2,
+};
+
+struct LoopSnapshotBodyFormatV1SaveScratch;
+
+/// PSRAM-backed scratch reused across deferred `LoopSnapshotTail` slices (opaque payload).
+LoopSnapshotBodyFormatV1SaveScratch* acquireLoopSnapshotBodyFormatV1SaveScratch();
+
+void resetLoopSnapshotBodyFormatV1SaveScratch(LoopSnapshotBodyFormatV1SaveScratch& scratch);
+
+void beginLoopSnapshotBodyFormatV1SaveGather(const LoopSnapshot& loopSnapshot,
+                                               LoopSnapshotBodyFormatV1SaveScratch& scratch);
+
+/// One classified grain per call when \p maxGrains is 1. \p deadlineUs is a safety stop only.
+LoopSnapshotBodyFormatV1SaveStepResult stepLoopSnapshotBodyFormatV1SaveTail(
+    const StorageIo& io, const LoopSnapshot& loopSnapshot,
+    LoopSnapshotBodyFormatV1SaveScratch& scratch, uint32_t deadlineUs, uint32_t maxGrains);
+
 enum class LoopSnapshotBodyFormatV1LoadStepResult : uint8_t {
   MoreWork = 0,
   Completed = 1,
@@ -230,6 +255,12 @@ void applyLoadedLoopSlotBodyCommit(Loop& loop, Track& track, uint8_t slotIndex,
 uint32_t testRebuildSlotFromLoopContentCallCount();
 void testResetRebuildSlotFromLoopContentCallCount();
 void testRecordRebuildSlotFromLoopContentCall();
+size_t testMeasureLoopSnapshotGatheredPayloadBytes(const LoopSnapshot& loopSnapshot);
+bool testWriteLoopSnapshotGatheredPayloadToIo(const StorageIo& io,
+                                              const LoopSnapshot& loopSnapshot);
+bool testWriteLoopSnapshotGatheredPayloadByteSlice(const StorageIo& io,
+                                                   const LoopSnapshot& loopSnapshot,
+                                                   size_t& byteOffset, size_t maxBytes);
 #endif
 
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);

@@ -71,6 +71,7 @@ enum class DeferredLoopWriteStage : uint8_t {
   CapturePassHeader,
   CapturePassChunk,
   EditTail,
+  LoopSnapshotTail,
 };
 
 enum class DeferredLoopFinalizeStage : uint8_t {

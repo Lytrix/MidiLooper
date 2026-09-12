@@ -83,7 +83,7 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 |---|-------|-------|-------|-------|
 | 1 | `TrackManager::updateAllTracks` from clock dispatch | `ClockManager::onMidiClockPulse` | none | **Unbounded** |
 | 2 | `Track::ensurePlaybackMergedMidiEventsBuilt` | `TrackPlaybackWindowBuild.cpp` | selected playback window (2 bars on long loops; full loop on short) | **Unbounded** |
-| 3 | `DisplayManager::update` — resolve phase | `resolveDisplayNotes` | 5000 µs measurement only | **Unbounded** |
+| 3 | `DisplayManager::update` — resolve phase | `resolveDisplayNotes` / `resolveDisplayNotesByDrawSource` | 5000 µs measurement + overrun reuse of prior frame | **Empirically bounded** |
 | 4 | `DisplayManager::update` — draw + transfer | `_display.api.display()` | fixed frame size | **Structurally bounded** (size), **blocking** |
 | 5 | `Loop::advanceFallbackGatherSession` traversal | `LoopVisualCache.cpp` | 96 / 192 / 768 events | **Structurally bounded** |
 | 6 | Fallback gather sort | `sortSessionEventsByTick` | none | **Unbounded** |
@@ -108,7 +108,18 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 25 | `EditManager::tryCollectPreparedOverlapHoldNoteIds` / `collectAnalyzeOverlapNoteIds` / `unionAnalyzeOverlapNoteIds` | `NoteGeometryResolver::resolve` on geometry fader (MIDI interval) | Hit: `noteMembership(pitch, bar)` for hold bars only (±1 for analyze abut). Capture-active hit unions one pass of the already-built Stage 1 composed DisplayNotes. Miss: one pass of that same composed list (not visual cache). Result capped at `kOverlapNoteIdSetCapacity` (128). Overflow keeps the inserted ids and does not expand to a full-lane `baselineMap` fill. Scoped current-state upsert is at most those 128 ids. | **Structurally bounded** (hit bars + set cap); miss/union is one pass of the pre-built composed cache |
 | 26 | `EditManager::openNoteEditSession` current-root; `rebuildNoteEditFocusForDisplayNote` mover seed | NOTE_EDIT button; first select / live-edit focus rebuild | Open does not call `rebuildVisualCacheFromPasses`, `rematerializeEditView`, or `buildFromSessionStore`. Current state starts empty. First focus rebuild `upsertRow`s the selected mover only. First-frame paint uses the published snapshot / already-built visual cache. Miss path keeps the existing rematerialize owner. | **Structurally bounded** (no full-loop build on current-root open; one-row seed on focus) |
 
-Eleven rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+Ten rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+
+### Draw-source resolve (row 3)
+
+**Row 3 goal:** `resolveDisplayNotesByDrawSource` (production paint path) measures
+elapsed resolve time against `Diagnostics::kDisplayResolveBudgetMicros` (5000 µs).
+When the budget is exceeded and the prior frame matches the current track/slot,
+return the last composed frame and increment `DisplayResolveOverBudgetCount`.
+Full rebuild and slide gather are skipped; reuse/slide-incremental paths unchanged.
+Overrun does not publish partial gather state. Seed: [`122537`](../../../captures/session_20260912_122537.log)
+post stages 1–3 (`DFRAME` resolve max 2.6 ms); pre-fix [`033502`](../../../captures/session_20260912_033502.log)
+252 ms pathology required RC4 first.
 
 ### Snapshot candidate construction (`LoopSnapshotConstruction::step` and session-exit publish)
 
@@ -232,7 +243,7 @@ class.
 | `legacy_oracle_header` | `writeDeferredLoopHeader` | Every save | Loop header scalars + capture-pass count |
 | `capture_pass_header` / `capture_pass_chunk` | `writeDeferredCapturePassHeader` / `writeDeferredCapturePassChunk` | Per pass, per chunk | One pass header or one PSRAM chunk batch (unchanged) |
 | `edit_tail` | `writePersistedEditsTail` | `DeferredLoopWriteStage::EditTail` | One edit/geometry tail write |
-| `lsv1_loop_snapshot_tail` | `writeLoopSnapshotBodyFormatV1SaveTail` | After edit tail when LSV1 save | One `LoopSnapshot` section payload |
+| `lsv1_loop_snapshot_tail` | `stepLoopSnapshotBodyFormatV1SaveTail` (`DeferredLoopWriteStage::LoopSnapshotTail`) | After `edit_tail,done` when LSV1 save | One classified grain (`maxGrains = 1`): membership page gather, ≤16 sort swaps, 512-byte payload IO slice, or section header |
 
 **Save-time migration (no eager owner):** legacy body on disk → load adopts passes →
 `queueLoadedSnapshotPublish` + idle construction → `publishedSnapshotIsCurrent()` →

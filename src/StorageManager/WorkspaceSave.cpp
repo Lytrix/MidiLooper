@@ -63,6 +63,9 @@ STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
     storageSession.currentWorkspaceSave.capturePassCursor = 0;
     storageSession.currentWorkspaceSave.chunkCursor = 0;
     storageSession.currentWorkspaceSave.midiBatch.clear();
+    if (LoopSnapshotBodyFormatV1SaveScratch* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch()) {
+        resetLoopSnapshotBodyFormatV1SaveScratch(*scratch);
+    }
     resetDeferredLoopFinalizeState();
 }
 
@@ -603,11 +606,57 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
             }
             if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
                 const ImmutableLoopSnapshotRef loopSnapshot = loop.publishedSnapshot();
-                if (!loopSnapshot ||
-                    !writeLoopSnapshotBodyFormatV1SaveTail(io, *loopSnapshot)) {
+                if (!loopSnapshot) {
                     return false;
                 }
+#if defined(SESSION_CAPTURE)
+                SC_PERSIST("work", 0, 0, 0, "LoopPersist,edit_tail,done");
+#endif
+                LoopSnapshotBodyFormatV1SaveScratch* tailScratch =
+                    acquireLoopSnapshotBodyFormatV1SaveScratch();
+                if (tailScratch == nullptr) {
+                    return false;
+                }
+                beginLoopSnapshotBodyFormatV1SaveGather(*loopSnapshot, *tailScratch);
+                storageSession.currentWorkspaceSave.loopWriteStage =
+                    DeferredLoopWriteStage::LoopSnapshotTail;
+#if defined(SESSION_CAPTURE)
+                SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,enter");
+#endif
+                return true;
             }
+            resetDeferredLoopWriteState();
+            loopDone = true;
+            return true;
+        }
+
+        case DeferredLoopWriteStage::LoopSnapshotTail: {
+            const ImmutableLoopSnapshotRef loopSnapshot = loop.publishedSnapshot();
+            if (!loopSnapshot) {
+                return false;
+            }
+            const StorageIo io = crcMode == LoopPersistPayloadCrc::RevisionCommit
+                                     ? storageIoFromFileWriteWithRevisionPayloadCrc(file)
+                                     : storageIoFromFileWrite(file);
+            LoopSnapshotBodyFormatV1SaveScratch* tailScratch =
+                acquireLoopSnapshotBodyFormatV1SaveScratch();
+            if (tailScratch == nullptr) {
+                return false;
+            }
+            const LoopSnapshotBodyFormatV1SaveStepResult stepResult =
+                stepLoopSnapshotBodyFormatV1SaveTail(io, *loopSnapshot, *tailScratch, 0, 1);
+            if (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::Failed) {
+                return false;
+            }
+            if (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork) {
+#if defined(SESSION_CAPTURE)
+                SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,step");
+#endif
+                return true;
+            }
+#if defined(SESSION_CAPTURE)
+            SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,done");
+#endif
             resetDeferredLoopWriteState();
             loopDone = true;
             return true;
@@ -632,6 +681,7 @@ STORAGE_PERSIST_MEM bool stepDeferredEmptyLoopPersist(File& file, LoopId loopId,
 
         case DeferredLoopWriteStage::CapturePassHeader:
         case DeferredLoopWriteStage::CapturePassChunk:
+        case DeferredLoopWriteStage::LoopSnapshotTail:
             return false;
 
         case DeferredLoopWriteStage::EditTail: {
@@ -707,6 +757,9 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopSnapshotPersist(File& file, const Persi
             storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::CapturePassHeader;
             return true;
         }
+
+        case DeferredLoopWriteStage::LoopSnapshotTail:
+            return false;
 
         case DeferredLoopWriteStage::EditTail: {
             const StorageIo io = storageIoFromFileWrite(file);
