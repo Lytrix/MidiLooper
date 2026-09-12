@@ -11,10 +11,9 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Parallel — [`record_stop_snapshot_publication_gap_display_bugfix.md`](../Plans/record_stop_snapshot_publication_gap_display_bugfix.md) (2026-09-12).**
-Stages **1–4 shipped** (instrumentation downsampling, draw-source prefix contamination,
-viewport adopt dedupe, **RC1 record-stop candidate retention**). Native **1701/1707**;
-RAM1 **6848**. Next: HITL record → overdub recapture; **RC2 deferred** unless gap persists.
-Stage **7** (post-closeout): re-check `missed_preview` / `compose_miss` only after stages 4–6.
+Stages **1–5 shipped** (through **RC2** first-root overdub construction start). Native **1703/1709**;
+RAM1 **6848**. Next: HITL record → overdub recapture (`124756` RC1 PASS; RC2 fix landed).
+Stage **7** post-closeout after HITL acceptance.
 
 **Now — OpenSpec 6.4 (verification gate).**
 Run `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off.

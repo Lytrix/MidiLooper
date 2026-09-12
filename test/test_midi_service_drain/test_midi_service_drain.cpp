@@ -253,6 +253,19 @@ void test_stopped_snapshot_track_prefers_pending_slot() {
   TEST_ASSERT_EQUAL_UINT8(1, MidiServiceDrain::selectStoppedSnapshotTrack(1, 4, none));
 }
 
+void test_allow_snapshot_construction_start_before_first_root_session_exit() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotConstructionStart(
+      false, true, false, false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotConstructionStart(
+      true, false, false, false, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotConstructionStart(
+      true, true, false, false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotConstructionStart(
+      true, true, false, true, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotConstructionStart(
+      false, false, true, true, false));
+}
+
 void test_visual_cache_reconstruct_slice_off_during_overdub() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowVisualCacheReconstructSlice(false));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowVisualCacheReconstructSlice(true));
@@ -344,6 +357,7 @@ int main() {
   RUN_TEST(test_snapshot_idle_reserve_caps_at_ceiling);
   RUN_TEST(test_snapshot_idle_reserve_bypasses_when_not_timing_critical);
   RUN_TEST(test_stopped_pending_snapshot_wins_over_first_paint);
+  RUN_TEST(test_allow_snapshot_construction_start_before_first_root_session_exit);
   RUN_TEST(test_visual_cache_reconstruct_slice_off_during_overdub);
   return UNITY_END();
 }

@@ -22,6 +22,7 @@
 #include "Utils/CommittedMidiScratch.h"
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
+#include "Utils/MidiServiceDrain.h"
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "PassReclaim.h"
@@ -1385,6 +1386,35 @@ void test_overdub_idle_advances_in_flight_construction_only() {
   TEST_ASSERT_FALSE(loop.hasInFlightSnapshotConstruction());
   TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
+void test_session_exit_restarts_construction_when_overdub_would_block_start() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  constexpr uint8_t kNoteCount = 20;
+  for (uint8_t i = 0; i < kNoteCount; ++i) {
+    const uint32_t onTick = 40u + static_cast<uint32_t>(i) * 80u;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, 60 + i, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(onTick + 40u, 1, 60 + i, 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 1600));
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
+  while (loop.hasInFlightSnapshotConstruction()) {
+    loop.stepPendingSnapshotPublish(1, false);
+  }
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotConstructionStart(
+      true, true, false, false, loop.pendingSnapshotSessionExitQueued()));
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
 }
 
 void test_playback_session_exit_publication_gap_predicate() {
@@ -5511,6 +5541,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_exit_pass_change_skips_note_already_on_parent);
   RUN_TEST(test_live_record_starts_snapshot_before_session_exit);
   RUN_TEST(test_overdub_idle_advances_in_flight_construction_only);
+  RUN_TEST(test_session_exit_restarts_construction_when_overdub_would_block_start);
   RUN_TEST(test_playback_session_exit_publication_gap_predicate);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
   RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
