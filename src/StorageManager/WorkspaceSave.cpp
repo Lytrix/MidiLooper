@@ -58,7 +58,25 @@ STORAGE_PERSIST_MEM bool deferredLoopSlotFinalizeInProgress() {
     return storageSession.currentWorkspaceSave.loopFinalizeStage != DeferredLoopFinalizeStage::Idle;
 }
 
+STORAGE_PERSIST_MEM void disarmLoopPersistTailWriteResume() {
+    storageSession.currentWorkspaceSave.loopPersistTailResumeArmed = false;
+    storageSession.currentWorkspaceSave.loopPersistTailResumeKey = PersistKey{};
+}
+
+STORAGE_PERSIST_MEM void armLoopPersistTailWriteResume(const PersistKey& key) {
+    storageSession.currentWorkspaceSave.loopPersistTailResumeKey = key;
+    storageSession.currentWorkspaceSave.loopPersistTailResumeArmed = true;
+}
+
+STORAGE_PERSIST_MEM bool loopPersistTailWriteResumeActive(const PersistKey& key) {
+    return storageSession.currentWorkspaceSave.loopPersistTailResumeArmed &&
+           persistKeysEqual(key, storageSession.currentWorkspaceSave.loopPersistTailResumeKey) &&
+           storageSession.currentWorkspaceSave.loopWriteStage ==
+               DeferredLoopWriteStage::LoopSnapshotTail;
+}
+
 STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
+    disarmLoopPersistTailWriteResume();
     storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::Header;
     storageSession.currentWorkspaceSave.capturePassCursor = 0;
     storageSession.currentWorkspaceSave.chunkCursor = 0;
@@ -620,6 +638,7 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
                 beginLoopSnapshotBodyFormatV1SaveGather(*loopSnapshot, *tailScratch);
                 storageSession.currentWorkspaceSave.loopWriteStage =
                     DeferredLoopWriteStage::LoopSnapshotTail;
+                armLoopPersistTailWriteResume(persistKeyForLoop(loop.loopId));
 #if defined(SESSION_CAPTURE)
                 SC_PERSIST("work", 0, 0, 0, "LoopPersist,loop_snapshot_tail,enter");
 #endif

@@ -350,6 +350,18 @@ void test_hold_session_exit_publication_gap_handoff() {
       true, false, false));
 }
 
+void test_supplement_draw_source_from_unpublished_snapshot_predicate() {
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+          true, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+          false, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+          true, false));
+}
+
 void test_preserve_composed_notes_on_overdub_wrap_invalidate() {
   // session_20260826_011829: wrap invalidate without preserve left no frame for
   // ODUB,stop,display (155 ms gather). RC-W1 still resets bookkeeping.
@@ -2188,6 +2200,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_select_note_edit_committed_base_kind_capture_vs_playing);
   RUN_TEST(test_hold_overdub_stop_handoff_until_current_snapshot);
   RUN_TEST(test_hold_session_exit_publication_gap_handoff);
+  RUN_TEST(test_supplement_draw_source_from_unpublished_snapshot_predicate);
   RUN_TEST(test_preserve_composed_notes_on_overdub_wrap_invalidate);
   RUN_TEST(test_should_hold_composed_notes_on_overdub_wrap_revision);
   RUN_TEST(test_committed_display_visual_cache_authoritative);

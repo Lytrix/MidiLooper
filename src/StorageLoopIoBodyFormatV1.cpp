@@ -1012,44 +1012,38 @@ LSV1_SAVE_STEP_MEM bool gatherOneEventMembershipPage(const LoopSnapshot& snapsho
 
 LSV1_SAVE_STEP_MEM bool sortNotesOneGrain(Lsv1GatheredLoopSnapshotPayload& payload,
                        LoopSnapshotBodyFormatV1SaveWriteState& state) {
-  uint32_t swaps = 0;
-  for (uint32_t index = 0; index + 1 < payload.notes.size() && swaps < kLsv1SaveOrderingFlushBatch;
-       ++index) {
-    if (payload.notes[index].noteId > payload.notes[index + 1].noteId) {
-      std::swap(payload.notes[index], payload.notes[index + 1]);
-      ++swaps;
-    }
-  }
-  if (swaps == 0) {
-    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortEvents;
-    state.sortSwapBudget = 0;
-  }
+  // One grain: match monolithic gather ordering (RC-P1-SORT).
+  std::sort(payload.notes.begin(), payload.notes.end(),
+            [](const Lsv1GatheredNote& left, const Lsv1GatheredNote& right) {
+              return left.noteId < right.noteId;
+            });
+  state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortEvents;
+  state.sortSwapBudget = 0;
   return true;
 }
 
 LSV1_SAVE_STEP_MEM bool sortEventsOneGrain(Lsv1GatheredLoopSnapshotPayload& payload,
                         LoopSnapshotBodyFormatV1SaveWriteState& state) {
-  uint32_t swaps = 0;
-  for (uint32_t index = 0; index + 1 < payload.events.size() && swaps < kLsv1SaveOrderingFlushBatch;
-       ++index) {
-    const Lsv1GatheredEvent& left = payload.events[index];
-    const Lsv1GatheredEvent& right = payload.events[index + 1];
-    const bool outOfOrder = left.canonicalOrder > right.canonicalOrder ||
-                            (left.canonicalOrder == right.canonicalOrder &&
-                             left.eventId > right.eventId);
-    if (outOfOrder) {
-      std::swap(payload.events[index], payload.events[index + 1]);
-      ++swaps;
+  // One grain: match monolithic gather ordering (RC-P1-SORT).
+  std::sort(payload.events.begin(), payload.events.end(),
+            [](const Lsv1GatheredEvent& left, const Lsv1GatheredEvent& right) {
+              if (left.canonicalOrder != right.canonicalOrder) {
+                return left.canonicalOrder < right.canonicalOrder;
+              }
+              return left.eventId < right.eventId;
+            });
+  for (const Lsv1GatheredEvent& event : payload.events) {
+    if (!isPersistableMidiEvent(event.value)) {
+      return false;
     }
   }
-  if (swaps == 0) {
-    state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::WriteSectionHeader;
-    state.payloadSubphase = LoopSnapshotBodyFormatV1SaveWriteState::PayloadWriteSubphase::RootHeader;
-    state.emitIndex = 0;
-    state.nestedIndex = 0;
-    state.nestedRefIndex = 0;
-    state.writePayloadOffset = 0;
-  }
+  state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::WriteSectionHeader;
+  state.payloadSubphase = LoopSnapshotBodyFormatV1SaveWriteState::PayloadWriteSubphase::RootHeader;
+  state.emitIndex = 0;
+  state.nestedIndex = 0;
+  state.nestedRefIndex = 0;
+  state.writePayloadOffset = 0;
+  state.sortSwapBudget = 0;
   return true;
 }
 
@@ -1646,6 +1640,11 @@ bool testWriteLoopSnapshotGatheredPayloadToIo(const StorageIo& io,
     return false;
   }
   return writeLoopSnapshotPayloadToIo(io, payload);
+}
+
+uint32_t testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(
+    const LoopSnapshotBodyFormatV1SaveScratch& scratch) {
+  return scratch.writeState.writePayloadOffset;
 }
 
 bool testWriteLoopSnapshotGatheredPayloadByteSlice(const StorageIo& io,

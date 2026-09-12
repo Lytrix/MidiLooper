@@ -502,9 +502,9 @@ uint32_t liveRecordCompletedOrOneBar(uint32_t liveRecordCompletedTicks) {
 }
 
 uint32_t liveRecordNewParentLength(uint32_t completedTicks, uint32_t loopLengthTicks) {
-  // One detailed-window of extra bars so later completed bars append instead of
-  // rebuilding the whole prefix on each length step (session_20260826_121754).
-  constexpr uint32_t kExtraBars = 16;
+  // Small headroom beyond the completed frontier; extendLiveRecordCandidateCapacity
+  // grows capacity O(1) when the frontier advances (Stage 6C-B).
+  constexpr uint32_t kExtraBars = 2;
   const uint32_t withRoom = completedTicks + kExtraBars * Config::TICKS_PER_BAR;
   return loopLengthTicks > withRoom ? loopLengthTicks : withRoom;
 }

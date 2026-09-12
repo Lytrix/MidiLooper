@@ -261,6 +261,8 @@ bool testWriteLoopSnapshotGatheredPayloadToIo(const StorageIo& io,
 bool testWriteLoopSnapshotGatheredPayloadByteSlice(const StorageIo& io,
                                                    const LoopSnapshot& loopSnapshot,
                                                    size_t& byteOffset, size_t maxBytes);
+uint32_t testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(
+    const LoopSnapshotBodyFormatV1SaveScratch& scratch);
 #endif
 
 void applySnapshotToLoop(Loop& loop, PersistedLoopSnapshot& snapshot);

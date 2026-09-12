@@ -239,6 +239,37 @@ DISP_CAPTURE_MEM void retainDrawSourceHandoffCommittedPrefix(
     committedEndOut = committedOnlyEnd;
 }
 
+DISP_CAPTURE_MEM void supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(
+    const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow,
+    uint8_t pitchHigh, NoteUtils::DisplayNoteVec& frame, size_t& committedDisplayEnd) {
+    const ImmutableLoopSnapshotRef unpublished = loop.unpublishedSnapshot();
+    if (!DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+            loop.isPlaybackSessionExitPublicationGap(), static_cast<bool>(unpublished))) {
+        return;
+    }
+    const uint32_t loopLength = loop.loopLengthTicks;
+    if (loopLength == 0 || firstBar > lastBar) {
+        return;
+    }
+    const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+    for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        bool barCovered = false;
+        for (const NoteUtils::DisplayNote& note : frame) {
+            if (previewNoteIntersectsBar(note, bar, loopLength)) {
+                barCovered = true;
+                break;
+            }
+        }
+        if (barCovered) {
+            continue;
+        }
+        appendSnapshotNotesForBar(*unpublished, bar, pitchLow, resolvedPitchHigh, frame);
+    }
+    if (committedDisplayEnd < frame.size()) {
+        committedDisplayEnd = frame.size();
+    }
+}
+
 DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t firstBar,
                                                     uint32_t lastBar, uint8_t pitchLow,
                                                     uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
@@ -735,6 +766,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
         } else {
             liveDisplayNotes.swap(candidate);
         }
+    }
+    if (holdSessionExitGapHandoff) {
+        supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(
+            loop, firstBar, lastBar, resolvedPitchLow, resolvedPitchHigh, liveDisplayNotes,
+            committedDisplayEnd);
+        storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+                                       liveDisplayCommittedPrefix_);
     }
     DIAG_TIMING_RECORD(DisplayBuild, micros() - gatherStartUs);
 
