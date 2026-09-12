@@ -238,9 +238,9 @@ because any future long gather can re-create it.
 | 6C-A | Live-record candidate capacity extension | design session — **SHIPPED** | native 1706/1706; device PASS [`144434`](../../captures/session_20260912_144434.log) |
 | 6C-B | Reduce `kExtraBars` oversizing | after 6C-A device proof | [plan](record_stop_snapshot_live_record_candidate_capacity_design.md) |
 | P-persist | LSV1 `EditTail` monolith reboot (parallel) | separate bugfix | [`deferred_persist_lsv1_edittail_slice_bugfix.md`](deferred_persist_lsv1_edittail_slice_bugfix.md) — [`144434`](../../captures/session_20260912_144434.log); **not** 6C-B |
-| 7 | Preview compose parity (`missed_preview` / `compose_miss`) | checkpoint after 6C | **OPEN** — [`130411`](../../captures/session_20260912_130411.log) tail still non-zero |
+| 7 | Preview compose parity (`missed_preview` / `compose_miss`) | stage 7 | **IN PROGRESS** — [`record_stop_stage_7_preview_compose_parity_bugfix.md`](record_stop_stage_7_preview_compose_parity_bugfix.md); anchor [`130411`](../../captures/session_20260912_130411.log) |
 | 8 | Record-stop bars 2–5 publication gap (UX) | bundled follow-up | **SHIPPED** — `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` (display-only); native + device [`191442`](../../captures/session_20260912_191442.log) stop→publish 0.94 s |
-| 8b | Stale published root during session-exit gap (overdub) | GAP-8b | **DEFERRED** — was in `c16ec598`, reverted `3c9dcd4a` with 8c |
+| 8b | Stale published root during session-exit gap (overdub) | GAP-8b | **REVERTED** — bundled in `c16ec598`, reverted `3c9dcd4a`; deferred |
 | 8c | Record-stop viewport gap — bars 2–4 empty until publish | GAP-8c | **REVERTED** — device [`204310`](../../captures/session_20260912_204310.log); design session — [`record_stop_viewport_gap_supplement_bugfix.md`](record_stop_viewport_gap_supplement_bugfix.md) |
 
 Stage 1 first so stages 2–6 are measured on trustworthy captures. Stages 2 and 3 land before
@@ -301,9 +301,11 @@ session comparable to `033502`:
 
 > The published snapshot is now **convergent during overdub**, but **not necessarily available at overdub entry**. Architecture review (2026-09-12) identified the dominant cause as a **live-record candidate capacity cliff** (~17 bars), not construction throughput. Incremental construction stops during RECORDING while the take continues; session-exit debt scales as `(bars − 17)`. **Deferred to stage 6C** ([capacity design](record_stop_snapshot_live_record_candidate_capacity_design.md)). Stage 6B (units/turn boost) is **deferred** — it would pass a 21-bar capture without fixing the cliff. **Do not block overdub entry.**
 
-**Stage 7:** preview parity (`missed_preview` / `compose_miss`) remains open after [`130411`](../../captures/session_20260912_130411.log) post-root tail (22 / 15).
+**Stage 7 — IN PROGRESS (2026-09-12):** post-publish parity gate **failed** on [`130411`](../../captures/session_20260912_130411.log) — first `snap=1` clean at `96142977`; first non-zero at `111807617` (`7/7`); tail plateau `22/15`. Plan: [`record_stop_stage_7_preview_compose_parity_bugfix.md`](record_stop_stage_7_preview_compose_parity_bugfix.md).
 
 **Stage 8 (GAP-8) — SHIPPED (2026-09-12):** during session-exit publication gap, uncovered bars in the paint window are supplemented from `Loop::unpublishedSnapshot()` while the RECORDING handoff frame is retained (`shouldHoldSessionExitPublicationGapHandoff`). Display-only — no DEC-045 synchronous publish on stop. Native: `test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot`, `test_supplement_draw_source_from_unpublished_snapshot_predicate`. Device: [`191442`](../../captures/session_20260912_191442.log) stop→publish **0.94 s** (vs [`164947`](../../captures/session_20260912_164947.log) ~1.8 s); long LSV1 save is unrelated to display refresh.
+
+**Stage 8b (GAP-8b) — REVERTED (2026-09-12):** stale-root predicate was in `c16ec598`, reverted `3c9dcd4a` with GAP-8c; deferred pending design session.
 
 **Stage 8c (GAP-8c) — REVERTED (2026-09-12):** passes-fallback supplement + adequate bar coverage shipped in `c16ec598`, reverted in `3c9dcd4a` after device [`204310`](../../captures/session_20260912_204310.log) — notes lost on record stop (`DISP` `win_notes` 22→15), `BAR,376,0` after stop. Architectural design required before re-implementation. Plan: [`record_stop_viewport_gap_supplement_bugfix.md`](record_stop_viewport_gap_supplement_bugfix.md).
 
