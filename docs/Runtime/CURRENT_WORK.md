@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 6.4; `033502` display bugfix stages 1–3 shipped)
+Last updated: 2026-09-12 (record-stop RC1 stage 4 shipped; OpenSpec 6.4)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,11 +11,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Parallel — [`record_stop_snapshot_publication_gap_display_bugfix.md`](../Plans/record_stop_snapshot_publication_gap_display_bugfix.md) (2026-09-12).**
-Stages **1–3 shipped** (instrumentation downsampling, draw-source prefix contamination,
-viewport adopt dedupe). Native **1700/1706**; RAM1 **6848**. Next: **design session** for
-RC1 record-stop candidate retention and RC2 snapshot admission convergence before stages 4–5.
-HITL long-overdub recapture after stage 2+3 on device (`122537` anchor). Stage **7**
-(post-closeout): re-check `missed_preview` / `compose_miss` only after stages 4–6.
+Stages **1–4 shipped** (instrumentation downsampling, draw-source prefix contamination,
+viewport adopt dedupe, **RC1 record-stop candidate retention**). Native **1701/1707**;
+RAM1 **6848**. Next: HITL record → overdub recapture; **RC2 deferred** unless gap persists.
+Stage **7** (post-closeout): re-check `missed_preview` / `compose_miss` only after stages 4–6.
 
 **Now — OpenSpec 6.4 (verification gate).**
 Run `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off.

@@ -4786,6 +4786,43 @@ void test_session_exit_handoff_when_live_record_notes_fit_sealed_length() {
   TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 64));
 }
 
+void test_session_exit_handoff_when_candidate_shorter_than_sealed_length() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kSealedLength = Config::TICKS_PER_BAR * 4;
+  loop.loopLengthTicks = kSealedLength;
+  loop.beginCapture(CapturePhase::Record);
+  constexpr size_t kPairs = 20;
+  for (size_t i = 0; i < kPairs; ++i) {
+    const uint32_t onTick = 10 + static_cast<uint32_t>(i) * 20;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(onTick, 1, static_cast<uint8_t>(40 + i), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(onTick + 10, 1, static_cast<uint8_t>(40 + i), 0)));
+  }
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
+  const size_t appliedEventIndex = loop.liveRecordAppliedEventIndex();
+  TEST_ASSERT_TRUE(appliedEventIndex > 0);
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
+
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_EQUAL(kSealedLength, loop.loopLengthTicks);
+
+  loop.stepPendingSnapshotPublish(1, true);
+  TEST_ASSERT_EQUAL(appliedEventIndex, loop.liveRecordAppliedEventIndex());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_EQUAL(kSealedLength, loop.pendingSnapshotCandidateLengthTicks());
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(kSealedLength, loop.publishedSnapshot()->loopLengthTicks());
+}
+
 void test_session_exit_discards_when_applied_ticks_exceed_sealed_length() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5523,6 +5560,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
+  RUN_TEST(test_session_exit_handoff_when_candidate_shorter_than_sealed_length);
   RUN_TEST(test_session_exit_discards_when_applied_ticks_exceed_sealed_length);
   RUN_TEST(test_session_exit_pass_starts_as_journal_capped_fragments);
   RUN_TEST(test_session_exit_published_undo_attach_targets_originating_entry_id);

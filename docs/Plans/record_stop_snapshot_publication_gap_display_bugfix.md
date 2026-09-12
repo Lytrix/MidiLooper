@@ -1,6 +1,6 @@
 # Record-stop snapshot publication gap — display and MIDI consequences
 
-**Status:** Stages 1–3 shipped (2026-09-12); stages 4–6 design-gated.
+**Status:** Stages 1–4 shipped (2026-09-12); stages 5–6 design-gated / RC2 deferred.
 **Priority:** P0 — MIDI timing damage on long loops.
 **Evidence:** [`session_20260912_033502.log`](../../captures/session_20260912_033502.log) (114,083 lines)
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../../openspec/changes/immutable-loop-snapshot-passes/) — active phase 6.4; related open task `4b.3`
@@ -231,8 +231,8 @@ because any future long gather can re-create it.
 | 1 | RC7 instrumentation downsampling | checkpoint all no | **SHIPPED** — RAM1 6848; native 1700/1706 |
 | 2 | RC4 prefix contamination | checkpoint all no | **SHIPPED** — `retainDrawSourceHandoffCommittedPrefix`; native 1700/1706 |
 | 3 | RC6 adopt de-duplication | checkpoint all no | **SHIPPED** — `dedupeComposedDisplayNotesForVisualCacheAdopt`; native 1700/1706 |
-| 4 | RC1 candidate retention across record stop | design session (transitions) | native publication suite; HITL record → overdub |
-| 5 | RC2 admission convergence | design session (execution bounds) | native + HITL; `midi_gap` bound |
+| 4 | RC1 candidate retention across record stop | design session — **SHIPPED** Option A | **SHIPPED** — native 1701/1707; HITL record → overdub pending |
+| 5 | RC2 admission convergence | **deferred** — ship only if RC1 HITL still shows inflight stall / no root | native + HITL; `midi_gap` bound |
 | 6 | RC5 draw-source execution bound | design session (execution bounds) | `ExecutionBounds.md` entry + HITL |
 | 7 | Preview compose parity (`missed_preview` / `compose_miss`) | checkpoint after 4–6 | HITL recapture; fix only if still present |
 
@@ -295,6 +295,100 @@ session comparable to `033502`:
 | `BAR` tick error | +112 ticks | 0 |
 | `root` published | never | never (RC1/RC2 open) |
 | Bars 2–5 after wrap | missing | still missing (RC3; needs 4–5) |
+
+## Design session — RC1 / RC2 (2026-09-12)
+
+**Status:** Decisions recorded; **RC1 Option A approved** (2026-09-12); **RC2 deferred** until post-RC1 HITL.
+
+### Problem chain (confirmed)
+
+```text
+record stop → queueSessionExitSnapshot (LoopCapture.cpp, RecordStop)
+  → first Snapshot idle → discardPendingIfLoopLengthChanged
+       → pendingSnapshotFitsSealedLength rejects candidate shorter than sealed
+       → 23.9 ms discard; appliedLiveRecord* cleared; resolvePendingParent → createEmpty
+  → PLAYING gap (~1.2 s): allowStartConstruction=true; rebuild from empty parent starts
+  → OVERDUBBING: allowStartConstruction=false; last in-flight fragment finishes in ~72 ms
+  → inflight=0 for entire overdub; root never publishes → permanent publication gap
+```
+
+`TrackCaptureStopCommit` record branch only calls `markDisplayCachesStale`; session-exit
+queue is already owned by `Loop::commitCapturePass` → `queueSessionExitSnapshot`. RC1 does
+**not** need a new queue call site.
+
+### Architecture gate — Stage 4 (RC1)
+
+| Question | Answer |
+|---|---|
+| **Owner** | `Loop::discardPendingIfLoopLengthChanged` / `pendingSnapshotFitsSealedLength` in `LoopSnapshotPublish.cpp` |
+| **Primary invariant** | Live-record prefix retained across record stop; extend to sealed length via existing handoff, not discard |
+| **Ownership change?** | **NO** |
+| **State transition change?** | **YES** — session-exit length mismatch transitions to handoff-extend instead of discard-rebuild |
+| **Execution bound change?** | **NO** — removes a 23.9 ms discard+empty-parent cold path on the idle turn |
+| **Behavior-preserving?** | **NO** for this stage (intentional fix) |
+| **Reuse** | **YES** — widen `pendingSnapshotFitsSealedLength`; keep `handoffPendingSnapshotLength` |
+| **Phase scope** | `LoopSnapshotPublish.cpp`; native `test_record_stop_publishes_complete_snapshot`; DEC-045 amendment |
+
+### Architecture gate — Stage 5 (RC2)
+
+| Question | Answer |
+|---|---|
+| **Owner** | `Track::processDeferredIdleMaintenance` → `allowStartConstruction` arg to `stepPendingSnapshotPublish` |
+| **Primary invariant** | Pending session-exit publication converges without requiring a construction already in flight |
+| **Ownership change?** | **NO** |
+| **State transition change?** | **NO** — overdub entry unchanged; idle admission policy narrowed |
+| **Execution bound change?** | **NO** — same `kSnapshotIdleConstructionUnitsPerTurn` (2 units/turn); existing reserve yield |
+| **Behavior-preserving?** | **NO** for first-root-only exception; post-root DEC-045 successor freeze unchanged |
+| **Reuse** | **YES** — extend `allowStartConstruction` predicate; optional helper in `MidiServiceDrain.h` |
+| **Phase scope** | `TrackDeferredMaintenance.cpp`; `MidiServiceDrain.h` (comment + predicate); DEC-045 amendment |
+
+### RC1 — options
+
+| Option | Description | Verdict |
+|---|---|---|
+| **A (recommended)** | Remove the `< sealedLength` rejection for `unpublishedCandidate` and in-flight `construction` when `appliedLiveRecordCompletedTicks > 0` and `<= sealedLength`. Let `discardPendingIfLoopLengthChanged` call `handoffPendingSnapshotLength` and retain. | **Ship** — `withLoopLengthTicks` / `handoffLoopLengthTicks` already exist; fixes the normal growing-record case |
+| B | Reorder discard: attempt `handoffPendingSnapshotLength` before `pendingSnapshotFitsSealedLength` whenever `sessionExitQueued` | Equivalent to A; slightly less explicit |
+| C | Synchronous publish burst on record-stop button path | **Reject** — violates DEC-045 idle-stepped session-exit; blocks MIDI on long loops |
+| D | `queueSessionExitSnapshot` on `TrackCaptureStopCommit` record branch | **Reject** — duplicate; `LoopCapture.cpp` already queues at seal |
+
+**DEC-045 reconciliation:** Amendment 2026-08-26 (“session-exit discards first-bar unpublished when sealed length differs”) targeted in-progress RECORDING length steps, not successful handoff at stop. **Amend DEC-045:** at record session-exit, discard only when `appliedLiveRecordCompletedTicks` is invalid or `handoffPendingSnapshotLength` fails — not merely because candidate `loopLengthTicks < sealedLength`.
+
+**Native test:** extend `test_record_stop_publishes_complete_snapshot` with a multi-bar live-record fixture (applied completed ticks < sealed, candidate parent shorter than sealed) asserting `appliedLiveRecordCompletedTicks` survives first idle step and publish completes without empty-parent rebuild.
+
+### RC2 — options
+
+| Option | Description | Verdict |
+|---|---|---|
+| **A (recommended)** | When `!havePublishedSnapshot() && sessionExitQueued`, set `allowStartConstruction=true` during OVERDUBBING (first-root-only). Post-root successor freeze (DEC-045 2026-08-25 amendment) unchanged. | **Ship** — closes self-lock; structurally bounded |
+| B | Block `beginOverdubSession` until `publishedSnapshot()` non-null | **Reject** — UX/transition gate; does not help fast overdub entry |
+| C | `sessionExitDrainPending` extra Snapshot turns only | **Insufficient** — extra turns do not pass `allowStartConstruction` |
+| D | Synchronous PLAYING-gap burst before overdub | **Reject** — same DEC-045 conflict as RC1-C; PLAYING gap may be too short alone |
+
+**Predicate (proposed):**
+
+```cpp
+const bool allowStartConstruction =
+    (!isOverdubbing() && liveRecordPastFirstBar) || hasWrapJournal ||
+    (!havePublishedSnapshot && snapshotLoop.pendingSnapshotSessionExitQueued());
+```
+
+(`pendingSnapshotSessionExitQueued()` or inline `pendingSnapshotPublishBox_->sessionExitQueued` — match existing encapsulation.)
+
+**DEC-045 reconciliation:** Amend §3 — OVERDUBBING may `startNextPendingConstruction` when **no published root exists** and session-exit is queued. OVERDUBBING still must not start **successor** construction after a root exists (prior amendments stand).
+
+### Implementation order
+
+1. **Stage 4 (RC1)** — reduces discard waste; may alone shorten PLAYING-gap work enough for some sessions.
+2. **Stage 5 (RC2)** — convergence guarantee when PLAYING gap is shorter than remaining construction (21-bar `033502` case).
+3. HITL recapture — acceptance criteria §1–2; stage 7 parity check only after both land.
+
+### User decisions (2026-09-12)
+
+- **RC1:** Option A — widen `pendingSnapshotFitsSealedLength`; handoff at session-exit; amend DEC-045.
+- **RC2:** Deferred — implement stage 5 only if post-RC1 HITL still shows `root=0` through overdub or
+  `inflight=0` stall with `exit=1`.
+
+---
 
 ## Out of scope
 
