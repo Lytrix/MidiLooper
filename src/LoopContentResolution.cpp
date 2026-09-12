@@ -1843,7 +1843,6 @@ struct DeviceGateSession {
   enum class Phase : uint8_t {
     Idle,
     IndexCommit,
-    Materialize,
     Window,
     RebuildPrepare,
     RebuildSpans,
@@ -2061,15 +2060,7 @@ struct DeviceGateSession {
     return isActive() && trackIndex == liveTrackIndex && loopIndex == liveLoopIndex;
   }
 
-  void advancePastIndexCommit() {
-#if defined(ARDUINO)
-    phase = Phase::Window;
-    lastStepName = "win";
-#else
-    phase = Phase::Materialize;
-    lastStepName = "mat";
-#endif
-  }
+  void advancePastIndexCommit() { phase = Phase::Window; }
 
   bool formatPhaseLine(char* line, size_t cap) {
     if (line == nullptr || cap == 0) {
@@ -2152,7 +2143,7 @@ struct DeviceGateSession {
                                  true, elapsed);
           }
           advancePastIndexCommit();
-          return continueSlice(lastStepName, 0, 0, false, 0);
+          return continueSlice("idx", 0, static_cast<uint32_t>(indexPassCursor), false, 0);
         }
         IndexPassRef passRef;
         if (!indexPassRefAtCursor(passes, indexPassCursor, passRef) || passRef.chunks == nullptr) {
@@ -2237,19 +2228,8 @@ struct DeviceGateSession {
         sample_.indexCommit.elapsedMicros += elapsed;
         return continueSlice("idx", end - begin, indexEventCursor, false, elapsed);
       }
-    case Phase::Materialize: {
-        ElapsedTimer timer;
-        SessionMidiEventVec materialized;
-        passes.materializeToEventVector(materialized, loopLengthTicks);
-        (void)NoteUtils::reconstructDisplayNotes(materialized, loopLengthTicks, false);
-        sample_.materialize.elapsedMicros += timer.elapsed();
-        sample_.materialize.eventsInHistory = static_cast<uint32_t>(materialized.size());
-        sample_.materialize.passesInHistory = index.indexedPassCount();
-        phase = Phase::Window;
-        return continueSlice("mat", static_cast<uint32_t>(materialized.size()), 0, true,
-                             static_cast<uint32_t>(timer.elapsed()));
-      }
       case Phase::Window: {
+        lastStepName = "win";
         ElapsedTimer timer;
         uint32_t windowLength = DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
         if (windowLength > loopLengthTicks) {

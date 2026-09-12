@@ -613,5 +613,9 @@ to immutable snapshot content.
     `copyCommittedPassReplayEvents` removed from `LoopCapture`; `liveEventCount` snapshot-first.
     Native **1699/1705**; RAM1 **6880**. HITL `base` core PASS
     [`024434`](../../../captures/session_20260912_024434.log) (persist `result` flake — 5.7).
+  - **6.3.6 SHIPPED 2026-09-12:** `copyEffectiveCommittedEvents` snapshot-only;
+    LCR `Phase::Materialize` removed; `materializeToEventVector` confined to `LoopPasses`
+    (oracle/tests). Native **1699/1705**; RAM1 **6880**. HITL `base` PASS
+    [`030210`](../../../captures/session_20260912_030210.log) (persist `result=ok`).
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
 - [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.

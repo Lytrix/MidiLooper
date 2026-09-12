@@ -2313,7 +2313,7 @@ void test_stage9_native_worst_case_micros() {
   TEST_ASSERT_EQUAL_UINT32(0u, sample.state.passChunkListsWalked);
   TEST_ASSERT_GREATER_THAN(0u, sample.state.replayStartTick);
   TEST_ASSERT_LESS_THAN(sample.state.eventsInHistory, sample.state.eventsReplayed);
-  TEST_ASSERT_GREATER_THAN(0u, sample.materialize.elapsedMicros);
+  TEST_ASSERT_EQUAL_UINT32(0u, sample.materialize.elapsedMicros);
   TEST_ASSERT_GREATER_THAN(0u, sample.window.elapsedMicros);
   TEST_ASSERT_GREATER_THAN(0u, sample.indexCommit.resolutionOperations);
   std::printf("stage515c app=%llu sort=%llu\n",

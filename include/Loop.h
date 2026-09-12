@@ -153,10 +153,8 @@ struct Loop {
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
 
-  /// Full-loop pass replay flatten (OpenSpec 6.3.3 — no cached materialized store).
+  /// Current-root snapshot edit-view copy; clears `out` on miss (OpenSpec 6.3.6).
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
-  /// Pass replay flatten for source-view / count hints.
-  void copyCommittedPassReplayEvents(SessionMidiEventVec& out) const;
   /// Range query of committed content (chunk window + optional edit projection).
   /// Active Note rows apply per committed pass layer, then layers merge.
   /// Does not flatten the loop. Companion fast path copies a ready Overdub

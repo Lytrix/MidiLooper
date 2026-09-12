@@ -358,7 +358,7 @@ void test_visual_cache_reflects_active_edit_passes() {
   loop.rebuildVisualCacheFromPasses();
   TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
   SessionMidiEventVec committedEvents;
-  loop.copyEffectiveCommittedEvents(committedEvents);
+  loop.copyEffectiveCommittedEventsInRange(committedEvents, 0, loop.loopLengthTicks);
   TEST_ASSERT_TRUE(
       hasDisplayNote(committedEvents, loop.loopLengthTicks, 60, 106, 154));
   TEST_ASSERT_FALSE(

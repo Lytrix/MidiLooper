@@ -26,12 +26,10 @@ _HOT_PATH_FORBID = frozenset(
     }
 )
 
+# OpenSpec 6.3.6 — production pass-replay flatten retired; definition + tests only.
 _MATERIALIZE_TO_EVENT_VECTOR_ALLOW = frozenset(
     {
-        "src/Loop/LoopMaterialization.cpp",
         "src/Loop/LoopPasses.cpp",
-        "src/LoopContentResolution.cpp",
-        "src/Loop/LoopEditPasses.cpp",
         "include/LoopPasses.h",
     }
 )
@@ -39,13 +37,8 @@ _MATERIALIZE_TO_EVENT_VECTOR_ALLOW = frozenset(
 # OpenSpec 6.3.4 — gatherCommittedEvents* retired; no production allowlist.
 _GATHER_COMMITTED_ALLOW = frozenset()
 
-# OpenSpec 6.3.5 — capture construction replay retired; pass replay owner only.
-_COPY_COMMITTED_PASS_REPLAY_ALLOW = frozenset(
-    {
-        "src/Loop/LoopMaterialization.cpp",
-        "include/Loop.h",
-    }
-)
+# OpenSpec 6.3.6 — copyCommittedPassReplayEvents removed.
+_COPY_COMMITTED_PASS_REPLAY_ALLOW = frozenset()
 
 # OpenSpec 6.3.1 — C1-a session-exit gather retired at these owners.
 _C1_A_GATHER_RETIRED_SITES = frozenset(
@@ -62,7 +55,7 @@ _C1_A_GATHER_RETIRED_SITES = frozenset(
 # See scripts/test_b7_b8_construction_consumer_gate.py.
 _6_2_BLOCKER_SITES: dict[str, tuple[str, re.Pattern[str]]] = {}
 
-_B7_CONSTRUCTION_SITE = ("src/LoopContentResolution.cpp", _MATERIALIZE_TO_EVENT_VECTOR_RE)
+_B7_LCR_PATH = "src/LoopContentResolution.cpp"
 
 _EXPECTED_BLOCKER_COUNT = len(_6_2_BLOCKER_SITES)
 
@@ -177,12 +170,10 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
         text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
         self.assertNotRegex(text, r"\.midiEvents\s*\(")
 
-    def test_b7_construction_materialize_site_retained(self) -> None:
-        rel_path, pattern = _B7_CONSTRUCTION_SITE
-        hits = _scan_cpp_headers(pattern)
-        self.assertIn(rel_path, hits, "B7 construction must retain device-gate materialize")
-        text = (_REPO_ROOT / rel_path).read_text(encoding="utf-8", errors="replace")
-        self.assertIn("Phase::Materialize", text)
+    def test_b7_lcr_has_no_maintained_history_materialize(self) -> None:
+        text = (_REPO_ROOT / _B7_LCR_PATH).read_text(encoding="utf-8", errors="replace")
+        self.assertNotRegex(text, _MATERIALIZE_TO_EVENT_VECTOR_RE)
+        self.assertNotIn("Phase::Materialize", text)
 
     def test_b8_capture_has_no_materialize_to_event_vector(self) -> None:
         rel_path = "src/Loop/LoopCapture.cpp"

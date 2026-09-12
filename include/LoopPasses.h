@@ -99,6 +99,9 @@ struct LoopPasses {
   /// overdub Add must not LIFO-pair across later same-pitch offs (001517).
   void materializeToEventVector(MidiEventVec& out, uint32_t loopLengthTicks = 0) const;
   void materializeToEventVector(SessionMidiEventVec& out, uint32_t loopLengthTicks = 0) const;
+  /// Pass replay with selected edit rows disabled (LoopPasses owner — tests + note-edit undo fallback).
+  void materializeExcludingEditPassIds(const EditPassIdList& excludeIds, SessionMidiEventVec& out,
+                                     uint32_t loopLengthTicks) const;
 };
 
 inline CapturePassPhase capturePassPhaseForCapturePhase(CapturePhase phase) {
