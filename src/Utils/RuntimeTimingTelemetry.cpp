@@ -212,8 +212,6 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
   switch (path) {
     case PlaybackRebuildPath::PublishedSnapshot:
       return PSTR("snapshot");
-    case PlaybackRebuildPath::SessionExitPublicationGap:
-      return PSTR("session_exit_compat");
     case PlaybackRebuildPath::GatherMissHoldEmpty:
       return PSTR("hold_empty");
     case PlaybackRebuildPath::CompatibilityPasses:
@@ -230,8 +228,6 @@ RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
   switch (path) {
     case PlaybackRebuildPath::PublishedSnapshot:
       return "snapshot";
-    case PlaybackRebuildPath::SessionExitPublicationGap:
-      return "session_exit_compat";
     case PlaybackRebuildPath::GatherMissHoldEmpty:
       return "hold_empty";
     case PlaybackRebuildPath::CompatibilityPasses:

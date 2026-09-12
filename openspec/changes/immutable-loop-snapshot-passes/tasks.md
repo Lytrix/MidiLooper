@@ -593,7 +593,7 @@ to immutable snapshot content.
   - **6.2.3 SHIPPED:** B2 `HoldEmpty` on non-C1-a/C4 miss; B5 idle materialize C1-a only; B6 `copyEffectiveCommittedEvents` replaces `loop.midiEvents()`. HITL core [`002259`](../../../captures/session_20260912_002259.log).
   - **6.2.4 SHIPPED:** B7 LCR device-gate construction-only; B8 `copyCommittedPassReplayEvents` in capture (no direct `materializeToEventVector` in `LoopCapture`). `_6_2_BLOCKER_SITES` empty.
   - **6.2 parent closeout SHIPPED:** all B1–B8 consumer fallbacks retired; construction machinery remains for **6.3**. Persist wedge follow-up: **5.7**.
-- [ ] 6.3 Remove compatibility effective-state derivation and old readers only after documented triggers close.
+- [x] 6.3 Remove compatibility effective-state derivation and old readers only after documented triggers close.
   - **6.3.1 SHIPPED 2026-09-12:** C1-a session-exit compat bridges retired (B1/B3/B4/B2/B5 hold-empty
     during `isPlaybackSessionExitPublicationGap`; DEC-045 idle publish unchanged). HITL `base` PASS
     [`013611`](../../../captures/session_20260912_013611.log). Plan:
@@ -617,5 +617,7 @@ to immutable snapshot content.
     LCR `Phase::Materialize` removed; `materializeToEventVector` confined to `LoopPasses`
     (oracle/tests). Native **1699/1705**; RAM1 **6880**. HITL `base` PASS
     [`030210`](../../../captures/session_20260912_030210.log) (persist `result=ok`).
+  - **6.3.7 SHIPPED 2026-09-12:** gap predicate retained for visual hold-only; dead B1
+    `session_exit_compat` telemetry removed; host closeout gates finalized. Native **1699/1705**.
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
 - [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.

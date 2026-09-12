@@ -1,6 +1,6 @@
 # OpenSpec 6.3 — Compatibility machinery removal
 
-**Status:** **in progress** (6.3.1 SHIPPED 2026-09-12)  
+**Status:** **SHIPPED** (6.3.7 closeout 2026-09-12)  
 **OpenSpec:** `immutable-loop-snapshot-passes` task **6.3**  
 **Depends on:** [6.2 plan](immutable_loop_snapshot_6_2_compatibility_retirement_refinement.md) (**SHIPPED**), [5.7 plan](immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md) (**SHIPPED**)  
 **Regression baseline:** HITL `base` PASS [`012147`](../../captures/session_20260912_012147.log)
@@ -42,7 +42,7 @@ reintroduce synchronous `tryPublishSessionExitSnapshot` on the MIDI stop path.
 | **6.3.4** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | **SHIPPED** |
 | **6.3.5** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | **SHIPPED** |
 | **6.3.6** | Remove `materializeToEventVector` and LCR maintained-history construction | **SHIPPED** |
-| **6.3.7** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | pending |
+| **6.3.7** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | **SHIPPED** |
 
 ## 6.3.1 — C1-a hold-empty (SHIPPED)
 
@@ -150,6 +150,36 @@ scoped pass replay in `LoopEditPasses`.
 | Native `pio test -e native` | **1699/1705** (1 skipped) |
 | RAM1 `teensy41-capture-serial` | **6880** locals |
 | HITL `base` | **PASS** [`030210`](../../captures/session_20260912_030210.log) / report [`030255`](../../captures/host_midi_automation_baseline_20260912_030255.json); persist `result=ok` |
+
+## 6.3.7 — machinery closeout (SHIPPED)
+
+**Decision:** `isPlaybackSessionExitPublicationGap` **retained** — still required for
+6.3.2 visual hold-empty / draw-source handoff (`LoopVisualCache`, `DisplayNoteWindowGather`).
+Not a gather-compat bridge after 6.3.1. Retired dead B1 telemetry
+`PlaybackRebuildPath::SessionExitPublicationGap` (`session_exit_compat` label). Host gates
+finalized in `test_compatibility_consumer_inventory.py` + `test_6_3_machinery_closeout_gate.py`
+(runs B1–B8 + inventory). OpenSpec **6.4** (verification gate) and **6.5** (archive/sync)
+are next.
+
+### Files
+
+- `scripts/test_compatibility_consumer_inventory.py` — gap-predicate allowlist + machinery absent gates
+- `scripts/test_6_3_machinery_closeout_gate.py` — consolidated 6.3 gate runner
+- `include/Utils/RuntimeTimingTelemetry.h`, `src/Utils/RuntimeTimingTelemetry.cpp` — remove unused enum path
+
+### Verification (6.3.7)
+
+| Gate | Status |
+|---|---|
+| Host closeout runner + all B1–B8 gates | **PASS** |
+| Native `pio test -e native` | **1699/1705** (inherits 6.3.6; no firmware behavior change) |
+
+### Handoff — OpenSpec 6.4 / 6.5
+
+| Task | Scope |
+|---|---|
+| **6.4** | `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off |
+| **6.5** | Runtime docs, `DELIVERABLE_TRACKING`, spec sync + archive |
 
 ## Explicit non-goals (6.3 parent)
 
