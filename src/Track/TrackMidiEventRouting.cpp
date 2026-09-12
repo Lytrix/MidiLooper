@@ -12,8 +12,7 @@ extern TrackManager trackManager;
 
 MidiEventVec& Track::legacyMidiEventsFromCommitted() {
   // Edit-path boundary only (EditManager::editMidiEvents when session inactive).
-  // Display and playback use SessionMidiEventVec via getMidiEvents().
-  // OpenSpec 4.6 Stage 5: published-snapshot content + revision/identity freshness.
+  // OpenSpec 4.6 Stage 5 / 6.3.3: published-snapshot content + revision/identity freshness.
   (void)CommittedMidiScratch::refresh(committedMidiScratch_, committedMidiScratchRevision_,
                                       committedMidiScratchPublishedIdentity_, getActiveLoop());
   return committedMidiScratch_;

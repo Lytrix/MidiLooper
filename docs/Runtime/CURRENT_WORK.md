@@ -10,11 +10,30 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — OpenSpec 6.3.2+ (machinery removal).**
-6.3.1 **SHIPPED:** C1-a session-exit compat bridges retired; hold-empty until idle
-publish. HITL `base` PASS [`013611`](../../captures/session_20260912_013611.log).
-Next: `passesMaterializedStore_` / `gatherCommittedEvents*` API removal. Plan:
+**Now — OpenSpec 6.3.4+ (machinery removal).**
+Next: `gatherCommittedEvents*` API removal. Parent plan:
 [`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md).
+
+**Prior — OpenSpec 6.3.3 SHIPPED (2026-09-12).**
+Removed `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` /
+`getMidiEvents()`; `copyEffectiveCommittedEvents` → `copyCommittedPassReplayEvents`;
+`CommittedMidiScratch` snapshot-only. Native **1830/1835**; RAM1 **6880**. HITL `base` PASS
+[`022843`](../../captures/session_20260912_022843.log) / report [`022928`](../../captures/host_midi_automation_baseline_20260912_022928.json).
+First attempt [`022633`](../../captures/session_20260912_022633.log) failed on persistence
+`already_pending` wedge (`persistence_stage_missing:result`) — same 5.7 flake class, not 6.3.3.
+
+**Prior — OpenSpec 6.3.2 SHIPPED (2026-09-12).**
+Session-exit gap visual continuity — cache no-op + draw-source
+`shouldHoldSessionExitPublicationGapHandoff`. HITL `base` PASS
+[`020309`](../../captures/session_20260912_020309.log). Plan:
+[`immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md`](../Plans/immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md).
+
+**OpenSpec 4b.3** (documented, not closed): [`020309`](../../captures/session_20260912_020309.log)
+attribution holds (`ODUB,stop,display` bounded; post-OD PLAYING `midi_gap` ~44 ms from
+`late_on` + `track_order`). Bound not met — keep open.
+
+**Next — OpenSpec 6.3.4+ (machinery removal).**
+`gatherCommittedEvents*` API removal. Same parent plan.
 
 **Prior — OpenSpec 6.3.1 C1-a hold-empty (2026-09-12).**
 Retired B1/B3/B4 `gatherCommittedEvents*` and B2/B5 gap `materializeEditViewFromPasses`;

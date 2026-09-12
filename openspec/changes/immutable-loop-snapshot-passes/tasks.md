@@ -493,6 +493,14 @@ closed for `DisplayResolveLiveCapture`.
       In tree: source-cache reopen hardening now invalidates span-cache reuse on
       restamp miss and seeds from clean `visualCache` when prepared spans miss
       and no prior cache seed exists. Keep open until recapture.
+      [`020309`](../../../captures/session_20260912_020309.log) (HITL `base` PASS
+      after 6.3.2): attribution **holds** — `ODUB,stop,display` 4.1 ms / 9.3 ms;
+      first scored post-OD2 PLAYING `midi_gap` **44.2 ms** @ 189.0 s
+      (`late_on=22298`, `load_frame=6906`, `usbdisp=571`, T4 `track_order=15510`);
+      second PLAYING sample **43.5 ms**. Bound **not met** (reference
+      [`233642`](../../../captures/session_20260901_233642.log) first post-OD PLAYING
+      gap **6.9 ms**). No 6.3.2 regression. Keep open — next owners `late_on` +
+      `track_order`, not stop-display.
 - [x] 4b.4 Bound `DisplayResolveLiveCapture` during OVERDUBBING so a live
       compose does not take a 50 ms class slice. Evidence: `004934`
       `timing_max,DisplayResolveLiveCapture,58188` at 150.535 s. Owner stays
@@ -590,5 +598,12 @@ to immutable snapshot content.
     during `isPlaybackSessionExitPublicationGap`; DEC-045 idle publish unchanged). HITL `base` PASS
     [`013611`](../../../captures/session_20260912_013611.log). Plan:
     [`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md).
+  - **6.3.2 SHIPPED 2026-09-12:** post-record visual continuity during publication gap. HITL `base` PASS
+    [`020309`](../../../captures/session_20260912_020309.log). Plan:
+    [`immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md).
+  - **6.3.3 SHIPPED 2026-09-12:** `passesMaterializedStore_` / `materializeEditViewFromPasses` /
+    `midiEvents()` / `getMidiEvents()` removed; `copyEffectiveCommittedEvents` →
+    `copyCommittedPassReplayEvents`; `CommittedMidiScratch` snapshot-only. Native **1830/1835**;
+    RAM1 **6880**. HITL `base` PASS [`022843`](../../../captures/session_20260912_022843.log).
 - [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
 - [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.

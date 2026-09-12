@@ -11,9 +11,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _MATERIALIZE_TO_EVENT_VECTOR_RE = re.compile(r"\bmaterializeToEventVector\s*\(")
-_MATERIALIZE_EDIT_VIEW_RE = re.compile(r"\bmaterializeEditViewFromPasses\s*\(")
-_ENSURE_EFFECTIVE_RE = re.compile(r"\bensureEffectiveEventStoreCurrent\s*\(")
-_MIDI_EVENTS_RE = re.compile(r"\.midiEvents\s*\(\s*\)")
+_PASSES_MATERIALIZED_STORE_RE = re.compile(r"\bpassesMaterializedStore_")
 _GATHER_COMMITTED_RE = re.compile(
     r"\bgatherCommittedEvents(?:InWindow|WithCapture|ForDerivedView)?\s*\("
 )
@@ -37,24 +35,6 @@ _MATERIALIZE_TO_EVENT_VECTOR_ALLOW = frozenset(
     }
 )
 
-_MATERIALIZE_EDIT_VIEW_ALLOW = frozenset(
-    {
-        "src/Loop/LoopMaterialization.cpp",
-        "src/Utils/CommittedMidiScratch.cpp",
-        "src/Track/TrackDeferredMaintenance.cpp",
-        "include/Loop.h",
-    }
-)
-
-_MIDI_EVENTS_ALLOW = frozenset(
-    {
-        "src/Loop/LoopMaterialization.cpp",
-        "src/Utils/CommittedMidiScratch.cpp",
-        "include/Loop.h",
-        "include/Track.h",
-    }
-)
-
 _GATHER_COMMITTED_ALLOW = frozenset(
     {
         "src/Loop/LoopMaterialization.cpp",
@@ -71,14 +51,6 @@ _C1_A_GATHER_RETIRED_SITES = frozenset(
         "src/Loop/LoopVisualCache.cpp",
         "src/DisplayManager/DisplayNoteResolveCommitted.cpp",
         "src/DisplayManager/DisplayColdHelpers.cpp",
-    }
-)
-
-_PASSES_MATERIALIZED_STORE_ALLOW = frozenset(
-    {
-        "src/Loop.cpp",
-        "src/Loop/LoopMaterialization.cpp",
-        "include/Loop.h",
     }
 )
 
@@ -128,9 +100,7 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
     def test_hot_paths_forbid_compat_execute(self) -> None:
         patterns = (
             _MATERIALIZE_TO_EVENT_VECTOR_RE,
-            _MATERIALIZE_EDIT_VIEW_RE,
-            _ENSURE_EFFECTIVE_RE,
-            _MIDI_EVENTS_RE,
+            _PASSES_MATERIALIZED_STORE_RE,
             _GATHER_COMMITTED_RE,
         )
         for rel in _HOT_PATH_FORBID:
@@ -147,35 +117,14 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
         unexpected = _unexpected(hits, _MATERIALIZE_TO_EVENT_VECTOR_ALLOW)
         self.assertEqual(unexpected, {}, unexpected)
 
-    def test_materialize_edit_view_only_in_allowlist(self) -> None:
-        hits = _scan_cpp_headers(_MATERIALIZE_EDIT_VIEW_RE)
-        unexpected = _unexpected(hits, _MATERIALIZE_EDIT_VIEW_ALLOW)
-        self.assertEqual(unexpected, {}, unexpected)
-
-    def test_midi_events_only_in_allowlist(self) -> None:
-        hits = _scan_cpp_headers(_MIDI_EVENTS_RE)
-        unexpected = _unexpected(hits, _MIDI_EVENTS_ALLOW)
-        self.assertEqual(unexpected, {}, unexpected)
+    def test_passes_materialized_store_removed(self) -> None:
+        hits = _scan_cpp_headers(_PASSES_MATERIALIZED_STORE_RE)
+        self.assertEqual(hits, {})
 
     def test_gather_committed_only_in_allowlist(self) -> None:
         hits = _scan_cpp_headers(_GATHER_COMMITTED_RE)
         unexpected = _unexpected(hits, _GATHER_COMMITTED_ALLOW)
         self.assertEqual(unexpected, {}, unexpected)
-
-    def test_passes_materialized_store_confined_to_loop_owner(self) -> None:
-        hits: list[str] = []
-        for folder in ("src", "include"):
-            for path in (_REPO_ROOT / folder).rglob("*"):
-                if path.suffix not in {".cpp", ".h"}:
-                    continue
-                if "passesMaterializedStore" not in path.read_text(
-                    encoding="utf-8", errors="replace"
-                ):
-                    continue
-                rel = _rel(path)
-                if rel not in _PASSES_MATERIALIZED_STORE_ALLOW:
-                    hits.append(rel)
-        self.assertEqual(hits, [])
 
     def test_blocker_inventory_count_stable(self) -> None:
         """6.2 must shrink this set deliberately — not by accident."""
@@ -184,8 +133,6 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
             _MATERIALIZE_TO_EVENT_VECTOR_RE: _scan_cpp_headers(
                 _MATERIALIZE_TO_EVENT_VECTOR_RE
             ),
-            _MATERIALIZE_EDIT_VIEW_RE: _scan_cpp_headers(_MATERIALIZE_EDIT_VIEW_RE),
-            _MIDI_EVENTS_RE: _scan_cpp_headers(_MIDI_EVENTS_RE),
         }
 
         missing: list[str] = []

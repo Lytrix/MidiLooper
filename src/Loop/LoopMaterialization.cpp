@@ -156,38 +156,8 @@ void Loop::mergeActiveCapturePasses(SessionMidiEventVec& out) const {
   mergeActiveCapturePassesInto(passes, out);
 }
 
-void Loop::materializeEditViewFromPasses() const {
-  ensureEffectiveEventStoreCurrent();
-}
-
-void Loop::rebuildEffectiveEventStore() const {
-  Loop* self = const_cast<Loop*>(this);
-  SessionMidiEventVec flat;
-  passes.materializeToEventVector(flat, self->loopLengthTicks);
-  self->passesMaterializedStore_.mutStore().clear();
-  self->passesMaterializedStore_.discardEventsCache();
-  SessionMidiEventVec& events = self->passesMaterializedStore_.mutEvents();
-  events = std::move(flat);
-  self->passesMaterializedStoreStale_ = false;
-  ++self->effectiveEventStoreRevision_;
-}
-
-void Loop::ensureEffectiveEventStoreCurrent() const {
-  if (!passesMaterializedStoreStale_) {
-    if (!hasCommittedPasses()) {
-      return;
-    }
-    if (!passesMaterializedStore_.readEvents().empty()) {
-      return;
-    }
-  }
-  rebuildEffectiveEventStore();
-}
-
 void Loop::copyEffectiveCommittedEvents(SessionMidiEventVec& out) const {
-  ensureEffectiveEventStoreCurrent();
-  const SessionMidiEventVec& events = passesMaterializedStore_.readEvents();
-  out.assign(events.begin(), events.end());
+  copyCommittedPassReplayEvents(out);
 }
 
 LOOP_COLD_MEM void Loop::copyCommittedPassReplayEvents(SessionMidiEventVec& out) const {
@@ -513,34 +483,6 @@ LOOP_COLD_MEM void Loop::rematerializeEditView(LoopEventStore& store) const {
     passes.materialize(store, loopLengthTicks);
   }
   LoopEventStore::leaveEphemeralSeal();
-}
-
-SessionMidiEventVec& Loop::midiEvents() {
-  materializeEditViewFromPasses();
-  return passesMaterializedStore_.mutEvents();
-}
-
-const SessionMidiEventVec& Loop::midiEvents() const {
-  materializeEditViewFromPasses();
-  return passesMaterializedStore_.readEvents();
-}
-
-void Loop::discardPassesMaterializedCache() {
-  passesMaterializedStore_.mutStore().clear();
-  passesMaterializedStore_.discardEventsCache();
-  passesMaterializedStoreStale_ = true;
-}
-
-LOOP_COLD_MEM bool Loop::tryDiscardPassesMaterializedCache() {
-  if (!passesMaterializedStoreStale_) {
-    return false;
-  }
-  if (captureActive()) {
-    return false;
-  }
-  const bool hadStore = !passesMaterializedStore_.empty();
-  discardPassesMaterializedCache();
-  return hadStore;
 }
 
 void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {

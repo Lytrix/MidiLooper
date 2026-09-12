@@ -173,11 +173,9 @@ struct Loop {
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
 
-  /// Lazy full flatten for edit/MIDI paths that still require the entire loop.
-  void ensureEffectiveEventStoreCurrent() const;
+  /// Full-loop pass replay flatten (OpenSpec 6.3.3 — no cached materialized store).
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
-  /// Pass replay flatten for source-view / count hints without touching
-  /// `passesMaterializedStore_` or `effectiveEventStoreRevision_`.
+  /// Pass replay flatten for source-view / count hints.
   void copyCommittedPassReplayEvents(SessionMidiEventVec& out) const;
   /// Range query of committed content (chunk window + optional edit projection).
   /// Active Note rows apply per committed pass layer, then layers merge.
@@ -187,11 +185,6 @@ struct Loop {
   void copyEffectiveCommittedEventsInRange(SessionMidiEventVec& out, uint32_t windowStart,
                                            uint32_t windowLength,
                                            bool includeActiveEditRows = true) const;
-  uint32_t effectiveEventStoreRevision() const { return effectiveEventStoreRevision_; }
-
-  SessionMidiEventVec& midiEvents();
-  const SessionMidiEventVec& midiEvents() const;
-
   void rematerializeEditView(LoopEventStore& store) const;
   bool tryCopyCurrentSnapshotEditViewEvents(SessionMidiEventVec& out) const;
   /// Current-root edit-view copy with a single publication observation: on
@@ -712,10 +705,6 @@ struct Loop {
   void shiftActiveCapturePassTicks(int64_t delta);
   size_t nativeTestLiveEventCount() const { return liveEventCount(); }
   void seedRecordPassFromStore(LoopEventStore& store);
-  void discardPassesMaterializedCache();
-  /// Phase 1B — discard stale materialized store when owner guards pass.
-  bool tryDiscardPassesMaterializedCache();
-  void discardPassesMaterializedEventsCache() { passesMaterializedStore_.discardEventsCache(); }
   void commitStopFinalizeFromStore(LoopEventStore& merged);
 
   SealOutcome sealCapture(uint32_t sealedAtTick,
@@ -771,22 +760,13 @@ struct Loop {
 
   void clearCaptureOnNewPass();
 
-  /// Rebuild passesMaterializedStore_ from committed passes when stale.
-  void materializeEditViewFromPasses() const;
-  bool isPassesMaterializedStoreFresh() const { return !passesMaterializedStoreStale_; }
-
  private:
   friend class TrackUndo;
   friend void applyLoadedLoopSlotBodyCommit(Loop&, Track&, uint8_t, bool,
                                             PersistedLoopSnapshot&, ImmutableLoopSnapshotRef);
 
-  PassesMaterializedEventStore passesMaterializedStore_;
-  bool passesMaterializedStoreStale_ = true;
-  uint32_t effectiveEventStoreRevision_ = 0;
-
-  /// Committed content changed — invalidate derived views and rebuild effective store eagerly.
+  /// Committed content changed — invalidate derived views.
   void notifyCommittedContentChanged();
-  void rebuildEffectiveEventStore() const;
   const char* rebuildOverdubSourceSpanCache(uint32_t requestedWindowStart = 0,
                                              uint32_t requestedWindowLength = 0);
   uint32_t overdubSourceWindowLengthTicks() const;

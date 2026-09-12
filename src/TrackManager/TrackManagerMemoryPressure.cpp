@@ -61,7 +61,6 @@ PRESSURE_RECLAIM_MEM void TrackManager::tryReclaimDerivedViewCachesUnderPressure
       if (!isSlotEnabled(trackIndex, slot) && !loop.hasCommittedPasses()) {
         continue;
       }
-      (void)loop.tryDiscardPassesMaterializedCache();
     }
 
     (void)track.tryClearCommittedMidiScratch();

@@ -292,6 +292,11 @@ LOOP_COLD_MEM void Loop::rebuildVisualCacheIdleSlice(uint8_t maxBarsPerSlice, ui
   if (!visualCacheDirty || loopLengthTicks == 0 || maxBarsPerSlice == 0) {
     return;
   }
+  if (isPlaybackSessionExitPublicationGap()) {
+    lastVisualCacheIdleGatherSource_ = VisualCacheIdleGatherSource::None;
+    emitVisualCacheIdleGatherPath();
+    return;
+  }
 
   const uint32_t totalBars = totalVisualBarsForLoop(loopLengthTicks);
   if (totalBars == 0) {
@@ -549,6 +554,9 @@ LOOP_COLD_MEM void Loop::applyDeferredVisualCacheWrapAppend() {
   if (!deferredVisualCacheWrapAppendPending_) {
     return;
   }
+  if (isPlaybackSessionExitPublicationGap()) {
+    return;
+  }
   if (loopLengthTicks == 0) {
     clearDeferredVisualCacheWrapAppend(*this);
     return;
@@ -792,6 +800,9 @@ LOOP_COLD_MEM void Loop::mergeDisplayNotesIntoVisualCache(
 }
 
 LOOP_COLD_MEM void Loop::rebuildVisualCacheFromPasses() {
+  if (isPlaybackSessionExitPublicationGap()) {
+    return;
+  }
   DIAG_COUNTER_INC(DisplayFullRebuild);
   const uint32_t rebuildGatherRevision = playbackRevision;
   SessionMidiEventVec flat;

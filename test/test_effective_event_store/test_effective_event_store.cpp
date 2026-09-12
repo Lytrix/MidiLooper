@@ -125,7 +125,6 @@ void test_effective_store_matches_materialize_after_seed() {
   SessionMidiEventVec actual;
   loop.copyEffectiveCommittedEvents(actual);
   TEST_ASSERT_TRUE(eventsEqual(expected, actual));
-  TEST_ASSERT_GREATER_THAN(0u, loop.effectiveEventStoreRevision());
 }
 
 void test_effective_store_updates_on_edit_pass_save() {
@@ -148,7 +147,7 @@ void test_effective_store_updates_on_edit_pass_save() {
   TEST_ASSERT_FALSE(eventsEqual(beforeEdit, actual));
 }
 
-void test_overdub_entry_does_not_rebuild_effective_store() {
+void test_overdub_entry_does_not_full_materialize_committed_query_counter() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -156,29 +155,24 @@ void test_overdub_entry_does_not_rebuild_effective_store() {
   (void)loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 67));
 
   Loop::resetCommittedPitchQueryWork();
-  const uint32_t revBefore = loop.effectiveEventStoreRevision();
-
   loop.beginCapture(CapturePhase::Overdub);
-  TEST_ASSERT_EQUAL(revBefore, loop.effectiveEventStoreRevision());
   TEST_ASSERT_EQUAL(0u, Loop::committedEventsFullMaterializeCount());
   TEST_ASSERT_TRUE(loop.hasOverdubSourceView());
   TEST_ASSERT_EQUAL(0u, Loop::committedEventsFullMaterializeCount());
 }
 
-void test_ensure_effective_store_does_not_rebuild_when_fresh() {
+void test_copy_effective_committed_events_in_range_is_independent() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedRecordNote(loop, 10, 58, 60);
   (void)loop.saveNoteEditPass(0, makePitchRow(1, 10, 58, 67));
 
-  SessionMidiEventVec warm;
-  loop.copyEffectiveCommittedEvents(warm);
-  const uint32_t revAfterWarm = loop.effectiveEventStoreRevision();
-  TEST_ASSERT_GREATER_THAN(0u, revAfterWarm);
-
-  loop.copyEffectiveCommittedEventsInRange(warm, 0, kLoopLen);
-  TEST_ASSERT_EQUAL(revAfterWarm, loop.effectiveEventStoreRevision());
+  SessionMidiEventVec full;
+  loop.copyEffectiveCommittedEvents(full);
+  SessionMidiEventVec windowed;
+  loop.copyEffectiveCommittedEventsInRange(windowed, 0, kLoopLen);
+  TEST_ASSERT_TRUE(eventsEqual(full, windowed));
 }
 
 void test_overdub_entry_uses_windowed_source_on_long_loop() {
@@ -472,8 +466,8 @@ int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_effective_store_matches_materialize_after_seed);
   RUN_TEST(test_effective_store_updates_on_edit_pass_save);
-  RUN_TEST(test_overdub_entry_does_not_rebuild_effective_store);
-  RUN_TEST(test_ensure_effective_store_does_not_rebuild_when_fresh);
+  RUN_TEST(test_overdub_entry_does_not_full_materialize_committed_query_counter);
+  RUN_TEST(test_copy_effective_committed_events_in_range_is_independent);
   RUN_TEST(test_overdub_entry_uses_windowed_source_on_long_loop);
   RUN_TEST(test_mark_affected_display_cache_ranges_dirties_sparse_bars);
   RUN_TEST(test_undo_pass_toggle_rebuilds_effective_store);

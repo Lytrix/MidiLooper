@@ -38,9 +38,9 @@ inline void invalidate(MidiEventVec& scratch, uint32_t& scratchRevision,
 }
 
 /// Refresh scratch from the currently published snapshot when usable; otherwise
-/// pass materialize only on session-exit publication gap (C1-a) or stale-root
-/// overlay (C4). Other misses hold empty. Fill uses one publication observation
-/// for copy + stamp. Match uses the current published identity for this call.
+/// hold empty (OpenSpec 6.3.3 — no pass-replay fallback). Fill uses one
+/// publication observation for copy + stamp. Match uses the current published
+/// identity for this call.
 RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
                     const void*& scratchIdentity, Loop& loop);
 

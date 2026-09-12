@@ -125,18 +125,18 @@ void test_imported_takes_survive_invalidateCaches() {
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
 }
 
-void test_discard_materialization_preserves_takes() {
+void test_gather_committed_preserves_takes() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   seedCommittedPair(loop);
-  loop.discardPassesMaterializedCache();
   const size_t before = loop.nativeTestLiveEventCount();
-  (void)loop.midiEvents();
-  loop.discardPassesMaterializedCache();
+  SessionMidiEventVec gathered;
+  loop.gatherCommittedEvents(gathered);
 
   TEST_ASSERT_TRUE(loop.hasCommittedPasses());
   TEST_ASSERT_EQUAL(before, loop.nativeTestLiveEventCount());
+  TEST_ASSERT_EQUAL(2u, gathered.size());
   TEST_ASSERT_EQUAL(kLoopLen, loop.loopLengthTicks);
 }
 
@@ -161,8 +161,9 @@ void test_readonly_flat_access_preserves_takes() {
   simulateOverdubSealAndPublish(loop);
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
 
-  loop.discardPassesMaterializedCache();
-  TEST_ASSERT_EQUAL(4u, loop.midiEvents().size());
+  SessionMidiEventVec gathered;
+  loop.gatherCommittedEvents(gathered);
+  TEST_ASSERT_EQUAL(4u, gathered.size());
   loop.invalidateCaches();
 
   TEST_ASSERT_EQUAL(4u, loop.nativeTestLiveEventCount());
@@ -232,8 +233,10 @@ void test_pass_snapshot_ignores_derived_flat_mutation() {
   const auto before = loop.sharePassesSnapshot();
   TEST_ASSERT_EQUAL(2u, snapshotEventCount(before));
 
-  loop.midiEvents().push_back(MidiEvent::NoteOn(48, 1, 60, 80));
-  loop.midiEvents().push_back(MidiEvent::NoteOff(72, 1, 60, 0));
+  SessionMidiEventVec gathered;
+  loop.gatherCommittedEvents(gathered);
+  gathered.push_back(MidiEvent::NoteOn(48, 1, 60, 80));
+  gathered.push_back(MidiEvent::NoteOff(72, 1, 60, 0));
 
   const auto after = loop.sharePassesSnapshot();
   TEST_ASSERT_EQUAL(2u, snapshotEventCount(after));
@@ -252,7 +255,7 @@ void test_seal_overdub_preserves_record_pass() {
   TEST_ASSERT_EQUAL(2u, loop.nativeTestLiveEventCount());
 }
 
-void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
+void test_invalidateCaches_gather_reflects_loop_length_change() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
@@ -261,12 +264,8 @@ void test_invalidateCaches_marks_materialize_stale_after_loop_length_change() {
   loop.nextPassId_ = 2;
   (void)loop.saveNoteEditPass(0, makePitchRow(1, 10, 20, 67));
 
-  (void)loop.midiEvents();
-  TEST_ASSERT_TRUE(loop.isPassesMaterializedStoreFresh());
-
   loop.loopLengthTicks = 384;
   loop.invalidateCaches();
-  TEST_ASSERT_FALSE(loop.isPassesMaterializedStoreFresh());
 
   MidiEventVec expected;
   loop.passes.materializeToEventVector(expected, loop.loopLengthTicks);
@@ -1690,12 +1689,12 @@ void test_legacy_committed_scratch_snapshot_identity_freshness() {
   ++loop.playbackRevision;
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_EQUAL(
-      static_cast<int>(CommittedMidiScratch::RefreshKind::FromPasses),
+      static_cast<int>(CommittedMidiScratch::RefreshKind::HoldEmpty),
       static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
                                                      loop)));
   TEST_ASSERT_NULL(scratchIdentity);
   TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, scratchRevision);
-  TEST_ASSERT_TRUE(scratchHasNoteOffAt(scratch, 60, 200));
+  TEST_ASSERT_TRUE(scratch.empty());
 
   CommittedMidiScratch::invalidate(scratch, scratchRevision, scratchIdentity);
   TEST_ASSERT_TRUE(scratch.empty());
@@ -5420,7 +5419,7 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
-  RUN_TEST(test_discard_materialization_preserves_takes);
+  RUN_TEST(test_gather_committed_preserves_takes);
   RUN_TEST(test_restore_empty_pass_snapshot_clears_takes);
   RUN_TEST(test_readonly_flat_access_preserves_takes);
   RUN_TEST(test_post_overdub_stop_path_preserves_takes);
@@ -5428,7 +5427,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_commit_stop_finalize_empty_merged_preserves_takes);
   RUN_TEST(test_multi_take_flatten_matches_live_event_count);
   RUN_TEST(test_pass_snapshot_ignores_derived_flat_mutation);
-  RUN_TEST(test_invalidateCaches_marks_materialize_stale_after_loop_length_change);
+  RUN_TEST(test_invalidateCaches_gather_reflects_loop_length_change);
   RUN_TEST(test_reclaim_disabled_overdub_releases_committed_chunks);
   RUN_TEST(test_record_stop_publishes_complete_snapshot);
   RUN_TEST(test_record_wrap_note_publishes_one_reference);
