@@ -1375,10 +1375,8 @@ LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
 }
 
 LOOP_COLD_MEM bool Loop::isPlaybackSessionExitPublicationGap() const {
-  if (publishedSnapshot()) {
-    return false;
-  }
-  return pendingSnapshotSessionExitQueued() && hasPendingSnapshotPublish();
+  return pendingSnapshotSessionExitQueued() && hasPendingSnapshotPublish() &&
+         !publishedSnapshotIsCurrent();
 }
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotFromLoadedPasses() const {

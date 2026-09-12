@@ -240,6 +240,7 @@ because any future long gather can re-create it.
 | P-persist | LSV1 `EditTail` monolith reboot (parallel) | separate bugfix | [`deferred_persist_lsv1_edittail_slice_bugfix.md`](deferred_persist_lsv1_edittail_slice_bugfix.md) — [`144434`](../../captures/session_20260912_144434.log); **not** 6C-B |
 | 7 | Preview compose parity (`missed_preview` / `compose_miss`) | checkpoint after 6C | **OPEN** — [`130411`](../../captures/session_20260912_130411.log) tail still non-zero |
 | 8 | Record-stop bars 2–5 publication gap (UX) | bundled follow-up | **SHIPPED** — `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` (display-only); native + device [`191442`](../../captures/session_20260912_191442.log) stop→publish 0.94 s |
+| 8c | Record-stop viewport gap — bars 2–4 empty until publish | GAP-8c plan | **SHIPPED** — passes fallback + adequate bar coverage in gap supplement; native fixture; device recapture vs [`202721`](../../captures/session_20260912_202721.log) pending |
 
 Stage 1 first so stages 2–6 are measured on trustworthy captures. Stages 2 and 3 land before
 the design sessions so the timing damage is removed while the publication questions are
@@ -302,6 +303,10 @@ session comparable to `033502`:
 **Stage 7:** preview parity (`missed_preview` / `compose_miss`) remains open after [`130411`](../../captures/session_20260912_130411.log) post-root tail (22 / 15).
 
 **Stage 8 (GAP-8) — SHIPPED (2026-09-12):** during session-exit publication gap, uncovered bars in the paint window are supplemented from `Loop::unpublishedSnapshot()` while the RECORDING handoff frame is retained (`shouldHoldSessionExitPublicationGapHandoff`). Display-only — no DEC-045 synchronous publish on stop. Native: `test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot`, `test_supplement_draw_source_from_unpublished_snapshot_predicate`. Device: [`191442`](../../captures/session_20260912_191442.log) stop→publish **0.94 s** (vs [`164947`](../../captures/session_20260912_164947.log) ~1.8 s); long LSV1 save is unrelated to display refresh.
+
+**Stage 8b (GAP-8b) — SHIPPED (2026-09-12):** `Loop::isPlaybackSessionExitPublicationGap()` no longer returns false merely because `publishedSnapshot()` exists — stale root during session-exit publish is a gap (`pendingSnapshotSessionExitQueued && hasPendingSnapshotPublish && !publishedSnapshotIsCurrent`). Enables existing `shouldHoldSessionExitPublicationGapHandoff` in `resolveDisplayNotesByDrawSource` for overdub-stop regressions (`267→256`, `272→267` in [`200023`](../../captures/session_20260912_200023.log)). Native: `test_playback_session_exit_publication_gap_stale_published_root`, `test_draw_source_retains_composed_handoff_during_stale_session_exit_gap`. Device re-validation anchor: [`200023`](../../captures/session_20260912_200023.log) — native fixture alone is not proof of OLED fix.
+
+**Stage 8c (GAP-8c) — SHIPPED (2026-09-12):** gap handoff supplement now tries `unpublishedSnapshot()` then committed passes per inadequately covered paint-window bar (`displayBarAdequatelyCoveredForGapSupplement` + `gatherCommittedDrawSourceBars` `SessionExitGapPasses`); passes fallback gated to session-exit publication gap only. Native: `test_gap_handoff_supplements_low_bars_after_record_stop_viewport_reposition`; RAM1 **6848**. Viewport reposition unchanged. Device OLED recapture vs [`202721`](../../captures/session_20260912_202721.log) pending.
 
 No further DEC-045 amendment for this result unless post-publish bars 2–5 verification exposes a semantic problem (it did not).
 
