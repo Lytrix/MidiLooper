@@ -256,7 +256,6 @@ TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, Edit
 
     if (touched) {
         ++loop.playbackRevision;
-        loop.discardPassesMaterializedCache();
     }
     return touched;
 }

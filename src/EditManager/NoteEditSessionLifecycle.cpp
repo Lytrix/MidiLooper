@@ -197,7 +197,6 @@ EDIT_MANAGER_IMPL_MEM void EditManager::openNoteEditSession(Track& track) {
         track.stopOverdubbing();
     }
     Loop& loop = trackManager.getSelectedLoop(track);
-    loop.discardPassesMaterializedCache();
     // Capture chunks are the rematerialize source for commitEditAction. Assign here so
     // session rematerialize and pass rematerialize share NoteId (145518 Layer B).
     loop.assignMissingNoteIdsInCommittedCapturePasses();

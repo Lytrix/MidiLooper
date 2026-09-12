@@ -636,6 +636,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
     const bool canSlideCommittedPrefix =
         reuseKind == DisplayWindowUtils::DrawSourceReuseKind::SlideCommittedDrawSource &&
         canReuseCommittedPrefix;
+    const bool preservedHandoffAuthority =
+        !liveDisplayNotes.empty() && displaySlot == livePlaybackDisplaySlot_ &&
+        trackIndex == livePlaybackDisplayTrack_;
+    const bool holdSessionExitGapHandoff =
+        DisplayWindowUtils::shouldHoldSessionExitPublicationGapHandoff(
+            preservedHandoffAuthority, loop.publishedSnapshotIsCurrent(),
+            loop.isPlaybackSessionExitPublicationGap());
 
     size_t committedDisplayEnd = liveDisplayCommittedPrefix_.size();
     DisplayNoteVec candidate;
@@ -661,7 +668,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                                       resolvedPitchHigh, candidate, committedDisplayEnd);
         storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
-        liveDisplayNotes.swap(candidate);
+        if (holdSessionExitGapHandoff) {
+            committedDisplayEnd = liveDisplayNotes.size();
+            storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+                                           liveDisplayCommittedPrefix_);
+        } else {
+            liveDisplayNotes.swap(candidate);
+        }
     } else {
         DIAG_COUNTER_INC(DisplayFullRebuild);
         gatherCommittedDrawSourceBars(loop, firstBar, lastBar, resolvedPitchLow, resolvedPitchHigh,
@@ -689,7 +702,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(snapshotSelected,
                                                                  visualCleanNonempty) &&
             !liveDisplayNotes.empty();
-        if (retainHandoffSeed) {
+        if (holdSessionExitGapHandoff || retainHandoffSeed) {
             committedDisplayEnd = liveDisplayNotes.size();
             storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
                                            liveDisplayCommittedPrefix_);

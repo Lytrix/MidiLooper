@@ -126,6 +126,18 @@ inline bool shouldHoldOverdubStopHandoffUntilCurrentSnapshot(
                                             visualCacheDirty);
 }
 
+/// Session-exit publication gap (record or overdub stop): retain an already-valid
+/// composed display handoff until a current published snapshot exists. Authority is
+/// the handoff — not visualCache note count (`013759`: empty cache + 32 compose).
+inline bool shouldHoldSessionExitPublicationGapHandoff(bool preservedHandoffAuthority,
+                                                     bool publishedSnapshotIsCurrent,
+                                                     bool sessionExitPublicationGap) {
+    if (publishedSnapshotIsCurrent || !sessionExitPublicationGap) {
+        return false;
+    }
+    return preservedHandoffAuthority;
+}
+
 /// NOTE_EDIT paint/select committed base for the Runtime Request.
 /// Current snapshot when dirty+current; otherwise VisualCache (may be stale —
 /// dirty records idle maintenance debt). Request path must not PassMaterialize.

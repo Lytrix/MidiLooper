@@ -920,8 +920,10 @@ void test_source_view_immutable_when_live_materialize_mutates() {
   loop.beginCapture(CapturePhase::Overdub);
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 
-  loop.midiEvents().push_back(MidiEvent::NoteOn(100, 1, 80, 80));
-  loop.midiEvents().push_back(MidiEvent::NoteOff(140, 1, 80, 0));
+  SessionMidiEventVec gathered;
+  loop.gatherCommittedEvents(gathered);
+  gathered.push_back(MidiEvent::NoteOn(100, 1, 80, 80));
+  gathered.push_back(MidiEvent::NoteOff(140, 1, 80, 0));
   loop.invalidateCaches();
 
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));

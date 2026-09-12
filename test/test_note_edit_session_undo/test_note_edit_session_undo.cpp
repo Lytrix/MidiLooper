@@ -357,10 +357,12 @@ void test_visual_cache_reflects_active_edit_passes() {
 
   loop.rebuildVisualCacheFromPasses();
   TEST_ASSERT_FALSE(loop.visualCache.notes.empty());
+  SessionMidiEventVec committedEvents;
+  loop.copyEffectiveCommittedEvents(committedEvents);
   TEST_ASSERT_TRUE(
-      hasDisplayNote(loop.midiEvents(), loop.loopLengthTicks, 60, 106, 154));
+      hasDisplayNote(committedEvents, loop.loopLengthTicks, 60, 106, 154));
   TEST_ASSERT_FALSE(
-      hasDisplayNote(loop.midiEvents(), loop.loopLengthTicks, 60, 10, 58));
+      hasDisplayNote(committedEvents, loop.loopLengthTicks, 60, 10, 58));
 
   bool foundMovedInVisualCache = false;
   for (const NoteUtils::DisplayNote& note : loop.visualCache.notes) {

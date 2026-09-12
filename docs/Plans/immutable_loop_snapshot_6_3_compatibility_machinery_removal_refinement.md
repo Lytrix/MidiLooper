@@ -37,11 +37,12 @@ reintroduce synchronous `tryPublishSessionExitSnapshot` on the MIDI stop path.
 | Stage | Scope | Status |
 |---|---|---|
 | **6.3.1** | Remove C1-a session-exit compat bridges (B1/B3/B4/B2/B5); hold-empty during `isPlaybackSessionExitPublicationGap` | **SHIPPED** |
-| **6.3.2** | Remove `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` consumer paths | pending |
-| **6.3.3** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | pending |
-| **6.3.4** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | pending |
-| **6.3.5** | Remove `materializeToEventVector` and LCR maintained-history construction | pending |
-| **6.3.6** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | pending |
+| **6.3.2** | Post-record visual continuity during deferred publication gap (no C1-a restore) | **SHIPPED** — [plan](immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md); deferred record-start preview polish in same plan |
+| **6.3.3** | Remove `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` consumer paths | **SHIPPED** |
+| **6.3.4** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | pending |
+| **6.3.5** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | pending |
+| **6.3.6** | Remove `materializeToEventVector` and LCR maintained-history construction | pending |
+| **6.3.7** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | pending |
 
 ## 6.3.1 — C1-a hold-empty (SHIPPED)
 
@@ -85,3 +86,36 @@ hold empty until idle `stepPendingSnapshotPublish` completes (DEC-045 unchanged)
 ### Proceed?
 
 **YES** — start **6.3.1** (C1-a hold-empty); machinery deletion in **6.3.2–6.3.5** after host gates shrink.
+
+## 6.3.3 — `passesMaterializedStore_` removal (SHIPPED)
+
+**Decision:** Delete lazy `passesMaterializedStore_` / `materializeEditViewFromPasses` /
+`Loop::midiEvents()` / `Track::getMidiEvents()`. `copyEffectiveCommittedEvents` delegates to
+`copyCommittedPassReplayEvents` (direct pass replay, no cache). `CommittedMidiScratch` holds
+empty on snapshot miss (C4 stale-root pass fallback retired with C1-a).
+
+### Files
+
+- `include/Loop.h`, `src/Loop.cpp`, `src/Loop/LoopMaterialization.cpp` — remove store + accessors
+- `include/Track.h` — remove `getMidiEvents()`; note-cache paths use `copyEffectiveCommittedEvents`
+- `src/Utils/CommittedMidiScratch.cpp` — snapshot-only refresh
+- `src/EditManager/NoteEditSessionLifecycle.cpp`, `src/TrackUndo.cpp`,
+  `src/TrackManager/TrackManagerMemoryPressure.cpp` — drop discard hooks
+- Host gates: `test_compatibility_consumer_inventory.py`, `test_b2_b5_b6_narrow_session_exit_compat_gate.py`
+- Native: `test_effective_event_store`, `test_loop_take_survival`, `test_overdub_source_view`,
+  `test_note_edit_session_undo`
+
+### Verification (6.3.3)
+
+| Gate | Status |
+|---|---|
+| Host `test_compatibility_consumer_inventory.py` + `test_b2_b5_b6_narrow_session_exit_compat_gate.py` | **PASS** |
+| Native `pio test -e native` | **1830/1835** |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` | **PASS** [`022843`](../../captures/session_20260912_022843.log) / [`022928`](../../captures/host_midi_automation_baseline_20260912_022928.json); flake FAIL [`022633`](../../captures/session_20260912_022633.log) (`already_pending` wedge) |
+
+### OpenSpec 4b.3 (documented, not closed)
+
+HITL `base` PASS [`020309`](../../captures/session_20260912_020309.log): attribution holds
+(`ODUB,stop,display` 4.1/9.3 ms; post-OD PLAYING `midi_gap` ~44 ms from `late_on` +
+`track_order`). Bound not met — keep open.

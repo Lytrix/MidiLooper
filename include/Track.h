@@ -284,12 +284,6 @@ public:
   bool isStopped() const;
   bool isMuted() const;
 
-  // Add to public section of Track to be able to save the events
-  SessionMidiEventVec& getMidiEvents() { return getActiveLoop().midiEvents(); }
-
-  /// Immutable access to midiEvents (for const Track)
-  const SessionMidiEventVec& getMidiEvents() const { return getActiveLoop().midiEvents(); }
-
   /// Legacy internal-heap view of committed/materialized events (revision-keyed copy for NOTE_EDIT APIs).
   MidiEventVec& legacyMidiEventsFromCommitted();
   const MidiEventVec& legacyMidiEventsFromCommitted() const;
@@ -340,7 +334,9 @@ public:
   const std::vector<NoteUtils::DisplayNote, ExternalMemoryFirstAllocator<NoteUtils::DisplayNote>>&
   getCachedNotesForSlot(uint8_t slotIndex) const {
     const Loop& loop = getLoop(slotIndex);
-    return loop.getNoteCache().getNotes(loop.midiEvents(), loop.loopLengthTicks);
+    SessionMidiEventVec committedEvents;
+    const_cast<Loop&>(loop).copyEffectiveCommittedEvents(committedEvents);
+    return loop.getNoteCache().getNotes(committedEvents, loop.loopLengthTicks);
   }
   const DisplayNoteVec& getVisualNotesForSlot(uint8_t slotIndex) const {
     const Loop& loop = getLoop(slotIndex);
@@ -357,7 +353,9 @@ public:
   const NoteUtils::EventIndex& getCachedEventIndex() const {
     Loop& loop = const_cast<Loop&>(getActiveLoop());
     if (!loop.eventIndexValid) {
-      loop.getCachedEventIndex() = NoteUtils::buildEventIndex(loop.midiEvents());
+      SessionMidiEventVec committedEvents;
+      loop.copyEffectiveCommittedEvents(committedEvents);
+      loop.getCachedEventIndex() = NoteUtils::buildEventIndex(committedEvents);
       loop.eventIndexValid = true;
     }
     return loop.getCachedEventIndex();

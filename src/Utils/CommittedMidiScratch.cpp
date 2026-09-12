@@ -5,14 +5,6 @@
 
 #include "Loop.h"
 
-namespace {
-
-bool shouldMaterializeCommittedScratchFromPasses(const Loop& loop) {
-  return loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent();
-}
-
-}  // namespace
-
 namespace CommittedMidiScratch {
 
 RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
@@ -30,15 +22,6 @@ RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
     scratchRevision = revision;
     scratchIdentity = observedIdentity;
     return RefreshKind::FromSnapshot;
-  }
-
-  if (shouldMaterializeCommittedScratchFromPasses(loop)) {
-    loop.materializeEditViewFromPasses();
-    const SessionMidiEventVec& committedLoopMidi = loop.midiEvents();
-    scratch.assign(committedLoopMidi.begin(), committedLoopMidi.end());
-    scratchRevision = revision;
-    scratchIdentity = nullptr;
-    return RefreshKind::FromPasses;
   }
 
   scratch.clear();
