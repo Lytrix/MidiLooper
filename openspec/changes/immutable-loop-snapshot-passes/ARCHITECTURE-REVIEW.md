@@ -300,7 +300,8 @@ excluded to tasks 5.1–5.6). Stage 1 VisualCache `builtFromSnapshotIdentity` + 
       [`immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_2_storage_layout_approval_refinement.md).
 - [x] Tasks **5.3–5.6** closed (reader/writer, load, persistence ownership, large-loop bounds).
 - [x] Task **6.1** closed (compatibility consumer inventory — host gate only).
-- [ ] Task **6.2–6.5** remain open (compatibility retirement).
+- [x] Task **6.4** closed 2026-09-12 — device sign-off [`164947`](../../../captures/session_20260912_164947.log); RAM1 **6848**; native **1707/1707** (RC-P1 close; not re-run).
+- [ ] Task **6.5** remains open (archive gate). **6.6** post-closeout polish indexed — does not block 6.5 (`tasks.md` §6.6).
 
 ### Phase 4 implementation review (task 5.2 only — docs/decision)
 

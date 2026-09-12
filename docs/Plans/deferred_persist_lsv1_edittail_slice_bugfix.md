@@ -147,9 +147,9 @@ slot:4:0,start write=LoopSnapshotTail                   ← job recovery
 
 Log ends ~243 s mid-second gather (p=0, `n` climbing) — persist never completes.
 
-### Secondary — failure recovery amplifies cost (defer RC-P1.3)
+### Secondary — failure recovery amplifies cost → **follow-up bundle § Post-RC-P1**
 
-On `payload_slice failed`, persist job recovery restarts from `CapturePass*` replay + `beginLoopSnapshotBodyFormatV1SaveGather` instead of resuming `WritePayload` at `writePayloadOffset`. Explains multi-`enter` / multi-`tail_gather_begin` on [`155724`](../../captures/session_20260912_155724.log). **Not required to close RC-P1.2** once quota fix lands; follow-up if A4 still slow after completion.
+On `payload_slice failed`, persist job recovery restarts from `CapturePass*` replay + `beginLoopSnapshotBodyFormatV1SaveGather` instead of resuming `WritePayload` at `writePayloadOffset`. Explains multi-`enter` / multi-`tail_gather_begin` on [`155724`](../../captures/session_20260912_155724.log). Tracked as **RC-P1.3** in the post-closeout bundle below.
 
 ### RC-P2 — deferred
 
@@ -507,7 +507,35 @@ Keep `test_lsv1_stepped_save_tail_matches_monolithic` (small fixture).
 | Bound | `LoopSnapshotTail` slices ~0.9–1.2 ms; no `#CAPTURE_RECONNECT` |
 | Timing | ~80 s `edit_tail,done` → `loop_snapshot_tail,done` (sort-dominated); ~4 ms tail done → `payload_done` |
 
-**RC-P1 closed** (reboot layer A1 + completion layer A4.2). Follow-up **RC-P1.3** (recovery resume) and sort efficiency remain optional.
+**RC-P1 closed** (reboot layer A1 + completion layer A4.2). Deferred polish: **§ Post-RC-P1 follow-up bundle**.
+
+---
+
+## Post-RC-P1 follow-up bundle (deferred)
+
+Single backlog queue — **not** in scope for RC-P1 closeout. OpenSpec tracking:
+[`immutable-loop-snapshot-passes` §6.6](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md#66-post-closeout-polish-linked-plans--non-blocking)
+(**non-blocking** for §6.5 archive). Implement as separate slices after OpenSpec **6.4** closeout unless reprioritized.
+
+| ID | Track | Owner / hook | Problem | Target invariant | Anchor |
+|---|---|---|---|---|---|
+| **RC-P1.3** | Persist recovery resume | `PersistenceWorkItemPersist` / `WorkspaceSave` job recovery | On `payload_slice failed`, job replays `CapturePass*` + full `beginLoopSnapshotBodyFormatV1SaveGather` instead of resuming `LoopSnapshotTail` at `writePayloadOffset` | Failed grain retries `WritePayload` from persisted scratch cursor; no full gather replay unless scratch invalid | [`155724`](../../captures/session_20260912_155724.log) multi-`tail_gather_begin` |
+| **RC-P1-SORT** | LSV1 tail sort grain efficiency | `sortNotesOneGrain` / `sortEventsOneGrain` in `stepLoopSnapshotBodyFormatV1SaveTail` | Bubble-sort grains scale ~O(n²/16); ~15k tail steps / ~80 s sort+payload on 25-bar OD3 save | Sort phase wall-clock and step count bounded for 500-note class without changing byte identity | [`164947`](../../captures/session_20260912_164947.log) p=2/p=3 dominate; A4.1 stall sig false alarm |
+| **GAP-8** | Record-stop bars 2–5 until publish | `isPlaybackSessionExitPublicationGap`, `DisplayNoteWindowGather`, `LoopVisualCache` | After record stop, bars 2–5 look empty until snapshot root lands; easy to misread as SD-save driven (publish ~1–2 s vs LSV1 tail ~80 s on [`164947`](../../captures/session_20260912_164947.log)) | Either shorten publication-gap window (faster root) **or** committed visual bridge for bars 2–5 during gap without violating DEC-045 hold semantics | [`164947`](../../captures/session_20260912_164947.log) `draw_src snap=0` → `snap=1` at +1.8 s; parent [gap plan](record_stop_snapshot_publication_gap_display_bugfix.md) stages 4–5 **PASS**, stage 7 open |
+
+**Dependencies / ordering**
+
+- **RC-P1.3** and **RC-P1-SORT** are independent persist-path slices; either can land first.
+- **GAP-8** is display/publication — do **not** fold into RC-P1.3 or sort work; cross-plan with [record_stop_snapshot_publication_gap_display_bugfix.md](record_stop_snapshot_publication_gap_display_bugfix.md) (stage 7 preview parity may share fixtures).
+- **Do not:** Clear save-gate bypass; RC-P2 slot-meta debt; reopen RC-P1.2 quota fix.
+
+**Verification (when scheduled)**
+
+| Track | Native | Device |
+|---|---|---|
+| RC-P1.3 | Inject failed `WritePayload` grain; assert resume from `writePayloadOffset`, single `tail_gather_begin` | Forced-failure HITL or manual repro; no multi-gather replay |
+| RC-P1-SORT | Byte identity `A == B` preserved; step-count ceiling fixture for 500-note class | Same 25+OD workload; `loop_snapshot_tail,done` with fewer sort-phase steps / lower wall-clock |
+| GAP-8 | Fixture for gap window + post-publish bars 2–5 coverage | Record stop → bars 2–5 visible within agreed bound **or** documented gap + `snap=1` anchor; not correlated with `SAVE,completed` tail |
 
 ---
 
