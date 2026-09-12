@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec §6.6 — GAP-8 shipped; stage 7 open)
+Last updated: 2026-09-12 (GAP-8c reverted — design session before re-implementation)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -11,7 +11,7 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Parallel — [`record_stop_snapshot_publication_gap_display_bugfix.md`](../Plans/record_stop_snapshot_publication_gap_display_bugfix.md) (2026-09-12).**
-**Stage 6C-A + 6C-B SHIPPED** — capacity extension + `kExtraBars = 2`. Native 18/25-bar fixtures PASS; device freeze-scaling [`144434`](../../captures/session_20260912_144434.log). **6B DEFERRED**. **GAP-8 SHIPPED** (§6.6.4) — unpublished snapshot supplements uncovered bars during publication gap; device [`191442`](../../captures/session_20260912_191442.log). **Open:** stage 7 (§6.6.5).
+**Stage 6C-A + 6C-B SHIPPED** — capacity extension + `kExtraBars = 2`. Native 18/25-bar fixtures PASS; device freeze-scaling [`144434`](../../captures/session_20260912_144434.log). **6B DEFERRED**. **GAP-8 SHIPPED** (§6.6.4) — unpublished snapshot supplements uncovered bars during publication gap; device [`191442`](../../captures/session_20260912_191442.log). **GAP-8c REVERTED** (`3c9dcd4a`) — device regression [`204310`](../../captures/session_20260912_204310.log) (notes lost on stop, BAR tick error); architectural design required before re-implementation; plan [`record_stop_viewport_gap_supplement_bugfix.md`](../Plans/record_stop_viewport_gap_supplement_bugfix.md). **GAP-8b** bundled in reverted commit — not on branch. **Open:** stage 7 (§6.6.5).
 
 **RC-P1 SHIPPED (2026-09-12).** Resumable `LoopSnapshotTail` + A4.2 `writeLoopSnapshotPayloadByteSlice` quota fix. Device A4 PASS [`164947`](../../captures/session_20260912_164947.log): `loop_snapshot_tail,done` → `payload_done` → `SAVE,completed`. Plan frozen:
 [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../Plans/deferred_persist_lsv1_edittail_slice_bugfix.md). RC-P2 **DEFER**.
