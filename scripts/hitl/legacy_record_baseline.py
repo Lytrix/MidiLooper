@@ -1383,7 +1383,7 @@ def _run_record_arm_until_capturing(
     ):
         # Transport was still running: arm jumped STOPPED→RECORDING. Stop both
         # capture and transport, then re-arm so note stream starts on a fresh
-        # ARMED→play→RECORDING take ([`session_20260911_095928.log`] 2304/33).
+        # ARMED→play→RECORDING take.
         print(
             "[info] RECORDING after arm without stopped transport; "
             "stopping capture+transport and re-arming for ARMED"
