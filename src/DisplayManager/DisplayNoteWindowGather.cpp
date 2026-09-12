@@ -371,7 +371,7 @@ DISP_CAPTURE_MEM bool lookupAuthoritativeCommittedShortenRow(
     const uint32_t barTicks = Config::TICKS_PER_BAR;
     const uint32_t barStart = (visualHint->startTick / barTicks) * barTicks;
     SessionMidiEventVec flat;
-    loop.gatherCommittedEventsInWindow(flat, barStart, barTicks * 2u, true);
+    loop.copyEffectiveCommittedEventsInRange(flat, barStart, barTicks * 2u, true);
     const NoteUtils::DisplayNoteVec reconstructed =
         NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
     if (const NoteUtils::DisplayNote* found =

@@ -190,13 +190,13 @@ TRACK_COLD_MEM void logPreparedDisplayRangeSample(Loop& loop) {
   const uint32_t reconstructUs = micros() - reconstructStartUs;
   const uint32_t oracleStartUs = micros();
   SessionMidiEventVec oracle;
-  loop.gatherCommittedEventsInWindow(oracle, windowStart, windowLength);
+  loop.copyEffectiveCommittedEventsInRange(oracle, windowStart, windowLength);
   const NoteUtils::DisplayNoteVec oracleNotes =
       NoteUtils::reconstructDisplayNotes(oracle, loop.loopLengthTicks, false, false);
   const uint32_t oracleUs = micros() - oracleStartUs;
   const uint32_t nativeStartUs = micros();
   SessionMidiEventVec nativeFull;
-  loop.gatherCommittedEvents(nativeFull);
+  loop.copyEffectiveCommittedEvents(nativeFull);
   SessionMidiEventVec nativeWindow;
   DisplayWindowUtils::filterMidiEventsToWindow(nativeFull, nativeWindow, windowStart, windowLength,
                                                loop.loopLengthTicks);
@@ -666,7 +666,7 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
       // Effective dump pairs each capture pass, then applies companions, so
       // occupancy convergence does not LIFO-steal another pass's Off (`211440`).
       deferredStoredVerificationEvents.clear();
-      loop.gatherCommittedEvents(deferredStoredVerificationEvents);
+      loop.copyEffectiveCommittedEvents(deferredStoredVerificationEvents);
       // Match STOPPED paint: LCR passes + wrap-held append (`180916` parity).
       LoopContentResolution::resolveDisplayNotes(loop.passes, loop.loopLengthTicks,
                                                  deferredStoredVerificationNotes);

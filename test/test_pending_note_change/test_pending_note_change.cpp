@@ -784,14 +784,14 @@ void test_occupancy_five_sibling_convergence() {
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
 
   SessionMidiEventVec firstFlat;
-  loop.gatherCommittedEvents(firstFlat);
+  loop.copyEffectiveCommittedEvents(firstFlat);
   NoteUtils::DisplayNoteVec firstNotes =
       NoteUtils::reconstructDisplayNotes(firstFlat, loop.loopLengthTicks, false);
   loop.applyPendingNoteChangesToDisplayNotes(firstNotes);
   TEST_ASSERT_EQUAL_UINT32(0u, countDisplayNotesAtPitchStart(firstNotes, 64, 768));
 
   SessionMidiEventVec repeatFlat;
-  loop.gatherCommittedEvents(repeatFlat);
+  loop.copyEffectiveCommittedEvents(repeatFlat);
   NoteUtils::DisplayNoteVec repeatNotes =
       NoteUtils::reconstructDisplayNotes(repeatFlat, loop.loopLengthTicks, false);
   loop.applyPendingNoteChangesToDisplayNotes(repeatNotes);
@@ -817,7 +817,7 @@ void test_occupancy_five_sibling_convergence() {
   loop.pushOverdubSessionPass(passId, sealed);
 
   SessionMidiEventVec sealedFlat;
-  loop.gatherCommittedEvents(sealedFlat);
+  loop.copyEffectiveCommittedEvents(sealedFlat);
   const NoteUtils::DisplayNoteVec sealedNotes =
       NoteUtils::reconstructDisplayNotes(sealedFlat, loop.loopLengthTicks, false);
   TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(sealedNotes, 64, 768));
@@ -1084,7 +1084,7 @@ void test_occupancy_undo_restores_original_geometry() {
   loop.pushOverdubSessionPass(passId, sealed);
 
   SessionMidiEventVec occupied;
-  loop.gatherCommittedEvents(occupied);
+  loop.copyEffectiveCommittedEvents(occupied);
   const NoteUtils::DisplayNoteVec occupiedNotes =
       NoteUtils::reconstructDisplayNotes(occupied, loop.loopLengthTicks, false);
   const NoteUtils::DisplayNote* shortened = findDisplayNoteById(occupiedNotes, 1);
@@ -1092,7 +1092,7 @@ void test_occupancy_undo_restores_original_geometry() {
 
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
   SessionMidiEventVec restored;
-  loop.gatherCommittedEvents(restored);
+  loop.copyEffectiveCommittedEvents(restored);
   const NoteUtils::DisplayNoteVec restoredNotes =
       NoteUtils::reconstructDisplayNotes(restored, loop.loopLengthTicks, false);
   const NoteUtils::DisplayNote* original = findDisplayNoteById(restoredNotes, 1);
@@ -1230,7 +1230,7 @@ void test_wrap_commit_hide_drops_shorter_same_start_from_display() {
   loop.invalidateCaches();
 
   SessionMidiEventVec flat;
-  loop.gatherCommittedEvents(flat);
+  loop.copyEffectiveCommittedEvents(flat);
   NoteUtils::DisplayNoteVec notes =
       NoteUtils::reconstructDisplayNotes(flat, kLoopLen, false, false);
   loop.appendOverdubPassDisplayNotes(notes);
@@ -1558,7 +1558,7 @@ void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   TEST_ASSERT_EQUAL_UINT8(kOverdubCompanionEditPassIndex, loop.passes.editPasses[0].editPassIndex);
 
   SessionMidiEventVec flat;
-  loop.gatherCommittedEvents(flat);
+  loop.copyEffectiveCommittedEvents(flat);
   bool foundShortenedOff = false;
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOff() && evt.data.noteData.note == 60 && evt.tick == 119) {
@@ -1702,7 +1702,7 @@ void test_wrap_committed_note_at_s_occupies_ledger_same_tick() {
   loop.rebuildOverdubSourceView(kS);
 
   SessionMidiEventVec merged;
-  loop.gatherCommittedEvents(merged);
+  loop.copyEffectiveCommittedEvents(merged);
   std::sort(merged.begin(), merged.end(),
             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
   NoteId wrapId = kInvalidNoteId;
@@ -1964,7 +1964,7 @@ void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather(
   constexpr NoteId kWrapNoteId = 9;
   seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -1997,7 +1997,7 @@ void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather(
   TEST_ASSERT_TRUE(foundAfterS);
 
   SessionMidiEventVec rebuilt;
-  loop.gatherCommittedEventsForDerivedView(rebuilt);
+  loop.copyEffectiveCommittedEvents(rebuilt);
   TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(rebuilt, kWrapNoteId));
   TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
 }
@@ -2011,7 +2011,7 @@ void test_incremental_overdub_seal_applies_companion_shorten() {
   constexpr NoteId kOverdubId = 10;
   seedLongSourceNote(loop, kSourceId, 50, 200, 60, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2045,7 +2045,7 @@ void test_overdub_stop_reanchor_preserves_merged_then_admits_seal() {
   constexpr NoteId kStopNoteId = 11;
   seedLongSourceNote(loop, kSourceId, 48, 200, 60, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2085,7 +2085,7 @@ void test_overdub_stop_shaped_receipt_admits_without_duplication() {
   constexpr NoteId kStopNoteId = 12;
   seedLongSourceNote(loop, kSourceId, 50, 200, 60, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2109,7 +2109,7 @@ void test_overdub_stop_shaped_receipt_admits_without_duplication() {
   TEST_ASSERT_EQUAL_UINT32(119u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
 
   SessionMidiEventVec rebuilt;
-  loop.gatherCommittedEventsForDerivedView(rebuilt);
+  loop.copyEffectiveCommittedEvents(rebuilt);
   TEST_ASSERT_EQUAL_UINT32(countNoteOnWithId(rebuilt, kSourceId),
                            countNoteOnWithId(merged.mergedEvents, kSourceId));
   TEST_ASSERT_EQUAL_UINT32(countNoteOnWithId(rebuilt, kStopNoteId),
@@ -2125,7 +2125,7 @@ void test_incremental_overdub_seal_provenance_miss_falls_back() {
   constexpr NoteId kWrapNoteId = 9;
   seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.gatherCommittedEventsForDerivedView(merged.mergedEvents);
+  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2575,7 +2575,7 @@ void test_capture_off_does_not_clear_committed_occupy() {
   TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
 
   MidiEventVec withCapture;
-  loop.gatherCommittedEventsWithCapture(withCapture);
+  loop.copyEffectiveCommittedEventsWithCapture(withCapture);
   ActiveNoteLedger foldedCapture;
   applyGatheredThroughTick(foldedCapture, withCapture, kOccupy);
   OverlapNoteIdSet clearedOccupy;
@@ -2583,7 +2583,7 @@ void test_capture_off_does_not_clear_committed_occupy() {
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(clearedOccupy.size()));
 
   MidiEventVec committedOnly;
-  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  loop.copyEffectiveCommittedEvents(committedOnly);
   ActiveNoteLedger ledger;
   applyGatheredThroughTick(ledger, committedOnly, kOccupy);
   OverlapNoteIdSet occupyIds;
@@ -2616,7 +2616,7 @@ void test_capture_on_does_not_occupy_empty_source_view() {
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(sourceViewIds.size()));
 
   MidiEventVec withCapture;
-  loop.gatherCommittedEventsWithCapture(withCapture);
+  loop.copyEffectiveCommittedEventsWithCapture(withCapture);
   ActiveNoteLedger leftoverLedger;
   applyGatheredThroughTick(leftoverLedger, withCapture, kOccupy);
   OverlapNoteIdSet leftoverOccupy;
@@ -2625,7 +2625,7 @@ void test_capture_on_does_not_occupy_empty_source_view() {
   TEST_ASSERT_TRUE(leftoverOccupy.contains(kCaptureId));
 
   MidiEventVec committedOnly;
-  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  loop.copyEffectiveCommittedEvents(committedOnly);
   ActiveNoteLedger ledger;
   applyGatheredThroughTick(ledger, committedOnly, kOccupy);
   OverlapNoteIdSet occupyIds;
@@ -2659,7 +2659,7 @@ void test_occupy_ledger_catchup_on_at_192_after_last_tick_184() {
   TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
 
   MidiEventVec committedOnly;
-  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  loop.copyEffectiveCommittedEvents(committedOnly);
   ActiveNoteLedger behindClock;
   applyGatheredThroughTick(behindClock, committedOnly, kLastTick);
   OverlapNoteIdSet behindIds;
@@ -2693,7 +2693,7 @@ void test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick() {
   loop.nextEventIndex = 7;
 
   MidiEventVec committedOnly;
-  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  loop.copyEffectiveCommittedEvents(committedOnly);
   TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
   ActiveNoteLedger ledger;
   CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, committedOnly, kOccupy, kOccupy,
@@ -3187,7 +3187,7 @@ void test_occupy_ledger_catchup_skips_wrap_crossing() {
   TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
 
   MidiEventVec committedOnly;
-  loop.gatherCommittedEventsForDerivedView(committedOnly);
+  loop.copyEffectiveCommittedEvents(committedOnly);
   ActiveNoteLedger ledger;
   OverlapNoteIdSet occupyIds;
   loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);

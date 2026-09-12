@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 5.7 + 5.7.5 SHIPPED; HITL sign-off PASS; next 6.3)
+Last updated: 2026-09-12 (OpenSpec 6.3.4 SHIPPED; next 6.3.5)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,9 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — OpenSpec 6.3.4+ (machinery removal).**
-Next: `gatherCommittedEvents*` API removal. Parent plan:
+**Now — OpenSpec 6.3.5+ (machinery removal).**
+Next: capture `copyCommittedPassReplayEvents` / construction replay removal.
+Parent plan:
 [`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md).
+
+**Prior — OpenSpec 6.3.4 SHIPPED (2026-09-12).**
+Retired `gatherCommittedEvents*` / `mergeMaterializedPassesWithCapture`; callers use
+`copyEffectiveCommittedEvents*`. Native **1699/1705**; RAM1 **6880**. HITL `base` core PASS
+[`023806`](../../captures/session_20260912_023806.log) / report
+[`023847`](../../captures/host_midi_automation_baseline_20260912_023847.json) — persist
+`result` stage flake (5.7 class), not 6.3.4.
 
 **Prior — OpenSpec 6.3.3 SHIPPED (2026-09-12).**
 Removed `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` /
@@ -31,9 +39,6 @@ Session-exit gap visual continuity — cache no-op + draw-source
 **OpenSpec 4b.3** (documented, not closed): [`020309`](../../captures/session_20260912_020309.log)
 attribution holds (`ODUB,stop,display` bounded; post-OD PLAYING `midi_gap` ~44 ms from
 `late_on` + `track_order`). Bound not met — keep open.
-
-**Next — OpenSpec 6.3.4+ (machinery removal).**
-`gatherCommittedEvents*` API removal. Same parent plan.
 
 **Prior — OpenSpec 6.3.1 C1-a hold-empty (2026-09-12).**
 Retired B1/B3/B4 `gatherCommittedEvents*` and B2/B5 gap `materializeEditViewFromPasses`;

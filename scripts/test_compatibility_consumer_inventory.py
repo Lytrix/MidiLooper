@@ -35,14 +35,8 @@ _MATERIALIZE_TO_EVENT_VECTOR_ALLOW = frozenset(
     }
 )
 
-_GATHER_COMMITTED_ALLOW = frozenset(
-    {
-        "src/Loop/LoopMaterialization.cpp",
-        "src/Track/TrackDeferredMaintenance.cpp",
-        "src/DisplayManager/DisplayNoteWindowGather.cpp",
-        "include/Loop.h",
-    }
-)
+# OpenSpec 6.3.4 — gatherCommittedEvents* retired; no production allowlist.
+_GATHER_COMMITTED_ALLOW = frozenset()
 
 # OpenSpec 6.3.1 — C1-a session-exit gather retired at these owners.
 _C1_A_GATHER_RETIRED_SITES = frozenset(

@@ -747,7 +747,7 @@ void test_wrap_append_does_not_lengthen_same_pitch_body_in_visual_cache() {
   TEST_ASSERT_EQUAL(notesAtWrap, loop.visualCache.notes.size());
   loop.rebuildVisualCacheFromPasses();
   SessionMidiEventVec flat;
-  loop.gatherCommittedEvents(flat);
+  loop.copyEffectiveCommittedEvents(flat);
   const NoteUtils::DisplayNoteVec linearPassNotes =
       NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false, false);
 
@@ -921,7 +921,7 @@ void test_source_view_immutable_when_live_materialize_mutates() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.overdubSourceViewNotes(), 60, 10));
 
   SessionMidiEventVec gathered;
-  loop.gatherCommittedEvents(gathered);
+  loop.copyEffectiveCommittedEvents(gathered);
   gathered.push_back(MidiEvent::NoteOn(100, 1, 80, 80));
   gathered.push_back(MidiEvent::NoteOff(140, 1, 80, 0));
   loop.invalidateCaches();
@@ -2067,7 +2067,7 @@ void test_overdub_session_undo_disables_sealed_wrap() {
   TEST_ASSERT_TRUE(disabled);
   loop.invalidateCaches();
   SessionMidiEventVec afterUndo;
-  loop.gatherCommittedEvents(afterUndo);
+  loop.copyEffectiveCommittedEvents(afterUndo);
   TEST_ASSERT_EQUAL(0, countNoteOns(afterUndo, 72));
   TEST_ASSERT_EQUAL(1, countNoteOns(afterUndo, 60));
   SessionMidiEventVec liveAfterUndo;
@@ -2752,7 +2752,7 @@ void test_idle_slice_stale_overlay_rejects_and_uses_committed_fallback() {
       NoteUtils::reconstructDisplayNotes(overlayFlat, loop.loopLengthTicks, false, false);
 
   SessionMidiEventVec committed;
-  loop.gatherCommittedEventsInWindow(committed, 0, kLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(committed, 0, kLoopLen, true);
   const NoteUtils::DisplayNoteVec oracle =
       NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
   TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
@@ -2813,7 +2813,7 @@ void test_paint_last_resort_stale_overlay_uses_passes_resolve() {
       NoteUtils::reconstructDisplayNotes(overlayFlat, loop.loopLengthTicks, false, false);
 
   SessionMidiEventVec committed;
-  loop.gatherCommittedEvents(committed);
+  loop.copyEffectiveCommittedEvents(committed);
   const NoteUtils::DisplayNoteVec oracle =
       NoteUtils::reconstructDisplayNotes(committed, loop.loopLengthTicks, false, false);
   TEST_ASSERT_EQUAL(1u, countNotesAtPitchStart(oracle, 39, 192));
@@ -3834,7 +3834,7 @@ void test_undo_overdub_idle_refresh_restores_record_layer() {
   TEST_ASSERT_TRUE(hasDisplayNote(loop.visualCache.notes, 60, 64));
   TEST_ASSERT_FALSE(hasDisplayNote(loop.visualCache.notes, 62, 296));
   SessionMidiEventVec flat;
-  loop.gatherCommittedEvents(flat);
+  loop.copyEffectiveCommittedEvents(flat);
   const NoteUtils::DisplayNoteVec materialized =
       NoteUtils::reconstructDisplayNotes(flat, loop.loopLengthTicks, false, false);
   TEST_ASSERT_EQUAL(materialized.size(), loop.visualCache.notes.size());
@@ -4434,14 +4434,14 @@ void test_occupy_144743_48_616_materialize_vs_window_vs_pending() {
       400u, displayNoteExclusiveLength(materializeNotes, kPitch, 616, kOccupyLoopLen));
 
   SessionMidiEventVec effectiveEvents;
-  loop.gatherCommittedEvents(effectiveEvents);
+  loop.copyEffectiveCommittedEvents(effectiveEvents);
   const NoteUtils::DisplayNoteVec effectiveNotes =
       NoteUtils::reconstructDisplayNotes(effectiveEvents, kOccupyLoopLen, false, false);
   TEST_ASSERT_EQUAL_UINT32(
       400u, displayNoteExclusiveLength(effectiveNotes, kPitch, 616, kOccupyLoopLen));
 
   SessionMidiEventVec windowEvents;
-  loop.gatherCommittedEventsInWindow(windowEvents, 0, kOccupyLoopLen, true);
+  loop.copyEffectiveCommittedEventsInRange(windowEvents, 0, kOccupyLoopLen, true);
   TEST_ASSERT_EQUAL_UINT32(0u, countPitchOnsAtTick(windowEvents, kPitch, 885));
   TEST_ASSERT_EQUAL_UINT32(1u, countPitchOffsAtTick(windowEvents, kPitch, 1016));
   const NoteUtils::DisplayNoteVec windowNotes =
@@ -4470,7 +4470,7 @@ void test_occupy_144743_48_616_materialize_vs_window_vs_pending() {
   loop.applyPendingNoteChangesToDisplayNotes(rawAfterPending, rawAfterPending.size());
   TEST_ASSERT_FALSE(pendingWritesExclusiveEnd(rawAfterPending, kPitch, 616, 884));
 
-  // Fixture table (144743 48@616): per-layer materialize, gatherCommittedEvents,
+  // Fixture table (144743 48@616): per-layer materialize, copyEffectiveCommittedEvents,
   // and window gather are 400 (Off@1016 kept, On@885 absent). After OD2 close,
   // pending is empty and overlay apply does not write end 884.
   TEST_ASSERT_EQUAL_UINT32(400u, windowLength);
@@ -4549,7 +4549,7 @@ void test_occupy_153848_52_2172_first_inclusive_2230_pin() {
   TEST_ASSERT_FALSE(pendingShortenTargetsEnd(loop, kOccupy2172, 2230));
 
   SessionMidiEventVec effectiveEvents;
-  loop.gatherCommittedEvents(effectiveEvents);
+  loop.copyEffectiveCommittedEvents(effectiveEvents);
   TEST_ASSERT_EQUAL_UINT32(1u, countPitchOnsAtTick(effectiveEvents, kPitch, 2172));
   TEST_ASSERT_EQUAL_UINT32(1u, countPitchOffsAtTick(effectiveEvents, kPitch, 2231));
   const NoteUtils::DisplayNoteVec effectiveNotes =

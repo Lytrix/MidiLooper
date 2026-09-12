@@ -485,18 +485,6 @@ LOOP_COLD_MEM void Loop::rematerializeEditView(LoopEventStore& store) const {
   LoopEventStore::leaveEphemeralSeal();
 }
 
-void Loop::mergeMaterializedPassesWithCapture(MidiEventVec& out) const {
-  gatherCommittedEventsWithCapture(out);
-}
-
-void Loop::mergeMaterializedPassesWithCapture(SessionMidiEventVec& out) const {
-  gatherCommittedEventsWithCapture(out);
-}
-
-LOOP_COLD_MEM void Loop::gatherCommittedEvents(SessionMidiEventVec& out) const {
-  copyEffectiveCommittedEvents(out);
-}
-
 LOOP_COLD_MEM void Loop::resetCommittedPitchQueryWork() {
   g_committedPitchQueryWork = CommittedPitchQueryWork{};
 }
@@ -505,29 +493,8 @@ LOOP_COLD_MEM uint32_t Loop::committedEventsFullMaterializeCount() {
   return g_committedPitchQueryWork.fullMaterializeCount;
 }
 
-LOOP_COLD_MEM void Loop::gatherCommittedEvents(MidiEventVec& out) const {
-  SessionMidiEventVec extmemFlat;
-  gatherCommittedEvents(extmemFlat);
-  out.assign(extmemFlat.begin(), extmemFlat.end());
-}
-
-LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindow(SessionMidiEventVec& out, uint32_t windowStart,
-                                                       uint32_t windowLength,
-                                                       bool includeActiveEditRows) const {
-  copyEffectiveCommittedEventsInRange(out, windowStart, windowLength, includeActiveEditRows);
-}
-
-LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindow(MidiEventVec& out, uint32_t windowStart,
-                                                       uint32_t windowLength,
-                                                       bool includeActiveEditRows) const {
-  SessionMidiEventVec extmemFlat;
-  gatherCommittedEventsInWindow(extmemFlat, windowStart, windowLength, includeActiveEditRows);
-  out.assign(extmemFlat.begin(), extmemFlat.end());
-}
-
-LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindowWithCapture(SessionMidiEventVec& out,
-                                                                  uint32_t windowStart,
-                                                                  uint32_t windowLength) const {
+LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsInWindowWithCapture(
+    SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength) const {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   // The capture tail is unwindowed: copyEventsTo copies the whole capture store before the
   // window filter. Split it so `gather` is fully attributed.
@@ -560,7 +527,7 @@ LOOP_COLD_MEM void Loop::gatherCommittedEventsInWindowWithCapture(SessionMidiEve
   do {                           \
   } while (0)
 #endif
-  gatherCommittedEventsInWindow(out, windowStart, windowLength);
+  copyEffectiveCommittedEventsInRange(out, windowStart, windowLength);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_INVESTIGATION_DIAG
   committedUs = micros() - tailPhaseUs;
   tailPhaseUs = micros();
@@ -628,20 +595,13 @@ LOOP_COLD_MEM bool Loop::shouldAvoidFullVisualRebuild(uint32_t loopLength) const
   return loopLength > boundedThreshold;
 }
 
-LOOP_COLD_MEM void Loop::gatherCommittedEventsForDerivedView(SessionMidiEventVec& flat) const {
-  gatherCommittedEvents(flat);
-}
-
-LOOP_COLD_MEM void Loop::gatherCommittedEventsForDerivedView(MidiEventVec& flat) const {
-  gatherCommittedEvents(flat);
-}
-
-LOOP_COLD_MEM void Loop::gatherCommittedEventsWithCapture(SessionMidiEventVec& flat) const {
-  gatherCommittedEvents(flat);
+LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsWithCapture(SessionMidiEventVec& flat) const {
+  copyEffectiveCommittedEvents(flat);
   mergeCaptureStoreIntoMaterializedEvents(*this, flat);
 }
 
-LOOP_COLD_MEM void Loop::gatherCommittedEventsWithCapture(MidiEventVec& flat) const {
-  gatherCommittedEvents(flat);
-  mergeCaptureStoreIntoMaterializedEvents(*this, flat);
+LOOP_COLD_MEM void Loop::copyEffectiveCommittedEventsWithCapture(MidiEventVec& flat) const {
+  SessionMidiEventVec extmemFlat;
+  copyEffectiveCommittedEventsWithCapture(extmemFlat);
+  flat.assign(extmemFlat.begin(), extmemFlat.end());
 }
