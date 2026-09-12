@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-058](#dec-058--runtime-owned-derived-playback-views-and-bounded-stop-admission) | 2026-09-13 | Runtime-owned derived playback views and bounded deferred overdub stop; canonical content remains in `Loop` | Accepted — implementation authorized; capacity, grain, coverage, stop-latency, and MIDI-trace gates remain required |
 | [DEC-057](#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write) | 2026-09-11 | LoopSnapshot body format version 1 (`LSV1` wire discriminator); dual-write `PersistedLoopSnapshot` + `LoopSnapshot`; load undo depth 0 | Accepted — OpenSpec task 5.2 docs/decision only; firmware is 5.3 |
 | [DEC-056](#dec-056--note-edit-rows-enter-the-existing-pending-companion-set-when-the-published-root-is-stale) | 2026-09-08 | NOTE_EDIT `saveNoteEditPass` admits the row into `pendingSnapshotPublishBox.companionIds` when the published root is already stale; not a new publication owner | Accepted — miss-path device PASS [`000740`](../captures/session_20260909_000740.log); current-root close [`000237`](../captures/session_20260909_000237.log) |
 | [DEC-055](#dec-055--note-edit-working-set-is-overlay-delta-on-opened-loopsnapshot) | 2026-09-08 | NOTE_EDIT working set is overlay delta on the opened LoopSnapshot; no second full-loop representation for edit or undo | Accepted — Stage 3 device PASS [`221906`](../captures/session_20260908_221906.log); Stage 2 device PASS [`220445`](../captures/session_20260908_220445.log); Stage 1 device PASS [`212850`](../captures/session_20260908_212850.log) |
@@ -72,6 +73,60 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ---
 
 <!-- Append new entries below (newest first). Next ID: DEC-058 -->
+
+## DEC-058 — Runtime-owned derived playback views and bounded stop admission
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted — implementation authorized; evidence gates remain open |
+| **Date** | 2026-09-13 |
+| **OpenSpec** | `resumable-midi-boundary-playback-maintenance` |
+| **Reassessment** | [`ARCHITECTURE-REASSESSMENT.md`](../openspec/changes/resumable-midi-boundary-playback-maintenance/ARCHITECTURE-REASSESSMENT.md) |
+| **Transfer** | [`OWNERSHIP_TRANSFER.md`](../openspec/changes/resumable-midi-boundary-playback-maintenance/OWNERSHIP_TRANSFER.md) |
+
+### Decision
+
+Move only the **derived active playback-view lifecycle** — ordered event view,
+coverage, cursor, bridge, and continuation — from `Loop`’s mutable
+`playbackOrder_` path to per-slot `LoopPlaybackRuntime`. `Loop` retains
+canonical passes, capture, revision, persistence, undo/redo, and invalidation
+ownership.
+
+`OVERDUB_STOPPING` is an active transport state. It continues normal playback
+and MIDI priority while bounded reserved finalization completes. Transport Stop
+has precedence over a pending PLAYING transition and forces STOPPED recovery.
+
+`DeferredJobScheduler::runFrame()` remains the existing load-job child. No
+`RuntimeWorkBudget`, second scheduler, extra MIDI service call site, persistent
+schema change, or partial publication is authorized.
+
+### Rationale
+
+The DMA baseline still attributes large post-overdub MIDI gaps to synchronous
+`track_order` and `load_frame` work. A caller-side budget cannot bound their
+content-sized operations. The existing runtime per-slot owner already owns the
+ledger and merged-event lifetime required to bind an immutable playback view;
+moving canonical content there would duplicate `Loop`’s established authority.
+
+### Required evidence before closeout
+
+- Fixed external-memory/RAM1 capacity for three views, two bridges, and capture
+  reservations.
+- Structural or empirical-plus-policy bounds for each active grain and eligible
+  load Commit phase.
+- Coverage and deferred-stop contracts under maximum phase advance and denied
+  turns.
+- MIDI-trace parity and overflow-free HITL 4b.3 evidence.
+
+### Related decisions
+
+- [DEC-043](#dec-043-execution-bound-class-is-a-gated-architectural-property)
+- [DEC-027](#dec-027-deferred-job-scheduler-north-star)
+- [DEC-038](#dec-038-overdub-wrap-commit-and-session-undo)
+- [DEC-049](#dec-049-overdub-stop-admits-the-seal-and-accelerates-snapshot-publication)
+- [DEC-051](#dec-051-overdub-wrap-seals-at-loop-end-not-session-start)
+
+---
 
 ## DEC-057 — LoopSnapshot body format version 1 (LSV1) dual-write
 

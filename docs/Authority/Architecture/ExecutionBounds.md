@@ -107,8 +107,30 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 24 | `SelectNavigation::buildSelectNavigationSlots` | Select encoder (`stepSelectNavSlot`) and select fader (`resolveFader1SelectTarget`) on the MIDI interval path | At most `2 * kSelectNavigationNeighborhoodRadiusSteps + 1` 16ths (3). One pass over the already-built selectable list; does not rematerialize or walk every loop 16th. Overrun: emit the neighborhood only; do not expand to a full-loop onset list. | **Structurally bounded** (steps); note filter is one pass of the pre-built selectable inventory |
 | 25 | `EditManager::tryCollectPreparedOverlapHoldNoteIds` / `collectAnalyzeOverlapNoteIds` / `unionAnalyzeOverlapNoteIds` | `NoteGeometryResolver::resolve` on geometry fader (MIDI interval) | Hit: `noteMembership(pitch, bar)` for hold bars only (±1 for analyze abut). Capture-active hit unions one pass of the already-built Stage 1 composed DisplayNotes. Miss: one pass of that same composed list (not visual cache). Result capped at `kOverlapNoteIdSetCapacity` (128). Overflow keeps the inserted ids and does not expand to a full-lane `baselineMap` fill. Scoped current-state upsert is at most those 128 ids. | **Structurally bounded** (hit bars + set cap); miss/union is one pass of the pre-built composed cache |
 | 26 | `EditManager::openNoteEditSession` current-root; `rebuildNoteEditFocusForDisplayNote` mover seed | NOTE_EDIT button; first select / live-edit focus rebuild | Open does not call `rebuildVisualCacheFromPasses`, `rematerializeEditView`, or `buildFromSessionStore`. Current state starts empty. First focus rebuild `upsertRow`s the selected mover only. First-frame paint uses the published snapshot / already-built visual cache. Miss path keeps the existing rematerialize owner. | **Structurally bounded** (no full-loop build on current-root open; one-row seed on focus) |
+| 27 | `Track::stepPlaybackViewMaintenance` (planned) | Existing post-`handleMidiInput()` owner turn; never clock dispatch | Planned phase/index fill or merge unit with a fixed event/pair quantum, fixed storage, persistent cursor, and atomic publish only after complete. Until the code declares those caps and proves maximum phase advance/denied-turn coverage, active windowed playback is denied. | **Unbounded** — not implemented or admitted |
+| 28 | `Track::stepOverdubStopAdmission` (planned) | Existing post-`handleMidiInput()` owner turn while `OVERDUB_STOPPING` | Planned fixed stop-finalization unit backed by per-accepted-note closure credits. It must retain playback, preserve the frozen candidate, and expose a grain counter/latency; a contract breach takes deterministic STOPPED recovery. | **Unbounded** — not implemented or admitted |
+| 29 | `main.cpp::runDeferredLoadAndDisplayFrame` selected child (planned refinement) | Existing load/display owner after MIDI service | Exactly one display phase, qualified load-job phase, or prewarm unit per active-transport turn. A load Commit is active-eligible only when its complete body has a content-independent bound; otherwise it remains STOPPED-only. | **Unbounded** — compound owner until one-child continuation is implemented |
 
-Ten rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+Thirteen rows are unbounded. Bounding those owners is Owner-Boundary Gate work (roadmap L1–L7). It is not a reason to introduce a scheduling class or a new Manager.
+
+### Resumable playback and deferred-stop admission gates (rows 27–29)
+
+Rows 27–29 are declarations of **required implementation contracts**, not proof
+of an active-transport bound. They remain unbounded and excluded from admission
+until the firmware and native fixtures establish the following fields.
+
+| Contract | Owner and interval entry | Declared quantum and continuation | Required proof / denial policy |
+|---|---|---|---|
+| `CoverageServiceContract` | `Track::stepPlaybackViewMaintenance` after the existing MIDI service boundary | Fixed phase/index fill or merge pairs; persistent view-build cursor and current/ready/pending identity | Maximum phase advance, maximum consecutive denied turns, required grain count, and lead margin prove the next view is ready by its handoff. If not provable, reject active windowed selection or the source mutation; use full-loop prewarm or STOPPED-only work. |
+| `StopAdmissionContract` | `Track::stepOverdubStopAdmission` after the existing MIDI service boundary while `OVERDUB_STOPPING` | One reserved finalization unit; frozen generation, remaining-grain count, command epoch, and requested destination | Per accepted NoteOn reserves its closing work. The contract bounds finalization grains and latency; a breach emits all-notes-off and enters STOPPED recovery without discarding capture. Transport Stop supersedes PLAYING completion. |
+| `LoadFrameChildContract` | `main.cpp::runDeferredLoadAndDisplayFrame` after the existing MIDI service boundary | One selected display, qualified load-job, or prewarm child; saved child continuation | No same-turn child stacking. An unqualified Commit/preparation/cleanup phase is denied during RECORDING, PLAYING, OVERDUBBING, and `OVERDUB_STOPPING` and remains pending until STOPPED. |
+
+Capture evidence for these rows must identify owner, grain kind, quantum,
+duration, complete/yield/denied outcome, source/coverage state, stop state and
+latency, load phase, and `RING,overflow`. Scored RECORDING, PLAYING,
+OVERDUBBING, and `OVERDUB_STOPPING` windows reject any overflow. Observed
+service cadence is diagnostic only; it is never a policy ceiling or substitute
+for the contracts above.
 
 ### Draw-source resolve (row 3)
 

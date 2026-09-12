@@ -47,7 +47,11 @@ struct CaptureRecordHeader {
   uint16_t payloadLen = 0;
 };
 
-constexpr size_t kCaptureRingBytes = 96 * 1024;
+// PLAYING/OVERDUBBING never flushes USB serial: capture must retain the full
+// active-transport evidence burst until STOPPED.  The canonical two-overdub
+// HITL fixture kept just over the former 96 KiB ring before its stop drain;
+// reserve this fixed PSRAM budget rather than weakening Tier-A evidence.
+constexpr size_t kCaptureRingBytes = 512 * 1024;
 constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
 constexpr size_t kMaxCaptureTextBytes = 192;
 
@@ -57,7 +61,12 @@ struct CaptureRing {
   size_t head = 0;
   size_t tail = 0;
   size_t used = 0;
+  // Capacity eviction can remove required evidence and therefore invalidates the
+  // session.  Timing-critical shedding is different: playback deliberately
+  // discards only non-Tier-A diagnostics instead of doing USB I/O.  Keep that
+  // observable without reporting it as an evidence overflow.
   bool overflowPending = false;
+  uint32_t timingShedPending = 0;
 };
 
 CaptureRing sCaptureRing;
@@ -229,7 +238,13 @@ void advanceHead(size_t bytes) {
   sCaptureRing.used -= bytes;
 }
 
-void discardOldestRecord() {
+void noteTimingShed() {
+  if (sCaptureRing.timingShedPending != UINT32_MAX) {
+    ++sCaptureRing.timingShedPending;
+  }
+}
+
+void discardOldestRecord(bool requiredEvidenceEviction) {
   if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
     sCaptureRing.head = sCaptureRing.tail;
     sCaptureRing.used = 0;
@@ -248,7 +263,11 @@ void discardOldestRecord() {
     return;
   }
   advanceHead(total);
-  sCaptureRing.overflowPending = true;
+  if (requiredEvidenceEviction) {
+    sCaptureRing.overflowPending = true;
+  } else {
+    noteTimingShed();
+  }
 }
 
 SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload, uint16_t payloadLen) {
@@ -268,11 +287,16 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   const bool incomingTierA =
       type == CaptureRecordType::Text && isTierATextLine(static_cast<const char*>(payload));
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
-    if (!incomingTierA && headRecordIsTierAText()) {
+    const bool headTierA = headRecordIsTierAText();
+    if (!incomingTierA && headTierA) {
+      // The incoming non-essential record loses to retained Tier-A evidence.
+      noteTimingShed();
       return false;
     }
     const size_t usedBefore = sCaptureRing.used;
-    discardOldestRecord();
+    // A full ring may replace a non-Tier-A record without invalidating the
+    // timing/state trace.  Only loss of an existing Tier-A record is overflow.
+    discardOldestRecord(headTierA);
     if (sCaptureRing.used == usedBefore) {
       return false;
     }
@@ -302,6 +326,19 @@ void emitOverflowNotice() {
   }
   sCaptureRing.overflowPending = false;
   Serial.printf("#CAP,%lu,RING,overflow\r\n", (unsigned long)micros());
+}
+
+void emitTimingShedNotice() {
+  if (sCaptureRing.timingShedPending == 0) {
+    return;
+  }
+  if (!serialWriteRoom(64)) {
+    return;  // keep pending; never block main on the diagnostic notice
+  }
+  const uint32_t shed = sCaptureRing.timingShedPending;
+  sCaptureRing.timingShedPending = 0;
+  Serial.printf("#CAP,%lu,RING,shed,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)shed);
 }
 
 void flushOneRevtRecord(const PendingRevt& revt) {
@@ -784,10 +821,10 @@ SC_MEM_ATTR void captureCleanup(const char* phase, const char* kind, uint32_t co
 }
 
 void flushCaptureBuffer(size_t maxRecords) {
-  // Never emit overflow via USB Serial under timing-critical budgets — 013530 logged
-  // 813× RING,overflow during PLAYING (emitOverflowNotice before tc_skip return).
+  // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
     emitOverflowNotice();
+    emitTimingShedNotice();
   }
   if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {
     return;
@@ -810,7 +847,7 @@ void flushCaptureBuffer(size_t maxRecords) {
         break;
       }
       const size_t usedBefore = sCaptureRing.used;
-      discardOldestRecord();
+      discardOldestRecord(false);
       if (sCaptureRing.used >= usedBefore) {
         break;
       }
