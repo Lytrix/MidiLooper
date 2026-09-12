@@ -145,6 +145,65 @@ inline bool shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGa
     return sessionExitPublicationGap && hasUnpublishedSnapshot;
 }
 
+/// GAP-8c: session-exit gap handoff supplement runs only during publication gap.
+inline bool shouldSupplementDrawSourceDuringSessionExitPublicationGap(
+    bool sessionExitPublicationGap) {
+    return sessionExitPublicationGap;
+}
+
+/// GAP-8c: left-edge coverage threshold for adequate bar paint (one sixteenth-note grid
+/// at the configured bar length; 48 ticks when `ticksPerBar` is 0).
+inline uint32_t gapSupplementBarLeftEdgeCoverageTicks(uint32_t ticksPerBar) {
+    return ticksPerBar > 0 ? ticksPerBar / 16u : 48u;
+}
+
+/// True when any display row intersects the bar tick span.
+inline bool displayFrameCoversBar(const NoteUtils::DisplayNoteVec& frame, uint32_t bar,
+                                  uint32_t loopLength, uint32_t ticksPerBar) {
+    if (loopLength == 0 || ticksPerBar == 0) {
+        return false;
+    }
+    const uint32_t barStart = bar * ticksPerBar;
+    for (const NoteUtils::DisplayNote& note : frame) {
+        if (noteIntersectsWindow(note.startTick, note.endTick, barStart, ticksPerBar,
+                                 loopLength)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// GAP-8c: partial tail coverage (e.g. bar 4 handoff from tick 3432) is inadequate.
+inline bool displayBarAdequatelyCoveredForGapSupplement(const NoteUtils::DisplayNoteVec& frame,
+                                                        uint32_t bar, uint32_t loopLength,
+                                                        uint32_t ticksPerBar) {
+    if (!displayFrameCoversBar(frame, bar, loopLength, ticksPerBar)) {
+        return false;
+    }
+    if (ticksPerBar == 0) {
+        return true;
+    }
+    const uint32_t barStart = bar * ticksPerBar;
+    const uint32_t leftEdgeCoverageEnd =
+        barStart + gapSupplementBarLeftEdgeCoverageTicks(ticksPerBar);
+    for (const NoteUtils::DisplayNote& note : frame) {
+        if (!noteIntersectsWindow(note.startTick, note.endTick, barStart, ticksPerBar,
+                                  loopLength)) {
+            continue;
+        }
+        if (note.startTick <= leftEdgeCoverageEnd) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// GAP-8c: passes fallback only when gap handoff supplement still owes bar rows.
+inline bool shouldSupplementDrawSourceFromCommittedPassesDuringPublicationGap(
+    bool sessionExitPublicationGap, bool hasCommittedPasses, bool barAdequatelyCovered) {
+    return sessionExitPublicationGap && hasCommittedPasses && !barAdequatelyCovered;
+}
+
 /// NOTE_EDIT paint/select committed base for the Runtime Request.
 /// Current snapshot when dirty+current; otherwise VisualCache (may be stale —
 /// dirty records idle maintenance debt). Request path must not PassMaterialize.

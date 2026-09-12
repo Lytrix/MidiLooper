@@ -3251,25 +3251,85 @@ void appendSnapshotNotesForBar(const LoopSnapshot& snapshot, uint32_t bar, uint8
   }
 }
 
-/// Host twin of `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` (GAP-8).
+enum class CommittedDrawSourceGatherSourceHost {
+  Default,
+  SessionExitGapPasses,
+};
+
+void gatherCommittedDrawSourceBarsHost(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                       uint8_t pitchLow, uint8_t pitchHigh,
+                                       NoteUtils::DisplayNoteVec& out, size_t& committedEnd,
+                                       CommittedDrawSourceGatherSourceHost gatherSource =
+                                           CommittedDrawSourceGatherSourceHost::Default) {
+  const uint32_t loopLength = loop.loopLengthTicks;
+  if (loopLength == 0 || firstBar > lastBar) {
+    committedEnd = out.size();
+    return;
+  }
+  const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+  for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+    if (gatherSource == CommittedDrawSourceGatherSourceHost::SessionExitGapPasses) {
+      if (!loop.hasCommittedPasses()) {
+        continue;
+      }
+      const uint32_t barStart = bar * Config::TICKS_PER_BAR;
+      SessionMidiEventVec events;
+      LoopContentResolution::resolveWindow(loop.passes, loopLength, barStart,
+                                           Config::TICKS_PER_BAR, events);
+      if (events.empty()) {
+        continue;
+      }
+      const NoteUtils::DisplayNoteVec barNotes =
+          NoteUtils::reconstructDisplayNotes(events, loopLength, false, false);
+      for (const NoteUtils::DisplayNote& note : barNotes) {
+        if (note.note < pitchLow || note.note > resolvedPitchHigh) {
+          continue;
+        }
+        appendDisplayNoteUniqueById(out, note);
+      }
+    }
+  }
+  committedEnd = out.size();
+}
+
+/// Host twin of `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` (GAP-8 / GAP-8c).
 void supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(
     const Loop& loop, uint32_t firstBar, uint32_t lastBar, uint8_t pitchLow, uint8_t pitchHigh,
     NoteUtils::DisplayNoteVec& frame, size_t& committedDisplayEnd) {
-  const ImmutableLoopSnapshotRef unpublished = loop.unpublishedSnapshot();
-  if (!DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
-          loop.isPlaybackSessionExitPublicationGap(), static_cast<bool>(unpublished))) {
+  if (!DisplayWindowUtils::shouldSupplementDrawSourceDuringSessionExitPublicationGap(
+          loop.isPlaybackSessionExitPublicationGap())) {
     return;
   }
   const uint32_t loopLength = loop.loopLengthTicks;
   if (loopLength == 0 || firstBar > lastBar) {
     return;
   }
+  const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
   const uint8_t resolvedPitchHigh = pitchHigh < pitchLow ? pitchLow : pitchHigh;
+  const ImmutableLoopSnapshotRef unpublished = loop.unpublishedSnapshot();
   for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
-    if (displayFrameCoversBar(frame, bar, loopLength)) {
+    if (DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(frame, bar, loopLength,
+                                                                        ticksPerBar)) {
       continue;
     }
-    appendSnapshotNotesForBar(*unpublished, bar, pitchLow, resolvedPitchHigh, frame);
+    if (DisplayWindowUtils::shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+            true, static_cast<bool>(unpublished))) {
+      appendSnapshotNotesForBar(*unpublished, bar, pitchLow, resolvedPitchHigh, frame);
+    }
+    if (DisplayWindowUtils::shouldSupplementDrawSourceFromCommittedPassesDuringPublicationGap(
+            true, loop.hasCommittedPasses(),
+            DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(frame, bar,
+                                                                            loopLength,
+                                                                            ticksPerBar))) {
+      NoteUtils::DisplayNoteVec barRows;
+      size_t barCommittedEnd = 0;
+      gatherCommittedDrawSourceBarsHost(loop, bar, bar, pitchLow, pitchHigh, barRows,
+                                        barCommittedEnd,
+                                        CommittedDrawSourceGatherSourceHost::SessionExitGapPasses);
+      for (const NoteUtils::DisplayNote& note : barRows) {
+        appendDisplayNoteUniqueById(frame, note);
+      }
+    }
   }
   if (committedDisplayEnd < frame.size()) {
     committedDisplayEnd = frame.size();
@@ -3417,6 +3477,28 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
     }
   }
   (void)playheadBar;
+}
+
+/// Host twin of draw-source full-rebuild session-exit gap handoff retention (GAP-8b).
+void applyDrawSourceSessionExitGapHandoff(const Loop& loop, uint32_t firstBar, uint32_t lastBar,
+                                          NoteUtils::DisplayNoteVec& handoff, size_t& committedEnd) {
+  const bool preservedHandoffAuthority = !handoff.empty();
+  const bool holdSessionExitGapHandoff =
+      DisplayWindowUtils::shouldHoldSessionExitPublicationGapHandoff(
+          preservedHandoffAuthority, loop.publishedSnapshotIsCurrent(),
+          loop.isPlaybackSessionExitPublicationGap());
+
+  NoteUtils::DisplayNoteVec candidate;
+  size_t gatheredEnd = 0;
+  gatherDrawSourceDisplayNotes(loop, firstBar, lastBar, 0, 0, 127, candidate, &gatheredEnd);
+
+  if (!holdSessionExitGapHandoff) {
+    handoff.swap(candidate);
+    committedEnd = handoff.size();
+    return;
+  }
+  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, firstBar, lastBar, 0, 127,
+                                                               handoff, committedEnd);
 }
 
 uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
@@ -4808,6 +4890,7 @@ void test_wrap_journal_drain_keeps_first_record_while_session_exit_pending() {
   TEST_ASSERT_FALSE(loop.hasPendingWrapJournal());
   TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
 
   SessionMidiEventVec gathered;
   if (!loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072)) {
@@ -4867,14 +4950,16 @@ void test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot() {
     appendSnapshotNotesForBar(*loop.unpublishedSnapshot(), bar, 0, 127, handoff);
   }
   for (uint32_t bar = 2; bar <= 5; ++bar) {
-    TEST_ASSERT_FALSE(displayFrameCoversBar(handoff, bar, loopLength));
+    TEST_ASSERT_FALSE(DisplayWindowUtils::displayFrameCoversBar(handoff, bar, loopLength,
+                                                                Config::TICKS_PER_BAR));
   }
 
   size_t committedEnd = handoff.size();
   supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 0, 20, 0, 127, handoff,
                                                               committedEnd);
   for (uint32_t bar = 2; bar <= 5; ++bar) {
-    TEST_ASSERT_TRUE(displayFrameCoversBar(handoff, bar, loopLength));
+    TEST_ASSERT_TRUE(DisplayWindowUtils::displayFrameCoversBar(handoff, bar, loopLength,
+                                                               Config::TICKS_PER_BAR));
   }
   TEST_ASSERT_TRUE(committedEnd >= handoff.size());
 
@@ -4884,6 +4969,189 @@ void test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot() {
   supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 2, 5, 0, 127, handoff,
                                                               committedEnd);
   TEST_ASSERT_EQUAL(sizeBeforeNoOp, handoff.size());
+}
+
+/// GAP-8b: stale published root during session-exit publish is a publication gap.
+void test_playback_session_exit_publication_gap_stale_published_root() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 480));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+
+  TEST_ASSERT_NOT_NULL(loop.publishedSnapshot().get());
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
+}
+
+/// GAP-8b (`200023`): draw-source retains composed handoff over stale published root until publish.
+/// GAP-8c (`202721`): tail RECORDING handoff + viewport 0 exposes bars 2–4 until supplement.
+void test_gap_handoff_supplements_low_bars_after_record_stop_viewport_reposition() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kBars = 20;
+  const uint32_t loopLength = Config::TICKS_PER_BAR * kBars;
+  loop.loopLengthTicks = loopLength;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t bar = 0; bar < kBars; ++bar) {
+    const uint32_t tick = bar * Config::TICKS_PER_BAR;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(tick + 10, 1, static_cast<uint8_t>(60 + bar), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(tick + 50, 1, static_cast<uint8_t>(60 + bar), 0)));
+  }
+  applyLiveRecordCompletedTicks(loop, loopLength);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, loopLength - 48));
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+
+  NoteUtils::DisplayNoteVec handoff;
+  constexpr uint32_t kRecordStopHandoffWindowStart = 3432u;
+  const uint32_t handoffFirstBar = kRecordStopHandoffWindowStart / Config::TICKS_PER_BAR;
+  for (uint32_t bar = handoffFirstBar; bar < kBars; ++bar) {
+    uint32_t startTick = bar * Config::TICKS_PER_BAR + 10;
+    if (bar == handoffFirstBar) {
+      startTick = kRecordStopHandoffWindowStart;
+    }
+    handoff.push_back(makeAdoptedNote(static_cast<NoteId>(bar + 1), static_cast<uint8_t>(60 + bar),
+                                      startTick, startTick + 40));
+  }
+  const size_t handoffBeforeSupplement = handoff.size();
+  TEST_ASSERT_TRUE(handoffBeforeSupplement > 0);
+  for (uint32_t bar = 2; bar <= 4; ++bar) {
+    TEST_ASSERT_FALSE(DisplayWindowUtils::displayBarAdequatelyCoveredForGapSupplement(
+        handoff, bar, loopLength, Config::TICKS_PER_BAR));
+  }
+
+  size_t committedEnd = handoff.size();
+  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 0, 15, 0, 127, handoff,
+                                                              committedEnd);
+  for (uint32_t bar = 2; bar <= 4; ++bar) {
+    TEST_ASSERT_TRUE(DisplayWindowUtils::displayFrameCoversBar(handoff, bar, loopLength,
+                                                               Config::TICKS_PER_BAR));
+  }
+  TEST_ASSERT_TRUE(handoff.size() > handoffBeforeSupplement);
+
+  const size_t afterFirstSupplement = handoff.size();
+  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 0, 15, 0, 127, handoff,
+                                                              committedEnd);
+  TEST_ASSERT_EQUAL(afterFirstSupplement, handoff.size());
+
+  NoteUtils::DisplayNoteVec bar2Only;
+  bar2Only.push_back(makeAdoptedNote(2, 62, 2 * Config::TICKS_PER_BAR + 10,
+                                     2 * Config::TICKS_PER_BAR + 50));
+  size_t bar2End = bar2Only.size();
+  const size_t bar2CountBefore = bar2Only.size();
+  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 2, 2, 0, 127, bar2Only,
+                                                              bar2End);
+  TEST_ASSERT_EQUAL(bar2CountBefore, bar2Only.size());
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
+  const size_t beforePostPublish = handoff.size();
+  supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars(loop, 0, 15, 0, 127, handoff,
+                                                              committedEnd);
+  TEST_ASSERT_EQUAL(beforePostPublish, handoff.size());
+}
+
+void test_draw_source_retains_composed_handoff_during_stale_session_exit_gap() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(800, 1, 64, 80)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(860, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 860));
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {});
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.isPlaybackSessionExitPublicationGap());
+
+  NoteUtils::DisplayNoteVec handoff;
+  handoff.push_back(makeAdoptedNote(1, 60, 100, 200));
+  handoff.push_back(makeAdoptedNote(2, 72, 400, 480));
+  handoff.push_back(makeAdoptedNote(3, 64, 800, 860));
+  for (uint32_t i = 0; i < 20; ++i) {
+    handoff.push_back(makeAdoptedNote(static_cast<NoteId>(10 + i), static_cast<uint8_t>(40 + i),
+                                      900 + i * 24, 920 + i * 24));
+  }
+  const size_t handoffCount = handoff.size();
+  TEST_ASSERT_TRUE(handoffCount > 3u);
+
+  loop.visualCache.notes.assign(handoff.begin(), handoff.begin() + 1);
+  loop.visualCacheDirty = true;
+
+  NoteUtils::DisplayNoteVec staleGather;
+  gatherDrawSourceDisplayNotes(loop, 0, 3, 0, 0, 127, staleGather);
+  TEST_ASSERT_TRUE(staleGather.size() < handoffCount);
+
+  size_t committedEnd = handoff.size();
+  for (int pass = 0; pass < 3; ++pass) {
+    const size_t before = handoff.size();
+    applyDrawSourceSessionExitGapHandoff(loop, 0, 3, handoff, committedEnd);
+    TEST_ASSERT_EQUAL(before, handoff.size());
+    TEST_ASSERT_EQUAL(handoffCount, handoff.size());
+  }
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_FALSE(loop.isPlaybackSessionExitPublicationGap());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  applyDrawSourceSessionExitGapHandoff(loop, 0, 3, handoff, committedEnd);
+  TEST_ASSERT_TRUE(handoff.size() < handoffCount);
+  bool hasRecord = false;
+  bool hasOverdub1 = false;
+  bool hasOverdub2 = false;
+  for (const NoteUtils::DisplayNote& note : handoff) {
+    if (note.note == 60) {
+      hasRecord = true;
+    }
+    if (note.note == 72) {
+      hasOverdub1 = true;
+    }
+    if (note.note == 64) {
+      hasOverdub2 = true;
+    }
+  }
+  TEST_ASSERT_TRUE(hasRecord);
+  TEST_ASSERT_TRUE(hasOverdub1);
+  TEST_ASSERT_TRUE(hasOverdub2);
 }
 
 void test_session_exit_handoff_when_live_record_notes_fit_sealed_length() {
@@ -5700,6 +5968,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
+  RUN_TEST(test_playback_session_exit_publication_gap_stale_published_root);
+  RUN_TEST(test_gap_handoff_supplements_low_bars_after_record_stop_viewport_reposition);
+  RUN_TEST(test_draw_source_retains_composed_handoff_during_stale_session_exit_gap);
   RUN_TEST(test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_handoff_when_candidate_shorter_than_sealed_length);
