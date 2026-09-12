@@ -212,6 +212,10 @@ void DisplayManager::applyCoalescedPaintInvalidation() {
 }
 
 void DisplayManager::update() {
+#ifdef __IMXRT1062__
+    // Complete a DMA frame promptly even when the next paint has not yet been admitted.
+    _display.api.pollDisplayTransfer();
+#endif
 #if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     const uint32_t telemetryStartUs = micros();
 #endif

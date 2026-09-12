@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "Logger.h"
 #include "TrackStateMachine.h"
+#include "Utils/DebugSessionCapture.h"
 
 uint8_t Track::getMidiChannel() const {
   return midiChannel;
@@ -74,6 +75,8 @@ bool Track::transitionState(TrackState newState) {
 
   logger.logStateTransition("Track", TrackStateMachine::toString(oldState),
                             TrackStateMachine::toString(newState));
+  SC_STATE("Track", TrackStateMachine::toString(oldState),
+           TrackStateMachine::toString(newState));
   return true;
 }
 
