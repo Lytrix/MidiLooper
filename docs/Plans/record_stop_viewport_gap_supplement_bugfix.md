@@ -48,4 +48,4 @@ gap handoff retain (GAP-8 / GAP-8b)
 
 ## Next step
 
-**Design session** — ownership, when supplement may run (STOPPED vs PLAYING only), interaction with `shouldHoldSessionExitPublicationGapHandoff`, and whether GAP-8b can ship independently of GAP-8c passes fallback.
+**Design session** — ownership, when supplement may run (STOPPED vs PLAYING only), interaction with `shouldHoldSessionExitPublicationGapHandoff`. **GAP-8b also reverted** (§6.6.5) — do not re-land without design session.

@@ -657,7 +657,7 @@ ownership, transitions, or execution-bound class changes.
 | LSV1 tail sort grain efficiency | RC-P1-SORT | same § Post-RC-P1 | **SHIPPED** — `std::sort` one grain per axis (matches monolithic gather) |
 | Live-record `kExtraBars` reduction | 6C-B | [`record_stop_snapshot_live_record_candidate_capacity_design.md`](../../../docs/Plans/record_stop_snapshot_live_record_candidate_capacity_design.md) | **SHIPPED** — `kExtraBars = 2`; native 25-bar fixture PASS |
 | Record-stop bars 2–5 gap UX | GAP-8 | [`record_stop_snapshot_publication_gap_display_bugfix.md`](../../../docs/Plans/record_stop_snapshot_publication_gap_display_bugfix.md) stage 8 | **SHIPPED** — unpublished snapshot supplements uncovered bars during gap; native fixture; device [`191442`](../../../captures/session_20260912_191442.log) stop→publish 0.94 s |
-| Preview compose parity | stage 7 | same plan stage 7 | **OPEN** — `missed_preview` / `compose_miss` tail |
+| Preview compose parity | stage 7 | [`record_stop_stage_7_preview_compose_parity_bugfix.md`](../../../docs/Plans/record_stop_stage_7_preview_compose_parity_bugfix.md) | **IN PROGRESS** — post-publish non-zero in [`130411`](../../../captures/session_20260912_130411.log) |
 
 Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
 [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../../../docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md).
@@ -667,8 +667,8 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
 - [x] 6.6.2 **RC-P1-SORT** — `sortNotesOneGrain` / `sortEventsOneGrain` use monolithic `std::sort` comparators (one grain each); byte identity tests PASS.
 - [x] 6.6.3 **6C-B** — `kExtraBars` **16 → 2** in `liveRecordNewParentLength`; native `test_loop_take_survival` 18/25-bar fixtures PASS; device recapture optional.
 - [x] 6.6.4 **GAP-8** — `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` during `shouldHoldSessionExitPublicationGapHandoff`; display-only bridge from `unpublishedSnapshot()`; native `test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot`; device improved gap [`191442`](../../../captures/session_20260912_191442.log).
-- [ ] 6.6.5 **GAP-8b** — stale published root during session-exit publish; **DEFERRED** (was in `c16ec598`, reverted `3c9dcd4a` with GAP-8c).
-- [ ] 6.6.6 **GAP-8c** — record-stop viewport gap supplement; **REVERTED** [`204310`](../../../captures/session_20260912_204310.log); design session before re-implementation — [`record_stop_viewport_gap_supplement_bugfix.md`](../../../docs/Plans/record_stop_viewport_gap_supplement_bugfix.md).
-- [ ] 6.6.7 **Stage 7** — re-check `missed_preview` / `compose_miss` after 6.6.3–6.6.4; fix only with native fixture if non-zero post-publish.
+- [ ] 6.6.5 **GAP-8b** — stale published root during session-exit publish; **REVERTED** with `3c9dcd4a` (bundled GAP-8c); deferred — do not re-land without design session.
+- [ ] 6.6.6 **GAP-8c** — record-stop viewport gap supplement; **REVERTED** [`204310`](../../../captures/session_20260912_204310.log); design session — [`record_stop_viewport_gap_supplement_bugfix.md`](../../../docs/Plans/record_stop_viewport_gap_supplement_bugfix.md).
+- [ ] 6.6.7 **Stage 7** — **IN PROGRESS** — post-publish `missed_preview` / `compose_miss` in [`130411`](../../../captures/session_20260912_130411.log); plan [`record_stop_stage_7_preview_compose_parity_bugfix.md`](../../../docs/Plans/record_stop_stage_7_preview_compose_parity_bugfix.md).
 
-**Suggested implementation order:** 6.6.3 → 6.6.2 → 6.6.4 → design GAP-8b/8c → 6.6.7 → 6.6.1 (failure-path hardening last).
+**Suggested implementation order:** 6.6.7 (active) → design GAP-8b/8c → 6.6.1 (failure-path hardening last).
