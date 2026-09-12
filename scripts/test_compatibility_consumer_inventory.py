@@ -15,6 +15,7 @@ _PASSES_MATERIALIZED_STORE_RE = re.compile(r"\bpassesMaterializedStore_")
 _GATHER_COMMITTED_RE = re.compile(
     r"\bgatherCommittedEvents(?:InWindow|WithCapture|ForDerivedView)?\s*\("
 )
+_COPY_COMMITTED_PASS_REPLAY_RE = re.compile(r"\bcopyCommittedPassReplayEvents\s*\(")
 
 _HOT_PATH_FORBID = frozenset(
     {
@@ -37,6 +38,14 @@ _MATERIALIZE_TO_EVENT_VECTOR_ALLOW = frozenset(
 
 # OpenSpec 6.3.4 — gatherCommittedEvents* retired; no production allowlist.
 _GATHER_COMMITTED_ALLOW = frozenset()
+
+# OpenSpec 6.3.5 — capture construction replay retired; pass replay owner only.
+_COPY_COMMITTED_PASS_REPLAY_ALLOW = frozenset(
+    {
+        "src/Loop/LoopMaterialization.cpp",
+        "include/Loop.h",
+    }
+)
 
 # OpenSpec 6.3.1 — C1-a session-exit gather retired at these owners.
 _C1_A_GATHER_RETIRED_SITES = frozenset(
@@ -118,6 +127,11 @@ class CompatibilityConsumerInventoryTests(unittest.TestCase):
     def test_gather_committed_only_in_allowlist(self) -> None:
         hits = _scan_cpp_headers(_GATHER_COMMITTED_RE)
         unexpected = _unexpected(hits, _GATHER_COMMITTED_ALLOW)
+        self.assertEqual(unexpected, {}, unexpected)
+
+    def test_copy_committed_pass_replay_only_in_machinery_owner(self) -> None:
+        hits = _scan_cpp_headers(_COPY_COMMITTED_PASS_REPLAY_RE)
+        unexpected = _unexpected(hits, _COPY_COMMITTED_PASS_REPLAY_ALLOW)
         self.assertEqual(unexpected, {}, unexpected)
 
     def test_blocker_inventory_count_stable(self) -> None:

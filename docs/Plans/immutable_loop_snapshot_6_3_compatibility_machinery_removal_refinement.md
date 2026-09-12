@@ -40,7 +40,7 @@ reintroduce synchronous `tryPublishSessionExitSnapshot` on the MIDI stop path.
 | **6.3.2** | Post-record visual continuity during deferred publication gap (no C1-a restore) | **SHIPPED** — [plan](immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md); deferred record-start preview polish in same plan |
 | **6.3.3** | Remove `passesMaterializedStore_`, `materializeEditViewFromPasses`, `midiEvents()` consumer paths | **SHIPPED** |
 | **6.3.4** | Remove `gatherCommittedEvents*` APIs and `LoopMaterialization` pass-replay gather | **SHIPPED** |
-| **6.3.5** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | pending |
+| **6.3.5** | Remove capture `copyCommittedPassReplayEvents` / construction replay; snapshot-only capture source | **SHIPPED** |
 | **6.3.6** | Remove `materializeToEventVector` and LCR maintained-history construction | pending |
 | **6.3.7** | Delete `isPlaybackSessionExitPublicationGap` if unused; host gate finalization; docs + OpenSpec 6.4/6.5 handoff | pending |
 
@@ -95,6 +95,32 @@ directly. Host inventory allowlist for `gatherCommittedEvents*` is empty.
 | RAM1 `teensy41-capture-serial` | **6880** locals |
 | HITL `base` core | **PASS** [`023806`](../../captures/session_20260912_023806.log) — transitions, notes, DISP, undo/redo |
 | HITL persist `result` stage | **flake** — `persistence_stage_missing:result` (5.7 class; not 6.3.4) |
+
+## 6.3.5 — capture construction replay retirement (SHIPPED)
+
+**Decision:** `LoopCapture` construction helpers are snapshot-only.
+`gatherConstructionCommittedEvents` delegates to `tryCopyCurrentSnapshotEditViewEvents`
+only; `gatherNarrowCompatCommittedEvents` / `shouldMaterializeCaptureCompatFromPasses`
+removed. `liveEventCount` uses snapshot first, else `mergeActiveCapturePasses` +
+capture store (no `copyCommittedPassReplayEvents` in capture). Host inventory gates
+`copyCommittedPassReplayEvents` to `LoopMaterialization.cpp` only.
+
+### Files
+
+- `src/Loop/LoopCapture.cpp` — snapshot-only construction + `liveEventCount`
+- `scripts/test_b7_b8_construction_consumer_gate.py` — B8 snapshot-only gate
+- `scripts/test_compatibility_consumer_inventory.py` — pass-replay allowlist
+- `test/test_overdub_source_view` — snapshot-published fixtures for source-view tests
+
+### Verification (6.3.5)
+
+| Gate | Status |
+|---|---|
+| Host B7/B8 + compatibility inventory (11 tests) | **PASS** |
+| Native `pio test -e native` | **1699/1705** (1 skipped) |
+| RAM1 `teensy41-capture-serial` | **6880** locals |
+| HITL `base` core | **PASS** [`024434`](../../captures/session_20260912_024434.log) — transitions, notes, DISP, undo/redo |
+| HITL persist `result` stage | **flake** — `persistence_stage_missing:result` (5.7 class; not 6.3.5) |
 
 ## Explicit non-goals (6.3 parent)
 

@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 6.3.4 SHIPPED; next 6.3.5)
+Last updated: 2026-09-12 (OpenSpec 6.3.5 SHIPPED; next 6.3.6)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -10,10 +10,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**Now — OpenSpec 6.3.5+ (machinery removal).**
-Next: capture `copyCommittedPassReplayEvents` / construction replay removal.
+**Now — OpenSpec 6.3.6+ (machinery removal).**
+Next: `materializeToEventVector` and LCR maintained-history construction removal.
 Parent plan:
 [`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md).
+
+**Prior — OpenSpec 6.3.5 SHIPPED (2026-09-12).**
+Capture construction replay retired — `gatherConstructionCommittedEvents` snapshot-only;
+`copyCommittedPassReplayEvents` removed from `LoopCapture`. Native **1699/1705**; RAM1
+**6880**. HITL `base` core PASS [`024434`](../../captures/session_20260912_024434.log) /
+report [`024519`](../../captures/host_midi_automation_baseline_20260912_024519.json) — persist
+`result` stage flake (5.7 class), not 6.3.5.
 
 **Prior — OpenSpec 6.3.4 SHIPPED (2026-09-12).**
 Retired `gatherCommittedEvents*` / `mergeMaterializedPassesWithCapture`; callers use

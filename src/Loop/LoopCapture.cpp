@@ -763,33 +763,14 @@ LOOP_COLD_MEM void mergeDisplayNotesByNoteId(NoteUtils::DisplayNoteVec& dest,
   }
 }
 
-bool shouldMaterializeCaptureCompatFromPasses(const Loop& loop) {
-  return loop.publishedSnapshot() && !loop.publishedSnapshotIsCurrent();
-}
-
 bool gatherSnapshotFirstCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
   const void* observedIdentity = nullptr;
   return loop.tryCopyCurrentSnapshotEditViewEvents(out, observedIdentity);
 }
 
 bool gatherConstructionCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
-  if (gatherSnapshotFirstCommittedEvents(loop, out)) {
-    return true;
-  }
-  loop.copyCommittedPassReplayEvents(out);
-  return !out.empty();
-}
-
-bool gatherNarrowCompatCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
-  if (gatherSnapshotFirstCommittedEvents(loop, out)) {
-    return true;
-  }
-  if (!shouldMaterializeCaptureCompatFromPasses(loop)) {
-    out.clear();
-    return false;
-  }
-  loop.copyCommittedPassReplayEvents(out);
-  return !out.empty();
+  out.clear();
+  return gatherSnapshotFirstCommittedEvents(loop, out);
 }
 
 LOOP_COLD_MEM bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
@@ -858,7 +839,7 @@ LOOP_COLD_MEM void Loop::mergeOmittedCommittedNoteOnIdentitiesInto(
     return;
   }
   SessionMidiEventVec committedEvents;
-  if (!gatherNarrowCompatCommittedEvents(*this, committedEvents)) {
+  if (!gatherConstructionCommittedEvents(*this, committedEvents)) {
     return;
   }
   mergeOmittedCommittedNoteOnIdentities(dest, committedEvents);
@@ -1726,9 +1707,17 @@ bool Loop::captureHasNoteOffAfter(uint8_t channel, uint8_t note, uint32_t onTick
 }
 
 size_t Loop::liveEventCount() const {
-  SessionMidiEventVec flat;
-  copyCommittedPassReplayEvents(flat);
-  size_t count = flat.size();
+  SessionMidiEventVec snapshotEvents;
+  if (tryCopyCurrentSnapshotEditViewEvents(snapshotEvents)) {
+    size_t count = snapshotEvents.size();
+    if (captureActive()) {
+      count += capture.store.size();
+    }
+    return count;
+  }
+  SessionMidiEventVec activeEvents;
+  mergeActiveCapturePasses(activeEvents);
+  size_t count = activeEvents.size();
   if (captureActive()) {
     count += capture.store.size();
   }
