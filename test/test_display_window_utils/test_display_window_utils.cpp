@@ -752,6 +752,33 @@ void test_keep_shortest_preserves_distinct_valid_note_ids() {
   TEST_ASSERT_TRUE(DisplayWindowUtils::displayNoteIdentityPresent(notes, longer));
 }
 
+void test_dedupe_composed_display_notes_for_visual_cache_adopt_033502() {
+  NoteUtils::DisplayNoteVec notes;
+  NoteUtils::DisplayNote stale{};
+  stale.noteId = 340;
+  stale.note = 71;
+  stale.startTick = 624;
+  stale.endTick = 624;
+  NoteUtils::DisplayNote live{};
+  live.noteId = 340;
+  live.note = 71;
+  live.startTick = 624;
+  live.endTick = 672;
+  NoteUtils::DisplayNote sibling{};
+  sibling.noteId = 341;
+  sibling.note = 70;
+  sibling.startTick = 672;
+  sibling.endTick = 720;
+  notes.push_back(stale);
+  notes.push_back(live);
+  notes.push_back(stale);
+  notes.push_back(sibling);
+  DisplayWindowUtils::dedupeComposedDisplayNotesForVisualCacheAdopt(notes);
+  TEST_ASSERT_EQUAL(2u, notes.size());
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNoteIdentityPresent(notes, live));
+  TEST_ASSERT_TRUE(DisplayWindowUtils::displayNoteIdentityPresent(notes, sibling));
+}
+
 void test_keep_shortest_end_at_pitch_start() {
   NoteUtils::DisplayNoteVec notes;
   NoteUtils::DisplayNote shorter{};
@@ -2188,6 +2215,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);
+  RUN_TEST(test_dedupe_composed_display_notes_for_visual_cache_adopt_033502);
   RUN_TEST(test_closed_capture_preview_identity_requires_closed_preview_row);
   RUN_TEST(test_keep_shortest_preserves_distinct_valid_note_ids);
   RUN_TEST(test_clamp_display_note_resize_never_grows);

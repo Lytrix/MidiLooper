@@ -2,13 +2,20 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (OpenSpec 6.3 SHIPPED; next 6.4 verification)
+Last updated: 2026-09-12 (OpenSpec 6.4; `033502` display bugfix stages 1–3 shipped)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
 ---
 
 ## Now implementing
+
+**Parallel — [`record_stop_snapshot_publication_gap_display_bugfix.md`](../Plans/record_stop_snapshot_publication_gap_display_bugfix.md) (2026-09-12).**
+Stages **1–3 shipped** (instrumentation downsampling, draw-source prefix contamination,
+viewport adopt dedupe). Native **1700/1706**; RAM1 **6848**. Next: **design session** for
+RC1 record-stop candidate retention and RC2 snapshot admission convergence before stages 4–5.
+HITL long-overdub recapture after stage 2+3 on device (`122537` anchor). Stage **7**
+(post-closeout): re-check `missed_preview` / `compose_miss` only after stages 4–6.
 
 **Now — OpenSpec 6.4 (verification gate).**
 Run `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off.
@@ -54,9 +61,11 @@ Session-exit gap visual continuity — cache no-op + draw-source
 [`020309`](../../captures/session_20260912_020309.log). Plan:
 [`immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md`](../Plans/immutable_loop_snapshot_6_3_2_post_record_visual_continuity_refinement.md).
 
-**OpenSpec 4b.3** (documented, not closed): [`020309`](../../captures/session_20260912_020309.log)
-attribution holds (`ODUB,stop,display` bounded; post-OD PLAYING `midi_gap` ~44 ms from
-`late_on` + `track_order`). Bound not met — keep open.
+**OpenSpec 4b.3** (documented, not closed): [`030210`](../../captures/session_20260912_030210.log)
+(post-6.3.7 HITL) confirms owner split — `ODUB,stop,display` 4.3/7.1 ms; first scored
+post-OD PLAYING `midi_gap` 43.7/44.2 ms (`persist_save` ~43 ms + `late_on`/`late_clk` on
+OD2; first-OD `track_order` ~17 ms). Bound ref [`233642`](../../captures/session_20260901_233642.log)
+OD2 **6.9 ms** when `persist_save` absent. Keep open.
 
 **Prior — OpenSpec 6.3.1 C1-a hold-empty (2026-09-12).**
 Retired B1/B3/B4 `gatherCommittedEvents*` and B2/B5 gap `materializeEditViewFromPasses`;

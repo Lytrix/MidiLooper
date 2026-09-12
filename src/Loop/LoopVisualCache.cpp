@@ -272,6 +272,8 @@ LOOP_COLD_MEM void Loop::applyPendingNoteChangesToVisualCacheNotes() {
 
 LOOP_COLD_MEM void Loop::adoptComposedDisplayNotesFromViewport(const DisplayNoteVec& notes) {
   DisplayNoteVec adopted = notes;
+  DisplayWindowUtils::dedupeComposedDisplayNotesForVisualCacheAdopt(adopted);
+  DisplayWindowUtils::keepShortestEndAtPitchStart(adopted);
   // Membership RC-A keeps bar-crossing NoteRefs in the published snapshot.
   // Do not re-heal visual from committed events here (consumer Stage 3 unwind).
   adoptPartialVisualCacheNotes(visualCache, visualCacheDirty, adopted, loopLengthTicks,
