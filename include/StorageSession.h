@@ -159,6 +159,9 @@ struct CurrentWorkspaceSaveJob {
   uint32_t epochCrcBodyOffset = 0;
   uint32_t epochCrcBodySize = 0;
   DeferredLoopWriteStage loopWriteStage = DeferredLoopWriteStage::Header;
+  /// When armed, LoopPersist job recovery resumes `LoopSnapshotTail` scratch (RC-P1.3).
+  PersistKey loopPersistTailResumeKey{};
+  bool loopPersistTailResumeArmed = false;
   DeferredLoopFinalizeStage loopFinalizeStage = DeferredLoopFinalizeStage::Idle;
   DeferredUndoWriteStage undoWriteStage = DeferredUndoWriteStage::Header;
   LooperState stateSnapshot = LOOPER_IDLE;

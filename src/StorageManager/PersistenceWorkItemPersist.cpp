@@ -236,7 +236,11 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
       return completePersistenceWorkItem(job, "prepare", false);
     }
     storageSession.currentWorkspaceSave.workspaceEpoch = currentWorkspaceEpoch;
-    resetDeferredLoopWriteState();
+    if (!loopPersistTailWriteResumeActive(job.item.key)) {
+      resetDeferredLoopWriteState();
+    } else {
+      resetDeferredLoopFinalizeState();
+    }
     return true;
   }
 

@@ -138,6 +138,13 @@ inline bool shouldHoldSessionExitPublicationGapHandoff(bool preservedHandoffAuth
     return preservedHandoffAuthority;
 }
 
+/// GAP-8: during session-exit publication gap, fill bars the RECORDING handoff
+/// window did not cover from the in-flight unpublished snapshot (display only).
+inline bool shouldSupplementDrawSourceFromUnpublishedSnapshotDuringPublicationGap(
+    bool sessionExitPublicationGap, bool hasUnpublishedSnapshot) {
+    return sessionExitPublicationGap && hasUnpublishedSnapshot;
+}
+
 /// NOTE_EDIT paint/select committed base for the Runtime Request.
 /// Current snapshot when dirty+current; otherwise VisualCache (may be stale —
 /// dirty records idle maintenance debt). Request path must not PassMaterialize.

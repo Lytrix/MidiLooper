@@ -134,6 +134,9 @@ void maybeAdmitDeferredWorkspaceFooter();
 uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state);
 
 void resetDeferredLoopWriteState();
+bool loopPersistTailWriteResumeActive(const PersistKey& key);
+void armLoopPersistTailWriteResume(const PersistKey& key);
+void disarmLoopPersistTailWriteResume();
 void resetDeferredLoopFinalizeState();
 void beginDeferredLoopSlotFinalize();
 bool deferredLoopSlotFinalizeInProgress();

@@ -239,7 +239,7 @@ because any future long gather can re-create it.
 | 6C-B | Reduce `kExtraBars` oversizing | after 6C-A device proof | [plan](record_stop_snapshot_live_record_candidate_capacity_design.md) |
 | P-persist | LSV1 `EditTail` monolith reboot (parallel) | separate bugfix | [`deferred_persist_lsv1_edittail_slice_bugfix.md`](deferred_persist_lsv1_edittail_slice_bugfix.md) — [`144434`](../../captures/session_20260912_144434.log); **not** 6C-B |
 | 7 | Preview compose parity (`missed_preview` / `compose_miss`) | checkpoint after 6C | **OPEN** — [`130411`](../../captures/session_20260912_130411.log) tail still non-zero |
-| 8 | Record-stop bars 2–5 publication gap (UX) | bundled follow-up | **DEFER** — OpenSpec **6.6.4** / [GAP-8 bundle](deferred_persist_lsv1_edittail_slice_bugfix.md#post-rc-p1-follow-up-bundle-deferred); [`164947`](../../captures/session_20260912_164947.log) |
+| 8 | Record-stop bars 2–5 publication gap (UX) | bundled follow-up | **SHIPPED** — `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` (display-only); native + device [`191442`](../../captures/session_20260912_191442.log) stop→publish 0.94 s |
 
 Stage 1 first so stages 2–6 are measured on trustworthy captures. Stages 2 and 3 land before
 the design sessions so the timing damage is removed while the publication questions are
@@ -301,7 +301,7 @@ session comparable to `033502`:
 
 **Stage 7:** preview parity (`missed_preview` / `compose_miss`) remains open after [`130411`](../../captures/session_20260912_130411.log) post-root tail (22 / 15).
 
-**Stage 8 (GAP-8):** bars 2–5 empty immediately after record stop until snapshot publish — **not** a regression of RC1/RC2 (still shipped). [`164947`](../../captures/session_20260912_164947.log): `draw_src snap=0` until +1.8 s (`kind=publish` +0.94 s); long LSV1 save (~170 s) is unrelated to display refresh. Bundled with persist follow-ups [RC-P1.3 + RC-P1-SORT](deferred_persist_lsv1_edittail_slice_bugfix.md#post-rc-p1-follow-up-bundle-deferred). Do not confuse with SD-save completion.
+**Stage 8 (GAP-8) — SHIPPED (2026-09-12):** during session-exit publication gap, uncovered bars in the paint window are supplemented from `Loop::unpublishedSnapshot()` while the RECORDING handoff frame is retained (`shouldHoldSessionExitPublicationGapHandoff`). Display-only — no DEC-045 synchronous publish on stop. Native: `test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot`, `test_supplement_draw_source_from_unpublished_snapshot_predicate`. Device: [`191442`](../../captures/session_20260912_191442.log) stop→publish **0.94 s** (vs [`164947`](../../captures/session_20260912_164947.log) ~1.8 s); long LSV1 save is unrelated to display refresh.
 
 No further DEC-045 amendment for this result unless post-publish bars 2–5 verification exposes a semantic problem (it did not).
 

@@ -1411,6 +1411,42 @@ void test_lsv1_stepped_save_tail_matches_monolithic() {
                                 monolithicBuffer.size());
 }
 
+void test_lsv1_stepped_save_tail_resumes_write_payload_without_regather() {
+  resetSnapshotAllocCounters();
+  const size_t noteCount = findNoteCountForPayloadBytesAtLeast(kLsv1SaveIoChunkBytes * 3u);
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1SnapshotWithNoteCount(noteCount);
+  TEST_ASSERT_NOT_NULL(snapshot.get());
+
+  std::vector<uint8_t> monolithicBuffer;
+  MemoryStorageIo monolithicMem(&monolithicBuffer);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1SaveTail(monolithicMem.io(), *snapshot));
+
+  std::vector<uint8_t> steppedBuffer;
+  MemoryStorageIo steppedMem(&steppedBuffer);
+  LoopSnapshotBodyFormatV1SaveScratch* scratch = acquireLoopSnapshotBodyFormatV1SaveScratch();
+  TEST_ASSERT_NOT_NULL(scratch);
+  beginLoopSnapshotBodyFormatV1SaveGather(*snapshot, *scratch);
+
+  LoopSnapshotBodyFormatV1SaveStepResult stepResult =
+      LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
+  while (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork &&
+         testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(*scratch) == 0u) {
+    stepResult = stepLoopSnapshotBodyFormatV1SaveTail(steppedMem.io(), *snapshot, *scratch, 0, 1);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::MoreWork, stepResult);
+  const uint32_t payloadOffsetAfterFirstSlice =
+      testLoopSnapshotBodyFormatV1SaveWritePayloadOffset(*scratch);
+  TEST_ASSERT_GREATER_THAN(0u, payloadOffsetAfterFirstSlice);
+
+  while (stepResult == LoopSnapshotBodyFormatV1SaveStepResult::MoreWork) {
+    stepResult = stepLoopSnapshotBodyFormatV1SaveTail(steppedMem.io(), *snapshot, *scratch, 0, 1);
+  }
+  TEST_ASSERT_EQUAL(LoopSnapshotBodyFormatV1SaveStepResult::Completed, stepResult);
+  TEST_ASSERT_EQUAL(monolithicBuffer.size(), steppedBuffer.size());
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(monolithicBuffer.data(), steppedBuffer.data(),
+                                monolithicBuffer.size());
+}
+
 void test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic() {
   resetSnapshotAllocCounters();
   const size_t noteCount = findNoteCountForPayloadBytesAtLeast(kLsv1SaveIoChunkBytes + 1u);
@@ -1793,6 +1829,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
   RUN_TEST(test_lsv1_payload_byte_slice_quota_and_io_boundaries);
   RUN_TEST(test_lsv1_stepped_save_tail_matches_monolithic);
+  RUN_TEST(test_lsv1_stepped_save_tail_resumes_write_payload_without_regather);
   RUN_TEST(test_lsv1_stepped_save_tail_large_snapshot_matches_monolithic);
   RUN_TEST(test_lsv1_load_commit_skips_rebuild);
   RUN_TEST(test_lsv1_probe_legacy_and_unsupported);

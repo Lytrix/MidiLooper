@@ -653,20 +653,20 @@ ownership, transitions, or execution-bound class changes.
 
 | Task | ID | Plan | Status (2026-09-12) |
 |---|---|---|---|
-| Persist recovery resume | RC-P1.3 | [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../../../docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md) § Post-RC-P1 | **OPEN** — failure path replays full gather |
-| LSV1 tail sort grain efficiency | RC-P1-SORT | same § Post-RC-P1 | **OPEN** — ~80 s / ~15k sort steps on 25-bar OD3 [`164947`](../../../captures/session_20260912_164947.log) |
-| Live-record `kExtraBars` reduction | 6C-B | [`record_stop_snapshot_live_record_candidate_capacity_design.md`](../../../docs/Plans/record_stop_snapshot_live_record_candidate_capacity_design.md) | **OPEN** — after 6C-A PASS [`144434`](../../../captures/session_20260912_144434.log) |
-| Record-stop bars 2–5 gap UX | GAP-8 | [`record_stop_snapshot_publication_gap_display_bugfix.md`](../../../docs/Plans/record_stop_snapshot_publication_gap_display_bugfix.md) stage 8 | **OPEN** — publish ~1 s, not SD-save [`164947`](../../../captures/session_20260912_164947.log) |
+| Persist recovery resume | RC-P1.3 | [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../../../docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md) § Post-RC-P1 | **SHIPPED** — `loopPersistTailWriteResumeActive` skips gather reset on job retry |
+| LSV1 tail sort grain efficiency | RC-P1-SORT | same § Post-RC-P1 | **SHIPPED** — `std::sort` one grain per axis (matches monolithic gather) |
+| Live-record `kExtraBars` reduction | 6C-B | [`record_stop_snapshot_live_record_candidate_capacity_design.md`](../../../docs/Plans/record_stop_snapshot_live_record_candidate_capacity_design.md) | **SHIPPED** — `kExtraBars = 2`; native 25-bar fixture PASS |
+| Record-stop bars 2–5 gap UX | GAP-8 | [`record_stop_snapshot_publication_gap_display_bugfix.md`](../../../docs/Plans/record_stop_snapshot_publication_gap_display_bugfix.md) stage 8 | **SHIPPED** — unpublished snapshot supplements uncovered bars during gap; native fixture; device [`191442`](../../../captures/session_20260912_191442.log) stop→publish 0.94 s |
 | Preview compose parity | stage 7 | same plan stage 7 | **OPEN** — `missed_preview` / `compose_miss` tail |
 
 Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
 [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../../../docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md).
 
 - [x] 6.6.0 Index post-RC-P1 / gap follow-ups in OpenSpec (this section). RC-P1 core **SHIPPED** [`164947`](../../../captures/session_20260912_164947.log); 6C-A **SHIPPED** [`144434`](../../../captures/session_20260912_144434.log).
-- [ ] 6.6.1 **RC-P1.3** — resume `LoopSnapshotTail` from `writePayloadOffset` on job recovery; no `CapturePass*` replay + `tail_gather_begin` unless scratch invalid. Anchor: [`155724`](../../../captures/session_20260912_155724.log).
-- [ ] 6.6.2 **RC-P1-SORT** — bounded sort grains in `stepLoopSnapshotBodyFormatV1SaveTail`; preserve byte identity vs monolithic oracle. Anchor: [`164947`](../../../captures/session_20260912_164947.log).
-- [ ] 6.6.3 **6C-B** — reduce `kExtraBars` oversizing after 6C-A device proof; separate commit from 6C-A.
-- [ ] 6.6.4 **GAP-8** — record-stop bars 2–5 during publication gap (faster root or committed visual bridge); design session if DEC-045 semantics change.
+- [x] 6.6.1 **RC-P1.3** — resume `LoopSnapshotTail` from `writePayloadOffset` on job recovery; no `CapturePass*` replay + `tail_gather_begin` unless scratch invalid. `armLoopPersistTailWriteResume` + skip `resetDeferredLoopWriteState` on matching `LoopPersist` retry; native `test_lsv1_stepped_save_tail_resumes_write_payload_without_regather`.
+- [x] 6.6.2 **RC-P1-SORT** — `sortNotesOneGrain` / `sortEventsOneGrain` use monolithic `std::sort` comparators (one grain each); byte identity tests PASS.
+- [x] 6.6.3 **6C-B** — `kExtraBars` **16 → 2** in `liveRecordNewParentLength`; native `test_loop_take_survival` 18/25-bar fixtures PASS; device recapture optional.
+- [x] 6.6.4 **GAP-8** — `supplementDrawSourceFromUnpublishedSnapshotForUncoveredBars` during `shouldHoldSessionExitPublicationGapHandoff`; display-only bridge from `unpublishedSnapshot()`; native `test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot`; device improved gap [`191442`](../../../captures/session_20260912_191442.log).
 - [ ] 6.6.5 **Stage 7** — re-check `missed_preview` / `compose_miss` after 6.6.3–6.6.4; fix only with native fixture if non-zero post-publish.
 
 **Suggested implementation order:** 6.6.3 → 6.6.2 → 6.6.4 → 6.6.5 → 6.6.1 (failure-path hardening last).

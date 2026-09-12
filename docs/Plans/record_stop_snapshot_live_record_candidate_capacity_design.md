@@ -1,6 +1,6 @@
 # Stage 6C — Live-record snapshot candidate capacity extension
 
-**Status:** **6C-A SHIPPED** (2026-09-12). **6C-B** tracked as OpenSpec **6.6.3** ([`tasks.md`](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md#66-post-closeout-polish-linked-plans--non-blocking)).
+**Status:** **6C-A + 6C-B SHIPPED** (2026-09-12). `kExtraBars = 2` (was 16). OpenSpec **6.6.3** closed; native 18/25-bar fixtures PASS.
 **Priority:** P0 — first-root publication debt on loops longer than ~17 bars
 **Parent plan:** [`record_stop_snapshot_publication_gap_display_bugfix.md`](record_stop_snapshot_publication_gap_display_bugfix.md)
 **OpenSpec:** [`immutable-loop-snapshot-passes`](../openspec/changes/immutable-loop-snapshot-passes/)
