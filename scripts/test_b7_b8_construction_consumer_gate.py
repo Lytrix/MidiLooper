@@ -28,13 +28,12 @@ class B7B8ConstructionConsumerGateTests(unittest.TestCase):
         text = _B8.read_text(encoding="utf-8", errors="replace")
         self.assertNotRegex(text, _MATERIALIZE_RE)
 
-    def test_b8_capture_uses_construction_owner_not_direct_materialize(self) -> None:
+    def test_b8_capture_uses_snapshot_only_construction_owner(self) -> None:
         text = _B8.read_text(encoding="utf-8", errors="replace")
         self.assertIn("gatherConstructionCommittedEvents", text)
-        self.assertIn("gatherNarrowCompatCommittedEvents", text)
         self.assertIn("tryCopyCurrentSnapshotEditViewEvents", text)
-        self.assertIn("isPlaybackSessionExitPublicationGap", text)
-        self.assertIn("copyCommittedPassReplayEvents", text)
+        self.assertNotIn("copyCommittedPassReplayEvents", text)
+        self.assertNotIn("gatherNarrowCompatCommittedEvents", text)
 
 
 if __name__ == "__main__":

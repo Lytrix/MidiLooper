@@ -3849,25 +3849,42 @@ bool drainSnapshotConstruction(LoopSnapshotConstruction& construction) {
   return construction.complete() && !construction.failed();
 }
 
-ImmutableLoopSnapshotRef buildOccupySnapshot(LoopId loopId, uint32_t loopLength, NoteId noteId,
-                                             uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+struct SnapshotNoteSpec {
+  NoteId noteId;
+  uint8_t pitch;
+  uint32_t startTick;
+  uint32_t endTick;
+};
+
+ImmutableLoopSnapshotRef buildSnapshotWithNotes(LoopId loopId, uint32_t loopLength,
+                                                const SnapshotNoteSpec* specs, size_t count) {
   auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loopId, loopLength, 0, 100, 100));
   LoopSnapshotChangeSet changes;
-  SnapshotNoteChange add{};
-  add.kind = SnapshotChangeKind::Add;
-  add.next.loopId = loopId;
-  add.next.noteId = noteId;
-  add.next.pitch = pitch;
-  add.next.velocity = 100;
-  add.next.startTick = startTick;
-  add.next.endTick = endTick;
-  changes.notes.push_back(add);
+  for (size_t i = 0; i < count; ++i) {
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loopId;
+    add.next.noteId = specs[i].noteId;
+    add.next.pitch = specs[i].pitch;
+    add.next.velocity = 100;
+    add.next.startTick = specs[i].startTick;
+    add.next.endTick = specs[i].endTick;
+    changes.notes.push_back(add);
+  }
   LoopSnapshotConstruction construction(empty, changes);
   TEST_ASSERT_TRUE(drainSnapshotConstruction(construction));
   const ImmutableLoopSnapshotRef snapshot = construction.freeze();
   TEST_ASSERT_TRUE(static_cast<bool>(snapshot));
-  TEST_ASSERT_TRUE(static_cast<bool>(snapshot->findNote(noteId, pitch)));
+  for (size_t i = 0; i < count; ++i) {
+    TEST_ASSERT_TRUE(static_cast<bool>(snapshot->findNote(specs[i].noteId, specs[i].pitch)));
+  }
   return snapshot;
+}
+
+ImmutableLoopSnapshotRef buildOccupySnapshot(LoopId loopId, uint32_t loopLength, NoteId noteId,
+                                             uint8_t pitch, uint32_t startTick, uint32_t endTick) {
+  const SnapshotNoteSpec spec{noteId, pitch, startTick, endTick};
+  return buildSnapshotWithNotes(loopId, loopLength, &spec, 1);
 }
 
 void plantVisualGeometry(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
@@ -3980,6 +3997,13 @@ void test_incomplete_visual_cache_does_not_hide_committed_occupy_identity_174151
   TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(5375, 1, 69, 0)));
   loop.seedRecordPassFromStore(store);
   loop.nextNoteId_ = 113;
+  const SnapshotNoteSpec publishedNotes[] = {
+      {16, 69, 720, 768},
+      {112, 69, 5328, 5375},
+  };
+  loop.storePublishedSnapshotForTest(
+      buildSnapshotWithNotes(loop.loopId, loop.loopLengthTicks, publishedNotes, 2),
+      loop.playbackRevision);
   plantVisualGeometry(loop, 16, 69, 720, 768);
   TEST_ASSERT_NULL(findSpanCacheNote(loop, 112));
   loop.openOverdubSession(0);
@@ -4669,6 +4693,13 @@ void test_source_view_keeps_same_start_a_identities_183043() {
   TEST_ASSERT_TRUE(overdub.append(MidiEvent::NoteOff(88, 1, 69, 0)));
   seedCommittedOverdubPass(loop, overdub, 2, 1);
   loop.nextNoteId_ = 87;
+  const SnapshotNoteSpec publishedNotes[] = {
+      {32, 69, 48, 88},
+      {86, 69, 48, 88},
+  };
+  loop.storePublishedSnapshotForTest(
+      buildSnapshotWithNotes(loop.loopId, loop.loopLengthTicks, publishedNotes, 2),
+      loop.playbackRevision);
   loop.openOverdubSession(48);
   loop.establishOverdubSourceView(48);
   TEST_ASSERT_TRUE(sourceViewHasNoteId(loop, 32));
