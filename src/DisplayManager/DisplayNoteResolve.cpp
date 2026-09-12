@@ -233,24 +233,45 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     }
     sLastDiffLogMs = nowMs;
 
-    auto findByNoteId = [](const DisplayNoteVec& notes, NoteId noteId) -> const DisplayNote* {
+    // Both lookups are linear, so the differential costs visualCache x frame plus
+    // preview x frame. A healthy 16-bar window settles near 80k comparisons; the
+    // duplicate-laden frame in session_20260912_033502 reached about 920k, which is
+    // milliseconds of MIDI-interval time spent measuring. Spend a fixed comparison
+    // budget and report truncation instead of letting the probe scale with the defect.
+    constexpr uint32_t kComposeDiffComparisonBudget = 200000u;
+    uint32_t comparisonBudget = kComposeDiffComparisonBudget;
+    const auto spendComparisons = [&comparisonBudget](size_t count) {
+        const uint32_t spent = static_cast<uint32_t>(count);
+        comparisonBudget = comparisonBudget > spent ? comparisonBudget - spent : 0u;
+    };
+
+    auto findByNoteId = [&spendComparisons](const DisplayNoteVec& notes,
+                                            NoteId noteId) -> const DisplayNote* {
         if (noteId == kInvalidNoteId) {
             return nullptr;
         }
+        size_t scanned = 0;
         for (const DisplayNote& note : notes) {
+            ++scanned;
             if (note.noteId == noteId) {
+                spendComparisons(scanned);
                 return &note;
             }
         }
+        spendComparisons(scanned);
         return nullptr;
     };
-    auto findByPitchStart = [](const DisplayNoteVec& notes, uint8_t pitch,
-                               uint32_t startTick) -> const DisplayNote* {
+    auto findByPitchStart = [&spendComparisons](const DisplayNoteVec& notes, uint8_t pitch,
+                                                uint32_t startTick) -> const DisplayNote* {
+        size_t scanned = 0;
         for (const DisplayNote& note : notes) {
+            ++scanned;
             if (note.note == pitch && note.startTick == startTick) {
+                spendComparisons(scanned);
                 return &note;
             }
         }
+        spendComparisons(scanned);
         return nullptr;
     };
     auto emitDiff = [](uint32_t bar, NoteId noteId, const DisplayNote* oldNote,
@@ -296,10 +317,15 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     uint32_t composeMissCount = 0;
     uint32_t logged = 0;
     uint32_t loggedPreviewMiss = 0;
+    bool comparisonBudgetSpent = false;
     constexpr uint32_t kMaxLoggedDiffs = 8;
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
 
     for (const DisplayNote& visual : loop.visualCache.notes) {
+        if (comparisonBudget == 0) {
+            comparisonBudgetSpent = true;
+            break;
+        }
         if (visual.noteId == kInvalidNoteId) {
             continue;
         }
@@ -329,6 +355,10 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     }
 
     for (const DisplayNote& preview : loop.capturePreview.notes) {
+        if (comparisonBudget == 0) {
+            comparisonBudgetSpent = true;
+            break;
+        }
         if (preview.noteId == kInvalidNoteId) {
             continue;
         }
@@ -392,7 +422,7 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
     char layers[208];
     snprintf(layers, sizeof(layers),
              "#CAP,%lu,DIAG,draw_src,layers,visual,%u,preview,%u,sealed,%u,snap,%u,frame,%u,"
-             "hidden,%u,missed_preview,%u,compose_miss,%u",
+             "hidden,%u,missed_preview,%u,compose_miss,%u,trunc,%u",
              static_cast<unsigned long>(micros()),
              static_cast<unsigned>(loop.visualCache.notes.size()),
              static_cast<unsigned>(loop.capturePreview.notes.size()),
@@ -400,7 +430,7 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
              loop.publishedSnapshotIsCurrent() ? 1u : 0u,
              static_cast<unsigned>(drawnNotes.size()), static_cast<unsigned>(hiddenCount),
              static_cast<unsigned>(missedPreviewCount),
-             static_cast<unsigned>(composeMissCount));
+             static_cast<unsigned>(composeMissCount), comparisonBudgetSpent ? 1u : 0u);
     DebugSessionCapture::appendCaptureTextLine(layers);
 
     if (mismatchCount > 0) {

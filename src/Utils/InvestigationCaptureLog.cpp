@@ -66,6 +66,79 @@ uint32_t g_pendingSnapshotIdleStartUs = 0;
 bool g_snapshotIdleReservePending = false;
 bool g_snapshotIdleForcedYieldArmed = false;
 
+// Snapshot idle takes a deferred-idle turn more than 120 times per second, and the
+// four lines below cost about 140 us of that turn. session_20260912_033502 held
+// 61,652 snapshot_idle lines across 128 s, all repeating one unchanged state, which
+// buried the two transitions that mattered. Emit the state line on change plus a
+// heartbeat, and emit the breakdown only for turns that did work.
+constexpr uint32_t kSnapshotIdleHeartbeatMs = 250u;
+// The record-stop candidate discard is the one turn whose discard time matters
+// (`033502` discard=23917 against 14 us elsewhere). Keep that turn's breakdown.
+constexpr uint32_t kSnapshotIdleDiscardReportUs = 100u;
+
+struct SnapshotIdleStateKey {
+  const void* root = nullptr;
+  uint32_t rootRevision = 0;
+  uint32_t playbackRevision = 0;
+  uint32_t queuedPassCount = 0;
+  uint32_t appliedPassCount = 0;
+  uint32_t constructionPassId = 0;
+  uint32_t wrapJournalCount = 0;
+  uint32_t wrapParentRevision = 0;
+  uint8_t wrapFragmentIndex = 0;
+  uint8_t wrapFragmentCount = 0;
+  bool pending = false;
+  bool sessionExitQueued = false;
+  bool inFlightConstruction = false;
+
+  bool operator!=(const SnapshotIdleStateKey& other) const {
+    return root != other.root || rootRevision != other.rootRevision ||
+           playbackRevision != other.playbackRevision ||
+           queuedPassCount != other.queuedPassCount ||
+           appliedPassCount != other.appliedPassCount ||
+           constructionPassId != other.constructionPassId ||
+           wrapJournalCount != other.wrapJournalCount ||
+           wrapParentRevision != other.wrapParentRevision ||
+           wrapFragmentIndex != other.wrapFragmentIndex ||
+           wrapFragmentCount != other.wrapFragmentCount || pending != other.pending ||
+           sessionExitQueued != other.sessionExitQueued ||
+           inFlightConstruction != other.inFlightConstruction;
+  }
+};
+
+SnapshotIdleStateKey g_lastSnapshotIdleStateKey;
+bool g_snapshotIdleStateKeyPrimed = false;
+uint32_t g_lastSnapshotIdleHeartbeatMs = 0;
+
+IC_LOG_MEM SnapshotIdleStateKey snapshotIdleStateKey(Loop& snapshotLoop,
+                                                     const void* root) {
+  SnapshotIdleStateKey key;
+  key.root = root;
+  key.rootRevision = snapshotLoop.publishedSnapshotRevision();
+  key.playbackRevision = snapshotLoop.playbackRevision;
+  key.queuedPassCount = static_cast<uint32_t>(snapshotLoop.pendingSnapshotQueuedPassCount());
+  key.appliedPassCount = static_cast<uint32_t>(snapshotLoop.pendingSnapshotAppliedPassCount());
+  key.constructionPassId =
+      static_cast<uint32_t>(snapshotLoop.pendingSnapshotConstructionPassId());
+  key.wrapJournalCount = static_cast<uint32_t>(snapshotLoop.pendingSnapshotWrapJournalCount());
+  key.wrapParentRevision = snapshotLoop.pendingSnapshotWrapParentRevision();
+  key.wrapFragmentIndex = snapshotLoop.pendingSnapshotWrapFragmentIndex();
+  key.wrapFragmentCount = snapshotLoop.pendingSnapshotWrapFragmentCount();
+  key.pending = snapshotLoop.hasPendingSnapshotPublish();
+  key.sessionExitQueued = snapshotLoop.pendingSnapshotSessionExitQueued();
+  key.inFlightConstruction = snapshotLoop.hasInFlightSnapshotConstruction();
+  return key;
+}
+
+IC_LOG_MEM bool snapshotIdleTurnPerformedWork(Loop& snapshotLoop) {
+  return snapshotLoop.lastSnapshotIdleStartUs() > 0 ||
+         snapshotLoop.lastSnapshotIdlePassChangeUs() > 0 ||
+         snapshotLoop.lastSnapshotIdleStepUs() > 0 ||
+         snapshotLoop.lastSnapshotIdleFinishUs() > 0 ||
+         snapshotLoop.lastSnapshotIdlePublishUs() > 0 ||
+         snapshotLoop.lastSnapshotIdleDiscardUs() >= kSnapshotIdleDiscardReportUs;
+}
+
 IC_LOG_MEM void emitSnapshotIdleReserveLine(uint32_t enterUs, uint32_t startUs,
                                              uint32_t reserveUs) {
   char reserveLine[kCaptureLineBytes];
@@ -92,6 +165,21 @@ IC_LOG_MEM void appendSnapshotIdleLines(Loop& snapshotLoop, uint32_t snapshotIdl
   const uint32_t emitStartUs = micros();
 #endif
   const ImmutableLoopSnapshotRef publishedSnapshot = snapshotLoop.publishedSnapshot();
+
+  const uint32_t nowMs = millis();
+  const SnapshotIdleStateKey stateKey =
+      snapshotIdleStateKey(snapshotLoop, publishedSnapshot.get());
+  const bool heartbeatDue =
+      !g_snapshotIdleStateKeyPrimed ||
+      (nowMs - g_lastSnapshotIdleHeartbeatMs) >= kSnapshotIdleHeartbeatMs;
+  const bool stateChanged = !g_snapshotIdleStateKeyPrimed || stateKey != g_lastSnapshotIdleStateKey;
+  if (!stateChanged && !heartbeatDue) {
+    return;
+  }
+  g_lastSnapshotIdleStateKey = stateKey;
+  g_snapshotIdleStateKeyPrimed = true;
+  g_lastSnapshotIdleHeartbeatMs = nowMs;
+
   char snapshotLine[kCaptureLineBytes];
   snprintf(snapshotLine, sizeof(snapshotLine),
            IC_LOG_FMT("#CAP,%lu,DIAG,snapshot_idle,us=%lu,pending=%u,root=%p,root_rev=%lu,"
@@ -114,6 +202,15 @@ IC_LOG_MEM void appendSnapshotIdleLines(Loop& snapshotLoop, uint32_t snapshotIdl
 #if defined(SESSION_CAPTURE)
   snapshotLoop.addSnapshotIdleEmitUs(micros() - emitStartUs);
 #endif
+
+  if (!snapshotIdleTurnPerformedWork(snapshotLoop)) {
+    if (g_snapshotIdleReservePending) {
+      emitSnapshotIdleReserveLine(nowUs, g_pendingSnapshotIdleStartUs, 0);
+    }
+    g_pendingSnapshotIdleStartUs = snapshotIdleStartUs;
+    g_snapshotIdleReservePending = true;
+    return;
+  }
 
   char childLine[kCaptureLineBytes];
   snprintf(childLine, sizeof(childLine),

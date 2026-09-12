@@ -579,6 +579,43 @@ inline bool shouldAdoptComposedNotesOverVisualCache(size_t composedNoteCount,
          composedNoteCount > visualCacheNoteCount;
 }
 
+/// Viewport adopt only: draw-source prefix contamination can leave many rows
+/// sharing the same `NoteId` and `startTick` with stale zero-length ends
+/// (`033502` 2890 rows / 359 unique). Keep the longest end per identity.
+/// Distinct valid `NoteId`s at the same pitch+start still coexist (`195409`).
+inline void dedupeComposedDisplayNotesForVisualCacheAdopt(NoteUtils::DisplayNoteVec& notes) {
+  if (notes.size() < 2) {
+    return;
+  }
+  NoteUtils::DisplayNoteVec kept;
+  kept.reserve(notes.size());
+  for (size_t i = 0; i < notes.size(); ++i) {
+    const NoteUtils::DisplayNote& note = notes[i];
+    if (note.noteId == kInvalidNoteId) {
+      kept.push_back(note);
+      continue;
+    }
+    bool dominated = false;
+    for (size_t j = 0; j < notes.size(); ++j) {
+      if (i == j) {
+        continue;
+      }
+      const NoteUtils::DisplayNote& other = notes[j];
+      if (other.noteId != note.noteId || other.startTick != note.startTick) {
+        continue;
+      }
+      if (other.endTick > note.endTick) {
+        dominated = true;
+        break;
+      }
+    }
+    if (!dominated) {
+      kept.push_back(note);
+    }
+  }
+  notes.swap(kept);
+}
+
 /// Full-loop idle must not replace a larger cache with a smaller slice
 /// (`000013` Prepared 95→80; `234233` compose 325 then slice 176).
 inline bool shouldKeepVisualCacheOverSmallerFullLoopSlice(size_t visualCacheNoteCount,

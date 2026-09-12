@@ -227,6 +227,18 @@ DISP_CAPTURE_MEM void storeCommittedDrawSourcePrefix(const NoteUtils::DisplayNot
                      gathered.begin() + static_cast<std::ptrdiff_t>(committedEnd));
 }
 
+/// Session-exit gap handoff during capture keeps the prior composed frame visible,
+/// but the committed prefix must stay overlay-free. `033502` folded preview rows
+/// into the prefix and Reuse re-appended them every frame (2890 rows / 359 unique).
+DISP_CAPTURE_MEM void retainDrawSourceHandoffCommittedPrefix(
+    const NoteUtils::DisplayNoteVec& handoffFrame, size_t gatheredCommittedEnd,
+    size_t priorCommittedEnd, NoteUtils::DisplayNoteVec& prefixOut, size_t& committedEndOut) {
+    const size_t committedOnlyEnd =
+        gatheredCommittedEnd > priorCommittedEnd ? gatheredCommittedEnd : priorCommittedEnd;
+    storeCommittedDrawSourcePrefix(handoffFrame, committedOnlyEnd, prefixOut);
+    committedEndOut = committedOnlyEnd;
+}
+
 DISP_CAPTURE_MEM void gatherCommittedDrawSourceBars(const Loop& loop, uint32_t firstBar,
                                                     uint32_t lastBar, uint8_t pitchLow,
                                                     uint8_t pitchHigh, NoteUtils::DisplayNoteVec& out,
@@ -666,12 +678,13 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             windowStart > liveDrawSourceKey_.windowStart ? lastBar : firstBar;
         gatherCommittedDrawSourceBars(loop, enteringBar, enteringBar, resolvedPitchLow,
                                       resolvedPitchHigh, candidate, committedDisplayEnd);
-        storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
+        const size_t gatheredCommittedEnd = committedDisplayEnd;
+        storeCommittedDrawSourcePrefix(candidate, gatheredCommittedEnd, liveDisplayCommittedPrefix_);
         applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
         if (holdSessionExitGapHandoff) {
-            committedDisplayEnd = liveDisplayNotes.size();
-            storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
-                                           liveDisplayCommittedPrefix_);
+            retainDrawSourceHandoffCommittedPrefix(
+                liveDisplayNotes, gatheredCommittedEnd, liveDisplayCacheCommittedNoteCount_,
+                liveDisplayCommittedPrefix_, committedDisplayEnd);
         } else {
             liveDisplayNotes.swap(candidate);
         }
@@ -688,8 +701,8 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             candidate.assign(loop.visualCache.notes.begin(), loop.visualCache.notes.end());
             committedDisplayEnd = candidate.size();
         }
-        storeCommittedDrawSourcePrefix(candidate, committedDisplayEnd, liveDisplayCommittedPrefix_);
-        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        const size_t gatheredCommittedEnd = committedDisplayEnd;
+        const size_t priorCommittedEnd = liveDisplayCacheCommittedNoteCount_;
         const bool snapshotSelected =
             DisplayWindowUtils::shouldGatherPublishedSnapshotForDrawSource(
                 static_cast<bool>(loop.publishedSnapshot()), loop.captureActive(),
@@ -702,10 +715,23 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
             DisplayWindowUtils::shouldRetainRecordStopHandoffSeed(snapshotSelected,
                                                                  visualCleanNonempty) &&
             !liveDisplayNotes.empty();
-        if (holdSessionExitGapHandoff || retainHandoffSeed) {
-            committedDisplayEnd = liveDisplayNotes.size();
-            storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+        const bool willRetainHandoffFrame =
+            holdSessionExitGapHandoff || retainHandoffSeed;
+        if (!willRetainHandoffFrame || !captureOrOverdubActive || gatheredCommittedEnd > 0) {
+            storeCommittedDrawSourcePrefix(candidate, gatheredCommittedEnd,
                                            liveDisplayCommittedPrefix_);
+        }
+        applyDrawSourceOverlays(loop, firstBar, lastBar, candidate, committedDisplayEnd);
+        if (willRetainHandoffFrame) {
+            if (captureOrOverdubActive) {
+                retainDrawSourceHandoffCommittedPrefix(
+                    liveDisplayNotes, gatheredCommittedEnd, priorCommittedEnd,
+                    liveDisplayCommittedPrefix_, committedDisplayEnd);
+            } else {
+                committedDisplayEnd = liveDisplayNotes.size();
+                storeCommittedDrawSourcePrefix(liveDisplayNotes, committedDisplayEnd,
+                                               liveDisplayCommittedPrefix_);
+            }
         } else {
             liveDisplayNotes.swap(candidate);
         }

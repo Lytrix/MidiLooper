@@ -79,6 +79,22 @@ LOOP_COLD_MEM __attribute__((noinline)) void emitSnapshotUnitCapture(
            static_cast<unsigned long>(snapshotAllocSlabCount()));
   DebugSessionCapture::appendCaptureTextLine(line);
 }
+
+// `step` dominates snapshot_unit volume (`033502`: 4,991 of 5,134 lines) while
+// start / finish / publish are the rare decisive events. Report steps on an interval
+// so a construction that stops advancing is still visible without one line per unit.
+constexpr uint32_t kSnapshotUnitStepReportIntervalMs = 25u;
+
+LOOP_COLD_MEM __attribute__((noinline)) void emitSnapshotUnitStepCapture(const Loop& loop,
+                                                                        uint32_t heapBefore) {
+  static uint32_t sLastStepReportMs = 0;
+  const uint32_t nowMs = millis();
+  if (sLastStepReportMs != 0 && (nowMs - sLastStepReportMs) < kSnapshotUnitStepReportIntervalMs) {
+    return;
+  }
+  sLastStepReportMs = nowMs;
+  emitSnapshotUnitCapture(loop, "step", heapBefore);
+}
 #endif
 
 namespace {
@@ -1743,7 +1759,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     }
     steppedThisCall = true;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    emitSnapshotUnitCapture(*this, "step", heapBefore);
+    emitSnapshotUnitStepCapture(*this, heapBefore);
 #endif
     if (box.construction->failed()) {
       box.construction.reset();
