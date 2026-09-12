@@ -15,7 +15,8 @@ and 4b.4 are complete under Ring B round-robin. Phase **5.x** complete.
 [`001343`](../../../captures/session_20260912_001343.log)). **6.2.3** B2/B5/B6 C1-a / stale-root SHIPPED 2026-09-12. **6.2.4** B7/B8 +
 **6.2 parent closeout** SHIPPED 2026-09-12 (`_6_2_BLOCKER_SITES` empty; native
 **1825/1830**; HITL core [`002259`](../../../captures/session_20260912_002259.log)).
-Open now: **4b.3**, **6.3–6.5**.
+**6.4 SHIPPED 2026-09-12** (sign-off on [`164947`](../../../captures/session_20260912_164947.log); gates not re-run).
+Open now: **4b.3**, **6.5** (archive gate). **6.6** post-closeout polish tracked below — **does not block 6.5**.
 
 - [x] 1.1 Complete formal architecture reassessment for immutable snapshots, including ownership, transitions, execution bounds, storage, and compatibility removal. Recommendation is recorded in `ARCHITECTURE-REASSESSMENT.md`.
 - [x] 1.2 Record the approved decision in `docs/DECISION_LOG.md` and update the refinement plan, parent runtime architecture, derived-representation authority, storage authority, and naming with the accepted `LoopPass` / `LoopSnapshot` boundary. The logical indexes and fixed-capacity physical directory are approved and implemented; remaining consumer bounds and storage layout stay separately gated.
@@ -501,6 +502,19 @@ closed for `DisplayResolveLiveCapture`.
       [`233642`](../../../captures/session_20260901_233642.log) first post-OD PLAYING
       gap **6.9 ms**). No 6.3.2 regression. Keep open — next owners `late_on` +
       `track_order`, not stop-display.
+      [`030210`](../../../captures/session_20260912_030210.log) (HITL `base` PASS
+      after 6.3.7): same class — `ODUB,stop,display` **4.3 ms** / **7.1 ms**;
+      first scored post-OD PLAYING `midi_gap` **43.7 ms** (OD1) /
+      **44.2 ms** (OD2). OD1 window: `persist_save=42764`, `track_order=16845`,
+      `tracks=17028`, `late_on=12525`, `load_frame=6840`, `usbdisp=429`.
+      OD2 window: `persist_save=42910`, `late_on=24526`, `late_clk=22113`,
+      `load_frame=6838`, `usbdisp=1043`, `track_order=708`. Reference
+      [`233642`](../../../captures/session_20260901_233642.log) OD2 bound window had
+      `midi_gap=6930`, `load_frame=5260`, `late_on=11296`, `persist_save=1` — bound
+      met when deferred persist is absent from the scored window. No 6.3.x
+      improvement. Keep open — add `persist_save` to attribution; owners remain
+      post-stop PLAYING maintenance (`late_on` / deferred persist / first-OD
+      `track_order`), not `ODUB,stop,display`.
 - [x] 4b.4 Bound `DisplayResolveLiveCapture` during OVERDUBBING so a live
       compose does not take a 50 ms class slice. Evidence: `004934`
       `timing_max,DisplayResolveLiveCapture,58188` at 150.535 s. Owner stays
@@ -619,5 +633,40 @@ to immutable snapshot content.
     [`030210`](../../../captures/session_20260912_030210.log) (persist `result=ok`).
   - **6.3.7 SHIPPED 2026-09-12:** gap predicate retained for visual hold-only; dead B1
     `session_exit_compat` telemetry removed; host closeout gates finalized. Native **1699/1705**.
-- [ ] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
-- [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after all gates pass.
+- [x] 6.4 Run capture-serial firmware build first with RAM1 locals at least 4000, then `pio test -e native`, followed by required existing HITL verification.
+  - **6.4 SHIPPED 2026-09-12** (user sign-off — gates not re-run this session):
+    - **RAM1** **6848** (`teensy41-capture-serial`, RC-P1 close build `325d6d6a`).
+    - **Native** **1707/1707** at RC-P1 close (`325d6d6a`); 6C-A (`7b935a79`) adds survival fixtures — count not re-run.
+    - **Device** [`164947`](../../../captures/session_20260912_164947.log): 25-bar record + multi-OD; LSV1 OD3 save
+      `tail_gather_begin,bc=25` → `loop_snapshot_tail,done` → `payload_done` → `SAVE,completed` (×2 full chains);
+      0 `payload_slice failed`; no `#CAPTURE_RECONNECT`. Supersedes dedicated HITL `base` re-run for §6.4 closeout
+      (6.3.7 HITL [`030210`](../../../captures/session_20260912_030210.log) remains baseline regression anchor).
+- [ ] 6.5 Update runtime docs, deliverable tracking, the refinement plan, and archived specs; sync and archive only after **6.4** gates pass. **6.6 does not block archive.**
+
+## 6.6 Post-closeout polish (linked plans — non-blocking)
+
+Long-loop record/overdub + LSV1 persist **quality** slices that complete a good
+working solution but are outside the §6.3 compatibility-retirement contract.
+Each item keeps its **plan doc as implementation authority**; this section is
+OpenSpec tracking only. Post the phase architecture gate before firmware when
+ownership, transitions, or execution-bound class changes.
+
+| Task | ID | Plan | Status (2026-09-12) |
+|---|---|---|---|
+| Persist recovery resume | RC-P1.3 | [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../../../docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md) § Post-RC-P1 | **OPEN** — failure path replays full gather |
+| LSV1 tail sort grain efficiency | RC-P1-SORT | same § Post-RC-P1 | **OPEN** — ~80 s / ~15k sort steps on 25-bar OD3 [`164947`](../../../captures/session_20260912_164947.log) |
+| Live-record `kExtraBars` reduction | 6C-B | [`record_stop_snapshot_live_record_candidate_capacity_design.md`](../../../docs/Plans/record_stop_snapshot_live_record_candidate_capacity_design.md) | **OPEN** — after 6C-A PASS [`144434`](../../../captures/session_20260912_144434.log) |
+| Record-stop bars 2–5 gap UX | GAP-8 | [`record_stop_snapshot_publication_gap_display_bugfix.md`](../../../docs/Plans/record_stop_snapshot_publication_gap_display_bugfix.md) stage 8 | **OPEN** — publish ~1 s, not SD-save [`164947`](../../../captures/session_20260912_164947.log) |
+| Preview compose parity | stage 7 | same plan stage 7 | **OPEN** — `missed_preview` / `compose_miss` tail |
+
+Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
+[`deferred_persist_lsv1_edittail_slice_bugfix.md`](../../../docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md).
+
+- [x] 6.6.0 Index post-RC-P1 / gap follow-ups in OpenSpec (this section). RC-P1 core **SHIPPED** [`164947`](../../../captures/session_20260912_164947.log); 6C-A **SHIPPED** [`144434`](../../../captures/session_20260912_144434.log).
+- [ ] 6.6.1 **RC-P1.3** — resume `LoopSnapshotTail` from `writePayloadOffset` on job recovery; no `CapturePass*` replay + `tail_gather_begin` unless scratch invalid. Anchor: [`155724`](../../../captures/session_20260912_155724.log).
+- [ ] 6.6.2 **RC-P1-SORT** — bounded sort grains in `stepLoopSnapshotBodyFormatV1SaveTail`; preserve byte identity vs monolithic oracle. Anchor: [`164947`](../../../captures/session_20260912_164947.log).
+- [ ] 6.6.3 **6C-B** — reduce `kExtraBars` oversizing after 6C-A device proof; separate commit from 6C-A.
+- [ ] 6.6.4 **GAP-8** — record-stop bars 2–5 during publication gap (faster root or committed visual bridge); design session if DEC-045 semantics change.
+- [ ] 6.6.5 **Stage 7** — re-check `missed_preview` / `compose_miss` after 6.6.3–6.6.4; fix only with native fixture if non-zero post-publish.
+
+**Suggested implementation order:** 6.6.3 → 6.6.2 → 6.6.4 → 6.6.5 → 6.6.1 (failure-path hardening last).

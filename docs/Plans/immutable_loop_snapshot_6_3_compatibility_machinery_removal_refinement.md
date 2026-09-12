@@ -176,10 +176,10 @@ are next.
 
 ### Handoff — OpenSpec 6.4 / 6.5
 
-| Task | Scope |
-|---|---|
-| **6.4** | `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off |
-| **6.5** | Runtime docs, `DELIVERABLE_TRACKING`, spec sync + archive |
+| Task | Scope | Status |
+|---|---|---|
+| **6.4** | `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, device sign-off | **SHIPPED 2026-09-12** — RAM1 **6848**; native **1707/1707** (RC-P1 close); device [`164947`](../../captures/session_20260912_164947.log) (`loop_snapshot_tail,done` → `SAVE,completed`); HITL `base` re-run waived |
+| **6.5** | Runtime docs, `DELIVERABLE_TRACKING`, spec sync + archive | **OPEN** |
 
 ## Explicit non-goals (6.3 parent)
 

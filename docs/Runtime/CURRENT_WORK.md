@@ -2,7 +2,7 @@
 
 **Highest operational priority.** Defines what to implement **now**. Load with [PROJECT_STATE.md](PROJECT_STATE.md) before planning or coding.
 
-Last updated: 2026-09-12 (RC-P1 A4 PASS; 6C-B unblocked)
+Last updated: 2026-09-12 (OpenSpec 6.4 closed; next 6.5 archive)
 
 Authority hygiene: execution bound class is a gated property — [ExecutionBounds.md](../Authority/Architecture/ExecutionBounds.md), [DEC-043](../DECISION_LOG.md#dec-043-execution-bound-class-is-a-gated-architectural-property). Architecture-checkpoint question 3 is a hard stop for new unbounded interval work. No interval reservation / `RuntimeWorkBudget::admit`.
 
@@ -15,11 +15,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 **Stage 6B DEFERRED**. **Next:** 6C-B (`kExtraBars` reduction). Stage 7 separate.
 
 **RC-P1 SHIPPED (2026-09-12).** Resumable `LoopSnapshotTail` + A4.2 `writeLoopSnapshotPayloadByteSlice` quota fix. Device A4 PASS [`164947`](../../captures/session_20260912_164947.log): `loop_snapshot_tail,done` → `payload_done` → `SAVE,completed`. Plan frozen:
-[`deferred_persist_lsv1_edittail_slice_bugfix.md`](../Plans/deferred_persist_lsv1_edittail_slice_bugfix.md). RC-P2 / RC-P1.3 **DEFER**. **Not** Clear bypass.
+[`deferred_persist_lsv1_edittail_slice_bugfix.md`](../Plans/deferred_persist_lsv1_edittail_slice_bugfix.md). RC-P2 **DEFER**.
 
-**Now — OpenSpec 6.4 (verification gate).**
-Run `teensy41-capture-serial` RAM1 ≥ 4000, `pio test -e native`, HITL `base` sign-off.
-Then **6.5** archive/sync. Parent plan:
+**Deferred follow-up bundle** — OpenSpec [`§6.6`](../openspec/changes/immutable-loop-snapshot-passes/tasks.md#66-post-closeout-polish-linked-plans--non-blocking) (non-blocking for archive): RC-P1.3, RC-P1-SORT, 6C-B, GAP-8, stage 7. Plan authority: [persist](deferred_persist_lsv1_edittail_slice_bugfix.md), [gap](record_stop_snapshot_publication_gap_display_bugfix.md), [capacity](record_stop_snapshot_live_record_candidate_capacity_design.md).
+
+**OpenSpec 6.4 SHIPPED (2026-09-12).** Sign-off on device [`164947`](../../captures/session_20260912_164947.log)
+(LSV1 tail + `SAVE,completed`); RAM1 **6848**; native **1707/1707** at RC-P1 close — gates not re-run.
+HITL `base` re-run waived; 6.3.7 anchor [`030210`](../../captures/session_20260912_030210.log) unchanged.
+
+**Now — OpenSpec 6.5 (archive/sync).** Runtime docs, deliverable tracking, spec sync + archive.
+Parent plan:
 [`immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md`](../Plans/immutable_loop_snapshot_6_3_compatibility_machinery_removal_refinement.md) (**SHIPPED**).
 
 **Prior — OpenSpec 6.3.7 SHIPPED (2026-09-12).**
