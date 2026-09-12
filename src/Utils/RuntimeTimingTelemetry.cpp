@@ -797,7 +797,11 @@ RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   if (s.pendingLateEvent) {
     DebugSessionCapture::midiDeadlineLateEvent(midiClass, s.pendingLateUs, s.pendingLateTick);
   }
-  if (s.pendingPlaybackRebuild) {
+  // A first take has no committed source, so its expected hold-empty probe can
+  // recur every loop.  It carries no timing-failure signal and must not flood
+  // the capture ring while the display is sharing the live-capture budget.
+  if (s.pendingPlaybackRebuild &&
+      s.pendingRebuildPath != PlaybackRebuildPath::GatherMissHoldEmpty) {
     DebugSessionCapture::playbackRebuild(s.pendingRebuildDurationUs, s.pendingRebuildWindowStartTick,
                                          s.pendingRebuildWindowLengthTicks, s.pendingRebuildRevision,
                                          s.pendingRebuildTrack, s.pendingRebuildSlot,

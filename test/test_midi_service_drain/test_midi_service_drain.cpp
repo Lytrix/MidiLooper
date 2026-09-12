@@ -201,6 +201,13 @@ void test_stopped_track_snapshot_pauses_during_realtime() {
   TEST_ASSERT_FALSE(MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(false, true));
 }
 
+void test_background_snapshot_is_one_unit_while_selected_keeps_normal_budget() {
+  TEST_ASSERT_EQUAL_UINT8(2u, MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn);
+  TEST_ASSERT_EQUAL_UINT32(8000u, MidiServiceDrain::snapshotIdleConstructionCostUs(
+                                        MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn));
+  TEST_ASSERT_EQUAL_UINT32(4000u, MidiServiceDrain::snapshotIdleConstructionCostUs(1));
+}
+
 void test_snapshot_idle_pauses_during_boot_title_drain() {
   TEST_ASSERT_TRUE(MidiServiceDrain::allowSnapshotIdleDuringBootTitleDrain(false, false));
   TEST_ASSERT_FALSE(MidiServiceDrain::allowSnapshotIdleDuringBootTitleDrain(true, false));
@@ -344,6 +351,7 @@ int main() {
   RUN_TEST(test_live_record_snapshot_starts_after_first_bar);
   RUN_TEST(test_first_record_snapshot_idle_matches_overdub_playing_start);
   RUN_TEST(test_stopped_track_snapshot_pauses_during_realtime);
+  RUN_TEST(test_background_snapshot_is_one_unit_while_selected_keeps_normal_budget);
   RUN_TEST(test_snapshot_idle_pauses_during_boot_title_drain);
   RUN_TEST(test_loaded_snapshot_hydration_stays_off_after_boot);
   RUN_TEST(test_stopped_clock_snapshot_requires_pending_work);

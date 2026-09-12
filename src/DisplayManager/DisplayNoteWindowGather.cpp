@@ -80,12 +80,16 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     const Track& track, Loop& mutLoop, const Loop& loop, uint8_t displaySlot, uint32_t loopLength,
     uint32_t windowStart, uint32_t windowLength) {
     const uint8_t trackIndex = resolveTrackIndex(track);
+    const bool sealedHandoffActive =
+        DisplayWindowUtils::shouldBypassWindowedVisualCacheForSealedCapturePreview(
+            loop.hasSealedCapturePreview(), loop.sealedCapturePreviewIsCovered());
 
     // Prefer filtering visualCache over gather+reconstruct when capture is idle and the
     // cache covers the paint neighborhood. A nonempty dirty prefix must not win — after
     // record stop the first idle slice left 20 notes and later bars never painted
-    // (session_20260825_235954).
-    if (!loop.captureActive() &&
+    // (session_20260825_235954). The fast filter has no sealed-preview overlay,
+    // so it must also yield during the post-stop handoff (`221700`).
+    if (!loop.captureActive() && !sealedHandoffActive &&
         visualCacheCoversFollowWindow(loop, windowStart, windowLength, loopLength)) {
         const bool visualCacheHit =
             liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
@@ -121,7 +125,7 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
         return liveDisplayNotes;
     }
 
-    const bool cacheHit =
+    const bool cacheHit = !sealedHandoffActive &&
         liveWindowGatherValid_ && displaySlot == livePlaybackDisplaySlot_ &&
         trackIndex == livePlaybackDisplayTrack_ &&
         liveMergePlaybackRevision_ == loop.playbackRevision &&
@@ -147,6 +151,19 @@ DISP_COLD_MEM const DisplayNoteVec& DisplayManager::resolveWindowedDisplayNotes(
     rebuildDisplayNotesInWindow(mutLoop, loop, loopLength, gatherStart, gatherLength,
                                 liveDisplayEventBuffer, liveDisplayNotes, true);
     liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
+    if (sealedHandoffActive) {
+        // `rebuildDisplayNotesInWindow` materializes committed content only once
+        // capture has closed. Retain the sealed rows as an overlay until cache
+        // membership proves them covered; otherwise the first PLAYING frame can
+        // transfer an empty/stale detailed window after record stop.
+        for (const NoteUtils::DisplayNote& sealedRow : loop.sealedCapturePreviewNotes()) {
+            if (DisplayWindowUtils::noteIntersectsWindow(
+                    sealedRow.startTick, sealedRow.endTick, gatherStart, gatherLength,
+                    loopLength)) {
+                DisplayWindowUtils::upsertDisplayNoteAtPitchStart(liveDisplayNotes, sealedRow);
+            }
+        }
+    }
     liveMergePlaybackRevision_ = loop.playbackRevision;
     liveMergeCaptureRevision_ = loop.captureDisplayRevision;
     livePlaybackDisplaySlot_ = displaySlot;

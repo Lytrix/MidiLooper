@@ -156,7 +156,8 @@ public:
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   void processDeferredIdleMaintenance(
       uint32_t nowMs, bool postOverdubDrainWindowActive,
-      MidiServiceDrain::DeferredIdleOwner deferredOwner);
+      MidiServiceDrain::DeferredIdleOwner deferredOwner,
+      uint8_t snapshotConstructionUnits = MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn);
   /// One-shot `#CAP,DIAG,stored_notes` from a clean visual cache. SESSION_CAPTURE only.
   /// Gate 0 diagnosis; disable once later-stage overlap validation proofs exist.
   void maybeLogStoredNoteCount();

@@ -455,14 +455,47 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   }
   const uint8_t realtimeTrackCount = trackManager.getTrackCount();
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) {
-    for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
-      Track& track = trackManager.getTrack(i);
-      const bool trackIsRealtime = track.isPlaying() || track.isRecording() ||
-                                   track.isOverdubbing() || track.isStoppedRecording();
-      if (!MidiServiceDrain::allowStoppedTrackSnapshotDuringRealtime(trackIsRealtime, true)) {
-        continue;
+    const uint8_t selectedTrackIndex = trackManager.getSelectedTrackIndex();
+    if (selectedTrackIndex < realtimeTrackCount) {
+      Track& selectedTrack = trackManager.getTrack(selectedTrackIndex);
+      const bool selectedTrackIsRealtime =
+          selectedTrack.isPlaying() || selectedTrack.isRecording() ||
+          selectedTrack.isOverdubbing() || selectedTrack.isStoppedRecording();
+      // Preserve the selected track's existing snapshot behaviour. This is
+      // the current interaction target, including its live-record path.
+      if (selectedTrackIsRealtime) {
+        selectedTrack.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain,
+                                                      deferredOwner);
       }
-      track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner);
+    }
+
+    // A background snapshot may run only when no capture is active, and only
+    // one construction unit is admitted per Snapshot owner turn. Previously
+    // every realtime track could take the normal two-unit allowance in the
+    // same loop turn, multiplying the display stall on multi-track playback.
+    if (!trackManager.anyTrackRecordingOrOverdubbing()) {
+      static uint8_t sBackgroundSnapshotTrackCursor = 0;
+      if (realtimeTrackCount != 0) {
+        for (uint8_t offset = 0; offset < realtimeTrackCount; ++offset) {
+          const uint8_t trackIndex = static_cast<uint8_t>(
+              (sBackgroundSnapshotTrackCursor + offset) % realtimeTrackCount);
+          if (trackIndex == selectedTrackIndex) {
+            continue;
+          }
+          Track& track = trackManager.getTrack(trackIndex);
+          const bool backgroundTrackEligible =
+              (track.isPlaying() || track.isStoppedRecording()) &&
+              !track.isRecording() && !track.isOverdubbing();
+          if (!backgroundTrackEligible) {
+            continue;
+          }
+          track.processDeferredIdleMaintenance(now, postOverdubPlayingMidiDrain, deferredOwner,
+                                               1);
+          sBackgroundSnapshotTrackCursor =
+              static_cast<uint8_t>((trackIndex + 1) % realtimeTrackCount);
+          break;
+        }
+      }
     }
     return;
   }
@@ -630,7 +663,10 @@ void loop() {
 
   HOT_PATH_TELEMETRY_PROCESS_DEFERRED_SUMMARY();
 
-  SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 128 : 64);
+  // A timing-critical turn must not write queued capture text to USB Serial.  The
+  // capture ring's <= 8 budget only sheds non-critical records; larger budgets
+  // drain with Serial.println and visibly stall the OLED during live capture.
+  SC_CAPTURE_FLUSH(timingCriticalTrackActive ? 8 : 64);
 
   // Update SELECT mode for overdubbing if active
   if (editManager.getCurrentState() == editManager.getSelectNoteState()) {
@@ -733,13 +769,16 @@ void loop() {
 #endif
   const bool deferredSavePending = StorageManager::hasDeferredSaveWork();
   const bool prioritizeWorkspaceSaveDrain = StorageManager::shouldPrioritizeWorkspaceSaveDrain();
-  const bool activePersistenceWorkItem = StorageManager::hasActivePersistenceWorkItem();
+  // A queued workspace save is urgent only while transport is idle. It must
+  // never bypass record/overdub/playback timing protection (213530).
+  const bool allowPrioritizedWorkspaceSaveDrain =
+      prioritizeWorkspaceSaveDrain && !timingCriticalTrackActive;
   const bool allowDeferredSaveAfterLoadFrame =
-      prioritizeWorkspaceSaveDrain ||
+      allowPrioritizedWorkspaceSaveDrain ||
       MidiServiceDrain::allowDeferredSaveAfterLoadFrame(timingCriticalTrackActive, loadFrameUs);
   const bool runDeferredSaveState =
       deferredSavePending &&
-      (prioritizeWorkspaceSaveDrain ||
+      (allowPrioritizedWorkspaceSaveDrain ||
        (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::Persistence &&
         deferredIdleOwnerAllowed && allowDeferredSaveAfterLoadFrame &&
         MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending)));
@@ -795,4 +834,3 @@ void loop() {
   //   }
   // }
 }
-

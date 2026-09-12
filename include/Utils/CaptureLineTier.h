@@ -44,6 +44,12 @@ inline bool isTierALine(const char* line) {
   if (tag == nullptr) {
     return false;
   }
+  // `hold_empty` is the expected no-committed-source probe during a first take.
+  // It is intentionally lossy so it cannot monopolize the timing-critical ring.
+  if (strncmp(tag, "DIAG,playback_build,hold_empty,",
+              strlen("DIAG,playback_build,hold_empty,")) == 0) {
+    return false;
+  }
   return strncmp(tag, "ST,", 3) == 0 || strncmp(tag, "PERS,", 5) == 0 ||
          strncmp(tag, "RECS,", 5) == 0 || strncmp(tag, "HDR,", 4) == 0 ||
          strncmp(tag, "ODUB,stop,", 10) == 0 ||

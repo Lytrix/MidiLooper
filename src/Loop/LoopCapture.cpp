@@ -1487,15 +1487,10 @@ LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {
     return;
   }
   for (size_t index = 0; index < capturePreview.notes.size(); ++index) {
-    // Open holds keep sounding into the next pass and the live Capture tier still paints them.
-    // Retaining one would double-paint the same note beside its fresh capture row.
-    const bool open = std::find(capturePreview.openNoteIndices.begin(),
-                                capturePreview.openNoteIndices.end(),
-                                static_cast<uint32_t>(index)) !=
-                      capturePreview.openNoteIndices.end();
-    if (open) {
-      continue;
-    }
+    // The capture store is cleared immediately after sealing. Retain every
+    // preview row, including an open hold, so its final stop/wrap span never
+    // loses display authority before the committed cache proves membership.
+    // Draw-side upsert keeps this handoff from double-painting a fresh row.
     DisplayWindowUtils::upsertDisplayNoteAtPitchStart(sealedCapturePreviewNotes_,
                                                       capturePreview.notes[index]);
   }
