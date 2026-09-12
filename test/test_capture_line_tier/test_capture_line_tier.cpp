@@ -119,6 +119,9 @@ void test_timing_telemetry_lines_are_tier_a() {
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine(
           "#CAP,6701480,DIAG,playback_build,compatibility,12345,0,384,9,3,1,2"));
+  TEST_ASSERT_FALSE(
+      CaptureLineTier::isTierALine(
+          "#CAP,6701480,DIAG,playback_build,hold_empty,6,0,1536,1,6,0,1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine(
       "#CAP,6701480,DIAG,playback_build,incremental,0,0,8448,4,4,0,1"));
   TEST_ASSERT_TRUE(

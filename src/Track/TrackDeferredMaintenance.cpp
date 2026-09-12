@@ -816,7 +816,7 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
-    MidiServiceDrain::DeferredIdleOwner deferredOwner) {
+    MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
   updateGrowingRecordLoopLength(clockManager.getCurrentTick());
   Loop& activeLoop = getActiveLoop();
   // Free the seal-handoff rows once a committed tier carries them. Paint reads the coverage
@@ -893,13 +893,13 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     if (MidiServiceDrain::kSnapshotIdleReserveYieldEnabled &&
         !MidiServiceDrain::allowSnapshotIdleReserve(
             remainingUs, timingCritical,
-            MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn)) {
+            snapshotConstructionUnits)) {
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
       InvestigationCaptureLog::appendSnapshotIdleYieldLine(
           remainingUs, MidiServiceDrain::kSnapshotIdleSafetyMarginUs,
           MidiServiceDrain::admittedSnapshotIdleUs(remainingUs),
           MidiServiceDrain::snapshotIdleConstructionCostUs(
-              MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn),
+              snapshotConstructionUnits),
           timingCritical, snapshotLoop.hasPendingSnapshotPublish(),
           snapshotLoop.publishedSnapshotRevision());
 #endif
@@ -913,7 +913,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
               : tickPhaseInLoop(getEffectivePlaybackTick(clockManager.getCurrentTick()),
                                 snapshotLoop.startLoopTick, snapshotLoop.loopLengthTicks);
       snapshotLoop.stepPendingSnapshotPublish(
-          MidiServiceDrain::kSnapshotIdleConstructionUnitsPerTurn,
+          snapshotConstructionUnits,
           MidiServiceDrain::allowSnapshotConstructionStart(
               isOverdubbing(), liveRecordPastFirstBar, hasWrapJournal, havePublishedSnapshot,
               snapshotLoop.pendingSnapshotSessionExitQueued()),

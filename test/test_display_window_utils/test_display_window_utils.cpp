@@ -681,18 +681,30 @@ void test_should_write_live_display_notes_on_transport_stop() {
 }
 
 void test_should_union_sealed_capture_preview_for_draw_source() {
-  // Live session: uncovered sealed stays in the frame (012714 wrap 2).
+  // Uncovered sealed rows remain the authority through both a live session
+  // and the immediate post-stop handoff.
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
       true, false, false, true));
   TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
       true, false, true, false));
-  // Covered, or session closed: do not suffix-union onto adopted visual.
+  TEST_ASSERT_TRUE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
+      true, false, false, false));
+  // Coverage, rather than session state, releases the handoff.
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
       true, true, false, true));
   TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
-      true, false, false, false));
-  TEST_ASSERT_FALSE(DisplayWindowUtils::shouldUnionSealedCapturePreviewForDrawSource(
       false, false, true, true));
+}
+
+void test_windowed_visual_cache_yields_to_uncovered_sealed_preview() {
+  // The detailed-window fast path has no draw-source overlay stage. It must
+  // rebuild while the post-stop seal still owns display authority.
+  TEST_ASSERT_TRUE(
+      DisplayWindowUtils::shouldBypassWindowedVisualCacheForSealedCapturePreview(true, false));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldBypassWindowedVisualCacheForSealedCapturePreview(true, true));
+  TEST_ASSERT_FALSE(
+      DisplayWindowUtils::shouldBypassWindowedVisualCacheForSealedCapturePreview(false, false));
 }
 
 void test_should_adopt_composed_notes_over_visual_cache() {
@@ -2226,6 +2238,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_merge_display_notes_by_note_id_upserts_missing_ids);
   RUN_TEST(test_should_write_live_display_notes_on_transport_stop);
   RUN_TEST(test_should_union_sealed_capture_preview_for_draw_source);
+  RUN_TEST(test_windowed_visual_cache_yields_to_uncovered_sealed_preview);
   RUN_TEST(test_should_adopt_composed_notes_over_visual_cache);
   RUN_TEST(test_keep_shortest_end_at_pitch_start);
   RUN_TEST(test_dedupe_composed_display_notes_for_visual_cache_adopt_033502);

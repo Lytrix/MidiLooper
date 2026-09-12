@@ -28,6 +28,14 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     resetRevisionLoadJobState();
     return;
 #endif
+    // Never start or advance SD persistence while RECORDING, OVERDUBBING, or
+    // PLAYING. An earlier workspace-save priority exception let multi-frame
+    // bundle writes run in these windows (session_20260912_213530), producing
+    // 90–598 ms display gaps. Keeping the work item parked is safe: its queue
+    // ownership and state remain intact until transport is idle again.
+    if (isTransportActiveForPersistence()) {
+        return;
+    }
     // LoadLoopJob owns the SD session through Parsing/Committing (file may be closed
     // between grains). Catalog sync / revision / work-item must not run until Commit
     // finishes — overlapping SD during parse hung after edits grain (235129).

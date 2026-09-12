@@ -630,15 +630,24 @@ inline bool shouldKeepVisualCacheOverSmallerFullLoopSlice(size_t visualCacheNote
   return visualCacheNoteCount > 0 && sliceNoteCount < visualCacheNoteCount;
 }
 
-/// Sealed rows stay in the live session frame until visual cache covers the seal
-/// (`012714` wrap 2). After stop the adopted VisualCache is paint authority — do
-/// not suffix-union sealed onto it.
+/// Sealed rows remain a display handoff until the visual cache proves it contains
+/// every sealed row. Session exit clears the capture store before that proof can
+/// exist, so capture/overdub state must not revoke this final authority.
 inline bool shouldUnionSealedCapturePreviewForDrawSource(bool hasSealedCapturePreview,
                                                          bool sealedCapturePreviewCovered,
                                                          bool captureActive,
                                                          bool overdubSessionActive) {
-    return hasSealedCapturePreview && !sealedCapturePreviewCovered &&
-           (captureActive || overdubSessionActive);
+    (void)captureActive;
+    (void)overdubSessionActive;
+    return hasSealedCapturePreview && !sealedCapturePreviewCovered;
+}
+
+/// A detailed-window visual-cache filter has no overlay stage. While the stop
+/// handoff is uncovered, it must rebuild through the capture-aware path so the
+/// sealed rows remain part of the frame (`221700` one-frame post-record gap).
+inline bool shouldBypassWindowedVisualCacheForSealedCapturePreview(
+    bool hasSealedCapturePreview, bool sealedCapturePreviewCovered) {
+    return hasSealedCapturePreview && !sealedCapturePreviewCovered;
 }
 
 /// NoteOn pending/overlay must paint from a pending representation, not a
