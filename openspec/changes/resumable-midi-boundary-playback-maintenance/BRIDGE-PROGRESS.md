@@ -2285,3 +2285,10 @@ the upload reset (zero serial lines and no intervention), so no device acceptanc
 gate or task checkbox is closed. Commit `6ad9641c` records this implementation
 checkpoint; task 2.3 still needs the remaining wrap/coalescing/parity coverage and
 an end-to-end device run once the MIDI endpoint is available.
+
+Boot correction (2026-09-15): a full companion-row reservation in the boot-only
+runtime prewarm caused the display to remain blank before the first boot line.
+The reservation is now limited to `prepareCapture=true` (explicit recording
+preparation); boot/load staging remains lightweight. After upload, the Teensy
+again emitted OLED initialization and `BOOT,load,start` normally. Commit
+`4a5e3064` records the fix.
