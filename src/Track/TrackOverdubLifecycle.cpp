@@ -64,20 +64,29 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
       ? 0 : loop.pendingSnapshotCompanionIds()->size();
   const size_t captureChunks = finalFrozenCount == 0 ? 1 :
       1 + (finalFrozenCount - 1) / LoopEventStoreConfig::CHUNK_CAPACITY;
-  const uint64_t rankedCredits = finalFrozenCount == 0 ? 0 :
+  const bool stoppedDestination = destination == PendingStopDestination::Stopped;
+  const PlaybackViewSourceIdentity baseSource{
+      loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity()};
+  const RuntimePlaybackView* baseView = runtime->publishedFullLoopView(
+      baseSource, loop.loopLengthTicks);
+  const size_t baseEventCount = baseView == nullptr
+      ? finalFrozenCount : baseView->storage.eventCount;
+  const size_t candidateCapacity = std::min(
+      std::max(baseEventCount, finalFrozenCount), RuntimePlaybackViewConfig::kEventsPerView);
+  const uint64_t rankedCredits = stoppedDestination || finalFrozenCount == 0 ? 0 :
       StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(
-          RuntimePlaybackViewConfig::kEventsPerView,
+          candidateCapacity,
           std::min(loop.passes.overdubPasses.size() + 1,
                    RuntimePlaybackViewConfig::kRecordsPerBridge),
-          finalFrozenCount, historyCount, pendingChangeCount,
+          baseEventCount, historyCount, pendingChangeCount,
           kDeferredStopPreparationQuantum);
-  const uint64_t canonicalRequired = finalFrozenCount == 0 ? 0 :
+  const uint64_t canonicalRequired = stoppedDestination || finalFrozenCount == 0 ? 0 :
       Loop::requiredPreparedCompanionHistoryGrains(
           historyCount, 0, pendingChangeCount, kDeferredStopPreparationQuantum,
           snapshotCount, finalFrozenCount, captureChunks);
   const uint64_t canonicalCredits = canonicalRequired == UINT64_MAX ? UINT64_MAX :
       canonicalRequired + 1;
-  const uint64_t recycleRequired = finalFrozenCount == 0 ? 0 :
+  const uint64_t recycleRequired = stoppedDestination || finalFrozenCount == 0 ? 0 :
       Loop::requiredPreparedCompanionRecycleGrains(
           historyCount + pendingChangeCount, 0, pendingChangeCount, snapshotCount,
           kDeferredStopPreparationQuantum);
@@ -170,7 +179,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     }
     (void)pendingStopAdmission_.consumeClosureGrain();
     if (pendingStopAdmission_.remainingClosureGrains == 0) {
-      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalPrefix);
+      pendingStopAdmission_.setPhase(
+          pendingStopAdmission_.destination == PendingStopDestination::Stopped
+              ? PendingStopPhase::CanonicalOrder : PendingStopPhase::CanonicalPrefix);
     }
     return false;
   }
@@ -187,6 +198,10 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       pendingStopAdmission_.transportCommandEpoch, loop.loopLengthTicks, staging};
 
   if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalPrefix) {
+    if (pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
+      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalOrder);
+      return false;
+    }
     const auto result = runtime->stepCanonicalPrefix(
         loop.passes, baseSource, currentSource, kDeferredStopPreparationQuantum);
     if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
@@ -266,7 +281,8 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // A zero-event stop has no canonical tail or companion bridge. Keep the
     // existing bounded transfer path for that case; populated captures use
     // the prepared joint handoff below.
-    if (staged == SealOutcome::SkippedEmpty) {
+    if (staged == SealOutcome::SkippedEmpty ||
+        pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
       pendingStopAdmission_.setPhase(PendingStopPhase::AtomicTransfer);
     } else {
       pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalTail);
@@ -342,11 +358,15 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (!pendingStopAdmission_.canCommit(pendingStopAdmission_.transportCommandEpoch,
                                          pendingStopAdmission_.destination)) return false;
     if (loop.hasPendingCapturePass()) {
-      if (!loop.canCommitPreparedCaptureAndCompanions() ||
-          !loop.commitPreparedCaptureAndCompanionsAtomic(transferred)) return false;
-      pendingStopAdmission_.historyRecycleOwner = &loop;
-      pendingStopAdmission_.historyRecycleGeneration = loop.preparedCompanionHistoryGeneration();
-      pendingStopAdmission_.historyRecycleStarted = false;
+      if (pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
+        if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+      } else {
+        if (!loop.canCommitPreparedCaptureAndCompanions() ||
+            !loop.commitPreparedCaptureAndCompanionsAtomic(transferred)) return false;
+        pendingStopAdmission_.historyRecycleOwner = &loop;
+        pendingStopAdmission_.historyRecycleGeneration = loop.preparedCompanionHistoryGeneration();
+        pendingStopAdmission_.historyRecycleStarted = false;
+      }
     }
     pendingStopAdmission_.setPhase(PendingStopPhase::DeferredCleanup);
     return false;
