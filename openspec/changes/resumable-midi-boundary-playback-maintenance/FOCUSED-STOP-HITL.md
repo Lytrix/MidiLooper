@@ -719,3 +719,19 @@ broader baseline is intentionally `INCONCLUSIVE_CAPTURE` because the injected
 transport Stop aborts its normal overdub note-count checks. Restart survival,
 layered playback, emission deadline attribution, and the 6,240-grain
 reservation remain open.
+
+### Transport-stop rerun after bounded STOPPED recovery (2026-09-15, 14:04)
+
+Evidence: `captures/transport-stop-interruption-2_3-rerun5-20260915/`, including
+`session_20260915_140418.log`, `intervention.jsonl`, `midi-output.jsonl`, and
+`interruption-result.json`. The fixture captured 5,765 serial lines and passed
+its record, overdub, persistence, and post-stop display checks. The prepared
+stop admission nevertheless rejected the candidate with
+`preparation_horizon_denied` (`ranked=73039`, `canonical=4`), above the
+provisional 6,240 ranked-grain allowance. The bounded legacy fallback completed
+`OVERDUBBING -> PLAYING` before the injected transport Stop, so the verifier
+reported `INCONCLUSIVE_CAPTURE` (`no_device_stop_inside_stopping`). No trace
+overflow was observed. This run does not replace the earlier focused
+interruption PASS and closes no additional task or HITL gate; the companion
+history admission/setup condition remains to be resolved before another
+prepared-path interruption run.

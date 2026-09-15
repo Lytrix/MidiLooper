@@ -2301,3 +2301,16 @@ pass horizon instead of the 2,048-pass maximum, keeping normal candidates under
 the provisional 6,240-grain ceiling. Focused native coverage remains **256/256**;
 the clean transport-stop checkpoint must be rerun from an idle, synchronized
 fixture before any 2.3 or 5.3 acceptance decision.
+
+Transport-stop rerun (2026-09-15 14:04): the fresh track-5/slot-1 fixture
+captured **5,765** serial lines and completed record, overdub, persistence, and
+post-stop display checks, but the prepared stop admission again rejected the
+candidate (`ODUB,stop,admission,...,73039,4,preparation_horizon_denied`). The
+firmware therefore used the bounded legacy fallback and published
+`OVERDUBBING → PLAYING` before the injected transport Stop; no
+`OVERDUB_STOPPING` segment or stop-grain timeline was observed. The host result
+is `INCONCLUSIVE_CAPTURE` (`no_device_stop_inside_stopping`), with no trace
+overflow and no device acceptance gate closed. The 73,039 estimate is driven by
+the current companion-history horizon and exceeds the provisional 6,240-grain
+allowance; resolve that admission/setup condition before the next interruption
+run rather than counting this fallback as task-2.3 evidence.
