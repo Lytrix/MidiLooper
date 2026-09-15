@@ -2324,3 +2324,14 @@ real runtime cost; it cannot be removed from the receipt merely because the
 canonical prefix is already prepared. The focused native suites remain
 **256/256** and the capture image retains **6,496** bytes of RAM1 local
 headroom. No acceptance gate or task checkbox closes.
+
+Sparse admission probe (2026-09-15 14:53): the diagnostic harness was extended
+to generate a one-bar overdub with 48-clock note spacing and matching 48-clock
+gates. The track-5 / slot-1 run did not reach a device-confirmed overdub-stop
+edge; it ended `INCONCLUSIVE_CAPTURE` with `no_device_stop_inside_stopping`.
+Because the deferred-stop segment was never observed, this probe supplies no
+admission estimate and does not distinguish the production path. The 16-bar
+versus rolling-window policy is therefore unchanged; the next useful run must
+first restore a synchronized overdub-stop fixture, then compare dense and sparse
+accepted candidates under the same device-clock telemetry. No task or HITL gate
+closes.

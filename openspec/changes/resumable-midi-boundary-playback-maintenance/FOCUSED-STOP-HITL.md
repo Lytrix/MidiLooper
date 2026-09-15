@@ -741,3 +741,16 @@ history term from the prepared-tail estimate. The device entered the deferred
 stop but then stopped emitting serial output during preparation, confirming the
 estimate was under-reserved. The change was reverted and the safe firmware was
 rebuilt and uploaded; this is diagnostic evidence only and closes no gate.
+
+### Sparse admission probe (2026-09-15, 14:53)
+
+The diagnostic wrapper generated a one-bar overdub using 48 MIDI clocks between
+notes and 48-clock gates, reducing the candidate event count without changing
+the production admission code. The authorized track-5 / slot-1 fixture reached
+the host overdub-stop action but did not produce a device-confirmed
+`OVERDUBBING → OVERDUB_STOPPING` edge before the baseline timeout. The focused
+result is `INCONCLUSIVE_CAPTURE` (`no_device_stop_inside_stopping`), so no
+`ODUB,stop,admission` estimate can be interpreted from this run. This is a
+fixture synchronization/setup failure, not evidence for removing the 16-bar or
+rolling-window logic. Restore the clean stop fixture before comparing sparse and
+dense admission candidates; no task or acceptance gate closes.
