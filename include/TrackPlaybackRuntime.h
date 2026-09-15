@@ -30,10 +30,14 @@ class Loop;
 enum class PendingStopDestination : uint8_t { Playing, Stopped };
 enum class PendingStopPhase : uint8_t {
   ReservedClosure,
+  CanonicalPrefix,
   CanonicalOrder,
   CanonicalRewrite,
   AudibleOrder,
+  CanonicalTail,
   PrepareTransfer,
+  CompanionHistory,
+  CompanionBridge,
   AtomicTransfer,
   DeferredCleanup,
 };
