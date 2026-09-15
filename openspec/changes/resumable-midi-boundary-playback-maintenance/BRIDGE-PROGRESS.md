@@ -2264,3 +2264,24 @@ Validation for this continuation: `pio test -e native` **2,075 passed, 1 skipped
 (2:57); capture-serial build passed with RAM1 code **425,864**, variables
 **91,808**, padding **120**, local-variable headroom **6,496** bytes. Flash code
 **945,392**, data **83,124**, headers **8,792** bytes. No task checkbox was changed.
+
+## 2026-09-15 prepared stop owner integration
+
+The production `OVERDUB_STOPPING` owner now routes accepted frozen capture
+through the existing canonical-prefix/tail workers, prepared companion-history
+verification, and the fixed companion bridge compiler before the atomic transfer.
+Admission derives bounded ranked, canonical, and recycle credits from the frozen
+candidate and rejects a horizon that cannot fit the declared contract. Both
+PLAYING and transport-STOP destinations use the joint capture/companion transfer;
+STOPPED skips bridge selection but retains the same canonical publication and
+deferred recycle ownership. Companion row storage is prewarmed with the shared
+playback runtime, so the owner path performs no vector growth.
+
+Validation: focused native playback-prewarm/edit suites **256/256 passed**;
+capture-serial build passed with RAM1 local-variable headroom **6,496 bytes**;
+firmware upload succeeded. Two transport-Stop HITL attempts were
+`INCONCLUSIVE_CAPTURE` because the host runner could not acquire MIDI clock after
+the upload reset (zero serial lines and no intervention), so no device acceptance
+gate or task checkbox is closed. Commit `6ad9641c` records this implementation
+checkpoint; task 2.3 still needs the remaining wrap/coalescing/parity coverage and
+an end-to-end device run once the MIDI endpoint is available.
