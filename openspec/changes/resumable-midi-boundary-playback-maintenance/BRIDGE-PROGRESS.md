@@ -2292,3 +2292,12 @@ The reservation is now limited to `prepareCapture=true` (explicit recording
 preparation); boot/load staging remains lightweight. After upload, the Teensy
 again emitted OLED initialization and `BOOT,load,start` normally. Commit
 `4a5e3064` records the fix.
+
+Admission-bound follow-up (2026-09-15): the first device run after the boot fix
+captured a complete serial trace but fell back before `OVERDUB_STOPPING`; the
+host fixture issued multiple record transitions and never established its
+overdub phase. The ranked preparation estimate now uses the actual admitted
+pass horizon instead of the 2,048-pass maximum, keeping normal candidates under
+the provisional 6,240-grain ceiling. Focused native coverage remains **256/256**;
+the clean transport-stop checkpoint must be rerun from an idle, synchronized
+fixture before any 2.3 or 5.3 acceptance decision.
