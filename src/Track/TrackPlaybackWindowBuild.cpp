@@ -432,6 +432,13 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // active transport turn.
   if (prepareCapture || !anyTimingCriticalTrackActive()) {
     (void)loop.prewarmActiveOverdubTransferHorizon();
+    // Companion rows are part of the same deferred stop admission. Reserve
+    // the complete fixed row horizon while the loop is cold so stop grains
+    // never grow vectors or relocate canonical history.
+    const size_t usedRows = std::min(loop.passes.editPasses.size(),
+                                     RuntimePlaybackViewConfig::kRecordsPerBridge);
+    (void)loop.prewarmPreparedCompanionHistory(
+        RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows);
   }
   (void)loop.getPlaybackOrder();
 }
