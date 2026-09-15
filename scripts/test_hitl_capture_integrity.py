@@ -7,16 +7,22 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
+from contextlib import contextmanager
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
+from hitl.config import HitlConfig
 from hitl.contract import CaptureIntegrity
 from hitl.managed_capture import (
     ManagedCaptureSession,
     active_managed_capture,
+    legacy_args_with_managed_capture,
+    run_with_managed_capture,
 )
 from hitl.serial_collector import (
     CaptureLineClock,
@@ -58,6 +64,12 @@ class CaptureLineClockTests(unittest.TestCase):
         clock.mark_incomplete("capture file truncated (12 < offset 40)")
         self.assertEqual(clock.integrity, CaptureIntegrity.INCOMPLETE)
         self.assertIn("truncated", clock.integrity_abort_reason() or "")
+
+    def test_ring_overflow_marks_capture_incomplete(self) -> None:
+        clock = CaptureLineClock()
+        clock.note_line("#CAP,123,RING,overflow", now=1.0)
+        self.assertEqual(clock.integrity, CaptureIntegrity.INCOMPLETE)
+        self.assertEqual(clock.integrity_abort_reason(), "firmware capture ring overflow")
 
 
 class FollowCaptureIntegrityTests(unittest.TestCase):
@@ -212,6 +224,34 @@ class FollowCaptureIntegrityTests(unittest.TestCase):
 
 
 class ManagedCaptureActiveTests(unittest.TestCase):
+    def test_managed_callback_gets_the_exact_new_log(self) -> None:
+        config = HitlConfig(preset="base", scenario_ids=("base",), track_number=5,
+            loop_slot=1, midi_channel=5, record_bars=2, overdub_bars=2,
+            midi_out_name="Teensy", midi_in_name="Teensy", serial_port=None,
+            verify_serial_log=None, verify_only=False, out_dir=Path("captures/custom"))
+        target = config.out_dir / "new-session.log"
+        @contextmanager
+        def session(_config):
+            yield target
+        def check(active):
+            self.assertEqual(target, active.follow_serial_log)
+            self.assertFalse(active.follow_current_session)
+            self.assertEqual(("--follow-serial-log", str(target)), active.legacy_extra_args)
+            return 17
+        with patch("hitl.managed_capture.managed_capture_session", session):
+            self.assertEqual(17, run_with_managed_capture(config, check))
+
+
+    def test_exact_managed_log_replaces_stale_pointer_and_explicit_log(self) -> None:
+        args = SimpleNamespace(verify_only=False, no_managed_capture=False)
+        target = Path("captures/custom/current-run.log")
+        for stale in (["--follow-current-session"],
+                      ["--follow-serial-log", "captures/old.log"],
+                      ["--follow-serial-log=captures/old.log"]):
+            result = legacy_args_with_managed_capture(["--track", "5"] + stale, args, target)
+            self.assertEqual(["--track", "5", "--follow-serial-log", str(target)], result)
+
+
     def test_poll_none_when_process_missing(self) -> None:
         session = ManagedCaptureSession(out_dir=Path("captures"))
         self.assertIsNone(session.poll())

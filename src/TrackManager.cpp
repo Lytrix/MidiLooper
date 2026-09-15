@@ -63,7 +63,9 @@ void TrackManager::prewarmPlaybackRuntime() {
       if (!isSlotEnabled(t, s) && !track.loopForSlot(s).hasCommittedPasses()) {
         continue;
       }
-      track.prewarmPlaybackForSlot(s);
+      // Boot reserves staging, not eight full view/bridge/companion bundles
+      // before SD load. Explicit full prewarm remains separate.
+      track.prewarmPlaybackForSlot(s, false);
     }
   }
 }
@@ -105,7 +107,11 @@ void TrackManager::clearTrack(uint8_t trackIndex) {
 
 bool TrackManager::anyTrackRecordingOrOverdubbing() const {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
-    if (tracks[i].isRecording() || tracks[i].isOverdubbing()) {
+    // STOPPING still owns frozen capture state and continues audible playback.
+    // It must therefore keep the same cross-track maintenance exclusions as
+    // RECORDING and OVERDUBBING until its continuation reaches a destination.
+    if (tracks[i].isRecording() || tracks[i].isOverdubbing() ||
+        tracks[i].isOverdubStopping()) {
       return true;
     }
   }

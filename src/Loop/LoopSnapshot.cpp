@@ -1359,3 +1359,118 @@ LOOP_SNAPSHOT_COLD_MEM void emitSnapshotAllocFailure(const char* site, size_t by
   (void)bytes;
 #endif
 }
+
+namespace {
+// At most span -> pitch -> page -> membership -> note (five levels).
+// Linked membership tails are moved sideways, never recursively destroyed.
+using SnapshotReleasePositions = std::array<size_t, 5>;
+template <typename Type> struct SnapshotReleaseChildren;
+template <typename Type>
+LOOP_SNAPSHOT_COLD_MEM bool releaseSnapshotReference(
+    std::shared_ptr<const Type>& value, SnapshotReleasePositions& positions,
+    size_t depth) {
+  if (!value || value.use_count() > 1 ||
+      SnapshotReleaseChildren<Type>::step(value, positions, depth)) {
+    value.reset();
+    positions[depth] = 0;
+    return true;
+  }
+  return false;
+}
+
+template <typename Type> struct SnapshotReleaseChildren {
+  static bool step(std::shared_ptr<const Type>&, SnapshotReleasePositions&, size_t) {
+    return true;  // Scalar note/event object; no child ownership.
+  }
+};
+
+template <typename Reference, size_t Count>
+LOOP_SNAPSHOT_COLD_MEM bool releaseSnapshotArray(
+    std::array<Reference, Count>& children, SnapshotReleasePositions& positions,
+    size_t depth) {
+  size_t& index = positions[depth];
+  if (index == Count) return true;
+  if (releaseSnapshotReference(children[index], positions, depth + 1)) ++index;
+  return false;
+}
+
+template <typename Reference>
+struct SnapshotReleaseChildren<SnapshotMembership<Reference>> {
+  static LOOP_SNAPSHOT_COLD_MEM bool step(
+      SnapshotMembershipRef<Reference>& value,
+      SnapshotReleasePositions& positions, size_t depth) {
+    if (!releaseSnapshotArray(value->references, positions, depth)) return false;
+    auto next = std::move(value->next);
+    value = std::move(next);  // Old node contains only empty ownership slots.
+    positions[depth] = 0;
+    return false;
+  }
+};
+template <typename Reference>
+struct SnapshotReleaseChildren<SnapshotBarPage<Reference>> {
+  static LOOP_SNAPSHOT_COLD_MEM bool step(
+      SnapshotBarPageRef<Reference>& value,
+      SnapshotReleasePositions& positions, size_t depth) {
+    return releaseSnapshotArray(value->memberships, positions, depth);
+  }
+};
+template <> struct SnapshotReleaseChildren<SnapshotPitchDirectory> {
+  static LOOP_SNAPSHOT_COLD_MEM bool step(
+      SnapshotPitchDirectoryRef& value, SnapshotReleasePositions& positions,
+      size_t depth) {
+    // The directory wrapper is logically immutable; only its mutable pages move.
+    auto& pages = value->pages.pages;
+    if (pages.empty()) return true;
+    if (releaseSnapshotReference(pages.back(), positions, depth + 1)) pages.pop_back();
+    return false;
+  }
+};
+template <> struct SnapshotReleaseChildren<SnapshotSpanRoot> {
+  static LOOP_SNAPSHOT_COLD_MEM bool step(
+      std::shared_ptr<const SnapshotSpanRoot>& value,
+      SnapshotReleasePositions& positions, size_t depth) {
+    return releaseSnapshotArray(value->pitches, positions, depth);
+  }
+};
+template <> struct SnapshotReleaseChildren<SnapshotEventRoot> {
+  static LOOP_SNAPSHOT_COLD_MEM bool step(
+      std::shared_ptr<const SnapshotEventRoot>& value,
+      SnapshotReleasePositions& positions, size_t depth) {
+    auto& pages = value->pages.pages;
+    if (pages.empty()) return true;
+    if (releaseSnapshotReference(pages.back(), positions, depth + 1)) pages.pop_back();
+    return false;
+  }
+};
+}  // namespace
+
+LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::beginRelease(
+    ReleaseCursor& cursor, ImmutableLoopSnapshotRef& root) {
+  if (!cursor.complete()) return false;
+  cursor.positions_.fill(0);
+  cursor.phase_ = 0;
+  cursor.units_ = 0;
+  cursor.root_ = std::move(root);
+  return true;
+}
+
+LOOP_SNAPSHOT_COLD_MEM bool LoopSnapshot::stepRelease(
+    ReleaseCursor& cursor, size_t maximumUnits) {
+  for (size_t unit = 0; unit < maximumUnits && cursor.root_; ++unit) {
+    ++cursor.units_;
+    if (cursor.root_.use_count() > 1) {
+      cursor.root_.reset();
+    } else if (cursor.phase_ == 0) {
+      if (releaseSnapshotReference(cursor.root_->spanRoot_, cursor.positions_, 0)) {
+        ++cursor.phase_;
+      }
+    } else if (cursor.phase_ == 1) {
+      if (releaseSnapshotReference(cursor.root_->eventRoot_, cursor.positions_, 0)) {
+        ++cursor.phase_;
+      }
+    } else {
+      cursor.root_.reset();  // Both child roots are empty.
+    }
+  }
+  return cursor.complete();
+}

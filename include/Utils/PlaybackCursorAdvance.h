@@ -17,21 +17,32 @@ struct PlaybackTickFrame {
   bool atLoopStart = false;
 };
 
-struct PlaybackCursorAdvanceState {
-  uint16_t* cursor = nullptr;
+template <typename Index>
+struct PlaybackCursorAdvanceStateFor {
+  Index* cursor = nullptr;
   bool* playbackOrderDirty = nullptr;
 };
+
+using PlaybackCursorAdvanceState = PlaybackCursorAdvanceStateFor<uint16_t>;
+using WidePlaybackCursorAdvanceState = PlaybackCursorAdvanceStateFor<uint32_t>;
 
 using PlaybackSendFn = void (*)(void* ctx, const MidiEvent& evt, uint8_t slotIndex);
 using PlaybackJamFilterFn = bool (*)(void* ctx, uint32_t storageTick);
 
-struct PlaybackEventStream {
+template <typename Index>
+struct PlaybackEventStreamFor {
   const void* ctx = nullptr;
   size_t (*size)(const void* ctx) = nullptr;
-  bool (*isCursorValid)(const void* ctx, uint16_t cursor) = nullptr;
-  const MidiEvent& (*eventAt)(const void* ctx, uint16_t cursor);
+  bool (*isCursorValid)(const void* ctx, Index cursor) = nullptr;
+  const MidiEvent& (*eventAt)(const void* ctx, Index cursor);
   uint32_t (*eventPhase)(const MidiEvent& evt, const ProjectionContext& playbackContext);
+  // Optional for a prepared two-way stream. Called exactly once when the
+  // logical cursor consumes a row (including jam/dedup/interval skips).
+  void (*consume)(const void* ctx) = nullptr;
 };
+
+using PlaybackEventStream = PlaybackEventStreamFor<uint16_t>;
+using WidePlaybackEventStream = PlaybackEventStreamFor<uint32_t>;
 
 /// Advance the committed playback cursor while emitting every event crossed by the playback
 /// interval. Mutates only cursorAdvance.cursor and optional cursorAdvance.playbackOrderDirty.
@@ -46,6 +57,14 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
                                             PlaybackJamFilterFn jamFilter, void* jamCtx,
                                             uint8_t trackMidiChannelForDedup,
                                             PlaybackSendFn applyLedgerOnly = nullptr);
+
+// Same emission/skip/ledger semantics for pool-sized prepared sources. This
+// widens logical positions only; it does not allocate or admit source storage.
+PlaybackAdvanceResult advancePlaybackCursor(WidePlaybackCursorAdvanceState cursorAdvance,
+    const PlaybackTickFrame& frame, PlaybackEmitPolicy policy,
+    const WidePlaybackEventStream& stream, PlaybackSendFn send, void* sendCtx,
+    uint8_t playbackSlotIndex, PlaybackJamFilterFn jamFilter, void* jamCtx,
+    uint8_t trackMidiChannelForDedup, PlaybackSendFn applyLedgerOnly = nullptr);
 
 /// Overdub wrap clock walk: offer `(prev, L-1]` then `[0, S]` to the same
 /// `advancePlaybackCursor` → `applyPlaybackEvent` path. Head-only

@@ -36,6 +36,17 @@ SECTIONS
 		*LoopOverdubSession*.o(.text .text.*)
 		*LoopSnapshot*.o(.text .text.*)
 		*TrackOverdubWrap*.o(.text .text.*)
+		/* Deferred maintenance runs from the main-loop owner, never the MIDI
+		   ISR. Keep its diagnostics and continuation helpers in FLASH so adding
+		   a recording-window service cannot cross another ITCM flexRAM bank. */
+		*TrackDeferredMaintenance*.o(.text .text.*)
+		/* The complete compatibility order builder is FLASHMEM. Keep its
+		   instantiated sort helpers beside it instead of spending an ITCM
+		   bank on the implementation being retired by bounded playback. */
+		*TrackPlaybackWindowBuild.cpp.o(.text.*rebuildPlaybackOrder*)
+		/* Create's complete reference sorter is cold too. Its generated
+		   stable-sort helpers do not inherit the caller's FLASHMEM section. */
+		*EditApply.cpp.o(.text.*applyAddNote*)
 		*TrackUndo*.o(.text .text.*)
 		*InvestigationCaptureLog*.o(.text .text.*)
 		*DisplayCacheLifecycle*.o(.text .text.*)
@@ -63,6 +74,12 @@ SECTIONS
 		   the extra ~1 KB from LoopSnapshotTail labels crosses the 4K
 		   _VectorsRam/periodictable align edge (+4 KB RAM1 locals). */
 		*WorkspaceSave*.o(.rodata .rodata.*)
+		/* Capture-admission diagnostics otherwise push DTCM across the
+		   vectors/USB periodic-table alignment edge, costing 4 KB of stack
+		   headroom. Keep only these string literals in memory-mapped FLASH;
+		   mutable state and non-string capture lookup data retain their placement. */
+		*TrackCaptureInput.cpp.o(.rodata.str* .rodata.*.str*)
+		*TrackOverdubLifecycle.cpp.o(.rodata.str* .rodata.*.str*)
 		. = ALIGN(4);
 	} > FLASH
 

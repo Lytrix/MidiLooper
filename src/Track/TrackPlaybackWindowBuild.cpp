@@ -45,6 +45,23 @@ uint32_t mergedPlaybackStreamPhase(const MidiEvent& evt, const ProjectionContext
   return IntervalProjection::playbackEventPhase(evt.tick, playbackContext.loopLength);
 }
 
+size_t fixedPlaybackStreamSize(const void* ctx) {
+  return static_cast<const FixedPlaybackStreamCtx*>(ctx)->storage->eventCount;
+}
+
+bool fixedPlaybackStreamValid(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const FixedPlaybackStreamCtx*>(ctx);
+  if (static_cast<size_t>(cursor) >= stream->storage->eventCount) {
+    return true;
+  }
+  return stream->storage->order[cursor] < stream->storage->eventCount;
+}
+
+const MidiEvent& fixedPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const FixedPlaybackStreamCtx*>(ctx);
+  return stream->storage->events[stream->storage->order[cursor]];
+}
+
 size_t capturePlaybackStreamSize(const void* ctx) {
   return static_cast<const Loop*>(ctx)->capture.store.size();
 }
@@ -79,6 +96,17 @@ uint8_t playbackRebuildSlotIndex(const Track& track, const Loop& loop) {
   return 255;
 }
 
+bool anyTimingCriticalTrackActive() {
+  const uint8_t trackCount = trackManager.getTrackCount();
+  for (uint8_t trackIndex = 0; trackIndex < trackCount; ++trackIndex) {
+    const Track& candidate = trackManager.getTrack(trackIndex);
+    if (candidate.isRecording() || candidate.isAudiblePlaybackActive()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
@@ -103,6 +131,25 @@ void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, 
     const uint32_t evPhase =
         IntervalProjection::playbackEventPhase(e.tick, playbackContext.loopLength);
     if (evPhase > loop.lastTickInLoop) break;
+    ++idx;
+  }
+  loop.nextEventIndex = static_cast<uint16_t>(idx);
+}
+
+void reanchorFixedPlaybackIndex(Loop& loop, const FixedPlaybackEventStorage& storage,
+                                const ProjectionContext& playbackContext) {
+  if (loop.lastTickInLoop == UINT32_MAX) {
+    loop.nextEventIndex = 0;
+    return;
+  }
+  size_t idx = 0;
+  while (idx < storage.eventCount) {
+    const MidiEvent& event = storage.events[storage.order[idx]];
+    const uint32_t eventPhase =
+        IntervalProjection::playbackEventPhase(event.tick, playbackContext.loopLength);
+    if (eventPhase > loop.lastTickInLoop) {
+      break;
+    }
     ++idx;
   }
   loop.nextEventIndex = static_cast<uint16_t>(idx);
@@ -223,7 +270,9 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
                  : (gatherPath == Loop::SnapshotWindowGatherPath::Overlay
                         ? RuntimeTimingTelemetry::PlaybackRebuildPath::StaleRootOverlay
                         : RuntimeTimingTelemetry::PlaybackRebuildPath::
-                              GatherMissHoldEmpty)));
+                              GatherMissHoldEmpty)),
+      playbackBuildStartUs, loop.lastTickInLoop, playhead,
+      static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size()));
   mergedMidiEventsBuildInProgress = false;
   return true;
 }
@@ -303,12 +352,20 @@ PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx) {
                              mergedPlaybackStreamEventAt, mergedPlaybackStreamPhase};
 }
 
+PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx) {
+  return PlaybackEventStream{&ctx, fixedPlaybackStreamSize, fixedPlaybackStreamValid,
+                             fixedPlaybackStreamEventAt, mergedPlaybackStreamPhase};
+}
+
 PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
   return PlaybackEventStream{&loop, capturePlaybackStreamSize, nullptr,
                              capturePlaybackStreamEventAt, capturePlaybackStreamPhase};
 }
 void Track::reanchorPlaybackCycle(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
+  if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
+    runtime->bridgeStream.reset();
+  }
   loop.nextEventIndex = 0;
   if (loop.loopLengthTicks == 0) {
     loop.lastTickInLoop = 0;
@@ -354,13 +411,28 @@ void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
   bumpPlaybackGeneration();
   playbackRuntime.resetAll(preserveLedger);
 }
-void Track::prewarmPlaybackForSlot(uint8_t slotIndex) {
+TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture) {
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
   Loop& loop = loopForSlot(slotIndex);
-  (void)playbackRuntime.trySlot(slotIndex);
+  LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
+  if (runtime != nullptr) {
+    // This is a boot/load or pre-transport path. The hot MIDI path deliberately
+    // has no equivalent allocation call.
+    if (prepareCapture) (void)runtime->prewarmViews();
+    else (void)runtime->prewarmCaptureStaging();
+  }
+  // Canonical ownership transfer is a pre-capture resource.  Explicit capture
+  // preparation (the RECORDING entry point) must reserve the target loop's
+  // horizon even when other tracks are already playing; otherwise the later
+  // overdub command is rejected before it can enter the deferred stop path.
+  // Boot-only staging keeps the all-stopped guard and never grows during an
+  // active transport turn.
+  if (prepareCapture || !anyTimingCriticalTrackActive()) {
+    (void)loop.prewarmActiveOverdubTransferHorizon();
+  }
   (void)loop.getPlaybackOrder();
 }
 
@@ -387,6 +459,26 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
       ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);
     }
+    // The full vector/order build is the STOPPED oracle until task 2.4 moves
+    // the active clock path to the fixed view. Publish its completed window
+    // only while every track is stopped; active transport must never turn the
+    // oracle copy into a hidden rebuild on a different, parked track.
+    if (!anyTimingCriticalTrackActive()) {
+      const PlaybackCoverageInterval coverage{runtime->mergedMidiEvents.windowStartTick,
+                                              runtime->mergedMidiEvents.windowLengthTicks,
+                                              loop.loopLengthTicks};
+      const PlaybackViewSourceIdentity sourceIdentity{
+          runtime->mergedMidiEvents.builtFromRevision, playbackGeneration,
+          runtime->mergedMidiEvents.builtFromSnapshotIdentity};
+      const RuntimeCanonicalPassInputs::CurrentSource live{loop.playbackRevision, playbackGeneration,
+          loop.loopLengthTicks, loop.canonicalStorageGeneration};
+      if (!runtime->publishStoppedCanonicalOracleView(loop.passes, sourceIdentity, live,
+              runtime->mergedMidiEvents.mergedEvents.data(), runtime->mergedMidiEvents.mergedEvents.size(), coverage)) {
+        (void)runtime->publishStoppedOracleView(runtime->mergedMidiEvents.mergedEvents.data(),
+                                                runtime->mergedMidiEvents.mergedEvents.size(),
+                                                sourceIdentity, coverage);
+      }
+    }
   }
 }
 
@@ -411,7 +503,7 @@ void Track::releasePlaybackMergedMidiEventsMemory() {
 }
 
 TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
-  if (isRecording() || isOverdubbing() || getState() == TRACK_ARMED) {
+  if (isRecording() || isOverdubbing() || isOverdubStopping() || getState() == TRACK_ARMED) {
     return false;
   }
 

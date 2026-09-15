@@ -32,6 +32,12 @@ void TrackManager::stopPlayingTrack(uint8_t trackIndex) {
 
 void TrackManager::handleTransportStop() {
   uint32_t currentTick = clockManager.getCurrentTick();
+  // Publish the output barrier for every track before CC123 fan-out. Sending
+  // all-notes-off to every channel can take several milliseconds; an internal
+  // clock ISR must not emit a due playback event during that interval.
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    tracks[i].suppressMidiOutputForTransportStop();
+  }
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     Track& t = tracks[i];
     // Always clear queued quantized actions when transport stops.
@@ -60,7 +66,7 @@ void TrackManager::handleTransportStop() {
       if (autoAlignEnabled) {
         t.setLoopLength(masterLoopLength);
       }
-    } else if (t.isOverdubbing()) {
+    } else if (t.isOverdubbing() || t.isOverdubStopping()) {
       // Same order as record: finalize held notes before sendAllNotesOff()
       // clears pendingNotes. [`122152`] wrap_synth Off@168 was an orphaned On.
       t.stopOverdubbingToStopped();
@@ -118,7 +124,8 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
     if (pendingMultiSlotCommit[i] &&
         currentTick != pendingMultiSlotQueuedAtTick[i] &&
         (currentTick % Config::TICKS_PER_16TH_STEP) == 0) {
-      if (tracks[i].isRecording() || tracks[i].isOverdubbing() || pendingRecord[i]) {
+      if (tracks[i].isRecording() || tracks[i].isOverdubbing() ||
+          tracks[i].isOverdubStopping() || pendingRecord[i]) {
         pendingMultiSlotCommit[i] = false;
         pendingMultiSlotQueuedAtTick[i] = UINT32_MAX;
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
@@ -170,7 +177,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
       }
 
       // Ensure playback is running if we have any audible slot data.
-      if (anyEnabledUnmutedWithData && !tracks[i].isPlaying() && !tracks[i].isOverdubbing()) {
+      if (anyEnabledUnmutedWithData && !tracks[i].isAudiblePlaybackActive()) {
         // Track state machine may block EMPTY->PLAYING; we keep this guard minimal.
         startPlayingTrack(i);
       }

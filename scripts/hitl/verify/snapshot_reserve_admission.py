@@ -19,7 +19,9 @@ _IDLE_RE = re.compile(
     r"inflight=(\d+),journals=(\d+)"
 )
 
-_TIMING_CRITICAL = frozenset({"RECORDING", "PLAYING", "OVERDUBBING", "STOPPED_RECORDING", "ARMED"})
+_TIMING_CRITICAL = frozenset(
+    {"RECORDING", "PLAYING", "OVERDUBBING", "OVERDUB_STOPPING", "STOPPED_RECORDING", "ARMED"}
+)
 
 
 def _state_at(lines: list[str], ts: int) -> str:

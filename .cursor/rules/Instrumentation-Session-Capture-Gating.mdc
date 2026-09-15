@@ -16,6 +16,34 @@ When adding runtime instrumentation (timing, stage markers, diagnostics), keep i
 3. For non-hot investigation helpers on Teensy, place instrumentation code in cold/flash sections (`TRACK_COLD_MEM`, `LOOP_COLD_MEM`, `FLASHMEM`-style owner macros) so RAM1/ITCM pressure does not grow from debug-only paths.
 4. Disabled builds must not execute instrumentation-only argument work in hot paths (for example extra `traceMicros()` spans used only for logs).
 
+## Diagnostic string placement (Teensy capture builds)
+
+This linker script places ordinary C/C++ string-literal sections (`.rodata*`)
+in DTCM/RAM1. Adding a label, format string, or diagnostic reason can cross the
+`_VectorsRam` / USB periodic-table alignment boundary and consume 4 KB of stack
+headroom at once. Treat diagnostic text as a RAM1-budgeted resource.
+
+1. Prefer the existing flash-string call-site pattern: `PSTR("...")` with a
+   `_P` consumer such as `snprintf_P`, or the local `*_FMT(literal)` macro that
+   expands to `PSTR(literal)` in capture builds.
+2. `FLASHMEM`, `TRACK_COLD_MEM`, and a disabled runtime branch place code or
+   skip execution; none moves an ordinary string literal out of `.rodata`.
+3. If an API cannot consume a flash-string literal, add a **narrow** owner rule
+   in `linker/imxrt1062_t41_lcr.ld` under `.text.progmem`, before the `.data`
+   rule. Follow the persistence-telemetry pattern, but restrict it to strings:
+
+   ```ld
+   *Owner.cpp.o(.rodata.str* .rodata.*.str*)
+   ```
+
+   Do not add a wildcard for every translation unit or move an owner’s whole
+   `.rodata` section unless its non-string constants have been reviewed for
+   flash-safe access. The existing `*WorkspaceSave*.o(.rodata .rodata.*)` rule
+   is a documented persistence-telemetry exception, not the default.
+4. In the capture-serial firmware build, inspect the RAM1 line after adding or
+   changing diagnostic text. Preserve at least the configured local-variable
+   floor; investigate any unexpected 1 KB or 4 KB change before accepting it.
+
 ## Hot-path rule
 
 - In RECORD/OVERDUB stop, playback, and MIDI service paths, investigation-only instrumentation must compile out or return immediately when disabled.

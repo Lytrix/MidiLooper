@@ -479,6 +479,15 @@ void Track::stopRecording(uint32_t currentTick) {
   // Silence live/held notes on the wire before loop playback catch-up; CC123 is not stored.
   sendAllNotesOff();
   resetPlaybackState(playbackTick);
+  if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(recordedSlotIndex)) {
+    // Final length is known only now. Bind the already prepared bar-1 view
+    // before the normal PLAYING transition, so launch stays on this boundary.
+    if (!runtime->bindFirstRecordingBar(finalLength)) {
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "First-record bar-1 playback binding unavailable length=%lu",
+                 static_cast<unsigned long>(finalLength));
+    }
+  }
   const uint32_t stateAdvanceStartUs = micros();
   startPlaying(playbackTick, true);
   displayManager.refreshViewportAfterRecordStop(*this, activeLoopIndex, storagePhaseTickAtStop);

@@ -7,6 +7,8 @@
 #include "Logger.h"
 #include "TrackStateMachine.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/RuntimeTimingTelemetry.h"
+#include "ClockManager.h"
 
 uint8_t Track::getMidiChannel() const {
   return midiChannel;
@@ -30,12 +32,12 @@ SlotOpState Track::getSlotOpState(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) return SlotOpState::SLOT_OP_IDLE;
   if (slotIndex != activeLoopIndex) return SlotOpState::SLOT_OP_IDLE;
   if (isRecording()) return SlotOpState::SLOT_OP_RECORDING;
-  if (isOverdubbing()) return SlotOpState::SLOT_OP_OVERDUBBING;
+  if (isOverdubbing() || isOverdubStopping()) return SlotOpState::SLOT_OP_OVERDUBBING;
   return SlotOpState::SLOT_OP_IDLE;
 }
 
 uint8_t Track::getRecordingFocusSlot() const {
-  if (isRecording() || isOverdubbing()) return activeLoopIndex;
+  if (isRecording() || isOverdubbing() || isOverdubStopping()) return activeLoopIndex;
   return Config::INVALID_LOOP_SLOT;
 }
 
@@ -61,13 +63,20 @@ const char* Track::getStateName(TrackState state) {
   return TrackStateMachine::toString(state);
 }
 
-bool Track::transitionState(TrackState newState) {
+TRACK_COLD_MEM bool Track::transitionState(TrackState newState) {
   if (!TrackStateMachine::isValidTransition(trackState, newState)) {
     return false;
   }
 
   TrackState oldState = trackState;
   trackState = newState;
+#if RUNTIME_TIMING_ENABLED
+  if (oldState == TRACK_OVERDUB_STOPPING) {
+    RuntimeTimingTelemetry::recordStopStateTransition(
+        resolveTrackIndexForPersistence(*this), activeLoopIndex,
+        oldState, newState, clockManager.getCurrentTick(), micros());
+  }
+#endif
 
   if (oldState == TRACK_ARMED && newState != TRACK_RECORDING) {
     armedPreRollNotes.clear();
@@ -117,6 +126,15 @@ bool Track::isOverdubbing() const {
   return trackState == TRACK_OVERDUBBING;
 }
 
+bool Track::isOverdubStopping() const {
+  return trackState == TRACK_OVERDUB_STOPPING;
+}
+
 bool Track::isPlaying() const {
   return trackState == TRACK_PLAYING;
+}
+
+bool Track::isAudiblePlaybackActive() const {
+  return trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING ||
+         trackState == TRACK_OVERDUB_STOPPING;
 }

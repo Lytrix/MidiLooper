@@ -879,7 +879,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
             // (`175831` pitch 18 @2095 → head@6).
             const bool allowWrapContinuation =
                 DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
-                    track.isRecording(), track.isPlaying() || track.isOverdubbing(),
+                    track.isRecording(), track.isAudiblePlaybackActive(),
                     track.isOverdubbing());
             applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,

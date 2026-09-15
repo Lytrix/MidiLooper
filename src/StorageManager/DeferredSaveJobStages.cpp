@@ -86,7 +86,8 @@ STORAGE_PERSIST_MEM bool stepDeferredSaveJobTrackHeaderAndSlots() {
                 switch (storageSession.currentWorkspaceSave.trackWriteStage) {
                     case DeferredTrackWriteStage::TrackState: {
                         TrackState stateToSave = track.getState();
-                        if (stateToSave == TRACK_OVERDUBBING) {
+                        if (stateToSave == TRACK_OVERDUBBING ||
+                            stateToSave == TRACK_OVERDUB_STOPPING) {
                             stateToSave = TRACK_PLAYING;
                         }
                         const uint32_t trackState = static_cast<uint32_t>(stateToSave);

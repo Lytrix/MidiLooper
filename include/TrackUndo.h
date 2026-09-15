@@ -20,6 +20,10 @@ public:
     /// Stop: one OverdubPassAdded for sealed session wraps plus the last wrap when committed.
     static void pushOverdubSessionOnStop(Track& track, uint8_t slotIndex, PassId lastPassId,
                                          EditPassIdList lastCompanionIds, bool includeLastPass);
+    /// Consume completed private IDs into an unpublished entry. Caller supplies
+    /// the existing session-before root (or published fallback); no global push.
+    static bool prepareOverdubSessionEntry(Loop& loop, Loop::SessionUndoCollection& collection,
+        uint8_t slotIndex, const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry);
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds,
                                        ImmutableLoopSnapshotRef beforePublishedSnapshot = {});

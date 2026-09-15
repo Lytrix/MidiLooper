@@ -29,7 +29,7 @@ void DisplayManager::invalidateForSlotChange(uint8_t trackIndex, uint8_t previou
     invalidateLiveDisplayCache();
     Track& track = trackManager.getTrack(trackIndex);
     const uint8_t activeSlot = track.getActiveLoopIndex();
-    const bool playbackActive = track.isPlaying() || track.isOverdubbing();
+    const bool playbackActive = track.isAudiblePlaybackActive();
 
     auto invalidateSlotDisplay = [&](uint8_t slot) {
         if (slot >= Config::MAX_LOOPS_PER_TRACK) {

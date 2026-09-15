@@ -32,6 +32,35 @@ state, and maintenance continuation. `Loop` retains canonical pass content,
 revision, invalidation notifications, persistence, and undo/redo. `Track`
 requests or consumes runtime-view work at existing interval boundaries.
 
+### Canonical-transfer capacity constraint found during implementation
+
+`LoopPasses::overdubPasses` and each `OverdubPass::committedChunkIds` remain
+unbounded allocator-backed vectors. The historical pool-budget change removed
+the former fixed capture-pass limit, so the current model has no preexisting
+bounded reservoir for a later active-transport pass row or its chunk-reference
+list. `LoopEventStore::detachChunksToCommittedChunkIds()` currently builds a
+new vector as part of detachment, and `stagePreparedCapturePass()` may grow the
+pass-row vector.
+
+Consequently, fixed capture-event staging alone cannot make an atomic
+`OVERDUB_STOPPING` transfer allocation-free. The implementation must add a
+declared, external-memory-first canonical-transfer admission horizon, prewarm
+the pass-row and chunk-reference storage while STOPPED, and reject a new active
+overdub admission before capture mutation when that horizon is exhausted. A
+STOPPED-only rearm may extend the horizon under the existing heap/pool policy.
+The active path may not reserve, detach into a newly grown vector, or treat an
+allocation failure as a normal sealed commit.
+
+Implementation now reserves a 16-pass horizon (`ACTIVE_OVERDUB_TRANSFER_HORIZON`)
+and eight committed-chunk references per pass. Eight is the exact upper bound
+for the fixed 2,048-event capture staging buffer at 256 events per chunk. The
+active staging entry moves one prewarmed chunk-reference vector into the
+pending candidate; detachment fills that vector in place, and the atomic pass
+handoff only moves it into an already-capacious canonical pass row. Native
+coverage asserts that this leaves the canonical pass-vector capacity unchanged
+and leaves the next horizon row available. A caller without this admission is
+rejected before entering overdub capture.
+
 `OVERDUB_STOPPING` is an active state, not a cleanup idle state. It preserves
 playback and MIDI priority while reserved finalization grains complete. A later
 transport Stop has precedence and invalidates any pending return to PLAYING.

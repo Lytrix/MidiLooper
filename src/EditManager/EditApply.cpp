@@ -149,14 +149,18 @@ NOTE_EDIT_MEM int findNoteOffForOnIndex(const MidiEventVec& events, int onIndex)
   }
 
   std::vector<size_t> walkOrder(pitchIndices);
-  std::stable_sort(walkOrder.begin(), walkOrder.end(), [&](size_t a, size_t b) {
-    const MidiEvent& ea = events[a];
-    const MidiEvent& eb = events[b];
-    if (ea.tick == eb.tick) {
-      return NoteUtils::midiEventChronologicalLess(ea, eb);
-    }
-    return a < b;
-  });
+  // Preserve lane traversal across distinct ticks. Equal-tick ordering is
+  // local to a contiguous run in the filtered channel/pitch lane. Equal ticks
+  // separated by a different lane tick stay separate. Comparing equal ticks by kind and
+  // distinct ticks by index is not a strict weak ordering.
+  for (size_t begin = 0; begin < walkOrder.size();) {
+    size_t end = begin + 1;
+    const uint32_t tick = events[walkOrder[begin]].tick;
+    while (end < walkOrder.size() && events[walkOrder[end]].tick == tick) ++end;
+    std::stable_partition(walkOrder.begin() + begin, walkOrder.begin() + end,
+                          [&](size_t index) { return events[index].isNoteOff(); });
+    begin = end;
+  }
 
   std::vector<size_t> openNoteOnIndices;
   // Indexed by position in pitchIndices, which is ascending, so lower_bound maps an event index.
@@ -507,13 +511,15 @@ NOTE_EDIT_MEM void applyChangeLengthById(MidiEventVec& events, NoteId noteId, ui
   clearNoteOnIndexLookupCache(cache);
 }
 
-void applyAddNote(MidiEventVec& events, const MidiEventVec& addedEvents,
+NOTE_EDIT_MEM void applyAddNote(MidiEventVec& events, const MidiEventVec& addedEvents,
                   NoteOnIndexLookupCache* cache) {
   for (const MidiEvent& evt : addedEvents) {
     events.push_back(evt);
   }
-  std::sort(events.begin(), events.end(),
-            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  // Deterministic Create reference: preserve stored order for equal raw ticks,
+  // including existing events before appended events. Empty Create still sorts.
+  std::stable_sort(events.begin(), events.end(),
+                   [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
   clearNoteOnIndexLookupCache(cache);
 }
 

@@ -100,3 +100,14 @@ struct PendingSnapshotPublishBox {
     }
   }
 };
+
+// Reserved before capture admission. Owns the session identities across close;
+// no vector growth, traversal, or snapshot graph release at the stop boundary.
+struct SessionExitSnapshotHandoff {
+  bool pending = false;
+  CommitReason reason = CommitReason::OverdubStop;
+  PassId lastPassId = kInvalidPassId;
+  size_t companionRowCount = 0;
+  std::vector<PassId> passIds;
+  std::vector<EditPassIdList> companionIds;
+};

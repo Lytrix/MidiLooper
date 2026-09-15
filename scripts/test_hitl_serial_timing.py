@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +19,15 @@ from hitl.serial_timing import (
     phase_start_delay_clocks,
 )
 from hitl.contract import PhaseAmbiguity
+from hitl.verify.midi_boundary_timing import (
+    extract_overdub_stopping_segments,
+    extract_deadline_samples,
+    extract_stop_phase_samples,
+    extract_stop_timeline,
+    midi_boundary_timing_issues,
+    summarize_midi_boundary_timing,
+)
+from hitl.managed_capture import wait_for_capture_boot_ready
 
 
 class ExtractPhaseBoundariesTests(unittest.TestCase):
@@ -247,6 +257,189 @@ class ExtractFirstNoteOffsetTests(unittest.TestCase):
         )
         self.assertEqual(result["bpm_source"], "fallback_cli")
         self.assertEqual(result["offset_clocks"], 2)
+
+
+class MidiBoundaryTimingTests(unittest.TestCase):
+    def test_stopping_and_following_playing_are_separate_active_intervals(self) -> None:
+        lines = [
+            "#HITL,SCENARIO,deferred_stop",
+            "#CAP,100,ST,Track,STOPPED,PLAYING",
+            "#CAP,200,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,300,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,400,ST,Track,OVERDUB_STOPPING,PLAYING",
+            "#CAP,500,ST,Track,PLAYING,STOPPED",
+        ]
+        summary = summarize_midi_boundary_timing(lines)
+        self.assertEqual(summary["interval_counts"], {
+            "OVERDUBBING": 1,
+            "OVERDUB_STOPPING": 1,
+            "PLAYING": 2,
+            "RECORDING": 0,
+        })
+        self.assertEqual(summary["overdub_stopping_diagnostics"], [])
+        self.assertEqual(summary["overdub_stopping_segments"], [
+            {
+                "overdub_start_ts": 200,
+                "stopping_start_ts": 300,
+                "destination_ts": 400,
+                "destination": "PLAYING",
+            }
+        ])
+        self.assertEqual(midi_boundary_timing_issues(summary), [])
+
+    def test_overflow_is_rejected_in_stopping_and_following_playing(self) -> None:
+        lines = [
+            "#CAP,100,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,200,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,250,RING,overflow",
+            "#CAP,300,ST,Track,OVERDUB_STOPPING,PLAYING",
+            "#CAP,350,RING,overflow",
+            "#CAP,400,ST,Track,PLAYING,STOPPED",
+        ]
+        summary = summarize_midi_boundary_timing(lines)
+        self.assertEqual(summary["overflow_intervals"], [
+            {"state": "OVERDUB_STOPPING", "timestamp": 250},
+            {"state": "PLAYING", "timestamp": 350},
+        ])
+        self.assertIn("ring_overflow_in_active_interval", midi_boundary_timing_issues(summary))
+
+    def test_overflow_without_an_interval_still_invalidates_the_capture(self) -> None:
+        summary = summarize_midi_boundary_timing(["#CAP,250,RING,overflow"])
+        self.assertEqual(summary["overflow_timestamps"], [250])
+        self.assertFalse(summary["overflow_free"])
+        issues = midi_boundary_timing_issues(summary)
+        self.assertIn("capture_ring_overflow", issues)
+        self.assertNotIn("ring_overflow_in_active_interval", issues)
+
+    def test_overflow_uses_the_first_eviction_timestamp_when_available(self) -> None:
+        summary = summarize_midi_boundary_timing(
+            [
+                "#CAP,100,ST,Track,PLAYING,OVERDUBBING",
+                "#CAP,200,ST,Track,OVERDUBBING,PLAYING",
+                "#CAP,900,RING,overflow,150",
+            ]
+        )
+        self.assertEqual(summary["overflow_timestamps"], [150])
+        self.assertEqual(
+            summary["overflow_intervals"], [{"state": "OVERDUBBING", "timestamp": 150}]
+        )
+
+    def test_direct_legacy_transition_cannot_satisfy_stopping_fixture(self) -> None:
+        lines = [
+            "#CAP,100,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,200,ST,Track,OVERDUBBING,PLAYING",
+        ]
+        segments, diagnostics = extract_overdub_stopping_segments(lines)
+        self.assertEqual(segments, [])
+        self.assertEqual(diagnostics, ["legacy_direct_overdub_stop"])
+
+    def test_current_firmware_has_only_the_midi_input_call_site_allowlist(self) -> None:
+        summary = summarize_midi_boundary_timing(
+            [], repo_root=_SCRIPT_DIR.parent
+        )
+        self.assertTrue(summary["call_site_gate_ok"])
+        self.assertEqual(summary["extra_midi_input_call_sites"], [])
+
+
+class DeadlineCorrelationTests(unittest.TestCase):
+    def test_delayed_notice_uses_send_state_and_preserves_legacy_uncertainty(self):
+        rows = [
+            "#CAP,100,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,300,ST,Track,OVERDUB_STOPPING,PLAYING",
+            "#CAP,500,ST,Track,PLAYING,STOPPED",
+            "#CAP,450,DIAG,late_event,off,10,42,250,200,240",
+            "#CAP,450,DIAG,late_event,off,10,42",
+        ]
+        samples = extract_deadline_samples(rows)
+        self.assertEqual(samples[0]["state"], "OVERDUB_STOPPING")
+        self.assertTrue(samples[0]["correlation_valid"])
+        self.assertIsNone(samples[1]["state"])
+        self.assertFalse(samples[1]["correlation_valid"])
+        self.assertFalse(summarize_midi_boundary_timing(rows)["deadline_safety_proven"])
+
+    def test_inconsistent_deadline_is_not_attributed(self):
+        sample = extract_deadline_samples(["#CAP,450,DIAG,late_event,on,10,42,250,200,230"])[0]
+        self.assertFalse(sample["correlation_valid"])
+        self.assertIsNone(sample["state"])
+
+    def test_stop_phase_summary_preserves_counts_and_max_span(self):
+        samples = extract_stop_phase_samples([
+            "#CAP,500,DIAG,stop_phase,4,0,2,1,0,0,3,1,0,100,130,20",
+            "#CAP,500,DIAG,stop_phase,4,0,2,1,0,0,3,4,0,100,130,20",
+        ])
+        self.assertTrue(samples[0]["valid"])
+        self.assertEqual(samples[0]["calls"], 3)
+        self.assertEqual(samples[0]["crossed"], 1)
+        self.assertEqual(samples[0]["max_duration_us"], 30)
+        self.assertFalse(samples[1]["valid"])
+
+    def test_stop_timeline_correlates_device_clock_grains_services_and_emissions(self):
+        report = extract_stop_timeline([
+            "#CAP,495,DIAG,stop_state,4,0,6,7,92,95,93,90,110,20",
+            "#CAP,500,DIAG,stop_grain,4,0,2,1,0,0,93,100,130,90,90,110,20,10,0",
+            "#CAP,510,DIAG,stop_service,94,121,110,130,20",
+            "#CAP,520,DIAG,stop_emit,94,off,48,122,110,130,0",
+            "#CAP,530,DIAG,stop_grain,4,0,2,1,0,0,94,131,140,121,110,130,20,0,1",
+            "#CAP,535,DIAG,stop_state,4,0,7,5,95,141,94,110,130,20",
+        ])
+        self.assertTrue(report["correlation_complete"])
+        self.assertTrue(report["state_correlation_complete"])
+        self.assertEqual(len(report["grains"]), 2)
+        self.assertEqual(report["emissions"][0]["sequence"], 94)
+        self.assertEqual(report["grains"][0]["deadline_relation"], "crossed_during_grain")
+        self.assertTrue(report["grains"][0]["overlaps_next_observed_service"])
+        self.assertEqual(report["grains"][1]["deadline_relation"], "already_overdue_at_start")
+        self.assertIsNone(report["grains"][1]["next_observed_service_us"])
+
+    def test_stop_emission_retains_owner_and_rejects_invalid_identity(self):
+        service = "#CAP,510,DIAG,stop_service,94,121,110,130,20"
+        emission = "#CAP,520,DIAG,stop_emit,94,on,48,122,110,130,0,4,0,5,71"
+        report = extract_stop_timeline([service, emission])
+        self.assertTrue(report["emissions"][0]["valid"])
+        self.assertEqual(report["emissions"][0]["track"], 4)
+        self.assertEqual(report["emissions"][0]["channel"], 5)
+        self.assertEqual(report["emissions"][0]["note"], 71)
+        bad = extract_stop_timeline([service, emission.rsplit(",", 1)[0] + ",128"])
+        self.assertFalse(bad["emissions"][0]["valid"])
+
+    def test_stop_timeline_rejects_invalid_or_reversed_state_edges(self):
+        grain = "#CAP,500,DIAG,stop_grain,4,0,1,3,4,0,93,100,105,90,90,110,20,10,1"
+        entry = "#CAP,495,DIAG,stop_state,4,0,6,7,92,95,93,90,110,20"
+        invalid = "#CAP,535,DIAG,stop_state,4,0,7,5,95,141,94,110,131,20"
+        report = extract_stop_timeline([grain, entry, invalid])
+        self.assertFalse(report["correlation_complete"])
+        self.assertFalse(report["state_correlation_complete"])
+        reversed_edge = "#CAP,535,DIAG,stop_state,4,0,7,5,95,94,94,110,130,20"
+        report = extract_stop_timeline([grain, entry, reversed_edge])
+        self.assertFalse(report["state_correlation_complete"])
+
+    def test_stop_timeline_drop_invalidates_trace_evidence(self):
+        summary = summarize_midi_boundary_timing([
+            "#CAP,500,DIAG,stop_trace_drop,1",
+        ])
+        self.assertIn("stop_timeline_trace_drop", midi_boundary_timing_issues(summary))
+
+    def test_wrapped_device_timestamp_is_attributed(self):
+        rows = ["#CAP,4294967280,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+                "#CAP,30,ST,Track,OVERDUB_STOPPING,PLAYING",
+                "#CAP,50,DIAG,late_event,clk,10,42,5,4294967280,4294967291"]
+        sample = extract_deadline_samples(rows)[0]
+        self.assertTrue(sample["correlation_valid"])
+        self.assertEqual(sample["state"], "OVERDUB_STOPPING")
+
+
+class ManagedCaptureTests(unittest.TestCase):
+    def test_boot_ready_accepts_capture_sessions_relative_pointer(self) -> None:
+        with tempfile.TemporaryDirectory(dir=_SCRIPT_DIR.parent) as temp_dir:
+            out_dir = Path(temp_dir) / "captures"
+            out_dir.mkdir()
+            session_log = out_dir / "session.log"
+            session_log.touch()
+            (out_dir / ".current_session.ready").write_text(
+                str(session_log.relative_to(_SCRIPT_DIR.parent)) + "\n",
+                encoding="utf-8",
+            )
+            wait_for_capture_boot_ready(out_dir, session_log, timeout_s=0.1)
 
 
 if __name__ == "__main__":

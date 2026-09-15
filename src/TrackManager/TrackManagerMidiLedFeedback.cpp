@@ -13,7 +13,7 @@ uint8_t TrackManager::getMidiLedPhaseSlotIndex(uint8_t trackIndex) const {
     return 0;
   }
   const Track& track = tracks[trackIndex];
-  if (track.isPlaying() || track.isOverdubbing()) {
+  if (track.isAudiblePlaybackActive()) {
     return getPlayingSlotIndex(trackIndex);
   }
   return getPreviewSlotIndex(trackIndex);
@@ -71,7 +71,7 @@ void TrackManager::refreshTrackAndLoopSelectMidiLeds() {
 
     const bool enabled = slotEnabled[selectedTrack][s];
     const bool mutedSlot = slotMuted[selectedTrack][s];
-    const bool transportActive = st.isPlaying() || st.isOverdubbing();
+    const bool transportActive = st.isAudiblePlaybackActive();
     if (!enabled) {
       slotVelocities[s] = 32;
     } else if (mutedSlot && transportActive && s == playingSlot) {

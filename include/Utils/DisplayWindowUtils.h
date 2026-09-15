@@ -270,8 +270,8 @@ inline bool shouldApplyLiveCapturePlayheadTails(bool recording, bool overdubbing
 /// (`overdub_live_wrap_playhead_tail_display_bugfix`):
 ///   RECORDING (any playing) → NO
 ///   OVERDUBBING + PLAYING → YES
-/// `playing` means playhead advancing (`isPlaying() || isOverdubbing()`):
-/// `Track::isPlaying()` alone is false while `trackState == OVERDUBBING`.
+/// `playing` means playhead advancing (`Track::isAudiblePlaybackActive()`):
+/// `Track::isPlaying()` alone is false while capture or its finalization owns playback.
 inline bool shouldAllowCapturePlayheadWrapContinuation(bool recording, bool playing,
                                                        bool overdubbing) {
     if (recording) {

@@ -66,6 +66,28 @@ struct UndoEntry {
   EditPassType editPassType = EditPassType::Note;
 };
 
+
+/// Final-reference destruction of one privately retired entry. Begin only beyond
+/// the transaction's no-fail point; keep alive and drain before active teardown.
+/// No public stack reader may observe the moved-from entry during retirement.
+class UndoEntryReleaseCursor {
+ public:
+  UndoEntryReleaseCursor() = default;
+  UndoEntryReleaseCursor(const UndoEntryReleaseCursor&) = delete;
+  UndoEntryReleaseCursor& operator=(const UndoEntryReleaseCursor&) = delete;
+  bool begin(UndoEntry& entry);
+  bool step(size_t maximumUnits);
+  bool complete() const { return !active_; }
+  size_t completedUnits() const { return units_; }
+ private:
+  UndoEntry entry_;
+  LoopSnapshot::ReleaseCursor published_;
+  PersistedLoopSnapshotReleaseCursor persisted_;
+  size_t units_ = 0;
+  uint8_t phase_ = 0;
+  bool active_ = false;
+};
+
 using UndoEntryVec = std::vector<UndoEntry, ExternalMemoryFirstAllocator<UndoEntry>>;
 
 /// On-disk token before per-track undo stacks in `runtime.bundle.bin` footer (wire bytes: "GUS3").

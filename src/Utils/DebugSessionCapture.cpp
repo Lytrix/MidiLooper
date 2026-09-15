@@ -66,6 +66,10 @@ struct CaptureRing {
   // discards only non-Tier-A diagnostics instead of doing USB I/O.  Keep that
   // observable without reporting it as an evidence overflow.
   bool overflowPending = false;
+  // `RING,overflow` is emitted only at a later safe USB flush. Preserve the
+  // first actual eviction timestamp so a host report does not mistake that
+  // notification point for the loss point.
+  uint32_t overflowFirstEvictedUs = 0;
   uint32_t timingShedPending = 0;
 };
 
@@ -265,6 +269,9 @@ void discardOldestRecord(bool requiredEvidenceEviction) {
   advanceHead(total);
   if (requiredEvidenceEviction) {
     sCaptureRing.overflowPending = true;
+    if (sCaptureRing.overflowFirstEvictedUs == 0) {
+      sCaptureRing.overflowFirstEvictedUs = micros();
+    }
   } else {
     noteTimingShed();
   }
@@ -321,11 +328,15 @@ void emitOverflowNotice() {
   if (!sCaptureRing.overflowPending) {
     return;
   }
-  if (!serialWriteRoom(48)) {
+  if (!serialWriteRoom(64)) {
     return;  // keep pending; never block main on overflow notice
   }
+  const uint32_t firstEvictedUs = sCaptureRing.overflowFirstEvictedUs;
   sCaptureRing.overflowPending = false;
-  Serial.printf("#CAP,%lu,RING,overflow\r\n", (unsigned long)micros());
+  sCaptureRing.overflowFirstEvictedUs = 0;
+  Serial.printf_P(SC_FMT("#CAP,%lu,RING,overflow,%lu\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(firstEvictedUs));
 }
 
 void emitTimingShedNotice() {
@@ -551,19 +562,92 @@ SC_MEM_ATTR void runtimeTimingUsbBatchBuckets(const char* kind, const uint32_t b
                 (unsigned long)buckets[3], (unsigned long)buckets[4]);
 }
 
-SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick) {
-  emitCapPrintf("#CAP,%lu,DIAG,late_event,%s,%lu,%lu\r\n", (unsigned long)micros(), midiClass,
-                (unsigned long)latenessUs, (unsigned long)tick);
+SC_MEM_ATTR void stopPhaseTiming(uint8_t track, uint8_t slot, uint8_t phase,
+    uint32_t generation, uint32_t epoch, uint8_t destination, uint32_t calls,
+    uint32_t crossed, uint32_t unknown, uint32_t startUs, uint32_t endUs, uint32_t slackUs) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_phase,%u,%u,%u,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu\r\n"),
+      (unsigned long)micros(), (unsigned)track, (unsigned)slot, (unsigned)phase,
+      (unsigned long)generation, (unsigned long)epoch, (unsigned)destination,
+      (unsigned long)calls, (unsigned long)crossed, (unsigned long)unknown,
+      (unsigned long)startUs, (unsigned long)endUs, (unsigned long)slackUs);
+}
+
+SC_MEM_ATTR void stopGrainTiming(uint8_t track, uint8_t slot, uint8_t phase,
+    uint32_t generation, uint32_t epoch, uint8_t destination, uint32_t serviceSequence,
+    uint32_t grainStartUs, uint32_t grainEndUs, uint32_t serviceActualUs,
+    uint32_t serviceDueUs, uint32_t serviceDeadlineUs, uint32_t servicePeriodUs,
+    uint32_t slackUs, uint8_t finishedPhase) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_grain,%u,%u,%u,%lu,%lu,%u,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u\r\n"),
+      (unsigned long)micros(), (unsigned)track, (unsigned)slot, (unsigned)phase,
+      (unsigned long)generation, (unsigned long)epoch, (unsigned)destination,
+      (unsigned long)serviceSequence, (unsigned long)grainStartUs, (unsigned long)grainEndUs,
+      (unsigned long)serviceActualUs, (unsigned long)serviceDueUs,
+      (unsigned long)serviceDeadlineUs, (unsigned long)servicePeriodUs,
+      (unsigned long)slackUs, (unsigned)finishedPhase);
+}
+
+SC_MEM_ATTR void stopStateTiming(uint8_t track, uint8_t slot, uint8_t fromState,
+    uint8_t toState, uint32_t tick, uint32_t atUs, uint32_t serviceSequence,
+    uint32_t serviceDueUs, uint32_t serviceDeadlineUs, uint32_t servicePeriodUs) {
+  if (fromState == 6 && toState == 7) {
+    // Preserve the existing host state protocol using the occurrence timestamp.
+    emitCapPrintf(SC_FMT("#CAP,%lu,ST,Track,OVERDUBBING,OVERDUB_STOPPING\r\n"),
+                  (unsigned long)atUs);
+  }
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_state,%u,%u,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu\r\n"),
+      (unsigned long)micros(), (unsigned)track, (unsigned)slot, (unsigned)fromState,
+      (unsigned)toState, (unsigned long)tick, (unsigned long)atUs,
+      (unsigned long)serviceSequence, (unsigned long)serviceDueUs,
+      (unsigned long)serviceDeadlineUs, (unsigned long)servicePeriodUs);
+}
+
+SC_MEM_ATTR void stopServiceTiming(uint32_t serviceSequence, uint32_t actualUs,
+    uint32_t dueUs, uint32_t deadlineUs, uint32_t periodUs) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_service,%lu,%lu,%lu,%lu,%lu\r\n"),
+      (unsigned long)micros(), (unsigned long)serviceSequence, (unsigned long)actualUs,
+      (unsigned long)dueUs, (unsigned long)deadlineUs, (unsigned long)periodUs);
+}
+
+SC_MEM_ATTR void stopMidiEmissionTiming(uint32_t serviceSequence, uint8_t isNoteOn,
+    uint32_t tick, uint32_t sendUs, uint32_t dueUs, uint32_t deadlineUs,
+    uint32_t latenessUs, uint8_t track, uint8_t slot, uint8_t channel, uint8_t note) {
+#if defined(__IMXRT1062__)
+  const char* kind = isNoteOn ? PSTR("on") : PSTR("off");
+#else
+  const char* kind = isNoteOn ? "on" : "off";
+#endif
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_emit,%lu,%s,%lu,%lu,%lu,%lu,%lu,%u,%u,%u,%u\r\n"),
+      (unsigned long)micros(), (unsigned long)serviceSequence, kind, (unsigned long)tick,
+      (unsigned long)sendUs, (unsigned long)dueUs, (unsigned long)deadlineUs,
+      (unsigned long)latenessUs, (unsigned)track, (unsigned)slot,
+      (unsigned)channel, (unsigned)note);
+}
+
+SC_MEM_ATTR void stopTimelineDropped(uint32_t droppedRecords) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_trace_drop,%lu\r\n"),
+      (unsigned long)micros(), (unsigned long)droppedRecords);
+}
+
+SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick,
+                                          uint32_t sendUs, uint32_t dueUs, uint32_t deadlineUs) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,late_event,%s,%lu,%lu,%lu,%lu,%lu\r\n"),
+                (unsigned long)micros(), midiClass, (unsigned long)latenessUs,
+                (unsigned long)tick, (unsigned long)sendUs, (unsigned long)dueUs,
+                (unsigned long)deadlineUs);
 }
 
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
-                                 uint8_t slotIndex, uint32_t rebuildCount, const char* path) {
-  emitCapPrintf("#CAP,%lu,DIAG,playback_build,%s,%lu,%lu,%lu,%lu,%u,%u,%lu\r\n",
+                                 uint8_t slotIndex, uint32_t rebuildCount, const char* path,
+                                 uint32_t atUs, uint32_t previousPhase,
+                                 uint32_t currentPhase, uint32_t eventCount) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,playback_build,%s,%lu,%lu,%lu,%lu,%u,%u,%lu,%lu,%lu,%lu,%lu\r\n"),
                 (unsigned long)micros(), path, (unsigned long)durationUs,
                 (unsigned long)windowStartTick, (unsigned long)windowLengthTicks,
                 (unsigned long)revision, static_cast<unsigned>(trackIndex),
-                static_cast<unsigned>(slotIndex), static_cast<unsigned long>(rebuildCount));
+                static_cast<unsigned>(slotIndex), static_cast<unsigned long>(rebuildCount),
+                (unsigned long)atUs, (unsigned long)previousPhase,
+                (unsigned long)currentPhase, (unsigned long)eventCount);
 }
 
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {

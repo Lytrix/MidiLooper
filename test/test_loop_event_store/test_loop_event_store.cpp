@@ -743,8 +743,210 @@ void test_snapshot_failed_candidate_preserves_parent() {
   TEST_ASSERT_NULL(parent->noteMembership(60, 1).get());
 }
 
+void test_sealed_pass_read_preserves_order_and_quantum() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  MidiEventVec expected;
+  for (size_t i = 0; i < 2048; ++i) {
+    auto event = i % 2 ? MidiEvent::NoteOff(i % 97, 1, 60, 0)
+                       : MidiEvent::NoteOn(i % 97, 1, 60, 100);
+    expected.push_back(event);
+    TEST_ASSERT_TRUE(store.append(event));
+  }
+  CaptureChunkIdList refs;
+  store.detachChunksTo(refs);
+  const auto references = LoopEventStore::chunkReferenceCount(refs.front());
+  std::vector<MidiEvent> output(expected.size());
+  uint64_t generation = 7;
+  for (size_t quantum : {size_t(1), size_t(7), size_t(32), size_t(4096)}) {
+    LoopEventStoreReadCursor cursor;
+    TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(
+        cursor, refs.data(), refs.size(), output.data(), output.size(), generation));
+    TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Pending,
+                     LoopEventStore::stepReadSealedChunks(cursor, 0));
+    size_t calls = 0;
+    while (!cursor.ready()) {
+      TEST_ASSERT_NULL(cursor.data());
+      TEST_ASSERT_EQUAL(0u, cursor.size());
+      const auto result = LoopEventStore::stepReadSealedChunks(cursor, quantum);
+      TEST_ASSERT_NOT_EQUAL(LoopEventStoreReadResult::Denied, result);
+      TEST_ASSERT_TRUE(++calls <= (expected.size() + refs.size() + quantum - 1) / quantum);
+    }
+    TEST_ASSERT_EQUAL((expected.size() + refs.size() + quantum - 1) / quantum, calls);
+    TEST_ASSERT_EQUAL(expected.size(), cursor.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+      TEST_ASSERT_EQUAL(expected[i].tick, cursor.data()[i].tick);
+      TEST_ASSERT_EQUAL(expected[i].type, cursor.data()[i].type);
+    }
+    TEST_ASSERT_EQUAL(references, LoopEventStore::chunkReferenceCount(refs.front()));
+    ++generation;
+    TEST_ASSERT_FALSE(cursor.ready());
+    TEST_ASSERT_NULL(cursor.data());
+    TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Denied,
+                     LoopEventStore::stepReadSealedChunks(cursor, quantum));
+  }
+  LoopEventStore::releaseChunkRefs(refs);
+}
+
+void test_sealed_pass_read_denies_invalid_capacity_and_stale_inputs() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(96, 1, 60, 100)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(0, 1, 60, 0)));
+  MidiEvent output[2];
+  uint64_t generation = 1;
+  LoopEventStoreReadCursor cursor;
+  // The live tail is not an immutable input.
+  TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(cursor,
+      store.chunkIds().data(), store.chunkIds().size(), output, 2, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Denied,
+                   LoopEventStore::stepReadSealedChunks(cursor, 1));
+  CaptureChunkIdList refs;
+  store.detachChunksTo(refs);
+  TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(
+      cursor, refs.data(), refs.size(), output, 1, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Pending,
+                   LoopEventStore::stepReadSealedChunks(cursor, 1));
+  TEST_ASSERT_FALSE(LoopEventStore::beginReadSealedChunks(
+      cursor, refs.data(), refs.size(), output, 2, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Denied,
+                   LoopEventStore::stepReadSealedChunks(cursor, 1));
+  TEST_ASSERT_NULL(cursor.data());
+  TEST_ASSERT_EQUAL(0u, cursor.size());
+  TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(
+      cursor, refs.data(), refs.size(), output, 2, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Pending,
+                   LoopEventStore::stepReadSealedChunks(cursor, 1));
+  ++generation;
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Denied,
+                   LoopEventStore::stepReadSealedChunks(cursor, 2));
+  TEST_ASSERT_NULL(cursor.data());
+  const uint16_t invalid[] = {refs.front(), UINT16_MAX};
+  TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(
+      cursor, invalid, 2, output, 2, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Denied,
+                   LoopEventStore::stepReadSealedChunks(cursor, 8));
+  TEST_ASSERT_NULL(cursor.data());
+  LoopEventStore::releaseChunkRefs(refs);
+  TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(
+      cursor, refs.data(), refs.size(), output, 2, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Denied,
+                   LoopEventStore::stepReadSealedChunks(cursor, 1));
+}
+
+void test_sealed_pass_read_empty_and_invalid_bindings() {
+  uint64_t generation = 1;
+  LoopEventStoreReadCursor cursor;
+  TEST_ASSERT_FALSE(LoopEventStore::beginReadSealedChunks(cursor, nullptr, 1, nullptr, 0, generation));
+  TEST_ASSERT_FALSE(LoopEventStore::beginReadSealedChunks(cursor, nullptr, 0, nullptr, 1, generation));
+  TEST_ASSERT_TRUE(LoopEventStore::beginReadSealedChunks(cursor, nullptr, 0, nullptr, 0, generation));
+  TEST_ASSERT_EQUAL(LoopEventStoreReadResult::Complete,
+                   LoopEventStore::stepReadSealedChunks(cursor, 1));
+  TEST_ASSERT_TRUE(cursor.ready());
+  TEST_ASSERT_EQUAL(0u, cursor.size());
+  cursor.discard();
+  TEST_ASSERT_FALSE(cursor.ready());
+}
+
+void test_snapshot_release_shared_root_is_one_unit_and_readable() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(41, 60, 10, 100));
+  auto root = buildSnapshotForTests(changes);
+  auto reader = root;
+  LoopSnapshot::ReleaseCursor release;
+  TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(release, root));
+  TEST_ASSERT_NULL(root.get());
+  TEST_ASSERT_FALSE(LoopSnapshot::stepRelease(release, 0));
+  TEST_ASSERT_EQUAL(0u, release.completedUnits());
+  TEST_ASSERT_TRUE(LoopSnapshot::stepRelease(release, 1));
+  TEST_ASSERT_EQUAL(1u, release.completedUnits());
+  TEST_ASSERT_EQUAL(41u, reader->findNoteAtPitch(41, 60)->noteId);
+  TEST_ASSERT_TRUE(LoopSnapshot::stepRelease(release, 32));
+  TEST_ASSERT_EQUAL(1u, release.completedUnits());
+}
+
+void test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves() {
+  for (const size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    LoopSnapshotChangeSet changes;
+    // Three linked membership pages, multiple pitches and directory pages.
+    for (NoteId id = 1; id <= 40; ++id) {
+      changes.notes.push_back(addSnapshotNote(id, 60, 10, 100));
+    }
+    changes.notes.push_back(addSnapshotNote(41, 62, 33 * 768, 33 * 768 + 100));
+    SnapshotEventChange event{};
+    event.kind = SnapshotChangeKind::Add;
+    event.next.loopId = 7;
+    event.next.eventId = 9;
+    event.next.value = MidiEvent::ControlChange(33 * 768, 1, 7, 64);
+    changes.events.push_back(event);
+    auto root = buildSnapshotForTests(changes, 64 * 768);
+    TEST_ASSERT_NOT_NULL(root.get());
+    std::weak_ptr<const LoopSnapshot> rootLifetime = root;
+    std::weak_ptr<const LoopSnapshotNote> first = root->findNoteAtPitch(1, 60);
+    std::weak_ptr<const LoopSnapshotNote> last = root->findNoteAtPitch(41, 62);
+    std::weak_ptr<const LoopSnapshotEvent> eventLifetime =
+        root->eventMembership(33)->references[0];
+    LoopSnapshot::ReleaseCursor release;
+    TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(release, root));
+    auto other = LoopSnapshot::createEmpty(9, 768, 0, 1, 1);
+    const auto* otherIdentity = other.get();
+    TEST_ASSERT_FALSE(LoopSnapshot::beginRelease(release, other));
+    TEST_ASSERT_EQUAL_PTR(otherIdentity, other.get());
+    const auto allocations = snapshotAllocNodeCount();
+    size_t turns = 0;
+    while (!release.complete() && turns++ < 10000) {
+      const size_t before = release.completedUnits();
+      LoopSnapshot::stepRelease(release, quantum);
+      TEST_ASSERT_TRUE(release.completedUnits() - before <= quantum);
+      TEST_ASSERT_TRUE(release.completedUnits() > before);
+    }
+    TEST_ASSERT_TRUE(release.complete());
+    TEST_ASSERT_TRUE(rootLifetime.expired());
+    TEST_ASSERT_TRUE(first.expired());
+    TEST_ASSERT_TRUE(last.expired());
+    TEST_ASSERT_TRUE(eventLifetime.expired());
+    TEST_ASSERT_EQUAL(allocations, snapshotAllocNodeCount());
+    TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(release, other));
+    while (!LoopSnapshot::stepRelease(release, quantum)) {}
+  }
+}
+
+void test_snapshot_release_preserves_shared_descendants_during_every_grain() {
+  LoopSnapshotChangeSet changes;
+  changes.notes.push_back(addSnapshotNote(41, 60, 10, 100));
+  changes.notes.push_back(addSnapshotNote(42, 62, 20, 120));
+  auto parent = buildSnapshotForTests(changes);
+  auto reader = parent->withLoopLengthTicks(6144);
+  // Parent and reader are distinct roots sharing the entire indexed graph.
+  TEST_ASSERT_NOT_EQUAL(parent.get(), reader.get());
+  auto membership = parent->noteMembership(60, 0);
+  LoopSnapshot::ReleaseCursor release;
+  TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(release, parent));
+  do {
+    LoopSnapshot::stepRelease(release, 1);
+    TEST_ASSERT_EQUAL_PTR(membership.get(), reader->noteMembership(60, 0).get());
+    TEST_ASSERT_EQUAL(10u, reader->findNoteAtPitch(41, 60)->startTick);
+    TEST_ASSERT_EQUAL(20u, reader->findNoteAtPitch(42, 62)->startTick);
+  } while (!release.complete());
+  // Now retire the last root, retaining just one membership as an external reader.
+  TEST_ASSERT_TRUE(LoopSnapshot::beginRelease(release, reader));
+  do {
+    LoopSnapshot::stepRelease(release, 1);
+    TEST_ASSERT_EQUAL(1u, snapshotMembershipCount(membership.get()));
+    TEST_ASSERT_EQUAL(41u, membership->references[0]->noteId);
+  } while (!release.complete());
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_snapshot_release_shared_root_is_one_unit_and_readable);
+  RUN_TEST(test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves);
+  RUN_TEST(test_snapshot_release_preserves_shared_descendants_during_every_grain);
+  RUN_TEST(test_sealed_pass_read_preserves_order_and_quantum);
+  RUN_TEST(test_sealed_pass_read_denies_invalid_capacity_and_stale_inputs);
+  RUN_TEST(test_sealed_pass_read_empty_and_invalid_bindings);
   RUN_TEST(test_append_fills_chunks_without_realloc_pattern);
   RUN_TEST(test_adopt_all_moves_chunks);
   RUN_TEST(test_merge_from_combines_sorted_events);

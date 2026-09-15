@@ -1,0 +1,56 @@
+--- a/src/EditManager/EditApply.cpp
++++ b/src/EditManager/EditApply.cpp
+@@ -516,8 +516,10 @@
+   for (const MidiEvent& evt : addedEvents) {
+     events.push_back(evt);
+   }
+-  std::sort(events.begin(), events.end(),
+-            [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
++  // Deterministic Create reference: preserve stored order for equal raw ticks,
++  // including existing events before appended events. Empty Create still sorts.
++  std::stable_sort(events.begin(), events.end(),
++                   [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+   clearNoteOnIndexLookupCache(cache);
+ }
+ 
+--- a/test/test_edit_apply/test_edit_apply.cpp
++++ b/test/test_edit_apply/test_edit_apply.cpp
+@@ -5325,6 +5325,30 @@
+         TEST_ASSERT_TRUE(origin < events.size());
+         auto original = events[origin]; original.tick = actual[i].tick;
+         assertMidiEventVecEquivalent(MidiEventVec{original}, MidiEventVec{actual[i]}, "base provenance across companion batch");
++      }
++    }
++  }
++}
++
++void test_create_history_preserves_equal_tick_append_order() {
++  for (size_t existingCount : {size_t(0), size_t(12), size_t(25)}) {
++    MidiEventVec events;
++    EditPass row;
++    row.actionType = EditActionType::Create;
++    for (size_t i = 0; i < 25; ++i) {
++      auto event = MidiEvent::NoteOn(i % 3, 1, 60, 90);
++      event.noteId = i + 1;
++      if (i < existingCount) events.push_back(event);
++      else row.addedEvents.push_back(event);
++    }
++    applyNoteEditPassSequence(events, EditPassVec{row}, 768);
++    TEST_ASSERT_EQUAL_UINT(25, events.size());
++    size_t index = 0;
++    for (size_t tick = 0; tick < 3; ++tick) {
++      for (size_t originalIndex = tick; originalIndex < 25; originalIndex += 3) {
++        TEST_ASSERT_EQUAL_UINT32(tick, events[index].tick);
++        TEST_ASSERT_EQUAL_UINT32(originalIndex + 1, events[index].noteId);
++        ++index;
+       }
+     }
+   }
+@@ -5763,6 +5787,7 @@
+   RUN_TEST(test_companion_bridge_map_guards_source_capacity_and_cancellation);
+   RUN_TEST(test_reference_same_tick_off_helper_preserves_event_bytes);
+   RUN_TEST(test_bounded_companion_batch_matches_sequential_reference_and_base_provenance);
++  RUN_TEST(test_create_history_preserves_equal_tick_append_order);
+   RUN_TEST(test_bounded_history_updates_match_canonical_sequence);
+   RUN_TEST(test_bounded_history_collapsing_capacity_and_stale_guards);
+   RUN_TEST(test_bounded_history_wrap_updates_and_unpaired_move);

@@ -14,6 +14,7 @@
 #include "../../src/EditManager/EditApply.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/StorageLoopIo.cpp"
+#include "../../src/StorageLoopIoBodyFormatV1.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
 #include "../../src/Utils/LoopEventValidation.cpp"
 #include "../../src/Loop.cpp"

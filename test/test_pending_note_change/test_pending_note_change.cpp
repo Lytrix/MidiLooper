@@ -22,6 +22,8 @@
 #include "../../src/EditManager/ParticipatingNoteSession.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/Utils/RuntimeTimingTelemetry.cpp"
+#include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureCompanions.cpp"
 
 #include "Loop.h"
 #include "LoopContentResolution.h"
@@ -53,6 +55,15 @@ namespace {
 using namespace NoteIdTestFixtures;
 
 constexpr uint32_t kLoopLen = Config::TICKS_PER_BAR * 8;
+
+/// The snapshot-only convenience API intentionally clears on a root miss.
+/// These pass-layer tests exercise the explicit, cold full-loop range oracle.
+template <typename MidiVector>
+void copyFullPassReplayForTest(const Loop& loop, MidiVector& out) {
+  SessionMidiEventVec replay;
+  loop.copyEffectiveCommittedEventsInRange(replay, 0, loop.loopLengthTicks, true);
+  out.assign(replay.begin(), replay.end());
+}
 
 int countKind(const PendingNoteChangeVec& pending, PendingNoteChangeKind kind) {
   int count = 0;
@@ -784,14 +795,14 @@ void test_occupancy_five_sibling_convergence() {
   TEST_ASSERT_EQUAL(0, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten));
 
   SessionMidiEventVec firstFlat;
-  loop.copyEffectiveCommittedEvents(firstFlat);
+  copyFullPassReplayForTest(loop, firstFlat);
   NoteUtils::DisplayNoteVec firstNotes =
       NoteUtils::reconstructDisplayNotes(firstFlat, loop.loopLengthTicks, false);
   loop.applyPendingNoteChangesToDisplayNotes(firstNotes);
   TEST_ASSERT_EQUAL_UINT32(0u, countDisplayNotesAtPitchStart(firstNotes, 64, 768));
 
   SessionMidiEventVec repeatFlat;
-  loop.copyEffectiveCommittedEvents(repeatFlat);
+  copyFullPassReplayForTest(loop, repeatFlat);
   NoteUtils::DisplayNoteVec repeatNotes =
       NoteUtils::reconstructDisplayNotes(repeatFlat, loop.loopLengthTicks, false);
   loop.applyPendingNoteChangesToDisplayNotes(repeatNotes);
@@ -817,7 +828,7 @@ void test_occupancy_five_sibling_convergence() {
   loop.pushOverdubSessionPass(passId, sealed);
 
   SessionMidiEventVec sealedFlat;
-  loop.copyEffectiveCommittedEvents(sealedFlat);
+  copyFullPassReplayForTest(loop, sealedFlat);
   const NoteUtils::DisplayNoteVec sealedNotes =
       NoteUtils::reconstructDisplayNotes(sealedFlat, loop.loopLengthTicks, false);
   TEST_ASSERT_EQUAL_UINT32(1u, countDisplayNotesAtPitchStart(sealedNotes, 64, 768));
@@ -1084,7 +1095,7 @@ void test_occupancy_undo_restores_original_geometry() {
   loop.pushOverdubSessionPass(passId, sealed);
 
   SessionMidiEventVec occupied;
-  loop.copyEffectiveCommittedEvents(occupied);
+  copyFullPassReplayForTest(loop, occupied);
   const NoteUtils::DisplayNoteVec occupiedNotes =
       NoteUtils::reconstructDisplayNotes(occupied, loop.loopLengthTicks, false);
   const NoteUtils::DisplayNote* shortened = findDisplayNoteById(occupiedNotes, 1);
@@ -1092,7 +1103,7 @@ void test_occupancy_undo_restores_original_geometry() {
 
   TEST_ASSERT_TRUE(loop.undoOverdubSession());
   SessionMidiEventVec restored;
-  loop.copyEffectiveCommittedEvents(restored);
+  copyFullPassReplayForTest(loop, restored);
   const NoteUtils::DisplayNoteVec restoredNotes =
       NoteUtils::reconstructDisplayNotes(restored, loop.loopLengthTicks, false);
   const NoteUtils::DisplayNote* original = findDisplayNoteById(restoredNotes, 1);
@@ -1230,7 +1241,7 @@ void test_wrap_commit_hide_drops_shorter_same_start_from_display() {
   loop.invalidateCaches();
 
   SessionMidiEventVec flat;
-  loop.copyEffectiveCommittedEvents(flat);
+  copyFullPassReplayForTest(loop, flat);
   NoteUtils::DisplayNoteVec notes =
       NoteUtils::reconstructDisplayNotes(flat, kLoopLen, false, false);
   loop.appendOverdubPassDisplayNotes(notes);
@@ -1558,7 +1569,7 @@ void test_seal_pending_shorten_to_edit_pass_after_overdub_publish() {
   TEST_ASSERT_EQUAL_UINT8(kOverdubCompanionEditPassIndex, loop.passes.editPasses[0].editPassIndex);
 
   SessionMidiEventVec flat;
-  loop.copyEffectiveCommittedEvents(flat);
+  copyFullPassReplayForTest(loop, flat);
   bool foundShortenedOff = false;
   for (const MidiEvent& evt : flat) {
     if (evt.isNoteOff() && evt.data.noteData.note == 60 && evt.tick == 119) {
@@ -1702,7 +1713,7 @@ void test_wrap_committed_note_at_s_occupies_ledger_same_tick() {
   loop.rebuildOverdubSourceView(kS);
 
   SessionMidiEventVec merged;
-  loop.copyEffectiveCommittedEvents(merged);
+  copyFullPassReplayForTest(loop, merged);
   std::sort(merged.begin(), merged.end(),
             [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
   NoteId wrapId = kInvalidNoteId;
@@ -1964,7 +1975,7 @@ void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather(
   constexpr NoteId kWrapNoteId = 9;
   seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
+  copyFullPassReplayForTest(loop, merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -1997,7 +2008,7 @@ void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather(
   TEST_ASSERT_TRUE(foundAfterS);
 
   SessionMidiEventVec rebuilt;
-  loop.copyEffectiveCommittedEvents(rebuilt);
+  copyFullPassReplayForTest(loop, rebuilt);
   TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(rebuilt, kWrapNoteId));
   TEST_ASSERT_EQUAL_UINT32(1u, countNoteOnWithId(merged.mergedEvents, kWrapNoteId));
 }
@@ -2011,7 +2022,7 @@ void test_incremental_overdub_seal_applies_companion_shorten() {
   constexpr NoteId kOverdubId = 10;
   seedLongSourceNote(loop, kSourceId, 50, 200, 60, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
+  copyFullPassReplayForTest(loop, merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2045,7 +2056,7 @@ void test_overdub_stop_reanchor_preserves_merged_then_admits_seal() {
   constexpr NoteId kStopNoteId = 11;
   seedLongSourceNote(loop, kSourceId, 48, 200, 60, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
+  copyFullPassReplayForTest(loop, merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2085,7 +2096,7 @@ void test_overdub_stop_shaped_receipt_admits_without_duplication() {
   constexpr NoteId kStopNoteId = 12;
   seedLongSourceNote(loop, kSourceId, 50, 200, 60, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
+  copyFullPassReplayForTest(loop, merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2109,7 +2120,7 @@ void test_overdub_stop_shaped_receipt_admits_without_duplication() {
   TEST_ASSERT_EQUAL_UINT32(119u, noteOffTickForId(merged.mergedEvents, kSourceId, 60));
 
   SessionMidiEventVec rebuilt;
-  loop.copyEffectiveCommittedEvents(rebuilt);
+  copyFullPassReplayForTest(loop, rebuilt);
   TEST_ASSERT_EQUAL_UINT32(countNoteOnWithId(rebuilt, kSourceId),
                            countNoteOnWithId(merged.mergedEvents, kSourceId));
   TEST_ASSERT_EQUAL_UINT32(countNoteOnWithId(rebuilt, kStopNoteId),
@@ -2125,7 +2136,7 @@ void test_incremental_overdub_seal_provenance_miss_falls_back() {
   constexpr NoteId kWrapNoteId = 9;
   seedLongSourceNote(loop, kSourceId, 48, 72, 72, kLoopLenTicks);
   PlaybackMergedMidiEvents merged;
-  loop.copyEffectiveCommittedEvents(merged.mergedEvents);
+  copyFullPassReplayForTest(loop, merged.mergedEvents);
   merged.builtFromRevision = loop.playbackRevision;
   merged.windowStartTick = 0;
   merged.windowLengthTicks = loop.loopLengthTicks;
@@ -2583,7 +2594,7 @@ void test_capture_off_does_not_clear_committed_occupy() {
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(clearedOccupy.size()));
 
   MidiEventVec committedOnly;
-  loop.copyEffectiveCommittedEvents(committedOnly);
+  copyFullPassReplayForTest(loop, committedOnly);
   ActiveNoteLedger ledger;
   applyGatheredThroughTick(ledger, committedOnly, kOccupy);
   OverlapNoteIdSet occupyIds;
@@ -2625,7 +2636,7 @@ void test_capture_on_does_not_occupy_empty_source_view() {
   TEST_ASSERT_TRUE(leftoverOccupy.contains(kCaptureId));
 
   MidiEventVec committedOnly;
-  loop.copyEffectiveCommittedEvents(committedOnly);
+  copyFullPassReplayForTest(loop, committedOnly);
   ActiveNoteLedger ledger;
   applyGatheredThroughTick(ledger, committedOnly, kOccupy);
   OverlapNoteIdSet occupyIds;
@@ -2659,7 +2670,7 @@ void test_occupy_ledger_catchup_on_at_192_after_last_tick_184() {
   TEST_ASSERT_TRUE(sourceViewIds.contains(kCommittedId));
 
   MidiEventVec committedOnly;
-  loop.copyEffectiveCommittedEvents(committedOnly);
+  copyFullPassReplayForTest(loop, committedOnly);
   ActiveNoteLedger behindClock;
   applyGatheredThroughTick(behindClock, committedOnly, kLastTick);
   OverlapNoteIdSet behindIds;
@@ -2693,7 +2704,7 @@ void test_occupy_ledger_catchup_exclusive_when_occupy_equals_last_tick() {
   loop.nextEventIndex = 7;
 
   MidiEventVec committedOnly;
-  loop.copyEffectiveCommittedEvents(committedOnly);
+  copyFullPassReplayForTest(loop, committedOnly);
   TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
   ActiveNoteLedger ledger;
   CommittedPlaybackLedgerCatchUp::applyOpenClosedInterval(ledger, 1, committedOnly, kOccupy, kOccupy,
@@ -3187,7 +3198,7 @@ void test_occupy_ledger_catchup_skips_wrap_crossing() {
   TEST_ASSERT_FALSE(CommittedPlaybackLedgerCatchUp::shouldApply(loop, kOccupy));
 
   MidiEventVec committedOnly;
-  loop.copyEffectiveCommittedEvents(committedOnly);
+  copyFullPassReplayForTest(loop, committedOnly);
   ActiveNoteLedger ledger;
   OverlapNoteIdSet occupyIds;
   loop.collectOverdubNoteOnParticipantIds(kPitch, 1, ledger, occupyIds);
@@ -4825,10 +4836,17 @@ void test_consume_finds_loop_end_identity_when_visual_cache_omits_it_174151() {
   kept.startTick = 720;
   kept.endTick = 768;
   loop.visualCache.notes.push_back(kept);
-  loop.visualCache.dirtyBars.clear();
-  loop.visualCacheDirty = false;
-  loop.openOverdubSession(48);
-  loop.establishOverdubSourceView(48);
+  // This display cache only has the early row. Mark the omitted tail as dirty so
+  // source-view admission must reconstruct it from the immutable pass layer.
+  const uint32_t barCount =
+      (kLen + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+  loop.visualCache.dirtyBars.assign(barCount, 0);
+  loop.visualCache.dirtyBars.back() = 1;
+  loop.visualCacheDirty = true;
+  // The global prepared index belongs to a selected loop. This fixture has no
+  // prepared owner, so force the documented committed-pass fallback.
+  LoopContentResolution::deviceGateReset();
+  loop.beginCapture(CapturePhase::Overdub, 48);
   TEST_ASSERT_NOT_NULL(findDisplayNoteById(loop.overdubSourceViewNotes(), 112));
   TEST_ASSERT_EQUAL_UINT32(0, loop.overlapHoldTotals().idsWithoutNotes);
   TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, 69, 90, 48, 96, 174,
@@ -5215,8 +5233,51 @@ void test_pending_hide_keeps_closed_preview_equal_geometry_204112() {
   }
 }
 
+void test_prepared_companion_payload_matches_legacy_seal_without_publishing() {
+  for (auto kind : {PendingNoteChangeKind::Shorten, PendingNoteChangeKind::Hide}) {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    seedLongSourceNote(loop, 1, 0, 576, 60);
+    const PendingNoteChange change{kind, 1, 1, 60, 90, 0, 192};
+    loop.pushPendingNoteChangeForTest(change);
+    CaptureAdmissionStaging capture;
+    TEST_ASSERT_TRUE(capture.prewarm());
+    capture.captureGeneration = 112;
+    TEST_ASSERT_TRUE(capture.freeze(112));
+    RuntimeCaptureCompanions prepared;
+    TEST_ASSERT_TRUE(prepared.prewarm(2));
+    const uint32_t revision = loop.playbackRevision;
+    TEST_ASSERT_TRUE(prepared.begin(capture, 112, loop.pendingNoteChanges()));
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, prepared.step(1));
+    TEST_ASSERT_TRUE(prepared.ready(112));
+    TEST_ASSERT_EQUAL_UINT32(revision, loop.playbackRevision);
+    TEST_ASSERT_TRUE(loop.passes.editPasses.empty());
+    TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
+    const auto ids = loop.sealPendingNoteChangesToEditPasses(false);
+    TEST_ASSERT_EQUAL_UINT32(1, ids.size());
+    const EditPass& actual = loop.passes.editPasses.back();
+    const EditPass& pending = prepared.row(0);
+    TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, actual.id);
+    TEST_ASSERT_EQUAL(kInvalidEditPassId, pending.id);
+    TEST_ASSERT_EQUAL(actual.passType, pending.passType);
+    TEST_ASSERT_EQUAL(actual.editPassIndex, pending.editPassIndex);
+    TEST_ASSERT_EQUAL(actual.actionType, pending.actionType);
+    TEST_ASSERT_EQUAL(actual.propertyType, pending.propertyType);
+    TEST_ASSERT_EQUAL(actual.state, pending.state);
+    TEST_ASSERT_EQUAL_UINT32(actual.targetNoteId, pending.targetNoteId);
+    TEST_ASSERT_EQUAL_UINT32(actual.startTick, pending.startTick);
+    TEST_ASSERT_EQUAL_UINT32(actual.endTick, pending.endTick);
+    TEST_ASSERT_EQUAL_UINT8(actual.pitch, pending.pitch);
+    TEST_ASSERT_EQUAL_UINT8(actual.velocity, pending.velocity);
+    TEST_ASSERT_TRUE(pending.addedEvents.empty());
+    TEST_ASSERT_FALSE(prepared.ready(112)); // Legacy seal consumed the frozen source list.
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_prepared_companion_payload_matches_legacy_seal_without_publishing);
   RUN_TEST(test_pending_requires_source_view);
   RUN_TEST(test_pending_add_only_when_no_overlap);
   RUN_TEST(test_no_overlap_with_companion_edit_does_not_full_materialize);

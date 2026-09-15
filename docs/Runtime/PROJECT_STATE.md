@@ -1,10 +1,319 @@
 # Project state (execution context)
 
+**Current DRY direction:** first recording reuses the existing playback view,
+fill/order, coverage lifecycle, bridges and MIDI cursor. The separate recording
+window/store/stream prototype was removed. Shared coverage-scoped fill is tested
+(122 focused tests); source/lifecycle integration and original-boundary readiness
+remain open. Earlier prototype test counts are historical, not acceptance of the
+shared recording path. No delayed launch or new recording rejection is authorized.
+
+**2026-09-15 first-record shared-window implementation:** bar 1 is installed as
+raw playback coverage before RECORDING, then refreshed from the canonical
+chunked capture store by the existing resumable fill/order owner. Source-count
+and capture-display generation checks discard stale unpublished work; the
+retained view survives a cache reset and binds final length at record stop.
+Native focused coverage/prewarm tests pass 132/132 and both firmware builds
+pass. Deferred main-loop maintenance is routed to FLASH, and the capture-serial
+instrumentation target now passes its RAM1 local gate with 6,496 bytes of local
+headroom. No upload or HITL verdict is claimed yet.
+
+The recovered capture image has since been uploaded. Track 5 / slot 1 transport
+Stop interruption passed focused precedence and silence verification; the clean
+normal-stop rerun was inconclusive because the overdub-stop transition was not
+confirmed. Broader HITL and reservation gates remain open.
+
+
+**2026-09-15 first-record direction corrected by user:** no delayed launch is
+acceptable. Prepare rolling one-bar playback windows during recording, with
+bar 1 established at record start and retained for the existing final-bar return
+boundary. Extend the currently overdub-only staged input path; prove late input,
+held-note closure, final-length binding, and subsequent window handoffs without
+rewinding transport or replaying historical events. The verified first-record
+snapshot delay/catch-up defect remains unfixed. The deferred-launch proposal is
+rejected history. See the active `resumable-midi-boundary-playback-maintenance`
+design and specs; task and HITL gates remain open.
+
+
+**2026-09-15 device-clock stop timeline ready:** capture-only telemetry now
+retains every stopping grain's frozen identity, requested destination, actual
+preceding MIDI service/due/deadline and span, followed by queued service and
+NoteOn/Off emission records. Loss is explicit and invalidates the host timing
+report. Focused native telemetry/tier: 43 passed; host timing/stop tests: 40
+passed. Capture build remains within the RAM1 local gate (6,496 bytes). The
+next device checkpoint is normal stop plus timed transport Stop after the
+deferred-save setup precondition is confirmed. Task 4.1 remains open.
+
+**2026-09-15 forced wrap Stop PASS:** the approved track 5/slot 1 four-bar
+fixture reached `OVERDUB_STOPPING`; MIDI Stop followed 8.689 ms later. A
+volatile per-track output barrier now blocks loop output before the Stop
+handler's all-track CC123 fan-out and at the final Track emission call. The
+rerun sent All Notes Off after 83 us, reached STOPPED after 173.607 ms, and
+observed no target NoteOn for 18.9 s. Evidence:
+`captures/resumable-handoff-wrap-forced4-barrier-hitl/`. This is focused
+single-track silence evidence only; Task 2.3, layered playback and deadline
+acceptance remain open. Native focused suites: 242 passed; host tests: 38
+passed; capture firmware RAM1 locals: 6,496 bytes.
+
+**2026-09-14 restart omission repaired and HITL PASS:** the prepared-stop path
+now hands prewarmed session identities to the idle snapshot owner before close;
+the stale-root overlay reads that receipt immediately. Companion publication
+updates both note and MIDI-event membership. Three complete restart cycles each
+played all 49 expected notes exactly once with matching NoteOffs, after a focused
+Stop-interruption PASS. Evidence: `captures/resumable-handoff-admission-hitl/`
+and `captures/resumable-handoff-restart-hitl/`. Firmware uploaded; transport stopped.
+Native full suite 2,083 passed/1 skipped, final focused suite 124 passed, host tests
+38 passed; RAM1 locals 6,496 bytes. Tasks remain 11/19. An earlier wrap-adjacent
+run took legacy stop and is inconclusive; reproduce that admission fallback next
+with the new capture-only denial diagnostics. Protected cleanup/undo, fully
+bounded publisher/overlay work, layered parity and timing acceptance remain open.
+See `FOCUSED-STOP-HITL.md` for scope and separate baseline verdicts.
+
+**2026-09-14 restart survival FAIL:** after the focused interruption PASS, three
+complete restart cycles emitted only base pitches 48–79; overdub pitches 24–39
+and held 83 were absent. Canonical/display evidence still reports 49 notes while
+playback's overlay has 32. Prioritize task 2.3's reserved bounded session-exit
+snapshot handoff before clearing session identity; the prepared-stop production
+path currently omits it. Do not insert the unbounded legacy queue call into an
+active grain. Layered HITL is deferred until single-slot survival passes.
+Evidence: `captures/resumable-stop-restart-survival/restart-result.json` and
+`FOCUSED-STOP-HITL.md`. Transport stopped; firmware unchanged; tasks 11/19.
+
+**2026-09-14 focused interruption PASS:** repaired concrete-output-port fixture
+and stale-PLAYING skip; actual MIDI Stop observed 9.253 ms into OVERDUB_STOPPING,
+All Notes Off after 70 us, then STOPPED and 9.49 s without resumed target notes.
+Evidence: `captures/resumable-stop-hitl-strict-wrapper/interruption-result.json`.
+This closes only the single-track interruption/silence checkpoint. Restart
+survival, layered playback, broader baseline and full timing acceptance remain
+open. Tasks remain 11/19; see `FOCUSED-STOP-HITL.md` for scope and next gates.
+
+**2026-09-14 MIDI deadline correlation checkpoint:** uploaded capture-only retained
+send/due/deadline timestamps and per-stop-phase summaries. Native 2,080 passed,
+1 skipped. A normal stopping interval measured 97.760 ms; one canonical-order
+turn crossed its entry service deadline (248 us duration, 33 us slack). Another
+run retained 24.678 ms clock and 26.049 ms NoteOff lateness. This is partial
+hardware evidence, not deadline acceptance. Scratch clears succeeded with the
+revised host precondition; the timed interruption fixture was subsequently repaired and its focused
+checkpoint passed (see the newer entry above). See `FOCUSED-STOP-HITL.md`; tasks remain 11/19 complete.
+
+**2026-09-14 protected stop continuation:** bounded undo publication/restore,
+STOPPED-only joint recovery, disabled-pass reclamation and session-close helpers
+now have native coverage. Production playback honors the latched STOPPED
+emission policy; full joint stop integration remains open (11/19 tasks).
+See the change's `BRIDGE-PROGRESS.md` and `FOCUSED-STOP-HITL.md` for the focused
+Stop regression checkpoint and explicit remaining integration. Upload and a focused HITL attempt were approved and performed on 2026-09-14.
+The initial boot exhaustion is fixed: boot now reserves staging only; full
+bridge readiness remains separately guarded. Device startup and normal UI are
+confirmed, with 4,401 KB free PSRAM. Native: 2,077 passed, 1 skipped. The exact
+managed-log binding is fixed. Normal stopping was observed; the interruption
+retest remains INCONCLUSIVE_CAPTURE after a deferred-save clear refusal. See
+`FOCUSED-STOP-HITL.md` for evidence and remaining gates.
+
 **Agents: load first** with [CURRENT_WORK.md](CURRENT_WORK.md). Overwrite frequently — **operational only**, no future milestones (those live in [ROADMAP.md](ROADMAP.md)).
 
 Last updated: 2026-09-12 (OpenSpec 6.4 SHIPPED; next 6.5 archive)
 
 ---
+
+**2026-09-13 active OpenSpec continuation:**
+`resumable-midi-boundary-playback-maintenance` is **11/19 tasks complete**.
+DEC-060 records user approval of canonical per-pass companion application for
+combined capture preparation. Preserve immutable pass membership and apply rows
+independently before the canonical merge; flattened admission is not the oracle.
+The bounded per-pass owner now applies and merges immutable input descriptors
+with pass/event origins and generation/capacity guards. Per-pass mapping now
+validates an explicit published-base provenance table and feeds the ranked bridge
+compiler/cursor. Full-loop view fill now constructs and owns the table alongside
+events from a completed effective-pass baseline. A generation-checked sealed-pass
+reader now copies raw chunks in bounded event/chunk visits without allocation
+or partial-result exposure (2026-09-14; event-store tests 34/34). Production canonical pass
+lifetime integration remains open. Bounded history preparation
+now covers Create/Delete/Length/Pitch/Velocity/NoteRange, including contiguous row
+collapse and Create identity reactivation. DEC-061 records the approved stable
+Create sort correction. A runtime-owned continuation now connects frozen
+sealed-pass descriptors through history application to separate effective-pass
+inputs, with a generation-bound companion consumer. A direct LoopPasses overload
+now selects canonical passes and filters active history in bounded grains;
+a frozen-source entry point now checks live revision/generation/epoch, loop
+length and capture state even on completed-result access. The typed companion
+consumer now also binds the prepared row owner, rejecting same-generation row
+reuse and mismatched capture owners. A frozen-overdub entry now orders capture
+with private indexes and normalizes it as the final pass without changing the
+shared audible arrays. Companion continuation now preserves historical Delete/
+Create membership across the stage boundary through a bounded prefix scan.
+End-to-end native bridge traces now cover 24 canonical history/capture variants,
+a four-cycle open-note capture trace, and epoch cancellation/rebuild in mapping
+and compilation. Ranked mapping/compilation now also feeds runtime admission
+with live owner/generation checks retained through final selection preflight.
+Executable uint64 bounds now compose ranked preparation, mapping and compilation;
+the conservative full-horizon result exceeds the existing stop budget, so
+completed sealed prefixes can now be reused without selection/read/history replay.
+A runtime-owned prefix continuation now binds live revision/generation/length,
+latches denial until the source changes, separates cleanup from restart, and
+yields ownership to a frozen tail. The VisualCache owner now schedules at most
+one prefix child across all tracks, with Q=32 and a global early return. Stop,
+recording and existing active visual work retain priority; eligible overdub
+tracks rotate without allocating missing runtime storage. A runtime coordinator now extends the owned prefix
+through frozen-tail normalization, row preparation and canonical per-pass
+companions in separate grains. It binds all child generations and retains
+live source/epoch checks through ranked bridge preflight. Production stop routing,
+atomic admission, admitted-tail/service proof and HITL remain open. Ranked-tail
+bounds now accept an explicit maximum pass count and published-base event count;
+C=2048/P=2/B=2048 with no history/companions still needs 7648 additional grains
+at Q=32. Invalid quantum, out-of-staging event counts and overflowing legacy
+contract totals now deny before stop admission. The order builder now checks
+retained adjacency during fill and bypasses merge/copy only when the exact
+comparator proves the input already ordered (64 grains for 2048 rows at Q=32).
+Unordered inputs retain the merge path; worst-case bounds and production stop
+limits are unchanged. Frozen-tail normalization now imports completed canonical
+capture indexes into its private array in Q-bounded steps. Shared-order reuse
+invalidates an in-flight import; after copying, audible ordering is independent.
+Canonical and audible order bindings now also record that storage generation,
+so discarding a later audible order cannot revive an older canonical completion.
+Stale bindings deny resume/rewrite/readiness; tail admission uses private sorting
+until a current canonical order is explicitly rebuilt.
+When canonical order is already complete/current, capture normalization has a
+196-grain bound at C=2048,H=0,Q=32 instead of 1604. The initial canonical sort is
+still charged. The executable prepared-order aggregate now gives 6240 additional
+grains for C=2048/P=2/B=2048,H=R=0,Q=32. The general 7648-grain aggregate and
+legacy order/rewrite credits are unchanged. DEC-062 now approves a separate
+provisional 6240-grain ranked-preparation allowance for continued integration.
+Determine realtime reservations and elapsed stop latency with HITL once the
+complete path can run; the old 3072 is not a product latency ceiling.
+`PendingStopAdmission` now accepts an optional uint64 ranked-work bound at begin,
+validates the 6240 allowance and combined counter capacity before mutation,
+and tracks ranked credits separately. Finalization requires all three counters
+empty; transport Stop preserves credits and changes epoch/destination. Existing
+production callers still request zero ranked credits pending typed tail/bridge
+routing; exhausting credits does not replace prepared-source readiness checks.
+Reserved tail/bridge step entry points now bind the pending stop's frozen
+generation, epoch and admitted quantum, charge one credit before one child,
+and deny exhausted/stale reservations without advancing it. Completed readiness
+queries consume no credit. Native end-to-end coverage uses these entries;
+production stage dispatch, setup charging and atomic publication remain next.
+A STOPPED-only typed oracle publisher now owns canonical baseline events and
+pass origins together, upgrading flat same-identity views before bridge mapping.
+It preserves the existing view on invalid baseline/coverage preflight and needs
+no allocation. Track's all-stopped merged-event preparation now invokes canonical
+baseline construction using idle prewarmed workers. It publishes typed origins
+only when the complete canonical event sequence matches the existing oracle;
+otherwise it retains flat publication. Temporary workers are released on success
+or denial, without cancelling an already-owned prefix. This is synchronous
+STOPPED throughput, never an active grain. Production ranked-stop stage dispatch
+and atomic canonical/audible handoff remain open. A joint audible preflight now
+requires AtomicTransfer phase, exhausted stop counters, matching command epoch,
+PLAYING destination, explicit base/target identities and ready bridge/ledger/
+cursor state. It is read-only and does not establish canonical companion-row
+publication. Final bridge selection also rejects phase >= loop length instead
+of accepting it through modulo coverage. Canonical companion staging is still
+required before enabling the combined production commit. Loop-owned companion
+history staging now prewarms a separate EditPass vector while STOPPED and copies
+history metadata, Create payload events and prepared companion rows in Q-bounded
+units. Prospective IDs do not advance nextPassId; canonical rows/revisions stay
+unchanged. Source/storage/row-owner/ID changes hide the candidate. Logical discard
+retains storage. The history handoff now swaps prebuilt canonical rows and the
+snapshot companion-ID list, advances IDs/revision, and retains an immutable ID
+receipt for the existing undo owner. Snapshot clear/replacement and append guards
+reject stale candidates. Old history stays allocated until STOPPED prewarm.
+A joint canonical helper now preflights the reserved capture pass and history,
+transfers capture, then publishes history without a stale revision recheck.
+It retires capture using scalar writes and preserves the one-revision-per-seal
+convention. Track's prepared-stop entry now preflights exact canonical/companion owners,
+source identities, stop epoch/credits/destination, cursor and ledger, then commits
+canonical data and publishes the bridge without a second fallible selection.
+Native fixtures verify matching identities and retained selected-bridge storage.
+Loop's prepared-history continuation now verifies every staged sealed capture
+event against the raw frozen canonical order in bounded event/chunk visits.
+The joint handoff requires this proof; same-count payload/order mismatches and
+missing/extra events deny publication. The rewrite cursor also binds its original
+store. Stop admission now reserves canonical preparation separately from the 6240
+ranked grains, rejects combined counter overflow before mutation, and requires
+both counters exhausted for commit. An admitted step checks Q, frozen epoch and
+owners before charging exactly one canonical grain; completed queries are free.
+STOPPED prewarm now reserves both swap sides. After receipt consumption, a
+bounded recycler retains allocations and restores preparation within the remaining
+row/snapshot horizon. Two consecutive commits reuse the same buffers; exhausted
+capacity or intervening canonical/mailbox changes deny reuse. Stop admission now
+reserves post-commit history recycling separately, checks the combined credit
+limit, and permits consumption only in DeferredCleanup after preparation finishes.
+The joint commit requires and preserves that reservation; transport Stop also
+preserves it. The native joint fixture charges setup and recycling while retaining
+canonical revision and selected-bridge data. Track's recycling entries now bind
+that committed Loop and preparation generation, charge receipt-consumed setup
+separately, and enforce the admitted Q for each later grain. Wrong owner or
+replacement preparation cannot consume the old reservation. Completed queries
+remain free only while canonical/mailbox identity stays current. Loop now offers
+bounded session undo-ID collection into caller-reserved private lists, preserving
+the legacy cursor prefix and duplicate/order semantics. Session mutations invalidate
+paused and completed collection. The maximum 2048-row/2048-companion collection
+fits 193 grains at Q=32, separate from ranked preparation and recycling. The
+collector now also appends the final capture and prepared companion receipt in
+bounded stages, preserving the legacy final-pass inclusion and duplicate rules.
+Receipt generation/lifetime and canonical identity guard paused and completed
+collection. TrackUndo now prepares a private UndoEntry by setting metadata,
+retaining the supplied before-snapshot and swapping the bounded ID outputs;
+single-pass entries retain the legacy scalar representation. Preparation consumes
+the collection without releasing vector buffers or existing snapshot roots.
+Global publication and redo/trim retirement still need bounded integration.
+DEC-063's accepted lifetime helpers now drain immutable snapshot graphs, persisted
+snapshot/chunk payloads and complete UndoEntry resources in bounded units. A
+private-stack trim continuation releases each entry before rechecking physical
+pressure and shifts surviving entries one per unit. Shared snapshot readers remain
+unchanged in per-grain native checks. Focused suites pass 37/37 and 43/43; full native passes 2069 with 1 skipped.
+Firmware passes with RAM1 code 425736; strict OpenSpec and whitespace checks pass. These helpers require exclusive unpublished ownership
+beyond a no-fail point; production locking, attachments, commands, reservations and
+joint dispatch remain open. See the current BRIDGE-PROGRESS lifetime section.
+A native pressure-feedback reproducer now proves that retaining removed roots
+can change the surviving undo prefix (10 versus 8 entries in the controlled case).
+The [undo publication reassessment](../../openspec/changes/resumable-midi-boundary-playback-maintenance/UNDO-PUBLICATION-REASSESSMENT.md)
+records the accepted DEC-063 protected transaction with bounded reclamation.
+The latest deferred Undo/Redo request wins per affected Track and executes once
+after finalization under the destination policy; Transport Stop stays immediate.
+Feedback trimming remains unchanged. Implementation and native proof precede
+runnable HITL. Focused pool-budget validation passes **18/18**; this review changed no
+firmware behavior. Production dispatch,
+receipt/undo sequencing and active snapshot-box refill remain open. This canonical staging work is separate from the
+6240 ranked-preparation allowance. A required live storage-generation guard now rejects timeline
+reset/revision reuse, disabled-history reclamation and deferred edit appends
+that can relocate rows without a playback revision change. The marker advances
+before reset releases chunks, reclamation moves rows, or append reallocates
+history, and remains bound across frozen-tail handoff. Native lifetime and
+scheduler policy coverage do not establish an on-device latency bound.
+Empty-history normalization and empty-companion merging now bypass
+the apply worker and its extra copies, with corresponding tighter bounds.
+Per-pass bridge mapping now uses a bounded sorted origin index and binary
+search instead of quadratic scans; its maximum Q=32 bound is 2564 grains.
+Production atomic transfer/routing, remaining combined-history/companion parity, duplicate
+mergeSequence parity, production lifetime enforcement, capture freezing,
+and admission remain open. See the
+[Create reassessment](../../openspec/changes/resumable-midi-boundary-playback-maintenance/CREATE-HISTORY-REASSESSMENT.md).
+See
+[scope reassessment](../../openspec/changes/resumable-midi-boundary-playback-maintenance/COMPANION-SCOPE-REASSESSMENT.md).
+Task 3.5 STOPPING MIDI-poll/save policy is verified. Bounded bridge compilation
+and the production selected-bridge consumer retain cross-wrap open-note
+closures in native tests; capture-side creation and the canonical/audible bridge
+handoff remain incomplete. Private UndoEntry preparation validation and capture-serial build pass
+(RAM1 code 425736, locals 6496). Final full native run: **2061 passed, 1 skipped**
+(`/tmp/resumable-undo-entry-native.log`), including combined receipt handoff,
+single/multiple-pass representation, buffer/snapshot retention and denial guards;
+bounded
+Delete and wrap-head selection now match the actual resolver in 1,000
+generated differential fixtures, including retention masks and inferred loop
+length. Maximum-size completion, cancellation, and restart/capacity guards pass.
+DEC-059's revised pairing reference remains the oracle. Length overlap traversal now preserves shortening-before-deletion order in
+bounded quanta with held actions; 500 generated cases match the actual Length
+resolver when using its existing reconstruction and mutation/order primitives.
+Reconstruction wrap queries now match the legacy helpers in bounded two-pass
+lookups. Complete bounded pitch reconstruction now matches canonical spans and
+projected/deduped note output, using prewarmed storage with stale-source and
+partial-output guards. Bounded Delete/Length application and frozen batches now match sequential
+reference application while retaining base provenance. Bounded bridge mapping
+now preserves final canonical ranks separately from that provenance. The ranked
+compiler and cursor consume them with a bounded immutable-base index sort;
+combined capture/production integration remains open. Aggregate stop-grain/
+latency proof, bridge mapping/publication, and production transfer remain open;
+host timing fixtures **22/22**;
+capture-serial RAM1 locals **6720**. No upload/HITL. Details and next integration
+work: [BRIDGE-PROGRESS.md](../../openspec/changes/resumable-midi-boundary-playback-maintenance/BRIDGE-PROGRESS.md).
 
 ## Current branch
 

@@ -4,6 +4,7 @@
 #include "Utils/RuntimeTimingTelemetry.h"
 
 #include "Globals.h"
+#include <new>
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/MidiBatchComposition.h"
@@ -30,6 +31,45 @@ namespace {
 struct Accumulator {
   uint32_t maxUs = 0;
   uint32_t overCount = 0;
+};
+
+constexpr uint8_t kStopTraceRecordCount = 128;
+
+enum class StopTraceKind : uint8_t {
+  Service,
+  NoteEmission,
+  StateTransition,
+};
+
+// Written by a playback-service context and drained only by the main loop.
+// Keep this fixed and integer-only: stop tracing must never allocate or call
+// the capture formatter from a timing-critical callback.
+struct StopTraceRecord {
+  StopTraceKind kind = StopTraceKind::Service;
+  uint32_t sequence = 0;
+  uint32_t actualUs = 0;
+  uint32_t dueUs = 0;
+  uint32_t deadlineUs = 0;
+  uint32_t periodUs = 0;
+  uint32_t tick = 0;
+  uint32_t latenessUs = 0;
+  bool isNoteOn = false;
+  uint8_t track = 255, slot = 255, fromState = 255, toState = 255;
+  uint8_t channel = 255, note = 255;
+};
+
+// State edges run in main; timer service and note emission may interrupt them.
+// Preserve the caller's mask and protect only fixed-size telemetry updates.
+struct StopTraceCriticalSection {
+#if defined(__IMXRT1062__)
+  uint32_t mask;
+  StopTraceCriticalSection() {
+    asm volatile("mrs %0, primask\n\tcpsid i" : "=r"(mask) :: "memory");
+  }
+  ~StopTraceCriticalSection() {
+    asm volatile("msr primask, %0" :: "r"(mask) : "memory");
+  }
+#endif
 };
 
 void recordSample(Accumulator& acc, uint32_t durationUs) {
@@ -88,6 +128,7 @@ RT_FLASHMEM_FN Accumulator& trackUpdateAt(uint8_t trackIndex) {
 }
 
 struct State {
+  StopPhaseTiming stopPhases[Config::NUM_TRACKS];
   Accumulator midiGap;
   Accumulator midiInput;
   Accumulator clk;
@@ -161,6 +202,15 @@ struct State {
   uint32_t serviceDueUs = 0;
   uint32_t servicePeriodUs = 0;
   bool serviceCadenceActive = false;
+  uint32_t serviceSequence = 0;
+  StopBoundaryTiming stopBoundary;
+  volatile bool stopTraceActive = false;
+  StopTraceRecord stopTraceRecords[kStopTraceRecordCount];
+  volatile uint8_t stopTraceHead = 0;
+  volatile uint8_t stopTraceTail = 0;
+  uint32_t stopTraceDropped = 0;
+  uint32_t stopTraceDroppedReported = 0;
+  uint32_t stopActiveTracks = 0;
   uint32_t clockDueUs = 0;
   uint32_t clockPeriodUs = 0;
   bool clockCadenceActive = false;
@@ -169,16 +219,29 @@ struct State {
   uint8_t pendingLateClass = 0;  // 0=on, 1=off, 2=clk
   uint32_t pendingLateUs = 0;
   uint32_t pendingLateTick = 0;
+  uint32_t pendingLateSendUs = 0;
+  uint32_t pendingLateDueUs = 0;
+  uint32_t pendingLateDeadlineUs = 0;
   bool pendingPlaybackRebuild = false;
   uint32_t pendingRebuildDurationUs = 0;
   uint32_t pendingRebuildWindowStartTick = 0;
   uint32_t pendingRebuildWindowLengthTicks = 0;
   uint32_t pendingRebuildRevision = 0;
   uint32_t pendingRebuildCount = 0;
+  uint32_t pendingRebuildAtUs = 0;
+  uint32_t pendingRebuildPreviousPhase = UINT32_MAX;
+  uint32_t pendingRebuildCurrentPhase = 0;
+  uint32_t pendingRebuildEventCount = 0;
   uint8_t pendingRebuildTrack = 255;
   uint8_t pendingRebuildSlot = 255;
   PlaybackRebuildPath pendingRebuildPath = PlaybackRebuildPath::CompatibilityPasses;
 };
+
+RT_FLASHMEM_FN void initializeState(State& s) {
+  // Construct in PSRAM directly; an aggregate temporary would consume most
+  // of the remaining device stack as the bounded trace queue grows.
+  ::new (static_cast<void*>(&s)) State();
+}
 
 State& state() {
 #if defined(__IMXRT1062__) && EXTMEM_AVAILABLE
@@ -186,7 +249,7 @@ State& state() {
   static EXTMEM State s;
   static bool initialized = false;
   if (!initialized) {
-    s = State{};
+    initializeState(s);
     initialized = true;
   }
   return s;
@@ -196,7 +259,32 @@ State& state() {
 #endif
 }
 
-void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t tick) {
+// Producer may run in the playback-service context. A byte index is atomic on
+// the target; write the record before publishing its new head index.
+void queueStopTraceRecord(State& s, const StopTraceRecord& record) {
+  [[maybe_unused]] StopTraceCriticalSection critical;
+  if (!s.stopTraceActive) {
+    return;
+  }
+  const uint8_t head = s.stopTraceHead;
+  const uint8_t next = static_cast<uint8_t>((head + 1u) % kStopTraceRecordCount);
+  if (next == s.stopTraceTail) {
+    ++s.stopTraceDropped;
+    return;
+  }
+  s.stopTraceRecords[head] = record;
+  s.stopTraceHead = next;
+}
+
+RT_FLASHMEM_FN void beginStopTrace(State& s, uint8_t track) {
+  // Never reset an undrained queue when another stop starts.
+  s.stopActiveTracks |= 1u << track;
+  s.stopTraceActive = true;
+  s.stopBoundary.traceActive = true;
+}
+
+void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t tick,
+                    uint32_t sendUs, uint32_t dueUs, uint32_t deadlineUs) {
   if (latenessUs == 0 || !s.lateOneShotArmed) {
     return;
   }
@@ -205,6 +293,9 @@ void queueFirstLate(State& s, uint8_t lateClass, uint32_t latenessUs, uint32_t t
   s.pendingLateClass = lateClass;
   s.pendingLateUs = latenessUs;
   s.pendingLateTick = tick;
+  s.pendingLateSendUs = sendUs;
+  s.pendingLateDueUs = dueUs;
+  s.pendingLateDeadlineUs = deadlineUs;
 }
 
 RT_FLASHMEM_FN const char* playbackRebuildPathLabel(PlaybackRebuildPath path) {
@@ -686,9 +777,19 @@ void notePlaybackServiceEnter(uint32_t nowUs, uint32_t tickPeriodUs) {
   if (!s.serviceCadenceActive || tickPeriodUs == 0) {
     s.serviceDueUs = nowUs;
     s.serviceCadenceActive = tickPeriodUs != 0;
-    return;
+  } else {
+    s.serviceDueUs += tickPeriodUs;
   }
-  s.serviceDueUs += tickPeriodUs;
+  ++s.serviceSequence;
+  s.stopBoundary.sequence = s.serviceSequence;
+  s.stopBoundary.actualUs = nowUs;
+  s.stopBoundary.dueUs = s.serviceDueUs;
+  s.stopBoundary.deadlineUs = s.serviceDueUs + tickPeriodUs;
+  s.stopBoundary.periodUs = tickPeriodUs;
+  s.stopBoundary.droppedRecords = s.stopTraceDropped;
+  s.stopBoundary.traceActive = s.stopTraceActive;
+  queueStopTraceRecord(s, StopTraceRecord{StopTraceKind::Service, s.serviceSequence, nowUs,
+      s.serviceDueUs, s.serviceDueUs + tickPeriodUs, tickPeriodUs});
 }
 
 RT_FLASHMEM_FN void resetPlaybackDeadlineCadence() {
@@ -718,12 +819,17 @@ uint32_t remainingUntilNextPlaybackServiceUs(uint32_t nowUs) {
   return deadlineUs - nowUs;
 }
 
-void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick) {
+void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick,
+    uint8_t track, uint8_t slot, uint8_t channel, uint8_t note) {
   State& s = state();
   const uint32_t latenessUs =
       latenessAfterDeadline(nowUs, s.serviceDueUs, s.servicePeriodUs);
   recordLateness(isNoteOn ? s.lateOn : s.lateOff, latenessUs);
-  queueFirstLate(s, isNoteOn ? 0 : 1, latenessUs, tick);
+  queueStopTraceRecord(s, StopTraceRecord{StopTraceKind::NoteEmission, s.serviceSequence,
+      nowUs, s.serviceDueUs, s.serviceDueUs + s.servicePeriodUs, s.servicePeriodUs, tick,
+      latenessUs, isNoteOn, track, slot, 255, 255, channel, note});
+  queueFirstLate(s, isNoteOn ? 0 : 1, latenessUs, tick, nowUs, s.serviceDueUs,
+                 s.serviceDueUs + s.servicePeriodUs);
 }
 
 void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t onTimeWindowUs,
@@ -743,13 +849,16 @@ void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t on
   s.clockDueUs += clockPeriodUs;
   const uint32_t latenessUs = latenessAfterDeadline(nowUs, s.clockDueUs, onTimeWindowUs);
   recordLateness(s.lateClk, latenessUs);
-  queueFirstLate(s, 2, latenessUs, tick);
+  queueFirstLate(s, 2, latenessUs, tick, nowUs, s.clockDueUs,
+                 s.clockDueUs + onTimeWindowUs);
 }
 
 RT_FLASHMEM_FN void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                           uint32_t windowLengthTicks, uint32_t revision,
                                           uint8_t trackIndex, uint8_t slotIndex,
-                                          PlaybackRebuildPath path) {
+                                          PlaybackRebuildPath path, uint32_t atUs,
+                                          uint32_t previousPhase, uint32_t currentPhase,
+                                          uint32_t eventCount) {
   State& s = state();
   ++s.pendingRebuildCount;
   if (!s.pendingPlaybackRebuild || durationUs > s.pendingRebuildDurationUs) {
@@ -760,8 +869,104 @@ RT_FLASHMEM_FN void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowSt
     s.pendingRebuildTrack = trackIndex;
     s.pendingRebuildSlot = slotIndex;
     s.pendingRebuildPath = path;
+    s.pendingRebuildAtUs = atUs;
+    s.pendingRebuildPreviousPhase = previousPhase;
+    s.pendingRebuildCurrentPhase = currentPhase;
+    s.pendingRebuildEventCount = eventCount;
   }
   s.pendingPlaybackRebuild = true;
+}
+
+RT_FLASHMEM_FN void emitStopPhase(uint8_t track, const StopPhaseTiming& sample) {
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::stopPhaseTiming(track, sample.slot, sample.phase,
+      sample.generation, sample.epoch, sample.destination, sample.calls,
+      sample.crossed, sample.unknown, sample.startUs, sample.endUs, sample.slackUs);
+#else
+  (void)track; (void)sample;
+#endif
+}
+
+RT_FLASHMEM_FN void recordStopGrain(uint8_t track, uint8_t slot, uint8_t phase,
+    uint32_t generation, uint32_t epoch, uint8_t destination,
+    uint32_t startUs, uint32_t endUs, uint32_t slackUs, bool finishedPhase,
+    const StopBoundaryTiming* admittedBoundary) {
+  if (track >= Config::NUM_TRACKS) return;
+  State& s = state();
+  auto& sample = s.stopPhases[track];
+  if (sample.calls && (sample.slot != slot || sample.phase != phase ||
+      sample.generation != generation || sample.epoch != epoch || sample.destination != destination)) {
+    emitStopPhase(track, sample);
+    sample = StopPhaseTiming{};
+  }
+  sample.slot = slot; sample.phase = phase; sample.generation = generation;
+  sample.epoch = epoch; sample.destination = destination;
+  const uint32_t durationUs = endUs - startUs;
+  if (!sample.calls || durationUs > sample.maxUs) {
+    sample.startUs = startUs; sample.endUs = endUs;
+    sample.slackUs = slackUs; sample.maxUs = durationUs;
+  }
+  ++sample.calls;
+  if (slackUs == 0xFFFFFFFFu) ++sample.unknown;
+  else if (durationUs > slackUs) ++sample.crossed;
+  const StopBoundaryTiming boundary = admittedBoundary != nullptr
+      ? *admittedBoundary : peekStopBoundary();
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::stopGrainTiming(track, slot, phase, generation, epoch, destination,
+      boundary.sequence, startUs, endUs, boundary.actualUs, boundary.dueUs,
+      boundary.deadlineUs, boundary.periodUs, slackUs,
+      finishedPhase ? 1u : 0u);
+#else
+  (void)boundary;
+#endif
+  if (finishedPhase) {
+    emitStopPhase(track, sample);
+    sample = StopPhaseTiming{};
+  }
+}
+
+RT_FLASHMEM_FN void recordStopStateTransition(uint8_t track, uint8_t slot, uint8_t fromState,
+    uint8_t toState, uint32_t tick, uint32_t atUs) {
+  if (track >= Config::NUM_TRACKS) return;
+  State& s = state();
+  [[maybe_unused]] StopTraceCriticalSection critical;
+  const bool entry = fromState == 6 && toState == 7;
+  const bool terminal = fromState == 7 && (toState == 1 || toState == 5);
+  if (!entry && !terminal) return;
+  if (entry) beginStopTrace(s, track);
+  StopTraceRecord record{StopTraceKind::StateTransition, s.stopBoundary.sequence,
+      atUs, s.stopBoundary.dueUs, s.stopBoundary.deadlineUs, s.stopBoundary.periodUs,
+      tick, 0, false, track, slot, fromState, toState};
+  queueStopTraceRecord(s, record);
+  if (terminal) {
+    s.stopActiveTracks &= ~(1u << track);
+    s.stopTraceActive = s.stopActiveTracks != 0;
+    s.stopBoundary.traceActive = s.stopTraceActive;
+  }
+}
+
+RT_FLASHMEM_FN StopPhaseTiming peekStopPhase(uint8_t track) {
+  return track < Config::NUM_TRACKS ? state().stopPhases[track] : StopPhaseTiming{};
+}
+
+RT_FLASHMEM_FN StopBoundaryTiming peekStopBoundary() {
+  [[maybe_unused]] StopTraceCriticalSection critical;
+  StopBoundaryTiming boundary = state().stopBoundary;
+  boundary.droppedRecords = state().stopTraceDropped;
+  boundary.traceActive = state().stopTraceActive;
+  return boundary;
+}
+
+RT_FLASHMEM_FN StopBoundaryTiming captureStopGrainBoundary(uint32_t& startUs) {
+  [[maybe_unused]] StopTraceCriticalSection critical;
+#if defined(__IMXRT1062__)
+  startUs = micros();
+#else
+  (void)startUs;
+#endif
+  StopBoundaryTiming boundary = state().stopBoundary;
+  if (!state().serviceCadenceActive) boundary.periodUs = 0;
+  return boundary;
 }
 
 RT_FLASHMEM_FN void noteIdleMaint(uint32_t durationUs) {
@@ -778,7 +983,31 @@ RT_FLASHMEM_FN void notePersistSave(uint32_t durationUs) {
 
 RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   State& s = state();
+  while (s.stopTraceTail != s.stopTraceHead) {
+    const StopTraceRecord record = s.stopTraceRecords[s.stopTraceTail];
+    s.stopTraceTail = static_cast<uint8_t>((s.stopTraceTail + 1u) % kStopTraceRecordCount);
 #if defined(SESSION_CAPTURE)
+    if (record.kind == StopTraceKind::Service) {
+      DebugSessionCapture::stopServiceTiming(record.sequence, record.actualUs, record.dueUs,
+          record.deadlineUs, record.periodUs);
+    } else if (record.kind == StopTraceKind::StateTransition) {
+      DebugSessionCapture::stopStateTiming(record.track, record.slot, record.fromState,
+          record.toState, record.tick, record.actualUs, record.sequence, record.dueUs,
+          record.deadlineUs, record.periodUs);
+    } else {
+      DebugSessionCapture::stopMidiEmissionTiming(record.sequence, record.isNoteOn ? 1u : 0u,
+          record.tick, record.actualUs, record.dueUs, record.deadlineUs, record.latenessUs,
+          record.track, record.slot, record.channel, record.note);
+    }
+#else
+    (void)record;
+#endif
+  }
+#if defined(SESSION_CAPTURE)
+  if (s.stopTraceDropped != s.stopTraceDroppedReported) {
+    DebugSessionCapture::stopTimelineDropped(s.stopTraceDropped - s.stopTraceDroppedReported);
+    s.stopTraceDroppedReported = s.stopTraceDropped;
+  }
 #if defined(__IMXRT1062__)
   const char* midiClass = PSTR("on");
   if (s.pendingLateClass == 1) {
@@ -795,7 +1024,8 @@ RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
   }
 #endif
   if (s.pendingLateEvent) {
-    DebugSessionCapture::midiDeadlineLateEvent(midiClass, s.pendingLateUs, s.pendingLateTick);
+    DebugSessionCapture::midiDeadlineLateEvent(midiClass, s.pendingLateUs, s.pendingLateTick,
+        s.pendingLateSendUs, s.pendingLateDueUs, s.pendingLateDeadlineUs);
   }
   // A first take has no committed source, so its expected hold-empty probe can
   // recur every loop.  It carries no timing-failure signal and must not flood
@@ -806,7 +1036,9 @@ RT_FLASHMEM_FN void emitPendingDeadlineOneShots() {
                                          s.pendingRebuildWindowLengthTicks, s.pendingRebuildRevision,
                                          s.pendingRebuildTrack, s.pendingRebuildSlot,
                                          s.pendingRebuildCount,
-                                         playbackRebuildPathLabel(s.pendingRebuildPath));
+                                         playbackRebuildPathLabel(s.pendingRebuildPath),
+                                         s.pendingRebuildAtUs, s.pendingRebuildPreviousPhase,
+                                         s.pendingRebuildCurrentPhase, s.pendingRebuildEventCount);
   }
 #endif
   s.pendingLateEvent = false;
@@ -1015,12 +1247,19 @@ RT_FLASHMEM_FN Snapshot peek(uint32_t nowUs) {
   }
   out.lateOneShotArmed = s.lateOneShotArmed;
   out.pendingLateEvent = s.pendingLateEvent;
+  out.pendingLateSendUs = s.pendingLateSendUs;
+  out.pendingLateDueUs = s.pendingLateDueUs;
+  out.pendingLateDeadlineUs = s.pendingLateDeadlineUs;
   out.pendingPlaybackRebuild = s.pendingPlaybackRebuild;
   out.pendingRebuildDurationUs = s.pendingRebuildDurationUs;
   out.pendingRebuildCount = s.pendingRebuildCount;
   out.pendingRebuildTrack = s.pendingRebuildTrack;
   out.pendingRebuildSlot = s.pendingRebuildSlot;
   out.pendingRebuildPath = s.pendingRebuildPath;
+  out.pendingRebuildAtUs = s.pendingRebuildAtUs;
+  out.pendingRebuildPreviousPhase = s.pendingRebuildPreviousPhase;
+  out.pendingRebuildCurrentPhase = s.pendingRebuildCurrentPhase;
+  out.pendingRebuildEventCount = s.pendingRebuildEventCount;
   out.clockPulses = s.clockPulses;
   if (s.windowStartUs != 0 && nowUs != 0) {
     out.windowElapsedUs = nowUs - s.windowStartUs;

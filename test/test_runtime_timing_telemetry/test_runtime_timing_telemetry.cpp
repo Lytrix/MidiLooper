@@ -330,7 +330,7 @@ void test_playback_rebuild_keeps_maximum_and_counts_destinations() {
       RuntimeTimingTelemetry::PlaybackRebuildPath::CompatibilityPasses);
   RuntimeTimingTelemetry::recordPlaybackRebuild(
       12000, 768, 1536, 2, 5, 1,
-      RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview);
+      RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview, 20000, UINT32_MAX, 290, 256);
   RuntimeTimingTelemetry::recordPlaybackRebuild(
       8000, 1536, 1536, 3, 4, 2,
       RuntimeTimingTelemetry::PlaybackRebuildPath::PublishedSnapshot);
@@ -338,6 +338,10 @@ void test_playback_rebuild_keeps_maximum_and_counts_destinations() {
   TEST_ASSERT_TRUE(queued.pendingPlaybackRebuild);
   TEST_ASSERT_EQUAL_UINT32(12000, queued.pendingRebuildDurationUs);
   TEST_ASSERT_EQUAL_UINT32(3, queued.pendingRebuildCount);
+  TEST_ASSERT_EQUAL_UINT32(20000, queued.pendingRebuildAtUs);
+  TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, queued.pendingRebuildPreviousPhase);
+  TEST_ASSERT_EQUAL_UINT32(290, queued.pendingRebuildCurrentPhase);
+  TEST_ASSERT_EQUAL_UINT32(256, queued.pendingRebuildEventCount);
   TEST_ASSERT_EQUAL_UINT8(5, queued.pendingRebuildTrack);
   TEST_ASSERT_EQUAL_UINT8(1, queued.pendingRebuildSlot);
   TEST_ASSERT_EQUAL_INT(static_cast<int>(RuntimeTimingTelemetry::PlaybackRebuildPath::NoteEditPreview),
@@ -521,10 +525,125 @@ void test_emit_interval_constant() {
   TEST_ASSERT_EQUAL_UINT32(50000u, RuntimeTimingTelemetry::kLoopRemainderOneShotUs);
 }
 
+void test_late_sample_retains_send_due_deadline_across_delayed_emit() {
+  RuntimeTimingTelemetry::resetForTest();
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1000, 100);
+  RuntimeTimingTelemetry::recordNoteSendLateness(false, 1150, 42);
+  // Later clock/service activity must not rewrite the queued sample.
+  RuntimeTimingTelemetry::notePlaybackServiceEnter(1200, 100);
+  RuntimeTimingTelemetry::recordNoteSendLateness(true, 1350, 43);
+  const auto sample = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_EQUAL_UINT32(1150, sample.pendingLateSendUs);
+  TEST_ASSERT_EQUAL_UINT32(1000, sample.pendingLateDueUs);
+  TEST_ASSERT_EQUAL_UINT32(1100, sample.pendingLateDeadlineUs);
+}
+
+void test_late_clock_sample_retains_wrapped_deadline() {
+  RuntimeTimingTelemetry::resetForTest();
+  RuntimeTimingTelemetry::recordOutgoingClockSend(0xFFFFFF00u, 200, 100, 0);
+  RuntimeTimingTelemetry::recordOutgoingClockSend(100, 200, 100, 8);
+  const auto sample = RuntimeTimingTelemetry::peek();
+  TEST_ASSERT_TRUE(sample.pendingLateEvent);
+  TEST_ASSERT_EQUAL_UINT32(100, sample.pendingLateSendUs);
+  TEST_ASSERT_EQUAL_UINT32(0xFFFFFFC8u, sample.pendingLateDueUs);
+  TEST_ASSERT_EQUAL_UINT32(44, sample.pendingLateDeadlineUs);
+}
+
+void test_stop_phase_counts_unknown_and_crossed_without_losing_max_sample() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  recordStopGrain(0, 1, 2, 3, 4, 0, 100, 130, 20, false);
+  recordStopGrain(0, 1, 2, 3, 4, 0, 200, 205, 0xFFFFFFFFu, false);
+  recordStopGrain(0, 1, 2, 3, 4, 0, 300, 310, 10, false);
+  auto sample = peekStopPhase(0);
+  TEST_ASSERT_EQUAL_UINT32(3, sample.calls);
+  TEST_ASSERT_EQUAL_UINT32(1, sample.crossed);
+  TEST_ASSERT_EQUAL_UINT32(1, sample.unknown);
+  TEST_ASSERT_EQUAL_UINT32(100, sample.startUs);
+  TEST_ASSERT_EQUAL_UINT32(130, sample.endUs);
+  TEST_ASSERT_EQUAL_UINT32(20, sample.slackUs);
+  // A new command epoch must never mix destinations in one summary.
+  recordStopGrain(0, 1, 2, 3, 5, 1, 400, 410, 20, false);
+  TEST_ASSERT_EQUAL_UINT32(1, peekStopPhase(0).calls);
+  TEST_ASSERT_EQUAL_UINT32(5, peekStopPhase(0).epoch);
+  recordStopGrain(0, 1, 2, 3, 5, 1, 500, 510, 20, true);
+  TEST_ASSERT_EQUAL_UINT32(0, peekStopPhase(0).calls);
+}
+
+void test_stop_boundary_retains_service_due_deadline_and_trace_lifetime() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  notePlaybackServiceEnter(1000, 200);
+  recordStopStateTransition(0, 1, 6, 7, 48, 1010);
+  recordStopGrain(0, 1, 2, 3, 4, 0, 1020, 1040, 180, false);
+  auto boundary = peekStopBoundary();
+  TEST_ASSERT_EQUAL_UINT32(1, boundary.sequence);
+  TEST_ASSERT_EQUAL_UINT32(1000, boundary.actualUs);
+  TEST_ASSERT_EQUAL_UINT32(1000, boundary.dueUs);
+  TEST_ASSERT_EQUAL_UINT32(1200, boundary.deadlineUs);
+  TEST_ASSERT_EQUAL_UINT32(200, boundary.periodUs);
+  TEST_ASSERT_TRUE(boundary.traceActive);
+
+  // The next actual service remains distinguishable from its scheduled instant.
+  notePlaybackServiceEnter(1210, 200);
+  boundary = peekStopBoundary();
+  TEST_ASSERT_EQUAL_UINT32(2, boundary.sequence);
+  TEST_ASSERT_EQUAL_UINT32(1210, boundary.actualUs);
+  TEST_ASSERT_EQUAL_UINT32(1200, boundary.dueUs);
+  TEST_ASSERT_EQUAL_UINT32(1400, boundary.deadlineUs);
+  recordNoteSendLateness(false, 1220, 48);
+  recordStopGrain(0, 1, 2, 3, 4, 0, 1221, 1230, 170, true);
+  TEST_ASSERT_TRUE(peekStopBoundary().traceActive);
+  // Intermediate completion must retain the queue and trace until a terminal edge.
+  notePlaybackServiceEnter(1410, 200);
+  TEST_ASSERT_EQUAL_UINT32(3, peekStopBoundary().sequence);
+  recordStopStateTransition(0, 1, 7, 5, 49, 1420);
+  recordStopGrain(0, 1, 6, 3, 4, 0, 1411, 1421, 189, true);
+  TEST_ASSERT_FALSE(peekStopBoundary().traceActive);
+}
+
+void test_overlapping_stops_preserve_trace_and_undrained_loss() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  notePlaybackServiceEnter(1000, 200);
+  recordStopStateTransition(0, 0, 6, 7, 0, 1010);
+  recordStopStateTransition(1, 0, 6, 7, 0, 1020);
+  recordStopStateTransition(0, 0, 7, 5, 0, 1030);
+  TEST_ASSERT_TRUE(peekStopBoundary().traceActive);
+  for (uint32_t i = 0; i < 140; ++i) notePlaybackServiceEnter(1200 + 200 * i, 200);
+  const auto dropped = peekStopBoundary().droppedRecords;
+  TEST_ASSERT_TRUE(dropped > 0);
+  recordStopStateTransition(1, 0, 7, 1, 0, 9400);
+  TEST_ASSERT_FALSE(peekStopBoundary().traceActive);
+  recordStopStateTransition(0, 0, 6, 7, 0, 9500);
+  TEST_ASSERT_TRUE(peekStopBoundary().droppedRecords >= dropped);
+  emitPendingDeadlineOneShots();
+  recordStopStateTransition(0, 0, 7, 5, 0, 9600);
+  TEST_ASSERT_FALSE(peekStopBoundary().traceActive);
+}
+
+void test_grain_boundary_snapshot_survives_service_and_cadence_reset() {
+  using namespace RuntimeTimingTelemetry;
+  resetForTest();
+  notePlaybackServiceEnter(1000, 200);
+  uint32_t startUs = 1020;
+  const auto admitted = captureStopGrainBoundary(startUs);
+  notePlaybackServiceEnter(1210, 200);
+  TEST_ASSERT_EQUAL_UINT32(1, admitted.sequence);
+  TEST_ASSERT_EQUAL_UINT32(1200, admitted.deadlineUs);
+  TEST_ASSERT_EQUAL_UINT32(2, peekStopBoundary().sequence);
+  recordStopGrain(0, 0, 1, 1, 0, 0, startUs, 1230, 180, false, &admitted);
+  TEST_ASSERT_EQUAL_UINT32(1, peekStopPhase(0).crossed);
+  resetPlaybackDeadlineCadence();
+  TEST_ASSERT_EQUAL_UINT32(0, captureStopGrainBoundary(startUs).periodUs);
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
   UNITY_BEGIN();
+  RUN_TEST(test_grain_boundary_snapshot_survives_service_and_cadence_reset);
+  RUN_TEST(test_overlapping_stops_preserve_trace_and_undrained_loss);
   RUN_TEST(test_midi_input_gap_recorded_between_handle_midi_input_calls);
   RUN_TEST(test_observational_over_count_uses_soft_ceiling);
   RUN_TEST(test_clock_and_tracks_accumulate_independently);
@@ -538,6 +657,10 @@ int main(int argc, char** argv) {
   RUN_TEST(test_remaining_until_next_playback_service_unknown_without_cadence);
   RUN_TEST(test_remaining_until_next_playback_service_uses_due_plus_period);
   RUN_TEST(test_emit_interval_constant);
+  RUN_TEST(test_stop_phase_counts_unknown_and_crossed_without_losing_max_sample);
+  RUN_TEST(test_stop_boundary_retains_service_due_deadline_and_trace_lifetime);
+  RUN_TEST(test_late_sample_retains_send_due_deadline_across_delayed_emit);
+  RUN_TEST(test_late_clock_sample_retains_wrapped_deadline);
   RUN_TEST(test_note_send_within_tick_is_on_time);
   RUN_TEST(test_note_send_after_next_tick_is_late_and_queues_one_shot);
   RUN_TEST(test_first_late_one_shot_does_not_repeat_until_window_emit);

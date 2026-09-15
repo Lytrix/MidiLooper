@@ -106,7 +106,7 @@ void TrackManager::reclaimUnreferencedDisabledPasses(PassReclaimStats* statsOut,
     bool transportActive = false;
     for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
       const Track& track = tracks[i];
-      if (track.isRecording() || track.isOverdubbing() || track.isPlaying()) {
+      if (track.isRecording() || track.isAudiblePlaybackActive()) {
         transportActive = true;
         break;
       }

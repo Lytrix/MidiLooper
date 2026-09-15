@@ -29,6 +29,10 @@ enum class LoadLoopJobPhase : uint8_t {
     Reading = 0,
     Parsing = 1,
     Committing = 2,
+    /// Commit has made the loaded loop visible. Releasing parser/session
+    /// ownership and admitting post-load work is deliberately a later owner
+    /// turn, never a hidden tail of the atomic publication.
+    Cleanup = 3,
 };
 struct LoadLoopJob {
     bool active = false;
@@ -117,7 +121,8 @@ STORAGE_PERSIST_MEM bool shouldFinishLoadLoopJobBeforePreempt() {
         return false;
     }
     // Never abandon mid-publish.
-    if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+        loadLoopJob_.phase == LoadLoopJobPhase::Cleanup) {
         return true;
     }
     // Mid-parse may demote/park — snapshot + cursors travel with the job.
@@ -222,7 +227,7 @@ STORAGE_PERSIST_MEM bool canRunBackgroundLoadLoopNow() {
     }
     for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
         const Track& t = trackManager.getTrack(i);
-        if (t.isRecording() || t.isOverdubbing() || t.isPlaying()) {
+        if (t.isRecording() || t.isAudiblePlaybackActive()) {
             return false;
         }
     }
@@ -414,7 +419,6 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
 
     markLoopCommittedChunksPersistedFromSdLoad(loop);
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
-    markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
 
 #if defined(PERF_TELEMETRY)
     if (loadLoopJobIsFocusSlot()) {
@@ -425,6 +429,19 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     }
 #endif
 
+    // The loop is now atomically visible. Do not let allocation release,
+    // session destruction, restore-queue bookkeeping, or save admission hide
+    // in this Commit grain. The scheduler will execute Cleanup only under the
+    // same STOPPED-only admission as Commit.
+    loadLoopJob_.phase = LoadLoopJobPhase::Cleanup;
+    return SlotLoadAdvanceResult::MoreWork;
+}
+
+STORAGE_PERSIST_MEM SlotLoadAdvanceResult cleanupLoadLoopJobPublish() {
+    if (!loadLoopJob_.active || loadLoopJob_.phase != LoadLoopJobPhase::Cleanup) {
+        return SlotLoadAdvanceResult::Failed;
+    }
+    markLoopSlotRestoreAttempted(loadLoopJob_.track, loadLoopJob_.slot);
     delete loadLoopJob_.session;
     loadLoopJob_.session = nullptr;
     if (loadLoopJob_.file) {
@@ -506,6 +523,9 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult stepLoadLoopJob(uint32_t deadlineUs) {
     }
     if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
         return commitLoadLoopJobPublish();
+    }
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Cleanup) {
+        return cleanupLoadLoopJobPublish();
     }
     if (loadLoopJob_.phase == LoadLoopJobPhase::Parsing) {
         return stepLoadLoopJobParse(deadlineUs);
@@ -694,7 +714,8 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
     if (!LoadLoopSelectionPolicy::shouldStepLoadLoopJob(jobIsFocus, backgroundAllowed)) {
         return;
     }
-    if (loadLoopJob_.phase == LoadLoopJobPhase::Committing) {
+    if (loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+        loadLoopJob_.phase == LoadLoopJobPhase::Cleanup) {
         (void)stepLoadLoopJob(frameStartUs + LoadLoopBudget::FocusRestoreUs);
         return;
     }
@@ -720,11 +741,6 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
         if (result != SlotLoadAdvanceResult::MoreWork) {
             break;
         }
-        if (loadLoopJob_.active && loadLoopJob_.phase == LoadLoopJobPhase::Committing &&
-            phaseBefore == LoadLoopJobPhase::Parsing) {
-            (void)stepLoadLoopJob(deadlineUs);
-            break;
-        }
         if (loadLoopJob_.active && loadLoopJob_.phase != phaseBefore) {
             break;
         }
@@ -744,6 +760,23 @@ bool STORAGE_PERSIST_MEM StorageManager::selectSubmittedLoadJobs() {
 void STORAGE_PERSIST_MEM StorageManager::stepSubmittedLoadJobs(uint32_t budgetUs,
                                                               bool activatedThisFrame) {
     StorageManagerInternal::stepSubmittedLoadJobsImpl(budgetUs, activatedThisFrame);
+}
+
+bool STORAGE_PERSIST_MEM StorageManager::hasActiveLoadLoopJobCommitPending() {
+    using namespace StorageManagerInternal;
+    return loadLoopJob_.active &&
+           (loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+            loadLoopJob_.phase == LoadLoopJobPhase::Cleanup);
+}
+
+bool STORAGE_PERSIST_MEM StorageManager::hasLoadLoopJobCommitPending() {
+    using namespace StorageManagerInternal;
+    return (loadLoopJob_.active &&
+            (loadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+             loadLoopJob_.phase == LoadLoopJobPhase::Cleanup)) ||
+           (parkedLoadLoopJob_.active &&
+            (parkedLoadLoopJob_.phase == LoadLoopJobPhase::Committing ||
+             parkedLoadLoopJob_.phase == LoadLoopJobPhase::Cleanup));
 }
 
 void STORAGE_PERSIST_MEM StorageManager::probeActiveLoadLoopJob(bool& active, uint8_t& track, uint8_t& slot,

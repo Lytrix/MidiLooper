@@ -62,3 +62,11 @@ before transport may start after audible-first interactive ready.
   unloaded slots
 - **AND** when such a slot later reaches COMMITTED, prewarm or equivalent
   allocation SHALL run before its first play tick
+
+
+#### Scenario: First recording reserves its return window
+
+- **WHEN** first recording starts on an admitted slot
+- **THEN** prewarmed runtime storage can maintain bar-1 return coverage alongside rolling later-bar preparation
+- **AND** incoming accepted recording events prepare that coverage before the final-bar boundary
+- **AND** first-record launch does not wait for a snapshot or allocate playback storage at that boundary

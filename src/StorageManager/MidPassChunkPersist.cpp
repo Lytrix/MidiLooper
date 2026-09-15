@@ -29,7 +29,7 @@ STORAGE_PERSIST_MEM void closeMidPassJournal(MidPassChunkPersistJob& job) {
 STORAGE_PERSIST_MEM bool resolveActiveCaptureTrackSlot(uint8_t& trackIndexOut, uint8_t& slotIndexOut) {
     for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
         const Track& track = trackManager.getTrack(trackIndex);
-        if (track.isRecording() || track.isOverdubbing()) {
+        if (track.isRecording() || track.isOverdubbing() || track.isOverdubStopping()) {
             trackIndexOut = trackIndex;
             slotIndexOut = track.getActiveLoopIndex();
             return true;

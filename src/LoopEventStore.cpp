@@ -477,6 +477,96 @@ const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   return kEmpty;
 }
 
+bool LoopEventStore::beginRewriteFromOrderedSource(LoopEventStoreRewriteCursor& cursor,
+                                                    size_t sourceCount) const {
+  cursor = LoopEventStoreRewriteCursor{};
+  if (!pool_ || sourceCount > eventCount_) {
+    return false;
+  }
+  cursor.targetCount = sourceCount;
+  cursor.trimRemaining = sourceCount;
+  cursor.active = true;
+  return true;
+}
+
+LoopEventStoreRewriteResult LoopEventStore::stepRewriteFromOrderedSource(
+    LoopEventStoreRewriteCursor& cursor, const MidiEvent* source,
+    const uint16_t* orderedIndices, size_t sourceCount, size_t sourceCapacity,
+    size_t eventQuantum) {
+  if (!cursor.active) {
+    return cursor.sourceIndex == sourceCount && cursor.targetCount == sourceCount
+               ? LoopEventStoreRewriteResult::Complete
+               : LoopEventStoreRewriteResult::Denied;
+  }
+  if ((sourceCount != 0 && (source == nullptr || orderedIndices == nullptr)) ||
+      sourceCount != cursor.targetCount || sourceCapacity < sourceCount || eventQuantum == 0 ||
+      cursor.sourceIndex > sourceCount ||
+      cursor.chunkIndex > chunkIds_.size()) {
+    return LoopEventStoreRewriteResult::Denied;
+  }
+
+  if (cursor.trimming) {
+    if (cursor.chunkIndex >= chunkIds_.size()) {
+      eventCount_ = sourceCount;
+      lastAppendedTick_ = sourceCount == 0 ? 0 : source[orderedIndices[sourceCount - 1]].tick;
+      markBarIndexDirty();
+      cursor.active = false;
+      return LoopEventStoreRewriteResult::Complete;
+    }
+    EventChunk& destination = chunk(chunkIds_[cursor.chunkIndex]);
+    if (cursor.trimRemaining >= destination.used) {
+      cursor.trimRemaining -= destination.used;
+      ++cursor.chunkIndex;
+      return LoopEventStoreRewriteResult::Pending;
+    }
+    if (cursor.trimRemaining != 0) {
+      destination.used = static_cast<uint16_t>(cursor.trimRemaining);
+      destination.lastTick = destination.events[destination.used - 1].tick;
+      cursor.trimRemaining = 0;
+      ++cursor.chunkIndex;
+      return LoopEventStoreRewriteResult::Pending;
+    }
+    const uint16_t retired = chunkIds_[cursor.chunkIndex];
+    releaseChunkReference(retired);
+    chunkIds_.erase(chunkIds_.begin() + static_cast<ptrdiff_t>(cursor.chunkIndex));
+    return LoopEventStoreRewriteResult::Pending;
+  }
+
+  size_t remaining = eventQuantum;
+  while (remaining > 0 && cursor.sourceIndex < sourceCount) {
+    if (cursor.chunkIndex >= chunkIds_.size()) {
+      return LoopEventStoreRewriteResult::Denied;
+    }
+    EventChunk& destination = chunk(chunkIds_[cursor.chunkIndex]);
+    if (cursor.eventIndexInChunk >= destination.used) {
+      ++cursor.chunkIndex;
+      cursor.eventIndexInChunk = 0;
+      continue;
+    }
+    const uint16_t sourceIndex = orderedIndices[cursor.sourceIndex];
+    if (sourceIndex >= sourceCapacity) {
+      return LoopEventStoreRewriteResult::Denied;
+    }
+    const MidiEvent& replacement = source[sourceIndex];
+    destination.events[cursor.eventIndexInChunk] = replacement;
+    if (cursor.eventIndexInChunk == 0) {
+      destination.firstTick = replacement.tick;
+    }
+    destination.lastTick = replacement.tick;
+    ++cursor.sourceIndex;
+    ++cursor.eventIndexInChunk;
+    --remaining;
+  }
+
+  if (cursor.sourceIndex != sourceCount) {
+    return LoopEventStoreRewriteResult::Pending;
+  }
+  cursor.trimming = true;
+  cursor.chunkIndex = 0;
+  cursor.eventIndexInChunk = 0;
+  return LoopEventStoreRewriteResult::Pending;
+}
+
 size_t LoopEventStore::lowerBoundIndex(uint32_t tick) const {
   size_t globalIndex = 0;
   for (uint16_t id : chunkIds_) {
@@ -574,9 +664,20 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(C
     return true;
   }
 
-  CommittedChunkIdList committedChunkIds;
-  if (!tryAssignCommittedChunkIds(committedChunkIds, chunkIds_.data(), count)) {
-    return false;
+  // An active-stop candidate arrives with this exact capacity prewarmed. Keep
+  // that storage in place so detachment cannot hide a vector allocation behind
+  // a seemingly small ownership handoff. Legacy callers retain the previous
+  // cold allocation path when no prepared capacity was supplied.
+  if (dest.capacity() >= count) {
+    for (uint16_t id : chunkIds_) {
+      dest.push_back(id);
+    }
+  } else {
+    CommittedChunkIdList committedChunkIds;
+    if (!tryAssignCommittedChunkIds(committedChunkIds, chunkIds_.data(), count)) {
+      return false;
+    }
+    dest = std::move(committedChunkIds);
   }
 
   for (uint16_t id : chunkIds_) {
@@ -587,10 +688,9 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::detachChunksToCommittedChunkIds(C
   markBarIndexDirty();
   lastAppendedTick_ = 0;
 
-  for (uint16_t id : committedChunkIds) {
+  for (uint16_t id : dest) {
     retainChunkReference(id);
   }
-  dest = std::move(committedChunkIds);
   return true;
 }
 
@@ -692,6 +792,56 @@ uint16_t LoopEventStore::chunkUsedCount(uint16_t id) {
     return 0;
   }
   return pool_[id].used;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginReadSealedChunks(
+    LoopEventStoreReadCursor& cursor, const uint16_t* refs, size_t refCount,
+    MidiEvent* output, size_t capacity, const uint64_t& generation) {
+  if (cursor.active_) return false;
+  cursor.discard();
+  if ((refCount && !refs) || (capacity && !output)) return false;
+  cursor.refs_ = refs;
+  cursor.refCount_ = refCount;
+  cursor.output_ = output;
+  cursor.capacity_ = capacity;
+  cursor.generation_ = &generation;
+  cursor.expected_ = generation;
+  cursor.active_ = true;
+  return true;
+}
+
+LoopEventStoreReadResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepReadSealedChunks(
+    LoopEventStoreReadCursor& cursor, size_t quantum) {
+  if (!cursor.generation_ || *cursor.generation_ != cursor.expected_) {
+    cursor.discard();
+    return LoopEventStoreReadResult::Denied;
+  }
+  if (cursor.complete_) return LoopEventStoreReadResult::Complete;
+  if (!cursor.active_) return LoopEventStoreReadResult::Denied;
+  while (quantum && cursor.chunk_ < cursor.refCount_) {
+    --quantum;
+    const uint16_t id = cursor.refs_[cursor.chunk_];
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ ||
+        !poolUsed_[id] || !isChunkSealed(id)) {
+      cursor.discard();
+      return LoopEventStoreReadResult::Denied;
+    }
+    const EventChunk& chunk = pool_[id];
+    if (cursor.event_ == chunk.used) {
+      ++cursor.chunk_;
+      cursor.event_ = 0;
+    } else {
+      if (cursor.count_ == cursor.capacity_) {
+        cursor.discard();
+        return LoopEventStoreReadResult::Denied;
+      }
+      cursor.output_[cursor.count_++] = chunk.events[cursor.event_++];
+    }
+  }
+  if (cursor.chunk_ != cursor.refCount_) return LoopEventStoreReadResult::Pending;
+  cursor.active_ = false;
+  cursor.complete_ = true;
+  return LoopEventStoreReadResult::Complete;
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEventRange(uint16_t id, uint32_t begin,
@@ -1099,3 +1249,22 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::assignMissingNoteIdsToNoteOnsInCh
 #define PERSISTENCE_QUEUE_CPP_INCLUDED
 #include "PersistenceQueue.cpp"
 #endif
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::readSealedChunkEvent(
+    uint16_t id, size_t index, MidiEvent& out, bool& atEnd) {
+  if (!pool_ || id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+      !isChunkSealed(id) || index > pool_[id].used) return false;
+  atEnd = index == pool_[id].used;
+  if (!atEnd) out = pool_[id].events[index];
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseLastCommittedChunkRef(
+    CommittedChunkIdList& refs) {
+  if (refs.empty()) return false;
+  const uint16_t id = refs.back();
+  refs.pop_back();
+  releaseChunkReference(id);
+  tryFreeChunk(id);
+  return true;
+}

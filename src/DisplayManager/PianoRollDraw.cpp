@@ -512,7 +512,7 @@ bool DisplayManager::shouldAutoFollowDetailedWindow(const Track& track,
     if (editManager.getEditSessionType() == EditSessionType::Note) {
         return false;
     }
-    return track.isRecording() || track.isPlaying() || track.isOverdubbing();
+    return track.isRecording() || track.isAudiblePlaybackActive();
 }
 
 DetailedWindowContext DisplayManager::resolveDetailedWindow(const Track& track, uint8_t displaySlot,
@@ -646,7 +646,7 @@ void DisplayManager::drawPianoRoll(uint32_t currentTick, Track& selectedTrack, u
 
         const bool previewPlayheadPending =
             isPreviewPlayheadPending(displaySlot, track.getActiveLoopIndex(),
-                                     track.isPlaying() || track.isOverdubbing());
+                                     track.isAudiblePlaybackActive());
         const bool drawPlayhead =
             !previewPlayheadPending || previewPlayheadFlashVisible(millis());
 

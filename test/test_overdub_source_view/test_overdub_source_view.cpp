@@ -2137,6 +2137,101 @@ void test_session_undo_skips_next_wrap_crossing() {
   TEST_ASSERT_TRUE(loop.shouldCommitOverdubWrap(kLoopLen - 1, 0));
 }
 
+void test_bounded_session_undo_collection_matches_legacy_without_growth() {
+  using Phase = Loop::SessionUndoCollection::Phase;
+  for (size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    Loop loop;
+    loop.openOverdubSession(0);
+    loop.pushOverdubSessionPass(1, {9,9});
+    loop.pushOverdubSessionPass(1, {0,8});
+    loop.pushOverdubSessionPass(3, {});
+    loop.pushOverdubSessionPass(kInvalidPassId, {99}); // Ignored by the session owner.
+    loop.pushOverdubSessionPass(4, {99});
+    (void)loop.undoOverdubSession(); // Cursor excludes the redo tail even if no canonical pass resolves.
+    PassIdList expectedPasses, passIds; EditPassIdList expectedCompanions, companions;
+    loop.collectOverdubSessionUndoPasses(expectedPasses, expectedCompanions);
+    passIds.reserve(4); companions.reserve(4);
+    auto* passStorage = passIds.data(); auto* companionStorage = companions.data();
+    Loop::SessionUndoCollection work;
+    TEST_ASSERT_TRUE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, companions));
+    TEST_ASSERT_FALSE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, companions));
+    Loop foreign;
+    TEST_ASSERT_EQUAL(Phase::Denied, foreign.stepCollectOverdubSessionUndoPasses(work, quantum));
+    TEST_ASSERT_EQUAL(Phase::Denied, loop.stepCollectOverdubSessionUndoPasses(work, 0));
+    TEST_ASSERT_EQUAL(Phase::Pass, work.phase);
+    const auto bound = Loop::requiredSessionUndoCollectionGrains(4, 4, quantum);
+    for (uint64_t grain = 0; grain < bound && work.phase != Phase::Complete; ++grain) {
+      const auto previous = passIds.size() + companions.size();
+      TEST_ASSERT_NOT_EQUAL(Phase::Denied, loop.stepCollectOverdubSessionUndoPasses(work, quantum));
+      TEST_ASSERT_TRUE(passIds.size() + companions.size() - previous <= quantum);
+      TEST_ASSERT_EQUAL_PTR(passStorage, passIds.data());
+      TEST_ASSERT_EQUAL_PTR(companionStorage, companions.data());
+    }
+    TEST_ASSERT_TRUE(loop.collectedOverdubSessionUndoPassesCurrent(work));
+    TEST_ASSERT_TRUE(expectedPasses == passIds); TEST_ASSERT_TRUE(expectedCompanions == companions);
+    TEST_ASSERT_EQUAL(Phase::Complete, loop.stepCollectOverdubSessionUndoPasses(work, quantum));
+  }
+}
+
+void test_bounded_session_undo_collection_denies_capacity_and_replaced_session() {
+  using Phase = Loop::SessionUndoCollection::Phase;
+  for (unsigned mutation = 0; mutation < 4; ++mutation) {
+    Loop loop; loop.openOverdubSession(0);
+    loop.pushOverdubSessionPass(1, {7,8});
+    if (mutation == 3) { loop.pushOverdubSessionPass(2, {}); (void)loop.undoOverdubSession(); }
+    PassIdList passIds; EditPassIdList companions;
+    passIds.reserve(4); companions.reserve(4);
+    Loop::SessionUndoCollection work;
+    TEST_ASSERT_TRUE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, companions));
+    TEST_ASSERT_EQUAL(Phase::Companions, loop.stepCollectOverdubSessionUndoPasses(work, 1));
+    if (mutation == 0) loop.pushOverdubSessionPass(2, {});
+    if (mutation == 1) { loop.closeOverdubSession(); loop.openOverdubSession(0); loop.pushOverdubSessionPass(1, {7,8}); }
+    if (mutation == 2) (void)loop.undoOverdubSession(); // Cursor changes even if no canonical pass resolves.
+    if (mutation == 3) loop.dropOverdubSessionRedoTail();
+    TEST_ASSERT_EQUAL(Phase::Denied, loop.stepCollectOverdubSessionUndoPasses(work, 1));
+    TEST_ASSERT_EQUAL_UINT32(1, passIds.size()); TEST_ASSERT_TRUE(companions.empty());
+    TEST_ASSERT_FALSE(loop.collectedOverdubSessionUndoPassesCurrent(work));
+  }
+  Loop loop; loop.pushOverdubSessionPass(1, {7,8});
+  PassIdList passIds; EditPassIdList companions;
+  Loop::SessionUndoCollection work;
+  TEST_ASSERT_FALSE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, companions));
+  passIds.reserve(1);
+  TEST_ASSERT_FALSE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, passIds));
+  TEST_ASSERT_TRUE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, companions));
+  TEST_ASSERT_EQUAL(Phase::Denied, loop.stepCollectOverdubSessionUndoPasses(work, 32));
+  TEST_ASSERT_EQUAL_UINT32(1, passIds.size()); TEST_ASSERT_TRUE(companions.empty());
+  TEST_ASSERT_EQUAL_UINT32(0, companions.capacity());
+  TEST_ASSERT_FALSE(loop.collectedOverdubSessionUndoPassesCurrent(work));
+}
+
+void test_bounded_session_undo_collection_empty_and_maximum_horizons() {
+  using Phase = Loop::SessionUndoCollection::Phase;
+  for (size_t count : {size_t(0), size_t(2048)}) {
+    Loop loop;
+    for (size_t i = 0; i < count; ++i) loop.pushOverdubSessionPass(i + 1, {EditPassId(i + 1)});
+    PassIdList passIds; EditPassIdList companions;
+    passIds.reserve(count); companions.reserve(count);
+    Loop::SessionUndoCollection work;
+    TEST_ASSERT_TRUE(loop.beginCollectOverdubSessionUndoPasses(work, passIds, companions));
+    const auto bound = Loop::requiredSessionUndoCollectionGrains(count, count, 32);
+    uint64_t grains = 0;
+    while (grains < bound && work.phase != Phase::Complete) {
+      TEST_ASSERT_NOT_EQUAL(Phase::Denied, loop.stepCollectOverdubSessionUndoPasses(work, 32));
+      ++grains;
+    }
+    TEST_ASSERT_EQUAL_UINT64(bound, grains);
+    TEST_ASSERT_TRUE(loop.collectedOverdubSessionUndoPassesCurrent(work));
+    TEST_ASSERT_EQUAL_UINT32(count, passIds.size()); TEST_ASSERT_EQUAL_UINT32(count, companions.size());
+    loop.closeOverdubSession();
+    TEST_ASSERT_FALSE(loop.collectedOverdubSessionUndoPassesCurrent(work));
+    TEST_ASSERT_EQUAL(Phase::Denied, loop.stepCollectOverdubSessionUndoPasses(work, 32));
+  }
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, Loop::requiredSessionUndoCollectionGrains(2049, 0, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, Loop::requiredSessionUndoCollectionGrains(0, 2049, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, Loop::requiredSessionUndoCollectionGrains(0, 0, 0));
+}
+
 void test_stop_collects_session_wraps_then_close_clears_stack() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -4888,6 +4983,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_overdub_session_undo_disables_sealed_wrap);
   RUN_TEST(test_overdub_session_undo_depth_counts_sealed_wraps_only);
   RUN_TEST(test_session_undo_skips_next_wrap_crossing);
+  RUN_TEST(test_bounded_session_undo_collection_matches_legacy_without_growth);
+  RUN_TEST(test_bounded_session_undo_collection_denies_capacity_and_replaced_session);
+  RUN_TEST(test_bounded_session_undo_collection_empty_and_maximum_horizons);
   RUN_TEST(test_stop_collects_session_wraps_then_close_clears_stack);
   RUN_TEST(test_overdub_session_index_stamps_wraps_and_groups_after_reload);
   RUN_TEST(test_should_commit_overdub_wrap_after_leaving_start);

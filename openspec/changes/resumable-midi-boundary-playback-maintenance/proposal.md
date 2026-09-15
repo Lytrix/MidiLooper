@@ -34,6 +34,9 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
   pending return to PLAYING.
 - Split each owner into explicit, bounded grains that may yield after MIDI has
   been serviced and resume in a later eligible main-loop turn.
+- Keep the display refreshing during PLAYING: distinguish permission to load
+  from actual pending work, and let admitted due display frames take priority
+  between load slices while retaining load progress and one-child turns.
 - Preserve atomic semantic boundaries: an active view is never mutated by a
   successor build, and its promotion preserves exactly-once audible MIDI output
   across the switch. Loop publication, slot-load Commit, and display-frame
@@ -120,3 +123,17 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
   gains the explicit preflight rejection and bounded deferred-stop behavior
   described above.
 - Treating STOPPED throughput as evidence for active-transport MIDI safety.
+
+
+## First-record continuity clarification (2026-09-15)
+
+The approved implementation direction includes preparing one-bar playback windows during first recording. Bar 1 is established when recording starts and stays ready as accepted input arrives, independently of rolling later-bar preparation. At the existing final-bar return boundary, playback selects that prepared source without delaying launch, rewinding transport, or waiting for a canonical snapshot. The proposed deferred first-record launch was explicitly rejected. Capacity, final-length binding, held-note closure, and boundary-tail readiness must be proven as part of the existing admission and parity gates.
+
+
+## Shared playback implementation requirement
+
+Recording preparation reuses the existing playback window storage, fill/order,
+coverage lifecycle, bridge and MIDI emission path. Extend those shared owners
+where needed; do not implement an independent recording window engine. The
+recording source and preparation schedule differ, while ordering and playback
+semantics remain shared. The prior recording-only prototype is superseded.

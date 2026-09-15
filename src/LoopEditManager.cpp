@@ -333,7 +333,7 @@ void LoopEditManager::commitLoopEditOnDepart(Track& track) {
     // Queueing another slot while playing must not write loopStartTick/loopLengthTicks onto the
     // live loop. Transport reanchor zeros start for the playback frame; reverting SD baseline
     // mid-play (session_20260717_234742) breaks LoopEnd wrap detection and hangs at commit.
-    if (!mayWriteLoopGeometryOnEditDepart(track.isPlaying() || track.isOverdubbing())) {
+    if (!mayWriteLoopGeometryOnEditDepart(track.isAudiblePlaybackActive())) {
         // Drop pending settle without applying pending values (that would mutate the live loop).
         hasPendingLoopStartTick_ = false;
         pendingLoopStartTick_ = 0;

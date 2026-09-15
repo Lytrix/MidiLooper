@@ -1,6 +1,134 @@
 #include <unity.h>
+#include <initializer_list>
 
 #include "Utils/MidiServiceDrain.h"
+
+void test_canonical_prefix_turn_has_global_priority_and_one_child() {
+  using namespace MidiServiceDrain;
+  for (uint8_t owner = 0; owner < 5; ++owner) {
+    for (int priority = -1; priority < 4; ++priority) {
+      uint8_t cursor = 2;
+      unsigned steps = 0;
+      const bool ran = serviceCanonicalPrefixTurn(static_cast<DeferredIdleOwner>(owner), 4, cursor,
+        [&](uint8_t i) { return i == priority; },
+        [&](uint8_t i) { TEST_ASSERT_EQUAL_UINT8(2, i); ++steps; return true; });
+      const bool expected = owner == static_cast<uint8_t>(DeferredIdleOwner::VisualCache) && priority == -1;
+      TEST_ASSERT_EQUAL(expected, ran);
+      TEST_ASSERT_EQUAL_UINT32(expected ? 1 : 0, steps);
+      TEST_ASSERT_EQUAL_UINT8(expected ? 3 : 2, cursor);
+    }
+  }
+}
+
+void test_canonical_prefix_turn_rotates_and_retains_denied_work() {
+  using namespace MidiServiceDrain;
+  uint8_t cursor = 3;
+  unsigned visits = 0, children = 0;
+  TEST_ASSERT_FALSE(serviceCanonicalPrefixTurn(DeferredIdleOwner::VisualCache, 0, cursor,
+    [](uint8_t) { TEST_FAIL_MESSAGE("Empty track set must not be read"); return false; },
+    [](uint8_t) { TEST_FAIL_MESSAGE("Empty track set must not be serviced"); return true; }));
+  TEST_ASSERT_FALSE(serviceCanonicalPrefixTurn(DeferredIdleOwner::VisualCache, 4, cursor,
+    [](uint8_t) { return false; }, [&](uint8_t) { ++visits; return false; }));
+  TEST_ASSERT_EQUAL_UINT32(4, visits); TEST_ASSERT_EQUAL_UINT8(3, cursor);
+  for (uint8_t selected : {uint8_t(0), uint8_t(1), uint8_t(2), uint8_t(3)}) {
+    TEST_ASSERT_TRUE(serviceCanonicalPrefixTurn(DeferredIdleOwner::VisualCache, 4, cursor,
+      [](uint8_t) { return false; }, [&](uint8_t i) {
+        if (i != selected) return false;
+        ++children; return true;
+      }));
+    TEST_ASSERT_EQUAL_UINT8((selected + 1) % 4, cursor);
+  }
+  TEST_ASSERT_EQUAL_UINT32(4, children);
+}
+
+void test_stopping_retains_midi_polls_and_excludes_pending_save() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::aroundIdleMaintenance(false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::aroundDeferredLoadFrame(false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::afterDeferredDisplay(true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::allowDeferredSave(false, true, true));
+  TEST_ASSERT_FALSE(MidiServiceDrain::aroundIdleMaintenance(false, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::aroundDeferredLoadFrame(false, false));
+  TEST_ASSERT_TRUE(MidiServiceDrain::allowDeferredSave(false, true, false));
+}
+
+void test_active_load_display_selects_exactly_one_child() {
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::Display),
+                    static_cast<int>(MidiServiceDrain::selectActiveLoadDisplayChild(true, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::LoadJob),
+                    static_cast<int>(MidiServiceDrain::selectActiveLoadDisplayChild(false, true)));
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::None),
+                    static_cast<int>(MidiServiceDrain::selectActiveLoadDisplayChild(false, false)));
+}
+
+void test_active_load_job_denies_unbounded_commit() {
+  TEST_ASSERT_TRUE(MidiServiceDrain::admitLoadJobChild(false, true));
+  TEST_ASSERT_TRUE(MidiServiceDrain::admitLoadJobChild(true, false));
+  TEST_ASSERT_FALSE(MidiServiceDrain::admitLoadJobChild(true, true));
+}
+
+void test_active_load_display_continuation_resumes_saved_child_after_denial() {
+  MidiServiceDrain::ActiveLoadDisplayContinuation continuation;
+
+  const auto display = continuation.select(true, true, true);
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::Display),
+                    static_cast<int>(display));
+  continuation.finish(display, true);
+
+  // An owner-denied turn does not select or finish work. A later eligible turn
+  // resumes Display even when a LoadLoopJob is still pending.
+  TEST_ASSERT_TRUE(continuation.hasPendingChild());
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::Display),
+                    static_cast<int>(continuation.select(true, true, true)));
+  continuation.finish(MidiServiceDrain::ActiveLoadDisplayChild::Display, false);
+
+  const auto load = continuation.select(true, false, true);
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::LoadJob),
+                    static_cast<int>(load));
+  continuation.finish(load, true);
+
+  // The load keeps its progress in StorageManager, but a due display frame
+  // receives the next owner turn instead of waiting for the whole load.
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::Display),
+                    static_cast<int>(continuation.select(true, true, true)));
+  continuation.finish(MidiServiceDrain::ActiveLoadDisplayChild::Display, false);
+  TEST_ASSERT_EQUAL(static_cast<int>(MidiServiceDrain::ActiveLoadDisplayChild::LoadJob),
+                    static_cast<int>(continuation.select(true, false, true)));
+  continuation.finish(MidiServiceDrain::ActiveLoadDisplayChild::LoadJob, false);
+  TEST_ASSERT_FALSE(continuation.hasPendingChild());
+}
+
+void test_playing_display_keeps_refreshing_with_deferred_load_backlog() {
+  using namespace MidiServiceDrain;
+  ActiveLoadDisplayContinuation continuation;
+  unsigned frames = 0;
+  unsigned loadSlices = 0;
+  unsigned paintPhase = 0;
+  for (unsigned turn = 0; turn < 1000; ++turn) {
+    // Model queued background work that remains pending throughout playback.
+    // Each frame needs three separate owner turns; a load slice cannot stack
+    // on any of them, and must resume between frames.
+    const bool displayDue = paintPhase != 0 || turn % 10 == 1;
+    const auto child = continuation.select(true, displayDue, true);
+    if (displayDue) {
+      TEST_ASSERT_EQUAL(static_cast<int>(ActiveLoadDisplayChild::Display),
+                        static_cast<int>(child));
+      paintPhase = (paintPhase + 1) % 3;
+      if (paintPhase == 0) ++frames;
+      continuation.finish(child, paintPhase != 0);
+    } else {
+      TEST_ASSERT_EQUAL(static_cast<int>(ActiveLoadDisplayChild::LoadJob),
+                        static_cast<int>(child));
+      ++loadSlices;
+      continuation.finish(child, true);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(100, frames);
+  TEST_ASSERT_EQUAL_UINT32(700, loadSlices);
+  // Once the actual backlog is gone, permission to load must not retain it.
+  TEST_ASSERT_EQUAL(static_cast<int>(ActiveLoadDisplayChild::None),
+                    static_cast<int>(continuation.select(true, false, false)));
+  TEST_ASSERT_FALSE(continuation.hasPendingChild());
+}
 
 void setUp() {}
 void tearDown() {}
@@ -340,6 +468,13 @@ void test_stopped_pending_snapshot_wins_over_first_paint() {
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_canonical_prefix_turn_has_global_priority_and_one_child);
+  RUN_TEST(test_canonical_prefix_turn_rotates_and_retains_denied_work);
+  RUN_TEST(test_stopping_retains_midi_polls_and_excludes_pending_save);
+  RUN_TEST(test_active_load_display_selects_exactly_one_child);
+  RUN_TEST(test_active_load_job_denies_unbounded_commit);
+  RUN_TEST(test_active_load_display_continuation_resumes_saved_child_after_denial);
+  RUN_TEST(test_playing_display_keeps_refreshing_with_deferred_load_backlog);
   RUN_TEST(test_around_idle_only_when_post_overdub_playing_drain);
   RUN_TEST(test_after_display_keeps_capture_and_adds_post_overdub);
   RUN_TEST(test_around_load_frame_only_when_post_overdub_playing_drain);

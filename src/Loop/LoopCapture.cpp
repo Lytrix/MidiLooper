@@ -770,7 +770,18 @@ bool gatherSnapshotFirstCommittedEvents(const Loop& loop, SessionMidiEventVec& o
 
 bool gatherConstructionCommittedEvents(const Loop& loop, SessionMidiEventVec& out) {
   out.clear();
-  return gatherSnapshotFirstCommittedEvents(loop, out);
+  if (gatherSnapshotFirstCommittedEvents(loop, out)) {
+    return true;
+  }
+  // Source-cache construction is a cold, full-loop operation. When no current
+  // snapshot exists, use the explicit pass-layer oracle so a terminal untagged
+  // NoteOff cannot make its valid NoteOn identity disappear from overlap
+  // resolution.
+  if (loop.loopLengthTicks == 0) {
+    return false;
+  }
+  loop.copyEffectiveCommittedEventsInRange(out, 0, loop.loopLengthTicks, true);
+  return !out.empty();
 }
 
 LOOP_COLD_MEM bool displayNotesContainNoteId(const NoteUtils::DisplayNoteVec& notes, NoteId noteId) {
@@ -1487,9 +1498,12 @@ LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {
     return;
   }
   for (size_t index = 0; index < capturePreview.notes.size(); ++index) {
-    // The capture store is cleared immediately after sealing. Retain every
-    // preview row, including an open hold, so its final stop/wrap span never
-    // loses display authority before the committed cache proves membership.
+    // An open hold continues through the next capture pass and remains owned
+    // by the live capture tier. The sealed handoff owns closed rows only;
+    // retaining an open row here duplicates it beside that live continuation.
+    if (index < capturePreview.noteStates.size() && capturePreview.noteStates[index].open) {
+      continue;
+    }
     // Draw-side upsert keeps this handoff from double-painting a fresh row.
     DisplayWindowUtils::upsertDisplayNoteAtPitchStart(sealedCapturePreviewNotes_,
                                                       capturePreview.notes[index]);
@@ -1735,6 +1749,12 @@ bool Loop::ensureCaptureEventsSorted() {
   return true;
 }
 
+void Loop::noteCaptureEventsCanonicalized(uint32_t lastTick) {
+  captureHasLastAppendTick_ = !capture.store.empty();
+  captureLastAppendTick_ = captureHasLastAppendTick_ ? lastTick : 0;
+  captureEventsSortDirty = false;
+}
+
 void Loop::clearCaptureOnNewPass() {
   discardCapture();
 }
@@ -1892,7 +1912,6 @@ LOOP_COLD_MEM CommitResult Loop::commitCapturePass(CommitReason reason, uint32_t
   emitStage("publish", publishDurationUs, DebugSessionCapture::kUnsampledHeapBytes,
             DebugSessionCapture::kUnsampledHeapBytes, "ok");
 
-  notifyCommittedContentChanged();
   if (reason == CommitReason::OverdubWrap) {
     markAffectedDisplayCacheRanges(lastCommittedPassId_, EditPassIdList{});
   }
@@ -2016,10 +2035,83 @@ LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason 
 #endif
   captureDedupEventsDropped_ = 0;
 
-  const CapturePassPhase phase =
-      effectiveCapturePassPhase(capture.phase, passes.hasRecordPass());
+  return stagePreparedCapturePass(sealedAtTick, reason);
+}
+
+LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePass(uint32_t sealedAtTick,
+                                                          CommitReason reason) {
+  return stagePreparedCapturePassWithChunkStorage(sealedAtTick, reason, nullptr);
+}
+
+LOOP_COLD_MEM bool Loop::prewarmActiveOverdubTransferHorizon(uint16_t horizon) {
+  if (horizon == 0 || !prewarmSessionExitSnapshotHandoff()) {
+    return false;
+  }
+
+  // All allocations happen before an active overdub starts. The pass vector
+  // and each ownership row use external-first allocators, keeping their
+  // capacity outside the MIDI path and away from RAM1 globals.
+  const size_t requiredPassRows = passes.overdubPasses.size() + horizon;
+  if (passes.overdubPasses.capacity() < requiredPassRows) {
+    passes.overdubPasses.reserve(requiredPassRows);
+  }
+  if (prewarmedCommittedChunkIdPool_.capacity() < horizon) {
+    prewarmedCommittedChunkIdPool_.reserve(horizon);
+  }
+  while (prewarmedCommittedChunkIdPool_.size() < horizon) {
+    prewarmedCommittedChunkIdPool_.emplace_back();
+  }
+  for (CommittedChunkIdList& row : prewarmedCommittedChunkIdPool_) {
+    if (row.capacity() < PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS) {
+      row.reserve(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS);
+    }
+  }
+  return hasActiveOverdubTransferAdmission();
+}
+
+LOOP_COLD_MEM bool Loop::hasActiveOverdubTransferAdmission() const {
+  if (hasPendingCapturePass_ || prewarmedCommittedChunkIdPool_.empty()) {
+    return false;
+  }
+  const CommittedChunkIdList& nextRow = prewarmedCommittedChunkIdPool_.back();
+  return passes.overdubPasses.capacity() > passes.overdubPasses.size() &&
+         nextRow.empty() &&
+         nextRow.capacity() >= PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS;
+}
+
+LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassFromActiveAdmission(
+    uint32_t sealedAtTick, CommitReason reason) {
+  if (!hasActiveOverdubTransferAdmission()) {
+    return SealOutcome::PoolExhausted;
+  }
+
+  // Remove the row before staging so no active continuation can consume the
+  // same capacity twice. Its vector storage moves into the pending candidate.
+  CommittedChunkIdList prewarmedChunkIds =
+      std::move(prewarmedCommittedChunkIdPool_.back());
+  prewarmedCommittedChunkIdPool_.pop_back();
+  return stagePreparedCapturePassWithChunkStorage(sealedAtTick, reason,
+                                                   &prewarmedChunkIds);
+}
+
+LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
+    uint32_t sealedAtTick, CommitReason reason, CommittedChunkIdList* prewarmedChunkIds) {
+  if (hasPendingCapturePass_) {
+    return SealOutcome::AlreadyPending;
+  }
+  if (capture.store.empty()) {
+    return SealOutcome::SkippedEmpty;
+  }
+  if (!LoopEventStore::canAllocChunkWithReserve()) {
+    return SealOutcome::PoolExhausted;
+  }
+
+  const CapturePassPhase phase = effectiveCapturePassPhase(capture.phase, passes.hasRecordPass());
 
   pendingCapturePass_ = PendingCapturePass{};
+  if (prewarmedChunkIds != nullptr) {
+    pendingCapturePass_.committedChunkIds = std::move(*prewarmedChunkIds);
+  }
   pendingCapturePass_.id = nextPassId_++;
   pendingCapturePass_.mergeSequence = nextMergeSequence_++;
   pendingCapturePass_.phase = phase;
@@ -2028,22 +2120,10 @@ LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason 
       (phase == CapturePassPhase::Overdub && hasOverdubSession())
           ? currentOverdubSessionIndex_
           : kUngroupedOverdubSessionIndex;
-#if defined(SESSION_CAPTURE)
-  const uint32_t detachChunksStartUs = traceMicros();
-#endif
   if (!capture.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
-#if defined(SESSION_CAPTURE)
-    emitOverdubSealTraceStage(sealTrace, "seal_detach_capture_chunks",
-                              traceMicros() - detachChunksStartUs, "failed");
-#endif
     pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
   }
-#if defined(SESSION_CAPTURE)
-  emitOverdubSealTraceStage(sealTrace, "seal_detach_capture_chunks",
-                            traceMicros() - detachChunksStartUs,
-                            pendingCapturePass_.committedChunkIds.empty() ? "empty" : "ok");
-#endif
 
   if (pendingCapturePass_.committedChunkIds.empty()) {
     pendingCapturePass_ = PendingCapturePass{};
@@ -2052,8 +2132,117 @@ LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason 
 
   pendingVisualDelta.clear();
   hasPendingCapturePass_ = true;
-  emitOverdubSealTraceStage(sealTrace, "seal_stage_complete", 0, "ok");
+  // Legacy staging may establish canonical capacity here. Active admission
+  // arrives with that proof from the STOPPED-only horizon and must only verify
+  // it; neither branch grows storage at the later ownership handoff.
+  const bool transferPrepared = prewarmedChunkIds != nullptr
+                                    ? canTransferPendingCapturePassWithoutAllocation()
+                                    : preparePendingCapturePassTransfer();
+  if (!transferPrepared) {
+    discardPendingCapturePass();
+    return SealOutcome::FailedValidation;
+  }
   return SealOutcome::Ok;
+}
+
+LOOP_COLD_MEM bool Loop::preparePendingCapturePassTransfer() {
+  if (!hasPendingCapturePass_) {
+    return false;
+  }
+  if (pendingCapturePass_.phase == CapturePassPhase::Record) {
+    return !passes.hasRecordPass();
+  }
+  // This is deliberately separate from transferPreparedCapturePass(): vector growth is
+  // preparation work and must never be smuggled into a MIDI-boundary transfer grain.
+  passes.overdubPasses.reserve(passes.overdubPasses.size() + 1u);
+  return passes.overdubPasses.capacity() > passes.overdubPasses.size();
+}
+
+LOOP_COLD_MEM bool Loop::canTransferPendingCapturePassWithoutAllocation() const {
+  if (!hasPendingCapturePass_) {
+    return false;
+  }
+  if (pendingCapturePass_.phase == CapturePassPhase::Record) {
+    return !passes.hasRecordPass();
+  }
+  return passes.overdubPasses.capacity() > passes.overdubPasses.size();
+}
+
+LOOP_COLD_MEM bool Loop::transferPreparedCapturePass(PreparedCapturePassTransfer& transferred) {
+  if (!canTransferPendingCapturePassWithoutAllocation()) {
+    return false;
+  }
+
+  // Preserve only scalar metadata. Chunk refs move exactly once, from the prepared pass
+  // into its canonical owner below.
+  transferred = PreparedCapturePassTransfer{};
+  transferred.id = pendingCapturePass_.id;
+  transferred.phase = pendingCapturePass_.phase;
+  transferred.mergeSequence = pendingCapturePass_.mergeSequence;
+  transferred.sealedAtTick = pendingCapturePass_.sealedAtTick;
+  transferred.overdubSessionIndex = pendingCapturePass_.overdubSessionIndex;
+
+  if (pendingCapturePass_.phase == CapturePassPhase::Record) {
+    RecordPass record{};
+    record.id = pendingCapturePass_.id;
+    record.state = CapturePassState::Active;
+    record.sealedAtTick = pendingCapturePass_.sealedAtTick;
+    record.committedChunkIds = std::move(pendingCapturePass_.committedChunkIds);
+    passes.recordPass = std::move(record);
+  } else {
+    OverdubPass overdub{};
+    overdub.id = pendingCapturePass_.id;
+    overdub.mergeSequence = pendingCapturePass_.mergeSequence;
+    overdub.state = CapturePassState::Active;
+    overdub.sealedAtTick = pendingCapturePass_.sealedAtTick;
+    overdub.overdubSessionIndex = pendingCapturePass_.overdubSessionIndex;
+    overdub.committedChunkIds = std::move(pendingCapturePass_.committedChunkIds);
+    // Capacity was proven above; this placement cannot grow the vector.
+    passes.overdubPasses.push_back(std::move(overdub));
+  }
+
+  lastCommittedPassId_ = transferred.id;
+  // The pass is now canonical. Derived playback/view invalidation stays with the
+  // deferred post-commit owner, but readers can use this monotonically increasing
+  // identity immediately to reject an old immutable projection.
+  ++playbackRevision;
+  pendingCapturePass_ = PendingCapturePass{};
+  hasPendingCapturePass_ = false;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
+    PreparedCapturePassTransfer& transferred) {
+  if (!transferPreparedCapturePass(transferred)) {
+    return false;
+  }
+  completePreparedCapturePassAtomic();
+  return true;
+}
+
+void Loop::completePreparedCapturePassAtomic() {
+  // The prepared pass has already detached every mutable chunk. This handoff
+  // changes only scalar capture ownership and derived invalidation state.
+  capture.store.clear();
+  capture.phase = CapturePhase::None;
+  captureNextEventIndex = 0;
+  captureEventsSortDirty = false;
+  captureHasLastAppendTick_ = false;
+  captureLastAppendTick_ = 0;
+  notifyCommittedContentChanged();
+}
+
+LOOP_COLD_MEM void Loop::completePreparedCapturePassDeferredCleanup() {
+  // Seal handoff (150650 / 120321): keep uncovered sealed rows and merge this
+  // pass's closed preview. This is intentionally outside the atomic transfer.
+  retainCapturePreviewAtSeal();
+  capturePreview.clear();
+  // Wrap and stop commit keep the session source view. Clearing here makes
+  // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
+  // re-establishes from a dirty cache (000417 src,why=open every wrap).
+  if (!hasOverdubSession()) {
+    clearOverdubSourceView();
+  }
 }
 
 LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
@@ -2063,36 +2252,25 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
     return false;
   }
 
-  PendingCapturePass pendingPass = std::move(pendingCapturePass_);
+  // sealCapture() establishes capacity while the candidate is prepared. A
+  // boundary caller may transfer only a candidate that retained that proof.
+  if (!canTransferPendingCapturePassWithoutAllocation()) {
+    emitOverdubPublishTraceStage(publishTrace, "seal_publish_prepare_transfer", 0,
+                                 "capacity_not_prepared");
+    return false;
+  }
+  PreparedCapturePassTransfer pendingPass{};
 #if defined(SESSION_CAPTURE)
   const uint32_t promotePassStartUs = traceMicros();
 #endif
-  if (pendingPass.phase == CapturePassPhase::Record) {
-    RecordPass record{};
-    record.id = pendingPass.id;
-    record.state = CapturePassState::Active;
-    record.sealedAtTick = pendingPass.sealedAtTick;
-    record.committedChunkIds = std::move(pendingPass.committedChunkIds);
-    passes.recordPass = std::move(record);
-  } else {
-    OverdubPass overdub{};
-    overdub.id = pendingPass.id;
-    overdub.mergeSequence = pendingPass.mergeSequence;
-    overdub.state = CapturePassState::Active;
-    overdub.sealedAtTick = pendingPass.sealedAtTick;
-    overdub.overdubSessionIndex = pendingPass.overdubSessionIndex;
-    overdub.committedChunkIds = std::move(pendingPass.committedChunkIds);
-    passes.overdubPasses.push_back(std::move(overdub));
+  if (!commitPreparedCapturePassAtomic(pendingPass)) {
+    emitOverdubPublishTraceStage(publishTrace, "seal_publish_promote_pass", 0, "failed");
+    return false;
   }
 #if defined(SESSION_CAPTURE)
   emitOverdubPublishTraceStage(publishTrace, "seal_publish_promote_pass",
                                traceMicros() - promotePassStartUs, "ok");
 #endif
-  lastCommittedPassId_ = pendingPass.id;
-
-  pendingCapturePass_ = PendingCapturePass{};
-  hasPendingCapturePass_ = false;
-
 #if defined(SESSION_CAPTURE)
   const uint32_t spanCacheRestampStartUs = traceMicros();
 #endif
@@ -2185,7 +2363,6 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
 #if defined(SESSION_CAPTURE)
   const uint32_t finalizeStateStartUs = traceMicros();
 #endif
-  ++playbackRevision;
   if ((reason == CommitReason::RecordStop ||
        reason == CommitReason::RecordStopToStopped) &&
       passes.hasRecordPass() && passes.recordPass.id == lastCommittedPassId_) {
@@ -2203,23 +2380,7 @@ LOOP_COLD_MEM bool Loop::commitPendingCapturePass(CommitReason reason) {
 #if defined(SESSION_CAPTURE)
   const uint32_t clearCaptureStartUs = traceMicros();
 #endif
-  // Seal handoff (150650 / 120321): keep uncovered sealed rows and merge this pass's
-  // closed preview. Only releaseSealedCapturePreviewIfCovered may drop the overlay.
-  retainCapturePreviewAtSeal();
-  capture.store.clear();
-  capture.phase = CapturePhase::None;
-  captureNextEventIndex = 0;
-  captureEventsSortDirty = false;
-  captureHasLastAppendTick_ = false;
-  captureLastAppendTick_ = 0;
-  capturePreview.clear();
-  // Wrap and stop commit keep the session source view. Clearing here makes
-  // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
-  // re-establishes from a dirty cache (000417 src,why=open every wrap).
-  // closeOverdubSession / discardCapture clear the view.
-  if (!hasOverdubSession()) {
-    clearOverdubSourceView();
-  }
+  completePreparedCapturePassDeferredCleanup();
 #if defined(SESSION_CAPTURE)
   emitOverdubPublishTraceStage(publishTrace, "seal_publish_clear_capture",
                                traceMicros() - clearCaptureStartUs, "ok");

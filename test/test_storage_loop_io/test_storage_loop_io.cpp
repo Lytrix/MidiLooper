@@ -12,6 +12,10 @@
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/Loop/LoopContentHistory.cpp"
 #include "../../src/StorageLoopIo.cpp"
+#include "../../src/StorageManager/PersistedLoopSnapshotRelease.cpp"
+#include "../../src/PassReclaim.cpp"
+#include "../../src/Track/TrackUndoRetirement.cpp"
+#include "../../src/Track/TrackUndoPublication.cpp"
 #include "../../src/StorageLoopIoBodyFormatV1.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
@@ -1795,8 +1799,263 @@ void test_serialize_reload_content_undo_units_match() {
   releasePersistedLoopSnapshotChunks(restored);
 }
 
+void test_persisted_snapshot_release_returns_chunks_in_bounded_units() {
+  for (const size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    LoopEventStore::resetPoolForTests();
+    auto snapshot = std::make_shared<PersistedLoopSnapshot>();
+    snapshot->passes.recordPass.id = 1;
+    LoopEventStore record;
+    for (size_t i = 0; i < 257; ++i) {
+      TEST_ASSERT_TRUE(record.append(MidiEvent::ControlChange(i, 1, 7, 64)));
+    }
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(
+        record, snapshot->passes.recordPass.committedChunkIds));
+    OverdubPass overdub;
+    overdub.id = 2;
+    LoopEventStore capture;
+    TEST_ASSERT_TRUE(capture.append(MidiEvent::ControlChange(2, 1, 7, 64)));
+    TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, overdub.committedChunkIds));
+    CommittedChunkIdList external;
+    TEST_ASSERT_TRUE(LoopEventStore::deepCloneCommittedChunkIds(external, overdub.committedChunkIds));
+    const uint16_t externalChunk = external.front();
+    snapshot->passes.overdubPasses.push_back(std::move(overdub));
+    EditPass edit;
+    edit.addedEvents.resize(45);
+    snapshot->passes.editPasses.push_back(std::move(edit));
+    snapshot->passes.loopGeometries.resize(3);
+    TEST_ASSERT_EQUAL(4u, LoopEventStore::usedChunkCount());
+    std::weak_ptr<PersistedLoopSnapshot> lifetime = snapshot;
+    PersistedLoopSnapshotReleaseCursor release;
+    TEST_ASSERT_TRUE(release.begin(snapshot));
+    TEST_ASSERT_NULL(snapshot.get());
+    TEST_ASSERT_FALSE(release.step(0));
+    TEST_ASSERT_EQUAL(0u, release.completedUnits());
+    auto other = std::make_shared<PersistedLoopSnapshot>();
+    TEST_ASSERT_FALSE(release.begin(other));
+    TEST_ASSERT_NOT_NULL(other.get());
+    size_t turns = 0;
+    while (!release.complete() && turns++ < 1000) {
+      const size_t before = release.completedUnits();
+      const uint16_t chunksBefore = LoopEventStore::usedChunkCount();
+      release.step(quantum);
+      TEST_ASSERT_TRUE(release.completedUnits() - before <= quantum);
+      TEST_ASSERT_TRUE(chunksBefore - LoopEventStore::usedChunkCount() <= quantum);
+    }
+    TEST_ASSERT_TRUE(release.complete());
+    TEST_ASSERT_TRUE(lifetime.expired());
+    TEST_ASSERT_EQUAL(1u, LoopEventStore::usedChunkCount());
+    TEST_ASSERT_EQUAL(1u, LoopEventStore::chunkReferenceCount(externalChunk));
+    TEST_ASSERT_EQUAL(1u, LoopEventStore::chunkUsedCount(externalChunk));
+    LoopEventStore::releaseChunkRefs(external);
+    external.clear();
+    TEST_ASSERT_EQUAL(0u, LoopEventStore::usedChunkCount());
+  }
+}
+
+void test_persisted_snapshot_release_leaves_shared_owner_unchanged() {
+  auto snapshot = std::make_shared<PersistedLoopSnapshot>();
+  snapshot->loopId = 7;
+  EditPass edit;
+  edit.addedEvents.resize(3);
+  snapshot->passes.editPasses.push_back(std::move(edit));
+  auto reader = snapshot;
+  PersistedLoopSnapshotReleaseCursor release;
+  TEST_ASSERT_TRUE(release.begin(snapshot));
+  TEST_ASSERT_TRUE(release.step(1));
+  TEST_ASSERT_EQUAL(1u, release.completedUnits());
+  TEST_ASSERT_EQUAL(7u, reader->loopId);
+  TEST_ASSERT_EQUAL(3u, reader->passes.editPasses.front().addedEvents.size());
+  TEST_ASSERT_TRUE(release.begin(reader));
+  while (!release.step(1)) {}
+}
+
+void test_bounded_undo_trim_rechecks_pressure_after_final_root_release() {
+  for (const size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    LoopEventStore::resetPoolForTests();
+    MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES + 1024);
+    GlobalUndoStack stack;
+    bool released = false;
+    for (size_t i = 0; i < Config::MIN_UNDO_DEPTH + 3; ++i) {
+      UndoEntry entry;
+      entry.id = i + 1;
+      entry.passId = i + 1;
+      if (i == 0) {
+        entry.beforePublishedSnapshot = ImmutableLoopSnapshotRef(new LoopSnapshot(),
+            [&released](const LoopSnapshot* root) {
+              delete root;
+              released = true;
+              MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES + 1024);
+            });
+        // Two references in the retired entry must both drain before feedback.
+        entry.afterPublishedSnapshot = entry.beforePublishedSnapshot;
+        entry.passIds.resize(7, 1);
+        entry.editPassIds.resize(9, 2);
+      }
+      stack.entries.push_back(std::move(entry));
+    }
+    stack.cursor = stack.entries.size();
+    const auto* storage = stack.entries.data();
+    MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES - 1);
+    GlobalUndoStackTrimCursor trim;
+    TEST_ASSERT_TRUE(trim.begin(stack));
+    TEST_ASSERT_FALSE(trim.begin(stack));
+    TEST_ASSERT_FALSE(trim.step(0));
+    size_t turns = 0;
+    while (!trim.complete() && turns++ < 10000) {
+      const auto before = trim.completedUnits();
+      trim.step(quantum);
+      TEST_ASSERT_TRUE(trim.completedUnits() - before <= quantum);
+      TEST_ASSERT_EQUAL_PTR(storage, stack.entries.data());
+    }
+    TEST_ASSERT_TRUE(trim.complete());
+    TEST_ASSERT_TRUE(released);
+    TEST_ASSERT_EQUAL(1u, trim.trimmedCount());
+    TEST_ASSERT_EQUAL(Config::MIN_UNDO_DEPTH + 2, stack.entries.size());
+    TEST_ASSERT_EQUAL(stack.entries.size(), stack.cursor);
+    TEST_ASSERT_EQUAL(2u, stack.entries.front().id);
+    MemoryMonitor::resetNativeTestFreeHeap();
+  }
+}
+
+void test_bounded_undo_trim_matches_depth_and_redo_reference() {
+  for (const bool pressure : {false, true}) {
+    for (const size_t count : {size_t(0), size_t(3), size_t(11),
+                              size_t(Config::ABSOLUTE_MAX_UNDO_ENTRIES + 2)}) {
+      for (const size_t cursor : {size_t(0), count / 2, count}) {
+        LoopEventStore::resetPoolForTests();
+        MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES + (pressure ? -1 : 1024));
+        GlobalUndoStack reference, bounded;
+        for (size_t i = 0; i < count; ++i) {
+          UndoEntry entry;
+          entry.id = i + 1;
+          reference.entries.push_back(entry);
+          bounded.entries.push_back(std::move(entry));
+        }
+        reference.cursor = bounded.cursor = cursor;
+        const size_t expected = trimGlobalUndoStackForMemory(reference);
+        GlobalUndoStackTrimCursor trim;
+        TEST_ASSERT_TRUE(trim.begin(bounded));
+        size_t turns = 0;
+        while (!trim.step(32) && turns++ < 100000) {}
+        TEST_ASSERT_TRUE(trim.complete());
+        TEST_ASSERT_EQUAL(expected, trim.trimmedCount());
+        TEST_ASSERT_EQUAL(reference.cursor, bounded.cursor);
+        TEST_ASSERT_EQUAL(reference.entries.size(), bounded.entries.size());
+        for (size_t i = 0; i < reference.entries.size(); ++i) {
+          TEST_ASSERT_EQUAL(reference.entries[i].id, bounded.entries[i].id);
+        }
+        MemoryMonitor::resetNativeTestFreeHeap();
+      }
+    }
+  }
+}
+
+void test_undo_publication_retains_redo_until_commit_and_defers_latest_command() {
+  MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES + 1024);
+  for (size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    GlobalUndoStack stack;
+    stack.entries.reserve(8);
+    bool redoReleased = false;
+    for (size_t i = 0; i < 4; ++i) {
+      UndoEntry row; row.id = i + 1; row.passId = i + 1;
+      if (i == 3) row.beforePublishedSnapshot = ImmutableLoopSnapshotRef(new LoopSnapshot(),
+          [&redoReleased](const LoopSnapshot* root) { delete root; redoReleased = true; });
+      stack.entries.push_back(std::move(row));
+    }
+    stack.cursor = 2; stack.nextEntryId = 5;
+    UndoEntry entry; entry.kind = UndoEntryKind::OverdubPassAdded;
+    entry.loopId = 7; entry.passId = 9; entry.slotIndex = 1;
+    TrackUndoPublication work;
+    TEST_ASSERT_FALSE(work.begin(stack, entry)); // No retired-row reservation.
+    TEST_ASSERT_TRUE(work.prewarm(2));
+    TEST_ASSERT_TRUE(work.begin(stack, entry));
+    TEST_ASSERT_TRUE(work.defer(TrackUndoPublication::Command::Undo, 1, 7));
+    TEST_ASSERT_TRUE(work.defer(TrackUndoPublication::Command::Redo, 1, 7));
+    TEST_ASSERT_FALSE(work.defer(TrackUndoPublication::Command::None, 1, 7));
+    TEST_ASSERT_FALSE(work.defer(static_cast<TrackUndoPublication::Command>(255), 1, 7));
+    TEST_ASSERT_EQUAL(TrackUndoPublication::Command::None, work.takePendingCommand().kind);
+    TEST_ASSERT_FALSE(work.stepPrepare(0));
+    while (!work.stepPrepare(quantum)) {
+      TEST_ASSERT_FALSE(redoReleased);
+      TEST_ASSERT_EQUAL(2u, work.visibleUndoCount());
+      TEST_ASSERT_EQUAL(2u, work.visibleRedoCount());
+    }
+    TEST_ASSERT_FALSE(redoReleased);
+    TEST_ASSERT_FALSE(work.canPublish(stack, 8, 9));
+    TEST_ASSERT_FALSE(work.canPublish(stack, 7, 10));
+    TEST_ASSERT_TRUE(work.canPublish(stack, 7, 9));
+    work.publishAtCommit();
+    TEST_ASSERT_EQUAL(5u, stack.entries.back().id);
+    TEST_ASSERT_EQUAL(3u, stack.cursor);
+    TEST_ASSERT_EQUAL(6u, stack.nextEntryId);
+    TEST_ASSERT_FALSE(work.beginRestore());
+    TEST_ASSERT_FALSE(work.beginTrimAfterReclaim());
+    size_t turns = 0;
+    while (!work.stepReleaseRedo(quantum) && turns++ < 1000) {}
+    TEST_ASSERT_TRUE(redoReleased);
+    TEST_ASSERT_EQUAL(TrackUndoPublication::Phase::AwaitReclaim, work.phase());
+    TEST_ASSERT_TRUE(work.protectedState());
+    TEST_ASSERT_TRUE(work.beginTrimAfterReclaim());
+    while (!work.stepTrim(quantum)) {}
+    TEST_ASSERT_TRUE(work.finish());
+    TEST_ASSERT_FALSE(work.protectedState());
+    auto pending = work.takePendingCommand();
+    TEST_ASSERT_EQUAL(TrackUndoPublication::Command::Redo, pending.kind);
+    TEST_ASSERT_EQUAL(1u, pending.slot);
+    TEST_ASSERT_EQUAL(7u, pending.loopId);
+    TEST_ASSERT_EQUAL(TrackUndoPublication::Command::None, work.takePendingCommand().kind);
+  }
+  MemoryMonitor::resetNativeTestFreeHeap();
+}
+
+void test_undo_publication_precommit_restore_preserves_resources_and_entry_buffers() {
+  for (size_t moved : {size_t(0), size_t(1), size_t(2), size_t(3)}) {
+    GlobalUndoStack stack;
+    stack.entries.reserve(5);
+    bool released = false;
+    for (size_t i = 0; i < 4; ++i) {
+      UndoEntry row; row.id = i + 1;
+      if (i == 3) row.beforePublishedSnapshot = ImmutableLoopSnapshotRef(new LoopSnapshot(),
+          [&released](const LoopSnapshot* root) { delete root; released = true; });
+      stack.entries.push_back(std::move(row));
+    }
+    stack.cursor = 2; stack.nextEntryId = 5;
+    UndoEntry entry; entry.kind = UndoEntryKind::OverdubPassAdded;
+    entry.loopId = 7; entry.passId = 9;
+    entry.passIds = {8,9}; entry.editPassIds = {10,11};
+    const auto* passStorage = entry.passIds.data();
+    const auto* editStorage = entry.editPassIds.data();
+    TrackUndoPublication work;
+    TEST_ASSERT_TRUE(work.prewarm(2));
+    TEST_ASSERT_TRUE(work.begin(stack, entry));
+    work.stepPrepare(moved);
+    TEST_ASSERT_FALSE(released);
+    TEST_ASSERT_TRUE(work.beginRestore());
+    while (!work.stepRestore(1)) {}
+    TEST_ASSERT_FALSE(released);
+    TEST_ASSERT_FALSE(work.finish()); // Recovery must retain the new private entry.
+    UndoEntry recovered;
+    TEST_ASSERT_TRUE(work.recoverPreparedEntry(recovered));
+    TEST_ASSERT_EQUAL_PTR(passStorage, recovered.passIds.data());
+    TEST_ASSERT_EQUAL_PTR(editStorage, recovered.editPassIds.data());
+    TEST_ASSERT_TRUE(work.finish());
+    TEST_ASSERT_EQUAL(4u, stack.entries.size());
+    TEST_ASSERT_EQUAL(2u, stack.cursor);
+    TEST_ASSERT_EQUAL(5u, stack.nextEntryId);
+    for (size_t i = 0; i < 4; ++i) TEST_ASSERT_EQUAL(i + 1, stack.entries[i].id);
+    stack.clear();
+    TEST_ASSERT_TRUE(released);
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_undo_publication_retains_redo_until_commit_and_defers_latest_command);
+  RUN_TEST(test_undo_publication_precommit_restore_preserves_resources_and_entry_buffers);
+  RUN_TEST(test_bounded_undo_trim_rechecks_pressure_after_final_root_release);
+  RUN_TEST(test_bounded_undo_trim_matches_depth_and_redo_reference);
+  RUN_TEST(test_persisted_snapshot_release_returns_chunks_in_bounded_units);
+  RUN_TEST(test_persisted_snapshot_release_leaves_shared_owner_unchanged);
   RUN_TEST(test_write_read_loop_snapshot_roundtrip);
   RUN_TEST(test_write_read_disabled_take_preserved);
   RUN_TEST(test_pending_take_not_persisted);

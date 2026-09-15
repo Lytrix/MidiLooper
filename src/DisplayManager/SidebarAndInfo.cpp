@@ -71,6 +71,7 @@ char trackStateToLetter(TrackState state, bool muted) {
         case TRACK_RECORDING:   return 'R';
         case TRACK_PLAYING:     return 'P';
         case TRACK_OVERDUBBING: return 'O';
+        case TRACK_OVERDUB_STOPPING: return 'O';
         case TRACK_STOPPED:     return 'S';
         case TRACK_ARMED:       return 'A';
         case TRACK_STOPPED_RECORDING: return 'r';
@@ -169,7 +170,8 @@ DisplayManager::SidebarMode DisplayManager::resolveSidebarMode(const Track& sele
     if (slotState == SlotOpState::SLOT_OP_RECORDING || selectedTrack.getState() == TRACK_RECORDING) {
         return SidebarMode::REC;
     }
-    if (slotState == SlotOpState::SLOT_OP_OVERDUBBING || selectedTrack.getState() == TRACK_OVERDUBBING) {
+    if (slotState == SlotOpState::SLOT_OP_OVERDUBBING || selectedTrack.getState() == TRACK_OVERDUBBING ||
+        selectedTrack.getState() == TRACK_OVERDUB_STOPPING) {
         return SidebarMode::OVERD;
     }
     if (editManager.getEditSessionType() == EditSessionType::Loop) {
@@ -363,7 +365,7 @@ void DisplayManager::drawInfoArea(uint32_t currentTick, Track& selectedTrack, ui
                                                           : selectedTrack.getLoopLengthForSlot(displaySlot);
 
     const bool transportActive =
-        selectedTrack.isPlaying() || selectedTrack.isOverdubbing();
+        selectedTrack.isAudiblePlaybackActive();
     const uint8_t playingSlot = selectedTrack.getActiveLoopIndex();
     const uint8_t trackIdx = trackManager.getSelectedTrackIndex();
     const bool queuedLaunchCountdown =
@@ -493,7 +495,7 @@ void DisplayManager::drawNoteInfo(uint32_t currentTick, Track& selectedTrack, ui
     if (!noteToShow && !notes.empty()) {
         if (editManager.getCurrentState() == nullptr) {
             const bool transportActive =
-                selectedTrack.isPlaying() || selectedTrack.isOverdubbing();
+                selectedTrack.isAudiblePlaybackActive();
             const uint8_t playingSlot = selectedTrack.getActiveLoopIndex();
             if (!isPreviewPlayheadPending(displaySlot, playingSlot, transportActive)) {
                 const uint32_t relativeCurrentTick =

@@ -43,7 +43,8 @@ TRACK_MANAGER_INTERNAL_MEM uint8_t reclaimTrackPriority(uint8_t trackIndex,
   if (manager.isSelectedTrack(track)) {
     return 3;
   }
-  if (track.isRecording() || track.isOverdubbing() || track.getState() == TRACK_ARMED) {
+  if (track.isRecording() || track.isOverdubbing() || track.isOverdubStopping() ||
+      track.getState() == TRACK_ARMED) {
     return 2;
   }
   if (track.isPlaying()) {

@@ -19,7 +19,8 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
   if (trackIndex < Config::NUM_TRACKS) {
     Track& t = tracks[trackIndex];
     const uint8_t prev = t.getActiveLoopIndex();
-    if (prev != index && (t.isRecording() || t.isOverdubbing())) {
+    if (prev != index &&
+        (t.isRecording() || t.isOverdubbing() || t.isOverdubStopping())) {
       finalizeCaptureAndSelectSlot(trackIndex, index, clockManager.getCurrentTick());
       return;
     }
@@ -81,6 +82,7 @@ void TrackManager::beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex)
     return;
   }
   if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
+      tracks[trackIndex].isOverdubStopping() ||
       pendingRecord[trackIndex]) {
     return;
   }
@@ -114,6 +116,7 @@ void TrackManager::endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, u
   if (pendingHoldCount[trackIndex] > 0) pendingHoldCount[trackIndex]--;
 
   if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
+      tracks[trackIndex].isOverdubStopping() ||
       pendingRecord[trackIndex]) {
     if (pendingHoldCount[trackIndex] == 0) {
       cancelSlotSelectionHold(trackIndex);
@@ -233,7 +236,7 @@ void TrackManager::loadTransportSlotIndices(uint8_t trackIndex, uint8_t activeSl
   slotStateMachine.setSelectedSlotIndex(trackIndex, selectedSlot);
   Track& track = tracks[trackIndex];
   const uint8_t playingSlot =
-      (track.isPlaying() || track.isOverdubbing()) ? activeSlot : selectedSlot;
+      track.isAudiblePlaybackActive() ? activeSlot : selectedSlot;
   track.setActiveLoopIndex(playingSlot);
   // updateAllTracks only calls playMidiEvents when slotEnabled[playingSlot].
   // Bundle slotEnabled can leave the selected slot disabled while another slot
@@ -250,7 +253,7 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
   }
   const uint8_t previousSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
   Track& track = tracks[trackIndex];
-  if (!track.isPlaying() && !track.isOverdubbing()) {
+  if (!track.isAudiblePlaybackActive()) {
     replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slotIndex, true);
   }
   if (slotIndex == previousSlot) {
@@ -285,7 +288,7 @@ void TrackManager::setSelectedSlotIndex(uint8_t trackIndex, uint8_t slotIndex,
       StorageManager::requestWorkspaceFooterPersistWhenSafe();
       const bool previewOnlyWhilePlaying =
           syncPlayback == SyncPlayback::No &&
-          (track.isPlaying() || track.isOverdubbing());
+          track.isAudiblePlaybackActive();
       if (!previewOnlyWhilePlaying) {
         StorageManager::requestDeferredSaveState(looperState.getLooperState());
       }

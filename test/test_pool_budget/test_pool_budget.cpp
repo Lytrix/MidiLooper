@@ -13,6 +13,7 @@
 #include "../../src/Loop.cpp"
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/PassReclaim.cpp"
+#include "../../src/Loop/LoopPassReclaim.cpp"
 
 #include "EditPass.h"
 #include "Loop.h"
@@ -365,6 +366,47 @@ void test_trim_drops_undo_side_before_redo_branch() {
   TEST_ASSERT_EQUAL(redoBefore, stack.redoCount());
 }
 
+void test_retained_undo_root_changes_feedback_based_trim_survivors() {
+  for (bool retainRetiredRoot : {false, true}) {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    MemoryMonitor::resetNativeTestFreeHeap();
+    bool released = false;
+    GlobalUndoStack stack;
+    const size_t initialCount = Config::MIN_UNDO_DEPTH + 3;
+    for (size_t i = 0; i < initialCount; ++i) {
+      UndoEntry entry;
+      entry.id = i + 1; entry.passId = i + 1;
+      if (i == 0) {
+        // Controlled pressure input models an oldest root whose destruction
+        // recovers enough internal heap to clear pressure. No device byte-cost claim.
+        entry.beforePublishedSnapshot = ImmutableLoopSnapshotRef(new LoopSnapshot(),
+            [&released](const LoopSnapshot* root) {
+              delete root;
+              released = true;
+              MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES + 1024);
+            });
+      }
+      stack.entries.push_back(std::move(entry));
+    }
+    stack.cursor = stack.entries.size();
+    ImmutableLoopSnapshotRef retired;
+    if (retainRetiredRoot) retired = stack.entries.front().beforePublishedSnapshot;
+    MemoryMonitor::setNativeTestFreeHeap(Config::HEAP_RESERVE_BYTES - 1);
+    TEST_ASSERT_TRUE(overUndoMemoryPressure(stack));
+    const auto trimmed = trimGlobalUndoStackForMemory(stack);
+    TEST_ASSERT_EQUAL_UINT32(retainRetiredRoot ? 3 : 1, trimmed);
+    TEST_ASSERT_EQUAL_UINT32(retainRetiredRoot ? Config::MIN_UNDO_DEPTH : initialCount - 1,
+                             stack.entries.size());
+    TEST_ASSERT_EQUAL_UINT32(retainRetiredRoot ? 4 : 2, stack.entries.front().id);
+    TEST_ASSERT_EQUAL(!retainRetiredRoot, released);
+    TEST_ASSERT_EQUAL(retainRetiredRoot, overUndoMemoryPressure(stack));
+    retired.reset();
+    TEST_ASSERT_TRUE(released);
+    MemoryMonitor::resetNativeTestFreeHeap();
+  }
+}
+
 void test_new_push_clears_redo_branch() {
   GlobalUndoStack stack;
   for (uint8_t i = 0; i < 3; ++i) {
@@ -391,8 +433,97 @@ void test_new_push_clears_redo_branch() {
   TEST_ASSERT_EQUAL(99u, stack.entries.back().passId);
 }
 
+void test_bounded_slot_reclaim_matches_reference_pins_and_preserves_audible_revision() {
+  for (size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    LoopEventStore::resetPoolForTests();
+    Loop reference, bounded;
+    for (Loop* loop : {&reference, &bounded}) {
+      loop->passes.recordPass = makeRecordPass(90);
+      loop->passes.recordPass.state = CapturePassState::Disabled;
+      for (PassId id : {9u,2u,12u,7u,4u,1u,6u,2u,0u}) {
+        loop->passes.overdubPasses.push_back(makeOverdubPass(id,
+            id % 2 == 0 ? CapturePassState::Disabled : CapturePassState::Active));
+      }
+      for (PassId id : {31u,5u,20u,11u,17u,42u}) {
+        EditPass row; row.id = id;
+        row.state = id == 20 ? EditPassState::Active : EditPassState::Disabled;
+        row.addedEvents.resize(id == 5 ? 45 : 1);
+        loop->passes.editPasses.push_back(std::move(row));
+      }
+    }
+    GlobalUndoStack stack;
+    UndoEntry pass; pass.kind = UndoEntryKind::OverdubPassAdded; pass.passIds = {12}; pass.editPassIds = {17};
+    stack.entries.push_back(std::move(pass));
+    UndoEntry edits; edits.kind = UndoEntryKind::NoteEditPassClosed; edits.editPassIds = {31,31};
+    stack.entries.push_back(std::move(edits));
+    UndoEntry clear; clear.kind = UndoEntryKind::ClearSlot;
+    clear.beforeSnapshot = std::make_shared<PersistedLoopSnapshot>();
+    clear.beforeSnapshot->passes.recordPass.id = 2;
+    EditPass beforeEdit; beforeEdit.id = 11; clear.beforeSnapshot->passes.editPasses.push_back(beforeEdit);
+    clear.afterSnapshot = std::make_shared<PersistedLoopSnapshot>();
+    OverdubPass afterPass; afterPass.id = 6; clear.afterSnapshot->passes.overdubPasses.push_back(std::move(afterPass));
+    EditPass afterEdit; afterEdit.id = 42; clear.afterSnapshot->passes.editPasses.push_back(afterEdit);
+    stack.entries.push_back(std::move(clear));
+    UndoEntry foreign; foreign.kind = UndoEntryKind::RecordPassAdded; foreign.passId = 4; foreign.slotIndex = 1;
+    stack.entries.push_back(std::move(foreign));
+    stack.cursor = 0; // Redo entries still pin resources.
+    PassReferenceSet references;
+    collectReferencedPasses(stack, references);
+    const size_t expected = reference.reclaimUnreferencedDisabledCapturePasses(references.slots[0]) +
+        reference.reclaimUnreferencedDisabledEditPasses(references.slots[0]);
+    Loop::DisabledPassReclaim work;
+    TEST_ASSERT_FALSE(work.begin(bounded, stack, 0));
+    TEST_ASSERT_TRUE(work.prewarm(32));
+    TEST_ASSERT_TRUE(work.begin(bounded, stack, 0));
+    const auto* captureRows = bounded.passes.overdubPasses.data();
+    const auto* editRows = bounded.passes.editPasses.data();
+    const uint32_t revision = bounded.playbackRevision;
+    const uint64_t generation = bounded.canonicalStorageGeneration;
+    TEST_ASSERT_EQUAL(Loop::DisabledPassReclaim::Result::Pending, work.step(0));
+    size_t turns = 0;
+    while (!work.complete() && turns++ < 10000) {
+      const auto before = work.completedUnits();
+      TEST_ASSERT_NOT_EQUAL(Loop::DisabledPassReclaim::Result::Denied, work.step(quantum));
+      TEST_ASSERT_TRUE(work.completedUnits() - before <= quantum);
+      TEST_ASSERT_EQUAL_PTR(captureRows, bounded.passes.overdubPasses.data());
+      TEST_ASSERT_EQUAL_PTR(editRows, bounded.passes.editPasses.data());
+    }
+    TEST_ASSERT_TRUE(work.complete());
+    TEST_ASSERT_EQUAL(expected, work.reclaimedPasses());
+    TEST_ASSERT_EQUAL(revision, bounded.playbackRevision); // Disabled content does not change the audible source.
+    TEST_ASSERT_EQUAL(generation + 1, bounded.canonicalStorageGeneration);
+    TEST_ASSERT_EQUAL(reference.passes.recordPass.id, bounded.passes.recordPass.id);
+    TEST_ASSERT_EQUAL(reference.passes.overdubPasses.size(), bounded.passes.overdubPasses.size());
+    TEST_ASSERT_EQUAL(reference.passes.editPasses.size(), bounded.passes.editPasses.size());
+    for (size_t i = 0; i < reference.passes.overdubPasses.size(); ++i)
+      TEST_ASSERT_EQUAL(reference.passes.overdubPasses[i].id, bounded.passes.overdubPasses[i].id);
+    for (size_t i = 0; i < reference.passes.editPasses.size(); ++i)
+      TEST_ASSERT_EQUAL(reference.passes.editPasses[i].id, bounded.passes.editPasses[i].id);
+  }
+}
+
+void test_bounded_slot_reclaim_denies_stale_source_or_stack_before_mutation() {
+  for (unsigned change = 0; change < 4; ++change) {
+    Loop loop; loop.passes.recordPass.id = 9;
+    loop.passes.recordPass.state = CapturePassState::Disabled;
+    GlobalUndoStack stack;
+    Loop::DisabledPassReclaim work;
+    TEST_ASSERT_TRUE(work.prewarm(1));
+    TEST_ASSERT_TRUE(work.begin(loop, stack, 0));
+    TEST_ASSERT_EQUAL(Loop::DisabledPassReclaim::Result::Pending, work.step(1));
+    if (change == 0) ++loop.canonicalStorageGeneration;
+    if (change == 1) ++loop.playbackRevision;
+    if (change == 2) ++stack.nextEntryId;
+    if (change == 3) stack.entries.emplace_back();
+    TEST_ASSERT_EQUAL(Loop::DisabledPassReclaim::Result::Denied, work.step(32));
+    TEST_ASSERT_EQUAL(9u, loop.passes.recordPass.id);
+  }
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_bounded_slot_reclaim_matches_reference_pins_and_preserves_audible_revision);
+  RUN_TEST(test_bounded_slot_reclaim_denies_stale_source_or_stack_before_mutation);
   RUN_TEST(test_chunk_stats_match_pool_bitmap);
   RUN_TEST(test_seal_succeeds_when_capture_pass_count_exceeds_25);
   RUN_TEST(test_seal_returns_pool_exhausted_when_reserve_violated);
@@ -409,6 +540,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_trim_pressure_when_chunk_reserve_violated);
   RUN_TEST(test_trim_preserves_redo_branch_when_cursor_zero_no_pressure);
   RUN_TEST(test_trim_drops_undo_side_before_redo_branch);
+  RUN_TEST(test_retained_undo_root_changes_feedback_based_trim_survivors);
   RUN_TEST(test_new_push_clears_redo_branch);
   return UNITY_END();
 }

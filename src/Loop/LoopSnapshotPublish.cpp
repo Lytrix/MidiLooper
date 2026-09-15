@@ -234,6 +234,9 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
   return true;
 }
 
+void appendCompanionEventChanges(const LoopSnapshot& parent, LoopId loopId,
+                                 LoopSnapshotChangeSet& changes);
+
 LOOP_COLD_MEM void appendCompanionChanges(const Loop& loop, const LoopSnapshot& parent,
                                           const EditPassIdList& companionIds,
                                           LoopSnapshotChangeSet& changes) {
@@ -244,6 +247,7 @@ LOOP_COLD_MEM void appendCompanionChanges(const Loop& loop, const LoopSnapshot& 
     }
     appendEditRowChange(parent, *row, loop.loopId, changes);
   }
+  appendCompanionEventChanges(parent, loop.loopId, changes);
 }
 
 bool midiEventMatchesSnapshot(const MidiEvent& existing, const MidiEvent& incoming) {
@@ -421,6 +425,52 @@ void appendPairedNoteEventChanges(const LoopSnapshot& parent, const PendingNoteC
         makeNoteEvent(offTick, change.channel, change.pitch, 0, change.noteId, false);
     offChange.kind = SnapshotChangeKind::Add;
     changes.events.push_back(offChange);
+  }
+}
+
+// Note membership and MIDI-event membership are independent snapshot roots.
+// Publish the final companion result to both; emitting note rows alone leaves
+// a deleted or shortened note audible once the stale-root overlay disappears.
+LOOP_COLD_MEM void appendCompanionEventChanges(const LoopSnapshot& parent, LoopId loopId,
+                                               LoopSnapshotChangeSet& changes) {
+  EventId nextEventId = parent.nextEventId();
+  uint32_t nextCanonicalOrder = parent.nextEventId();
+  for (size_t i = 0; i < changes.notes.size(); ++i) {
+    const auto& note = changes.notes[i];
+    bool superseded = false;
+    for (size_t j = i + 1; j < changes.notes.size(); ++j) {
+      if (changes.notes[j].next.noteId == note.next.noteId) {
+        superseded = true;
+        break;
+      }
+    }
+    if (superseded) continue;
+    PendingNoteChange eventChange{};
+    eventChange.kind = note.kind == SnapshotChangeKind::Remove
+                           ? PendingNoteChangeKind::Hide : PendingNoteChangeKind::Shorten;
+    eventChange.noteId = note.next.noteId;
+    eventChange.pitch = note.next.pitch;
+    eventChange.velocity = note.next.velocity;
+    eventChange.startTick = note.next.startTick;
+    eventChange.endTick = note.next.endTick;
+    eventChange.channel = 1;
+    const auto previous = parent.findNote(note.next.noteId, note.next.pitch);
+    if (!previous && note.kind == SnapshotChangeKind::Replace) {
+      bool createdInBatch = false;
+      for (size_t j = 0; j < i; ++j) {
+        if (changes.notes[j].next.noteId == note.next.noteId &&
+            changes.notes[j].kind == SnapshotChangeKind::Add) createdInBatch = true;
+      }
+      // A stale Modify row cannot invent MIDI events when note construction
+      // skips its missing target. A preceding Create in this batch can.
+      if (!createdInBatch) continue;
+    }
+    if (previous) {
+      const auto on = findPairedNoteEvent(parent, note.next.noteId, previous->startTick, true);
+      if (on) eventChange.channel = on->value.channel;
+    }
+    appendPairedNoteEventChanges(parent, eventChange, loopId, parent.loopLengthTicks(),
+                                nextEventId, nextCanonicalOrder, changes);
   }
 }
 
@@ -1259,7 +1309,8 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
 }
 
 LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
-  if (!pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->sessionExitQueued) {
+  if ((sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) ||
+      !pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->sessionExitQueued) {
     return;
   }
   // Skipped overdub stop (`094930` seal=skipped) never queues session-exit, then
@@ -1272,6 +1323,7 @@ LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
 }
 
 LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
+  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) return true;
   if (pendingSnapshotPublishBox_) {
     const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
     if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued ||
@@ -1371,7 +1423,8 @@ LOOP_COLD_MEM uint32_t Loop::pendingSnapshotWrapParentRevision() const {
 }
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
-  return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued;
+  return (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) ||
+         (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued);
 }
 
 LOOP_COLD_MEM bool Loop::isPlaybackSessionExitPublicationGap() const {
@@ -1637,6 +1690,33 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
   return true;
 }
 
+LOOP_COLD_MEM bool Loop::prewarmSessionExitSnapshotHandoff() {
+  if (!sessionExitSnapshotHandoff_) {
+    sessionExitSnapshotHandoff_ = std::make_unique<SessionExitSnapshotHandoff>();
+  }
+  return canHandoffSessionExitSnapshot();
+}
+
+LOOP_COLD_MEM bool Loop::canHandoffSessionExitSnapshot() const {
+  return sessionExitSnapshotHandoff_ && !sessionExitSnapshotHandoff_->pending;
+}
+
+LOOP_COLD_MEM bool Loop::handoffSessionExitSnapshot(CommitReason reason) {
+  if (!canHandoffSessionExitSnapshot() || !hasOverdubSession() ||
+      !isOverdubSessionExit(reason) || loopLengthTicks == 0) return false;
+  auto& receipt = *sessionExitSnapshotHandoff_;
+  receipt.reason = reason;
+  receipt.lastPassId = lastCommittedPassId_;
+  receipt.companionRowCount = std::min(overdubSessionCursor_, overdubSessionCompanionIds_.size());
+  receipt.passIds.swap(overdubSessionPassIds_);
+  receipt.companionIds.swap(overdubSessionCompanionIds_);
+  receipt.pending = true;
+  // Existing wrap construction must survive close until the idle owner merges
+  // these identities into its queues. The receipt also supplies playback's
+  // stale-root overlay before the first publisher turn.
+  return true;
+}
+
 LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
                                                   const EditPassIdList& companionIds) {
   if (!isSessionExit(reason) || loopLengthTicks == 0) {
@@ -1679,14 +1759,18 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
   }
 
   if (isOverdubSessionExit(reason)) {
-    for (const PassId passId : overdubSessionPassIds_) {
+    const auto* receipt = sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending
+                              ? sessionExitSnapshotHandoff_.get() : nullptr;
+    const auto& sessionPassIds = receipt ? receipt->passIds : overdubSessionPassIds_;
+    const auto& sessionCompanionIds = receipt ? receipt->companionIds : overdubSessionCompanionIds_;
+    const size_t sessionCursor = receipt ? receipt->companionRowCount : overdubSessionCursor_;
+    for (const PassId passId : sessionPassIds) {
       if (passId != kInvalidPassId && !passAlreadyTracked(box, passId)) {
         box.queuedPassIds.push_back(passId);
       }
     }
-    for (size_t i = 0; i < overdubSessionCursor_ && i < overdubSessionCompanionIds_.size();
-         ++i) {
-      for (const EditPassId companionId : overdubSessionCompanionIds_[i]) {
+    for (size_t i = 0; i < sessionCursor && i < sessionCompanionIds.size(); ++i) {
+      for (const EditPassId companionId : sessionCompanionIds[i]) {
         if (companionId == kInvalidEditPassId) {
           continue;
         }
@@ -1703,8 +1787,10 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
       }
     }
   }
-  if (lastCommittedPassId_ != kInvalidPassId && !passAlreadyTracked(box, lastCommittedPassId_)) {
-    box.queuedPassIds.push_back(lastCommittedPassId_);
+  const PassId finalPassId = sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending
+                                 ? sessionExitSnapshotHandoff_->lastPassId : lastCommittedPassId_;
+  if (finalPassId != kInvalidPassId && !passAlreadyTracked(box, finalPassId)) {
+    box.queuedPassIds.push_back(finalPassId);
   }
   box.companionsApplied = box.companionIds.empty();
 
@@ -1735,6 +1821,17 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #endif
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
+  }
+  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) {
+    if (!allowStartConstruction) return true;
+    auto& receipt = *sessionExitSnapshotHandoff_;
+    if (!queueSessionExitSnapshot(receipt.reason) && !publishedSnapshotIsCurrent()) return true;
+    receipt.pending = false;
+    receipt.passIds.clear();
+    receipt.companionIds.clear();
+    // Queue assembly and construction must not share a turn. Full idle
+    // publisher allocation/timing bounds remain a separate integration gate.
+    return true;
   }
   if (!pendingSnapshotPublishBox_) {
     if (!hasPendingSnapshotPublish()) {

@@ -51,10 +51,12 @@ LOOP_COLD_MEM uint32_t Loop::publishedSnapshotRevision() const {
 
 LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
   publishedSnapshotBox_.reset();
+  if (sessionExitSnapshotHandoff_) *sessionExitSnapshotHandoff_ = {};
   clearPendingSnapshotPublish();
 }
 
 LOOP_COLD_MEM void Loop::clearPendingSnapshotPublish() {
+  ++pendingSnapshotCompanionGeneration_;
   pendingSnapshotPublishBox_.reset();
 }
 

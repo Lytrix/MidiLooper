@@ -141,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--capture-boot-wait",
         type=float,
         default=10.0,
-        help="Boot settle seconds passed to capture_session.py (default: 10)",
+        help="Seconds to settle after serial-open reset before the scenario starts (default: 10)",
     )
     run_parser.add_argument(
         "--no-managed-capture",
@@ -218,7 +218,8 @@ def _run_with_optional_managed_capture(
     )
 
     def _legacy_run(_active: HitlConfig) -> int:
-        merged = legacy_args_with_managed_capture(legacy, args)
+        merged = legacy_args_with_managed_capture(legacy, args, _active.follow_serial_log)
+        merged += ["--out-dir", str(_active.out_dir)]
         setattr(args, "legacy_args", merged)
         return run_fn()
 

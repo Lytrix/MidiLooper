@@ -47,6 +47,43 @@ enum class PlaybackRebuildPath : uint8_t {
  */
 constexpr uint32_t kObservationalSoftCeilingUs = 5000u;
 
+/** One stop-phase aggregate. Deadlines are cadence-derived, not wire timestamps.
+ * Every call is counted; start/end/slack describe the maximum-duration call.
+ * Unknown cadence is counted separately and cannot establish deadline safety.
+ */
+struct StopPhaseTiming {
+  uint32_t generation = 0, epoch = 0;
+  uint32_t calls = 0, crossed = 0, unknown = 0;
+  uint32_t startUs = 0, endUs = 0, slackUs = 0, maxUs = 0;
+  uint8_t slot = 255, phase = 255, destination = 255;
+};
+
+/**
+ * Last device-clock playback-service boundary observed by stop telemetry.
+ * `dueUs` is the expected service instant and `deadlineUs` the following
+ * service boundary.  This is capture attribution only; it does not admit or
+ * defer any work.
+ */
+struct StopBoundaryTiming {
+  uint32_t sequence = 0;
+  uint32_t actualUs = 0;
+  uint32_t dueUs = 0;
+  uint32_t deadlineUs = 0;
+  uint32_t periodUs = 0;
+  uint32_t droppedRecords = 0;
+  bool traceActive = false;
+};
+void recordStopGrain(uint8_t track, uint8_t slot, uint8_t phase,
+                     uint32_t generation, uint32_t epoch, uint8_t destination,
+                     uint32_t startUs, uint32_t endUs, uint32_t slackUs, bool finishedPhase,
+                     const StopBoundaryTiming* admittedBoundary = nullptr);
+/** Queue an exact device-clock state edge for the active stop trace. */
+void recordStopStateTransition(uint8_t track, uint8_t slot, uint8_t fromState,
+                               uint8_t toState, uint32_t tick, uint32_t atUs);
+StopPhaseTiming peekStopPhase(uint8_t track);
+StopBoundaryTiming peekStopBoundary();
+StopBoundaryTiming captureStopGrainBoundary(uint32_t& startUs);
+
 struct Snapshot {
   uint32_t midiGapMaxUs = 0;
   uint32_t midiGapOverCount = 0;
@@ -128,9 +165,16 @@ struct Snapshot {
   uint32_t trackResidOverCount = 0;
   bool lateOneShotArmed = true;
   bool pendingLateEvent = false;
+  uint32_t pendingLateSendUs = 0;
+  uint32_t pendingLateDueUs = 0;
+  uint32_t pendingLateDeadlineUs = 0;
   bool pendingPlaybackRebuild = false;
   uint32_t pendingRebuildDurationUs = 0;
   uint32_t pendingRebuildCount = 0;
+  uint32_t pendingRebuildAtUs = 0;
+  uint32_t pendingRebuildPreviousPhase = UINT32_MAX;
+  uint32_t pendingRebuildCurrentPhase = 0;
+  uint32_t pendingRebuildEventCount = 0;
   uint8_t pendingRebuildTrack = 255;
   uint8_t pendingRebuildSlot = 255;
   PlaybackRebuildPath pendingRebuildPath = PlaybackRebuildPath::CompatibilityPasses;
@@ -278,7 +322,9 @@ uint32_t remainingUntilNextPlaybackServiceUs(uint32_t nowUs);
  * Note-on/off send lateness. ISR-safe ITCM stores. On time iff sent before the next
  * playback tick is due (`now <= serviceDue + period`). Equality and early are 0.
  */
-void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick);
+void recordNoteSendLateness(bool isNoteOn, uint32_t nowUs, uint32_t tick,
+                            uint8_t track = 255, uint8_t slot = 255,
+                            uint8_t channel = 255, uint8_t note = 255);
 
 /**
  * Outgoing MIDI clock send lateness (internal master `sendClock`). ISR-safe ITCM
@@ -291,12 +337,17 @@ void recordOutgoingClockSend(uint32_t nowUs, uint32_t clockPeriodUs, uint32_t on
 /**
  * Queue a playback-gather rebuild one-shot. Keeps the **maximum** duration
  * (and that sample's window / track / slot / representation path) plus a count
- * of rebuilds recorded before emit. ISR-safe integer stores; emit from
+ * of rebuilds recorded before emit. Optional occurrence time and playback phases
+ * distinguish delayed publication catch-up from a stop-grain boundary crossing.
+ * UINT32_MAX previousPhase means no committed playback interval was observed.
+ * ISR-safe integer stores; emit from
  * `emitPendingDeadlineOneShots` on the main loop.
  */
 void recordPlaybackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                            uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
-                           uint8_t slotIndex, PlaybackRebuildPath path);
+                           uint8_t slotIndex, PlaybackRebuildPath path, uint32_t atUs = 0,
+                           uint32_t previousPhase = UINT32_MAX, uint32_t currentPhase = 0,
+                           uint32_t eventCount = 0);
 
 /**
  * Main-loop only: emit pending first-late / rebuild `#CAP` lines (SESSION_CAPTURE).
@@ -407,14 +458,12 @@ Snapshot peek(uint32_t nowUs = 0);
   RuntimeTimingTelemetry::resetPlaybackDeadlineCadence()
 #define RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(nowUs) \
   RuntimeTimingTelemetry::remainingUntilNextPlaybackServiceUs(nowUs)
-#define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) \
-  RuntimeTimingTelemetry::recordNoteSendLateness(isNoteOn, nowUs, tick)
+#define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(...) \
+  RuntimeTimingTelemetry::recordNoteSendLateness(__VA_ARGS__)
 #define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) \
   RuntimeTimingTelemetry::recordOutgoingClockSend(nowUs, clockPeriodUs, onTimeWindowUs, tick)
-#define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision, \
-                                               trackIndex, slotIndex, path) \
-  RuntimeTimingTelemetry::recordPlaybackRebuild(durationUs, windowStartTick, windowLengthTicks, revision, \
-                                                trackIndex, slotIndex, path)
+#define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(...) \
+  RuntimeTimingTelemetry::recordPlaybackRebuild(__VA_ARGS__)
 #define RUNTIME_TIMING_RECORD_LOOP_REMAINDER_IF_MEASURING(measure, span, startUs) \
   RuntimeTimingTelemetry::recordLoopRemainderIfMeasuring(measure, span, startUs)
 #define RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, helper, startUs) \
@@ -468,11 +517,9 @@ Snapshot peek(uint32_t nowUs = 0);
 #define RUNTIME_TIMING_NOTE_PLAYBACK_SERVICE_ENTER(nowUs, tickPeriodUs) ((void)0)
 #define RUNTIME_TIMING_RESET_PLAYBACK_DEADLINE_CADENCE() ((void)0)
 #define RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(nowUs) (0xFFFFFFFFu)
-#define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(isNoteOn, nowUs, tick) ((void)0)
+#define RUNTIME_TIMING_RECORD_NOTE_SEND_LATENESS(...) ((void)0)
 #define RUNTIME_TIMING_RECORD_OUTGOING_CLOCK_SEND(nowUs, clockPeriodUs, onTimeWindowUs, tick) ((void)0)
-#define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(durationUs, windowStartTick, windowLengthTicks, revision, \
-                                               trackIndex, slotIndex, path) \
-  ((void)0)
+#define RUNTIME_TIMING_RECORD_PLAYBACK_REBUILD(...) ((void)0)
 #define RUNTIME_TIMING_RECORD_LOOP_REMAINDER_IF_MEASURING(measure, span, startUs) ((void)0)
 #define RUNTIME_TIMING_RECORD_MIDI_LED_HELPER_REM(measure, helper, startUs) ((void)0)
 #define RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(child, startUs) ((void)0)

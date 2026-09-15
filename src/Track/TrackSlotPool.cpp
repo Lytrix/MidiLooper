@@ -149,7 +149,7 @@ TRACK_COLD_MEM bool Track::hasAnySlotData() const {
 }
 
 TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
-  if (isRecording() || isOverdubbing() || isStoppedRecording()) {
+  if (isRecording() || isOverdubbing() || isOverdubStopping() || isStoppedRecording()) {
     return;
   }
   if (trackState == TRACK_ARMED && getActiveLoop().hasCommittedPasses()) {
@@ -171,7 +171,8 @@ TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
       setState(TRACK_STOPPED);
     }
   } else if (trackState == TRACK_ARMED || trackState == TRACK_STOPPED ||
-             trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING) {
+             trackState == TRACK_PLAYING || trackState == TRACK_OVERDUBBING ||
+             trackState == TRACK_OVERDUB_STOPPING) {
     setState(TRACK_EMPTY);
   } else if (trackState != TRACK_EMPTY) {
     setState(TRACK_EMPTY);

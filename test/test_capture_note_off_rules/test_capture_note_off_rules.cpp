@@ -104,6 +104,7 @@ void test_no_orphan_off_for_balanced_wrap_grid() {
 
   const uint32_t gridOn[] = {0, 384, 576, 768, 960, 1152, 1344, 1536};
   const uint32_t gridOff[] = {192, 480, 672, 960, 1248, 1440, 1728, 2016};
+  static_assert(sizeof(gridOn) == sizeof(gridOff), "Every grid On needs its Off");
   for (size_t i = 0; i < sizeof(gridOn) / sizeof(gridOn[0]); ++i) {
     TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(gridOn[i], ch, note, 100)));
   }
@@ -193,7 +194,9 @@ void test_orphan_off_at_tail_tick_fails_canonical_check() {
 
 static void append_hilt_grid_through_1920(LoopEventStore& store, uint8_t ch, uint8_t note) {
   const uint32_t gridOn[] = {0, 384, 576, 768, 960, 1152, 1344, 1536, 1920};
-  const uint32_t gridOff[] = {192, 480, 672, 960, 1248, 1440, 1728, 2016};
+  // Preserve the existing eight pairs; close the ninth before the tail On@2112.
+  const uint32_t gridOff[] = {192, 480, 672, 960, 1248, 1440, 1728, 2016, 2112};
+  static_assert(sizeof(gridOn) == sizeof(gridOff), "Every grid On needs its Off");
   for (size_t i = 0; i < sizeof(gridOn) / sizeof(gridOn[0]); ++i) {
     TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(gridOn[i], ch, note, 100)));
     TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(gridOff[i], ch, note, 0)));
@@ -202,7 +205,9 @@ static void append_hilt_grid_through_1920(LoopEventStore& store, uint8_t ch, uin
 
 static void append_hilt_grid_through_1920(MidiEventVec& ev, uint8_t ch, uint8_t note) {
   const uint32_t gridOn[] = {0, 384, 576, 768, 960, 1152, 1344, 1536, 1920};
-  const uint32_t gridOff[] = {192, 480, 672, 960, 1248, 1440, 1728, 2016};
+  // Preserve the existing eight pairs; close the ninth before the tail On@2112.
+  const uint32_t gridOff[] = {192, 480, 672, 960, 1248, 1440, 1728, 2016, 2112};
+  static_assert(sizeof(gridOn) == sizeof(gridOff), "Every grid On needs its Off");
   for (size_t i = 0; i < sizeof(gridOn) / sizeof(gridOn[0]); ++i) {
     ev.push_back(MidiEvent::NoteOn(gridOn[i], ch, note, 100));
     ev.push_back(MidiEvent::NoteOff(gridOff[i], ch, note, 0));

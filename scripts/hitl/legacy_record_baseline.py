@@ -69,6 +69,10 @@ from hitl.verify.deferred_persist_large_loop_bounds import (
     deferred_persist_large_loop_bounds_issues,
     summarize_deferred_persist_large_loop_bounds,
 )
+from hitl.verify.midi_boundary_timing import (
+    midi_boundary_timing_issues,
+    summarize_midi_boundary_timing,
+)
 from hitl.control_constants import (
     CONTROL_CHANNEL_1BASED,
     DEFAULT_LONG_RUN_BAR_THRESHOLD,
@@ -379,7 +383,6 @@ _CLEAR_RESULTS_EXEMPT_UNDO_PRUNE = frozenset(
         "already_empty_ignored",
         "already_empty_skip",
         "already_empty_after_select_stop",
-        "clear_aborted_ignored",
         "clear_log_confirmed",
         "cleared_without_empty_transition",
         "empty_transition",
@@ -754,9 +757,9 @@ def _prepare_deferred_save_before_clear(
 ) -> bool:
     """Stop transport or wait on recent save activity before clear long press.
 
-    Only waits when the serial *tail* shows active save work (not the full follow-session
-    log). Persistence drain stuck and wait timeouts are ignored so clear/HITL can
-    proceed ([`session_20260911_094306.log`]).
+    Use fresh sequencer activity as well as explicit transport transitions.
+    Unresolved stuck persistence or a wait timeout blocks clear; neither is
+    evidence that the save-before-clear ownership guard can be bypassed.
     """
     del in_port
     if serial_collector is None:
@@ -764,20 +767,33 @@ def _prepare_deferred_save_before_clear(
 
     from hitl.deferred_save_idle import (
         deferred_save_active_in_suffix,
+        deferred_save_active_in_tail,
         persistence_drain_stuck_in_suffix,
         wait_for_deferred_save_idle_if_active,
     )
 
     lines = serial_collector.snapshot()
-    save_wait_anchor = len(lines)
+    # A save commonly predates this fixture's capture baseline. Looking only
+    # at `after_index` missed that pending writer, so the next Clear fell back
+    # to the firmware's bounded synchronous drain and could abort. Keep a
+    # recent state window as the wait anchor, while still preferring the
+    # fixture suffix when it already contains save activity.
+    recent_save_anchor = max(0, len(lines) - 256)
+    save_active = (
+        deferred_save_active_in_suffix(lines, after_index=after_index)
+        or deferred_save_active_in_tail(lines, lookback=256)
+    )
+    save_wait_anchor = recent_save_anchor if save_active else len(lines)
 
-    if persistence_drain_stuck_in_suffix(lines, after_index=after_index):
+    if persistence_drain_stuck_in_suffix(lines, after_index=recent_save_anchor):
         print(
-            "[warn] persistence drain stuck — ignoring for clear precondition"
+            "[warn] persistence drain stuck — clear blocked"
         )
-        return True
+        return False
 
-    if serial_global_transport_running(lines, after_index=after_index):
+    if (serial_global_transport_running(lines, after_index=after_index)
+            or _serial_sequencer_running(serial_collector, max_silence_s=2.0,
+                                          after_index=after_index)):
         print("[info] transport stop before clear long press")
         _send_short_press(
             out_port,
@@ -785,9 +801,17 @@ def _prepare_deferred_save_before_clear(
             channel_1based=CONTROL_CHANNEL_1BASED,
             press_ms=press_ms,
         )
-        time.sleep(phase_wait_ms / 1000.0)
-        save_wait_anchor = len(serial_collector.snapshot())
-    elif not deferred_save_active_in_suffix(lines, after_index=after_index):
+        time.sleep(max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0)
+        post_stop_anchor = len(serial_collector.snapshot())
+        time.sleep(0.35)
+        if _serial_sequencer_running(serial_collector, max_silence_s=1.0,
+                                     after_index=post_stop_anchor):
+            print("[warn] transport still active after stop; clear blocked")
+            return False
+        # Retain the pre-existing pending marker as well as activity/completion
+        # emitted during the stop wait.
+        save_wait_anchor = recent_save_anchor
+    elif not save_active:
         return True
     else:
         save_wait_anchor = after_index
@@ -796,9 +820,9 @@ def _prepare_deferred_save_before_clear(
         serial_collector.snapshot(), after_index=save_wait_anchor
     ):
         print(
-            "[warn] persistence drain stuck — ignoring for clear precondition"
+            "[warn] persistence drain stuck — clear blocked"
         )
-        return True
+        return False
 
     save_drain_s = max(getattr(args, "deferred_save_wait_ms", 3000), 0) / 1000.0
     if not wait_for_deferred_save_idle_if_active(
@@ -810,8 +834,9 @@ def _prepare_deferred_save_before_clear(
     ):
         print(
             "[warn] deferred save not idle after "
-            f"{save_drain_s:.0f}s — ignoring and continuing clear"
+            f"{save_drain_s:.0f}s — clear blocked"
         )
+        return False
     return True
 
 
@@ -1348,7 +1373,13 @@ def _run_record_arm_until_capturing(
         return _arm_already_satisfied(lines, after_index=track_baseline_len)
 
     def _arm_confirmed(lines: list[str], baseline: int) -> bool:
-        return _arm_already_satisfied(lines, after_index=baseline)
+        # During active transport, state rows stay in the capture ring until a
+        # bounded flush point.  The live logger's "Recording started" evidence
+        # is therefore the only immediate confirmation for a direct
+        # STOPPED->RECORDING entry after a fresh clear.
+        return _arm_already_satisfied(lines, after_index=baseline) or _serial_has_recording_active(
+            lines, after_index=baseline
+        )
 
     def _arm_disproved(lines: list[str], baseline: int) -> bool:
         # Arm while stopped → ARMED; RECORDING only after play starts. PLAYING is
@@ -1381,48 +1412,14 @@ def _run_record_arm_until_capturing(
     if _serial_has_recording_active(
         serial_collector.snapshot(), after_index=arm_baseline_len
     ):
-        # Transport was still running: arm jumped STOPPED→RECORDING. Stop both
-        # capture and transport, then re-arm so note stream starts on a fresh
-        # ARMED→play→RECORDING take.
+        # The post-clear transport may already be running.  Its fresh record
+        # press enters RECORDING directly; do not stop and re-arm that valid
+        # take merely because its #CAP state row is retained until a flush.
         print(
-            "[info] RECORDING after arm without stopped transport; "
-            "stopping capture+transport and re-arming for ARMED"
+            "[info] RECORDING after arm on the fresh cleared slot; "
+            "using the active take"
         )
-        _stop_live_capture_if_active_before_arm(
-            out_port,
-            serial_collector,
-            args,
-            after_index=arm_baseline_len,
-            abort=abort,
-        )
-        _ensure_transport_stopped_before_record_arm(
-            out_port,
-            in_port,
-            serial_collector,
-            args,
-            press_ms=args.press_ms,
-            phase_wait_ms=args.phase_wait_ms,
-            after_index=len(serial_collector.snapshot()),
-        )
-        rearm_baseline = len(serial_collector.snapshot())
-        _send_record_arm_press(
-            out_port, press_ms=args.press_ms, loop_slot=record_loop_slot
-        )
-        time.sleep(args.phase_wait_ms / 1000.0)
-        if _serial_has_recording_active(
-            serial_collector.snapshot(), after_index=rearm_baseline
-        ):
-            print(
-                "[warn] Still RECORDING after re-arm; "
-                "proceeding with wall-clock schedule (cannot force ARMED)"
-            )
-            return True, time.monotonic()
-        if not _latest_track_is(
-            serial_collector.snapshot(), ("ARMED", "RECORDING"), after_index=rearm_baseline
-        ):
-            return False, None
-        # Landed on ARMED — fall through to transport start below.
-        arm_baseline_len = rearm_baseline
+        return True, time.monotonic()
 
     transport_baseline_len = len(serial_collector.snapshot())
     ok, press_sent = _restart_transport_after_clear(
@@ -1859,10 +1856,10 @@ def _run_clear_before_record(
             return satisfied
 
         def _clear_blocked(lines: list[str], baseline: int) -> bool:
-            # Clear aborted for deferred-save drain is ignored for HITL setup;
-            # do not hard-block the transition (see clear_aborted_ignored below).
-            del lines, baseline
-            return False
+            # A failed clear leaves the selected slot's contents unknown.  It
+            # must terminate setup; otherwise record/overdub pair and span
+            # checks can accidentally consume a prior fixture's MIDI rows.
+            return _serial_has_clear_aborted(lines, after_index=baseline)
 
         def _clear_disproved(lines: list[str], baseline: int) -> bool:
             if _clear_confirmed(lines, baseline):
@@ -1930,10 +1927,10 @@ def _run_clear_before_record(
                 serial_collector.snapshot(), after_index=clear_baseline
             ):
                 print(
-                    "[warn] Clear aborted in firmware (deferred save); "
-                    "ignoring and continuing HITL setup"
+                    "[error] Clear aborted in firmware (deferred save); "
+                    "the selected slot is not a valid fixture"
                 )
-                return True, "clear_aborted_ignored"
+                return False, "clear_aborted"
             # Serial-follow can lag the on-disk clear logs under DISP/snapshot_idle
             # flood ([`session_20260911_092650.log`]: timeout state=None, then drain
             # caught Track cleared / Clear selected slot).
@@ -3134,6 +3131,11 @@ def _build_serial_verification(
         lines,
         record_stop_ts=boundaries.get("record_stop_ts"),
     )
+    midi_boundary_timing = summarize_midi_boundary_timing(
+        lines,
+        after_index=phase_report.after_index,
+        repo_root=Path(__file__).resolve().parents[2],
+    )
     is_long_record_run = bool(args.record_bars and args.record_bars >= args.long_run_bar_threshold)
     ram2_headroom = _summarize_ram2_headroom(record_stop_stage_rows, persistence_rows)
     record_stop_ram2_floor = _verify_record_stop_ram2_floor(
@@ -3305,6 +3307,7 @@ def _build_serial_verification(
         issues.extend(
             deferred_persist_large_loop_bounds_issues(deferred_persist_large_loop_bounds)
         )
+    issues.extend(midi_boundary_timing_issues(midi_boundary_timing))
     if not record_stop_ram2_floor.get("phase_disabled", True):
         if record_stop_ram2_floor.get("record_stop_row_missing", False):
             issues.append("record_stop_ram2_heap_missing")
@@ -3458,6 +3461,7 @@ def _build_serial_verification(
         "persistence_handoff": persistence_handoff,
         "deferred_persist_nonblocking": deferred_persist_nonblocking,
         "deferred_persist_large_loop_bounds": deferred_persist_large_loop_bounds,
+        "midi_boundary_timing": midi_boundary_timing,
         "ram2_headroom": ram2_headroom,
         "record_stop_ram2_floor": record_stop_ram2_floor,
         "long_run_persistence_result": long_run_persistence_result,
@@ -5349,6 +5353,15 @@ def run() -> int:
         elif capture_integrity_snapshot is CaptureIntegrity.UNKNOWN:
             capture_integrity_snapshot = CaptureIntegrity.COMPLETE
 
+    # A ring-overflow notice is delayed until a safe serial flush.  It still
+    # means retained evidence was evicted, including for offline verification
+    # where no live collector can mark the session incomplete.
+    if (
+        serial_verification
+        and not bool((serial_verification.get("midi_boundary_timing") or {}).get("overflow_free", True))
+    ):
+        capture_integrity_snapshot = CaptureIntegrity.INCOMPLETE
+
     setup_unconfirmed = bool(
         abort_reason
         or precondition_failures
@@ -5378,6 +5391,8 @@ def run() -> int:
         config_for_report["serial_log_path"] = str(config_for_report["serial_log_path"])
     if config_for_report.get("verify_serial_log") is not None:
         config_for_report["verify_serial_log"] = str(config_for_report["verify_serial_log"])
+    if config_for_report.get("follow_serial_log") is not None:
+        config_for_report["follow_serial_log"] = str(config_for_report["follow_serial_log"])
 
     report = {
         "started_at": run_started.isoformat(),
@@ -5543,6 +5558,15 @@ def run() -> int:
                     f"active={deferred_persist_large_loop_bounds.get('active_snapshot_ok')} "
                     f"stop={deferred_persist_large_loop_bounds.get('stop_path_ok')} "
                     f"ok={deferred_persist_large_loop_bounds.get('ok')}"
+                )
+            midi_boundary_timing = serial_verification.get("midi_boundary_timing")
+            if midi_boundary_timing:
+                print(
+                    "  VERIFY MIDI-boundary timing: "
+                    f"intervals={midi_boundary_timing.get('interval_counts')} "
+                    f"stopping={len(midi_boundary_timing.get('overdub_stopping_segments') or [])} "
+                    f"overflow_free={midi_boundary_timing.get('overflow_free')} "
+                    f"call_sites={midi_boundary_timing.get('call_site_gate_ok')}"
                 )
             ram2_headroom = serial_verification.get("ram2_headroom")
             if ram2_headroom and not ram2_headroom.get("phase_disabled"):

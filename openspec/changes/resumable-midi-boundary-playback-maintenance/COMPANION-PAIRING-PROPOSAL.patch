@@ -1,0 +1,28 @@
+--- a/src/EditManager/EditApply.cpp
++++ b/src/EditManager/EditApply.cpp
+@@ -149,14 +149,17 @@
+   }
+ 
+   std::vector<size_t> walkOrder(pitchIndices);
+-  std::stable_sort(walkOrder.begin(), walkOrder.end(), [&](size_t a, size_t b) {
+-    const MidiEvent& ea = events[a];
+-    const MidiEvent& eb = events[b];
+-    if (ea.tick == eb.tick) {
+-      return NoteUtils::midiEventChronologicalLess(ea, eb);
+-    }
+-    return a < b;
+-  });
++  // Preserve lane traversal across distinct ticks. Equal-tick ordering is
++  // local to a contiguous run: comparing arbitrary equal ticks by kind and
++  // distinct ticks by index is not a strict weak ordering.
++  for (size_t begin = 0; begin < walkOrder.size();) {
++    size_t end = begin + 1;
++    const uint32_t tick = events[walkOrder[begin]].tick;
++    while (end < walkOrder.size() && events[walkOrder[end]].tick == tick) ++end;
++    std::stable_partition(walkOrder.begin() + begin, walkOrder.begin() + end,
++                          [&](size_t index) { return events[index].isNoteOff(); });
++    begin = end;
++  }
+ 
+   std::vector<size_t> openNoteOnIndices;
+   // Indexed by position in pitchIndices, which is ascending, so lower_bound maps an event index.

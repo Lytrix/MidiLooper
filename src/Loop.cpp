@@ -30,6 +30,7 @@ NoteId Loop::allocateNoteId() {
 }
 
 LOOP_COLD_MEM void Loop::resetPassTimeline() {
+  ++canonicalStorageGeneration; // Before releasing refs or resetting playbackRevision.
   discardPendingCapturePass();
   if (passes.hasRecordPass()) {
     LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);

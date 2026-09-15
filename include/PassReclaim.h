@@ -80,3 +80,23 @@ struct PassReclaimStats {
   uint16_t chunksFreeAfter = 0;
   uint32_t durationUs = 0;
 };
+
+/// Feedback trimming of an exclusively owned, unpublished stack. The enclosing
+/// Track transaction must hide it from readers/mutators and cross its no-fail
+/// point before begin: retirement cannot be rolled back. No pass reclaim occurs
+/// here; the transaction schedules it after prepared canonical proofs are retired.
+class GlobalUndoStackTrimCursor {
+ public:
+  bool begin(GlobalUndoStack& privateStack);
+  bool step(size_t maximumUnits);
+  bool complete() const { return stack_ == nullptr; }
+  size_t trimmedCount() const { return trimmed_; }
+  size_t completedUnits() const { return units_; }
+ private:
+  GlobalUndoStack* stack_ = nullptr;
+  UndoEntryReleaseCursor release_;
+  size_t shift_ = 0;
+  size_t trimmed_ = 0;
+  size_t units_ = 0;
+  uint8_t phase_ = 0;
+};

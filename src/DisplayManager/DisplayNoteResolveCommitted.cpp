@@ -77,7 +77,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesCommit
 
     Loop& mutLoop = const_cast<Loop&>(loop);
     const bool deferVisualRebuild =
-        (track.isPlaying() || track.isStoppedRecording()) && !track.isOverdubbing() &&
+        (track.isAudiblePlaybackActive() || track.isStoppedRecording()) && !track.isOverdubbing() &&
         !(track.isRecording() && !track.isPlaying());
     const bool avoidFullVisualRebuild = shouldAvoidFullVisualRebuild(loop, loopLength);
     const bool deferHeavyDisplayRebuild = shouldDeferHeavyDisplayRebuild();

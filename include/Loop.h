@@ -36,14 +36,20 @@
 #include "PendingNoteChange.h"
 #include "Utils/LoopStopFinalize.h"
 
+class RuntimeCaptureCompanions;
+class RuntimeCanonicalPassInputs;
+struct CaptureAdmissionStaging;
 class Track;
 class NoteEditCurrentState;
 struct PlaybackMergedMidiEvents;
 
 using PlaybackOrderVec = std::vector<size_t, ExternalMemoryFirstAllocator<size_t>>;
+using PrewarmedCommittedChunkIdPool =
+    std::vector<CommittedChunkIdList, ExternalMemoryFirstAllocator<CommittedChunkIdList>>;
 
 struct PublishedSnapshotBox;
 struct PendingSnapshotPublishBox;
+struct SessionExitSnapshotHandoff;
 
 /// Overdub-session totals for `#CAP,DIAG,oh` (`add`/`shorten`/`hide` last). Incremented on note-off; emitted at stop.
 struct OverlapHoldTotals {
@@ -70,6 +76,44 @@ struct OverlapHoldTotals {
 };
 
 struct Loop {
+  /// Protected post-publication reclamation of this Loop's disabled passes.
+  /// Prewarmed key probes take at most 13 comparisons; a unit moves or releases
+  /// one row/reference. The enclosing Track excludes concurrent stack writers.
+  class DisabledPassReclaim {
+   public:
+    enum class Result : uint8_t { Pending, Complete, Denied };
+    bool prewarm(size_t maximumKeys);
+    bool begin(Loop& loop, const GlobalUndoStack& stack, uint8_t slotIndex);
+    Result step(size_t maximumUnits);
+    bool complete() const { return phase_ == Phase::Complete; }
+    size_t completedUnits() const { return units_; }
+    size_t reclaimedPasses() const { return reclaimed_; }
+   private:
+    enum class Phase : uint8_t { Idle, GatherRecord, GatherOverdub, GatherEdit, SortSetup,
+      SortCopy, References, Record, Overdub, OverdubTail, Edit, EditTail, Complete, Denied };
+    using Keys = std::vector<uint64_t, ExternalMemoryFirstAllocator<uint64_t>>;
+    Keys keys_, scratch_;
+    std::vector<uint8_t, ExternalMemoryFirstAllocator<uint8_t>> pinned_;
+    Loop* loop_ = nullptr;
+    const GlobalUndoStack* stack_ = nullptr;
+    const UndoEntry* entries_ = nullptr;
+    size_t stackSize_ = 0, stackCursor_ = 0;
+    UndoEntryId nextEntryId_ = 0;
+    uint64_t generation_ = 0;
+    uint32_t revision_ = 0;
+    uint8_t slot_ = 0, referencePart_ = 0;
+    size_t count_ = 0, cursor_ = 0, write_ = 0, entry_ = 0, reference_ = 0;
+    size_t width_ = 1, left_ = 0, middle_ = 0, right_ = 0, a_ = 0, b_ = 0, out_ = 0;
+    size_t units_ = 0, reclaimed_ = 0;
+    bool changed_ = false;
+    Phase phase_ = Phase::Idle;
+    void mark(PassId id, bool edit);
+    bool referenced(PassId id, bool edit) const;
+    size_t find(uint64_t key) const;
+    void nextReference();
+    void invalidateStorage();
+  };
+
   Loop();
   ~Loop();
   Loop(const Loop&) = delete;
@@ -85,12 +129,41 @@ struct Loop {
 
   LoopId loopId = kInvalidLoopId;
   uint32_t playbackRevision = 0;
+  // Invalidates borrowed pass/history storage even when audible revision is
+  // unchanged or reset. Runtime-only; never restored from persisted content.
+  uint64_t canonicalStorageGeneration = 0;
   LoopPasses passes;
   PassId nextPassId_ = 1;
   NoteId nextNoteId_ = 1;
   bool editStateDirty_ = false;
   bool hasPendingCapturePass_ = false;
   PendingCapturePass pendingCapturePass_;
+  /// STOPPED-only reservoir for canonical ownership transfer. A deferred
+  /// overdub stop moves one prepared list into `pendingCapturePass_`; it never
+  /// creates or grows a committed-chunk vector while transport is active.
+  PrewarmedCommittedChunkIdPool prewarmedCommittedChunkIdPool_;
+  struct PreparedCompanionHistory {
+    enum class Phase : uint8_t { Cold, Prewarmed, CopySnapshot, CopyRow, CopyPayload, Append, Trim, VerifyCapture, Ready, Committed, RecycleIds, RecycleSnapshot, RecycleRows, RecycleGrow, Denied };
+    EditPassVec rows;
+    EditPassIdList companionIds, snapshotIds;
+    size_t snapshotCount = 0, snapshotIndex = 0;
+    size_t rowLimit = 0, snapshotLimit = 0;
+    uint64_t snapshotGeneration = 0;
+    uint64_t preparationGeneration = 0;
+    size_t historyCount = 0, companionCapacity = 0, targetCount = 0, row = 0, event = 0;
+    uint64_t storageGeneration = 0, rowGeneration = 0;
+    uint32_t revision = 0;
+    PassId firstId = 0, capturePassId = kInvalidPassId;
+    const RuntimeCaptureCompanions* source = nullptr;
+    const CaptureAdmissionStaging* capture = nullptr;
+    const RuntimeCanonicalPassInputs* captureInputs = nullptr;
+    uint64_t captureInputsGeneration = 0;
+    const uint16_t* captureChunks = nullptr;
+    size_t captureChunkCount = 0, captureChunk = 0, captureEvent = 0, comparedEvents = 0;
+    Phase phase = Phase::Cold;
+  } preparedCompanionHistory_;
+  bool preparedCompanionHistorySourceCurrent() const;
+
   VisualCache visualCache;
   bool deferredVisualCacheWrapAppendPending_ = false;
   /// `playbackRevision` at the moment wrap-append was first deferred. Append
@@ -230,6 +303,18 @@ struct Loop {
   uint32_t playheadPhaseTick = UINT32_MAX;
   void openOverdubSession(uint32_t sessionPlayheadPhaseTick);
   void closeOverdubSession();
+  /// Post-publication cleanup under exclusive protected-stop ownership. Snapshot
+  /// exit work must already be retained; this never discards an owned graph.
+  struct SessionClose {
+    enum class Phase : uint8_t { Idle, Passes, Companions, LiveEvents, SourceEvents,
+      SourceNotes, Finish, Complete, Denied };
+    const Loop* owner = nullptr;
+    uint64_t generation = 0;
+    size_t units = 0;
+    Phase phase = Phase::Idle;
+  };
+  bool beginCloseOverdubSession(SessionClose& work);
+  SessionClose::Phase stepCloseOverdubSession(SessionClose& work, size_t quantum);
   void syncNextOverdubSessionIndexFromPasses();
   bool hasOverdubSession() const { return playheadPhaseTick != UINT32_MAX; }
   void armOverdubWrapAfterLeavingStart(uint32_t currentPhase);
@@ -243,6 +328,33 @@ struct Loop {
   void pushOverdubSessionPass(PassId passId, EditPassIdList companionIds);
   /// Sealed wraps still on the session cursor (not the undone redo tail).
   void collectOverdubSessionUndoPasses(PassIdList& passIds, EditPassIdList& companionIds) const;
+  struct SessionUndoCollection {
+    enum class Phase : uint8_t { Cold, Pass, Companions, FinalPass, FinalCompanions, Complete, Denied };
+    const Loop* owner = nullptr;
+    uint64_t generation = 0;
+    PassIdList* passIds = nullptr;
+    EditPassIdList* companionIds = nullptr;
+    size_t limit = 0, row = 0, companion = 0, passCount = 0, companionCount = 0;
+    uint64_t receiptGeneration = 0;
+    size_t receiptCount = 0, receiptIndex = 0;
+    PassId finalPassId = kInvalidPassId;
+    bool finalReceipt = false, includeFinalPass = false;
+    Phase phase = Phase::Cold;
+  };
+  /// Caller supplies empty, pre-reserved private outputs and keeps exclusive
+  /// access until completion/discard. No clearing, allocation or canonical mutation.
+  bool beginCollectOverdubSessionUndoPasses(SessionUndoCollection& work,
+      PassIdList& passIds, EditPassIdList& companionIds) const;
+  SessionUndoCollection::Phase stepCollectOverdubSessionUndoPasses(
+      SessionUndoCollection& work, size_t quantum) const;
+  bool collectedOverdubSessionUndoPassesCurrent(const SessionUndoCollection& work) const;
+  static uint64_t requiredSessionUndoCollectionGrains(size_t rows, size_t companions, size_t quantum);
+  /// Adds the final capture ID (unless already last) and the current prepared
+  /// companion receipt. Output remains private; does not consume/recycle receipt.
+  bool beginCollectOverdubStopUndoPasses(SessionUndoCollection& work, PassIdList& passIds,
+      EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass);
+  static uint64_t requiredSessionStopUndoCollectionGrains(size_t rows, size_t companions,
+      size_t finalCompanions, size_t quantum);
   /// Last sealed session layer still on the cursor. False when the cursor is empty.
   bool collectLastOverdubSessionPass(PassId& passId, EditPassIdList& companionIds) const;
   void dropOverdubSessionRedoTail();
@@ -383,6 +495,48 @@ struct Loop {
                                                    NoteId incomingNoteId);
   /// Encode pending Shorten/Hide into EditPass rows (call after OverdubPass publish).
   /// Clears pending. Occupancy transforms seal as Length / Delete companions.
+  /// STOPPED-only allocation; total history rows and copied Create payloads
+  /// must fit the fixed preparation horizons. Both vector sides are reserved;
+  /// canonical history relocation advances its generation before moving rows.
+  bool prewarmPreparedCompanionHistory(size_t companionCapacity);
+  static uint64_t requiredPreparedCompanionHistoryGrains(size_t historyRows, size_t historyPayloadEvents,
+                                                        size_t companionCapacity, size_t quantum, size_t snapshotIds = 0,
+                                                        size_t captureEvents = 0, size_t captureChunks = 0);
+  /// Frozen row/capture owners must remain alive until logical discard.
+  /// Optional captureInputs enables bounded verification of the staged sealed
+  /// capture against its raw frozen order. Required for Track's joint handoff;
+  /// the input owner must also remain alive and immutable until discard.
+  bool beginPreparedCompanionHistory(const RuntimeCaptureCompanions& rows,
+                                     const CaptureAdmissionStaging& capture,
+                                     const RuntimeCanonicalPassInputs* captureInputs = nullptr);
+  /// One unit is row metadata, a payload/snapshot item, an unused tail row,
+  /// or one staged-capture event/chunk-boundary comparison.
+  bool stepPreparedCompanionHistory(size_t quantum);
+  bool preparedCompanionHistoryReady() const;
+  bool preparedCompanionCaptureVerified(const RuntimeCanonicalPassInputs& inputs) const;
+  bool preparedCompanionHistoryCanStep(const RuntimeCaptureCompanions& rows,
+      const CaptureAdmissionStaging& capture, const RuntimeCanonicalPassInputs& inputs) const;
+  bool preparedCompanionHistoryMatches(const RuntimeCaptureCompanions& rows,
+                                       const CaptureAdmissionStaging& capture) const;
+  const EditPassVec* preparedCompanionHistory() const;
+  /// Canonical history half only: caller must preflight capture/audible handoff too.
+  /// Retains retired history and the undo receipt until acknowledged recycling
+  /// or STOPPED prewarm/discard. Reuse consumes the initially reserved row horizon.
+  bool commitPreparedCompanionHistoryAtomic();
+  /// Joint canonical preflight. Audible source/epoch/ledger checks belong to Track.
+  bool canCommitPreparedCaptureAndCompanions() const;
+  bool commitPreparedCaptureAndCompanionsAtomic(PreparedCapturePassTransfer& transferred);
+  const EditPassIdList* preparedCompanionHistoryIds() const;
+  /// Caller has consumed the ID receipt. Recycling ends that receipt's lifetime.
+  /// No active allocation/free; returns to Prewarmed within the remaining horizon.
+  bool beginRecyclePreparedCompanionHistory();
+  bool stepRecyclePreparedCompanionHistory(size_t quantum);
+  bool preparedCompanionHistoryRecycleComplete() const;
+  uint64_t preparedCompanionHistoryGeneration() const { return preparedCompanionHistory_.preparationGeneration; }
+  bool preparedCompanionHistoryPrewarmed(size_t requiredCompanions = 0) const;
+  static uint64_t requiredPreparedCompanionRecycleGrains(size_t rowCapacity,
+      size_t retiredPayloadEvents, size_t companionIds, size_t snapshotIds, size_t quantum);
+  void discardPreparedCompanionHistory(); // Logical discard only; retains storage.
   EditPassIdList sealPendingNoteChangesToEditPasses(
       bool updateOverdubSourceView = true);
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
@@ -551,6 +705,10 @@ struct Loop {
   bool tryPublishSessionExitSnapshot(CommitReason reason,
                                      const EditPassIdList& companionIds = {});
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
+  // Cold prewarm reserves the receipt; the stopping handoff only swaps ownership.
+  bool prewarmSessionExitSnapshotHandoff();
+  bool canHandoffSessionExitSnapshot() const;
+  bool handoffSessionExitSnapshot(CommitReason reason);
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
   /// OpenSpec 5.1 Pin A: bind deferred after-root attach to this GUS entry id
   /// (`UndoEntryId`; 0 clears). No-op when no session-exit pending box exists.
@@ -630,6 +788,11 @@ struct Loop {
   /// Committed pass event count + active capture size; builds visual cache if needed. Display/LED only.
   size_t displayEventCountHint() const;
   bool ensureCaptureEventsSorted();
+  /// Accept completion of the fixed-grain canonical rewrite performed from a
+  /// frozen capture staging source. The caller has already written every
+  /// capture row in stable raw-tick order; sealing must not fall back to the
+  /// legacy full-store sort.
+  void noteCaptureEventsCanonicalized(uint32_t lastTick);
   /// Fallback/full rebuild pairs each capture pass (`resolveDisplayNotes`)
   /// before merging rows. Snapshot gather still reconstructs that event vector.
   void rebuildVisualCacheFromPasses();
@@ -692,8 +855,47 @@ struct Loop {
 
   SealOutcome sealCapture(uint32_t sealedAtTick,
                           CommitReason reason = CommitReason::RecordStop);
+  /// Stage an already canonicalized and finalized capture as a pending pass.
+  /// This is preparation work: it seals/moves capture chunk references and
+  /// reserves canonical pass capacity. The later transfer is allocation-free.
+  SealOutcome stagePreparedCapturePass(uint32_t sealedAtTick, CommitReason reason);
+  /// STOPPED-only capacity admission for a bounded run of active overdub
+  /// commits. The supplied horizon is deliberately independent of capture
+  /// event count; every row gets fixed chunk-reference capacity.
+  bool prewarmActiveOverdubTransferHorizon(
+      uint16_t horizon = PassConfig::ACTIVE_OVERDUB_TRANSFER_HORIZON);
+  /// True only when an active overdub may consume one fully prepared
+  /// canonical-transfer row without growing canonical storage.
+  bool hasActiveOverdubTransferAdmission() const;
+  /// Stage an already canonicalized capture using one prewarmed transfer row.
+  /// This is the active-path form of `stagePreparedCapturePass`; it denies
+  /// instead of allocating when the declared horizon is exhausted.
+  SealOutcome stagePreparedCapturePassFromActiveAdmission(uint32_t sealedAtTick,
+                                                           CommitReason reason);
   /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
   LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
+  /// May grow canonical pass storage. Call only while non-real-time preparation is allowed.
+  /// A successful call establishes the capacity required by transferPreparedCapturePass().
+  bool preparePendingCapturePassTransfer();
+  /// True when the pending pass can change canonical ownership without growing pass storage.
+  bool canTransferPendingCapturePassWithoutAllocation() const;
+  /// Move an already sealed pass into canonical ownership without scanning events or allocating.
+  /// `transferred` receives the pass identity and seal metadata; chunk refs move directly
+  /// into the canonical pass. Callers remain responsible for deferred cache/UI cleanup.
+  bool transferPreparedCapturePass(PreparedCapturePassTransfer& transferred);
+  /// Perform the bounded canonical ownership handoff. This moves a
+  /// capacity-proven pending pass and retires mutable capture ownership, but
+  /// deliberately does not publish derived content, persist, build a bridge,
+  /// or perform display/source cleanup.
+  bool commitPreparedCapturePassAtomic(PreparedCapturePassTransfer& transferred);
+  /// Atomic completion after `transferPreparedCapturePass()`: retire the
+  /// mutable capture ownership and invalidate derived identities only. It
+  /// deliberately does not retain display rows, build views, persist, or run
+  /// any content-sized cleanup.
+  void completePreparedCapturePassAtomic();
+  /// Non-atomic display/source cleanup retained for legacy STOPPED callers.
+  /// A deferred active-transport owner must schedule this separately.
+  void completePreparedCapturePassDeferredCleanup();
   bool commitPendingCapturePass(CommitReason reason = CommitReason::RecordStop);
   void discardPendingCapturePass();
 
@@ -732,6 +934,10 @@ struct Loop {
   void invalidatePlaybackCaches();
 
   NoteId allocateNoteId();
+  /// Admission-only lookahead. Callers may reserve fixed capture capacity for
+  /// this identity before mutating pending-note or canonical capture state;
+  /// the accepted append then consumes it through `allocateNoteId()`.
+  NoteId peekNextNoteId() const { return nextNoteId_; }
   void assignMissingNoteIds(SessionMidiEventVec& events);
   void assignMissingNoteIds(MidiEventVec& events);
   void assignMissingNoteIdsInStore(LoopEventStore& store);
@@ -796,9 +1002,17 @@ struct Loop {
   std::vector<PassId> overdubSessionPassIds_;
   std::vector<EditPassIdList> overdubSessionCompanionIds_;
   size_t overdubSessionCursor_ = 0;
+  uint64_t overdubSessionUndoGeneration_ = 0;
   SessionMidiEventVec overdubSessionLiveUndoEvents_;
 
   void freeActiveCapturePassChunks();
+  /// Shared staging implementation. `prewarmedChunkIds` is supplied only by
+  /// the active admission path and already has enough ownership-row capacity
+  /// for the capture chunks it is allowed to detach.
+  SealOutcome stagePreparedCapturePassWithChunkStorage(
+      uint32_t sealedAtTick, CommitReason reason, CommittedChunkIdList* prewarmedChunkIds);
+  bool preparedCompanionRecycleSourceCurrent() const;
+  void publishPreparedCompanionHistory(); // No-fail publication after joint preflight.
   void markPassDerivedStale();
   void resetFallbackGatherSession();
   bool fallbackGatherSessionMatches(uint32_t windowStart, uint32_t windowLength,
@@ -816,6 +1030,8 @@ struct Loop {
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
   std::unique_ptr<PublishedSnapshotBox> publishedSnapshotBox_;
   std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
+  std::unique_ptr<SessionExitSnapshotHandoff> sessionExitSnapshotHandoff_;
+  uint64_t pendingSnapshotCompanionGeneration_ = 0; // Clear/swap ABA guard; appends use size.
 
   void clearPublishedSnapshot();
   /// `revision` is the `playbackRevision` the snapshot content represents. Zero

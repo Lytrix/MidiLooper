@@ -814,11 +814,70 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 #endif
 }
 
+TRACK_COLD_MEM bool Track::processDeferredCanonicalPrefix() {
+  if (!isOverdubbing() || !loopsAllocated()) return false;
+  Loop& loop = getActiveLoop();
+  if (loop.visualCacheDirty || loop.hasDeferredVisualCacheWrapAppend() ||
+      !loop.overdubSourceSpanCacheReady()) return false;
+  auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (!runtime) return false;
+  const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
+                                         loop.publishedSnapshotIdentity()};
+  if (!runtime->canonicalPrefixNeedsService(loop.passes, source, loop.loopLengthTicks,
+                                            loop.canonicalStorageGeneration)) return false;
+  RuntimeCanonicalPassInputs::CurrentSource live{loop.playbackRevision, playbackGeneration,
+                                                loop.loopLengthTicks, loop.canonicalStorageGeneration};
+  (void)runtime->stepCanonicalPrefix(loop.passes, source, live,
+                                    MidiServiceDrain::kCanonicalPrefixInputQuantum);
+  return true; // Setup, cleanup, denied, or Q input work consumed this turn.
+}
+
 TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     uint32_t nowMs, bool postOverdubDrainWindowActive,
     MidiServiceDrain::DeferredIdleOwner deferredOwner, uint8_t snapshotConstructionUnits) {
+  // STOPPING owns the active capture and consumes exactly one declared
+  // finalization/order/rewrite/transfer grain after MIDI service. Nothing
+  // else may stack into this owner turn.
+  if (isOverdubStopping()) {
+#if defined(SESSION_CAPTURE)
+    const auto phase = pendingStopAdmission_.phase;
+    const auto generation = pendingStopAdmission_.frozenGeneration;
+    const auto epoch = pendingStopAdmission_.transportCommandEpoch;
+    const auto destination = pendingStopAdmission_.destination;
+    const uint8_t slot = activeLoopIndex;
+    const uint8_t track = resolveTrackIndexForPersistence(*this);
+    uint32_t startUs = 0;
+    const auto boundary = RuntimeTimingTelemetry::captureStopGrainBoundary(startUs);
+    const uint32_t slackUs = boundary.periodUs == 0 ? 0xFFFFFFFFu
+        : (static_cast<int32_t>(boundary.deadlineUs - startUs) > 0
+            ? boundary.deadlineUs - startUs : 0u);
+
+#endif
+    (void)processDeferredOverdubStopGrain();
+#if defined(SESSION_CAPTURE)
+    const uint32_t endUs = micros();
+    RuntimeTimingTelemetry::recordStopGrain(track, slot, static_cast<uint8_t>(phase),
+        generation, epoch, static_cast<uint8_t>(destination), startUs, endUs, slackUs,
+        !pendingStopAdmission_.pending || pendingStopAdmission_.phase != phase, &boundary);
+#endif
+    return;
+  }
   updateGrowingRecordLoopLength(clockManager.getCurrentTick());
   Loop& activeLoop = getActiveLoop();
+  // Keep the prewarmed first-record bar current on the existing playback
+  // preparation owner. One fill/order grain is allowed per idle turn, so this
+  // work cannot stack with snapshot or visual-cache maintenance.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && isRecording()) {
+    auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+    if (runtime != nullptr) {
+      const PlaybackViewSourceIdentity source{activeLoop.playbackRevision, playbackGeneration,
+                                              activeLoop.publishedSnapshotIdentity()};
+      if (runtime->serviceFirstRecordingBar(activeLoop, source, Config::TICKS_PER_BAR,
+                                             MidiServiceDrain::kCanonicalPrefixInputQuantum)) {
+        return;
+      }
+    }
+  }
   // Free the seal-handoff rows once a committed tier carries them. Paint reads the coverage
   // predicate itself, so this only reclaims the vector and never gates correctness.
   activeLoop.releaseSealedCapturePreviewIfCovered();
@@ -876,7 +935,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot &&
       snapshotEligible) {
     const bool timingCritical =
-        isRecording() || isPlaying() || isOverdubbing() || isStoppedRecording() || isArmed();
+        isRecording() || isAudiblePlaybackActive() || isStoppedRecording() || isArmed();
     uint32_t remainingUs = RUNTIME_TIMING_REMAINING_UNTIL_NEXT_PLAYBACK_SERVICE_US(
 #if defined(ARDUINO)
         micros()
@@ -915,7 +974,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       snapshotLoop.stepPendingSnapshotPublish(
           snapshotConstructionUnits,
           MidiServiceDrain::allowSnapshotConstructionStart(
-              isOverdubbing(), liveRecordPastFirstBar, hasWrapJournal, havePublishedSnapshot,
+              isOverdubbing() || isOverdubStopping(), liveRecordPastFirstBar,
+              hasWrapJournal, havePublishedSnapshot,
               snapshotLoop.pendingSnapshotSessionExitQueued()),
           playheadPhaseTick, liveRecordCompletedTicks);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
@@ -937,7 +997,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // REVT and stored-MIDI verification: emit only when transport is fully idle (58d6c08 reference).
   // Verification is one-shot per boot; it must not drain during PLAYING — the first slice still
   // does a full merge and blocks MIDI for seconds on grown loops (session_20260813_020631).
-  if (!isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
+  if (!isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()) {
     size_t revtSlice = 64;
     size_t verificationSlice = 64;
     if (StorageManager::hasDeferredSaveWork()) {
@@ -950,7 +1010,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   }
 
   const bool deferredDerivedViewMaintenance =
-      (isPlaying() || isOverdubbing() || isStoppedRecording()) && !isRecording() &&
+      (isAudiblePlaybackActive() || isStoppedRecording()) && !isRecording() &&
       deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache;
   bool idleVisualSliceRan = false;
   uint8_t idleVisualBarsPerSlice = 0;
@@ -1076,7 +1136,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
                                   idleVisualDirtyBefore, idleVisualDirtyAfter);
 
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache &&
-      !isPlaying() && !isRecording() && !isOverdubbing() && !isStoppedRecording()) {
+      !isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()) {
     Loop& loop = getActiveLoop();
     if (loop.hasCommittedPasses()) {
       // Phase 3: queued background restores must not block idle visual work.
@@ -1117,7 +1177,8 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   }
 
   if (!DeferredValidatePolicy::shouldRunDeferredFullValidate(
-          deferredFullMidiValidate, isPlaying(), isRecording(), isOverdubbing(),
+          deferredFullMidiValidate, isAudiblePlaybackActive(), isRecording(),
+          isOverdubbing() || isOverdubStopping(),
           deferredValidateQueuedAtMs, nowMs)) {
     if (deferredFullMidiValidate && deferredValidateQueuedAtMs == 0) {
       deferredValidateQueuedAtMs = nowMs;
