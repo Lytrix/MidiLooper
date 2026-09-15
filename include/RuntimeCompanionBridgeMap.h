@@ -6,7 +6,8 @@
 
 /// Unpublished overlay mapping of a completed companion candidate. Single-stream
 /// mode requires the exact immutable apply input; per-pass mode validates an
-/// explicit published-base origin table. Neither mode accepts projected windows.
+/// explicit published-base origin table. Typed views may cover a partial window,
+/// but their events retain canonical coordinates and matching owned provenance.
 /// Original provenance and final canonical order are separate: consumers MUST
 /// use the rank arrays for equal-key order, not infer it from provenance.
 /// This is preparation data, not a compiled/selectable playback bridge.
@@ -38,6 +39,7 @@ class RuntimeCompanionBridgeMap {
   const uint16_t* recordRanks() const; // UINT16_MAX for Suppress.
   const uint16_t* baseRanks() const;   // UINT16_MAX for removed base rows.
   size_t size() const;
+  size_t candidateCount() const { return ready(source_) ? candidateCount_ : 0; }
   size_t lastStepInputCount() const { return lastStepInputs_; }
   void discard();
   uint64_t generation() const { return mapGeneration_; }
@@ -57,6 +59,9 @@ class RuntimeCompanionBridgeMap {
   const RuntimeCompanionPasses* prepared_ = nullptr;
   const RuntimeCompanionPasses::Origin* baseOrigins_ = nullptr;
   const PlaybackViewSourceIdentity* baseIdentity_ = nullptr;
+  const RuntimePlaybackView* baseView_ = nullptr;
+  uint64_t baseStorageGeneration_ = 0;
+  PlaybackCoverageInterval coverage_;
   PlaybackViewSourceIdentity preparedSource_;
   size_t scan_ = 0;
   const MidiEvent* base_ = nullptr;

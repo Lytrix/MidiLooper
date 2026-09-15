@@ -82,6 +82,10 @@ SC_MEM_ATTR bool isTierATextLine(const char* line) {
   return CaptureLineTier::isTierALine(line);
 }
 
+SC_MEM_ATTR bool isCriticalTextLine(const char* line) {
+  return CaptureLineTier::isCriticalLine(line);
+}
+
 SC_MEM_ATTR bool captureRingPressureHigh() {
   return sCaptureRing.overflowPending || sCaptureRing.used >= kCaptureRingPressureBytes;
 }
@@ -106,6 +110,22 @@ SC_MEM_ATTR bool headRecordIsTierAText() {
   readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
   line[sizeof(line) - 1] = '\0';
   return isTierATextLine(line);
+}
+
+SC_MEM_ATTR bool headRecordIsCriticalText() {
+  if (sCaptureRing.used < sizeof(CaptureRecordHeader)) return false;
+  CaptureRecordHeader header{};
+  if (!readHeaderAt(sCaptureRing.head, header) ||
+      header.type != static_cast<uint8_t>(CaptureRecordType::Text) || header.payloadLen == 0) {
+    return false;
+  }
+  char line[48] = {};
+  const size_t copyLen = static_cast<size_t>(header.payloadLen) < sizeof(line) - 1
+                             ? static_cast<size_t>(header.payloadLen)
+                             : sizeof(line) - 1;
+  readBytesAt(sCaptureRing.head + sizeof(header), line, copyLen);
+  line[sizeof(line) - 1] = '\0';
+  return isCriticalTextLine(line);
 }
 
 SC_MEM_ATTR bool shouldSampleMidiOutCapture() {
@@ -293,10 +313,13 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   // Allowing Tier-A to evict Tier-A keeps the newest windows and cannot wedge the ring.
   const bool incomingTierA =
       type == CaptureRecordType::Text && isTierATextLine(static_cast<const char*>(payload));
+  const bool incomingCritical =
+      type == CaptureRecordType::Text && isCriticalTextLine(static_cast<const char*>(payload));
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
     const bool headTierA = headRecordIsTierAText();
-    if (!incomingTierA && headTierA) {
-      // The incoming non-essential record loses to retained Tier-A evidence.
+    const bool headCritical = headRecordIsCriticalText();
+    if ((!incomingTierA && headTierA) || (!incomingCritical && headCritical)) {
+      // Preserve an actionable denial over ordinary timing telemetry.
       noteTimingShed();
       return false;
     }
@@ -537,6 +560,13 @@ SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_
                 (unsigned long)maxUs, (unsigned long)overCount);
 }
 
+SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs,
+                                    uint32_t overflowCount) {
+  emitCapPrintf("#CAP,%lu,DIAG,droid_queue,%u,%lu,%lu\r\n", (unsigned long)micros(),
+                static_cast<unsigned>(depth), (unsigned long)oldestAgeUs,
+                (unsigned long)overflowCount);
+}
+
 SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
                                           uint32_t overCount) {
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,track_update,%u,%lu,%lu\r\n"),
@@ -592,6 +622,11 @@ SC_MEM_ATTR void stopStateTiming(uint8_t track, uint8_t slot, uint8_t fromState,
   if (fromState == 6 && toState == 7) {
     // Preserve the existing host state protocol using the occurrence timestamp.
     emitCapPrintf(SC_FMT("#CAP,%lu,ST,Track,OVERDUBBING,OVERDUB_STOPPING\r\n"),
+                  (unsigned long)atUs);
+  } else if (fromState == 7 && toState == 5) {
+    // The control boundary releases the prepared playback window immediately;
+    // keep the same occurrence-timed protocol edge for host/HITL observers.
+    emitCapPrintf(SC_FMT("#CAP,%lu,ST,Track,OVERDUB_STOPPING,PLAYING\r\n"),
                   (unsigned long)atUs);
   }
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,stop_state,%u,%u,%u,%u,%lu,%lu,%lu,%lu,%lu,%lu\r\n"),

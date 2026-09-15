@@ -48,6 +48,7 @@ STORAGE_PERSIST_MEM SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot()
   snapshot.activeWorkType = storageSession.persistenceWorkItem.item.type;
   snapshot.bundleStage = static_cast<uint8_t>(storageSession.currentWorkspaceSave.stage);
   snapshot.loopStage = static_cast<uint8_t>(storageSession.currentWorkspaceSave.loopWriteStage);
+  snapshot.workItemSliceCount = storageSession.persistenceWorkItem.workItemSliceCount;
   snapshot.capturePassCursor = storageSession.currentWorkspaceSave.capturePassCursor;
   snapshot.chunkCursor = storageSession.currentWorkspaceSave.chunkCursor;
   snapshot.pendingFlush = storageSession.currentWorkspaceSave.pending;

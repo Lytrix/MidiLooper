@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Capture one normal overdub-stop timeline on an explicitly authorized slot.
+"""Capture one or more normal overdub-stop timelines on an authorized slot.
 
 This intentionally small HITL probe bypasses the full baseline recipe after a
 host-runner interruption. It selects the requested track and slot, optionally
 clears that explicitly authorized scratch location, records a short seed,
-enters Live Overdub, adds one note, then requires a fresh
-``OVERDUB_STOPPING -> PLAYING`` transition. The resulting serial log and JSON
-report are evidence for the device-clock stop timeline.
+enters Live Overdub for each requested pass, adds a note, then requires a fresh
+``OVERDUB_STOPPING -> PLAYING`` transition per pass. The resulting serial log
+and JSON report are evidence for the device-clock stop timeline.
 """
 
 from __future__ import annotations
@@ -143,11 +143,23 @@ def main() -> int:
     parser.add_argument("--seed-record-duration-s", type=float, default=4.5,
                         help="Minimum seed-record window before stopping (two bars at 120 BPM).")
     parser.add_argument("--phase-timeout-s", type=float, default=20.0)
+    parser.add_argument("--overdub-passes", type=int, default=1, choices=range(1, 9),
+                        help="Number of sequential note-based overdub passes to stop into PLAYING.")
+    parser.add_argument("--empty-overdub", action="store_true",
+                        help="Stop without new notes to exercise the empty frozen tail.")
+    parser.add_argument("--overdub-duration-s", type=float, default=0.4,
+                        help="Time in each overdub before stopping; use a full loop to exercise wrap.")
     parser.add_argument("--dense-stop-probe", action="store_true",
                         help="Seed dense notes, align stop to playback marker, and require On/Off trace evidence")
     parser.add_argument("--stop-after-marker-ms", type=float, default=0.0,
                         help="Additional marker-to-stop delay; device trace still decides overlap")
+    parser.add_argument("--record-only", action="store_true",
+                        help="Capture the fresh recording interval without entering overdub.")
     args = parser.parse_args()
+    if args.record_only and not args.clear_before_seed:
+        parser.error("--record-only requires --clear-before-seed on the authorized scratch slot")
+    if args.overdub_duration_s < 0:
+        parser.error("--overdub-duration-s must be nonnegative")
     if args.stop_after_marker_ms < 0:
         parser.error("--stop-after-marker-ms must be nonnegative")
     if args.dense_stop_probe and not args.clear_before_seed:
@@ -160,6 +172,9 @@ def main() -> int:
         "track_number": args.track_number,
         "loop_slot": args.loop_slot,
         "cleared_storage": bool(args.clear_before_seed),
+        "overdub_passes_requested": args.overdub_passes,
+        "empty_overdub": args.empty_overdub,
+        "overdub_duration_s": args.overdub_duration_s,
         "events": events,
     }
     run_token = uuid.uuid4().hex
@@ -229,6 +244,26 @@ def main() -> int:
                     _press(out_port, GLOBAL_TRANSPORT_NOTE, args.press_ms)
                     events.append({"event": "transport_stop_before_clear"})
                     time.sleep(1.0)
+                elif slot_started_recording:
+                    # Selecting an empty slot can immediately arm and begin a
+                    # capture.  Commit that capture before the clear request:
+                    # a live capture owns deferred persistence and cannot be
+                    # synchronously drained by the clear handler.
+                    before_record_stop = len(_lines(capture_log))
+                    _press(out_port, RECORD_BUTTON_NOTE, args.press_ms)
+                    stopped_recording = _wait_for_any(
+                        capture_log,
+                        after=before_record_stop,
+                        markers=("Playback started", ",ST,Track,RECORDING,PLAYING",
+                                 ",ST,Track,RECORDING,STOPPED"),
+                        timeout_s=args.phase_timeout_s,
+                    )
+                    events.append({
+                        "event": "recording_stop_before_clear",
+                        "confirmed": stopped_recording,
+                    })
+                    if not stopped_recording:
+                        raise RuntimeError("live recording did not stop before scratch-slot clear")
                 # Let the recent deferred persistence work settle before the
                 # firmware's bounded clear drain. This is the same ownership
                 # order used by the focused clear fixture, without opening a
@@ -318,44 +353,56 @@ def main() -> int:
                 time.sleep(max(args.settle_after_seed_s, 0.0))
                 events.append({"event": "seed_settle", "seconds": args.settle_after_seed_s})
 
-            before_overdub = len(_lines(capture_log))
-            _press(out_port, RECORD_BUTTON_NOTE, args.press_ms)
-            overdubbing = _wait_for(
-                capture_log,
-                after=before_overdub,
-                marker="Overdubbing started",
-                timeout_s=args.phase_timeout_s,
-            )
-            events.append({"event": "overdub_start", "fresh_overdubbing": overdubbing})
-            if not overdubbing:
-                raise RuntimeError("fresh Live Overdub start was not observed")
+            if not args.record_only:
+                for pass_index in range(args.overdub_passes):
+                    before_overdub = len(_lines(capture_log))
+                    _press(out_port, RECORD_BUTTON_NOTE, args.press_ms)
+                    overdubbing = _wait_for(
+                        capture_log,
+                        after=before_overdub,
+                        marker="Overdubbing started",
+                        timeout_s=args.phase_timeout_s,
+                    )
+                    events.append({"event": "overdub_start", "pass": pass_index + 1,
+                                   "fresh_overdubbing": overdubbing})
+                    if not overdubbing:
+                        raise RuntimeError(f"Live Overdub pass {pass_index + 1} start was not observed")
 
-            # A single note makes the currently active per-pass playback path
-            # observable while the normal-stop finalization grains run.
-            out_port.send(mido.Message("note_on", channel=midi_channel, note=83, velocity=100))
-            time.sleep(0.10)
-            out_port.send(mido.Message("note_off", channel=midi_channel, note=83, velocity=0))
-            events.append({"event": "overdub_note", "channel": midi_channel, "note": 83})
-            time.sleep(0.30)
+                    # A distinct note makes each active per-pass playback path observable.
+                    note = 83 + pass_index
+                    if not args.empty_overdub:
+                        out_port.send(mido.Message("note_on", channel=midi_channel, note=note, velocity=100))
+                        time.sleep(0.10)
+                        out_port.send(mido.Message("note_off", channel=midi_channel, note=note, velocity=0))
+                        events.append({"event": "overdub_note", "pass": pass_index + 1,
+                                       "channel": midi_channel, "note": note})
+                    time.sleep(max(0.0, args.overdub_duration_s - (0 if args.empty_overdub else 0.10)))
 
-            if args.dense_stop_probe:
-                marker_seen.clear()
-                marker_armed.set()
-                if not marker_seen.wait(args.phase_timeout_s):
-                    raise RuntimeError("fresh playback marker 95 was not observed on MIDI output")
-                marker_armed.clear()
-                events.append({"event": "playback_marker_before_stop", "host_ns": time.monotonic_ns(),
-                               "additional_stop_delay_ms": args.stop_after_marker_ms})
-                time.sleep(args.stop_after_marker_ms / 1000.0)
-            before_stop = len(_lines(capture_log))
-            _press(out_port, RECORD_BUTTON_NOTE, args.press_ms)
-            track_index = args.track_number - 1
-            slot_index = args.loop_slot - 1
-            # Capture records are retained while transport is active. Give the
-            # normal stop a fixed observation window, then stop transport to
-            # flush evidence. Never wait on a retained marker before this Stop.
-            time.sleep(1.0)
-            events.append({"event": "normal_stop_observation_end", "seconds": 1.0})
+                    if args.dense_stop_probe:
+                        marker_seen.clear()
+                        marker_armed.set()
+                        if not marker_seen.wait(args.phase_timeout_s):
+                            raise RuntimeError("fresh playback marker 95 was not observed on MIDI output")
+                        marker_armed.clear()
+                        events.append({"event": "playback_marker_before_stop", "pass": pass_index + 1,
+                                       "host_ns": time.monotonic_ns(),
+                                       "additional_stop_delay_ms": args.stop_after_marker_ms})
+                        time.sleep(args.stop_after_marker_ms / 1000.0)
+                    before_stop = len(_lines(capture_log))
+                    _press(out_port, RECORD_BUTTON_NOTE, args.press_ms)
+                    # State-edge trace records are retained until capture cleanup, so
+                    # they are not a reliable live-file signal. Give the bounded owner
+                    # one second, then let the next pass's actual overdub admission prove
+                    # that the previous frozen transaction retired.
+                    time.sleep(1.0)
+                    events.append({
+                        "event": "normal_stop_observation_end",
+                        "pass": pass_index + 1,
+                        "background_settle_wait_s": 1.0,
+                    })
+                # Active transport retains CAP records in the PSRAM ring and
+                # flushes them only after cleanup. The post-session device-clock
+                # timeline remains the authoritative correlation evidence.
 
         except Exception as exc:
             result["error"] = str(exc)
@@ -400,9 +447,16 @@ def main() -> int:
             )
             for index, entry in enumerate(states)
         )
+        stop_to_playing_count = sum(
+            1 for entry in states
+            if entry["valid"] and entry["track"] == args.track_number - 1
+            and entry["slot"] == args.loop_slot - 1
+            and entry["from_state"] == 7 and entry["to_state"] == 5
+        )
         result.update(stop_start_line=before_stop, stop_timeline=timeline,
                       timing_issues=midi_boundary_timing_issues(summary),
-                      normal_stop_verified=normal)
+                      normal_stop_verified=normal,
+                      overdub_passes_observed=stop_to_playing_count)
         if any("#CAPTURE_RECONNECT" in line for line in _lines(capture_log)):
             result["error"] = "serial reconnected after run fence; attribution invalid"
         if args.dense_stop_probe:
@@ -412,11 +466,19 @@ def main() -> int:
             result["probe_scope"] = "stop correlation; full real-time reservation is not established"
             if not result["emission_evidence_complete"]:
                 result["error"] = "stop trace lacks correlated NoteOn and NoteOff evidence"
-        if (normal and timeline["correlation_complete"]
+        if (normal and stop_to_playing_count >= args.overdub_passes
+                and timeline["correlation_complete"]
                 and not result["timing_issues"] and "error" not in result):
             exit_code = 0
         elif "error" not in result:
             result["error"] = "flushed capture did not prove a correlated normal stop"
+
+    if args.record_only:
+        result["probe_scope"] = "recording interval only; no overdub-stop acceptance"
+        result["recording_sequence_completed"] = "error" not in result and any(
+            event.get("event") == "seed_recording_stop" and event.get("fresh_playing")
+            for event in events)
+        exit_code = 0 if result["recording_sequence_completed"] else 1
 
     (out_dir / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2), flush=True)

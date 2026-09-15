@@ -103,6 +103,13 @@ def use_serial_transport_proxy(
 ) -> bool:
     if serial_collector is None or not serial_capture_active(args):
         return False
+    # Managed capture often has no USB MIDI clock input.  An explicit current
+    # session transport edge is stronger evidence than a short tail that may
+    # be filled with note or display records; do not let the clock fallback
+    # toggle Play/Stop and interrupt an active overdub.
+    lines = serial_collector.snapshot()
+    if serial_global_transport_running(lines, after_index=after_index):
+        return True
     return serial_sequencer_running(serial_collector, after_index=after_index)
 
 

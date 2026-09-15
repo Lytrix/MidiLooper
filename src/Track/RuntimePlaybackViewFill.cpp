@@ -70,10 +70,15 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
 NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
-    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary) {
+    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
+    RuntimePlaybackViewFillScope scope) {
   if (!baseline.uneditedBaseline(sourceIdentity) || destination.passOrigins == nullptr ||
-      coverage.lengthTicks != coverage.loopLengthTicks) return false;
-  if (!begin(destination, baseline.data(), baseline.size(), sourceIdentity, coverage, cursorAnchor, ledgerBoundary)) return false;
+      destination.canonicalRanks == nullptr || baseline.size() > UINT16_MAX ||
+      scope == RuntimePlaybackViewFillScope::RawCoverage ||
+      (scope == RuntimePlaybackViewFillScope::AllSource &&
+       coverage.lengthTicks != coverage.loopLengthTicks)) return false;
+  if (!begin(destination, baseline.data(), baseline.size(), sourceIdentity, coverage,
+             cursorAnchor, ledgerBoundary, scope)) return false;
   baseline_ = &baseline; baselineGeneration_ = baseline.generation();
   // Even an empty typed source acquires its provenance receipt on step.
   destination.sourceFilled = false;
@@ -108,14 +113,17 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
         destination_ = nullptr;
         return RuntimePlaybackViewFillResult::Denied;
       }
-      if (baseline_ != nullptr) destination_->passOrigins[copied_] = baseline_->origins()[cursor_];
+      if (baseline_ != nullptr) {
+        destination_->passOrigins[copied_] = baseline_->origins()[cursor_];
+        destination_->canonicalRanks[copied_] = cursor_;
+      }
       ++copied_;
     }
     ++cursor_;
     --remaining;
   }
   if (cursor_ == sourceCount_) {
-    destination_->passOriginsReady = baseline_ != nullptr;
+    destination_->passOriginsReady = destination_->canonicalRanksReady = baseline_ != nullptr;
     destination_->passOriginSource = baseline_ != nullptr ? expected_ : PlaybackViewSourceIdentity{};
     destination_->sourceFilled = true;
     destination_ = nullptr;

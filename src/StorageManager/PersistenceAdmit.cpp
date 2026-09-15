@@ -256,7 +256,7 @@ void StorageManager::processEditAutosave(const LooperState& state) {
     bool captureActive = false;
     for (uint8_t t = 0; t < trackManager.getTrackCount(); ++t) {
         Track& track = trackManager.getTrack(t);
-        if (track.isRecording() || track.isOverdubbing() || track.isOverdubStopping()) {
+        if (track.isRecording() || track.isOverdubbing() || track.hasPendingDeferredOverdubStop()) {
             captureActive = true;
         }
     }

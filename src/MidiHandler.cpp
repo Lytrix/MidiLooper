@@ -19,6 +19,25 @@
 #include "Utils/MidiDispatchOrder.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
+namespace {
+
+struct DeferredDroidHostEvent {
+  uint8_t type = 0;
+  uint8_t channel = 0;
+  uint8_t data1 = 0;
+  uint8_t data2 = 0;
+  int16_t pitchBend = 0;
+  uint32_t queuedUs = 0;
+};
+
+constexpr uint16_t kDeferredDroidHostCapacity = 256;
+EXTMEM DeferredDroidHostEvent gDeferredDroidHostQueue[kDeferredDroidHostCapacity];
+uint16_t gDeferredDroidHostHead = 0;
+uint16_t gDeferredDroidHostCount = 0;
+uint32_t gDeferredDroidHostOverflow = 0;
+
+}  // namespace
+
 MIDI_CREATE_INSTANCE(HardwareSerial, Serial8, MIDIserial);  // Teensy Serial8 for 5-pin DIN MIDI
 
 MidiHandler midiHandler;  // Global instance
@@ -508,14 +527,117 @@ void MidiHandler::queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero) 
   ledPendingCount_++;
 }
 
-void MidiHandler::processDroidUsbHostOutbound() {
-  if (!usbHostReady_ || !usbHostMIDI || ledPendingCount_ == 0 || droidMotorOutboundPriority_) {
+FLASHMEM bool MidiHandler::queueDeferredDroidHostEvent(const MidiEvent& event) {
+  const bool replaceableFaderState =
+      (event.type == midi::PitchBend && isDroidFaderFeedbackOnlyPitchbend(event.channel)) ||
+      (event.type == midi::ControlChange &&
+       isDroidFaderFeedbackOnlyControlChange(event.channel, event.data.ccData.cc));
+  if (replaceableFaderState) {
+    // Fader feedback is state, so keep the newest value for the same target while
+    // retaining the position of the first queued update in the ordered stream.
+    for (uint16_t offset = 0; offset < gDeferredDroidHostCount; ++offset) {
+      const uint16_t index = static_cast<uint16_t>(
+          (gDeferredDroidHostHead + offset) % kDeferredDroidHostCapacity);
+      DeferredDroidHostEvent& pending = gDeferredDroidHostQueue[index];
+      const bool sameTarget = pending.type == static_cast<uint8_t>(event.type) &&
+                              pending.channel == event.channel &&
+                              (event.type == midi::PitchBend ||
+                               pending.data1 == event.data.ccData.cc);
+      if (sameTarget) {
+        pending.data2 = event.type == midi::ControlChange ? event.data.ccData.value : 0;
+        if (event.type == midi::PitchBend) {
+          pending.pitchBend = event.data.pitchBend;
+        }
+        SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount,
+                                micros() - gDeferredDroidHostQueue[gDeferredDroidHostHead].queuedUs,
+                                gDeferredDroidHostOverflow);
+        return true;
+      }
+    }
+  }
+  if (gDeferredDroidHostCount >= kDeferredDroidHostCapacity) {
+    ++gDeferredDroidHostOverflow;
+    SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount, 0, gDeferredDroidHostOverflow);
+    logger.log(CAT_MIDI, LOG_WARNING, "DROID host feedback queue overflow (%lu)",
+               static_cast<unsigned long>(gDeferredDroidHostOverflow));
+    return false;
+  }
+  const uint16_t index = static_cast<uint16_t>(
+      (gDeferredDroidHostHead + gDeferredDroidHostCount) % kDeferredDroidHostCapacity);
+  DeferredDroidHostEvent& pending = gDeferredDroidHostQueue[index];
+  pending.type = static_cast<uint8_t>(event.type);
+  pending.channel = event.channel;
+  pending.data1 = 0;
+  pending.data2 = 0;
+  pending.pitchBend = 0;
+  if (event.isNoteOn() || event.isNoteOff()) {
+    pending.data1 = event.data.noteData.note;
+    pending.data2 = event.data.noteData.velocity;
+  } else if (event.type == midi::ControlChange) {
+    pending.data1 = event.data.ccData.cc;
+    pending.data2 = event.data.ccData.value;
+  } else if (event.type == midi::PitchBend) {
+    pending.pitchBend = event.data.pitchBend;
+  } else if (event.type == midi::ProgramChange) {
+    pending.data1 = event.data.program;
+  } else if (event.type == midi::AfterTouchChannel) {
+    pending.data1 = event.data.channelPressure;
+  } else {
+    return false;
+  }
+  pending.queuedUs = micros();
+  ++gDeferredDroidHostCount;
+  const uint32_t oldestAgeUs = micros() -
+      gDeferredDroidHostQueue[gDeferredDroidHostHead].queuedUs;
+  SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount, oldestAgeUs, gDeferredDroidHostOverflow);
+  return true;
+}
+
+FLASHMEM void MidiHandler::sendDeferredDroidHostEvent(uint8_t type, uint8_t channel, uint8_t data1,
+                                                       uint8_t data2, int16_t pitchBend) {
+  paceDroidUsbHostBeforeSend();
+  switch (static_cast<midi::MidiType>(type)) {
+    case midi::NoteOn:
+      usbHostMIDI.sendNoteOn(data1, data2, channel);
+      break;
+    case midi::NoteOff:
+      usbHostMIDI.sendNoteOff(data1, data2, channel);
+      break;
+    case midi::ControlChange:
+      usbHostMIDI.sendControlChange(data1, data2, channel);
+      break;
+    case midi::PitchBend:
+      usbHostMIDI.sendPitchBend(MidiConfig::Pitchbend::logicalToWireSigned(pitchBend), channel);
+      break;
+    case midi::ProgramChange:
+      usbHostMIDI.sendProgramChange(data1, channel);
+      break;
+    case midi::AfterTouchChannel:
+      usbHostMIDI.sendAfterTouch(data1, channel);
+      break;
+    default:
+      return;
+  }
+  serviceUsbHostAfterOutboundPacket();
+}
+
+FLASHMEM void MidiHandler::processDroidUsbHostOutbound() {
+  if (!usbHostReady_ || !usbHostMIDI || droidMotorOutboundPriority_) {
     return;
   }
-  constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
   uint8_t drained = 0;
-  while (ledPendingCount_ > 0 &&
+  while (gDeferredDroidHostCount > 0 &&
          drained < MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP) {
+    const DeferredDroidHostEvent pending = gDeferredDroidHostQueue[gDeferredDroidHostHead];
+    gDeferredDroidHostHead = static_cast<uint16_t>(
+        (gDeferredDroidHostHead + 1) % kDeferredDroidHostCapacity);
+    --gDeferredDroidHostCount;
+    sendDeferredDroidHostEvent(pending.type, pending.channel, pending.data1, pending.data2,
+                               pending.pitchBend);
+    ++drained;
+  }
+  constexpr uint8_t ch = MidiConfig::Led::CHANNEL;
+  while (ledPendingCount_ > 0 && drained < MidiConfig::DroidUsbHost::LED_DRAIN_MAX_PER_LOOP) {
     const uint8_t note = ledPendingNotes_[0];
     const uint8_t velocity = ledPendingVelocities_[0];
     ledPendingCount_--;
@@ -532,6 +654,11 @@ void MidiHandler::processDroidUsbHostOutbound() {
     }
     serviceUsbHostAfterOutboundPacket();
     drained++;
+  }
+  if (gDeferredDroidHostCount > 0) {
+    const uint32_t oldestAgeUs = micros() -
+        gDeferredDroidHostQueue[gDeferredDroidHostHead].queuedUs;
+    SC_DROID_FEEDBACK_QUEUE(gDeferredDroidHostCount, oldestAgeUs, gDeferredDroidHostOverflow);
   }
 }
 
@@ -685,6 +812,8 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                     isLedChannel(event.channel) && !droidMotorOutboundPriority_;
                 if (queueAsLed) {
                     queueLedUsbHostFeedback(event.data.noteData.note, event.data.noteData.velocity);
+                } else if (deferDroidHost_) {
+                    queueDeferredDroidHostEvent(event);
                 } else {
                     paceDroidUsbHostBeforeSend();
                     usbHostMIDI.sendNoteOn(event.data.noteData.note, event.data.noteData.velocity, event.channel);
@@ -715,6 +844,8 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                     isLedChannel(event.channel) && !droidMotorOutboundPriority_;
                 if (queueAsLed) {
                     queueLedUsbHostFeedback(event.data.noteData.note, 0);
+                } else if (deferDroidHost_) {
+                    queueDeferredDroidHostEvent(event);
                 } else {
                     paceDroidUsbHostBeforeSend();
                     usbHostMIDI.sendNoteOff(event.data.noteData.note, event.data.noteData.velocity, event.channel);
@@ -749,9 +880,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                 MIDIserial.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
             }
             if (canSendUsbHostMidi() && !skipCc123OnLedCh) {
-                paceDroidUsbHostBeforeSend();
-                usbHostMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
-                serviceUsbHostAfterOutboundPacket();
+                if (deferDroidHost_) {
+                    queueDeferredDroidHostEvent(event);
+                } else {
+                    paceDroidUsbHostBeforeSend();
+                    usbHostMIDI.sendControlChange(event.data.ccData.cc, event.data.ccData.value, event.channel);
+                    serviceUsbHostAfterOutboundPacket();
+                }
             }
             break;
         }
@@ -767,24 +902,38 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
                 MIDIserial.sendPitchBend(wirePitch, event.channel);
             }
             if (canSendUsbHostMidi()) {
-                paceDroidUsbHostBeforeSend();
-                usbHostMIDI.sendPitchBend(wirePitch, event.channel);
-                serviceUsbHostAfterOutboundPacket();
+                if (deferDroidHost_) {
+                    queueDeferredDroidHostEvent(event);
+                } else {
+                    paceDroidUsbHostBeforeSend();
+                    usbHostMIDI.sendPitchBend(wirePitch, event.channel);
+                    serviceUsbHostAfterOutboundPacket();
+                }
             }
             break;
         }
         case midi::AfterTouchChannel:
             if (outputUSB) usbMIDI.sendAfterTouch(event.data.channelPressure, event.channel);
             if (outputSerial) MIDIserial.sendAfterTouch(event.data.channelPressure, event.channel);
-            if (canSendUsbHostMidi()) usbHostMIDI.sendAfterTouch(event.data.channelPressure, event.channel);
+            if (canSendUsbHostMidi()) {
+                if (deferDroidHost_) {
+                    queueDeferredDroidHostEvent(event);
+                } else {
+                    usbHostMIDI.sendAfterTouch(event.data.channelPressure, event.channel);
+                }
+            }
             break;
         case midi::ProgramChange:
             if (outputUSB) usbMIDI.sendProgramChange(event.data.program, event.channel);
             if (outputSerial) MIDIserial.sendProgramChange(event.data.program, event.channel);
             if (canSendUsbHostMidi()) {
-                paceDroidUsbHostBeforeSend();
-                usbHostMIDI.sendProgramChange(event.data.program, event.channel);
-                serviceUsbHostAfterOutboundPacket();
+                if (deferDroidHost_) {
+                    queueDeferredDroidHostEvent(event);
+                } else {
+                    paceDroidUsbHostBeforeSend();
+                    usbHostMIDI.sendProgramChange(event.data.program, event.channel);
+                    serviceUsbHostAfterOutboundPacket();
+                }
             }
             break;
         case midi::SystemExclusive:
@@ -823,6 +972,13 @@ void MidiHandler::sendMidiEvent(const MidiEvent& event) {
             // Unsupported or unhandled event type
             break;
     }
+}
+
+void MidiHandler::sendRealtimePlaybackEvent(const MidiEvent& event) {
+  const bool previous = deferDroidHost_;
+  deferDroidHost_ = true;
+  sendMidiEvent(event);
+  deferDroidHost_ = previous;
 }
 
 // For immediate output, tick is set to 0 because the event is sent right now and the value is no used in the function

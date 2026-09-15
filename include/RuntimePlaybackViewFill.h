@@ -46,10 +46,13 @@ class RuntimePlaybackViewFill {
   /// Construct events and provenance together from already-effective immutable
   /// pass inputs merged without new edits. Source descriptors remain stable until
   /// copy completes; the resulting view owns the origin table independently.
+  /// PlaybackCoverage filters with the same charged source visits as other
+  /// window fills. It does not require the whole source to fit the window.
   bool begin(RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
-             const LedgerBoundarySummary& ledgerBoundary);
+             const LedgerBoundarySummary& ledgerBoundary,
+             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
   RuntimePlaybackViewFillResult step(size_t entryQuantum);
   void discard();
   bool active() const { return destination_ != nullptr && cursor_ < sourceCount_; }

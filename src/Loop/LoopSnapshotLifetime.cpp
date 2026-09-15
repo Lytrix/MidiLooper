@@ -57,6 +57,15 @@ LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
 
 LOOP_COLD_MEM void Loop::clearPendingSnapshotPublish() {
   ++pendingSnapshotCompanionGeneration_;
+  if (pendingSnapshotPublishBox_ && preparedCompanionHistory_.companionCapacity != 0) {
+    // Publication cleanup must retain the pre-capture companion destination.
+    // Losing its capacity leaves the allocation-free stop worker unable to start.
+    auto reservedIds = std::move(pendingSnapshotPublishBox_->companionIds);
+    reservedIds.clear();
+    *pendingSnapshotPublishBox_ = PendingSnapshotPublishBox{};
+    pendingSnapshotPublishBox_->companionIds = std::move(reservedIds);
+    return;
+  }
   pendingSnapshotPublishBox_.reset();
 }
 

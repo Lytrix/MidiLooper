@@ -538,3 +538,58 @@ original-bar return, raw-tick, late-input and held-note requirements above.
 - **AND** only events within the requested playback coverage enter that candidate
 - **AND** raw event ticks and stable order are preserved for the shared order worker
 - **AND** candidate overflow cannot publish a partial window or authorize recording input loss
+
+### Requirement: DROID USB-host feedback cannot block real-time playback
+
+Immediate playback emission SHALL score and satisfy its MIDI boundary deadline
+using the Teensy USB and physical MIDI serial outputs. The USB-host copy sent to
+DROID for LEDs, faders, and controller feedback MAY be delayed and paced by the
+existing main-loop drain. It SHALL be enqueued without waiting in the playback
+boundary, use fixed storage with coalescing for replaceable states, preserve
+order for non-coalescible messages, and report queue age, depth, and overflow.
+
+#### Scenario: Dense playback feedback does not delay real-time MIDI
+
+- **WHEN** multiple events share one MIDI tick and the DROID host pacing would
+  exceed the current service period
+- **THEN** USB and serial playback sends remain within the derived service
+  deadline and preserve canonical Off-before-On order
+- **AND** DROID feedback is queued for paced delivery after the boundary
+- **AND** the queue reports any overflow or age without changing the playback
+  deadline result
+
+#### Scenario: DROID feedback states coalesce while queued
+
+- **WHEN** several LED or fader updates for the same target arrive before the
+  paced host drain sends them
+- **THEN** the latest replaceable state is retained
+- **AND** the queue remains bounded and reports its maximum age/depth
+
+
+### Requirement: Visible playback state does not retire frozen stop ownership
+
+A normal overdub stop MAY publish PLAYING while the existing prepared playback
+source continues and frozen finalization remains pending. The pending transaction
+SHALL retain its source generation, capture admission barrier and command epoch
+until canonical transfer and cleanup complete. A visible state edge SHALL NOT be
+scored as evidence of audible handoff or real-time deadline completion.
+
+#### Scenario: Empty successor capture stops after a wrap
+
+- **WHEN** an overdub stop has no remaining capture events after wrap or filtering
+- **THEN** the owner retires credits for skipped companion preparation after reserved closure and ordering work completes
+- **AND** atomic completion validates the current destination and command epoch
+- **AND** the completed transaction releases its admission barrier so a later overdub can begin
+
+#### Scenario: Transport Stop supersedes visible playback release
+
+- **WHEN** transport Stop arrives while the frozen transaction remains pending
+- **THEN** it changes the destination to STOPPED and invalidates the older playing completion
+- **AND** an empty tail can finish without waiting for skipped companion work
+- **AND** final completion leaves the track STOPPED with no pending stop transaction
+
+#### Scenario: Timing proof includes background finalization
+
+- **WHEN** PLAYING is visible before the frozen transaction completes
+- **THEN** deadline acceptance requires correlated service and emission evidence through background finalization and audible handoff
+- **AND** state-assignment latency alone cannot satisfy that gate

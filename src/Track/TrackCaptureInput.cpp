@@ -369,6 +369,9 @@ void Track::startRecording(uint32_t currentTick) {
   // First-record entry owns the same playback-window preparation used by
   // ordinary playback. This makes bar 1 available before capture starts and
   // leaves the retained view ready for the record-stop handoff.
+  // Reset invalidates canonical generations and snapshot ownership. Reserve
+  // the new take's resources afterwards, so its later stop can use them.
+  loop.resetPassTimeline();
   prewarmPlaybackForSlot(activeLoopIndex, true);
   auto preRoll = std::move(armedPreRollNotes);
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
@@ -386,7 +389,6 @@ void Track::startRecording(uint32_t currentTick) {
   }
   transportStopOutputBarrier_ = false;
   recordAddedNoteOnCount = 0;
-  loop.resetPassTimeline();
   loop.beginCapture(CapturePhase::Record);
   // Establish raw recording coordinates before pre-roll enters the same input
   // path. Using the previous slot origin here misplaces its first notes.
@@ -446,7 +448,7 @@ TRACK_CAPTURE_ADMISSION_MEM uint32_t Track::capturePhaseTick(uint32_t absTick) c
     }
     return 0;
   }
-  if (isOverdubbing() || isOverdubStopping() || (isRecording() && isPlaying())) {
+  if (isOverdubbing() || hasPendingDeferredOverdubStop() || (isRecording() && isPlaying())) {
     return IntervalProjection::tickPhaseInProjectionCycle(
         absTick, projectionCycleStartTick, loop.loopLengthTicks);
   }
@@ -478,7 +480,7 @@ TRACK_CAPTURE_ADMISSION_MEM bool Track::appendCaptureNoteOffAtPhase(
   }
   CaptureAdmissionStaging* staging = nullptr;
   CaptureNoteReservation* reservation = nullptr;
-  if ((isOverdubbing() || isOverdubStopping()) && newEvt.noteId != kInvalidNoteId) {
+  if ((isOverdubbing() || hasPendingDeferredOverdubStop()) && newEvt.noteId != kInvalidNoteId) {
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
     CaptureAdmissionStaging* viewSet =
         runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
@@ -557,7 +559,7 @@ TRACK_CAPTURE_ADMISSION_MEM void Track::finalizePendingNotes(uint32_t offAbsTick
     const uint8_t channel = key.second;
     ++pendingFinalized;
 
-    if (isOverdubbing() || isOverdubStopping()) {
+    if (isOverdubbing() || hasPendingDeferredOverdubStop()) {
       const auto pendingIt = pendingNotes.find(key);
       const uint32_t pendingOnAbsTick =
           pendingIt != pendingNotes.end() ? pendingIt->second.startNoteTick : offAbsTick;

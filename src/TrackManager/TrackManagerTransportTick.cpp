@@ -66,7 +66,7 @@ void TrackManager::handleTransportStop() {
       if (autoAlignEnabled) {
         t.setLoopLength(masterLoopLength);
       }
-    } else if (t.isOverdubbing() || t.isOverdubStopping()) {
+    } else if (t.isOverdubbing() || t.hasPendingDeferredOverdubStop()) {
       // Same order as record: finalize held notes before sendAllNotesOff()
       // clears pendingNotes. [`122152`] wrap_synth Off@168 was an orphaned On.
       t.stopOverdubbingToStopped();
@@ -125,7 +125,7 @@ void TrackManager::updateAllTracks(uint32_t currentTick) {
         currentTick != pendingMultiSlotQueuedAtTick[i] &&
         (currentTick % Config::TICKS_PER_16TH_STEP) == 0) {
       if (tracks[i].isRecording() || tracks[i].isOverdubbing() ||
-          tracks[i].isOverdubStopping() || pendingRecord[i]) {
+          tracks[i].hasPendingDeferredOverdubStop() || pendingRecord[i]) {
         pendingMultiSlotCommit[i] = false;
         pendingMultiSlotQueuedAtTick[i] = UINT32_MAX;
         for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {

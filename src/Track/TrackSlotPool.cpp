@@ -149,7 +149,7 @@ TRACK_COLD_MEM bool Track::hasAnySlotData() const {
 }
 
 TRACK_COLD_MEM void Track::reconcileTransportStateAfterSlotMutation() {
-  if (isRecording() || isOverdubbing() || isOverdubStopping() || isStoppedRecording()) {
+  if (isRecording() || isOverdubbing() || hasPendingDeferredOverdubStop() || isStoppedRecording()) {
     return;
   }
   if (trackState == TRACK_ARMED && getActiveLoop().hasCommittedPasses()) {

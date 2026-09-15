@@ -316,6 +316,7 @@ struct PersistenceWorkItemJob {
   uint32_t flushStartedAtUs = 0;
   uint32_t flushHeapBefore = 0;
   uint32_t bundleStartedAtUs = 0;
+  uint32_t workItemSliceCount = 0;
   uint32_t bundleSliceCount = 0;
   uint32_t bundleMaxSliceUs = 0;
   uint32_t bundleUndoEntryCount = 0;

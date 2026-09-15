@@ -112,8 +112,14 @@ struct FixedPlaybackEventStorage {
 struct PlaybackPassEventOrigin { uint16_t pass; uint16_t event; };
 
 struct RuntimePlaybackView {
+  // Reusing a physical window invalidates borrowed indexes even if its source
+  // and coverage happen to repeat after a complete loop cycle.
+  uint64_t storageGeneration = 0;
   FixedPlaybackEventStorage storage;
   PlaybackPassEventOrigin* passOrigins = nullptr;
+  // Position in the complete canonical source merge, independent of window filtering.
+  uint16_t* canonicalRanks = nullptr;
+  bool canonicalRanksReady = false;
   PlaybackViewSourceIdentity passOriginSource;
   bool passOriginsReady = false;
   ~RuntimePlaybackView();
@@ -142,7 +148,20 @@ struct PlaybackBridgeRecord {
   MidiEvent event{};
 };
 
+// Closure state uses the compiler's existing ledger matching and cycle rules.
+// The copied Off remains meaningful after the base window is retired. Its time
+// is measured from phase zero of the bridge anchor's projection cycle.
+struct PlaybackHeldNoteClosure {
+  MidiEvent originalOff{};
+  uint64_t relativeTick = UINT64_MAX;
+  uint32_t nextOnPhase = UINT32_MAX;
+  uint8_t flags = 0; // Affected, original Off found, inherited from a predecessor.
+  uint32_t rank = 0;
+  bool resolved() const { return (flags & 3) == 3 && relativeTick != UINT64_MAX; }
+};
+
 struct FixedPlaybackBridgeStorage {
+  uint64_t storageGeneration = 0;
   PlaybackBridgeRecord* records = nullptr;
   // Prepared indexes refer to the immutable base, never copy or mutate it.
   // eventProvenance on Suppress/Replace is a storage index in baseSource.
@@ -157,6 +176,10 @@ struct FixedPlaybackBridgeStorage {
   uint16_t* secondCycleInsertionOrder = nullptr;
   uint8_t* insertionCycleMask = nullptr;  // Bits 0..3 select the prepared cycle indexes.
   uint8_t* baseRetained = nullptr;
+  // Effective-cycle gates indexed by canonical rank; metadata covers later windows too.
+  uint8_t* canonicalCycleMasks = nullptr;
+  size_t canonicalRankCount = 0;
+  bool canonicalMasksReady = false;
   uint32_t* insertionProvenance = nullptr;
   uint32_t* insertionRanks = nullptr;
   uint32_t* baseRanks = nullptr;
@@ -170,12 +193,20 @@ struct FixedPlaybackBridgeStorage {
   size_t currentCycleInsertionCount = 0;
   size_t nextCycleInsertionCount = 0;
   size_t secondCycleInsertionCount = 0;
+  size_t steadyInsertionCount = 0;
+  std::array<PlaybackHeldNoteClosure, ActiveNoteLedger::kMaxOpenNotes> heldClosures{};
+  size_t heldClosureCount = 0; // Same indexes as the owned ledgerBoundary.
+  const PlaybackHeldNoteClosure* heldClosure(size_t ledgerIndex) const {
+    return complete && streamPrepared && ledgerIndex < heldClosureCount &&
+        heldClosures[ledgerIndex].resolved() ? &heldClosures[ledgerIndex] : nullptr;
+  }
   bool protectsOpenNotes = false;
   bool hasRetainedClosure = false;
   uint32_t retainedClosurePhaseLimit = UINT32_MAX;
   uint32_t preparedAdmissionPhase = 0;
   FixedPlaybackEventStorage insertions;
   PlaybackViewSourceIdentity baseSource;
+  uint64_t baseStorageGeneration = 0;
   bool streamPrepared = false;
   size_t capacity = 0;
   size_t recordCount = 0;

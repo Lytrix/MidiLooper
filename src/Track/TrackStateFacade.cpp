@@ -130,6 +130,10 @@ bool Track::isOverdubStopping() const {
   return trackState == TRACK_OVERDUB_STOPPING;
 }
 
+bool Track::hasPendingDeferredOverdubStop() const {
+  return pendingStopAdmission_.pending;
+}
+
 bool Track::isPlaying() const {
   return trackState == TRACK_PLAYING;
 }

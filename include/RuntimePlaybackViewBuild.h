@@ -16,6 +16,11 @@ enum class RuntimePlaybackViewBuildGrain : uint8_t { Fill, Order, Complete, Deni
 /// merge order entries in the same active-transport turn.
 class RuntimePlaybackViewBuild {
  public:
+  bool begin(RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
+             const PlaybackViewSourceIdentity& sourceIdentity,
+             const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
+             const LedgerBoundarySummary& ledgerBoundary,
+             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::PlaybackCoverage);
   bool begin(RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,

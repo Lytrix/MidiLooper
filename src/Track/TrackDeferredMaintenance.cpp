@@ -838,7 +838,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // STOPPING owns the active capture and consumes exactly one declared
   // finalization/order/rewrite/transfer grain after MIDI service. Nothing
   // else may stack into this owner turn.
-  if (isOverdubStopping()) {
+  if (hasPendingDeferredOverdubStop()) {
 #if defined(SESSION_CAPTURE)
     const auto phase = pendingStopAdmission_.phase;
     const auto generation = pendingStopAdmission_.frozenGeneration;
@@ -974,7 +974,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
       snapshotLoop.stepPendingSnapshotPublish(
           snapshotConstructionUnits,
           MidiServiceDrain::allowSnapshotConstructionStart(
-              isOverdubbing() || isOverdubStopping(), liveRecordPastFirstBar,
+              isOverdubbing() || hasPendingDeferredOverdubStop(), liveRecordPastFirstBar,
               hasWrapJournal, havePublishedSnapshot,
               snapshotLoop.pendingSnapshotSessionExitQueued()),
           playheadPhaseTick, liveRecordCompletedTicks);
@@ -1178,7 +1178,7 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 
   if (!DeferredValidatePolicy::shouldRunDeferredFullValidate(
           deferredFullMidiValidate, isAudiblePlaybackActive(), isRecording(),
-          isOverdubbing() || isOverdubStopping(),
+          isOverdubbing() || hasPendingDeferredOverdubStop(),
           deferredValidateQueuedAtMs, nowMs)) {
     if (deferredFullMidiValidate && deferredValidateQueuedAtMs == 0) {
       deferredValidateQueuedAtMs = nowMs;

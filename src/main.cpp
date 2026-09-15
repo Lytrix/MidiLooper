@@ -37,6 +37,10 @@
 
 static MidiServiceDrain::DeferredIdleOwnerCursor sDeferredIdleOwnerCursor{};
 
+static bool hasRealtimeIdleWork(const Track& track) {
+  return track.isRecording() || track.isAudiblePlaybackActive() || track.isStoppedRecording();
+}
+
 FLASHMEM __attribute__((noinline)) static bool anySnapshotPublicationBacklog() {
   const uint8_t trackCount = trackManager.getTrackCount();
   for (uint8_t i = 0; i < trackCount; ++i) {
@@ -244,10 +248,18 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
   bool overdubStopping = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing() || t.isOverdubStopping()) {
+    if (t.isRecording() || t.isOverdubbing() || t.hasPendingDeferredOverdubStop()) {
       captureActive = true;
     }
-    overdubStopping = overdubStopping || t.isOverdubStopping();
+    overdubStopping = overdubStopping || t.hasPendingDeferredOverdubStop();
+  }
+  if (overdubStopping) {
+    // Stop preparation can span many turns. Keep the existing sliced paint
+    // continuation alive on its own owner turn, without starting a load job.
+    if (admitDisplayPaintTurn(now, lastDisplayUpdate)) {
+      finishAdmittedDisplayPaintTurn(now, lastDisplayUpdate);
+    }
+    return;
   }
   const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
   const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
@@ -513,7 +525,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       Track& selectedTrack = trackManager.getTrack(selectedTrackIndex);
       const bool selectedTrackIsRealtime =
           selectedTrack.isPlaying() || selectedTrack.isRecording() ||
-          selectedTrack.isOverdubbing() || selectedTrack.isOverdubStopping() ||
+          selectedTrack.isOverdubbing() || selectedTrack.hasPendingDeferredOverdubStop() ||
           selectedTrack.isStoppedRecording();
       // Preserve the selected track's existing snapshot behaviour. This is
       // the current interaction target, including its live-record path.
@@ -539,7 +551,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
           Track& track = trackManager.getTrack(trackIndex);
           const bool backgroundTrackEligible =
               (track.isPlaying() || track.isStoppedRecording()) &&
-              !track.isRecording() && !track.isOverdubbing() && !track.isOverdubStopping();
+              !track.isRecording() && !track.isOverdubbing() && !track.hasPendingDeferredOverdubStop();
           if (!backgroundTrackEligible) {
             continue;
           }
@@ -558,7 +570,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
           deferredOwner, realtimeTrackCount, sCanonicalPrefixTrackCursor,
           [](uint8_t index) {
             Track& track = trackManager.getTrack(index);
-            if (track.isOverdubStopping() || track.isRecording()) return true;
+            if (track.hasPendingDeferredOverdubStop() || track.isRecording()) return true;
             if ((!track.isAudiblePlaybackActive() && !track.isStoppedRecording()) ||
                 !track.loopsAllocated()) return false;
             const Loop& loop = track.getActiveLoop();
@@ -569,7 +581,11 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
     return; // No other track, visual cleanup, or idle child stacks with this grain.
   }
   for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
-    trackManager.getTrack(i).processDeferredIdleMaintenance(
+    Track& track = trackManager.getTrack(i);
+    // Stopped-slot reconstruction is background work. Running every loaded
+    // track here stacked 120–281 ms turns into the first recording bars.
+    if (!hasRealtimeIdleWork(track)) continue;
+    track.processDeferredIdleMaintenance(
         now, postOverdubPlayingMidiDrain, deferredOwner);
   }
 }
@@ -747,10 +763,10 @@ void loop() {
   bool overdubStoppingForMidiDrain = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing() || t.isOverdubStopping()) {
+    if (t.isRecording() || t.isOverdubbing() || t.hasPendingDeferredOverdubStop()) {
       captureActiveForMidiDrain = true;
     }
-    overdubStoppingForMidiDrain = overdubStoppingForMidiDrain || t.isOverdubStopping();
+    overdubStoppingForMidiDrain = overdubStoppingForMidiDrain || t.hasPendingDeferredOverdubStop();
   }
   const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
   const MidiServiceDrain::DeferredIdleOwner deferredIdleOwner =
@@ -758,6 +774,9 @@ void loop() {
   bool visualCacheWrapAppendPending = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& track = trackManager.getTrack(i);
+    // A deferred background append cannot block the active track's display.
+    // It resumes with the existing stopped-track owner after transport work.
+    if (timingCriticalTrackActive && !hasRealtimeIdleWork(track)) continue;
     if (track.loopsAllocated() && track.getActiveLoop().hasDeferredVisualCacheWrapAppend()) {
       visualCacheWrapAppendPending = true;
       break;
@@ -805,7 +824,7 @@ void loop() {
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   uint32_t loadFrameUs = 0;
   if (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay &&
-      deferredIdleOwnerAllowed && !overdubStoppingForMidiDrain) {
+      deferredIdleOwnerAllowed) {
     const uint32_t loadFrameStartUs = micros();
     runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive,
                                    postOverdubPlayingMidiDrain);

@@ -50,6 +50,11 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
 - Add owner-level progress, yield, and per-grain timing telemetry, plus native
   fixtures and a capture-serial HITL gate that separately reports post-overdub
   PLAYING, RECORDING, OVERDUBBING, `OVERDUB_STOPPING`, and STOPPED windows.
+- Separate immediate real-time USB/serial playback from DROID USB-host feedback.
+  LED, fader, and controller updates destined for DROID may be delayed and
+  paced by the existing main-loop drain; they SHALL NOT block or count against
+  the playback MIDI-boundary deadline. Deferred feedback remains bounded,
+  coalesces replaceable states, and reports queue age and overflow explicitly.
 - Require a verified per-owner long-loop coverage-service contract. If it
   cannot prove successor preparation before coverage expires, active windowed
   maintenance is excluded in favor of a full-loop prewarm or STOPPED-only work.

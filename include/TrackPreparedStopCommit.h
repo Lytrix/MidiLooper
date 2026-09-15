@@ -26,6 +26,8 @@ bool beginHistoryRecycle(Loop& loop, PendingStopAdmission& stop);
 RuntimePlaybackOrderBuildResult stepHistoryRecycle(Loop& loop, PendingStopAdmission& stop,
     size_t quantum);
 bool retargetStoppedRecovery(LoopPlaybackRuntime& runtime, const PendingStopAdmission& stop);
+bool commitStopped(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred);
 bool commitStoppedWithUndo(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
     GlobalUndoStack& stack, TrackUndoPublication& undo);

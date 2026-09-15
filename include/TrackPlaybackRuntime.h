@@ -127,6 +127,12 @@ struct PendingStopAdmission {
   /// Post-commit storage recycling has a separate reservation and cannot delay
   /// the atomic commit. Receipt consumption precedes beginning the recycler.
   bool consumeHistoryRecycleGrain();
+  /// Owner calls only after this stage's worker readiness has been verified.
+  /// Release unused estimates in one turn; they are upper bounds, not work.
+  bool retireCompletedPreparation();
+  /// STOPPED or an empty sealed capture skips audible/companion preparation before
+  /// those workers start. Preserve closure/order and command-epoch obligations.
+  bool retireSkippedCompanionPreparation(bool emptyCapture);
   void setPhase(PendingStopPhase next) { phase = next; }
   bool permitsPlaybackEmission() const {
     return !pending || destination == PendingStopDestination::Playing;
@@ -224,6 +230,17 @@ struct LoopPlaybackRuntime {
   RuntimePlaybackOrderBuildResult stepCanonicalPrefix(const LoopPasses& passes,
       const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
       size_t quantum);
+  // Uses the same pass merge and view fill/order workers as ordinary playback.
+  // Completion publishes an immutable ready base, never changes audible current.
+  enum class CanonicalWindowPhase : uint8_t { Idle, Merge, Fill, Order, Publish, Ready, Denied };
+  CanonicalWindowPhase canonicalWindowPhase = CanonicalWindowPhase::Idle;
+  uint8_t canonicalWindowIndex = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t canonicalWindowPassGeneration = 0;
+  PlaybackCoverageInterval canonicalWindowCoverage;
+  RuntimePlaybackOrderBuildResult stepCanonicalWindow(
+      const PlaybackCoverageInterval& coverage, const EmissionCursor& anchor, size_t quantum);
+  const RuntimePlaybackView* preparedCanonicalWindow(const PlaybackViewSourceIdentity& source) const;
+  void discardCanonicalWindow();
   enum class CanonicalTailPhase : uint8_t { Idle, Normalize, Rows, StartCompanions, Companions, Complete, Denied };
   CanonicalTailPhase canonicalTailPhase = CanonicalTailPhase::Idle;
   PlaybackViewSourceIdentity canonicalTailTarget;
@@ -244,9 +261,15 @@ struct LoopPlaybackRuntime {
   PlaybackSourceAdmission frozenCaptureSourceAdmission;
   enum class CaptureBridgePhase : uint8_t { Idle, Fill, Map, Compile, Complete, Denied };
   CaptureBridgePhase captureBridgePhase = CaptureBridgePhase::Idle;
+  // Borrow the exact immutable base, including a canonical ready window.
+  // Never re-resolve it through the changing audible-current index mid-build.
+  const RuntimePlaybackView* captureBridgeBase = nullptr;
+  const RuntimePlaybackView* frozenCaptureBridgeBase() const;
   bool canonicalCaptureBridge = false;
   uint64_t captureBridgePreparationGeneration = 0;
   uint64_t captureBridgeMapGeneration = 0;
+  // Capture-only diagnostic latch: one reason report per attempted bridge.
+  uint16_t captureBridgeBeginFailureMask = 0;
 
   ~LoopPlaybackRuntime();
 
@@ -304,6 +327,10 @@ struct LoopPlaybackRuntime {
   /// verifying its compiled indexes still refer to the immutable current view.
   const FixedPlaybackBridgeStorage* selectedFullLoopBridge(
       const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks) const;
+  /// Finds the immutable loop view recorded by a bridge. The bridge may use a
+  /// prepared canonical window which is ready but not the audible current.
+  const RuntimePlaybackView* fullLoopBridgeBase(
+      const FixedPlaybackBridgeStorage& bridge, uint32_t loopLengthTicks) const;
   /// Fixed-capacity publication preflight; denial leaves the selected bridge
   /// unchanged. The caller supplies the first affected, not-yet-emitted phase.
   bool canSelectPreparedFullLoopBridge(const PlaybackViewSourceIdentity& sourceIdentity,

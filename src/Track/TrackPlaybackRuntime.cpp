@@ -9,6 +9,7 @@
 #include <new>
 
 #include "Utils/InternalHeapFirstAllocator.h"
+#include "Utils/DebugSessionCapture.h"
 
 #if defined(__IMXRT1062__)
 #include <Arduino.h>
@@ -191,30 +192,54 @@ bool PendingStopAdmission::consumeOrderGrain() {
 }
 
 bool PendingStopAdmission::consumeRankedPreparationGrain() {
-  if (!pending || remainingClosureGrains != 0 || remainingRankedPreparationGrains == 0) return false;
-  --remainingRankedPreparationGrains;
+  if (!pending || remainingClosureGrains != 0 || !rankedPreparationQuantum) return false;
+  if (remainingRankedPreparationGrains) --remainingRankedPreparationGrains;
   return true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::consumeCanonicalPreparationGrain() {
-  if (!pending || remainingClosureGrains != 0 || remainingCanonicalPreparationGrains == 0) return false;
-  --remainingCanonicalPreparationGrains;
+  if (!pending || remainingClosureGrains != 0 || !canonicalPreparationQuantum) return false;
+  if (remainingCanonicalPreparationGrains) --remainingCanonicalPreparationGrains;
   return true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::consumeHistoryRecycleGrain() {
   if (phase != PendingStopPhase::DeferredCleanup || !finalizationComplete() ||
-      remainingHistoryRecycleGrains == 0) return false;
-  --remainingHistoryRecycleGrains;
+      !historyRecycleQuantum) return false;
+  if (remainingHistoryRecycleGrains) --remainingHistoryRecycleGrains;
   return true;
 }
 
 void PendingStopAdmission::requestTransportStop() {
-  if (!pending) {
+  // Transport Stop is level-triggered: TrackManager can deliver the same
+  // stopped transport state on every service turn.  Retarget the frozen
+  // candidate once, then retain that epoch until the deferred owner reaches
+  // its terminal STOPPED transition.  Advancing it repeatedly invalidates
+  // canonical preparation that was correctly rebound to the first Stop.
+  if (!pending || destination == PendingStopDestination::Stopped) {
     return;
   }
   ++transportCommandEpoch;
   destination = PendingStopDestination::Stopped;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireCompletedPreparation() {
+  if (!pending || remainingClosureGrains) return false;
+  switch (phase) {
+    case PendingStopPhase::PrepareTransfer: remainingOrderGrains = 0; break;
+    case PendingStopPhase::CompanionHistory: remainingCanonicalPreparationGrains = 0; break;
+    case PendingStopPhase::CompanionBridge: remainingRankedPreparationGrains = 0; break;
+    default: return false;
+  }
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireSkippedCompanionPreparation(bool emptyCapture) {
+  if (!pending || (!emptyCapture && destination != PendingStopDestination::Stopped) ||
+      phase != PendingStopPhase::PrepareTransfer || remainingClosureGrains || remainingOrderGrains)
+    return false;
+  remainingRankedPreparationGrains = remainingCanonicalPreparationGrains = 0;
+  return true;
 }
 
 bool PendingStopAdmission::canCommit(uint32_t commandEpoch,
@@ -263,6 +288,7 @@ void LoopPlaybackRuntime::syncRevision(uint32_t loopRevision, uint32_t trackGene
 }
 
 void LoopPlaybackRuntime::reset(bool preserveLedger) {
+  discardCanonicalWindow();
   discardFrozenCanonicalTail();
   discardFrozenCaptureBridge();
   frozenCaptureCompanions.discard();
@@ -466,12 +492,38 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const FixedPlaybackBridgeStorage* LoopPlaybackRu
   const RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || set->bridgeLifecycle.selected >= set->bridges.size()) return nullptr;
   const auto& bridge = set->bridges[set->bridgeLifecycle.selected];
+  const auto* base = fullLoopBridgeBase(bridge, loopLengthTicks);
   if (!bridge.selected || !bridge.complete || !bridge.streamPrepared ||
-      !(bridge.source == sourceIdentity) || bridge.coverage.startPhase != 0 ||
-      bridge.coverage.lengthTicks != loopLengthTicks ||
+      !(bridge.source == sourceIdentity) ||
       bridge.coverage.loopLengthTicks != loopLengthTicks ||
-      publishedFullLoopView(bridge.baseSource, loopLengthTicks) == nullptr) return nullptr;
+      !base || base->storageGeneration != bridge.baseStorageGeneration) return nullptr;
   return &bridge;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView* LoopPlaybackRuntime::fullLoopBridgeBase(
+    const FixedPlaybackBridgeStorage& bridge, uint32_t loopLengthTicks) const {
+  const auto* set = viewSetIfPrewarmed();
+  if (set == nullptr || !loopLengthTicks) return nullptr;
+  // A canonical preparation view is published and immutable, but deliberately
+  // remains outside lifecycle.current until its bridge is atomically selected.
+  // Locate the exact view generation captured by the bridge rather than
+  // requiring the unrelated audible-current slot.
+  for (const auto& view : set->views) {
+    if (view.published && view.complete && view.sourceFilled && view.passOriginsReady &&
+        view.source == bridge.baseSource &&
+        view.coverage.startPhase == bridge.coverage.startPhase &&
+        view.coverage.lengthTicks == bridge.coverage.lengthTicks &&
+        view.coverage.loopLengthTicks == loopLengthTicks &&
+        view.storageGeneration == bridge.baseStorageGeneration) {
+      return &view;
+    }
+  }
+  // Legacy/full-loop bridge preparation predates pass-origin coverage. Keep
+  // its current-view proof intact while canonical-window bridges use the scan
+  // above.
+  const auto* current = publishedFullLoopView(bridge.baseSource, loopLengthTicks);
+  return current != nullptr && current->storageGeneration == bridge.baseStorageGeneration
+      ? current : nullptr;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canSelectPreparedFullLoopBridge(
@@ -481,11 +533,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canSelectPreparedFullL
   if (!loopLengthTicks || earliestAffectedCursor.phase >= loopLengthTicks ||
       set == nullptr || set->bridgeLifecycle.candidate >= set->bridges.size()) return false;
   auto& bridge = set->bridges[set->bridgeLifecycle.candidate];
+  const auto* base = fullLoopBridgeBase(bridge, loopLengthTicks);
   if (!bridge.complete || !bridge.streamPrepared || bridge.selected ||
-      !(bridge.source == sourceIdentity) || bridge.coverage.startPhase != 0 ||
-      bridge.coverage.lengthTicks != loopLengthTicks ||
+      !(bridge.source == sourceIdentity) ||
       bridge.coverage.loopLengthTicks != loopLengthTicks ||
-      publishedFullLoopView(bridge.baseSource, loopLengthTicks) == nullptr ||
+      !base || base->storageGeneration != bridge.baseStorageGeneration ||
       !bridge.ledgerBoundary.matches(ledger) ||
       earliestAffectedCursor.effectiveSourceGeneration != sourceIdentity.sourceGeneration ||
       (bridge.protectsOpenNotes && (!bridge.hasRetainedClosure ||
@@ -523,8 +575,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureBrid
   if (captureBridgePhase != CaptureBridgePhase::Idle || set == nullptr || base == nullptr ||
       !frozenCaptureCandidateReady(frozenGeneration) || frozenCaptureOrderBinding.loopLengthTicks != loopLengthTicks ||
       anchor.phase >= loopLengthTicks || anchor.effectiveSourceGeneration != targetSource.sourceGeneration ||
-      set->bridgeLifecycle.selected != RuntimePlaybackBridgeLifecycle::kNoBridge ||
       set->bridgeLifecycle.candidate >= set->bridges.size()) return false;
+  // The selected bridge remains audible until this candidate is atomically
+  // published.  A later overdub must therefore claim the alternate buffer,
+  // rather than rejecting the normal selected-bridge state.
+  if (!set->beginCandidateBridge()) return false;
   auto& bridge = set->bridges[set->bridgeLifecycle.candidate];
   if (bridge.selected || bridge.complete || bridge.recordCount != 0) return false;
   // A second selected source needs coalescing, not an insertion-only rebuild
@@ -540,6 +595,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureBrid
     return false;
   frozenCaptureSourceAdmission = {frozenGeneration, commandEpoch, baseSource, targetSource,
                                    set->bridgeLifecycle.candidate, false};
+  captureBridgeBase = base;
   captureBridgePhase = CaptureBridgePhase::Fill;
   return true;
 }
@@ -567,6 +623,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
     if (canonicalPrefixPasses != &passes || !(canonicalPrefixSource == source) || canonicalPrefixLength != live.loopLengthTicks ||
         canonicalPrefixStorageOwner != &live.storageGeneration ||
         live.storageGeneration != canonicalPrefixStorageGeneration) {
+      discardCanonicalWindow();
       canonicalPassInputs.discard(); canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
       canonicalPrefixPasses = nullptr;
       return RuntimePlaybackOrderBuildResult::Pending; // Restart on a later owner turn.
@@ -587,6 +644,120 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
   canonicalPrefixGeneration = canonicalPassInputs.generation();
   canonicalPrefixPhase = started ? CanonicalPrefixPhase::Preparing : CanonicalPrefixPhase::Denied;
   return started ? RuntimePlaybackOrderBuildResult::Pending : RuntimePlaybackOrderBuildResult::Denied;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView* LoopPlaybackRuntime::preparedCanonicalWindow(
+    const PlaybackViewSourceIdentity& source) const {
+  const auto* set = viewSetIfPrewarmed();
+  if (!set || canonicalWindowPhase != CanonicalWindowPhase::Ready ||
+      canonicalWindowIndex >= set->views.size() || !(source == canonicalPrefixSource) ||
+      !canonicalPrefixStorageOwner || *canonicalPrefixStorageOwner != canonicalPrefixStorageGeneration)
+    return nullptr;
+  const auto& view = set->views[canonicalWindowIndex];
+  return view.published && view.complete && view.sourceFilled && view.passOriginsReady &&
+      view.source == source && view.passOriginSource == source &&
+      view.coverage.startPhase == canonicalWindowCoverage.startPhase &&
+      view.coverage.lengthTicks == canonicalWindowCoverage.lengthTicks &&
+      view.coverage.loopLengthTicks == canonicalWindowCoverage.loopLengthTicks ? &view : nullptr;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardCanonicalWindow() {
+  if (canonicalWindowPhase == CanonicalWindowPhase::Idle) return;
+  auto* set = viewSetIfPrewarmed();
+  if (canonicalWindowPhase != CanonicalWindowPhase::Ready) viewBuild.discard();
+  if (canonicalWindowPhase != CanonicalWindowPhase::Ready &&
+      frozenCompanionPasses.generation() == canonicalWindowPassGeneration)
+    frozenCompanionPasses.discard();
+  if (set && canonicalWindowIndex < set->views.size() &&
+      canonicalWindowIndex != set->lifecycle.current && canonicalWindowIndex != set->lifecycle.retained)
+    set->views[canonicalWindowIndex].resetMetadata();
+  canonicalWindowPhase = CanonicalWindowPhase::Idle;
+  canonicalWindowIndex = RuntimePlaybackViewLifecycle::kNoView;
+  canonicalWindowPassGeneration = 0;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRuntime::stepCanonicalWindow(
+    const PlaybackCoverageInterval& coverage, const EmissionCursor& anchor, size_t quantum) {
+  auto* set = viewSetIfPrewarmed();
+  if (!quantum || !set || !coverage.isValid() || coverage.loopLengthTicks != canonicalPrefixLength ||
+      anchor.phase >= coverage.loopLengthTicks ||
+      anchor.effectiveSourceGeneration != canonicalPrefixSource.sourceGeneration)
+    return RuntimePlaybackOrderBuildResult::Denied;
+  if (canonicalWindowPhase == CanonicalWindowPhase::Ready)
+    return preparedCanonicalWindow(canonicalPrefixSource) &&
+        coverage.startPhase == canonicalWindowCoverage.startPhase &&
+        coverage.lengthTicks == canonicalWindowCoverage.lengthTicks
+        ? RuntimePlaybackOrderBuildResult::Complete : RuntimePlaybackOrderBuildResult::Denied;
+  if (canonicalWindowPhase == CanonicalWindowPhase::Denied ||
+      canonicalPrefixPhase != CanonicalPrefixPhase::Ready || !canonicalPassInputs.ready() ||
+      canonicalPassInputs.generation() != canonicalPrefixGeneration || canonicalPassInputs.captureAttached())
+    return RuntimePlaybackOrderBuildResult::Denied;
+  if (canonicalWindowPhase == CanonicalWindowPhase::Idle) {
+    // Wait for the existing view owner; never steal an in-flight or ready view.
+    if (viewBuild.active() || !frozenCompanionPasses.idle() || !frozenCompanionApply.available())
+      return RuntimePlaybackOrderBuildResult::Pending;
+    const auto index = set->lifecycle.ready != RuntimePlaybackViewLifecycle::kNoView
+        ? set->lifecycle.ready : set->lifecycle.build;
+    if (index >= set->views.size() || index == set->lifecycle.current || index == set->lifecycle.retained ||
+        set->views[index].published || set->views[index].complete)
+      return RuntimePlaybackOrderBuildResult::Pending;
+    viewBuild.discard();
+    RuntimeCompanionApply::Work work{frozenCompanionPairLookup, frozenCompanionDeleteLookup,
+      frozenCompanionSpans, frozenCompanionReconstruction, frozenCompanionOverlaps};
+    if (!frozenCompanionPasses.begin(frozenCompanionApply, work, canonicalPassInputs, nullptr, 0,
+                                    canonicalPrefixSource, canonicalPrefixLength))
+      return RuntimePlaybackOrderBuildResult::Denied;
+    canonicalWindowIndex = index;
+    canonicalWindowPassGeneration = frozenCompanionPasses.generation();
+    canonicalWindowCoverage = coverage;
+    canonicalWindowPhase = CanonicalWindowPhase::Merge;
+    return RuntimePlaybackOrderBuildResult::Pending; // Setup is a separate turn.
+  }
+  if (coverage.startPhase != canonicalWindowCoverage.startPhase ||
+      coverage.lengthTicks != canonicalWindowCoverage.lengthTicks ||
+      frozenCompanionPasses.generation() != canonicalWindowPassGeneration ||
+      canonicalWindowIndex >= set->views.size() ||
+      (canonicalWindowIndex != set->lifecycle.ready && canonicalWindowIndex != set->lifecycle.build) ||
+      canonicalWindowIndex == set->lifecycle.current || canonicalWindowIndex == set->lifecycle.retained)
+    return RuntimePlaybackOrderBuildResult::Denied;
+  auto& view = set->views[canonicalWindowIndex];
+  if (canonicalWindowPhase == CanonicalWindowPhase::Merge) {
+    const auto result = frozenCompanionPasses.step(quantum);
+    if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      canonicalWindowPhase = CanonicalWindowPhase::Denied;
+      return result;
+    }
+    if (result == RuntimePlaybackOrderBuildResult::Complete) {
+      LedgerBoundarySummary boundary; boundary.capture(ledger);
+      if (!viewBuild.begin(view, frozenCompanionPasses, canonicalPrefixSource, coverage, anchor, boundary)) {
+        canonicalWindowPhase = CanonicalWindowPhase::Denied;
+        return RuntimePlaybackOrderBuildResult::Denied;
+      }
+      canonicalWindowPhase = CanonicalWindowPhase::Fill;
+    }
+    return RuntimePlaybackOrderBuildResult::Pending;
+  }
+  if (canonicalWindowPhase == CanonicalWindowPhase::Publish) {
+    if (!view.complete || !view.sourceFilled || !view.passOriginsReady)
+      return RuntimePlaybackOrderBuildResult::Denied;
+    if (canonicalWindowIndex != set->lifecycle.ready &&
+        !set->publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation))
+      return RuntimePlaybackOrderBuildResult::Pending;
+    view.published = true; // Immutable ready base; audible current is unchanged.
+    viewBuild.discard();
+    frozenCompanionPasses.discard(); // Owned events/origins now outlive worker reuse for the frozen tail.
+    canonicalWindowPhase = CanonicalWindowPhase::Ready;
+    return RuntimePlaybackOrderBuildResult::Complete;
+  }
+  const auto result = canonicalWindowPhase == CanonicalWindowPhase::Fill
+      ? viewBuild.stepFill(quantum) : viewBuild.stepOrder(quantum);
+  if (result == RuntimePlaybackViewBuildGrain::Denied) {
+    canonicalWindowPhase = CanonicalWindowPhase::Denied;
+    return RuntimePlaybackOrderBuildResult::Denied;
+  }
+  canonicalWindowPhase = result == RuntimePlaybackViewBuildGrain::Complete ? CanonicalWindowPhase::Publish
+      : result == RuntimePlaybackViewBuildGrain::Order ? CanonicalWindowPhase::Order : CanonicalWindowPhase::Fill;
+  return RuntimePlaybackOrderBuildResult::Pending;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCanonicalTail(
@@ -713,30 +884,86 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCompanionBr
     uint32_t frozenGeneration, uint32_t commandEpoch, uint32_t loopLengthTicks,
     const EmissionCursor& anchor) {
   auto* set = viewSetIfPrewarmed();
-  const auto* base = publishedFullLoopView(baseSource, loopLengthTicks);
-  if (captureBridgePhase != CaptureBridgePhase::Idle || !set || !base ||
-      canonicalPassInputs.frozenCapture() != &set->captureStaging ||
-      !canonicalPassInputs.includesFrozenOverdub() ||
-      !canonicalPassInputs.matchesFrozenCommand(commandEpoch) ||
-      set->captureStaging.frozenGeneration != frozenGeneration ||
-      canonicalPassInputs.loopLength() != loopLengthTicks ||
-      !frozenCompanionPasses.matchesOwners(canonicalPassInputs, frozenCaptureCompanions) ||
-      !frozenCompanionPasses.ready(targetSource) ||
-      anchor.phase >= loopLengthTicks || anchor.effectiveSourceGeneration != targetSource.sourceGeneration ||
-      set->bridgeLifecycle.selected != RuntimePlaybackBridgeLifecycle::kNoBridge ||
-      set->bridgeLifecycle.candidate >= set->bridges.size()) return false;
+  const auto* base = preparedCanonicalWindow(baseSource);
+  if (!base) base = publishedFullLoopView(baseSource, loopLengthTicks);
+  uint16_t failure = 0;
+  failure |= captureBridgePhase != CaptureBridgePhase::Idle ? 0x0001u : 0u;
+  failure |= !set ? 0x0002u : 0u;
+  failure |= !base ? 0x0004u : 0u;
+  failure |= base && (base->coverage.loopLengthTicks != loopLengthTicks ||
+                      !base->coverage.contains(anchor.phase)) ? 0x0008u : 0u;
+  failure |= !set || canonicalPassInputs.frozenCapture() != &set->captureStaging ? 0x0010u : 0u;
+  failure |= !canonicalPassInputs.includesFrozenOverdub() ? 0x0020u : 0u;
+  failure |= !canonicalPassInputs.matchesFrozenCommand(commandEpoch) ? 0x0040u : 0u;
+  failure |= !set || set->captureStaging.frozenGeneration != frozenGeneration ? 0x0080u : 0u;
+  failure |= canonicalPassInputs.loopLength() != loopLengthTicks ? 0x0100u : 0u;
+  failure |= !frozenCompanionPasses.matchesOwners(canonicalPassInputs, frozenCaptureCompanions) ? 0x0200u : 0u;
+  failure |= !frozenCompanionPasses.ready(targetSource) ? 0x0400u : 0u;
+  failure |= anchor.phase >= loopLengthTicks || anchor.effectiveSourceGeneration != targetSource.sourceGeneration ? 0x0800u : 0u;
+  failure |= !set || set->bridgeLifecycle.candidate >= set->bridges.size() ? 0x1000u : 0u;
+  const auto reportFailure = [&](uint16_t mask) {
+    if (captureBridgeBeginFailureMask != 0) return;
+    captureBridgeBeginFailureMask = static_cast<uint16_t>(mask | 0x8000u);
+    SC_ODUB_STOP_STAGE("bridge_begin", 0, 0, UINT32_MAX, UINT32_MAX, mask,
+        set ? (static_cast<size_t>(set->bridgeLifecycle.selected) << 8u) |
+                  set->bridgeLifecycle.candidate : 0u,
+        "denied");
+  };
+  if (failure) {
+    reportFailure(failure);
+    return false;
+  }
+  // Keep the current bridge readable while building its replacement in the
+  // lifecycle's alternate candidate buffer.
+  if (!set->beginCandidateBridge()) {
+    reportFailure(0x2000u);
+    return false;
+  }
   auto& bridge = set->bridges[set->bridgeLifecycle.candidate];
-  if (bridge.selected || bridge.complete || bridge.recordCount ||
-      !frozenCompanionBridgeMap.begin(frozenCompanionPasses, *base, targetSource)) return false;
+  if (bridge.selected || bridge.complete || bridge.recordCount) {
+    reportFailure(0x4000u);
+    return false;
+  }
+  if (!frozenCompanionBridgeMap.begin(frozenCompanionPasses, *base, targetSource)) {
+    reportFailure(0x7fffu);
+    return false;
+  }
+  captureBridgeBeginFailureMask = 0;
   bridge.source = targetSource; bridge.coverage = base->coverage; bridge.cursorAnchor = anchor;
   bridge.ledgerBoundary.capture(ledger);
   frozenCaptureSourceAdmission = {frozenGeneration, commandEpoch, baseSource, targetSource,
                                   set->bridgeLifecycle.candidate, false};
+  captureBridgeBase = base;
   canonicalCaptureBridge = true;
   captureBridgePreparationGeneration = frozenCompanionPasses.generation();
   captureBridgeMapGeneration = frozenCompanionBridgeMap.generation();
   captureBridgePhase = CaptureBridgePhase::Map;
   return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView* LoopPlaybackRuntime::frozenCaptureBridgeBase() const {
+  const auto* set = viewSetIfPrewarmed();
+  const auto& admission = frozenCaptureSourceAdmission;
+  if (!set || !captureBridgeBase || admission.candidateIndex >= set->bridges.size()) return nullptr;
+  // The set owns three fixed views. Reject foreign storage and retired bases,
+  // even when their source identity happens to equal the successor's identity.
+  bool owned = false;
+  for (const auto& view : set->views) owned = owned || &view == captureBridgeBase;
+  if (!owned) return nullptr;
+  const auto& base = *captureBridgeBase;
+  const auto& bridge = set->bridges[admission.candidateIndex];
+  if (!base.published || !base.complete || !(base.source == admission.baseSource) ||
+      !base.coverage.isValid() || base.coverage.startPhase != bridge.coverage.startPhase ||
+      base.coverage.lengthTicks != bridge.coverage.lengthTicks ||
+      base.coverage.loopLengthTicks != bridge.coverage.loopLengthTicks ||
+      ((captureBridgePhase == CaptureBridgePhase::Compile || captureBridgePhase == CaptureBridgePhase::Complete) &&
+       base.storageGeneration != bridge.baseStorageGeneration) ||
+      (canonicalCaptureBridge && (!base.sourceFilled || !base.passOriginsReady ||
+          !base.passOrigins || !(base.passOriginSource == admission.baseSource) ||
+          (captureBridgePhase != CaptureBridgePhase::Map &&
+           !frozenCompanionBridgeMap.matchesBase(base.storage.events, base.storage.eventCount, base.source)))))
+    return nullptr;
+  return &base;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenBridgePreparationReady() const {
@@ -766,7 +993,7 @@ LoopPlaybackRuntime::stepFrozenCaptureBridge(size_t entryQuantum) {
     return RuntimePlaybackOrderBuildResult::Denied;
   }
   auto& bridge = set->bridges[admission.candidateIndex];
-  const auto* base = publishedFullLoopView(admission.baseSource, bridge.coverage.loopLengthTicks);
+  const auto* base = frozenCaptureBridgeBase();
   if (base == nullptr || bridge.selected || !(bridge.source == admission.targetSource)) {
     admission.ready = false;
     captureBridgePhase = CaptureBridgePhase::Denied;
@@ -804,6 +1031,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canSelectFrozenCapture
   return set != nullptr && captureBridgePhase == CaptureBridgePhase::Complete && admission.ready &&
          admission.frozenGeneration == frozenGeneration && admission.transportCommandEpoch == commandEpoch &&
          set->bridgeLifecycle.candidate == admission.candidateIndex && frozenBridgePreparationReady() &&
+         frozenCaptureBridgeBase() != nullptr &&
          admission.candidateIndex < set->bridges.size() &&
          set->bridges[admission.candidateIndex].baseSource == admission.baseSource &&
          (canonicalCaptureBridge ? canonicalPassInputs.loopLength() == loopLengthTicks
@@ -845,6 +1073,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM void LoopPlaybackRuntime::discardFrozenCaptureBr
     frozenCompanionBridgeMap.discard();
   canonicalCaptureBridge = false; captureBridgePreparationGeneration = 0;
   captureBridgeMapGeneration = 0;
+  captureBridgeBeginFailureMask = 0;
+  captureBridgeBase = nullptr;
   frozenCaptureSourceAdmission = PlaybackSourceAdmission{};
   captureBridgePhase = CaptureBridgePhase::Idle;
 }
@@ -854,7 +1084,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackBridgeStream* LoopPlaybackRuntime
     uint32_t completedPhase, bool beginNextCycle) {
   const auto* bridge = selectedFullLoopBridge(sourceIdentity, loopLengthTicks);
   if (bridge == nullptr) return nullptr;
-  const auto* base = publishedFullLoopView(bridge->baseSource, loopLengthTicks);
+  const auto* base = fullLoopBridgeBase(*bridge, loopLengthTicks);
   const uint32_t cycle = bridgeProjectionCycle + (beginNextCycle ? 1u : 0u);
   if (!bridgeStream.matches(*base, *bridge, cycle) &&
       !bridgeStream.selectAfterPhase(*base, *bridge, cycle,
@@ -997,8 +1227,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureCano
   CaptureAdmissionStaging* set = captureStagingIfPrewarmed();
   if (set == nullptr || !set->frozen ||
       set->frozenGeneration != frozenGeneration ||
-      set->captureGeneration != frozenGeneration ||
-      frozenCaptureOrderBinding.bound) return false;
+      set->captureGeneration != frozenGeneration) return false;
   if (frozenCaptureCanonicalOrderBinding.bound) {
     return frozenCaptureCanonicalOrderBinding.matches(*set, frozenCaptureOrderStorageGeneration) &&
            (frozenCaptureCanonicalOrder.active() || frozenCaptureCanonicalOrder.complete());
@@ -1030,7 +1259,7 @@ LoopPlaybackRuntime::stepFrozenCaptureOrder(size_t entryQuantum) {
 TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult
 LoopPlaybackRuntime::stepFrozenCaptureCanonicalOrder(size_t entryQuantum) {
   const auto* set = captureStagingIfPrewarmed();
-  if (set == nullptr || frozenCaptureOrderBinding.bound ||
+  if (set == nullptr ||
       !frozenCaptureCanonicalOrderBinding.matches(*set, frozenCaptureOrderStorageGeneration))
     return RuntimePlaybackOrderBuildResult::Denied;
   return frozenCaptureCanonicalOrder.step(entryQuantum);
@@ -1046,7 +1275,7 @@ LoopPlaybackRuntime::stepFrozenCaptureCanonicalRewrite(LoopEventStore& captureSt
       set->frozenGeneration != frozenGeneration ||
       set->captureGeneration != frozenGeneration ||
       !frozenCaptureCanonicalOrderBinding.matches(*set, frozenCaptureOrderStorageGeneration) ||
-      frozenCaptureOrderBinding.bound || !frozenCaptureCanonicalOrder.complete()) {
+      !frozenCaptureCanonicalOrder.complete()) {
     return LoopEventStoreRewriteResult::Denied;
   }
   FixedPlaybackEventStorage& source = set->storage;

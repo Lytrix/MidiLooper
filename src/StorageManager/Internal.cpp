@@ -152,7 +152,7 @@ STORAGE_PERSIST_MEM bool writeWorkspaceMetaAfterDeferredSave() {
 STORAGE_PERSIST_MEM bool isCaptureActiveForPersistence() {
     for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
         const Track& track = trackManager.getTrack(trackIndex);
-        if (track.isRecording() || track.isOverdubbing() || track.isOverdubStopping()) {
+        if (track.isRecording() || track.isOverdubbing() || track.hasPendingDeferredOverdubStop()) {
             return true;
         }
     }

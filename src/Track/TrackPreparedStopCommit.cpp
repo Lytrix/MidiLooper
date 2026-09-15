@@ -49,10 +49,10 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::retargetStoppedRecovery(
       runtime.canonicalPassInputs.retargetFrozenCommandEpoch(stop.transportCommandEpoch, views->captureStaging);
 }
 
-TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStoppedWithUndo(
+static TRACK_COLD_MEM bool commitPreparedStopped(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
-    GlobalUndoStack& stack, TrackUndoPublication& undo) {
+    GlobalUndoStack* stack, TrackUndoPublication* undo) {
   const auto* views = runtime.viewSetIfPrewarmed();
   if (!views || stop.phase != PendingStopPhase::AtomicTransfer ||
       !stop.canCommit(stop.transportCommandEpoch, PendingStopDestination::Stopped) ||
@@ -64,11 +64,11 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStoppedWithUndo(
       !loop.canCommitPreparedCaptureAndCompanions() ||
       !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ||
       !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->captureStaging) ||
-      !undo.canPublish(stack, loop.loopId, loop.pendingCapturePass().id)) return false;
+      (undo && (!stack || !undo->canPublish(*stack, loop.loopId, loop.pendingCapturePass().id)))) return false;
   const uint32_t revisionDelta = loop.preparedCompanionHistoryIds()->empty() ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta ||
       !loop.commitPreparedCaptureAndCompanionsAtomic(transferred)) return false;
-  undo.publishAtCommit();
+  if (undo) undo->publishAtCommit();
   // STOPPED has no audible successor selection. The old PLAYING command and
   // bridge epoch stay invalid; transport silence is owned by Track's stop action.
   stop.historyRecycleOwner = &loop;
@@ -76,6 +76,19 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStoppedWithUndo(
   stop.historyRecycleStarted = false;
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStopped(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred) {
+  return commitPreparedStopped(loop, runtime, stop, generation, transferred, nullptr, nullptr);
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStoppedWithUndo(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    GlobalUndoStack& stack, TrackUndoPublication& undo) {
+  return commitPreparedStopped(loop, runtime, stop, generation, transferred, &stack, &undo);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitWithUndo(

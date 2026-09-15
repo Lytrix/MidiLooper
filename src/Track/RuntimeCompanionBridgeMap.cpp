@@ -80,6 +80,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::prewarm(size_t capacity) {
 NOTE_EDIT_MEM void RuntimeCompanionBridgeMap::discard() {
   ++mapGeneration_;
   applied_ = nullptr; prepared_ = nullptr; baseOrigins_ = nullptr; baseIdentity_ = nullptr;
+  baseView_ = nullptr;
   scan_ = 0; base_ = nullptr; count_ = cursor_ = lastStepInputs_ = 0; phase_ = Phase::Idle;
   sortWidth_ = 1; sortStart_ = sortOutput_ = searchEnd_ = 0;
 }
@@ -110,10 +111,20 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::begin(
     const PlaybackViewSourceIdentity& preparedSource) {
   if (!base.published || !base.complete || !base.sourceFilled || !base.passOriginsReady ||
       base.passOrigins == nullptr || !(base.passOriginSource == base.source) ||
-      !base.coverage.isValid() || base.coverage.lengthTicks != base.coverage.loopLengthTicks) return false;
-  return begin(prepared, base.storage.events, base.storage.eventCount, base.passOrigins, base.source, preparedSource);
+      !base.coverage.isValid()) return false;
+  if (!begin(prepared, base.storage.events, base.storage.eventCount, base.passOrigins, base.source, preparedSource)) return false;
+  baseView_ = &base;
+  baseStorageGeneration_ = base.storageGeneration;
+  coverage_ = base.coverage;
+  return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::valid() const {
+  if (baseView_ && (baseView_->storageGeneration != baseStorageGeneration_ || !baseView_->published || !baseView_->complete || !baseView_->sourceFilled || !baseView_->passOriginsReady ||
+      baseView_->passOrigins != baseOrigins_ || !(baseView_->passOriginSource == source_) ||
+      baseView_->storage.events != base_ || baseView_->storage.eventCount != baseCount_ ||
+      baseView_->coverage.startPhase != coverage_.startPhase ||
+      baseView_->coverage.lengthTicks != coverage_.lengthTicks ||
+      baseView_->coverage.loopLengthTicks != coverage_.loopLengthTicks)) return false;
   if (prepared_ != nullptr) return prepared_->generation() == generation_ &&
       prepared_->ready(preparedSource_) && prepared_->size() == candidateCount_ &&
       baseIdentity_ != nullptr && *baseIdentity_ == source_;
@@ -200,6 +211,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionBridgeMap::step(si
       if (cursor_ < candidateCount_) {
         const size_t rank = cursor_++; ++lastStepInputs_;
         const auto& event = prepared_ != nullptr ? prepared_->data()[rank] : applied_->data()[rank];
+        if (baseView_ && !coverage_.contains(event.tick % coverage_.loopLengthTicks)) continue;
         if (prepared_ != nullptr && prepared_->origins()[rank].event != UINT16_MAX) {
           scan_ = 0; searchEnd_ = baseCount_; phase_ = Phase::FindOrigin; continue;
         }

@@ -770,3 +770,163 @@ builds with **6,176** bytes of RAM1 local headroom. The first post-upload
 track-5 / slot-1 HITL was `INCONCLUSIVE_CAPTURE` during clear preconditions
 (transport remained active), before overdub, so it provides no device admission
 or state-transition evidence.
+### Deferred DROID feedback upload and probe (2026-09-15 18:15)
+
+The firmware containing the deferred DROID USB-host feedback queue was built and
+uploaded successfully. The authorized track 5 / slot 1 `base` probe started
+recording and the first overdub, but the harness could not confirm the second
+overdub transition and aborted with `INCONCLUSIVE_CAPTURE` / `SERIAL_INCOMPLETE`.
+The capture contains 1,437 serial lines and no `DIAG,droid_queue` records, so
+this run did not exercise an active DROID USB-host endpoint. It is diagnostic
+only; no OpenSpec acceptance or real-time deadline gate is closed.
+
+Evidence: `captures/resumable-droid-deferred-hitl/`, including
+`session_20260915_181455.log` and
+`host_midi_automation_baseline_20260915_181549.json`.
+
+The immediate rerun at 18:26 reached the device but failed the scratch-slot
+clear precondition because the deferred-save blocker was reported. It produced
+no capture lines and is therefore also inconclusive.
+
+Evidence: `captures/resumable-droid-deferred-hitl-rerun/`.
+
+### Deferred-save clear blocker diagnosis and fix (2026-09-15)
+
+The clear failure was caused by `handleClearTrack()` synchronously draining a
+pending save while the selected track remained `PLAYING`. The persistence
+scheduler correctly refused all SD work during audible playback, so the drain
+made no progress and hit its stuck guard after 256 iterations. Clear now stops
+that playing track before the prerequisite drain; the existing
+`restorePlaybackAfterSlotClear()` path restores a remaining enabled slot after
+the mutation, and a failed drain restarts the original slot. The capture
+firmware and full native suite pass with this fix.
+
+The 19:19 rerun confirmed the fix on device: track 5 / slot 1 cleared, record
+started and stopped, and the first overdub was admitted. The canonical harness
+again could not confirm the second overdub transition and aborted, so the run
+remains `INCONCLUSIVE_CAPTURE`; no DROID endpoint was visible and no queue
+telemetry was emitted.
+
+Evidence: `captures/resumable-deferred-clear-fix-hitl/`.
+
+### Deferred overdub-stop continuation deadlock fix (2026-09-15)
+
+The stop continuation could remain in `OVERDUBBING` after the button request
+because `beginFrozenCaptureCanonicalOrder()` rejected a valid canonical binding
+whenever the separate ordinary frozen-order binding was already present. That
+cross-binding guard caused every canonical stop grain to return `Denied`.
+Removing the unrelated guard allows the canonical binding to initialize and the
+deferred owner to advance toward `OVERDUB_STOPPING → PLAYING` (or STOPPED for a
+transport Stop). Firmware build passes with 6,176 bytes of RAM1 local headroom.
+
+Follow-up inspection found the same guard in the canonical step function, so
+initialization could succeed but every subsequent grain still returned
+`Denied`. Removing that second cross-binding check completes the continuation
+fix. Focused state/playback tests pass (20/20), and the capture firmware builds
+with 6,176 bytes of RAM1 local headroom.
+
+The canonical rewrite stage contained the same independent-binding mistake.
+Its guard is now removed as well, allowing the full canonical order → rewrite →
+transfer sequence to reach the requested destination. The capture firmware
+rebuild passes with 6,176 bytes of RAM1 local headroom.
+
+The 19:39 uploaded rerun captured the repaired continuation on device:
+`OVERDUBBING → OVERDUB_STOPPING → STOPPED`. The harness later aborted when its
+MIDI clock disappeared before the complete second-overdub matrix, so this is a
+continuation checkpoint rather than a full acceptance run. The post-overdub
+display snapshot reported `state=STOPPED`.
+
+Evidence: `captures/resumable-overdub-stop-continuation-hitl/`.
+
+### Record/overdub-button continuation to PLAYING (2026-09-15 20:51)
+
+The normal record/overdub button path stalled because a bridge builder was
+allowed to prepare against the immutable one-bar canonical window, but bridge
+selection still required that base to be `lifecycle.current` and full-loop. The
+prepared window is intentionally non-current while the old audible view stays
+readable, so the completed candidate could never be selected. Selection now
+validates the exact immutable view generation recorded by the bridge and accepts
+its prepared coverage when the boundary lies in that coverage. Legacy full-loop
+bridges retain their existing current-view proof.
+
+The same investigation found completed bridge workers surviving a previous
+pass/clear. Deferred-cleanup and new overdub-stop admission now discard only
+those temporary workers, retaining the selected bridge and freeing its alternate
+candidate buffer.
+
+The authorized track-5 / slot-1 focused run passed after upload. It recorded a
+prepared-window bridge and `OVERDUB_STOPPING → PLAYING`; the post-flush
+device-clock trace has complete state/deadline correlation and no timing issues.
+The host probe now evaluates this deferred capture after its idle flush rather
+than treating the absence of live serial lines during active transport as a
+failure.
+
+Evidence: `captures/resumable-overdub-stop-canonical-window-pass-20260915/`
+(`session_20260915_205104.log`, `result.json`). This is a focused normal-stop
+checkpoint; the full task 5.3 matrix and real-time reservation work remain open.
+
+### Immediate Button A release and sequential two-overdub checkpoint (2026-09-15 21:13)
+
+The normal Button A path had kept the visible track state in `OVERDUB_STOPPING`
+until canonical ordering/rewrite reached `PrepareTransfer`. That made the user
+interface wait behind resumable background work. The capture is now frozen at
+the button boundary, the existing prepared playback window is released to
+`PLAYING` immediately, and the frozen transaction remains the admission and
+transport-stop barrier until its atomic commit/cleanup completes.
+
+The authorized track-5 / slot-1 device-clock run cleared the scratch slot,
+recorded a seed, then completed two note-based overdub passes (notes 83 and
+84). Both subsequent overdub admissions succeeded after the one-second
+background settle window. The trace contains two `OVERDUBBING →
+OVERDUB_STOPPING → PLAYING` pairs: the release edges occurred 20 µs and 17 µs
+after their respective stop boundaries, on a 2,603 µs MIDI service period.
+The analyzer reported 762 bounded stop grains, complete state correlation, and
+no timing issues. This validates the focused two-pass Button A continuation;
+full task 5.3 and real-time reservation acceptance remain open.
+
+Evidence: `captures/resumable-overdub-stop-button-release-two-pass-retry-20260915/`
+(`session_20260915_211327.log`, `result.json`).
+
+
+### DROID Button A empty-tail deadlock (2026-09-15)
+
+The subsequent user report invalidates treating the short two-note probe as
+complete Button A acceptance. Live `!STOP_STATUS` retrieval captured a stopped
+transport with `state=PLAYING,pending=1,phase=9,dest=1,order=0,ranked=0,canonical=1`
+and no pending capture pass (`captures/button-a-current-state-20260915.log`).
+The empty successor skipped companion preparation but retained its one setup
+credit; atomic transfer therefore could never finish, and the pending admission
+guard rejected subsequent capture commands. Immediate PLAYING state publication
+alone masked this unfinished transaction.
+
+Empty sealed captures now retire skipped companion preparation through the same
+checked helper as stopped captures. Closure/order obligations and command epoch
+checks remain prerequisites. The direct stop-admission path publishes PLAYING
+only for a Playing destination. Native regression covers empty, filtered-empty,
+and transport-retargeted completion (147 playback-prewarm tests pass).
+
+The earlier 17/20 microsecond measurements are state-assignment latency only.
+They do not prove audible handoff, DROID feedback delivery, or real-time deadline
+success: the immediate terminal state edge ends service/emission tracing before
+background finalization. Those acceptance gates remain open.
+
+
+After upload, both targeted continuations passed on track 5 / slot 1:
+
+- `captures/button-a-empty-two-pass-20260915/`: two overdubs with no new notes;
+  both stop edges observed and the second overdub admitted.
+- `captures/button-a-wrapped-two-pass-20260915/`: two eight-second overdubs;
+  each committed a wrap before its empty-tail stop, and both returned to PLAYING.
+
+The final serial check in `captures/button-a-stopped-reentry-20260915.log`
+reported `state=STOPPED,pending=0,canonical=0`. That separate check also includes
+additional controller input beyond the three scripted presses, so its control
+sequence is not scored as an isolated stopped-reentry acceptance test. The two
+focused reports show no analyzer issues, but remain functional continuation
+checkpoints rather than emission-deadline or full task-5.3 acceptance.
+
+
+The user confirmed that the additional DROID Button A and transport presses in
+the stopped-reentry capture were manual input. They are not evidence of duplicate
+controller delivery. This confirmation does not turn the mixed-input sequence
+into an isolated automated button-cycle test.
