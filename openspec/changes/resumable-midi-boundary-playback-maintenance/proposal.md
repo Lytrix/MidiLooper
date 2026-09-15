@@ -25,13 +25,15 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
   `capture.store`; its seal/commit path transfers the frozen candidate without
   further semantic work. Bridge suppression is cycle-qualified and ledger-safe,
   so an event may repeat after wrap and an already emitted NoteOn always retains
-  a closing path. An under-resourced active input is rejected before capture;
-  an accepted commit cannot defer its newly due audible output.
-- Make active overdub stop a bounded deferred admission: after the stop command
-  the runtime enters `OVERDUB_STOPPING`, finishes reserved staging in MIDI-
-  separated grains, then atomically commits only to a command-epoch-validated
-  destination. A later transport Stop selects STOPPED and invalidates any
-  pending return to PLAYING.
+  a closing path. Fixed storage exhaustion may reject an input before capture;
+  the amount of work needed to prepare or persist a pass is never itself an
+  admission rejection reason, and an accepted commit cannot defer newly due
+  audible output.
+- Make active overdub stop an always-entered continuous service: after the stop
+  command the runtime enters `OVERDUB_STOPPING`, performs reserved staging and
+  companion resolution in MIDI-separated resumable grains, and remains in that
+  state until an atomic command-epoch-validated commit is ready. A later
+  transport Stop selects STOPPED and invalidates any pending return to PLAYING.
 - Split each owner into explicit, bounded grains that may yield after MIDI has
   been serviced and resume in a later eligible main-loop turn.
 - Keep the display refreshing during PLAYING: distinguish permission to load
@@ -83,14 +85,13 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
 - Existing loop playback, slot switching, display content, save semantics, and
   MIDI protocol behavior remain compatible for every accepted capture-pass
   commit. A continuation may defer a derived representation or display frame,
-  but it may not defer newly due audible MIDI content. An active overdub input
-  whose fixed audible-admission preflight cannot meet capacity or readiness is
-  rejected before capture and reported as an admission failure. Overdub stop is
-  deliberately deferred for its declared bounded admission duration; the UI and
-  telemetry report `OVERDUB_STOPPING` until the canonical/audible commit occurs.
+  but it may not defer newly due audible MIDI content. Work-horizon estimates
+  cannot reject an accepted capture or stop request. Overdub stop is a
+  continuous resumable service; the UI and telemetry report
+  `OVERDUB_STOPPING` until the canonical/audible commit occurs.
   `OVERDUB_STOPPING` remains active transport for MIDI safety, persistence
-  restrictions, telemetry scoring, and overflow rejection.
-- This follows the runtime architecture's bounded/resumable rule without
+  restrictions, and telemetry scoring.
+- This follows the runtime architecture's resumable-service rule without
   expanding the load-only `DeferredJobScheduler`. It is within the active
   persistence/overlay/display delivery surface described in
   [`docs/DELIVERABLE_TRACKING.md`](../../../docs/DELIVERABLE_TRACKING.md).
@@ -104,12 +105,12 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
 - **TBD:** the MIDI-boundary eligibility budget and safety margin. The proposal
   will reuse the existing per-owner reserve vocabulary where applicable, but
   will not treat the observed 2.596 ms service period as a policy bound.
-- **TBD:** the maximum supported active-overdub source-admission size. It must
-  fit the prewarmed bridge/staging capacity before capture commit; overflow is a
-  reported preflight rejection, not a delayed audible revision.
-- **TBD:** the maximum `OVERDUB_STOPPING` duration and stop-finalization grain
-  count. It must be guaranteed by reservations for each accepted capture event,
-  not inferred from observed service cadence.
+- The active-overdub source-admission service uses fixed prewarmed storage and
+  resumable grains. Pass length and note count may increase service duration but
+  do not create a work-horizon rejection.
+- The `OVERDUB_STOPPING` grain quantum is content-independent and leaves MIDI
+  service room at every boundary. Total stop-service duration is measured by
+  telemetry; no work-horizon ceiling may reject a stop request.
 - Display-frame freshness may remain coalesced while its successor is pending;
   audible MIDI freshness is not an open decision and must match the existing
   playback semantics at every due event boundary.

@@ -976,7 +976,7 @@ void test_stop_admission_contract_counts_fixed_order_work() {
   // one-grain rewrite and two chunk-trim turns, so canonical + rewrite +
   // audible needs eleven fixed grains.
   TEST_ASSERT_EQUAL_UINT32(11, contract.requiredOrderGrains(3));
-  TEST_ASSERT_FALSE(contract.canFinalize(1, 3));
+  TEST_ASSERT_TRUE(contract.canFinalize(1, 3));
 
   const StopAdmissionContract adequate{4, 11, 1, 4};
   TEST_ASSERT_TRUE(adequate.canFinalize(1, 3));
@@ -985,7 +985,7 @@ void test_stop_admission_contract_counts_fixed_order_work() {
 
 void test_stop_contract_rejects_saturated_counts_and_invalid_quantum() {
   const StopAdmissionContract zeroQuantum{1, 1, 1, 0};
-  TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, zeroQuantum.requiredOrderGrains(1));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, zeroQuantum.requiredOrderGrains(1));
   TEST_ASSERT_FALSE(zeroQuantum.canFinalize(0, 1));
   const StopAdmissionContract overflowing{1, UINT16_MAX, 1, 1};
   TEST_ASSERT_FALSE(overflowing.isDeclared());
@@ -995,7 +995,7 @@ void test_stop_contract_rejects_saturated_counts_and_invalid_quantum() {
   TEST_ASSERT_TRUE(maximum.isDeclared());
   TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, maximum.maximumTotalGrains());
   for (size_t count : {size_t(RuntimePlaybackViewConfig::kCaptureStagingEvents + 1), SIZE_MAX}) {
-    TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, maximum.requiredOrderGrains(count));
+    TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, maximum.requiredOrderGrains(count));
     TEST_ASSERT_FALSE(maximum.canFinalize(0, count));
     PendingStopAdmission stop;
     TEST_ASSERT_FALSE(stop.begin(1, 100, 1, 0, count, maximum));
@@ -1053,22 +1053,25 @@ void test_stop_reserves_ranked_preparation_separately_and_preserves_stop_precede
   TEST_ASSERT_EQUAL_UINT16(0, stop.remainingRankedPreparationGrains); // Legacy callers reserve no ranked work.
 }
 
-void test_stop_denies_ranked_allowance_and_combined_counter_overflow_before_mutation() {
+void test_stop_accepts_long_ranked_service_without_horizon_rejection() {
   const StopAdmissionContract contract{PendingStopAdmission::kMaximumClosureGrains, 3072, 1, 32};
   PendingStopAdmission stop;
-  for (uint64_t grains : {uint64_t(6241), uint64_t(7648), uint64_t(UINT16_MAX) + 1, UINT64_MAX}) {
-    TEST_ASSERT_FALSE(stop.begin(4, 100, 7, 0, 1, contract, grains));
-    TEST_ASSERT_FALSE(stop.pending);
-    TEST_ASSERT_EQUAL_UINT32(0, stop.frozenGeneration);
-    TEST_ASSERT_EQUAL_UINT16(0, stop.remainingRankedPreparationGrains);
+  for (uint64_t grains : {uint64_t(6241), uint64_t(7648), uint64_t(UINT16_MAX) + 1}) {
+    TEST_ASSERT_TRUE(stop.begin(4, 100, 7, 0, 1, contract, grains));
+    TEST_ASSERT_TRUE(stop.pending);
+    TEST_ASSERT_EQUAL_UINT64(grains, stop.remainingRankedPreparationGrains);
+    stop.reset();
   }
+  TEST_ASSERT_FALSE(stop.begin(4, 100, 7, 0, 1, contract, UINT64_MAX));
+  TEST_ASSERT_FALSE(stop.pending);
   const StopAdmissionContract full{1, UINT16_MAX - 2, 1, 32};
-  TEST_ASSERT_FALSE(stop.begin(4, 100, 7, 0, 1, full, 1));
+  TEST_ASSERT_TRUE(stop.begin(4, 100, 7, 0, 1, full, 1));
+  stop.reset();
   const StopAdmissionContract exact{1, UINT16_MAX - 2 - 6240, 1, 32};
   TEST_ASSERT_TRUE(stop.begin(4, 100, 7, 0, 1, exact, 6240));
   TEST_ASSERT_FALSE(stop.begin(5, 200, 8, 0, 1, contract, 0));
   TEST_ASSERT_EQUAL_UINT32(4, stop.frozenGeneration);
-  TEST_ASSERT_EQUAL_UINT16(6240, stop.remainingRankedPreparationGrains);
+  TEST_ASSERT_EQUAL_UINT64(6240, stop.remainingRankedPreparationGrains);
 }
 
 void test_prepared_ranked_tail_bound_preserves_other_children_and_invalid_inputs() {
@@ -2205,17 +2208,17 @@ void test_prepared_undo_entry_denials_leave_private_outputs_untouched() {
 
 void test_stop_recycle_credits_check_total_and_cannot_run_before_commit() {
   const StopAdmissionContract contract{1,3072,1,32};
-  const uint64_t maximum = UINT16_MAX - uint64_t(contract.maximumTotalGrains()) - 6240 - 7;
-  for (uint64_t invalid : {maximum + 1, UINT64_MAX}) {
+  for (uint64_t invalid : {UINT64_MAX}) {
     PendingStopAdmission denied;
     TEST_ASSERT_FALSE(denied.begin(4, 100, 0, 0, 2, contract, 6240, 7, invalid));
     TEST_ASSERT_FALSE(denied.pending);
     TEST_ASSERT_EQUAL_UINT16(0, denied.historyRecycleQuantum);
     TEST_ASSERT_EQUAL_UINT16(0, denied.remainingHistoryRecycleGrains);
   }
+  const uint64_t longService = uint64_t(UINT16_MAX) + 1234;
   PendingStopAdmission stop;
-  TEST_ASSERT_TRUE(stop.begin(4, 100, 0, 1, 2, contract, 6240, 7, maximum));
-  TEST_ASSERT_EQUAL_UINT16(maximum, stop.remainingHistoryRecycleGrains);
+  TEST_ASSERT_TRUE(stop.begin(4, 100, 0, 1, 2, contract, 2, 3, longService));
+  TEST_ASSERT_EQUAL_UINT64(longService, stop.remainingHistoryRecycleGrains);
   TEST_ASSERT_EQUAL_UINT16(32, stop.historyRecycleQuantum);
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   TEST_ASSERT_FALSE(stop.consumeHistoryRecycleGrain()); // Phase alone is insufficient.
@@ -2229,7 +2232,7 @@ void test_stop_recycle_credits_check_total_and_cannot_run_before_commit() {
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   TEST_ASSERT_TRUE(stop.consumeHistoryRecycleGrain());
   stop.requestTransportStop();
-  TEST_ASSERT_EQUAL_UINT16(maximum - 1, stop.remainingHistoryRecycleGrains);
+  TEST_ASSERT_EQUAL_UINT64(longService - 1, stop.remainingHistoryRecycleGrains);
   TEST_ASSERT_TRUE(stop.consumeHistoryRecycleGrain());
   stop.remainingHistoryRecycleGrains = 0;
   TEST_ASSERT_FALSE(stop.consumeHistoryRecycleGrain());
@@ -2243,24 +2246,24 @@ void test_stop_recycle_credits_check_total_and_cannot_run_before_commit() {
 
 void test_stop_canonical_credits_are_separate_checked_and_preserved_on_transport_stop() {
   const StopAdmissionContract contract{1,3072,1,32};
-  const uint64_t maximum = UINT16_MAX - uint64_t(contract.maximumTotalGrains()) - 6240;
-  for (uint64_t invalid : {maximum + 1, UINT64_MAX}) {
+  for (uint64_t invalid : {UINT64_MAX}) {
     PendingStopAdmission denied;
     TEST_ASSERT_FALSE(denied.begin(1, 100, 0, 0, 1, contract, 6240, invalid));
     TEST_ASSERT_FALSE(denied.pending);
     TEST_ASSERT_EQUAL_UINT16(0, denied.canonicalPreparationQuantum);
     TEST_ASSERT_EQUAL_UINT16(0, denied.remainingCanonicalPreparationGrains);
   }
+  const uint64_t longService = uint64_t(UINT16_MAX) + 4321;
   PendingStopAdmission stop;
-  TEST_ASSERT_TRUE(stop.begin(1, 100, 0, 1, 2, contract, 6240, maximum));
-  TEST_ASSERT_EQUAL_UINT16(maximum, stop.remainingCanonicalPreparationGrains);
+  TEST_ASSERT_TRUE(stop.begin(1, 100, 0, 1, 2, contract, 2, longService));
+  TEST_ASSERT_EQUAL_UINT64(longService, stop.remainingCanonicalPreparationGrains);
   TEST_ASSERT_EQUAL_UINT16(32, stop.canonicalPreparationQuantum);
   TEST_ASSERT_FALSE(stop.consumeCanonicalPreparationGrain());
   TEST_ASSERT_TRUE(stop.consumeClosureGrain());
   TEST_ASSERT_TRUE(stop.consumeCanonicalPreparationGrain());
-  TEST_ASSERT_EQUAL_UINT16(6240, stop.remainingRankedPreparationGrains);
+  TEST_ASSERT_EQUAL_UINT64(2, stop.remainingRankedPreparationGrains);
   stop.requestTransportStop();
-  TEST_ASSERT_EQUAL_UINT16(maximum - 1, stop.remainingCanonicalPreparationGrains);
+  TEST_ASSERT_EQUAL_UINT64(longService - 1, stop.remainingCanonicalPreparationGrains);
   TEST_ASSERT_FALSE(stop.canCommit(stop.transportCommandEpoch, PendingStopDestination::Playing));
   while (stop.remainingOrderGrains) TEST_ASSERT_TRUE(stop.consumeOrderGrain());
   while (stop.remainingRankedPreparationGrains) TEST_ASSERT_TRUE(stop.consumeRankedPreparationGrain());
@@ -4674,7 +4677,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stop_admission_contract_counts_fixed_order_work);
   RUN_TEST(test_stop_contract_rejects_saturated_counts_and_invalid_quantum);
   RUN_TEST(test_stop_reserves_ranked_preparation_separately_and_preserves_stop_precedence);
-  RUN_TEST(test_stop_denies_ranked_allowance_and_combined_counter_overflow_before_mutation);
+  RUN_TEST(test_stop_accepts_long_ranked_service_without_horizon_rejection);
   RUN_TEST(test_prepared_ranked_tail_bound_preserves_other_children_and_invalid_inputs);
   RUN_TEST(test_ranked_tail_bound_uses_declared_pass_and_base_horizons);
   RUN_TEST(test_maximum_frozen_capture_has_a_declared_stop_budget);
