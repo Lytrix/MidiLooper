@@ -735,3 +735,9 @@ overflow was observed. This run does not replace the earlier focused
 interruption PASS and closes no additional task or HITL gate; the companion
 history admission/setup condition remains to be resolved before another
 prepared-path interruption run.
+
+An admission-bound experiment immediately after that rerun removed the
+history term from the prepared-tail estimate. The device entered the deferred
+stop but then stopped emitting serial output during preparation, confirming the
+estimate was under-reserved. The change was reverted and the safe firmware was
+rebuilt and uploaded; this is diagnostic evidence only and closes no gate.

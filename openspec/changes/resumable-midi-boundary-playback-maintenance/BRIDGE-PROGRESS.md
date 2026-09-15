@@ -2314,3 +2314,13 @@ overflow and no device acceptance gate closed. The 73,039 estimate is driven by
 the current companion-history horizon and exceeds the provisional 6,240-grain
 allowance; resolve that admission/setup condition before the next interruption
 run rather than counting this fallback as task-2.3 evidence.
+
+Admission-bound experiment (2026-09-15 14:23): omitting the history term from
+the prepared-tail estimate did admit the standard fixture into the deferred
+stop, but the device stopped emitting serial output while consuming the
+under-reserved preparation. The relaxation was reverted and the safe firmware
+was rebuilt and uploaded. This confirms that the companion-history work is
+real runtime cost; it cannot be removed from the receipt merely because the
+canonical prefix is already prepared. The focused native suites remain
+**256/256** and the capture image retains **6,496** bytes of RAM1 local
+headroom. No acceptance gate or task checkbox closes.
