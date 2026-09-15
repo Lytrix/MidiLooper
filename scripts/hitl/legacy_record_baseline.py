@@ -3087,7 +3087,7 @@ def _runtime_stats_pass_baseline(
             if rec_clocks <= 0 or rec_notes < expected_record_notes_min or rec_clocks != expected_record_clocks:
                 return False
         if (not args.record_only) and args.overdub_bars and args.bar_sync_from_midi_clock:
-            expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
+            expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, args.overdub_step_clocks)
             expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
             if od_clocks <= 0 or od_notes < expected_overdub_notes_min or od_clocks != expected_overdub_clocks:
                 return False
@@ -3339,6 +3339,7 @@ def _build_serial_verification(
             midi_channel_1based=args.midi_channel,
             note_on_count=int(overdub["note_on_count"]),
             memory_note_count=memory_note_count,
+            grid_step_clocks=args.overdub_step_clocks,
         )
     if (not record_only) and loop_length_ticks > 0:
         overdub_wrap_storage = _verify_overdub_wrap_storage(
@@ -4207,6 +4208,18 @@ def run() -> int:
     parser.add_argument("--overdub-low-note", type=int, default=24, help="Overdub phase lowest note (default C1)")
     parser.add_argument("--overdub-high-note", type=int, default=39, help="Overdub phase highest note (default D#2)")
     parser.add_argument(
+        "--overdub-step-clocks",
+        type=int,
+        default=OVERDUB_GRID_STEP_CLOCKS,
+        help="Overdub grid step in MIDI clocks (default 12)",
+    )
+    parser.add_argument(
+        "--overdub-gate-clocks",
+        type=int,
+        default=OVERDUB_GRID_STEP_CLOCKS,
+        help="Overdub note gate in MIDI clocks (default 12)",
+    )
+    parser.add_argument(
         "--second-overdub-bars",
         type=int,
         choices=[0, 1, 2, 4, 5, 8, 16, 24, 32, 48, 64, 128],
@@ -4910,8 +4923,8 @@ def run() -> int:
                         overdub_bars=args.overdub_bars or 0,
                         low_note=args.overdub_low_note,
                         high_note=args.overdub_high_note,
-                        step_clocks=OVERDUB_GRID_STEP_CLOCKS,
-                        gate_clocks=OVERDUB_GRID_STEP_CLOCKS,
+                        step_clocks=args.overdub_step_clocks,
+                        gate_clocks=args.overdub_gate_clocks,
                         phase_start_delay_bars=args.overdub_start_delay_bars,
                         phase_start_delay_beats=args.overdub_start_delay_beats,
                         pass_label="overdub",
@@ -5125,7 +5138,7 @@ def run() -> int:
                 loop_bars=args.record_bars or 4
             )
         else:
-            expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, OVERDUB_GRID_STEP_CLOCKS)
+            expected_overdub_notes_min = _expected_overdub_notes_min(args.overdub_bars, args.overdub_step_clocks)
         expected_overdub_clocks = args.overdub_bars * MIDI_CLOCKS_PER_BAR
     if args.second_overdub_bars and args.bar_sync_from_midi_clock:
         if getattr(args, "occupy_paint_pattern", False):

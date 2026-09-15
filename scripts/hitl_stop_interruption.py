@@ -27,6 +27,10 @@ def run_fixture():
                         help='Lowest generated overdub note; choose a lane disjoint from the seed to avoid companion edits.')
     parser.add_argument('--overdub-high-note', type=int, default=39,
                         help='Highest generated overdub note.')
+    parser.add_argument('--overdub-step-clocks', type=int, default=12,
+                        help='Generated overdub grid spacing in MIDI clocks.')
+    parser.add_argument('--overdub-gate-clocks', type=int, default=12,
+                        help='Generated overdub gate length in MIDI clocks.')
     parser.add_argument('--final-wait-ms', type=int, default=8000)
     parser.add_argument('--normal-stop', action='store_true',
                         help='Require a fresh OVERDUB_STOPPING -> PLAYING stop without transport Stop.')
@@ -82,7 +86,7 @@ def run_fixture():
         baseline._run_overdub_pass = run_pass
     thread = threading.Thread(target=monitor)
     thread.start()
-    args = ['run', '--preset', 'base', '--midi-out', 'Teensy', '--midi-in', 'Teensy', '--track-number', str(config.track_number), '--loop-slot', str(config.loop_slot), '--midi-channel', str(config.track_number), '--record-bars', str(config.record_bars), '--overdub-bars', str(config.overdub_bars), '--overdub-low-note', str(config.overdub_low_note), '--overdub-high-note', str(config.overdub_high_note), '--tempo-bpm', str(config.tempo_bpm), '--no-fixed-grid-notes', '--start-transport', '--overdub-start-delay-bars', '0', '--overdub-start-delay-beats', '1', '--phase-wait-ms', '500', '--final-wait-ms', str(config.final_wait_ms), '--press-ms', '120', '--no-undo-redo-after-overdub-stop', '--second-overdub-bars', '0', '--no-stop-after-overdub', '--deferred-save-wait-ms', '15000', '--out-dir', str(out), '--stimulus-temp-parent', 'STIM-BASE-2-ONE-OD-01', '--stimulus-temp-suffix', 'STOP-NORMAL' if config.normal_stop else 'STOP-INTERRUPT', '--stimulus-temp-reason', 'Fresh normal OVERDUB_STOPPING to PLAYING transition with device-clock timeline' if config.normal_stop else 'Held note 83 and timed MIDI Stop after overdub-stop button release; verify actual stopping overlap from fresh serial evidence']
+    args = ['run', '--preset', 'base', '--midi-out', 'Teensy', '--midi-in', 'Teensy', '--track-number', str(config.track_number), '--loop-slot', str(config.loop_slot), '--midi-channel', str(config.track_number), '--record-bars', str(config.record_bars), '--overdub-bars', str(config.overdub_bars), '--overdub-low-note', str(config.overdub_low_note), '--overdub-high-note', str(config.overdub_high_note), '--overdub-step-clocks', str(config.overdub_step_clocks), '--overdub-gate-clocks', str(config.overdub_gate_clocks), '--tempo-bpm', str(config.tempo_bpm), '--no-fixed-grid-notes', '--start-transport', '--overdub-start-delay-bars', '0', '--overdub-start-delay-beats', '1', '--phase-wait-ms', '500', '--final-wait-ms', str(config.final_wait_ms), '--press-ms', '120', '--no-undo-redo-after-overdub-stop', '--second-overdub-bars', '0', '--no-stop-after-overdub', '--deferred-save-wait-ms', '15000', '--out-dir', str(out), '--stimulus-temp-parent', 'STIM-BASE-2-ONE-OD-01', '--stimulus-temp-suffix', 'STOP-NORMAL' if config.normal_stop else 'STOP-INTERRUPT', '--stimulus-temp-reason', 'Fresh normal OVERDUB_STOPPING to PLAYING transition with device-clock timeline' if config.normal_stop else 'Held note 83 and timed MIDI Stop after overdub-stop button release; verify actual stopping overlap from fresh serial evidence']
     (out / 'command.json').write_text(json.dumps(args, indent=2))
     try:
         code = main(args)
