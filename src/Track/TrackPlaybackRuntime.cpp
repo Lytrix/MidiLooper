@@ -41,8 +41,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM uint64_t StopAdmissionContract::requiredRankedTa
   const auto bridge = RuntimePlaybackBridgeBuild::requiredRankedGrainsUpperBound(baseEventCount, capacity, quantum);
   if (tail == UINT64_MAX || passes == UINT64_MAX || mapping == UINT64_MAX || bridge == UINT64_MAX) return UINT64_MAX;
   const uint64_t rows = pendingChangeCount ? 1 + (pendingChangeCount - 1) / quantum : 1;
-  // All horizons are fixed-capacity validated by the children. The sum fits
-  // uint64; never narrow it into the existing uint16 stop credits.
+  // All horizons are fixed-capacity validated by the children. The sum is a
+  // diagnostic/service estimate; callers keep it wide and resumable rather
+  // than narrowing it into a stop-admission ceiling.
   return tail + rows + passes + mapping + bridge + 8;
 }
 
@@ -77,8 +78,8 @@ bool StopAdmissionContract::isDeclared() const {
          uint32_t(maximumClosureGrains) + maximumOrderGrains + maximumAtomicTransferGrains <= UINT16_MAX;
 }
 
-uint16_t StopAdmissionContract::requiredOrderGrains(size_t frozenEventCount) const {
-  if (!orderEntryQuantum || frozenEventCount > RuntimePlaybackViewConfig::kCaptureStagingEvents) return UINT16_MAX;
+uint64_t StopAdmissionContract::requiredOrderGrains(size_t frozenEventCount) const {
+  if (!orderEntryQuantum || frozenEventCount > RuntimePlaybackViewConfig::kCaptureStagingEvents) return UINT64_MAX;
   const size_t orderGrains = RuntimePlaybackOrderBuilder::requiredGrains(
       frozenEventCount, orderEntryQuantum);
   const size_t rewriteGrains = frozenEventCount == 0
@@ -94,9 +95,7 @@ uint16_t StopAdmissionContract::requiredOrderGrains(size_t frozenEventCount) con
                                  (std::numeric_limits<size_t>::max() - rewriteGrains) / 2
                              ? std::numeric_limits<size_t>::max()
                              : orderGrains * 2 + rewriteGrains + trimGrains;
-  return grains > std::numeric_limits<uint16_t>::max()
-             ? std::numeric_limits<uint16_t>::max()
-             : static_cast<uint16_t>(grains);
+  return static_cast<uint64_t>(grains);
 }
 
 bool StopAdmissionContract::canFinalize(size_t openReservationCount,
@@ -107,7 +106,7 @@ bool StopAdmissionContract::canFinalize(size_t openReservationCount,
     return false;
   }
   const auto required = requiredOrderGrains(frozenEventCount);
-  return required != UINT16_MAX && required <= maximumOrderGrains;
+  return required != UINT64_MAX;
 }
 
 uint16_t StopAdmissionContract::maximumTotalGrains() const {
@@ -146,12 +145,9 @@ bool PendingStopAdmission::begin(uint32_t generation, uint32_t tick, uint32_t co
                                  const StopAdmissionContract& contract, uint64_t rankedPreparationGrains,
                                  uint64_t canonicalPreparationGrains, uint64_t historyRecycleGrains) {
   if (pending || openReservationCount > kMaximumClosureGrains ||
-      rankedPreparationGrains > StopAdmissionContract::kProvisionalRankedPreparationGrains ||
-      canonicalPreparationGrains > UINT16_MAX ||
-      historyRecycleGrains > UINT16_MAX ||
       !contract.canFinalize(openReservationCount, frozenEventCount) ||
-      uint64_t(contract.maximumTotalGrains()) + rankedPreparationGrains + canonicalPreparationGrains +
-          historyRecycleGrains > UINT16_MAX) {
+      rankedPreparationGrains == UINT64_MAX || canonicalPreparationGrains == UINT64_MAX ||
+      historyRecycleGrains == UINT64_MAX) {
     return false;
   }
   frozenGeneration = generation;
@@ -159,11 +155,11 @@ bool PendingStopAdmission::begin(uint32_t generation, uint32_t tick, uint32_t co
   transportCommandEpoch = commandEpoch;
   remainingClosureGrains = static_cast<uint16_t>(openReservationCount);
   remainingOrderGrains = contract.requiredOrderGrains(frozenEventCount);
-  remainingRankedPreparationGrains = static_cast<uint16_t>(rankedPreparationGrains);
+  remainingRankedPreparationGrains = rankedPreparationGrains;
   rankedPreparationQuantum = rankedPreparationGrains ? contract.orderEntryQuantum : 0;
-  remainingCanonicalPreparationGrains = static_cast<uint16_t>(canonicalPreparationGrains);
+  remainingCanonicalPreparationGrains = canonicalPreparationGrains;
   canonicalPreparationQuantum = canonicalPreparationGrains ? contract.orderEntryQuantum : 0;
-  remainingHistoryRecycleGrains = static_cast<uint16_t>(historyRecycleGrains);
+  remainingHistoryRecycleGrains = historyRecycleGrains;
   historyRecycleQuantum = historyRecycleGrains ? contract.orderEntryQuantum : 0;
   historyRecycleOwner = nullptr;
   historyRecycleGeneration = 0;

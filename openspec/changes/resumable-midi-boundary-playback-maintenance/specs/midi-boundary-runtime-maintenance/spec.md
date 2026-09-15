@@ -190,8 +190,8 @@ at the handoff.
 - **THEN** `PlaybackSourceAdmission` has already prepared the complete bridge
   or successor coverage for that instance before canonical commit
 - **AND** `Loop` commits canonical content and its audible admission atomically
-- **AND** if that precondition fails, the event was rejected before capture and
-  telemetry identifies the resource-admission failure
+- **AND** if preparation is incomplete, the canonical service remains pending
+  and resumable; work length alone does not reject the accepted capture
 
 #### Scenario: Pre-seal candidate is incomplete at an overdub wrap
 
@@ -233,14 +233,18 @@ at the handoff.
 - **AND** it commits only after the frozen candidate and audible admission are
   ready and transitions to the command-epoch-validated destination, PLAYING by
   default or STOPPED after transport Stop
+- **AND** the stop request is always admitted when fixed staging and generation
+  ownership are valid, regardless of candidate length or note count
 
-#### Scenario: Stop finalization exceeds its declared contract
+#### Scenario: Stop finalization requires additional service turns
 
-- **WHEN** a frozen stop generation cannot complete within its declared
-  `StopAdmissionContract`
-- **THEN** the system reports an invariant breach and takes the deterministic
-  all-notes-off/stop path
-- **AND** it preserves the capture generation for STOPPED recovery
+- **WHEN** a frozen stop generation needs more turns than the provisional
+  preparation allowance
+- **THEN** the system keeps `OVERDUB_STOPPING` active and resumes the same
+  generation on later MIDI-separated turns
+- **AND** it does not reject the stop or take the fault path solely because of
+  candidate length or note count
+- **AND** it preserves the capture generation until PLAYING or STOPPED recovery
 
 #### Scenario: Transport Stop arrives during deferred stop admission
 
@@ -269,9 +273,17 @@ An active canonical commit SHALL transfer that frozen candidate and ready
 admission atomically; it SHALL NOT run those semantic operations, detach mutable
 capture chunks, or build an audible bridge. A pending admission is allowed only
 when all affected current-cycle instances are already covered; it SHALL NOT
-delay, omit, or roll back an accepted canonical commit. A stop request MAY
-enter bounded `OVERDUB_STOPPING` until the frozen candidate is ready, and SHALL
-not take the fault path during normal declared-contract operation.
+delay, omit, or roll back an accepted canonical commit. A stop request SHALL
+always enter `OVERDUB_STOPPING` when fixed staging and generation ownership are
+valid, and may remain there for any number of resumable turns until the frozen
+candidate is ready. Candidate length and note count SHALL NOT by themselves
+trigger a rejection or fault stop.
+
+Pass persistence SHALL remain metadata publication attached to the same
+record/play/overdub/stop service. Persisting a pass, resolving companions, and
+preparing an audible successor may yield independently, but they SHALL resume
+from retained generation-matched cursors without introducing a separate finite
+admission path.
 
 #### Scenario: Later-effective pending admission is superseded
 

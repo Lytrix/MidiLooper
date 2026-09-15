@@ -104,7 +104,8 @@ derived playback view from `Loop` to `LoopPlaybackRuntime`.
   introduce generic interval reservation/fairness policy.
 - Change MIDI input dispatch order, persistence admission, slot switching, or
   the display-DMA transport lifecycle. `Loop` retains canonical ownership; the
-  declared bounded deferred-stop admission may defer its capture-pass commit.
+  continuous deferred-stop service may defer its capture-pass commit for as many
+  resumable turns as preparation requires.
 - Use a wall-clock bailout around a still-indivisible sort, prewarm, or display
   resolve as evidence of a bound.
 
@@ -285,24 +286,25 @@ Off index 3 at tick 96. See `COMPANION-PAIRING-REASSESSMENT.md` for the approved
 counterexample and rationale. Task 2.3 and all listed validation/HITL gates
 remain open until their complete requirements pass.
 
-### Stop requests latch a bounded deferred-stop admission
+### Stop requests latch a continuous deferred-stop service
 
 An active overdub stop is not required to synchronously finish an arbitrary
-fresh staging tail. On the stop command, `Loop` latches `stopTick` and enters
-`OVERDUB_STOPPING`: it stops accepting new capture NoteOns/non-note events,
-uses already-reserved note closures to synthesize or preserve every terminal
-Off at that tick, and holds the last committed audible view while MIDI continues
-to be serviced. It does not call `sealCapture`, detach chunks, restart capture,
-or change to PLAYING yet.
+fresh staging tail. On every overdub stop command, `Loop` latches `stopTick` and
+enters `OVERDUB_STOPPING`: it stops accepting new capture NoteOns/non-note
+events, uses already-reserved note closures to synthesize or preserve every
+terminal Off at that tick, and holds the last committed audible view while MIDI
+continues to be serviced. It does not call `sealCapture`, detach chunks, restart
+capture, or change to PLAYING yet. The state is always entered after
+`OVERDUBBING`; preparation length and note count determine how many resumable
+turns are needed, never whether the stop is admitted.
 
 At each existing post-MIDI boundary, `CaptureAdmissionStaging` executes one
 declared stop-finalization grain against the frozen stop generation. The
-`StopAdmissionContract`, reserved by every accepted capture event, declares the
-maximum remaining tail/finalization grains and the maximum stop-to-commit
-admissions. Once the candidate and bridge/successor are ready, one bounded
-atomic transfer commits the pass and transitions to its still-valid requested
-destination. The display and telemetry expose this pending-stop state and
-measured latency.
+`StopAdmissionContract` declares the per-turn quantum and fixed closure/storage
+obligations; it does not cap the total number of service turns. Once the
+candidate and bridge/successor are ready, one bounded atomic transfer commits
+the pass and transitions to its still-valid requested destination. The display
+and telemetry expose this pending-stop state and measured latency.
 
 `TransportStop` has higher priority than pending stop completion. Each
 `PendingStopAdmission` stores a `transportCommandEpoch` and requested
@@ -315,11 +317,13 @@ generation may finish canonical recovery only under STOPPED policy; it may not
 publish audible playback, restart capture, or resume transport. An explicit
 later transport Start is required to play it.
 
-This is a deliberate compatibility change: overdub stop may be deferred for a
-declared bounded number of MIDI-separated turns, but an accepted event is never
-lost, delayed after its commit, or converted into a normal transport fault. The
-all-notes-off/stop fault path is reserved for an invariant breach such as a
-generation mismatch, corrupted reservation, or violated declared contract.
+This is a deliberate compatibility change: overdub stop is deferred for as many
+MIDI-separated turns as the resumable service requires, but an accepted event is
+never lost, delayed after its commit, or converted into a normal transport
+fault. The all-notes-off/stop fault path is reserved for an invariant breach
+such as a generation mismatch or corrupted reservation. Pass persistence is
+metadata publication attached to this continuous record/play/overdub/stop
+service; it does not create a separate finite admission path.
 
 ### MIDI-boundary capture and stop flow
 
@@ -657,15 +661,15 @@ or lost samples from closing the 4b.3 gate.
 ## Provisional ranked-preparation allowance (DEC-062, 2026-09-14)
 
 The user approves 6240 ranked-preparation grains for continued implementation
-and integration testing. This is a separate allowance from the existing
-order/rewrite reservation, not a total-stop or realtime-duration claim.
-The prepared-order aggregate at C=2048,P=2,B=2048,H=R=0,Q=32 fits it; larger
-horizons must be checked independently. Keep source/capacity/epoch validation,
-bounded grains, accepted-event preservation and MIDI-separated service.
-Determine realtime reservations and latency limits using overflow-free HITL
-when the complete path is runnable. Do not block provisional integration on
-comparison with the old 3072 allowance or unavailable device timing evidence.
-Final realtime qualification and the existing validation/HITL gates remain open.
+and integration testing. This is a measurement and scheduling allowance, not a
+runtime admission ceiling or total-stop duration claim. A pass whose preparation
+needs more than 6240 turns remains admitted and continues through the same
+resumable service; only a real fixed-storage or generation-safety failure may
+deny it. Keep source/capacity/epoch validation, bounded per-turn grains,
+accepted-event preservation and MIDI-separated service. Determine realtime
+reservations and latency limits using overflow-free HITL when the complete path
+is runnable. Final realtime qualification and the existing validation/HITL gates
+remain open.
 
 ### Accepted protected undo transaction (DEC-063)
 

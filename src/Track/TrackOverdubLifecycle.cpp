@@ -93,11 +93,9 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   const uint64_t recycleCredits = recycleRequired == UINT64_MAX ? UINT64_MAX :
       recycleRequired + 1;
   if (rankedCredits == UINT64_MAX || canonicalCredits == UINT64_MAX ||
-      recycleCredits == UINT64_MAX ||
-      rankedCredits > StopAdmissionContract::kProvisionalRankedPreparationGrains ||
-      canonicalCredits > UINT16_MAX || recycleCredits > UINT16_MAX) {
+      recycleCredits == UINT64_MAX) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
-                       rankedCredits, canonicalCredits, "preparation_horizon_denied");
+                       rankedCredits, canonicalCredits, "preparation_service_unavailable");
     return false;
   }
   if (!pendingStopAdmission_.begin(generation, currentTick, 0, openReservations,

@@ -42,24 +42,26 @@ enum class PendingStopPhase : uint8_t {
   DeferredCleanup,
 };
 
-/// Declares every bounded admission between a stop command and the atomic
-/// transfer. The event quantum belongs to the fixed merge-order builder; a
-/// candidate larger than the declared capacity is denied before state change.
+/// Declares the per-turn quantum and fixed closure/storage obligations between
+/// a stop command and the atomic transfer. Total service turns are resumable;
+/// candidate work length is not an admission ceiling.
 struct StopAdmissionContract {
   /// DEC-062: provisional ranked-preparation allowance for integration/HITL.
-  /// Separate from legacy order/rewrite credits; not a realtime latency claim.
+  /// Separate from legacy order/rewrite credits; it is not a runtime stop
+  /// ceiling or a realtime latency claim.
   static constexpr uint16_t kProvisionalRankedPreparationGrains = 6240;
   /// Additional ranked preparation only; excludes reserved closures, canonical
-  /// rewrite/transfer, cleanup and denied turns. Not a production stop permit.
-  /// Uses declared C/H/R horizons and a 64-bit result; invalid inputs return MAX.
+  /// rewrite/transfer, cleanup and denied turns. It is a diagnostic allowance,
+  /// not a production stop permit. Uses declared C/H/R horizons and a 64-bit
+  /// result; invalid inputs return MAX.
   static uint64_t requiredRankedPreparationGrains(size_t capacity, size_t historyCount,
                                                  size_t pendingChangeCount, size_t quantum);
   /// Same scope after a completed, current sealed prefix is reused.
   static uint64_t requiredRankedTailGrains(size_t capacity, size_t historyCount,
                                           size_t pendingChangeCount, size_t quantum);
-  /// Explicit upper bound on effective passes (including capture), and actual
-  /// published-base events. Capacity must bound every intermediate candidate,
-  /// not just final output. Still excludes canonical transfer/service latency.
+  /// Measurement estimate for effective passes (including capture), and actual
+  /// published-base events. Capacity still bounds every intermediate candidate,
+  /// but the returned service count does not reject a valid stop request.
   static uint64_t requiredRankedTailGrainsForPasses(size_t capacity, size_t maximumPassCount,
       size_t baseEventCount, size_t historyCount, size_t pendingChangeCount, size_t quantum);
   /// Same tail with a completed, current canonical capture order available
@@ -74,11 +76,9 @@ struct StopAdmissionContract {
 
   bool isDeclared() const;
   bool canFinalize(size_t openReservationCount, size_t frozenEventCount) const;
-  /// The frozen candidate needs three independently resumable operations:
-  /// raw canonical ordering, fixed-grain canonical-store rewrite, and the
-  /// audible phase ordering used by the unpublished admission.  Admission
-  /// counts all three before it permits OVERDUB_STOPPING.
-  uint16_t requiredOrderGrains(size_t frozenEventCount) const;
+  /// The frozen candidate needs three independently resumable operations. The
+  /// result is a service count, not a stop-admission limit.
+  uint64_t requiredOrderGrains(size_t frozenEventCount) const;
   uint16_t maximumTotalGrains() const;
 };
 
@@ -93,12 +93,12 @@ struct PendingStopAdmission {
   // never formatted from the handler itself.
   uint32_t transportCommandEpoch = 0;
   uint16_t remainingClosureGrains = 0;
-  uint16_t remainingOrderGrains = 0;
-  uint16_t remainingRankedPreparationGrains = 0;
+  uint64_t remainingOrderGrains = 0;
+  uint64_t remainingRankedPreparationGrains = 0;
   uint16_t rankedPreparationQuantum = 0;
-  uint16_t remainingCanonicalPreparationGrains = 0;
+  uint64_t remainingCanonicalPreparationGrains = 0;
   uint16_t canonicalPreparationQuantum = 0;
-  uint16_t remainingHistoryRecycleGrains = 0;
+  uint64_t remainingHistoryRecycleGrains = 0;
   uint16_t historyRecycleQuantum = 0;
   const Loop* historyRecycleOwner = nullptr; // Borrowed from the successful joint commit.
   uint64_t historyRecycleGeneration = 0;

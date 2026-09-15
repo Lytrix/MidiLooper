@@ -2335,3 +2335,23 @@ versus rolling-window policy is therefore unchanged; the next useful run must
 first restore a synchronized overdub-stop fixture, then compare dense and sparse
 accepted candidates under the same device-clock telemetry. No task or HITL gate
 closes.
+
+Contract correction (2026-09-15): the user clarified that pass length and note
+count may not reject admission. Record, playback, overdub, stop, persistence,
+and companion resolution form one continuous resumable service; persistence is
+metadata attached to that service. Every accepted overdub stop must enter
+`OVERDUB_STOPPING` and remain there across MIDI-separated grains until the
+command-epoch-validated PLAYING or STOPPED commit is ready. The provisional
+6,240-grain figure is a measurement allowance only, not a runtime horizon or
+fallback trigger. Implementation and HITL acceptance remain open.
+
+Continuous-stop implementation (2026-09-15): stop preparation counters now use
+wide resumable service counts, and `PendingStopAdmission` no longer rejects a
+valid frozen candidate because ranked/canonical/recycle work exceeds 6,240 or
+16-bit aggregate credits. Only fixed staging, closure, generation, and invalid
+bound failures can deny setup; a valid stop enters `OVERDUB_STOPPING` and keeps
+servicing until commit. Focused native playback-prewarm/edit coverage is
+**256/256** and the capture image builds with **6,176** bytes of RAM1 local
+headroom. The first post-upload HITL was `INCONCLUSIVE_CAPTURE` during clear
+preconditions (transport remained active), before overdub; no device admission
+or state-transition evidence was collected.

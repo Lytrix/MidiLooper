@@ -43,11 +43,12 @@ before transport may start after audible-first interactive ready.
   the build view, including an idle retired-current view whenever the next
   successor remains pending at a handoff and its successor-after-next build
   only after that successor becomes ready
-- **AND** an active capture pass is accepted only when its source-admission
-  staging can freeze a generation-matched candidate before its first affected
-  audible instance
+- **AND** an active capture pass uses source-admission staging that can freeze a
+  generation-matched candidate before its first affected audible instance;
+  preparation work may continue in later resumable turns and its length does
+  not reject the pass
 - **AND** each accepted NoteOn has reserved capacity for its matching closure
-  and a bounded deferred stop
+  and the continuous deferred-stop service
 
 #### Scenario: Prewarm touches enabled slots only
 

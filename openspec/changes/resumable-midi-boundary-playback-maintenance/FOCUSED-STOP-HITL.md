@@ -754,3 +754,19 @@ result is `INCONCLUSIVE_CAPTURE` (`no_device_stop_inside_stopping`), so no
 fixture synchronization/setup failure, not evidence for removing the 16-bar or
 rolling-window logic. Restore the clean stop fixture before comparing sparse and
 dense admission candidates; no task or acceptance gate closes.
+
+### Continuous-stop implementation checkpoint (2026-09-15)
+
+The stop-service contract now keeps preparation counters wide and resumable.
+`PendingStopAdmission` no longer rejects a valid frozen candidate when ranked,
+canonical, or recycle work exceeds the provisional 6,240 or legacy 16-bit
+aggregate credits. Fixed staging, closure, generation, and invalid-bound
+failures remain denial conditions. A valid overdub stop enters
+`OVERDUB_STOPPING` and continues one MIDI-separated grain per eligible turn
+until the command-epoch-validated PLAYING or STOPPED commit is ready.
+
+Focused native playback-prewarm/edit coverage is **256/256**; the capture image
+builds with **6,176** bytes of RAM1 local headroom. The first post-upload
+track-5 / slot-1 HITL was `INCONCLUSIVE_CAPTURE` during clear preconditions
+(transport remained active), before overdub, so it provides no device admission
+or state-transition evidence.
