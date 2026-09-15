@@ -67,7 +67,8 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   const uint64_t rankedCredits = finalFrozenCount == 0 ? 0 :
       StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(
           RuntimePlaybackViewConfig::kEventsPerView,
-          RuntimePlaybackViewConfig::kRecordsPerBridge,
+          std::min(loop.passes.overdubPasses.size() + 1,
+                   RuntimePlaybackViewConfig::kRecordsPerBridge),
           finalFrozenCount, historyCount, pendingChangeCount,
           kDeferredStopPreparationQuantum);
   const uint64_t canonicalRequired = finalFrozenCount == 0 ? 0 :
