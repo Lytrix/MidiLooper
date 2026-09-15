@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
@@ -59,6 +60,37 @@ def wait_for_current_session_pointer(
     )
 
 
+def wait_for_capture_boot_ready(
+    out_dir: Path,
+    session_log: Path,
+    *,
+    timeout_s: float,
+    poll_s: float = 0.1,
+) -> None:
+    """Wait for capture_session's first serial-open boot settle.
+
+    The managed runner must not send control MIDI while opening serial has reset
+    the Teensy.  The ready marker binds this wait to the exact session log so a
+    stale marker from an earlier run cannot authorize the new scenario.
+    """
+    ready = out_dir / ".current_session.ready"
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    expected = session_log.resolve()
+    while time.monotonic() < deadline:
+        if ready.is_file():
+            raw = ready.read_text(encoding="utf-8").strip()
+            if raw:
+                candidate = Path(raw)
+                if not candidate.is_absolute():
+                    candidate = (Path.cwd() / candidate).resolve()
+                if candidate == expected:
+                    return
+        time.sleep(poll_s)
+    raise TimeoutError(
+        f"Timed out waiting for {ready} — capture_session did not finish boot settle"
+    )
+
+
 class ManagedCaptureSession:
     """Background capture_session.py process for HITL device runs."""
 
@@ -70,12 +102,14 @@ class ManagedCaptureSession:
         out_dir: Path,
         python_executable: Optional[str] = None,
         arm_snapshot_yield: bool = False,
+        run_token: str | None = None,
     ) -> None:
         self._port = port
         self._boot_wait_s = max(boot_wait_s, 0.0)
         self._out_dir = out_dir
         self._python = python_executable or sys.executable
         self._arm_snapshot_yield = arm_snapshot_yield
+        self._run_token = run_token
         self._process: subprocess.Popen[str] | None = None
         self._output_thread: threading.Thread | None = None
         self._session_log: Path | None = None
@@ -89,8 +123,11 @@ class ManagedCaptureSession:
             raise FileNotFoundError(f"Missing capture script: {_CAPTURE_SCRIPT}")
         self._out_dir.mkdir(parents=True, exist_ok=True)
         pointer = self._out_dir / ".current_session"
+        ready_pointer = self._out_dir / ".current_session.ready"
         if pointer.is_file():
             pointer.unlink()
+        if ready_pointer.is_file():
+            ready_pointer.unlink()
         command = [
             self._python,
             str(_CAPTURE_SCRIPT),
@@ -101,6 +138,8 @@ class ManagedCaptureSession:
             "--out-dir",
             str(self._out_dir),
         ]
+        if self._run_token is not None:
+            command += ["--run-token", self._run_token]
         if self._arm_snapshot_yield:
             command.append("--arm-snapshot-yield")
         if self._boot_wait_s > 0:
@@ -129,6 +168,12 @@ class ManagedCaptureSession:
             started_after=started_at,
         )
         print(f"[hitl-capture] session log: {self._session_log}", flush=True)
+        wait_for_capture_boot_ready(
+            self._out_dir,
+            self._session_log,
+            timeout_s=max(self._boot_wait_s + 30.0, 30.0),
+        )
+        print("[hitl-capture] boot settle complete", flush=True)
         _set_active_managed_capture(self)
         return self._session_log
 
@@ -193,12 +238,16 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
 
 
 def run_with_managed_capture(config: HitlConfig, run_fn: Callable[[HitlConfig], int]) -> int:
-    active = config.with_follow_current_session()
-    with managed_capture_session(config):
+    with managed_capture_session(config) as log_path:
+        active = replace(config, follow_current_session=False, follow_serial_log=log_path,
+                         legacy_extra_args=tuple(legacy_args_with_managed_capture(
+                             list(config.legacy_extra_args), config, log_path)))
         return run_fn(active)
 
 
-def legacy_args_with_managed_capture(legacy: list[str], args: object) -> list[str]:
+def legacy_args_with_managed_capture(
+    legacy: list[str], args: object, session_log: Optional[Path] = None
+) -> list[str]:
     if getattr(args, "verify_only", False):
         return legacy
     if getattr(args, "no_managed_capture", False):
@@ -206,6 +255,23 @@ def legacy_args_with_managed_capture(legacy: list[str], args: object) -> list[st
     if "--serial-port" in legacy:
         return legacy
     merged = list(legacy)
+    if session_log is not None:
+        # Bind this run to the file actually opened, never a pointer in another
+        # output directory or a previous run's explicit follow argument.
+        filtered: list[str] = []
+        index = 0
+        while index < len(merged):
+            value = merged[index]
+            index += 1
+            if value == "--follow-current-session":
+                continue
+            if value == "--follow-serial-log":
+                index += 1
+                continue
+            if value.startswith("--follow-serial-log="):
+                continue
+            filtered.append(value)
+        return filtered + ["--follow-serial-log", str(session_log)]
     if "--follow-current-session" not in merged:
         merged.append("--follow-current-session")
     return merged

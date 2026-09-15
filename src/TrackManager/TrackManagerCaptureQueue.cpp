@@ -25,6 +25,12 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   if (trackIndex >= Config::NUM_TRACKS) return;
 
   Track& tr = tracks[trackIndex];
+  if (tr.isOverdubStopping()) {
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Track %d: record admission deferred while overdub finalization is pending",
+               trackIndex);
+    return;
+  }
   const uint8_t slot = tr.getActiveLoopIndex();
   if (tr.hasCommittedPassesInSlot(slot)) {
     logger.log(CAT_TRACK, LOG_WARNING,
@@ -36,7 +42,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   // Captures write into the active slot; ensure the target slot is enabled/unmuted.
   // Stopped record collapses a leftover layered set so only this slot plays after stop.
   {
-    const bool replaceLayeredSet = !tr.isPlaying() && !tr.isOverdubbing();
+    const bool replaceLayeredSet = !tr.isAudiblePlaybackActive();
     replaceSingleEnabledSlotWithTarget(slotEnabled, slotMuted, trackIndex, slot,
                                        replaceLayeredSet);
     slotEnabled[trackIndex][slot] = true;
@@ -54,7 +60,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
     pendingRecordSlot[trackIndex][slot] = true;
     // PLAYING/OVERDUBBING cannot transition to TRACK_ARMED; keep state and use pendingRecord only
     // (getTrackState maps pending + PLAYING/OVERDUBBING -> ARMED for UI).
-    const bool keepStateForUiArm = tr.isPlaying() || tr.isOverdubbing();
+    const bool keepStateForUiArm = tr.isAudiblePlaybackActive();
     if (!keepStateForUiArm && !tr.setState(TRACK_ARMED)) {
       pendingRecord[trackIndex] = false;
       pendingRecordQueuedAtTick[trackIndex] = UINT32_MAX;
@@ -158,7 +164,8 @@ bool TrackManager::hasQueuedRecordingTrack(uint8_t trackIndex) const {
 bool TrackManager::hasActiveOrPendingCapture() const {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     const Track& t = tracks[i];
-    if (t.isRecording() || t.isArmed() || t.isOverdubbing() || pendingRecord[i]) {
+    if (t.isRecording() || t.isArmed() || t.isOverdubbing() || t.isOverdubStopping() ||
+        pendingRecord[i]) {
       return true;
     }
   }
@@ -202,6 +209,12 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
     return;
   }
   Track& track = tracks[trackIndex];
+  if (track.isOverdubStopping()) {
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Track %d: overdub admission deferred while finalization is pending",
+               trackIndex);
+    return;
+  }
   const Loop& loop = track.getActiveLoop();
   if (track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub) {
     return;
@@ -314,6 +327,10 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     requestLoopSlotPersistAndSaveState(t, trackIndex, captureSlot);
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();
+  } else if (t.isOverdubStopping()) {
+    // The pending finalizer owns its active slot until it resolves the
+    // requested destination. Slot selection cannot preempt that ownership.
+    return;
   }
 
   t.setActiveLoopIndex(newSlot);
@@ -334,8 +351,8 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
   }
 
   if (t.hasDataInSlot(newSlot) && newLoop.loopLengthTicks > 0) {
-    if (!t.isPlaying()) t.startPlaying(currentTick);
-  } else if (t.isPlaying() && !otherAudibleHasData) {
+    if (!t.isAudiblePlaybackActive()) t.startPlaying(currentTick);
+  } else if (t.isAudiblePlaybackActive() && !otherAudibleHasData) {
     // Only stop the track if no other enabled slot is audible.
     t.stopPlaying();
   }

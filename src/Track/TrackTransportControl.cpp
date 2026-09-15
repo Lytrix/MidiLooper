@@ -23,6 +23,7 @@ void Track::startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
       forceSetState(TRACK_STOPPED);
     }
     if (!setState(TRACK_PLAYING)) return;
+    transportStopOutputBarrier_ = false;
     reanchorPlaybackProjection(currentTick, preserveLoopPhaseOrigin);
     logger.logTrackEvent("Playback started", currentTick);
   }
@@ -34,6 +35,7 @@ void Track::startPlaying(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
 
 void Track::stopPlaying() {
   if (isEmpty()) return; // Nothing to stop, empty track
+  suppressMidiOutputForTransportStop();
   sendAllNotesOff();  // first kill all sounding notes
 
   // then transition to the stopped state

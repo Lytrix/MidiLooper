@@ -68,6 +68,13 @@ public:
   Track();
   ~Track();
 
+  /// Final joint handoff for an already staged frozen overdub. The staging owner
+  /// must have rewritten this capture from the frozen source before detachment.
+  /// Does not finish session-exit undo, cleanup or Track state transitions.
+  static bool commitPreparedOverdubStopBridge(Loop& loop, LoopPlaybackRuntime& runtime,
+      PendingStopAdmission& stop, const uint32_t& generation, const EmissionCursor& cursor,
+      PreparedCapturePassTransfer& transferred);
+
   // State management
   TrackState getState() const;
   bool setState(TrackState newState);  // Returns true if transition was valid
@@ -97,6 +104,11 @@ public:
   uint32_t capturePhaseTick(uint32_t absTick) const;
   /// Append capture NoteOff at loop phase; returns false if capture inactive or append failed.
   bool appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t phaseTick);
+  /// Consume one already admitted terminal closure without searching the
+  /// mutable capture store. Deferred `OVERDUB_STOPPING` grains use this
+  /// generation-matched reservation path.
+  bool appendReservedCaptureNoteOffAtPhase(CaptureNoteReservation& reservation,
+                                           uint32_t phaseTick);
   void resetPlaybackState(uint32_t currentTick);
   /// Reset per-slot playback indices so enabling/unmuting starts at the right phase.
   void resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick);
@@ -154,6 +166,8 @@ public:
   /// can emit effective / frame after an earlier overdub stop consumed the boot arm.
   void rearmDeferredStoredMidiVerification();
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
+  // Called only by the single selected VisualCache prefix child. Never allocates.
+  bool processDeferredCanonicalPrefix();
   void processDeferredIdleMaintenance(
       uint32_t nowMs, bool postOverdubDrainWindowActive,
       MidiServiceDrain::DeferredIdleOwner deferredOwner,
@@ -164,7 +178,7 @@ public:
   /// Arm sliced `#CAP,DIAG,lcr` on the selected track when idle (Stage 9 device gate). SESSION_CAPTURE only.
   void maybeQueueContentResolutionDeviceGate();
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
-  void prewarmPlaybackForSlot(uint8_t slotIndex);
+  void prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// True when primary playback window matches current loop revision (safe LoopEnd activate).
@@ -177,7 +191,9 @@ public:
   bool tryClearCommittedMidiScratch();
 
   // MIDI events
-  void recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick);
+  /// Returns false when capture admission rejects the event before Loop state mutates.
+  bool recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2,
+                        uint32_t currentTick);
   /// Advance committed playback. `emitMidiOutput` sends on this track's MIDI channel
   /// and output ports; cursor and ledger always run.
   void playMidiEvents(uint32_t currentTick, bool emitMidiOutput);
@@ -188,6 +204,9 @@ public:
   void printNoteEvents() const;
   /// Send an "All Notes Off" (CC 123) on every channel and clear any pending notes.
   void sendAllNotesOff();
+  /// Close the ISR-visible MIDI emission barrier before a transport Stop fan-out.
+  /// A later Start, record, or overdub entry reopens it.
+  void suppressMidiOutputForTransportStop() { transportStopOutputBarrier_ = true; }
 
   // Note events
   void noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick);
@@ -281,7 +300,11 @@ public:
   bool isRecording() const;
   bool isStoppedRecording() const;
   bool isOverdubbing() const;
+  /// Overdub finalization is pending while committed playback remains audible.
+  bool isOverdubStopping() const;
   bool isPlaying() const;
+  /// True for every state whose committed MIDI playback must keep advancing.
+  bool isAudiblePlaybackActive() const;
   bool isStopped() const;
   bool isMuted() const;
 
@@ -378,6 +401,10 @@ private:
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
   bool playbackEmitMidiOutput_ = false;
+  // `handleTransportStop()` fans CC123 over every track while the internal-clock
+  // interval may still be executing. This volatile barrier is checked at the
+  // final Track MIDI emission point, so no due NoteOn can pass that fan-out.
+  volatile bool transportStopOutputBarrier_ = false;
   bool applyPlaybackLedgerEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
   void catchUpCommittedPlaybackLedgerToPhase(uint32_t occupyPhase);
   void sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex);
@@ -433,6 +460,8 @@ private:
   uint32_t queuedStartQueuedAtTick = UINT32_MAX;
   uint32_t queuedStartGridTicks = Config::TICKS_PER_16TH_STEP;
   TrackPlaybackRuntime playbackRuntime;
+  /// One active overdub admission per track; not duplicated for inactive slots.
+  PendingStopAdmission pendingStopAdmission_;
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
   bool hasRecordCaptureBaselineGeometry_ = false;
@@ -457,6 +486,10 @@ private:
   void emitOverdubStopDebtProbeIfArmed(const Loop& loop, bool idleVisualSliceRan,
                                        uint8_t idleBarsPerSlice, uint16_t idleDirtyBefore,
                                        uint16_t idleDirtyAfter);
+
+  bool beginDeferredOverdubStop(PendingStopDestination destination, uint32_t currentTick);
+  bool processDeferredOverdubStopGrain();
+  void requestDeferredOverdubStopToStopped();
 
   /// Record-stop prep: raw length → clamp → finalizePendingNotes → dropEvents (exact order).
   /// Returns rawLength for truncation rewind. guardLabel is the caller name for the clamp warning.

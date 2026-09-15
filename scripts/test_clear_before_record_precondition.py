@@ -5,11 +5,15 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest.mock import Mock, patch
+from types import SimpleNamespace
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
+
+from hitl import legacy_record_baseline as baseline
 
 from hitl.capture_transitions import (
     _count_capture_transitions,
@@ -325,6 +329,52 @@ class EditMinimalSeedOkTests(unittest.TestCase):
 
         ns = _parse_common_args(Args())
         self.assertEqual(ns.track_number, 5)
+
+class DeferredSaveClearTests(unittest.TestCase):
+    def run_prepare(self, lines, sequencer, idle=True):
+        collector = Mock()
+        collector.snapshot.return_value = lines
+        with patch.object(baseline, "_serial_sequencer_running", side_effect=sequencer), \
+             patch.object(baseline, "_send_short_press") as send, \
+             patch.object(baseline.time, "sleep"), \
+             patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active", return_value=idle):
+            result = baseline._prepare_deferred_save_before_clear(
+                Mock(), Mock(), collector, SimpleNamespace(deferred_save_wait_ms=3000),
+                press_ms=120, phase_wait_ms=500, after_index=0, abort=Mock())
+            return result, send.call_count
+
+    def test_recent_sequencer_activity_stops_without_transport_transition(self):
+        result, sends = self.run_prepare([], [True, False])
+        self.assertTrue(result)
+        self.assertEqual(sends, 1)
+
+    def test_active_after_stop_blocks_clear_without_retry(self):
+        result, sends = self.run_prepare([], [True, True])
+        self.assertFalse(result)
+        self.assertEqual(sends, 1)
+
+    def test_save_wait_timeout_blocks_clear(self):
+        result, _ = self.run_prepare(["#CAP,100,SAVE,pending,1"], [False], idle=False)
+        self.assertFalse(result)
+
+    def test_recent_pending_before_fixture_baseline_is_drained_before_clear(self):
+        """A save pending before this run's baseline must not reach Clear's sync drain."""
+        lines = ["#CAP,100,SAVE,pending,1"]
+        collector = Mock()
+        collector.snapshot.return_value = lines
+        with patch.object(baseline, "_serial_sequencer_running", return_value=False), \
+             patch("hitl.deferred_save_idle.wait_for_deferred_save_idle_if_active", return_value=False) as wait:
+            result = baseline._prepare_deferred_save_before_clear(
+                Mock(), Mock(), collector, SimpleNamespace(deferred_save_wait_ms=3000),
+                press_ms=120, phase_wait_ms=500, after_index=len(lines), abort=Mock())
+        self.assertFalse(result)
+        self.assertEqual(wait.call_count, 1)
+
+    def test_unresolved_stuck_drain_blocks_clear(self):
+        result, sends = self.run_prepare(["Persistence drain stuck after 256 iterations"], [])
+        self.assertFalse(result)
+        self.assertEqual(sends, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,7 +111,7 @@ uint32_t DisplayManager::resolvePlayheadInLoop(const Track& track, uint8_t displ
 
     const Loop& dispLoop = track.getLoop(displaySlot);
     const uint32_t loopOrigin = resolveLoopOriginTick(track, displaySlot);
-    const bool transportActive = track.isPlaying() || track.isOverdubbing();
+    const bool transportActive = track.isAudiblePlaybackActive();
     if (isPreviewPlayheadPending(displaySlot, track.getActiveLoopIndex(), transportActive)) {
         // Preview playhead parks at the queued loop's launch bracket (display phase 0).
         return 0;

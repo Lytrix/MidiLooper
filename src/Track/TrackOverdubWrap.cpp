@@ -78,8 +78,45 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
 #if defined(SESSION_CAPTURE)
   g_overdubWrapBeginCaptureUs = micros() - wrapBeginCaptureStartUs;
 #endif
-  for (const MidiEvent& evt : heldOns) {
-    loop.appendCaptureEvent(evt);
+  // A held note crosses into a new capture pass at wrap. Re-admit its new
+  // canonical NoteOn through fixed staging before mutating capture.store so
+  // its later physical or stop-time NoteOff still owns a reservation. The
+  // previous pass has already become canonical; this fresh staging generation
+  // represents only the successor capture tail.
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  RuntimePlaybackViewSet* viewSet =
+      runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (runtime == nullptr || viewSet == nullptr || !viewSet->prewarmed) {
+    // startOverdubbing() admitted this storage before capture began. Reaching
+    // this branch is an invariant failure; retain the old append behavior so
+    // the accepted held note is never silently omitted from canonical capture.
+    for (const MidiEvent& evt : heldOns) {
+      (void)loop.appendCaptureEvent(evt);
+    }
+  } else {
+    runtime->discardFrozenCaptureOrder();
+    runtime->discardFrozenCaptureCanonicalOrder();
+    CaptureAdmissionStaging& staging = viewSet->captureStaging;
+    staging.reset();
+    staging.captureGeneration = playbackGeneration;
+    for (const MidiEvent& evt : heldOns) {
+      if (!staging.appendContinuationNoteOn(evt)) {
+        // Capacity was admitted at overdub start. Preserve canonical input if
+        // that invariant has later been broken; recovery must retain rather
+        // than drop an already accepted cross-wrap NoteOn.
+        (void)loop.appendCaptureEvent(evt);
+        continue;
+      }
+      if (!loop.appendCaptureEvent(evt)) {
+        CaptureNoteReservation* reservation =
+            staging.matchingOpenReservation(evt.noteId, evt.channel, evt.data.noteData.note);
+        if (reservation != nullptr) {
+          staging.close(*reservation);
+        }
+        continue;
+      }
+      ++staging.captureGeneration;
+    }
   }
   // Re-opened holds crossed loop end — Stage 2 wrap split must not depend only on
   // playhead-vs-on inference after beginCapture cleared preview (`191636` pitch 18).

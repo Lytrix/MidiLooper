@@ -69,6 +69,43 @@ transport persistence/load-frame exclusions.
 - **AND** the job remains pending until STOPPED or a separately bounded
   preparation, Commit, or cleanup continuation is available
 
+### Requirement: Pending load work does not starve admitted display frames
+
+During active transport, load-child admission and retention SHALL distinguish
+permission to restore slots from actual unfinished restoration work. Permission
+alone SHALL NOT retain a load child. On an eligible `LoadAndDisplay` owner turn,
+an admitted due or pending display frame SHALL take priority over a retained
+load child. Each turn SHALL still execute at most one expensive child. Display
+resolve/draw/transfer progress and load read/parse progress SHALL remain owned
+by their existing domain state machines across yields. Existing focused-load
+display admission gates and unbounded Commit/cleanup exclusions remain in force.
+
+#### Scenario: Playback has permission to restore but no load work
+
+- **WHEN** PLAYING permits deferred slot restoration but no restoration work remains
+- **THEN** the load child is not retained on permission alone
+- **AND** admitted due display frames continue through resolve, draw, and transfer
+
+#### Scenario: A display frame becomes due while a load remains pending
+
+- **WHEN** a load child remains pending and a display frame is admitted as due
+  on the next eligible active-transport owner turn
+- **THEN** that turn runs one display phase without also running a load slice
+- **AND** pending display phases continue on subsequent eligible owner turns
+- **AND** eligible load work resumes from saved progress when no display phase is due
+
+#### Scenario: Background loads cannot progress during playback
+
+- **WHEN** queued background restoration remains deferred throughout PLAYING
+- **THEN** the retained backlog does not prevent admitted display frames from refreshing
+- **AND** the system does not need to enter RECORDING, OVERDUBBING, or STOPPED to release the display
+
+#### Scenario: STOPPED has no load work
+
+- **WHEN** STOPPED permits a deferred load-frame turn with an empty load queue
+- **THEN** the existing idle housekeeping path remains eligible
+- **AND** active-transport load-work admission does not suppress that housekeeping
+
 ### Requirement: Deferred maintenance preserves playback and publication semantics
 
 Deferring maintenance SHALL NOT drop, duplicate, or reorder audible MIDI
@@ -315,3 +352,177 @@ interval SHALL be rejected as evidence for the active-transport bound.
   the end of its scored timing window
 - **THEN** the timing report marks that window invalid for bound verification
 - **AND** it does not use the window to establish a post-overdub MIDI bound
+
+### Requirement: Deterministic companion-pairing reference
+
+Companion note-pair lookup SHALL filter the input sequence to the target
+channel/pitch lane before identifying contiguous equal-tick runs. Equal ticks
+separated by a different tick in that lane SHALL remain separate runs. Each
+run SHALL process Offs before Ons and preserve input order within each kind.
+Existing LIFO pairing and wrap fallback SHALL remain unchanged. Parity for
+bounded companion resolution SHALL use this revised reference; this is an
+explicit semantic correction to the former non-transitive comparator.
+
+#### Scenario: Counterexample retains its lane-run closing partner
+
+- **WHEN** the filtered lane is [On@96, On@0, Off@96, Off@96, Off@0]
+- **AND** the target On is at index 0
+- **THEN** companion pairing selects Off index 3 at tick 96
+
+#### Scenario: Other lanes do not split an equal-tick run
+
+- **WHEN** events from another channel or pitch occur between equal-tick events
+  in the target lane
+- **THEN** those intervening events do not split that lane's equal-tick run
+- **AND** Offs precede Ons within the run with stable order within each kind
+
+#### Scenario: A different tick separates runs
+
+- **WHEN** two equal ticks in a filtered lane are separated by a different tick
+- **THEN** the earlier and later equal ticks belong to different runs
+- **AND** the resolver does not globally regroup or sort them together
+
+### Requirement: Canonical per-pass companion preparation
+
+Combined capture preparation SHALL apply the frozen companion sequence
+independently within each participating canonical pass, including frozen capture,
+and THEN merge the resulting pass streams in canonical pass order using the
+existing stable raw-tick merge and within-pass result order. It SHALL retain
+immutable pass membership and original event provenance through bounded
+preparation. Flattened append-then-edit admission SHALL NOT be the reference.
+DEC-059's lane-run pairing rule remains the reference within each pass.
+
+Historical Create rows SHALL append their payload in stored order and stably
+sort the complete individual pass by ascending raw tick, including for an empty
+payload. Equal ticks SHALL preserve existing events before appended events and
+order within each group. This is the approved DEC-061 reference correction;
+parity SHALL use this revised reference. Create SHALL preserve existing
+present-identity bookkeeping, reactivating added nonzero NoteOn identities after
+earlier Delete rows. Stored Create ordering SHALL NOT add an Off-before-On
+tie-break; DEC-059 pairing and canonical per-pass merging remain unchanged.
+
+#### Scenario: Create orders equal ticks deterministically
+
+- **WHEN** a Create row appends events at ticks already present in its pass
+- **THEN** stable raw-tick ordering preserves existing events before appended
+  events at those ticks and preserves order within each group
+- **AND** an empty Create payload still stably orders the complete pass
+
+#### Scenario: Create reactivates a deleted identity
+
+- **WHEN** a Delete row removes an identity from the history sequence's present-ID
+  set and a later Create payload contains a nonzero NoteOn with that identity
+- **THEN** the identity re-enters that set and subsequent updates/deletes use
+  the canonical reference's lookup behavior within that pass
+
+#### Scenario: Repeated identity in separate passes
+- **GIVEN** a record pass and a captured pass each contain a NoteOn with NoteId 1
+- **WHEN** a frozen Delete companion targets NoteId 1
+- **THEN** the companion resolves independently in both passes before merging
+- **AND** deleting only the first instance in a flattened stream fails parity
+
+#### Scenario: Length overlap is confined to its pass
+- **GIVEN** record NoteId 1 spans ticks 0 to 10 and captured NoteId 2 spans 150 to 160 on the same channel/pitch
+- **WHEN** a Length row extends NoteId 1 to 250
+- **THEN** the captured NoteId 2 survives because overlap resolution is pass-local
+- **AND** the merged result matches canonical pass materialization
+
+### Requirement: Protected stop undo publication preserves memory feedback
+
+Before accepting capture that requires deferred stop publication, the system
+SHALL reserve private undo-entry, stack-bookkeeping, attachment and retirement
+continuation capacity and explicit work credits separate from ranked preparation.
+The affected Track SHALL protect the transaction against competing mutations and
+SHALL keep intermediate stack state invisible to normal readers. Canonical,
+audible and undo state SHALL share one final publication boundary. Retirement
+SHALL NOT destroy state needed for recovery before the transaction's no-fail point.
+Disabled canonical-pass reclamation SHALL be deferred until prepared proofs no
+longer depend on the reclaimed storage and SHALL have a bounded continuation.
+
+Removed undo entries SHALL release their final snapshot graph and persisted
+snapshot/chunk references in bounded units. Oldest-entry trimming SHALL recheck
+actual memory pressure only after the current entry's scheduled release completes.
+It SHALL preserve existing feedback-based survivor semantics, including redo
+removal and depth rails; retained roots SHALL NOT substitute for physical release
+when deciding whether to trim another entry.
+
+#### Scenario: Releasing one entry relieves pressure
+
+- **WHEN** the oldest entry's final release clears memory pressure
+- **THEN** the next trim decision observes that relief
+- **AND** no additional entry is removed unless the existing depth rails require it
+
+#### Scenario: Undo and Redo arrive during protected finalization
+
+- **WHEN** Undo or Redo is requested for the protected Track
+- **THEN** one reserved command slot retains the most recent request and reports deferral
+- **AND** repeated or conflicting requests replace the pending request
+- **AND** after finalization that request executes exactly once under the destination's normal command policy
+- **AND** other Tracks retain independent pending commands
+
+#### Scenario: Transport Stop arrives with a deferred undo command
+
+- **WHEN** Transport Stop arrives during the protected transaction
+- **THEN** its immediate stop and command-epoch precedence remain effective
+- **AND** accepted capture is preserved through finalization to STOPPED
+- **AND** the deferred command cannot cause a pending return to PLAYING
+
+#### Scenario: Snapshot attachment arrives during protected finalization
+
+- **WHEN** a snapshot-after attachment targets the protected transaction
+- **THEN** reserved storage retains the attachment without exposing intermediate undo state
+- **AND** publication validates the attachment's entry and loop identity
+
+
+### Requirement: First-record playback windows are prepared during recording
+
+First-record playback SHALL remain synchronized with the running transport and SHALL begin at the existing final-bar return boundary. Runtime preparation SHALL NOT postpone that launch to a later boundary. Preparation SHALL begin when recording starts and remain current with accepted recording input.
+
+#### Scenario: Recording starts with bar-1 playback coverage
+
+- **WHEN** first recording begins
+- **THEN** its runtime establishes prewarmed bar-1 coverage, initially empty, with the recording origin
+- **AND** accepted input incrementally prepares that playback window before record stop
+- **AND** later-window preparation does not overwrite the bar-1 return window
+- **AND** provisional one-bar coverage does not incorrectly fix the final loop length
+
+#### Scenario: Final recording bar returns to bar 1
+
+- **WHEN** the existing final-bar boundary returns the recorded loop to bar 1
+- **THEN** bar-1 source, order, cycle cursor, and ledger boundary are ready for atomic selection
+- **AND** playback emits the canonical events at their original due boundaries on the running clock
+- **AND** it neither waits for a later launch nor rewinds the global clock
+- **AND** a later snapshot publication neither replays nor omits the already serviced interval
+
+#### Scenario: One-bar recording closes with no preparation turn remaining
+
+- **WHEN** an accepted event or held-note closure affects the end of a one-bar recording immediately before its return boundary
+- **AND** no maintenance grain can run between that input and the boundary
+- **THEN** the previously established admission/closure path makes the affected audible events ready at their due boundaries
+- **AND** finalization preserves canonical ordering, minimum-length rules, and held-note closure
+- **AND** it performs no full gather, full sort, active allocation, or unbounded reanchor at launch
+
+#### Scenario: Playback continues through recorded windows
+
+- **WHEN** playback proceeds from bar 1 through a multi-bar first take
+- **THEN** each next one-bar window is prepared before its handoff under a verified coverage-service contract
+- **AND** the final-bar-to-bar-1 handoff remains ready without overwriting the return window
+- **AND** no accepted audible event is missing, duplicated, reordered, or delayed
+
+
+### Requirement: Recording preparation reuses playback window machinery
+
+First-record preparation SHALL reuse the existing playback view storage, bounded
+fill/order workers, coverage lifecycle, bridge mechanisms and MIDI emission
+path. Necessary extensions SHALL be shared with ordinary playback; recording
+SHALL NOT introduce a separate window store, ordering engine or emission stream.
+Recording source ownership and preparation scheduling SHALL preserve the
+original-bar return, raw-tick, late-input and held-note requirements above.
+
+#### Scenario: Coverage preparation from a larger immutable source
+
+- **WHEN** the shared fill worker prepares one window from a larger source
+- **THEN** each examined source event consumes its declared entry quantum
+- **AND** only events within the requested playback coverage enter that candidate
+- **AND** raw event ticks and stable order are preserved for the shared order worker
+- **AND** candidate overflow cannot publish a partial window or authorize recording input loss

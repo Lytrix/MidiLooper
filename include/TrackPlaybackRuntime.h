@@ -6,19 +6,389 @@
 
 #include "ActiveNoteLedger.h"
 #include "Globals.h"
+#include "LoopEventStore.h"
 #include "PlaybackMergedMidiEvents.h"
+#include "RuntimePlaybackView.h"
+#include "RuntimePlaybackViewBuild.h"
+#include "RuntimePlaybackBridge.h"
+#include "RuntimeCaptureCompanions.h"
+#include "RuntimeCompanionOverlapWalk.h"
+#include "RuntimeCompanionSpanWalk.h"
+#include "RuntimeCompanionReconstruction.h"
+#include "RuntimeCompanionApply.h"
+#include "RuntimeCompanionBridgeMap.h"
+#include "RuntimeCompanionPasses.h"
+#include "RuntimeCanonicalPassInputs.h"
+#include "RuntimeNotePairLookup.h"
+
+class Loop;
+
+/// Fixed metadata for a deferred overdub stop. It owns no event memory: the
+/// frozen candidate remains in `RuntimePlaybackViewSet::captureStaging` while
+/// task-2.3 grains consume its reserved capacity. The command epoch makes a
+/// transport Stop invalidate a previously selected PLAYING result.
+enum class PendingStopDestination : uint8_t { Playing, Stopped };
+enum class PendingStopPhase : uint8_t {
+  ReservedClosure,
+  CanonicalOrder,
+  CanonicalRewrite,
+  AudibleOrder,
+  PrepareTransfer,
+  AtomicTransfer,
+  DeferredCleanup,
+};
+
+/// Declares every bounded admission between a stop command and the atomic
+/// transfer. The event quantum belongs to the fixed merge-order builder; a
+/// candidate larger than the declared capacity is denied before state change.
+struct StopAdmissionContract {
+  /// DEC-062: provisional ranked-preparation allowance for integration/HITL.
+  /// Separate from legacy order/rewrite credits; not a realtime latency claim.
+  static constexpr uint16_t kProvisionalRankedPreparationGrains = 6240;
+  /// Additional ranked preparation only; excludes reserved closures, canonical
+  /// rewrite/transfer, cleanup and denied turns. Not a production stop permit.
+  /// Uses declared C/H/R horizons and a 64-bit result; invalid inputs return MAX.
+  static uint64_t requiredRankedPreparationGrains(size_t capacity, size_t historyCount,
+                                                 size_t pendingChangeCount, size_t quantum);
+  /// Same scope after a completed, current sealed prefix is reused.
+  static uint64_t requiredRankedTailGrains(size_t capacity, size_t historyCount,
+                                          size_t pendingChangeCount, size_t quantum);
+  /// Explicit upper bound on effective passes (including capture), and actual
+  /// published-base events. Capacity must bound every intermediate candidate,
+  /// not just final output. Still excludes canonical transfer/service latency.
+  static uint64_t requiredRankedTailGrainsForPasses(size_t capacity, size_t maximumPassCount,
+      size_t baseEventCount, size_t historyCount, size_t pendingChangeCount, size_t quantum);
+  /// Same tail with a completed, current canonical capture order available
+  /// for private import. Its initial sort must be charged upstream. Callers
+  /// must establish that receipt; this estimate alone never admits a stop.
+  static uint64_t requiredPreparedRankedTailGrainsForPasses(size_t capacity, size_t maximumPassCount,
+      size_t baseEventCount, size_t historyCount, size_t pendingChangeCount, size_t quantum);
+  uint16_t maximumClosureGrains = 0;
+  uint16_t maximumOrderGrains = 0;
+  uint16_t maximumAtomicTransferGrains = 0;
+  uint16_t orderEntryQuantum = 0;
+
+  bool isDeclared() const;
+  bool canFinalize(size_t openReservationCount, size_t frozenEventCount) const;
+  /// The frozen candidate needs three independently resumable operations:
+  /// raw canonical ordering, fixed-grain canonical-store rewrite, and the
+  /// audible phase ordering used by the unpublished admission.  Admission
+  /// counts all three before it permits OVERDUB_STOPPING.
+  uint16_t requiredOrderGrains(size_t frozenEventCount) const;
+  uint16_t maximumTotalGrains() const;
+};
+
+struct PendingStopAdmission {
+  static constexpr uint16_t kClosureGrainsPerTurn = 1;
+  static constexpr uint16_t kMaximumClosureGrains =
+      RuntimePlaybackViewConfig::kMaxCaptureNoteReservations;
+
+  uint32_t frozenGeneration = 0;
+  uint32_t stopTick = 0;
+  // Captured at the MIDI-handler state edge and emitted by the deferred owner,
+  // never formatted from the handler itself.
+  uint32_t transportCommandEpoch = 0;
+  uint16_t remainingClosureGrains = 0;
+  uint16_t remainingOrderGrains = 0;
+  uint16_t remainingRankedPreparationGrains = 0;
+  uint16_t rankedPreparationQuantum = 0;
+  uint16_t remainingCanonicalPreparationGrains = 0;
+  uint16_t canonicalPreparationQuantum = 0;
+  uint16_t remainingHistoryRecycleGrains = 0;
+  uint16_t historyRecycleQuantum = 0;
+  const Loop* historyRecycleOwner = nullptr; // Borrowed from the successful joint commit.
+  uint64_t historyRecycleGeneration = 0;
+  bool historyRecycleStarted = false;
+  PendingStopPhase phase = PendingStopPhase::ReservedClosure;
+  PendingStopDestination destination = PendingStopDestination::Playing;
+  bool pending = false;
+
+  void reset();
+  /// Declares the complete stop tail before the state changes. Each later
+  /// grain may close at most `kClosureGrainsPerTurn` reserved notes.
+  bool begin(uint32_t generation, uint32_t tick, uint32_t commandEpoch,
+             size_t openReservationCount, size_t frozenEventCount,
+             const StopAdmissionContract& contract, uint64_t rankedPreparationGrains = 0,
+             uint64_t canonicalPreparationGrains = 0, uint64_t historyRecycleGrains = 0);
+  bool consumeClosureGrain();
+  /// Ordering remains a separate bounded grain after every reserved closure
+  /// has been made durable in frozen staging. The atomic commit is permitted
+  /// only after all preparation counters are exhausted and epoch/destination validate.
+  bool consumeOrderGrain();
+  /// Separate DEC-062 credits; closures must finish first. Exhaustion is a
+  /// budget condition only: the caller must also validate prepared-source readiness.
+  bool consumeRankedPreparationGrain();
+  /// Separately admitted history/snapshot staging and sealed-capture verification.
+  bool consumeCanonicalPreparationGrain();
+  /// Post-commit storage recycling has a separate reservation and cannot delay
+  /// the atomic commit. Receipt consumption precedes beginning the recycler.
+  bool consumeHistoryRecycleGrain();
+  void setPhase(PendingStopPhase next) { phase = next; }
+  bool permitsPlaybackEmission() const {
+    return !pending || destination == PendingStopDestination::Playing;
+  }
+  bool finalizationComplete() const {
+    return pending && remainingClosureGrains == 0 && remainingOrderGrains == 0 &&
+           remainingRankedPreparationGrains == 0 && remainingCanonicalPreparationGrains == 0;
+  }
+  void requestTransportStop();
+  bool canCommit(uint32_t commandEpoch, PendingStopDestination requestedDestination) const;
+};
+
+/// Identity retained across deferred turns; a new frozen generation cannot
+/// inherit a completed sorter or resume one that still references old rows.
+struct FrozenCaptureOrderBinding {
+  uint32_t generation = 0;
+  uint32_t loopLengthTicks = 0;
+  size_t eventCount = 0;
+  bool bound = false;
+
+  // Completion belongs to the shared index array at this generation.
+  uint64_t storageGeneration = 0;
+
+  bool matches(const CaptureAdmissionStaging& staging, uint64_t currentStorageGeneration) const;
+};
+
+/// Prepared audible half of a capture transfer. This is never sufficient by
+/// itself to commit canonical content: the owner must validate both halves in
+/// the same MIDI-boundary turn, including the current transport command epoch.
+struct PlaybackSourceAdmission {
+  uint32_t frozenGeneration = 0;
+  uint32_t transportCommandEpoch = 0;
+  PlaybackViewSourceIdentity baseSource;
+  PlaybackViewSourceIdentity targetSource;
+  uint8_t candidateIndex = RuntimePlaybackBridgeLifecycle::kNoBridge;
+  bool ready = false;
+};
 
 struct LoopPlaybackRuntime {
   uint32_t cachedLoopRevision = 0;
   uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;
   PlaybackMergedMidiEvents mergedMidiEvents;
+  /// Fixed successor/bridge/capture buffers. A complete, identity-matched
+  /// full-loop current view is consumed by ordinary active PLAYING; the legacy
+  /// merged vector remains the compatibility fallback for other states until
+  /// their independent handoffs exist. Large fixed buffers live in
+  /// external-first dynamic storage, not in the Track object graph in RAM1.
+  RuntimePlaybackViewSet* viewSet = nullptr;
+  /// One persistent, unpublished successor builder. Its destination is always
+  /// the lifecycle's build view; current and ready coverage are never passed
+  /// to it.
+  RuntimePlaybackViewBuild viewBuild;
+  /// Orders only a frozen capture candidate. It owns no event memory and can
+  /// never touch the current/ready audible views.
+  RuntimePlaybackOrderBuilder frozenCaptureOrder;
+  /// Canonical capture passes retain stable raw-tick ordering. This builder
+  /// shares the frozen staging arrays with `frozenCaptureOrder`, but callers
+  /// run the two orders serially: canonical rewrite first, audible order
+  /// second.
+  RuntimePlaybackOrderBuilder frozenCaptureCanonicalOrder;
+  FrozenCaptureOrderBinding frozenCaptureOrderBinding;
+  FrozenCaptureOrderBinding frozenCaptureCanonicalOrderBinding;
+  uint64_t frozenCaptureOrderStorageGeneration = 0;
+  /// Persistent fixed-grain copy cursor for writing the canonical raw-tick
+  /// order back into the unpublished capture store.
+  LoopEventStoreRewriteCursor frozenCaptureRewrite;
+  const LoopEventStore* frozenCaptureRewriteOwner = nullptr;
+  RuntimePlaybackBridgeStream bridgeStream;
+  uint32_t bridgeProjectionCycle = 0;
+  RuntimeCaptureCompanions frozenCaptureCompanions;
+  RuntimeNotePairLookup frozenCompanionPairLookup;
+  RuntimeNoteDeleteLookup frozenCompanionDeleteLookup;
+  RuntimeCompanionOverlapWalk frozenCompanionOverlaps;
+  RuntimeCompanionSpanWalk frozenCompanionSpans;
+  RuntimeCompanionReconstruction frozenCompanionReconstruction;
+  RuntimeCompanionApply frozenCompanionApply;
+  RuntimeCompanionBridgeMap frozenCompanionBridgeMap;
+  RuntimeCompanionPasses frozenCompanionPasses;
+  RuntimeCanonicalPassInputs canonicalPassInputs;
+  // Pre-stop preparation owns only derived buffers. The caller retains passes
+  // and live counters until discard/reset and invalidates before replacement.
+  PlaybackViewSourceIdentity canonicalPrefixSource;
+  const LoopPasses* canonicalPrefixPasses = nullptr;
+  uint64_t canonicalPrefixGeneration = 0;
+  uint32_t canonicalPrefixLength = 0;
+  const uint64_t* canonicalPrefixStorageOwner = nullptr;
+  uint64_t canonicalPrefixStorageGeneration = 0;
+  uint64_t recordingWindowGeneration = 0;
+  bool recordingWindowGenerationValid = false;
+  enum class CanonicalPrefixPhase : uint8_t { Idle, Preparing, Ready, Denied };
+  CanonicalPrefixPhase canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
+  bool canonicalPrefixNeedsService(const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
+                                   uint32_t loopLength, const uint64_t& storageGeneration) const;
+  RuntimePlaybackOrderBuildResult stepCanonicalPrefix(const LoopPasses& passes,
+      const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
+      size_t quantum);
+  enum class CanonicalTailPhase : uint8_t { Idle, Normalize, Rows, StartCompanions, Companions, Complete, Denied };
+  CanonicalTailPhase canonicalTailPhase = CanonicalTailPhase::Idle;
+  PlaybackViewSourceIdentity canonicalTailTarget;
+  uint64_t canonicalTailInputGeneration = 0, canonicalTailRowGeneration = 0,
+           canonicalTailPassGeneration = 0;
+  // Extends an owned, completed prefix; does not grant stop credits or publish.
+  // Caller keeps live counters/changes alive and changes immutable until discard;
+  // capture IDs, closures and retention must already be final before admission.
+  bool beginFrozenCanonicalTail(const RuntimeCanonicalPassInputs::FrozenSource& live,
+                               const PendingNoteChangeVec& changes,
+                               const PlaybackViewSourceIdentity& target);
+  RuntimePlaybackOrderBuildResult stepFrozenCanonicalTail(size_t quantum);
+  RuntimePlaybackOrderBuildResult stepReservedFrozenCanonicalTail(PendingStopAdmission& stop, size_t quantum);
+  bool frozenCanonicalTailReady(const PlaybackViewSourceIdentity& target) const;
+  void discardFrozenCanonicalTail();
+  RuntimeCaptureBridgeFill frozenCaptureBridgeFill;
+  RuntimePlaybackBridgeBuild frozenCaptureBridgeBuild;
+  PlaybackSourceAdmission frozenCaptureSourceAdmission;
+  enum class CaptureBridgePhase : uint8_t { Idle, Fill, Map, Compile, Complete, Denied };
+  CaptureBridgePhase captureBridgePhase = CaptureBridgePhase::Idle;
+  bool canonicalCaptureBridge = false;
+  uint64_t captureBridgePreparationGeneration = 0;
+  uint64_t captureBridgeMapGeneration = 0;
+
+  ~LoopPlaybackRuntime();
 
   bool isStale(uint32_t loopRevision, uint32_t trackGeneration) const;
 
   void syncRevision(uint32_t loopRevision, uint32_t trackGeneration);
 
   void reset(bool preserveLedger);
+
+  /// Cold/boot or STOPPED-only allocation. Never call from a MIDI tick.
+  bool prewarmViews();
+  /// Boot reserves only capture staging. Full views/bridges/workers are a
+  /// separate cold admission; a staging-only runtime cannot select a bridge.
+  bool prewarmCaptureStaging();
+  CaptureAdmissionStaging* captureStagingIfPrewarmed() {
+    return viewSet && viewSet->captureStaging.storage.isPrewarmed()
+        ? &viewSet->captureStaging : nullptr;
+  }
+  const CaptureAdmissionStaging* captureStagingIfPrewarmed() const {
+    return viewSet && viewSet->captureStaging.storage.isPrewarmed()
+        ? &viewSet->captureStaging : nullptr;
+  }
+  /// Non-allocating access for active playback/capture paths. A partially
+  /// allocated bundle is not usable: callers must treat it as unavailable
+  /// until every view, bridge, and staging buffer has been prewarmed.
+  RuntimePlaybackViewSet* viewSetIfPrewarmed() {
+    return viewSet != nullptr && viewSet->prewarmed ? viewSet : nullptr;
+  }
+  const RuntimePlaybackViewSet* viewSetIfPrewarmed() const {
+    return viewSet != nullptr && viewSet->prewarmed ? viewSet : nullptr;
+  }
+
+  /// STOPPED-state oracle bridge: copy an already-built legacy window into the
+  /// published fixed current view. This performs no allocation and never
+  /// touches a ready/build successor. Ordinary PLAYING consumes the completed
+  /// full-loop view through the fixed-stream adapter.
+  bool publishStoppedOracleView(const MidiEvent* source, size_t sourceCount,
+                                const PlaybackViewSourceIdentity& sourceIdentity,
+                                const PlaybackCoverageInterval& coverage);
+  /// STOPPED-only publication from effective canonical passes. Owns events
+  /// and pass origins together so ranked capture mapping can use this base.
+  bool publishStoppedOracleView(const RuntimeCompanionPasses& baseline,
+                                const PlaybackViewSourceIdentity& sourceIdentity,
+                                const PlaybackCoverageInterval& coverage);
+  /// STOPPED-only construction using idle prewarmed workers. Publishes origins
+  /// only when canonical normalization/merge matches the existing oracle.
+  bool publishStoppedCanonicalOracleView(const LoopPasses& passes,
+      const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
+      const MidiEvent* oracle, size_t oracleCount, const PlaybackCoverageInterval& coverage);
+  /// Non-allocating active-path lookup. Only a complete, full-loop current
+  /// view with the exact canonical identity is eligible for MIDI emission.
+  const RuntimePlaybackView* publishedFullLoopView(
+      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks) const;
+  /// Resolve the selected bridge by the effective canonical identity, while
+  /// verifying its compiled indexes still refer to the immutable current view.
+  const FixedPlaybackBridgeStorage* selectedFullLoopBridge(
+      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks) const;
+  /// Fixed-capacity publication preflight; denial leaves the selected bridge
+  /// unchanged. The caller supplies the first affected, not-yet-emitted phase.
+  bool canSelectPreparedFullLoopBridge(const PlaybackViewSourceIdentity& sourceIdentity,
+                                      uint32_t loopLengthTicks,
+                                      const EmissionCursor& earliestAffectedCursor) const;
+  /// Track calls only within the same non-interleaved turn as complete preflight.
+  void publishPreflightedFullLoopBridge(const EmissionCursor& cursor);
+  bool selectPreparedFullLoopBridge(const PlaybackViewSourceIdentity& sourceIdentity,
+                                   uint32_t loopLengthTicks,
+                                   const EmissionCursor& earliestAffectedCursor);
+  /// Prepare the audible half from frozen capture and frozen companion rows.
+  /// Begins no canonical transfer and does not replace a selected source.
+  bool beginFrozenCaptureBridge(const PlaybackViewSourceIdentity& baseSource,
+                                const PlaybackViewSourceIdentity& targetSource,
+                                uint32_t frozenGeneration, uint32_t commandEpoch,
+                                uint32_t loopLengthTicks, const EmissionCursor& anchor,
+                                const PlaybackBridgeRecord* companions, size_t companionCount);
+  RuntimePlaybackOrderBuildResult stepFrozenCaptureBridge(size_t entryQuantum);
+  RuntimePlaybackOrderBuildResult stepReservedFrozenCaptureBridge(PendingStopAdmission& stop, size_t quantum);
+  /// Runtime-owned ranked mapping/compilation from complete typed preparation.
+  /// Keep preparation owners frozen through final selection. No active routing.
+  bool beginFrozenCompanionBridge(const PlaybackViewSourceIdentity& baseSource,
+                                 const PlaybackViewSourceIdentity& targetSource,
+                                 uint32_t frozenGeneration, uint32_t commandEpoch,
+                                 uint32_t loopLengthTicks, const EmissionCursor& anchor);
+  bool frozenBridgePreparationReady() const;
+  /// Read-only audible half of atomic stop preflight. Canonical transfer
+  /// capacity and companion-row publication must be proven separately.
+  bool canSelectReservedFrozenCaptureBridge(const PendingStopAdmission& stop,
+      const PlaybackViewSourceIdentity& baseSource, const PlaybackViewSourceIdentity& targetSource,
+      uint32_t loopLengthTicks, const EmissionCursor& earliestAffectedCursor) const;
+  bool canSelectFrozenCaptureBridge(uint32_t frozenGeneration, uint32_t commandEpoch,
+                                   uint32_t loopLengthTicks, const EmissionCursor& earliestAffectedCursor) const;
+  bool selectFrozenCaptureBridge(uint32_t frozenGeneration, uint32_t commandEpoch,
+                                uint32_t loopLengthTicks, const EmissionCursor& earliestAffectedCursor);
+  void discardFrozenCaptureBridge();
+
+  /// Retain physical/logical stream positions between ticks. A changed source
+  /// binds after the last fully consumed phase; wrap explicitly starts a new
+  /// cycle only after draining the prior tail.
+  RuntimePlaybackBridgeStream* prepareFullLoopBridgeStream(
+      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks,
+      uint32_t completedPhase, bool beginNextCycle = false);
+
+  /// Start only a coverage-proven build into the dedicated unpublished buffer.
+  /// This is an owner-local admission primitive; task 2.4 supplies the
+  /// post-MIDI owner turn that advances its separate fill/order grains.
+  bool beginCoverageBuild(const CoverageServiceContract& contract, uint32_t currentPhase,
+                          uint32_t handoffPhase, const MidiEvent* source, size_t sourceCount,
+                          const PlaybackViewSourceIdentity& sourceIdentity,
+                          const PlaybackCoverageInterval& coverage,
+                          const EmissionCursor& cursorAnchor,
+                          const LedgerBoundarySummary& ledgerBoundary);
+  // Establish an empty raw bar-1 view before first-record input. This uses the
+  // same fill/order/lifecycle buffers as ordinary playback.
+  bool prepareFirstRecordingBar(uint32_t ticksPerBar);
+  // Bind final record geometry and make the retained bar-1 view eligible for
+  // the normal audible handoff. No source copy or order rebuild occurs here.
+  bool bindFirstRecordingBar(uint32_t loopLengthTicks);
+  /// Refresh the retained first-record bar from the live capture store using
+  /// the same bounded fill/order workers as ordinary playback preparation.
+  bool serviceFirstRecordingBar(const Loop& loop,
+                                const PlaybackViewSourceIdentity& sourceIdentity,
+                                uint32_t ticksPerBar, size_t entryQuantum = 32);
+  RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
+  RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
+  RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);
+  void discardCoverageBuild();
+
+  bool beginFrozenCaptureOrder(uint32_t loopLengthTicks, uint32_t frozenGeneration);
+  RuntimePlaybackOrderBuildResult stepFrozenCaptureOrder(size_t entryQuantum);
+  bool frozenCaptureOrderComplete() const { return frozenCaptureOrder.complete(); }
+  bool beginFrozenCaptureCanonicalOrder(uint32_t frozenGeneration);
+  RuntimePlaybackOrderBuildResult stepFrozenCaptureCanonicalOrder(size_t entryQuantum);
+  bool frozenCaptureCanonicalOrderComplete() const {
+    return frozenCaptureCanonicalOrder.complete();
+  }
+  /// Write a completed canonical order into an unpublished capture store in
+  /// fixed event quanta. This does not alter the frozen source or any audible
+  /// view; callers mark the Loop sorted only after Complete.
+  LoopEventStoreRewriteResult stepFrozenCaptureCanonicalRewrite(
+      LoopEventStore& captureStore, uint32_t frozenGeneration, size_t eventQuantum);
+  void discardFrozenCaptureCanonicalOrder();
+  /// The only candidate state eligible for a later atomic capture transfer.
+  /// It is generation-matched, has consumed every reserved terminal closure,
+  /// and has a completed fixed-storage order. Callers must still validate the
+  /// transport command epoch before making it audible.
+  bool frozenCaptureCandidateReady(uint32_t frozenGeneration) const;
+  void discardFrozenCaptureOrder();
 };
 
 struct LoopPlaybackRuntimeDeleter {

@@ -9,6 +9,17 @@
 #include "../../src/Logger.cpp"
 #include "../../src/Utils/NoteUtils.cpp"
 #include "../../src/EditManager/EditApply.cpp"
+#include "../../src/Track/RuntimeNotePairLookup.cpp"
+#include "../../src/Track/RuntimeCompanionOverlapWalk.cpp"
+#include "../../src/Track/RuntimeCompanionSpanWalk.cpp"
+#include "../../src/Track/RuntimeCompanionReconstruction.cpp"
+#include "../../src/Track/RuntimeCompanionApply.cpp"
+#include "../../src/Track/RuntimeCompanionBridgeMap.cpp"
+#include "../../src/Track/RuntimeCompanionPasses.cpp"
+#include "../../src/Track/RuntimeCanonicalPassInputs.cpp"
+#include "../../src/Track/RuntimeCaptureCompanions.cpp"
+#include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimePlaybackOrderBuilder.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
 #include "../test_support/MemoryMonitorNativeDeps.cpp"
@@ -4433,8 +4444,2236 @@ void test_incremental_companion_projection_same_tick_order_divergence_boundary()
   TEST_ASSERT_EQUAL_UINT32(firstMismatchGeneration, mismatchGeneration);
 }
 
+static int boundedCompanionPair(const MidiEventVec& events, size_t target, size_t quantum) {
+  RuntimeNotePairLookup lookup;
+  TEST_ASSERT_TRUE(lookup.prewarm(2048));
+  TEST_ASSERT_TRUE(lookup.begin(events.data(), events.size(), target));
+  const size_t bound = (6 * events.size() + quantum - 1) / quantum + 1;
+  size_t turns = 0;
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) result = lookup.step(quantum);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_TRUE(turns <= bound);
+  return lookup.result();
+}
+
+void test_companion_lane_run_counterexample_pairs_index_3_at_tick_96() {
+  MidiEventVec events{MidiEvent::NoteOn(96, 1, 60, 90), MidiEvent::NoteOn(0, 1, 60, 90),
+                      MidiEvent::NoteOff(96, 1, 60), MidiEvent::NoteOff(96, 1, 60),
+                      MidiEvent::NoteOff(0, 1, 60)};
+  TEST_ASSERT_EQUAL_INT(3, findNoteOffForOnIndex(events, 0));
+  for (size_t q : {1u, 2u, 32u}) TEST_ASSERT_EQUAL_INT(3, boundedCompanionPair(events, 0, q));
+  TEST_ASSERT_EQUAL_UINT32(96, events[3].tick);
+}
+
+void test_companion_runs_are_filtered_by_lane_and_stable_within_kind() {
+  MidiEventVec events{MidiEvent::NoteOn(0, 1, 60, 90), MidiEvent::NoteOn(96, 1, 60, 80),
+                      MidiEvent::ControlChange(48, 1, 1, 9), MidiEvent::NoteOff(48, 2, 60),
+                      MidiEvent::NoteOff(48, 1, 62), MidiEvent::NoteOff(96, 1, 60),
+                      MidiEvent::NoteOff(192, 1, 60)};
+  TEST_ASSERT_EQUAL_INT(5, findNoteOffForOnIndex(events, 0));
+  TEST_ASSERT_EQUAL_INT(6, findNoteOffForOnIndex(events, 1));
+  TEST_ASSERT_EQUAL_INT(5, boundedCompanionPair(events, 0, 1));
+  TEST_ASSERT_EQUAL_INT(6, boundedCompanionPair(events, 1, 1));
+  events = {MidiEvent::NoteOn(0, 1, 60, 90), MidiEvent::NoteOn(0, 1, 60, 80),
+            MidiEvent::NoteOff(96, 1, 60), MidiEvent::NoteOff(96, 1, 60)};
+  TEST_ASSERT_EQUAL_INT(3, findNoteOffForOnIndex(events, 0));
+  TEST_ASSERT_EQUAL_INT(2, findNoteOffForOnIndex(events, 1));
+  TEST_ASSERT_EQUAL_INT(3, boundedCompanionPair(events, 0, 1));
+  TEST_ASSERT_EQUAL_INT(2, boundedCompanionPair(events, 1, 1));
+}
+
+void test_bounded_companion_pair_preserves_tagged_and_unique_wrap_fallback() {
+  MidiEventVec events{MidiEvent::NoteOff(10, 1, 60), MidiEvent::NoteOff(20, 1, 60),
+                      MidiEvent::NoteOn(700, 1, 60, 90)};
+  events[1].noteId = events[2].noteId = 42;
+  TEST_ASSERT_EQUAL_INT(1, findNoteOffForOnIndex(events, 2));
+  TEST_ASSERT_EQUAL_INT(1, boundedCompanionPair(events, 2, 1));
+  events[1].noteId = kInvalidNoteId;
+  TEST_ASSERT_EQUAL_INT(-1, findNoteOffForOnIndex(events, 2));
+  TEST_ASSERT_EQUAL_INT(-1, boundedCompanionPair(events, 2, 1));
+  events.erase(events.begin());
+  TEST_ASSERT_EQUAL_INT(0, findNoteOffForOnIndex(events, 1));
+  TEST_ASSERT_EQUAL_INT(0, boundedCompanionPair(events, 1, 1));
+}
+
+void test_bounded_companion_pair_matches_revised_reference_across_generated_lanes() {
+  std::mt19937 rng(20260913);
+  for (size_t fixture = 0; fixture < 500; ++fixture) {
+    MidiEventVec events;
+    const size_t count = 1 + rng() % 64;
+    for (size_t i = 0; i < count; ++i) {
+      const uint32_t tick = (rng() % 8) * 96;
+      const uint8_t channel = 1 + rng() % 2;
+      const uint8_t pitch = 60 + rng() % 3;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, 90) : MidiEvent::NoteOff(tick, channel, pitch);
+      event.noteId = rng() % 5; // Includes repeated identities and untagged wrap heads.
+      events.push_back(event);
+    }
+    for (size_t target = 0; target < events.size(); ++target) {
+      if (!events[target].isNoteOn()) continue;
+      const int expected = findNoteOffForOnIndex(events, target);
+      TEST_ASSERT_EQUAL_INT(expected, boundedCompanionPair(events, target, 1 + fixture % 7));
+    }
+  }
+  MidiEventVec maximum;
+  for (size_t i = 0; i < 2048; ++i) maximum.push_back(MidiEvent::NoteOn(i, 1, 60, 90));
+  TEST_ASSERT_EQUAL_INT(-1, boundedCompanionPair(maximum, 0, 32));
+}
+
+void test_bounded_wrap_head_lookup_matches_reference() {
+  RuntimeNotePairLookup lookup;
+  TEST_ASSERT_TRUE(lookup.prewarm(2048));
+  std::mt19937 rng(20260914);
+  for (size_t fixture = 0; fixture < 500; ++fixture) {
+    const uint32_t length = fixture % 2 ? 768 : 3072;
+    MidiEventVec events;
+    for (size_t i = 0, count = 1 + rng() % 64; i < count; ++i) {
+      const uint32_t tick = rng() % (2 * length + 1);
+      const uint8_t channel = 1 + rng() % 2, pitch = 60 + rng() % 2;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, 90)
+                            : MidiEvent::NoteOff(tick, channel, pitch);
+      event.noteId = rng() % 5;
+      events.push_back(event);
+    }
+    for (size_t target = 0; target < events.size(); ++target) {
+      if (!events[target].isNoteOn()) continue;
+      const size_t quantum = 1 + fixture % 7;
+      TEST_ASSERT_TRUE(lookup.beginWrapHead(events.data(), events.size(), target, length));
+      auto result = RuntimePlaybackOrderBuildResult::Pending;
+      size_t turns = 0, bound = (2 * events.size() + quantum - 1) / quantum;
+      while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound)
+        result = lookup.step(quantum);
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+      TEST_ASSERT_EQUAL_INT(findWrapHeadOffForOnIndex(events, target, length), lookup.result());
+    }
+  }
+}
+
+void test_bounded_delete_selection_matches_actual_delete_with_retained_rows() {
+  RuntimeNotePairLookup pair;
+  RuntimeNoteDeleteLookup lookup;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  std::mt19937 rng(20260915);
+  for (size_t fixture = 0; fixture < 500; ++fixture) {
+    MidiEventVec events, expected;
+    std::vector<uint8_t> retained;
+    for (size_t i = 0, count = 1 + rng() % 64; i < count; ++i) {
+      const uint32_t tick = rng() % 6145;
+      const uint8_t channel = 1 + rng() % 2, pitch = 60 + rng() % 2;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, 90)
+                            : MidiEvent::NoteOff(tick, channel, pitch);
+      event.noteId = rng() % 5;
+      events.push_back(event);
+      retained.push_back(rng() % 4 != 0);
+      if (retained.back()) expected.push_back(event);
+    }
+    const NoteId target = rng() % 6;
+    const uint32_t length = fixture % 3 ? 3072 : 0;
+    applyDeleteNoteById(expected, target, length, nullptr);
+    TEST_ASSERT_TRUE(lookup.begin(pair, events.data(), events.size(), target, length, retained.data()));
+    const size_t quantum = 1 + fixture % 7;
+    const size_t bound = (events.size() + quantum - 1) / quantum +
+                         (6 * events.size() + quantum - 1) / quantum +
+                         (2 * events.size() + quantum - 1) / quantum;
+    size_t turns = 0;
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, lookup.step(0));
+      result = lookup.step(quantum);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    MidiEventVec actual;
+    for (size_t i = 0; i < events.size(); ++i) {
+      if (retained[i] && static_cast<int>(i) != lookup.onIndex() &&
+          static_cast<int>(i) != lookup.offIndex() && static_cast<int>(i) != lookup.wrapOffIndex())
+        actual.push_back(events[i]);
+    }
+    TEST_ASSERT_EQUAL_UINT(expected.size(), actual.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+      TEST_ASSERT_EQUAL_UINT32(expected[i].tick, actual[i].tick);
+      TEST_ASSERT_EQUAL_UINT(expected[i].noteId, actual[i].noteId);
+      TEST_ASSERT_EQUAL_UINT(expected[i].channel, actual[i].channel);
+      TEST_ASSERT_EQUAL_UINT(expected[i].type, actual[i].type);
+      TEST_ASSERT_EQUAL_UINT(expected[i].data.noteData.note, actual[i].data.noteData.note);
+    }
+  }
+}
+
+void test_bounded_delete_selects_both_tail_and_wrap_off_and_preserves_source() {
+  MidiEventVec events{MidiEvent::NoteOn(2900, 1, 60, 90), MidiEvent::NoteOff(3072, 1, 60),
+                      MidiEvent::NoteOff(100, 1, 60)};
+  events[0].noteId = events[2].noteId = 42;
+  RuntimeNotePairLookup pair;
+  RuntimeNoteDeleteLookup lookup;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  TEST_ASSERT_TRUE(lookup.begin(pair, events.data(), events.size(), 42, 3072));
+  TEST_ASSERT_FALSE(lookup.begin(pair, events.data(), events.size(), 42, 3072));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t turn = 0; turn < 27 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result = lookup.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL_INT(0, lookup.onIndex());
+  TEST_ASSERT_EQUAL_INT(1, lookup.offIndex());
+  TEST_ASSERT_EQUAL_INT(2, lookup.wrapOffIndex());
+  TEST_ASSERT_EQUAL_UINT(3, events.size());
+  TEST_ASSERT_EQUAL_UINT32(3072, events[1].tick);
+  lookup.discard();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, lookup.step(1));
+  TEST_ASSERT_TRUE(pair.available());
+}
+
+void test_bounded_delete_capacity_bound_and_discard() {
+  RuntimeNotePairLookup pair;
+  RuntimeNoteDeleteLookup lookup;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  MidiEventVec events;
+  for (size_t i = 0; i < 2048; ++i) events.push_back(MidiEvent::NoteOn(2900, 1, 60, 90));
+  events[0].noteId = 42;
+  for (size_t quantum : {1u, 3u, 32u}) {
+    TEST_ASSERT_TRUE(lookup.begin(pair, events.data(), events.size(), 42, 3072));
+    TEST_ASSERT_FALSE(lookup.ready());
+    const size_t bound = (2048 + quantum - 1) / quantum +
+                         (6 * 2048 + quantum - 1) / quantum +
+                         (2 * 2048 + quantum - 1) / quantum;
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    size_t turns = 0;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound)
+      result = lookup.step(quantum);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_TRUE(lookup.ready());
+    TEST_ASSERT_EQUAL_INT(0, lookup.onIndex());
+    TEST_ASSERT_EQUAL_INT(-1, lookup.offIndex());
+    TEST_ASSERT_EQUAL_INT(-1, lookup.wrapOffIndex());
+    lookup.discard();
+  }
+  TEST_ASSERT_TRUE(lookup.begin(pair, events.data(), events.size(), 42, 3072));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, lookup.step(2048));
+  TEST_ASSERT_FALSE(pair.available());
+  lookup.discard();
+  TEST_ASSERT_TRUE(pair.available());
+  TEST_ASSERT_FALSE(lookup.ready());
+  TEST_ASSERT_TRUE(pair.begin(events.data(), events.size(), 0));
+  TEST_ASSERT_FALSE(lookup.begin(pair, events.data(), events.size(), 42, 3072));
+  pair.discard();
+  events.push_back(MidiEvent::NoteOff(3000, 1, 60));
+  TEST_ASSERT_FALSE(lookup.begin(pair, events.data(), events.size(), 42, 3072));
+}
+
+void test_companion_overlap_walk_holds_actions_and_preserves_legacy_action_order() {
+  const NoteUtils::DisplayNote notes[] = {
+      {2, 60, 90, 120, 160}, // Delete first in source, but after all shortenings.
+      {3, 60, 90, 50, 150},
+      {4, 60, 90, 125, 300}, // Extends beyond replacement: leave alone.
+      {5, 60, 90, 125, 200}, // Same ending inner note: leave alone.
+      {6, 61, 90, 50, 150},
+      {1, 60, 90, 100, 110},
+      {7, 60, 90, 60, 180},
+      {8, 60, 90, 150, 170}};
+  RuntimeCompanionOverlapWalk walk;
+  TEST_ASSERT_TRUE(walk.begin(notes, 8, 1, 60, 100, 200, 768));
+  TEST_ASSERT_FALSE(walk.begin(notes, 8, 1, 60, 100, 200, 768));
+  const NoteId ids[] = {3, 7, 2, 8};
+  size_t actions = 0;
+  auto result = RuntimeCompanionOverlapResult::Pending;
+  for (size_t turns = 0; turns < 25 && result != RuntimeCompanionOverlapResult::Complete; ++turns) {
+    result = walk.step(1);
+    if (result != RuntimeCompanionOverlapResult::ActionReady) continue;
+    TEST_ASSERT_TRUE(actions < 4);
+    TEST_ASSERT_EQUAL_UINT(ids[actions], walk.action().noteId);
+    TEST_ASSERT_EQUAL(actions < 2 ? RuntimeCompanionOverlapWalk::ActionKind::Shorten
+                                 : RuntimeCompanionOverlapWalk::ActionKind::Delete, walk.action().kind);
+    if (actions < 2) TEST_ASSERT_EQUAL_UINT32(99, walk.action().endTick);
+    const size_t index = walk.action().sourceIndex;
+    TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::Denied, walk.step(0));
+    TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::ActionReady, walk.step(32));
+    TEST_ASSERT_EQUAL_UINT(0, walk.lastStepInputCount());
+    TEST_ASSERT_EQUAL_UINT(index, walk.action().sourceIndex);
+    TEST_ASSERT_TRUE(walk.consumeAction());
+    TEST_ASSERT_FALSE(walk.consumeAction());
+    ++actions;
+  }
+  TEST_ASSERT_EQUAL_UINT(4, actions);
+  TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT32(150, notes[1].endTick);
+  walk.discard();
+  TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::Denied, walk.step(1));
+}
+
+void test_companion_overlap_walk_matches_actual_length_application() {
+  std::mt19937 rng(20260916);
+  for (size_t fixture = 0; fixture < 500; ++fixture) {
+    const uint32_t length = fixture % 2 ? 768 : 3072;
+    MidiEventVec initial;
+    for (size_t i = 0, count = 2 + rng() % 16; i < count; ++i) {
+      const uint32_t start = rng() % length;
+      auto on = MidiEvent::NoteOn(start, 1 + rng() % 2, 60 + rng() % 2, 80 + rng() % 40);
+      on.noteId = i + 1;
+      initial.push_back(on);
+      auto off = MidiEvent::NoteOff(rng() % (length + 1), on.channel, on.data.noteData.note);
+      off.noteId = on.noteId;
+      initial.push_back(off);
+    }
+    const auto target = initial[0];
+    const int offIndex = findNoteOffForOnIndex(initial, 0);
+    const uint32_t refEnd = offIndex >= 0 ? initial[offIndex].tick : target.tick;
+    const uint32_t newEnd = refEnd + 1 + rng() % length;
+    auto expected = initial;
+    applyChangeLengthById(expected, target.noteId, newEnd, length, nullptr);
+    auto actual = initial;
+    const auto notes = reconstructNotesForPitch(initial, target.data.noteData.note, length);
+    RuntimeCompanionOverlapWalk walk;
+    TEST_ASSERT_TRUE(walk.begin(notes.data(), notes.size(), target.noteId,
+                                target.data.noteData.note, target.tick, newEnd, length));
+    const size_t quantum = 1 + fixture % 7;
+    const size_t bound = (2 * notes.size() + quantum - 1) / quantum + 2 * notes.size() + 1;
+    auto result = RuntimeCompanionOverlapResult::Pending;
+    size_t turns = 0;
+    while (result != RuntimeCompanionOverlapResult::Complete && turns++ < bound) {
+      result = walk.step(quantum);
+      TEST_ASSERT_TRUE(walk.lastStepInputCount() <= quantum);
+      if (result == RuntimeCompanionOverlapResult::ActionReady) {
+        const auto action = walk.action();
+        if (action.kind == RuntimeCompanionOverlapWalk::ActionKind::Shorten)
+          shortenNoteEndById(actual, action.noteId, action.endTick, nullptr);
+        else applyDeleteNoteById(actual, action.noteId, length, nullptr);
+        TEST_ASSERT_TRUE(walk.consumeAction());
+      }
+    }
+    TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::Complete, result);
+    const int refreshedOn = findNoteOnByIdLinear(actual, target.noteId);
+    const int refreshedOff = findNoteOffForOnIndex(actual, refreshedOn);
+    if (refreshedOff >= 0) actual[refreshedOff].tick = newEnd;
+    else if (refreshedOn >= 0) actual.push_back(MidiEvent::NoteOff(newEnd,
+                                    actual[refreshedOn].channel, actual[refreshedOn].data.noteData.note));
+    NoteUtils::orderSamePitchNoteOffsForLifo(actual, target.channel, target.data.noteData.note);
+    std::stable_sort(actual.begin(), actual.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    assertMidiEventVecEquivalent(expected, actual, "bounded overlap action order vs Length resolver");
+  }
+}
+
+void test_companion_overlap_walk_maximum_input_and_denied_admission() {
+  std::vector<NoteUtils::DisplayNote> notes(4096, {2, 60, 90, 120, 160});
+  RuntimeCompanionOverlapWalk walk;
+  TEST_ASSERT_FALSE(walk.begin(notes.data(), 4097, 1, 60, 100, 200, 768));
+  TEST_ASSERT_FALSE(walk.begin(notes.data(), notes.size(), 1, 60, 100, 200, 0));
+  for (size_t quantum : {1u, 3u, 32u}) {
+    TEST_ASSERT_TRUE(walk.begin(notes.data(), notes.size(), 1, 60, 100, 200, 768));
+    size_t actions = 0, turns = 0;
+    const size_t bound = (2 * notes.size() + quantum - 1) / quantum + notes.size() + 1;
+    auto result = RuntimeCompanionOverlapResult::Pending;
+    while (result != RuntimeCompanionOverlapResult::Complete && turns++ < bound) {
+      result = walk.step(quantum);
+      TEST_ASSERT_TRUE(walk.lastStepInputCount() <= quantum);
+      if (result == RuntimeCompanionOverlapResult::ActionReady) {
+        TEST_ASSERT_EQUAL_UINT(actions, walk.action().sourceIndex);
+        ++actions;
+        TEST_ASSERT_TRUE(walk.consumeAction());
+      }
+    }
+    TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::Complete, result);
+    TEST_ASSERT_EQUAL_UINT(notes.size(), actions);
+  }
+}
+
+void test_reconstruction_wrap_lookup_matches_legacy_queries() {
+  RuntimeNotePairLookup lookup;
+  TEST_ASSERT_TRUE(lookup.prewarm(2048));
+  std::mt19937 rng(20260917);
+  for (size_t fixture = 0; fixture < 300; ++fixture) {
+    const uint32_t length = fixture % 2 ? 768 : 3072;
+    MidiEventVec source, filtered;
+    std::vector<uint8_t> retained;
+    std::vector<size_t> original;
+    for (size_t i = 0, count = 1 + rng() % 48; i < count; ++i) {
+      const uint32_t tick = (rng() % (length / 96 + 3)) * 96;
+      const uint8_t channel = 1 + rng() % 2, pitch = 60 + rng() % 2;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, 1 + rng() % 127)
+                            : MidiEvent::NoteOff(tick, channel, pitch);
+      event.noteId = rng() % 5;
+      source.push_back(event);
+      retained.push_back(rng() % 5 != 0);
+      if (retained.back()) { filtered.push_back(event); original.push_back(i); }
+    }
+    for (size_t off = 0; off < filtered.size(); ++off) {
+      if (!filtered[off].isNoteOff()) continue;
+      const auto& event = filtered[off];
+      const uint32_t head = event.tick % length;
+      for (size_t candidate = 0; candidate <= filtered.size(); ++candidate) {
+        const bool automatic = candidate == filtered.size();
+        if (!automatic && (!filtered[candidate].isNoteOn() ||
+            filtered[candidate].data.noteData.note != event.data.noteData.note)) continue;
+        uint32_t tick = automatic ? 0 : filtered[candidate].tick;
+        uint8_t velocity = 0;
+        const bool expected = automatic
+          ? tryPairWrappedTailOn(filtered, head, event.data.noteData.note, event.channel,
+                                 length, tick, velocity)
+          : isPreferredWrapTailForHeadOffInSpanBuild(tick, head, filtered,
+                                 event.data.noteData.note, event.channel, length);
+        TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(source.data(), source.size(),
+                 original[off], length, automatic ? SIZE_MAX : original[candidate], retained.data()));
+        const size_t quantum = 1 + fixture % 7;
+        const size_t bound = (2 * source.size() + quantum - 1) / quantum;
+        auto result = RuntimePlaybackOrderBuildResult::Pending;
+        size_t turns = 0;
+        while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+          TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, lookup.step(0));
+          result = lookup.step(quantum);
+          TEST_ASSERT_TRUE(lookup.lastStepInputCount() <= quantum);
+        }
+        TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+        TEST_ASSERT_EQUAL(expected, lookup.result() >= 0);
+        if (expected) {
+          const auto& selected = source[lookup.result()];
+          TEST_ASSERT_EQUAL_UINT32(tick, selected.tick);
+          if (automatic) TEST_ASSERT_EQUAL_UINT(velocity, selected.data.noteData.velocity);
+          else TEST_ASSERT_EQUAL_UINT(original[candidate], lookup.result());
+          TEST_ASSERT_EQUAL_UINT32(occupiedWrapHeadOffTick(filtered, tick, head,
+                     event.data.noteData.note, event.channel, length), lookup.reconstructedHeadTick());
+        }
+      }
+    }
+  }
+}
+
+void test_reconstruction_wrap_lookup_retains_reconstruct_specific_rules() {
+  RuntimeNotePairLookup lookup;
+  TEST_ASSERT_TRUE(lookup.prewarm(2048));
+  MidiEventVec events{MidiEvent::NoteOn(2900, 1, 60, 90), MidiEvent::NoteOff(100, 1, 60),
+                      MidiEvent::NoteOff(3000, 1, 60)};
+  TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(events.data(), events.size(), 1, 3072));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, lookup.step(32));
+  TEST_ASSERT_EQUAL_INT(-1, lookup.result()); // A real linear closer defeats reconstruction wrap.
+  events[2].tick = 3071; // A synthetic loop-end closer does not defeat it.
+  TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(events.data(), events.size(), 1, 3072));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, lookup.step(32));
+  TEST_ASSERT_EQUAL_INT(0, lookup.result());
+  events.push_back(MidiEvent::NoteOff(3172, 1, 60)); // Same head phase, another cycle.
+  events.push_back(MidiEvent::NoteOn(48, 1, 60, 80));
+  TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(events.data(), events.size(), 1, 3072));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, lookup.step(32));
+  TEST_ASSERT_EQUAL_UINT32(47, lookup.reconstructedHeadTick());
+  events.push_back(MidiEvent::NoteOn(200, 1, 60, 80)); // Mid-loop On blocks automatic wrap.
+  TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(events.data(), events.size(), 1, 3072));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, lookup.step(32));
+  TEST_ASSERT_EQUAL_INT(-1, lookup.result());
+  TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(events.data(), events.size(), 1, 3072, 0));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, lookup.step(32));
+  TEST_ASSERT_EQUAL_INT(0, lookup.result()); // Explicit preferred-tail check has no mid-On gate.
+}
+
+void test_reconstruction_wrap_lookup_maximum_grain_bound_and_tie_order() {
+  RuntimeNotePairLookup lookup;
+  TEST_ASSERT_TRUE(lookup.prewarm(2048));
+  MidiEventVec events(2048, MidiEvent::NoteOn(2900, 1, 60, 90));
+  events[0].data.noteData.velocity = 77;
+  events.back() = MidiEvent::NoteOff(100, 1, 60);
+  for (size_t quantum : {1u, 3u, 32u}) {
+    TEST_ASSERT_TRUE(lookup.beginReconstructionWrap(events.data(), events.size(), 2047, 3072));
+    TEST_ASSERT_FALSE(lookup.beginReconstructionWrap(events.data(), events.size(), 2047, 3072));
+    size_t turns = 0, visited = 0, bound = (4096 + quantum - 1) / quantum;
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+      result = lookup.step(quantum);
+      TEST_ASSERT_TRUE(lookup.lastStepInputCount() <= quantum);
+      visited += lookup.lastStepInputCount();
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_EQUAL_UINT(4096, visited);
+    TEST_ASSERT_EQUAL_INT(0, lookup.result());
+    TEST_ASSERT_EQUAL_UINT(77, events[lookup.result()].data.noteData.velocity);
+  }
+  TEST_ASSERT_FALSE(lookup.beginReconstructionWrap(events.data(), events.size(), 0, 3072));
+  TEST_ASSERT_FALSE(lookup.beginReconstructionWrap(events.data(), events.size(), 2047, 0));
+  lookup.discard();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, lookup.step(1));
+}
+
+void assertBoundedCompanionSpans(const MidiEventVec& events, uint8_t pitch, uint32_t length,
+                                 size_t quantum, const uint8_t* retained = nullptr) {
+  MidiEventVec filtered;
+  for (size_t i = 0; i < events.size(); ++i) {
+    if ((retained == nullptr || retained[i]) && (events[i].isNoteOn() || events[i].isNoteOff()) &&
+        events[i].data.noteData.note == pitch) filtered.push_back(events[i]);
+  }
+  const auto expected = buildCanonicalSpansFromMidi(filtered, length, false, true);
+  RuntimeNotePairLookup pair;
+  RuntimeCompanionSpanWalk walk;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  TEST_ASSERT_TRUE(walk.prewarm(2048));
+  TEST_ASSERT_TRUE(walk.begin(pair, events.data(), events.size(), pitch, length, retained));
+  auto result = RuntimeCompanionSpanResult::Pending;
+  const size_t visitBound = 4 * events.size() + 6 * events.size() * events.size();
+  const size_t turnBound = (visitBound + quantum - 1) / quantum + expected.size() + 1;
+  size_t turns = 0, spans = 0, visits = 0;
+  while (result != RuntimeCompanionSpanResult::Complete && turns++ < turnBound) {
+    TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::Denied, walk.step(0));
+    result = walk.step(quantum);
+    TEST_ASSERT_TRUE(walk.lastStepInputCount() <= quantum);
+    visits += walk.lastStepInputCount();
+    if (result == RuntimeCompanionSpanResult::SpanReady) {
+      TEST_ASSERT_TRUE(spans < expected.size());
+      const auto& actual = walk.span();
+      const auto& reference = expected[spans++];
+      TEST_ASSERT_EQUAL_UINT(reference.noteId, actual.noteId);
+      TEST_ASSERT_EQUAL_UINT(reference.pitch, actual.pitch);
+      TEST_ASSERT_EQUAL_UINT(reference.velocity, actual.velocity);
+      TEST_ASSERT_EQUAL_INT32(reference.interval.start, actual.interval.start);
+      TEST_ASSERT_EQUAL_INT32(reference.interval.end, actual.interval.end);
+      TEST_ASSERT_EQUAL(reference.isOpen, actual.isOpen);
+      TEST_ASSERT_EQUAL(reference.splitHeadTail, actual.splitHeadTail);
+      TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::SpanReady, walk.step(quantum));
+      TEST_ASSERT_EQUAL_UINT(0, walk.lastStepInputCount());
+      TEST_ASSERT_TRUE(walk.consumeSpan());
+      TEST_ASSERT_FALSE(walk.consumeSpan());
+    } else TEST_ASSERT_TRUE(result == RuntimeCompanionSpanResult::Pending ||
+                            result == RuntimeCompanionSpanResult::Complete);
+  }
+  TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT(expected.size(), spans);
+  TEST_ASSERT_TRUE(visits <= visitBound);
+  TEST_ASSERT_TRUE(pair.available());
+}
+
+void test_bounded_companion_spans_match_canonical_reconstruction() {
+  std::mt19937 rng(20260918);
+  for (size_t fixture = 0; fixture < 700; ++fixture) {
+    const uint32_t length = fixture % 2 ? 768 : 3072;
+    MidiEventVec events;
+    std::vector<uint8_t> retained;
+    for (size_t i = 0, count = rng() % 65; i < count; ++i) {
+      uint32_t tick = (rng() % (length / 96 + 3)) * 96;
+      if (rng() % 7 == 0) tick = length - 1;
+      const uint8_t channel = 1 + rng() % 2, pitch = 60 + rng() % 2;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, rng() % 128)
+                            : MidiEvent::NoteOff(tick, channel, pitch);
+      event.noteId = rng() % 8;
+      events.push_back(event);
+      retained.push_back(rng() % 5 != 0);
+    }
+    assertBoundedCompanionSpans(events, 60, length, 1 + fixture % 7, retained.data());
+  }
+}
+
+void test_bounded_companion_spans_cover_equal_tick_deferred_end_and_zero_wrap() {
+  MidiEventVec events{MidiEvent::NoteOff(100, 1, 60), MidiEvent::NoteOn(100, 1, 60, 90),
+                      MidiEvent::NoteOn(100, 2, 60, 80), MidiEvent::NoteOff(200, 1, 60),
+                      MidiEvent::NoteOn(2900, 1, 60, 70), MidiEvent::NoteOff(3071, 1, 60),
+                      MidiEvent::NoteOff(0, 1, 60)};
+  for (size_t i = 0; i < events.size(); ++i) events[i].noteId = i + 1;
+  for (size_t quantum : {1u, 3u, 32u}) assertBoundedCompanionSpans(events, 60, 3072, quantum);
+  events = {MidiEvent::NoteOn(2900, 1, 60, 90), MidiEvent::NoteOff(3172, 1, 60),
+            MidiEvent::NoteOff(100, 1, 60), MidiEvent::NoteOn(48, 1, 60, 80)};
+  assertBoundedCompanionSpans(events, 60, 3072, 1);
+  events.assign(256, MidiEvent::NoteOff(0, 1, 60));
+  events.push_back(MidiEvent::NoteOn(2900, 1, 60, 90));
+  assertBoundedCompanionSpans(events, 60, 3072, 3); // Preserve reference uint8 counter wrapping.
+}
+
+void test_bounded_companion_spans_maximum_capacity_and_discard() {
+  MidiEventVec events(2048, MidiEvent::NoteOn(2900, 1, 60, 90));
+  assertBoundedCompanionSpans(events, 60, 3072, 32);
+  RuntimeNotePairLookup pair;
+  RuntimeCompanionSpanWalk walk;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  TEST_ASSERT_TRUE(walk.prewarm(2048));
+  TEST_ASSERT_FALSE(walk.begin(pair, events.data(), 2049, 60, 3072));
+  TEST_ASSERT_TRUE(walk.begin(pair, events.data(), events.size(), 60, 3072));
+  TEST_ASSERT_FALSE(walk.begin(pair, events.data(), events.size(), 60, 3072));
+  TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::Pending, walk.step(1));
+  walk.discard();
+  TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::Denied, walk.step(1));
+  TEST_ASSERT_TRUE(pair.available());
+  TEST_ASSERT_TRUE(walk.begin(pair, events.data(), events.size(), 60, 3072));
+  TEST_ASSERT_EQUAL_UINT(2048, events.size());
+}
+
+void assertBoundedCompanionReconstruction(const MidiEventVec& events, uint8_t pitch, uint32_t length,
+                                           size_t quantum, const uint8_t* retained = nullptr) {
+  MidiEventVec filtered;
+  for (size_t i = 0; i < events.size(); ++i)
+    if (retained == nullptr || retained[i]) filtered.push_back(events[i]);
+  const auto expected = reconstructNotesForPitch(filtered, pitch, length);
+  RuntimeNotePairLookup pair;
+  RuntimeCompanionSpanWalk spans;
+  RuntimeCompanionReconstruction build;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  TEST_ASSERT_TRUE(spans.prewarm(2048));
+  TEST_ASSERT_TRUE(build.prewarm(4096));
+  PlaybackViewSourceIdentity identity{1, 2, events.data()};
+  TEST_ASSERT_TRUE(build.begin(spans, pair, events.data(), events.size(), pitch, length, identity, retained));
+  TEST_ASSERT_NULL(build.data());
+  TEST_ASSERT_EQUAL_UINT(0, build.size());
+  const size_t bound = 10 * events.size() * events.size() + 7 * events.size();
+  size_t visits = 0, turns = 0;
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < (bound + quantum - 1) / quantum + 1) {
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, build.step(0));
+    result = build.step(quantum);
+    TEST_ASSERT_TRUE(build.lastStepInputCount() <= quantum);
+    visits += build.lastStepInputCount();
+    if (result == RuntimePlaybackOrderBuildResult::Pending) TEST_ASSERT_NULL(build.data());
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_TRUE(visits <= bound);
+  TEST_ASSERT_TRUE(build.ready(identity));
+  TEST_ASSERT_EQUAL_UINT(expected.size(), build.size());
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const auto& actual = build.data()[i];
+    TEST_ASSERT_EQUAL_UINT(expected[i].noteId, actual.noteId);
+    TEST_ASSERT_EQUAL_UINT(expected[i].note, actual.note);
+    TEST_ASSERT_EQUAL_UINT(expected[i].velocity, actual.velocity);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].startTick, actual.startTick);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].endTick, actual.endTick);
+  }
+}
+
+void test_bounded_companion_reconstruction_matches_pitch_reference() {
+  std::mt19937 rng(20260919);
+  for (size_t fixture = 0; fixture < 700; ++fixture) {
+    const uint32_t length = fixture % 2 ? 768 : 3072;
+    MidiEventVec events;
+    std::vector<uint8_t> retained;
+    for (size_t i = 0, count = rng() % 65; i < count; ++i) {
+      uint32_t tick = (rng() % (3 * length / 96 + 1)) * 96;
+      if (rng() % 7 == 0) tick = length - 1;
+      const uint8_t channel = 1 + rng() % 2, pitch = 60 + rng() % 2;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, rng() % 128)
+                            : MidiEvent::NoteOff(tick, channel, pitch);
+      event.noteId = rng() % 8;
+      events.push_back(event);
+      retained.push_back(rng() % 5 != 0);
+    }
+    assertBoundedCompanionReconstruction(events, 60, length, 1 + fixture % 7, retained.data());
+  }
+}
+
+void test_bounded_companion_reconstruction_rejects_stale_and_partial_output() {
+  MidiEventVec events{MidiEvent::NoteOn(100, 1, 60, 90), MidiEvent::NoteOff(200, 1, 60),
+                      MidiEvent::NoteOn(300, 1, 60, 80), MidiEvent::NoteOff(400, 1, 60)};
+  RuntimeNotePairLookup pair;
+  RuntimeCompanionSpanWalk spans;
+  RuntimeCompanionReconstruction build;
+  TEST_ASSERT_TRUE(pair.prewarm(2048));
+  TEST_ASSERT_TRUE(spans.prewarm(2048));
+  TEST_ASSERT_TRUE(build.prewarm(1)); // Capacity failure must not expose first prepared note.
+  PlaybackViewSourceIdentity source{1, 1, events.data()};
+  TEST_ASSERT_TRUE(build.begin(spans, pair, events.data(), events.size(), 60, 768, source));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t turns = 0; turns < 200 && result == RuntimePlaybackOrderBuildResult::Pending; ++turns)
+    result = build.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(build.data());
+  TEST_ASSERT_FALSE(build.ready(source));
+  TEST_ASSERT_TRUE(pair.available());
+  build.discard();
+  TEST_ASSERT_TRUE(build.begin(spans, pair, events.data(), events.size(), 60, 768, source));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, build.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, build.step(1));
+  TEST_ASSERT_NULL(build.data());
+  --source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, build.step(1));
+  TEST_ASSERT_FALSE(build.ready(source));
+  build.discard();
+  TEST_ASSERT_TRUE(build.begin(spans, pair, events.data(), events.size(), 61, 768, source));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, build.step(200));
+  TEST_ASSERT_TRUE(build.ready(source));
+  const auto* backing = build.data();
+  ++source.playbackRevision;
+  TEST_ASSERT_FALSE(build.ready(source));
+  TEST_ASSERT_NULL(build.data());
+  build.discard();
+  TEST_ASSERT_TRUE(build.begin(spans, pair, events.data(), events.size(), 61, 768, source));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, build.step(200));
+  TEST_ASSERT_EQUAL_PTR(backing, build.data());
+}
+
+void test_bounded_companion_reconstruction_maximum_unique_and_duplicate_geometry() {
+  MidiEventVec events;
+  for (size_t i = 0; i < 2048; ++i) {
+    auto event = MidiEvent::NoteOn(i, 1, 60, 90);
+    event.noteId = i + 1;
+    events.push_back(event);
+  }
+  assertBoundedCompanionReconstruction(events, 60, 3072, 32);
+  for (size_t i = 0; i < events.size(); ++i) {
+    events[i].tick = 2900;
+    events[i].data.noteData.velocity = 1 + i % 127;
+  }
+  assertBoundedCompanionReconstruction(events, 60, 3072, 3);
+}
+
+struct CompanionApplyFixture {
+  RuntimeNotePairLookup pair;
+  RuntimeNoteDeleteLookup deletion;
+  RuntimeCompanionSpanWalk spans;
+  RuntimeCompanionReconstruction reconstruction;
+  RuntimeCompanionOverlapWalk overlaps;
+  RuntimeCompanionApply apply;
+  RuntimeCompanionApply::Work work{pair, deletion, spans, reconstruction, overlaps};
+  void prewarm(size_t capacity) {
+    TEST_ASSERT_TRUE(pair.prewarm(2048));
+    TEST_ASSERT_TRUE(spans.prewarm(2048));
+    TEST_ASSERT_TRUE(reconstruction.prewarm(4096));
+    TEST_ASSERT_TRUE(apply.prewarm(capacity));
+  }
+};
+
+void assertCompanionBridgeMapping(const RuntimeCompanionApply& apply, const MidiEventVec& base,
+                                 const PlaybackViewSourceIdentity& source, size_t quantum) {
+  RuntimeCompanionBridgeMap mapping;
+  TEST_ASSERT_TRUE(mapping.prewarm(2048));
+  TEST_ASSERT_TRUE(mapping.begin(apply, base.data(), base.size(), source));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  size_t turns = 0;
+  const size_t bound = (2 * base.size() + apply.size() + quantum - 1) / quantum + 2;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+    TEST_ASSERT_NULL(mapping.records()); TEST_ASSERT_NULL(mapping.baseRanks());
+    TEST_ASSERT_NULL(mapping.recordRanks()); TEST_ASSERT_EQUAL_UINT32(0, mapping.size());
+    TEST_ASSERT_FALSE(mapping.begin(apply, base.data(), base.size(), source));
+    result = mapping.step(quantum);
+    TEST_ASSERT_TRUE(mapping.lastStepInputCount() <= quantum);
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_TRUE(mapping.ready(source));
+  MidiEventVec reconstructed(apply.size());
+  std::vector<bool> written(apply.size(), false), touched(base.size(), false);
+  for (size_t i = 0; i < base.size(); ++i) {
+    const uint16_t rank = mapping.baseRanks()[i];
+    if (rank != UINT16_MAX) {
+      TEST_ASSERT_TRUE(rank < apply.size()); TEST_ASSERT_FALSE(written[rank]);
+      reconstructed[rank] = base[i]; written[rank] = true;
+    }
+  }
+  for (size_t i = 0; i < mapping.size(); ++i) {
+    const auto& record = mapping.records()[i];
+    const auto rank = mapping.recordRanks()[i];
+    if (record.operation != PlaybackBridgeOperation::Insert) {
+      TEST_ASSERT_TRUE(record.eventProvenance < base.size());
+      TEST_ASSERT_FALSE(touched[record.eventProvenance]); touched[record.eventProvenance] = true;
+    }
+    if (record.operation == PlaybackBridgeOperation::Suppress) {
+      TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, rank);
+      TEST_ASSERT_EQUAL_UINT16(UINT16_MAX, mapping.baseRanks()[record.eventProvenance]);
+    } else {
+      TEST_ASSERT_TRUE(rank < apply.size());
+      if (record.operation == PlaybackBridgeOperation::Insert) TEST_ASSERT_FALSE(written[rank]);
+      else TEST_ASSERT_EQUAL_UINT16(rank, mapping.baseRanks()[record.eventProvenance]);
+      reconstructed[rank] = record.event; written[rank] = true;
+    }
+  }
+  for (bool row : written) TEST_ASSERT_TRUE(row);
+  assertMidiEventVecEquivalent(MidiEventVec(apply.data(), apply.data() + apply.size()),
+                               reconstructed, "ranked companion bridge mapping matches candidate");
+}
+
+void assertBoundedCompanionApply(const MidiEventVec& input, RuntimeCompanionApply::Kind kind,
+                                 NoteId target, uint32_t end, uint32_t length, size_t quantum) {
+  auto expected = input;
+  if (kind == RuntimeCompanionApply::Kind::Delete) applyDeleteNoteById(expected, target, length, nullptr);
+  else applyChangeLengthById(expected, target, end, length, nullptr);
+  const auto frozen = input;
+  CompanionApplyFixture fixture;
+  const size_t capacity = std::min<size_t>(2048, std::max<size_t>(1, input.size() + 1));
+  fixture.prewarm(capacity);
+  PlaybackViewSourceIdentity source{1, 2, input.data()};
+  TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, input.data(), input.size(), source, kind, target, end, length));
+  const size_t bound = RuntimeCompanionApply::requiredGrainsUpperBound(capacity, quantum);
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  size_t turns = 0;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+    TEST_ASSERT_NULL(fixture.apply.data());
+    TEST_ASSERT_NULL(fixture.apply.provenance());
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, fixture.apply.step(0));
+    result = fixture.apply.step(quantum);
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_TRUE(fixture.apply.ready(source));
+  assertCompanionBridgeMapping(fixture.apply, input, source, quantum);
+  const MidiEventVec actual(fixture.apply.data(), fixture.apply.data() + fixture.apply.size());
+  assertMidiEventVecEquivalent(expected, actual, "bounded companion apply vs actual reference");
+  assertMidiEventVecEquivalent(frozen, input, "source remains immutable during companion apply");
+  for (size_t i = 0; i < actual.size(); ++i) {
+    const uint32_t origin = fixture.apply.provenance()[i];
+    if (origin == UINT32_MAX) {
+      TEST_ASSERT_TRUE(actual[i].isNoteOff());
+      TEST_ASSERT_EQUAL_UINT(kInvalidNoteId, actual[i].noteId);
+      TEST_ASSERT_EQUAL_UINT32(end, actual[i].tick);
+    } else {
+      TEST_ASSERT_TRUE(origin < input.size());
+      auto original = input[origin];
+      original.tick = actual[i].tick;
+      assertMidiEventVecEquivalent(MidiEventVec{original}, MidiEventVec{actual[i]}, "event provenance survives compaction and ordering");
+    }
+  }
+}
+
+void test_bounded_companion_apply_matches_delete_and_length_reference() {
+  std::mt19937 rng(20260920);
+  for (size_t fixture = 0; fixture < 900; ++fixture) {
+    const uint32_t length = fixture % 3 == 0 ? 0 : (fixture % 2 ? 768 : 3072);
+    MidiEventVec events;
+    for (size_t i = 0, count = rng() % 33; i < count; ++i) {
+      uint32_t tick = (rng() % 35) * 96;
+      if (rng() % 7 == 0) tick = 3071;
+      const uint8_t channel = 1 + rng() % 2, pitch = 60 + rng() % 2;
+      auto event = rng() % 2 ? MidiEvent::NoteOn(tick, channel, pitch, rng() % 128)
+                            : MidiEvent::NoteOff(tick, channel, pitch);
+      if (rng() % 9 == 0) event = MidiEvent::ControlChange(tick, channel, 1, 20);
+      event.noteId = rng() % 6;
+      events.push_back(event);
+    }
+    const NoteId target = fixture % 6;
+    const uint32_t end = (rng() % 36) * 96;
+    assertBoundedCompanionApply(events, fixture % 4 ? RuntimeCompanionApply::Kind::Length
+               : RuntimeCompanionApply::Kind::Delete, target, end, length, 1 + fixture % 7);
+  }
+}
+
+void test_bounded_companion_apply_synthesizes_off_and_keeps_shortening_order() {
+  MidiEventVec events{MidiEvent::NoteOn(600, 1, 60, 90), MidiEvent::NoteOn(100, 1, 61, 80),
+                      MidiEvent::NoteOff(200, 1, 61)};
+  events[0].noteId = 1; events[1].noteId = 2;
+  for (size_t quantum : {1u, 3u, 32u}) {
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 1, 700, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 1, 768, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 2, 150, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Delete, 2, 0, 768, quantum);
+  }
+}
+
+void test_bounded_companion_apply_capacity_and_stale_source_hide_partial_candidate() {
+  MidiEventVec events{MidiEvent::NoteOn(600, 1, 60, 90)};
+  events[0].noteId = 1;
+  CompanionApplyFixture fixture;
+  fixture.prewarm(1);
+  PlaybackViewSourceIdentity source{1, 1, events.data()};
+  TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
+                                     RuntimeCompanionApply::Kind::Length, 1, 700, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 200 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(fixture.apply.data());
+  TEST_ASSERT_EQUAL_UINT(1, events.size());
+  TEST_ASSERT_TRUE(fixture.pair.available());
+  TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
+                                     RuntimeCompanionApply::Kind::Length, 1, 768, 768));
+  TEST_ASSERT_FALSE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
+                                      RuntimeCompanionApply::Kind::Length, 1, 768, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, fixture.apply.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, fixture.apply.step(1));
+  TEST_ASSERT_NULL(fixture.apply.data());
+  --source.sourceGeneration;
+  TEST_ASSERT_FALSE(fixture.apply.ready(source));
+  TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
+                                     RuntimeCompanionApply::Kind::Length, 1, 768, 768));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 200 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  const auto* output = fixture.apply.data();
+  TEST_ASSERT_FALSE(fixture.apply.begin(fixture.work, output, fixture.apply.size(), source,
+                                      RuntimeCompanionApply::Kind::Delete, 1, 0, 768));
+  TEST_ASSERT_EQUAL_PTR(output, fixture.apply.data());
+  ++source.playbackRevision;
+  TEST_ASSERT_NULL(fixture.apply.data());
+}
+
+void test_bounded_companion_batch_matches_sequential_reference_and_base_provenance() {
+  std::mt19937 rng(20260921);
+  for (size_t test = 0; test < 400; ++test) {
+    MidiEventVec events;
+    for (size_t i = 0; i < 24; ++i) {
+      auto event = rng() % 2 ? MidiEvent::NoteOn((rng() % 34) * 96, 1 + rng() % 2, 60 + rng() % 2, 90)
+                            : MidiEvent::NoteOff((rng() % 34) * 96, 1 + rng() % 2, 60 + rng() % 2);
+      event.noteId = rng() % 8;
+      events.push_back(event);
+    }
+    const uint32_t length = test % 3 ? 3072 : 0;
+    std::vector<EditPass> rows(8);
+    auto expected = events;
+    for (auto& row : rows) {
+      row.passType = EditPassType::Note;
+      row.targetNoteId = rng() % 8;
+      row.endTick = (rng() % 38) * 96;
+      row.actionType = rng() % 3 ? EditActionType::Update : EditActionType::Delete;
+      row.propertyType = row.actionType == EditActionType::Update ? EditPropertyType::Length : EditPropertyType::None;
+      if (row.actionType == EditActionType::Delete) applyDeleteNoteById(expected, row.targetNoteId, length, nullptr);
+      else applyChangeLengthById(expected, row.targetNoteId, row.endTick, length, nullptr);
+    }
+    CompanionApplyFixture fixture;
+    fixture.prewarm(64);
+    PlaybackViewSourceIdentity source{1, 2, events.data()};
+    TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, events.data(), events.size(), source, rows.data(), rows.size(), length));
+    const size_t quantum = 1 + test % 7;
+    const size_t bound = (rows.size() + 1) * RuntimeCompanionApply::requiredGrainsUpperBound(64, quantum);
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    size_t turns = 0;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+      TEST_ASSERT_NULL(fixture.apply.data());
+      result = fixture.apply.step(quantum);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_TRUE(fixture.apply.ready(source));
+    assertCompanionBridgeMapping(fixture.apply, events, source, quantum);
+    MidiEventVec actual(fixture.apply.data(), fixture.apply.data() + fixture.apply.size());
+    assertMidiEventVecEquivalent(expected, actual, "bounded companion batch vs sequential reference");
+    for (size_t i = 0; i < actual.size(); ++i) {
+      const auto origin = fixture.apply.provenance()[i];
+      if (origin == UINT32_MAX) TEST_ASSERT_TRUE(actual[i].isNoteOff());
+      else {
+        TEST_ASSERT_TRUE(origin < events.size());
+        auto original = events[origin]; original.tick = actual[i].tick;
+        assertMidiEventVecEquivalent(MidiEventVec{original}, MidiEventVec{actual[i]}, "base provenance across companion batch");
+      }
+    }
+  }
+}
+
+void test_create_history_preserves_equal_tick_append_order() {
+  for (size_t existingCount : {size_t(0), size_t(12), size_t(25)}) {
+    MidiEventVec events;
+    EditPass row;
+    row.actionType = EditActionType::Create;
+    for (size_t i = 0; i < 25; ++i) {
+      auto event = MidiEvent::NoteOn(i % 3, 1, 60, 90);
+      event.noteId = i + 1;
+      if (i < existingCount) events.push_back(event);
+      else row.addedEvents.push_back(event);
+    }
+    applyNoteEditPassSequence(events, EditPassVec{row}, 768);
+    TEST_ASSERT_EQUAL_UINT(25, events.size());
+    size_t index = 0;
+    for (size_t tick = 0; tick < 3; ++tick) {
+      for (size_t originalIndex = tick; originalIndex < 25; originalIndex += 3) {
+        TEST_ASSERT_EQUAL_UINT32(tick, events[index].tick);
+        TEST_ASSERT_EQUAL_UINT32(originalIndex + 1, events[index].noteId);
+        ++index;
+      }
+    }
+  }
+}
+
+void test_bounded_history_updates_match_canonical_sequence() {
+  std::mt19937 rng(20260924);
+  for (size_t test = 0; test < 300; ++test) {
+    MidiEventVec events;
+    for (size_t i = 0; i < 24; ++i) {
+      auto event = rng() % 2 ? MidiEvent::NoteOn((rng() % 34) * 96, 1 + rng() % 2, 60 + rng() % 3, 90)
+                            : MidiEvent::NoteOff((rng() % 34) * 96, 1 + rng() % 2, 60 + rng() % 3);
+      event.noteId = rng() % 8;
+      events.push_back(event);
+    }
+    EditPassVec rows;
+    for (size_t i = 0; i < 10; ++i) {
+      EditPass row;
+      row.targetNoteId = rng() % 8;
+      row.actionType = EditActionType::Update;
+      const EditPropertyType properties[] = {EditPropertyType::Pitch, EditPropertyType::Velocity,
+          EditPropertyType::NoteRange, EditPropertyType::Length};
+      row.propertyType = properties[rng() % 4];
+      row.pitch = 60 + rng() % 3; row.velocity = rng() % 128;
+      row.startTick = (rng() % 34) * 96; row.endTick = (rng() % 38) * 96;
+      if (rng() % 7 == 0) row.actionType = EditActionType::Delete;
+      if (rng() % 5 == 0) {
+        row.actionType = EditActionType::Create;
+        auto on = MidiEvent::NoteOn(row.startTick, 1, row.pitch, row.velocity);
+        on.noteId = row.targetNoteId;
+        row.addedEvents = {on, MidiEvent::NoteOff(row.endTick, 1, row.pitch),
+                          MidiEvent::ControlChange(row.startTick, 1, 7, 64)};
+      }
+      rows.push_back(row);
+      if (i % 3 == 0) { row.pitch = 62; row.velocity = 0; rows.push_back(row); }
+    }
+    const auto untouched = events;
+    auto expected = events;
+    const uint32_t length = test % 3 ? 3072 : 0;
+    applyNoteEditPassSequence(expected, rows, length);
+    CompanionApplyFixture fixture; fixture.prewarm(128);
+    PlaybackViewSourceIdentity source{1, 2, events.data()};
+    TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, events.data(), events.size(),
+        source, rows.data(), rows.size(), length));
+    const size_t quantum = 1 + test % 7;
+    const uint64_t bound = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(128, rows.size(), quantum);
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    size_t turns = 0;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+      TEST_ASSERT_NULL(fixture.apply.data());
+      result = fixture.apply.step(quantum);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    MidiEventVec actual(fixture.apply.data(), fixture.apply.data() + fixture.apply.size());
+    assertMidiEventVecEquivalent(expected, actual, "bounded history updates vs canonical sequence");
+    assertMidiEventVecEquivalent(untouched, events, "history source is immutable");
+    for (size_t i = 0; i < actual.size(); ++i) {
+      const auto origin = fixture.apply.provenance()[i];
+      if (origin != UINT32_MAX) {
+        TEST_ASSERT_TRUE(origin < events.size());
+        TEST_ASSERT_EQUAL(events[origin].noteId, actual[i].noteId);
+        TEST_ASSERT_EQUAL(events[origin].channel, actual[i].channel);
+        TEST_ASSERT_EQUAL(events[origin].type, actual[i].type);
+      }
+    }
+  }
+}
+
+void assertBoundedCreateHistory(const MidiEventVec& input, const EditPassVec& rows, size_t capacity, size_t quantum) {
+  auto expected = input;
+  applyNoteEditPassSequence(expected, rows, 768);
+  CompanionApplyFixture fixture; fixture.prewarm(capacity);
+  PlaybackViewSourceIdentity source{1, 2, input.data()};
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, input.data(), input.size(),
+      source, rows.data(), rows.size(), 768));
+  const uint64_t bound = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows.size(), quantum);
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  uint64_t turns = 0;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+    TEST_ASSERT_NULL(fixture.apply.data());
+    result = fixture.apply.step(quantum);
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  assertMidiEventVecEquivalent(expected, MidiEventVec(fixture.apply.data(), fixture.apply.data() + fixture.apply.size()),
+                              "bounded Create history vs DEC-061 reference");
+}
+
+void test_bounded_create_reactivates_identity_with_surviving_duplicate() {
+  auto first = MidiEvent::NoteOn(0, 1, 60, 90); first.noteId = 1;
+  auto duplicate = first; duplicate.tick = 20;
+  MidiEventVec input{first, MidiEvent::NoteOff(10, 1, 60), duplicate, MidiEvent::NoteOff(30, 1, 60)};
+  EditPass deletion; deletion.actionType = EditActionType::Delete; deletion.targetNoteId = 1;
+  EditPass velocity; velocity.targetNoteId = 1; velocity.propertyType = EditPropertyType::Velocity; velocity.velocity = 55;
+  EditPass zeroCreate; zeroCreate.actionType = EditActionType::Create;
+  auto zeroOn = first; zeroOn.tick = 15; zeroOn.data.noteData.velocity = 0;
+  zeroCreate.addedEvents = {zeroOn};
+  EditPass create; create.actionType = EditActionType::Create;
+  auto addedOn = first; addedOn.tick = 100; create.addedEvents = {addedOn};
+  auto laterCreate = create; laterCreate.addedEvents[0].tick = 200;
+  auto finalVelocity = velocity; finalVelocity.velocity = 77;
+  EditPassVec rows{deletion, velocity, zeroCreate, velocity, create, velocity,
+                   deletion, velocity, laterCreate, finalVelocity};
+  auto expected = input;
+  applyNoteEditPassSequence(expected, rows, 768);
+  const int selected = findNoteOnById(expected, 1);
+  TEST_ASSERT_TRUE(selected >= 0);
+  TEST_ASSERT_EQUAL(100, expected[selected].tick);
+  TEST_ASSERT_EQUAL(77, expected[selected].data.noteData.velocity);
+  for (size_t quantum : {size_t(1), size_t(7), size_t(32)}) assertBoundedCreateHistory(input, rows, 16, quantum);
+}
+
+void test_bounded_create_empty_maximum_capacity_and_cancellation() {
+  MidiEventVec input{MidiEvent::NoteOn(100, 1, 60, 90), MidiEvent::NoteOff(0, 1, 60)};
+  input[0].noteId = 1;
+  EditPass create; create.actionType = EditActionType::Create;
+  assertBoundedCreateHistory(input, EditPassVec{create}, 2, 1);
+  assertBoundedCreateHistory(MidiEventVec{}, EditPassVec{create}, 2, 1);
+  for (size_t i = 0; i < 2048; ++i)
+    create.addedEvents.push_back(MidiEvent::ControlChange(i % 3, 1, i % 128, i % 127));
+  assertBoundedCreateHistory(MidiEventVec{}, EditPassVec{create}, 2048, 1);
+  CompanionApplyFixture fixture; fixture.prewarm(2048);
+  PlaybackViewSourceIdentity source{1, 2, input.data()};
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, nullptr, 0, source, &create, 1, 768));
+  // Copy -> next row -> collapse -> append, then cancel after a partial append.
+  for (size_t i = 0; i < 4; ++i)
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, fixture.apply.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_NULL(fixture.apply.data());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, fixture.apply.step(1));
+  // Aggregate overflow denies instead of truncating an accepted Create payload.
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, input.data(), input.size(), source, &create, 1, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 20 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+    result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(fixture.apply.data());
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCompanionApply::requiredHistoryGrainsUpperBound(2048, 2049, 1));
+  TEST_ASSERT_TRUE(RuntimeCompanionApply::requiredHistoryGrainsUpperBound(2048, 2048, 1) > UINT32_MAX);
+}
+
+void test_canonical_pass_inputs_feed_per_pass_companions() {
+  std::mt19937 rng(20260925);
+  for (size_t sample = 0; sample < 80; ++sample) {
+    LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+    CaptureChunkIdList refs[2];
+    MidiEventVec expectedPasses[2];
+    for (size_t pass = 0; pass < 2; ++pass) {
+      LoopEventStore store;
+      for (size_t i = 0; i < 12; ++i) {
+        auto on = MidiEvent::NoteOn(rng() % 700, 1, 60 + rng() % 3, 90); on.noteId = 1 + rng() % 5;
+        auto off = MidiEvent::NoteOff(rng() % 768, 1, on.data.noteData.note);
+        expectedPasses[pass].push_back(on); expectedPasses[pass].push_back(off);
+        TEST_ASSERT_TRUE(store.append(on)); TEST_ASSERT_TRUE(store.append(off));
+      }
+      store.detachChunksTo(refs[pass]);
+    }
+    RuntimeCanonicalPassInputs::SealedPass descriptors[] = {{refs[0].data(), refs[0].size()}, {refs[1].data(), refs[1].size()}};
+    EditPass pitch; pitch.targetNoteId = 1; pitch.propertyType = EditPropertyType::Pitch; pitch.pitch = 65;
+    EditPass create; create.actionType = EditActionType::Create;
+    auto added = MidiEvent::NoteOn(50, 1, 64, 80); added.noteId = 7;
+    create.addedEvents = {added, MidiEvent::NoteOff(90, 1, 64)};
+    EditPassVec history{pitch, create};
+    CompanionApplyFixture fixture; fixture.prewarm(128);
+    RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(128));
+    PlaybackViewSourceIdentity source{1, 2, descriptors};
+    TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, descriptors, 2, history.data(), history.size(), source, 768));
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    size_t turns = 0;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < 10000) {
+      TEST_ASSERT_NULL(inputs.data()); TEST_ASSERT_EQUAL(0, inputs.eventCount());
+      result = inputs.step(1 + sample % 7);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_EQUAL(2, inputs.passCount());
+    for (size_t pass = 0; pass < 2; ++pass) {
+      applyNoteEditPassSequence(expectedPasses[pass], history, 768);
+      const auto& actual = inputs.data()[pass];
+      assertMidiEventVecEquivalent(expectedPasses[pass], MidiEventVec(actual.events, actual.events + actual.count), "effective pass history");
+    }
+    EditPass deletion; deletion.actionType = EditActionType::Delete; deletion.targetNoteId = 1;
+    EditPassVec companions{deletion};
+    for (auto& events : expectedPasses) applyNoteEditPassSequence(events, companions, 768);
+    MidiEventVec expected(expectedPasses[0].size() + expectedPasses[1].size());
+    std::merge(expectedPasses[0].begin(), expectedPasses[0].end(), expectedPasses[1].begin(), expectedPasses[1].end(), expected.begin(),
+               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(128));
+    PlaybackViewSourceIdentity preparedSource{2, 3, descriptors};
+    TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, companions.data(), companions.size(), preparedSource, 768));
+    result = RuntimePlaybackOrderBuildResult::Pending; turns = 0;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < 10000) result = prepared.step(3);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    assertMidiEventVecEquivalent(expected, MidiEventVec(prepared.data(), prepared.data() + prepared.size()), "history then independent companions");
+    inputs.discard();
+    TEST_ASSERT_FALSE(prepared.ready(preparedSource)); TEST_ASSERT_NULL(prepared.data());
+    prepared.discard();
+    for (auto& ids : refs) LoopEventStore::releaseChunkRefs(ids);
+  }
+}
+
+void test_canonical_pass_inputs_capacity_stale_and_borrow_guards() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopEventStore store; TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 90)));
+  CaptureChunkIdList refs; store.detachChunksTo(refs);
+  RuntimeCanonicalPassInputs::SealedPass descriptors[] = {{refs.data(), refs.size()}, {refs.data(), refs.size()}};
+  CompanionApplyFixture fixture; fixture.prewarm(2);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(2));
+  PlaybackViewSourceIdentity source{1, 2, descriptors};
+  EditPass create; create.actionType = EditActionType::Create;
+  create.addedEvents = {MidiEvent::NoteOff(100, 1, 60)};
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, descriptors, 2, &create, 1, source, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 200 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = inputs.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result); TEST_ASSERT_NULL(inputs.data());
+  TEST_ASSERT_EQUAL(0, inputs.eventCount());
+  EditPass guard; guard.targetNoteId = 1; guard.propertyType = EditPropertyType::Velocity;
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, descriptors, 1, &guard, 1, source, 768));
+  TEST_ASSERT_FALSE(inputs.begin(fixture.apply, fixture.work, descriptors, 1, nullptr, 0, source, 768));
+  // Start, read event, finish chunk and borrow apply; then reuse that worker.
+  for (size_t i = 0; i < 3; ++i) TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, inputs.step(1));
+  fixture.apply.discard();
+  MidiEvent external = MidiEvent::NoteOn(10, 1, 61, 90);
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, &external, 1, source, nullptr, 0, 768));
+  const auto generation = fixture.apply.generation();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, inputs.step(1));
+  TEST_ASSERT_EQUAL_UINT64(generation, fixture.apply.generation());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, fixture.apply.step(1));
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, descriptors, 1, nullptr, 0, source, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, inputs.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, inputs.step(1));
+  TEST_ASSERT_NULL(inputs.data());
+  inputs.discard(); LoopEventStore::releaseChunkRefs(refs);
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, nullptr, 0, nullptr, 0, source, 768));
+  TEST_ASSERT_TRUE(inputs.ready()); TEST_ASSERT_EQUAL(0, inputs.passCount());
+}
+
+void test_canonical_pass_inputs_maximum_and_pending_consumer_invalidation() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  CaptureChunkIdList refs[2];
+  RuntimeCanonicalPassInputs::SealedPass passes[2];
+  for (size_t p = 0; p < 2; ++p) {
+    LoopEventStore store;
+    for (size_t i = 0; i < 1024; ++i) TEST_ASSERT_TRUE(store.append(MidiEvent::ControlChange(i % 700, 1, p + 1, i % 128)));
+    store.detachChunksTo(refs[p]); passes[p] = {refs[p].data(), refs[p].size()};
+  }
+  CompanionApplyFixture fixture; fixture.prewarm(2048);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(2048));
+  TEST_ASSERT_EQUAL_UINT64(2048 * (2 * sizeof(MidiEvent) + sizeof(RuntimeCompanionPasses::Pass) + sizeof(RuntimeCanonicalPassInputs::SealedPass) + 2 * sizeof(uint16_t) + sizeof(const EditPass*)), inputs.fixedExternalBytes());
+  PlaybackViewSourceIdentity source{1, 2, passes};
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, 2, nullptr, 0, source, 768));
+  const auto bound = RuntimeCanonicalPassInputs::requiredGrainsUpperBound(2048, 2, 0, 7);
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  uint64_t turns = 0;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) result = inputs.step(7);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL(2048, inputs.eventCount());
+  for (size_t p = 0; p < 2; ++p) {
+    TEST_ASSERT_EQUAL(1024, inputs.data()[p].count);
+    for (size_t i = 0; i < 1024; ++i) {
+      TEST_ASSERT_EQUAL(i % 700, inputs.data()[p].events[i].tick);
+      TEST_ASSERT_EQUAL(p + 1, inputs.data()[p].events[i].data.ccData.cc);
+    }
+  }
+  RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(2048));
+  TEST_ASSERT_FALSE(prepared.begin(fixture.apply, fixture.work, inputs, nullptr, 0, source, 1536));
+  TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, nullptr, 0, source, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, prepared.step(1));
+  inputs.discard();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, prepared.step(1));
+  TEST_ASSERT_NULL(prepared.data());
+  TEST_ASSERT_TRUE(fixture.apply.available());
+  for (auto& ids : refs) LoopEventStore::releaseChunkRefs(ids);
+}
+
+void test_canonical_pass_selection_and_filtered_history_match_materialization() {
+  for (size_t sample = 0; sample < 32; ++sample) {
+    LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+    LoopPasses passes;
+    const auto fill = [](CommittedChunkIdList& refs, uint8_t pitch) {
+      LoopEventStore store;
+      auto on = MidiEvent::NoteOn(10, 1, pitch, 90); on.noteId = 1;
+      TEST_ASSERT_TRUE(store.append(on)); TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(50, 1, pitch)));
+      TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(refs));
+    };
+    passes.recordPass.id = sample % 2 ? 1 : kInvalidPassId;
+    passes.recordPass.state = sample % 3 ? CapturePassState::Active : CapturePassState::Disabled;
+    fill(passes.recordPass.committedChunkIds, 60);
+    passes.overdubPasses.resize(4);
+    const uint32_t sequence[] = {30, 0, UINT32_MAX, 10};
+    for (size_t i = 0; i < 4; ++i) {
+      auto& pass = passes.overdubPasses[i]; pass.id = i + 2; pass.mergeSequence = sequence[i];
+      pass.state = sample & (1u << i) ? CapturePassState::Active : CapturePassState::Disabled;
+      if (i != 2 || sample % 2) fill(pass.committedChunkIds, 61 + i);
+    }
+    EditPass velocity; velocity.targetNoteId = 1; velocity.propertyType = EditPropertyType::Velocity; velocity.velocity = 0;
+    // Canonical non-Create rows ignore leftover payloads; filtering must not copy or apply them.
+    velocity.addedEvents = {MidiEvent::ControlChange(0, 1, 7, 99)};
+    EditPass disabled; disabled.actionType = EditActionType::Delete; disabled.targetNoteId = 1; disabled.state = EditPassState::Disabled;
+    EditPass ignored = disabled; ignored.state = EditPassState::Active; ignored.passType = EditPassType::ControlChange;
+    auto lastVelocity = velocity; lastVelocity.velocity = 88;
+    EditPass create; create.actionType = EditActionType::Create;
+    auto added = MidiEvent::NoteOn(10, 1, 70, 80); added.noteId = 7;
+    create.addedEvents = {added, MidiEvent::NoteOff(60, 1, 70)};
+    passes.editPasses = {velocity, disabled, ignored, lastVelocity, create};
+    if (sample % 4 == 0) {
+      EditPass noOp; noOp.targetNoteId = 1; noOp.propertyType = EditPropertyType::None;
+      passes.editPasses.insert(passes.editPasses.begin() + 3, noOp);
+    }
+    SessionMidiEventVec reference;
+    passes.materializeToEventVector(reference, 768);
+    CompanionApplyFixture fixture; fixture.prewarm(32);
+    RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(32));
+    PlaybackViewSourceIdentity source{1, 2, &passes};
+    TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+    const size_t quantum = 1 + sample % 7;
+    const auto bound = RuntimeCanonicalPassInputs::requiredSelectedGrainsUpperBound(32, passes.editPasses.size(), quantum);
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    uint64_t turns = 0;
+    while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) {
+      TEST_ASSERT_NULL(inputs.data()); result = inputs.step(quantum);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    RuntimeCompanionPasses merged; TEST_ASSERT_TRUE(merged.prewarm(32));
+    TEST_ASSERT_TRUE(merged.begin(fixture.apply, fixture.work, inputs, nullptr, 0, source, 768));
+    result = RuntimePlaybackOrderBuildResult::Pending;
+    for (size_t i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = merged.step(quantum);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    assertMidiEventVecEquivalent(MidiEventVec(reference.begin(), reference.end()), MidiEventVec(merged.data(), merged.data() + merged.size()),
+                                "direct LoopPasses selection and active-row filtering");
+    merged.discard(); inputs.discard();
+    LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+    for (auto& pass : passes.overdubPasses) LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+  }
+}
+
+void test_canonical_selection_denies_ambiguous_order_and_stale_source() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopPasses passes; passes.overdubPasses.resize(3);
+  const uint32_t sequences[] = {5, 3, 5};
+  for (size_t i = 0; i < 3; ++i) {
+    LoopEventStore store; TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 90)));
+    TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(passes.overdubPasses[i].committedChunkIds));
+    passes.overdubPasses[i].mergeSequence = sequences[i];
+  }
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(4));
+  PlaybackViewSourceIdentity source{1, 2, &passes};
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = inputs.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(inputs.data()); TEST_ASSERT_EQUAL(0, inputs.eventCount());
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, inputs.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, inputs.step(1));
+  TEST_ASSERT_NULL(inputs.data()); inputs.discard();
+  for (auto& pass : passes.overdubPasses) LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+  const EditPass* badRows[] = {nullptr};
+  TEST_ASSERT_TRUE(fixture.apply.beginSelectedHistoryBatch(fixture.work, nullptr, 0, source, badRows, 1, 768));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 10 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+}
+
+void test_canonical_frozen_source_invalidates_without_producer_turn() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopPasses passes; passes.recordPass.id = 1;
+  LoopEventStore store;
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 90)));
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(50, 1, 60)));
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(passes.recordPass.committedChunkIds));
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(4));
+  RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(4));
+  CaptureAdmissionStaging capture;
+  uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+  const PlaybackViewSourceIdentity source{1, 2, &passes};
+  const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+  for (size_t change = 0; change < 8; ++change) {
+    // Interrupt every early grain as well as completed normalization and both
+    // pending/completed downstream consumers. The copied source never changes.
+    for (size_t pause = 0; pause < 22; ++pause) {
+      revision = 1; generation = 2; epoch = 3; length = 768;
+      capture.captureGeneration = capture.frozenGeneration = 4;
+      capture.frozen = true; capture.storage.eventCount = 0;
+      TEST_ASSERT_TRUE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+      auto result = RuntimePlaybackOrderBuildResult::Pending;
+      for (size_t i = 0; i < pause && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+        result = inputs.step(1);
+      const bool consume = inputs.ready();
+      if (consume) {
+        TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, nullptr, 0, source, length));
+        for (size_t i = 0; i < (pause % 2 ? 100u : 1u); ++i) {
+          if (prepared.step(1) == RuntimePlaybackOrderBuildResult::Complete) break;
+        }
+      }
+      switch (change) {
+        case 0: ++revision; break;
+        case 1: ++generation; break;
+        case 2: ++epoch; break;
+        case 3: ++length; break;
+        case 4: capture.frozen = false; break;
+        case 5: ++capture.captureGeneration; break;
+        case 6: ++capture.frozenGeneration; break;
+        case 7: ++capture.storage.eventCount; break;
+      }
+      TEST_ASSERT_FALSE(inputs.ready()); TEST_ASSERT_NULL(inputs.data());
+      TEST_ASSERT_EQUAL(0, inputs.passCount()); TEST_ASSERT_EQUAL(0, inputs.eventCount());
+      if (consume) {
+        TEST_ASSERT_FALSE(prepared.ready(source)); TEST_ASSERT_NULL(prepared.data());
+        TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, prepared.step(1));
+      }
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, inputs.step(1));
+      prepared.discard(); inputs.discard();
+    }
+  }
+  LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+}
+
+void test_canonical_frozen_source_refuses_unclosed_or_mismatched_admission() {
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(4));
+  LoopPasses passes; CaptureAdmissionStaging capture;
+  uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+  const PlaybackViewSourceIdentity source{1, 2, &passes};
+  const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+  TEST_ASSERT_FALSE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  capture.frozen = true; capture.captureGeneration = capture.frozenGeneration = 4;
+  capture.reservations[0].open = true;
+  TEST_ASSERT_FALSE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  capture.reservations[0].open = false; ++revision;
+  TEST_ASSERT_FALSE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  --revision; ++generation;
+  TEST_ASSERT_FALSE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  --generation; ++capture.frozenGeneration;
+  TEST_ASSERT_FALSE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  --capture.frozenGeneration;
+  TEST_ASSERT_TRUE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  for (size_t i = 0; i < 3; ++i) inputs.step(1);
+  TEST_ASSERT_TRUE(inputs.ready());
+  inputs.discard();
+}
+
+void test_frozen_companion_owner_binds_per_pass_reference_and_reuse() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopPasses passes; passes.recordPass.id = 1; passes.overdubPasses.resize(1);
+  MidiEventVec passEvents{MidiEvent::NoteOn(10, 1, 60, 90), MidiEvent::NoteOff(50, 1, 60),
+                          MidiEvent::NoteOn(100, 1, 62, 80), MidiEvent::NoteOff(200, 1, 62)};
+  passEvents[0].noteId = 1; passEvents[2].noteId = 2;
+  for (auto* refs : {&passes.recordPass.committedChunkIds, &passes.overdubPasses[0].committedChunkIds}) {
+    LoopEventStore store;
+    for (const auto& event : passEvents) TEST_ASSERT_TRUE(store.append(event));
+    TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(*refs));
+  }
+  CompanionApplyFixture fixture; fixture.prewarm(16);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(16));
+  RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(16));
+  RuntimeCaptureCompanions rows; TEST_ASSERT_TRUE(rows.prewarm(4));
+  CaptureAdmissionStaging capture; capture.frozen = true;
+  capture.captureGeneration = capture.frozenGeneration = 4;
+  uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+  const PlaybackViewSourceIdentity source{1, 2, &passes};
+  const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+  PendingNoteChangeVec changes{
+    {PendingNoteChangeKind::Add, 3, 1, 64, 90, 20, 30},
+    {PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50},
+    {PendingNoteChangeKind::Shorten, 2, 1, 62, 80, 100, 150}};
+  EditPassVec referenceRows;
+  for (const auto& change : changes) {
+    EditPass row;
+    if (preparePendingNoteCompanion(change, row)) referenceRows.push_back(row);
+  }
+  auto expectedPass = passEvents;
+  applyNoteEditPassSequence(expectedPass, referenceRows, length);
+  MidiEventVec expected;
+  std::merge(expectedPass.begin(), expectedPass.end(), expectedPass.begin(), expectedPass.end(),
+             std::back_inserter(expected), [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  for (size_t fault = 0; fault < 4; ++fault) {
+    for (size_t stage = 0; stage < 3; ++stage) {
+      TEST_ASSERT_TRUE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+      for (size_t i = 0; i < 500 && !inputs.ready(); ++i) inputs.step(1);
+      TEST_ASSERT_TRUE(inputs.ready());
+      TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
+      TEST_ASSERT_NULL(rows.data(4));
+      TEST_ASSERT_FALSE(prepared.begin(fixture.apply, fixture.work, inputs, rows, source, length));
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, rows.step(4));
+      TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, rows, source, length));
+      if (stage == 1) TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, prepared.step(1));
+      if (stage == 2) {
+        for (size_t i = 0; i < 1000 && !prepared.ready(source); ++i) prepared.step(1);
+        TEST_ASSERT_TRUE(prepared.ready(source));
+        assertMidiEventVecEquivalent(expected, MidiEventVec(prepared.data(), prepared.data() + prepared.size()),
+                                    "typed frozen companions apply independently to repeated IDs");
+      }
+      if (fault == 0) rows.discard();
+      if (fault == 1) {
+        const auto oldGeneration = rows.preparationGeneration();
+        rows.discard();
+        TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
+        TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, rows.step(4));
+        TEST_ASSERT_TRUE(rows.ready(capture));
+        TEST_ASSERT_TRUE(rows.preparationGeneration() != oldGeneration);
+      }
+      if (fault == 2) changes.push_back({PendingNoteChangeKind::Add, 4, 1, 66, 90, 20, 30});
+      if (fault == 3) ++epoch;
+      TEST_ASSERT_FALSE(prepared.ready(source)); TEST_ASSERT_NULL(prepared.data());
+      TEST_ASSERT_NULL(prepared.origins()); TEST_ASSERT_NULL(prepared.inputEvent({0, 0}));
+      TEST_ASSERT_EQUAL(0, prepared.size());
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, prepared.step(1));
+      prepared.discard(); inputs.discard(); rows.discard();
+      if (fault == 2) changes.pop_back();
+    }
+  }
+  LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+  LoopEventStore::releaseChunkRefs(passes.overdubPasses[0].committedChunkIds);
+}
+
+void test_frozen_companion_owner_rejects_other_capture_and_unbound_inputs() {
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(4));
+  RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(4));
+  RuntimeCaptureCompanions rows; TEST_ASSERT_TRUE(rows.prewarm(4));
+  LoopPasses passes; CaptureAdmissionStaging capture, other;
+  capture.frozen = other.frozen = true;
+  capture.captureGeneration = capture.frozenGeneration = other.captureGeneration = other.frozenGeneration = 4;
+  uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+  const PlaybackViewSourceIdentity source{1, 2, &passes};
+  const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+  PendingNoteChangeVec changes;
+  TEST_ASSERT_TRUE(rows.begin(other, 4, changes)); rows.step(1);
+  TEST_ASSERT_TRUE(inputs.beginFrozen(fixture.apply, fixture.work, passes, source, live));
+  for (size_t i = 0; i < 3; ++i) inputs.step(1);
+  TEST_ASSERT_TRUE(inputs.ready());
+  TEST_ASSERT_FALSE(prepared.begin(fixture.apply, fixture.work, inputs, rows, source, length));
+  rows.discard(); TEST_ASSERT_TRUE(rows.begin(capture, 4, changes)); rows.step(1);
+  TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, rows, source, length));
+  TEST_ASSERT_TRUE(prepared.ready(source)); // Empty pass/row set is still owner-bound.
+  prepared.discard(); inputs.discard();
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, length));
+  for (size_t i = 0; i < 3; ++i) inputs.step(1);
+  TEST_ASSERT_TRUE(inputs.ready()); TEST_ASSERT_NULL(inputs.frozenCapture());
+  TEST_ASSERT_FALSE(prepared.begin(fixture.apply, fixture.work, inputs, rows, source, length));
+  inputs.discard(); rows.discard();
+}
+
+void test_frozen_overdub_inputs_match_committed_capture_reference() {
+  for (size_t sample = 0; sample < 24; ++sample) {
+    LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+    LoopPasses passes; passes.recordPass.id = 1;
+    auto on = MidiEvent::NoteOn(10, 1, 60, 90); on.noteId = 1;
+    LoopEventStore record;
+    TEST_ASSERT_TRUE(record.append(on)); TEST_ASSERT_TRUE(record.append(MidiEvent::NoteOff(70, 1, 60)));
+    TEST_ASSERT_TRUE(record.detachChunksToCommittedChunkIds(passes.recordPass.committedChunkIds));
+    CaptureAdmissionStaging capture; TEST_ASSERT_TRUE(capture.prewarm());
+    auto captureOn = MidiEvent::NoteOn(10, 1, 64, 80); captureOn.noteId = 1;
+    const MidiEvent raw[] = {MidiEvent::NoteOff(800, 1, 64), captureOn,
+      MidiEvent::ControlChange(10, 1, 7, 80), MidiEvent::NoteOff(10, 1, 64),
+      MidiEvent::ControlChange(5, 1, 8, 81)};
+    for (const auto& event : raw) TEST_ASSERT_TRUE(capture.storage.append(event));
+    if (sample % 3 == 0) capture.storage.discardEvent(4);
+    if (sample % 5 == 0)
+      for (size_t i = 0; i < capture.storage.eventCount; ++i) capture.storage.discardEvent(i);
+    capture.captureGeneration = 4; TEST_ASSERT_TRUE(capture.freeze(4));
+    EditPass velocity; velocity.targetNoteId = 1; velocity.propertyType = EditPropertyType::Velocity; velocity.velocity = 99;
+    passes.editPasses.push_back(velocity);
+    if (sample % 2) {
+      EditPass create; create.actionType = EditActionType::Create;
+      create.addedEvents = {MidiEvent::ControlChange(10, 1, 9, 82)};
+      passes.editPasses.push_back(create);
+    }
+    PendingNoteChangeVec changes;
+    if (sample % 4 == 0) changes.push_back({PendingNoteChangeKind::Hide, 1, 1, 64, 80, 10, 800});
+    RuntimeCaptureCompanions rows; TEST_ASSERT_TRUE(rows.prewarm(4));
+    TEST_ASSERT_TRUE(rows.begin(capture, 4, changes)); rows.step(4);
+    MidiEventVec canonicalCapture;
+    for (size_t i = 0; i < capture.storage.eventCount; ++i)
+      if (capture.storage.eventRetained(i)) canonicalCapture.push_back(raw[i]);
+    std::stable_sort(canonicalCapture.begin(), canonicalCapture.end(),
+                     [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    CommittedChunkIdList capturedRefs;
+    if (!canonicalCapture.empty()) {
+      LoopEventStore store;
+      for (const auto& event : canonicalCapture) TEST_ASSERT_TRUE(store.append(event));
+      TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(capturedRefs));
+      passes.overdubPasses.emplace_back(); passes.overdubPasses.back().mergeSequence = 1;
+      TEST_ASSERT_TRUE(LoopEventStore::tryCopyCommittedChunkIds(passes.overdubPasses.back().committedChunkIds, capturedRefs));
+    }
+    const size_t historyCount = passes.editPasses.size();
+    for (size_t i = 0; i < rows.size(); ++i) passes.editPasses.push_back(rows.row(i));
+    SessionMidiEventVec expected; passes.materializeToEventVector(expected, 768);
+    passes.editPasses.resize(historyCount); passes.overdubPasses.clear();
+    CompanionApplyFixture fixture; fixture.prewarm(32);
+    RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(32));
+    RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(32));
+    uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+    const PlaybackViewSourceIdentity source{1, 2, &passes};
+    const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+    TEST_ASSERT_TRUE(inputs.beginFrozenOverdub(fixture.apply, fixture.work, passes, source, live));
+    const size_t quantum = 1 + sample % 7;
+    const auto bound = RuntimeCanonicalPassInputs::requiredFrozenOverdubGrainsUpperBound(32, historyCount, quantum);
+    uint64_t turns = 0;
+    while (!inputs.ready() && turns++ < bound) {
+      // Simulate reuse of all shared audible arrays between every input grain.
+      for (size_t i = 0; i < capture.storage.eventCount; ++i) {
+        capture.storage.order[i] = 123; capture.storage.mergeScratch[i] = 124; capture.storage.phases[i] = 125;
+      }
+      TEST_ASSERT_TRUE(inputs.step(quantum) != RuntimePlaybackOrderBuildResult::Denied);
+      for (size_t i = 0; i < capture.storage.eventCount; ++i) {
+        TEST_ASSERT_EQUAL(123, capture.storage.order[i]); TEST_ASSERT_EQUAL(124, capture.storage.mergeScratch[i]);
+        TEST_ASSERT_EQUAL(125, capture.storage.phases[i]);
+      }
+    }
+    TEST_ASSERT_TRUE(inputs.ready());
+    TEST_ASSERT_EQUAL(canonicalCapture.empty() ? 1 : 2, inputs.passCount());
+    TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, rows, source, length));
+    for (size_t i = 0; i < 2000 && !prepared.ready(source); ++i) prepared.step(quantum);
+    TEST_ASSERT_TRUE(prepared.ready(source));
+    assertMidiEventVecEquivalent(MidiEventVec(expected.begin(), expected.end()),
+      MidiEventVec(prepared.data(), prepared.data() + prepared.size()), "frozen capture canonical per-pass reference");
+    assertMidiEventVecEquivalent(MidiEventVec(std::begin(raw), std::end(raw)),
+      MidiEventVec(capture.storage.events, capture.storage.events + capture.storage.eventCount), "capture event source unchanged");
+    prepared.discard(); inputs.discard(); rows.discard();
+    LoopEventStore::releaseChunkRefs(capturedRefs); LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+  }
+}
+
+void test_frozen_overdub_inputs_maximum_capacity_and_stale_order() {
+  CompanionApplyFixture fixture; fixture.prewarm(2048);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(2048));
+  CaptureAdmissionStaging capture; TEST_ASSERT_TRUE(capture.prewarm());
+  for (size_t i = 0; i < 2048; ++i)
+    TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange((2047 - i) % 700, 1, 7, i % 128)));
+  capture.captureGeneration = 4; TEST_ASSERT_TRUE(capture.freeze(4));
+  LoopPasses passes;
+  uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+  const PlaybackViewSourceIdentity source{1, 2, &passes};
+  const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+  TEST_ASSERT_TRUE(inputs.beginFrozenOverdub(fixture.apply, fixture.work, passes, source, live));
+  const auto bound = RuntimeCanonicalPassInputs::requiredFrozenOverdubGrainsUpperBound(2048, 0, 32);
+  uint64_t turns = 0;
+  while (!inputs.ready() && turns++ < bound)
+    TEST_ASSERT_TRUE(inputs.step(32) != RuntimePlaybackOrderBuildResult::Denied);
+  TEST_ASSERT_TRUE(inputs.ready()); TEST_ASSERT_EQUAL(1, inputs.passCount()); TEST_ASSERT_EQUAL(2048, inputs.eventCount());
+  MidiEventVec expected(capture.storage.events, capture.storage.events + capture.storage.eventCount);
+  std::stable_sort(expected.begin(), expected.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+  assertMidiEventVecEquivalent(expected, MidiEventVec(inputs.data()[0].events, inputs.data()[0].events + 2048), "maximum private capture order");
+  inputs.discard();
+  TEST_ASSERT_TRUE(inputs.beginFrozenOverdub(fixture.apply, fixture.work, passes, source, live));
+  for (size_t i = 0; i < 8; ++i) TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, inputs.step(1));
+  ++epoch; TEST_ASSERT_NULL(inputs.data());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, inputs.step(1)); inputs.discard();
+  RuntimeCanonicalPassInputs small; TEST_ASSERT_TRUE(small.prewarm(4));
+  TEST_ASSERT_FALSE(small.beginFrozenOverdub(fixture.apply, fixture.work, passes, source, live));
+  capture.storage.eventCount = 4;
+  EditPass create; create.actionType = EditActionType::Create; create.addedEvents = {MidiEvent::ControlChange(1, 1, 8, 90)};
+  passes.editPasses.push_back(create);
+  TEST_ASSERT_TRUE(small.beginFrozenOverdub(fixture.apply, fixture.work, passes, source, live));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = small.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result); TEST_ASSERT_NULL(small.data()); small.discard();
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCanonicalPassInputs::requiredFrozenOverdubGrainsUpperBound(0, 0, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCanonicalPassInputs::requiredFrozenOverdubGrainsUpperBound(2048, 0, 0));
+}
+
+void test_companion_continuation_preserves_history_membership() {
+  for (size_t sample = 0; sample < 16; ++sample) {
+    LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+    LoopPasses passes; passes.recordPass.id = 1;
+    auto first = MidiEvent::NoteOn(10, 1, 60, 90); first.noteId = 1;
+    auto duplicate = MidiEvent::NoteOn(30, 1, 62, 80); duplicate.noteId = 1;
+    MidiEventVec original{first, MidiEvent::NoteOff(20, 1, 60), duplicate, MidiEvent::NoteOff(40, 1, 62)};
+    LoopEventStore store;
+    for (const auto& event : original) TEST_ASSERT_TRUE(store.append(event));
+    TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(passes.recordPass.committedChunkIds));
+    EditPass deletion; deletion.actionType = EditActionType::Delete; deletion.targetNoteId = 1;
+    passes.editPasses.push_back(deletion);
+    if (sample % 4) {
+      EditPass create; create.actionType = EditActionType::Create;
+      auto added = MidiEvent::NoteOn(60, 1, 64, sample % 4 == 2 ? 0 : 70);
+      added.noteId = sample % 4 == 3 ? 2 : 1;
+      create.addedEvents = {added, MidiEvent::NoteOff(80, 1, 64)};
+      passes.editPasses.push_back(create);
+    }
+    if (sample % 8 >= 4) passes.editPasses.push_back(deletion);
+    EditPass companion = deletion;
+    if (sample >= 8) {
+      companion.actionType = EditActionType::Update; companion.propertyType = EditPropertyType::Length;
+      companion.endTick = 35;
+    }
+    EditPassVec combined = passes.editPasses; combined.push_back(companion);
+    auto expected = original; applyNoteEditPassSequence(expected, combined, 768);
+    CompanionApplyFixture fixture; fixture.prewarm(16);
+    RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(16));
+    RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(16));
+    PlaybackViewSourceIdentity source{1, 2, &passes};
+    RuntimeCanonicalPassInputs::SealedPass descriptor{passes.recordPass.committedChunkIds.data(), passes.recordPass.committedChunkIds.size()};
+    if (sample % 2)
+      TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+    else
+      TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, &descriptor, 1,
+                                    passes.editPasses.data(), passes.editPasses.size(), source, 768));
+    for (size_t i = 0; i < 2000 && !inputs.ready(); ++i) inputs.step(1);
+    TEST_ASSERT_TRUE(inputs.ready());
+    TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, inputs, &companion, 1, source, 768));
+    for (size_t i = 0; i < 2000 && !prepared.ready(source); ++i) prepared.step(1);
+    TEST_ASSERT_TRUE(prepared.ready(source));
+    assertMidiEventVecEquivalent(expected, MidiEventVec(prepared.data(), prepared.data() + prepared.size()),
+                                 "history membership survives the companion handoff");
+    prepared.discard(); inputs.discard(); LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+  }
+}
+
+void test_companion_history_prefix_quantum_and_capacity_guards() {
+  CompanionApplyFixture fixture; fixture.prewarm(2048);
+  EditPassVec history(2048);
+  for (auto& row : history) { row.actionType = EditActionType::Update; row.propertyType = EditPropertyType::None; }
+  history.front().actionType = EditActionType::Delete; history.front().targetNoteId = 1;
+  auto& create = history[1]; create.actionType = EditActionType::Create;
+  for (size_t i = 0; i < 2047; ++i) create.addedEvents.push_back(MidiEvent::ControlChange(i, 1, 7, 90));
+  auto on = MidiEvent::NoteOn(2047, 1, 60, 90); on.noteId = 1; create.addedEvents.push_back(on);
+  EditPass companion; companion.actionType = EditActionType::Delete; companion.targetNoteId = 1;
+  PlaybackViewSourceIdentity source{1, 2, &history};
+  RuntimeCompanionApply::HistoryPrefix prefix{history.data(), nullptr, history.size()};
+  TEST_ASSERT_TRUE(fixture.apply.beginContinuationBatch(fixture.work, create.addedEvents.data(), 2048,
+      source, &companion, 1, 4096, prefix));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  uint64_t turns = 0;
+  const auto bound = RuntimeCompanionApply::requiredContinuationGrainsUpperBound(2048, 2048, 1, 1);
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL(2047, fixture.apply.size());
+  TEST_ASSERT_TRUE(turns >= 4096); // Neither prefix rows nor Create payload are an uncharged scan.
+  fixture.apply.discard();
+  const EditPass* bad[] = {nullptr};
+  TEST_ASSERT_TRUE(fixture.apply.beginContinuationBatch(fixture.work, &on, 1, source, &companion, 1, 4096,
+      {nullptr, bad, 1}));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 10 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result); TEST_ASSERT_NULL(fixture.apply.data());
+  TEST_ASSERT_FALSE(fixture.apply.beginContinuationBatch(fixture.work, &on, 1, source, &companion, 1, 4096,
+      {history.data(), bad, 1}));
+  TEST_ASSERT_FALSE(fixture.apply.beginContinuationBatch(fixture.work, &on, 1, source, &companion, 1, 4096,
+      {history.data(), nullptr, 2049}));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCompanionApply::requiredContinuationGrainsUpperBound(2048, 2049, 1, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCompanionApply::requiredContinuationGrainsUpperBound(2048, 1, 1, 0));
+}
+
+void test_frozen_tail_reuse_guards_and_invalidates_old_consumers() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopPasses passes; passes.recordPass.id = 1;
+  LoopEventStore store; TEST_ASSERT_TRUE(store.append(MidiEvent::ControlChange(10, 1, 7, 90)));
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(passes.recordPass.committedChunkIds));
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(4));
+  RuntimeCompanionPasses consumer; TEST_ASSERT_TRUE(consumer.prewarm(4));
+  PlaybackViewSourceIdentity source{1, 2, &passes};
+  CaptureAdmissionStaging capture; TEST_ASSERT_TRUE(capture.prewarm());
+  TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(20, 1, 8, 80)));
+  uint32_t revision = 1, generation = 2, epoch = 3, length = 768;
+  const RuntimeCanonicalPassInputs::FrozenSource live{revision, generation, epoch, length, capture};
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live));
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, length));
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live));
+  for (size_t i = 0; i < 100 && !inputs.ready(); ++i) inputs.step(1);
+  TEST_ASSERT_TRUE(inputs.ready());
+  const auto prefixGeneration = inputs.generation();
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); // Not frozen.
+  capture.captureGeneration = 4; TEST_ASSERT_TRUE(capture.freeze(4));
+  ++revision; TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); --revision;
+  ++generation; TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); --generation;
+  ++length; TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); --length;
+  capture.reservations[0].open = true; TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); capture.reservations[0].open = false;
+  TEST_ASSERT_EQUAL_UINT64(prefixGeneration, inputs.generation()); TEST_ASSERT_TRUE(inputs.ready());
+  EditPass guard; guard.targetNoteId = 1; guard.propertyType = EditPropertyType::Length; guard.endTick = 50;
+  TEST_ASSERT_TRUE(consumer.begin(fixture.apply, fixture.work, inputs, &guard, 1, source, length));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, consumer.step(1));
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); // Shared apply worker is borrowed.
+  TEST_ASSERT_EQUAL_UINT64(prefixGeneration, inputs.generation()); consumer.discard();
+  TEST_ASSERT_TRUE(consumer.begin(fixture.apply, fixture.work, inputs, nullptr, 0, source, length));
+  for (size_t i = 0; i < 100 && !consumer.ready(source); ++i) consumer.step(1);
+  TEST_ASSERT_TRUE(consumer.ready(source));
+  TEST_ASSERT_TRUE(inputs.appendFrozenOverdub(live));
+  TEST_ASSERT_FALSE(consumer.ready(source)); TEST_ASSERT_NULL(consumer.data());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, consumer.step(1));
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live));
+  const auto bound = RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpperBound(4, 0, 1);
+  uint64_t turns = 0;
+  while (!inputs.ready() && turns++ < bound) TEST_ASSERT_TRUE(inputs.step(1) != RuntimePlaybackOrderBuildResult::Denied);
+  TEST_ASSERT_TRUE(inputs.ready()); TEST_ASSERT_EQUAL(2, inputs.passCount()); TEST_ASSERT_EQUAL(2, inputs.eventCount());
+  TEST_ASSERT_EQUAL(10, inputs.data()[0].events[0].tick); TEST_ASSERT_EQUAL(20, inputs.data()[1].events[0].tick);
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); // Never append the same capture twice.
+  inputs.discard(); consumer.discard();
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, length));
+  for (size_t i = 0; i < 100 && !inputs.ready(); ++i) inputs.step(1);
+  capture.reset(); capture.captureGeneration = 5;
+  for (size_t i = 0; i < 4; ++i) TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(30+i, 1, 8, 80)));
+  TEST_ASSERT_TRUE(capture.freeze(5));
+  TEST_ASSERT_TRUE(inputs.appendFrozenOverdub(live));
+  auto overflow = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 200 && overflow == RuntimePlaybackOrderBuildResult::Pending; ++i) overflow = inputs.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, overflow); TEST_ASSERT_NULL(inputs.data());
+  inputs.discard();
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, length));
+  for (size_t i = 0; i < 100 && !inputs.ready(); ++i) inputs.step(1);
+  ++source.playbackRevision;
+  TEST_ASSERT_FALSE(inputs.appendFrozenOverdub(live)); TEST_ASSERT_NULL(inputs.data());
+  inputs.discard(); LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+  TEST_ASSERT_TRUE(RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpperBound(2048, 2048, 32) <
+                   RuntimeCanonicalPassInputs::requiredFrozenOverdubGrainsUpperBound(2048, 2048, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpperBound(0, 0, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpperBound(4, 2049, 32));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpperBound(4, 0, 0));
+}
+
+void test_empty_row_paths_do_not_borrow_or_copy_through_apply() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  MidiEventVec events;
+  for (size_t i = 0; i < 4; ++i) events.push_back(MidiEvent::ControlChange(i*10, 1, 7, 80+i));
+  LoopPasses passes; passes.recordPass.id = 1; LoopEventStore store;
+  for (const auto& event : events) TEST_ASSERT_TRUE(store.append(event));
+  TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(passes.recordPass.committedChunkIds));
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(4));
+  RuntimeCompanionPasses prepared; TEST_ASSERT_TRUE(prepared.prewarm(4));
+  RuntimeCompanionPasses::Pass descriptors[]{{events.data(), 2}, {events.data()+2, 2}};
+  PlaybackViewSourceIdentity source{1, 2, &passes};
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+  TEST_ASSERT_TRUE(prepared.begin(fixture.apply, fixture.work, descriptors, 2, nullptr, 0, source, 768));
+  // A separate owner starts work after admission. Neither no-edit path needs it.
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, events.data(), events.size(), source, nullptr, 0, 768));
+  const auto borrowedGeneration = fixture.apply.generation();
+  const auto bound = RuntimeCompanionPasses::requiredGrainsUpperBound(4, 2, 2048, 0, 1);
+  size_t turns = 0;
+  while (!prepared.ready(source) && turns++ < bound) {
+    TEST_ASSERT_TRUE(prepared.step(1) != RuntimePlaybackOrderBuildResult::Denied);
+    TEST_ASSERT_EQUAL_UINT64(borrowedGeneration, fixture.apply.generation());
+    TEST_ASSERT_FALSE(fixture.apply.available());
+  }
+  TEST_ASSERT_TRUE(prepared.ready(source));
+  for (size_t i = 0; i < 100 && !inputs.ready(); ++i) {
+    TEST_ASSERT_TRUE(inputs.step(1) != RuntimePlaybackOrderBuildResult::Denied);
+    TEST_ASSERT_EQUAL_UINT64(borrowedGeneration, fixture.apply.generation());
+  }
+  TEST_ASSERT_TRUE(inputs.ready());
+  assertMidiEventVecEquivalent(events, MidiEventVec(prepared.data(), prepared.data()+prepared.size()), "direct no-companion merge");
+  assertMidiEventVecEquivalent(events, MidiEventVec(inputs.data()[0].events, inputs.data()[0].events+4), "direct no-history copy");
+  for (size_t i = 0; i < 4; ++i) {
+    TEST_ASSERT_EQUAL(i/2, prepared.origins()[i].pass); TEST_ASSERT_EQUAL(i%2, prepared.origins()[i].event);
+  }
+  prepared.discard(); inputs.discard();
+  TEST_ASSERT_EQUAL_UINT64(borrowedGeneration, fixture.apply.generation());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, fixture.apply.step(4));
+  TEST_ASSERT_EQUAL_UINT64(4, RuntimeCompanionApply::requiredHistoryGrainsUpperBound(4, 0, 1));
+  TEST_ASSERT_EQUAL_UINT64(4, RuntimeCompanionApply::requiredContinuationGrainsUpperBound(4, 2048, 0, 1));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCompanionPasses::requiredGrainsUpperBound(4, 2049, 0, 0, 1));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX, RuntimeCompanionPasses::requiredGrainsUpperBound(4, 1, 0, 0, 0));
+  LoopEventStore::releaseChunkRefs(passes.recordPass.committedChunkIds);
+}
+
+void test_canonical_selection_maximum_metadata_horizons() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopEventStore store; TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(10, 1, 60, 90)));
+  CommittedChunkIdList original; TEST_ASSERT_TRUE(store.detachChunksToCommittedChunkIds(original));
+  LoopPasses passes; passes.overdubPasses.resize(2048);
+  // These lists borrow the one reference retained by original. Copying IDs
+  // does not increment the pool refcount; only original releases the chunk.
+  for (size_t i = 0; i < 2048; ++i) {
+    auto& pass = passes.overdubPasses[i]; pass.mergeSequence = 2047 - i;
+    TEST_ASSERT_TRUE(LoopEventStore::tryCopyCommittedChunkIds(pass.committedChunkIds, original));
+  }
+  CompanionApplyFixture fixture; fixture.prewarm(2048);
+  RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(2048));
+  PlaybackViewSourceIdentity source{1, 2, &passes};
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  uint64_t turns = 0;
+  const auto bound = RuntimeCanonicalPassInputs::requiredSelectedGrainsUpperBound(2048, 0, 32);
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < bound) result = inputs.step(32);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL(2048, inputs.passCount()); TEST_ASSERT_EQUAL(2048, inputs.eventCount());
+  inputs.discard();
+  passes.overdubPasses.clear();
+  passes.recordPass.id = 1;
+  TEST_ASSERT_TRUE(LoopEventStore::tryCopyCommittedChunkIds(passes.recordPass.committedChunkIds, original));
+  passes.editPasses.resize(2048);
+  for (auto& row : passes.editPasses) row.state = EditPassState::Disabled;
+  auto& create = passes.editPasses.back(); create.state = EditPassState::Active; create.actionType = EditActionType::Create;
+  create.addedEvents = {MidiEvent::NoteOff(50, 1, 60)};
+  TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 5000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = inputs.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL(1, inputs.passCount()); TEST_ASSERT_EQUAL(2, inputs.eventCount());
+  inputs.discard();
+  passes.editPasses.emplace_back();
+  TEST_ASSERT_FALSE(inputs.begin(fixture.apply, fixture.work, passes, source, 768));
+  LoopEventStore::releaseChunkRefs(original);
+}
+
+void test_bounded_history_wrap_updates_and_unpaired_move() {
+  for (const auto property : {EditPropertyType::Pitch, EditPropertyType::NoteRange}) {
+    for (bool withOffs : {false, true}) {
+      auto on = MidiEvent::NoteOn(2592, 1, 12, 100); on.noteId = 269;
+      MidiEventVec events{on};
+      if (withOffs) events = {MidiEvent::NoteOff(96, 1, 12), on, MidiEvent::NoteOff(2688, 1, 12)};
+      EditPass row; row.targetNoteId = 269; row.propertyType = property;
+      row.pitch = 65; row.startTick = 2832; row.endTick = 3408;
+      auto expected = events;
+      applyNoteEditPassSequence(expected, EditPassVec{row}, 3072);
+      CompanionApplyFixture fixture; fixture.prewarm(4);
+      PlaybackViewSourceIdentity source{1, 2, events.data()};
+      TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, events.data(), events.size(), source, &row, 1, 3072));
+      auto result = RuntimePlaybackOrderBuildResult::Pending;
+      for (size_t turns = 0; turns < 500 && result == RuntimePlaybackOrderBuildResult::Pending; ++turns)
+        result = fixture.apply.step(1);
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+      assertMidiEventVecEquivalent(expected, MidiEventVec(fixture.apply.data(), fixture.apply.data() + fixture.apply.size()),
+                                  "history wrap Off selection and unpaired synthesis");
+      if (!withOffs && property == EditPropertyType::NoteRange)
+        TEST_ASSERT_EQUAL_UINT32(UINT32_MAX, fixture.apply.provenance()[1]);
+    }
+  }
+}
+
+void test_bounded_history_collapsing_capacity_and_stale_guards() {
+  MidiEventVec events{MidiEvent::NoteOn(100, 1, 60, 90)};
+  events[0].noteId = 1;
+  EditPassVec rows(2048);
+  for (auto& row : rows) {
+    row.targetNoteId = 1; row.actionType = EditActionType::Update;
+    row.propertyType = EditPropertyType::Velocity; row.velocity = 0;
+  }
+  rows.back().velocity = 99;
+  CompanionApplyFixture fixture; fixture.prewarm(1);
+  PlaybackViewSourceIdentity source{1, 2, events.data()};
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, events.data(), events.size(),
+      source, rows.data(), rows.size(), 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  size_t turns = 0;
+  while (result == RuntimePlaybackOrderBuildResult::Pending && turns++ < 5000)
+    result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL(99, fixture.apply.data()[0].data.noteData.velocity);
+  TEST_ASSERT_EQUAL(0, fixture.apply.provenance()[0]);
+  RuntimeCompanionBridgeMap mapping;
+  TEST_ASSERT_TRUE(mapping.prewarm(4));
+  // The companion mapper compares surviving ticks only, so history output
+  // must first become the effective baseline, never a companion delta.
+  TEST_ASSERT_FALSE(mapping.begin(fixture.apply, events.data(), events.size(), source));
+  // Unpaired move needs an Off slot; exhaustion must not expose the moved On.
+  rows.resize(1); rows[0].propertyType = EditPropertyType::NoteRange;
+  rows[0].startTick = 200; rows[0].endTick = 300;
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, events.data(), events.size(),
+      source, rows.data(), rows.size(), 768));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+    result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(fixture.apply.data());
+  TEST_ASSERT_EQUAL(100, events[0].tick);
+  rows[0].propertyType = EditPropertyType::Velocity;
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, events.data(), events.size(),
+      source, rows.data(), rows.size(), 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, fixture.apply.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, fixture.apply.step(1));
+  TEST_ASSERT_NULL(fixture.apply.data());
+  // Input rows must have been filtered to active Note history.
+  rows[0].actionType = EditActionType::Create;
+  rows[0].state = EditPassState::Disabled;
+  TEST_ASSERT_TRUE(fixture.apply.beginHistoryBatch(fixture.work, events.data(), events.size(),
+      source, rows.data(), rows.size(), 768));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+    result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(fixture.apply.data());
+}
+
+void test_bounded_companion_batch_denial_keeps_prior_rows_unpublished() {
+  MidiEventVec events{MidiEvent::NoteOn(100, 1, 60, 90), MidiEvent::NoteOff(200, 1, 60)};
+  events[0].noteId = 1;
+  EditPass rows[2];
+  rows[0].passType = rows[1].passType = EditPassType::Note;
+  rows[0].targetNoteId = 1; rows[0].actionType = EditActionType::Delete;
+  rows[1].actionType = EditActionType::Update; rows[1].propertyType = EditPropertyType::Pitch;
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  PlaybackViewSourceIdentity source{1, 2, events.data()};
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, events.data(), events.size(), source, rows, 2, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t turns = 0; turns < 300 && result == RuntimePlaybackOrderBuildResult::Pending; ++turns)
+    result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(fixture.apply.data());
+  TEST_ASSERT_EQUAL_UINT(0, fixture.apply.size());
+  TEST_ASSERT_EQUAL_UINT(2, events.size());
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, events.data(), events.size(), source, nullptr, 0, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, fixture.apply.step(4));
+  TEST_ASSERT_EQUAL_UINT(2, fixture.apply.size());
+}
+
+void test_bounded_companion_apply_maximum_candidate_order_and_helper_exclusion() {
+  MidiEventVec events;
+  for (int i = 1023; i >= 0; --i) {
+    auto on = MidiEvent::NoteOn(2 * i, 1, 60, 90); on.noteId = i + 1;
+    auto off = MidiEvent::NoteOff(2 * i + 1, 1, 60); off.noteId = i + 1;
+    events.push_back(on); events.push_back(off);
+  }
+  assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 1, 3, 3072, 32);
+  assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Delete, 1, 0, 3072, 1);
+  CompanionApplyFixture fixture; fixture.prewarm(2048);
+  PlaybackViewSourceIdentity source{1, 1, events.data()};
+  TEST_ASSERT_TRUE(fixture.spans.begin(fixture.pair, events.data(), events.size(), 60, 3072));
+  TEST_ASSERT_FALSE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
+                                      RuntimeCompanionApply::Kind::Length, 1, 3, 3072));
+  TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::Pending, fixture.spans.step(1));
+  fixture.spans.discard();
+}
+
+// Characterization, not a new semantic oracle: these existing paths disagree.
+void assertPerPassPreparation(const std::vector<MidiEventVec>& inputs, const EditPassVec& rows,
+                              size_t quantum, size_t capacity = 64) {
+  MidiEventVec expected;
+  for (const auto& input : inputs) {
+    auto layer = input;
+    applyNoteEditPassSequence(layer, rows, 768);
+    MidiEventVec merged;
+    std::merge(expected.begin(), expected.end(), layer.begin(), layer.end(), std::back_inserter(merged),
+               [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    expected = std::move(merged);
+  }
+  const auto frozen = inputs;
+  CompanionApplyFixture fixture; fixture.prewarm(capacity);
+  RuntimeCompanionPasses preparation; TEST_ASSERT_TRUE(preparation.prewarm(capacity));
+  std::vector<RuntimeCompanionPasses::Pass> passes;
+  for (const auto& input : inputs) passes.push_back({input.data(), input.size()});
+  PlaybackViewSourceIdentity source{1, 3, inputs.data()};
+  TEST_ASSERT_TRUE(preparation.begin(fixture.apply, fixture.work, passes.data(), passes.size(),
+                                     rows.data(), rows.size(), source, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  const size_t bound = 1 + passes.size() * ((rows.size()+1) *
+      (RuntimeCompanionApply::requiredGrainsUpperBound(capacity, quantum) + (rows.size()+quantum-1)/quantum + 2) + (capacity+quantum-1)/quantum + 4);
+  for (size_t turn = 0; turn < bound && result == RuntimePlaybackOrderBuildResult::Pending; ++turn) {
+    if (!passes.empty()) { TEST_ASSERT_NULL(preparation.data()); TEST_ASSERT_NULL(preparation.origins()); }
+    result = preparation.step(quantum);
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_TRUE(preparation.ready(source));
+  assertMidiEventVecEquivalent(expected, MidiEventVec(preparation.data(), preparation.data()+preparation.size()),
+                               "DEC-060 per-pass preparation vs canonical merge");
+  for (size_t i = 0; i < preparation.size(); ++i) {
+    const auto origin = preparation.origins()[i];
+    TEST_ASSERT_TRUE(origin.pass < inputs.size());
+    if (origin.event == UINT16_MAX) {
+      TEST_ASSERT_TRUE(preparation.data()[i].isNoteOff());
+      TEST_ASSERT_EQUAL_UINT32(kInvalidNoteId, preparation.data()[i].noteId);
+    } else {
+      TEST_ASSERT_TRUE(origin.event < inputs[origin.pass].size());
+      auto original = inputs[origin.pass][origin.event]; original.tick = preparation.data()[i].tick;
+      assertMidiEventVecEquivalent(MidiEventVec{original}, MidiEventVec{preparation.data()[i]}, "pass/event origin");
+    }
+  }
+  for (size_t i = 0; i < inputs.size(); ++i)
+    assertMidiEventVecEquivalent(frozen[i], inputs[i], "immutable pass input");
+}
+
+void test_per_pass_companions_preserve_scope_and_repeated_identity() {
+  auto first = MidiEvent::NoteOn(0, 1, 60, 100); first.noteId = 1;
+  auto captured = MidiEvent::NoteOn(150, 1, 60, 100); captured.noteId = 2;
+  std::vector<MidiEventVec> passes{{first, MidiEvent::NoteOff(10, 1, 60)},
+                                 {captured, MidiEvent::NoteOff(160, 1, 60)}};
+  assertPerPassPreparation(passes, EditPassVec{makeLengthRow(1, 0, 10, 250)}, 1);
+  passes[1][0].noteId = 1;
+  assertPerPassPreparation(passes, EditPassVec{makeDeleteRow(1)}, 1);
+  assertPerPassPreparation({}, {}, 1);
+  assertPerPassPreparation({{}, {}, {}}, {}, 1);
+  MidiEventVec repeated{first, MidiEvent::NoteOff(10, 1, 60), first, MidiEvent::NoteOff(40, 1, 60)};
+  repeated[2].tick = 30;
+  assertPerPassPreparation({repeated, repeated}, EditPassVec{makeDeleteRow(1), makeDeleteRow(1)}, 1);
+  assertPerPassPreparation({MidiEventVec{first}}, EditPassVec{makeLengthRow(1, 0, 0, 250)}, 1);
+
+}
+
+void test_per_pass_companions_match_generated_canonical_merges() {
+  std::mt19937 rng(0x70617373);
+  for (size_t test = 0; test < 220; ++test) {
+    std::vector<MidiEventVec> passes(1 + rng()%4);
+    for (auto& pass : passes) {
+      for (size_t i = 0, count = rng()%10; i < count; ++i) {
+        auto event = i%3 == 0 ? MidiEvent::ControlChange((rng()%17)*48, 1, 7, rng()%128)
+          : i%2 ? MidiEvent::NoteOn((rng()%17)*48, 1+rng()%2, 60+rng()%3, 90)
+                : MidiEvent::NoteOff((rng()%17)*48, 1+rng()%2, 60+rng()%3);
+        if (event.isNoteOn()) event.noteId = 1+rng()%4;
+        pass.push_back(event);
+      }
+      std::stable_sort(pass.begin(), pass.end(), [](const MidiEvent& a, const MidiEvent& b) { return a.tick < b.tick; });
+    }
+    EditPassVec rows;
+    for (size_t i = 0; i < 4; ++i) rows.push_back(rng()%3 ? makeLengthRow(1+rng()%4, 0, 0, (rng()%18)*48)
+                                                        : makeDeleteRow(1+rng()%4));
+    assertPerPassPreparation(passes, rows, 1+test%7);
+  }
+}
+
+void test_per_pass_companions_maximum_aggregate_and_empty_pass_count() {
+  std::vector<MidiEventVec> passes(2);
+  for (size_t i = 0; i < 1024; ++i) {
+    passes[0].push_back(MidiEvent::ControlChange(i * 2, 1, 7, i%128));
+    passes[1].push_back(MidiEvent::ControlChange(i * 2 + 1, 2, 11, i%128));
+  }
+  assertPerPassPreparation(passes, {}, 1, 2048);
+  assertPerPassPreparation(std::vector<MidiEventVec>(2048), {}, 32, 1);
+}
+
+void test_per_pass_companions_hide_overflow_and_stale_or_reused_work() {
+  MidiEventVec input{MidiEvent::NoteOn(0, 1, 60, 90)}; input[0].noteId = 1;
+  RuntimeCompanionPasses::Pass passes[]{{input.data(), input.size()}, {input.data(), input.size()}};
+  PlaybackViewSourceIdentity source{1, 2, input.data()};
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  RuntimeCompanionPasses preparation; TEST_ASSERT_TRUE(preparation.prewarm(1));
+  TEST_ASSERT_TRUE(preparation.begin(fixture.apply, fixture.work, passes, 2, nullptr, 0, source, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = preparation.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
+  TEST_ASSERT_NULL(preparation.data()); TEST_ASSERT_EQUAL_UINT32(0, preparation.size());
+  TEST_ASSERT_TRUE(preparation.begin(fixture.apply, fixture.work, passes, 1, nullptr, 0, source, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, preparation.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, preparation.step(1));
+  TEST_ASSERT_TRUE(fixture.apply.available());
+  EditPass guard; guard.targetNoteId = 1; guard.propertyType = EditPropertyType::Length; guard.endTick = 50;
+  TEST_ASSERT_TRUE(preparation.begin(fixture.apply, fixture.work, passes, 1, &guard, 1, source, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, preparation.step(1));
+  fixture.apply.discard();
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, input.data(), input.size(), source, nullptr, 0, 768));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, preparation.step(1));
+  TEST_ASSERT_FALSE(fixture.apply.available()); // Denial must not cancel another owner's work.
+  fixture.apply.discard(); preparation.discard();
+  TEST_ASSERT_NULL(preparation.origins());
+}
+
+void test_companion_pass_scope_differs_from_merged_capture_scope() {
+  LoopEventStore::resetPoolForTests(); LoopEventStore::initPool();
+  LoopPasses passes;
+  passes.recordPass = makeRecordPassWithNote(1, 0); // NoteId 1: [0,10].
+  LoopEventStore capture;
+  TEST_ASSERT_TRUE(storeAppendNoteOn(capture, 150, 1, 60, 100, 2));
+  TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOff(160, 1, 60)));
+  OverdubPass overdub{}; overdub.id = 2; overdub.mergeSequence = 1;
+  overdub.state = CapturePassState::Active;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, overdub.committedChunkIds));
+  passes.overdubPasses.push_back(std::move(overdub));
+  pushEditPassRow(passes, 1, makeLengthRow(1, 0, 10, 250));
+
+  MidiEventVec canonical;
+  SessionMidiEventVec canonicalSession;
+  passes.materializeToEventVector(canonical, 768);
+  passes.materializeToEventVector(canonicalSession, 768);
+  TEST_ASSERT_EQUAL_UINT32(4, canonical.size());
+  TEST_ASSERT_EQUAL_UINT32(4, canonicalSession.size());
+  TEST_ASSERT_TRUE(findNoteOnById(canonical, 2) >= 0);
+  TEST_ASSERT_EQUAL_UINT32(250, canonical.back().tick);
+
+  // Reproduce tryAdmitLastOverdubSealIntoMergedEvents's append-before-edit
+  // sequence. All four rows are distinct, so its duplicate filter removes none.
+  SessionMidiEventVec merged;
+  LoopEventStore::appendChunkRefEvents(passes.recordPass.committedChunkIds, merged);
+  LoopEventStore::appendChunkRefEvents(passes.overdubPasses[0].committedChunkIds, merged);
+  applyNoteEditPassSequence(merged, passes.editPasses, 768);
+  TEST_ASSERT_EQUAL_UINT32(2, merged.size());
+  TEST_ASSERT_EQUAL_UINT32(1, merged[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(250, merged[1].tick);
+  printf("Companion scope reproducer: per-pass=4 events (capture preserved), merged=2 events (capture deleted)\n");
+
+  // Repeated NoteIds also disagree without any Length/overlap geometry:
+  // per-pass Delete visits both passes; flattened Delete targets the first On.
+  LoopPasses repeated;
+  repeated.recordPass = makeRecordPassWithNote(3, 0);
+  repeated.overdubPasses.push_back(makeOverdubPassWithNote(4, 150, 60));
+  pushEditPassRow(repeated, 2, makeDeleteRow(1));
+  SessionMidiEventVec perPassDelete, mergedDelete;
+  repeated.materializeToEventVector(perPassDelete, 768);
+  TEST_ASSERT_TRUE(perPassDelete.empty());
+  LoopEventStore::appendChunkRefEvents(repeated.recordPass.committedChunkIds, mergedDelete);
+  LoopEventStore::appendChunkRefEvents(repeated.overdubPasses[0].committedChunkIds, mergedDelete);
+  applyNoteEditPassSequence(mergedDelete, repeated.editPasses, 768);
+  TEST_ASSERT_EQUAL_UINT32(2, mergedDelete.size());
+  TEST_ASSERT_EQUAL_UINT32(1, mergedDelete[0].noteId);
+  TEST_ASSERT_EQUAL_UINT32(150, mergedDelete[0].tick);
+}
+
+void test_companion_bridge_map_preserves_batch_order_separately_from_provenance() {
+  MidiEventVec base{MidiEvent::NoteOn(0, 1, 60, 90), MidiEvent::NoteOff(300, 1, 60),
+                    MidiEvent::NoteOn(10, 1, 61, 90), MidiEvent::NoteOff(200, 1, 61),
+                    MidiEvent::NoteOn(20, 1, 62, 90), MidiEvent::NoteOff(350, 1, 62)};
+  base[0].noteId = 1; base[2].noteId = 2; base[4].noteId = 3;
+  EditPass rows[2];
+  for (auto& row : rows) {
+    row.passType = EditPassType::Note; row.actionType = EditActionType::Update;
+    row.propertyType = EditPropertyType::Length;
+  }
+  rows[0].targetNoteId = 3; rows[0].endTick = 400;
+  rows[1].targetNoteId = 1; rows[1].endTick = 200;
+  CompanionApplyFixture fixture; fixture.prewarm(8);
+  PlaybackViewSourceIdentity source{1, 2, base.data()};
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, base.data(), base.size(), source, rows, 2, 768));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (size_t i = 0; i < 10000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+    result = fixture.apply.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  assertCompanionBridgeMapping(fixture.apply, base, source, 1);
+  RuntimeCompanionBridgeMap mapping; TEST_ASSERT_TRUE(mapping.prewarm(8));
+  TEST_ASSERT_TRUE(mapping.begin(fixture.apply, base.data(), base.size(), source));
+  while (mapping.step(1) == RuntimePlaybackOrderBuildResult::Pending) {}
+  TEST_ASSERT_TRUE(mapping.ready(source));
+  TEST_ASSERT_TRUE(mapping.baseRanks()[3] < mapping.baseRanks()[1]);
+  TEST_ASSERT_EQUAL_UINT32(200, fixture.apply.data()[mapping.baseRanks()[1]].tick);
+  // Restarting the same apply storage with the same source identity must still
+  // invalidate a completed mapping (generation, not pointer/count, distinguishes it).
+  TEST_ASSERT_TRUE(fixture.apply.beginBatch(fixture.work, base.data(), base.size(), source, nullptr, 0, 768));
+  while (fixture.apply.step(32) == RuntimePlaybackOrderBuildResult::Pending) {}
+  TEST_ASSERT_FALSE(mapping.ready(source)); TEST_ASSERT_NULL(mapping.records());
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, mapping.step(1));
+}
+
+void test_companion_bridge_map_guards_source_capacity_and_cancellation() {
+  MidiEventVec base{MidiEvent::NoteOn(0, 1, 60, 90), MidiEvent::NoteOff(90, 1, 60)};
+  base[0].noteId = 1;
+  CompanionApplyFixture fixture; fixture.prewarm(4);
+  PlaybackViewSourceIdentity source{1, 2, base.data()};
+  RuntimeCompanionBridgeMap mapping; TEST_ASSERT_TRUE(mapping.prewarm(2));
+  TEST_ASSERT_FALSE(mapping.prewarm(4));
+  TEST_ASSERT_FALSE(mapping.begin(fixture.apply, base.data(), base.size(), source));
+  TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, base.data(), base.size(), source,
+                                     RuntimeCompanionApply::Kind::Delete, 1, 0, 768));
+  while (fixture.apply.step(32) == RuntimePlaybackOrderBuildResult::Pending) {}
+  RuntimeCompanionBridgeMap tooSmall;
+  TEST_ASSERT_FALSE(tooSmall.prewarm(0));
+  TEST_ASSERT_FALSE(tooSmall.prewarm(2049));
+  TEST_ASSERT_TRUE(tooSmall.prewarm(1));
+  TEST_ASSERT_FALSE(tooSmall.begin(fixture.apply, base.data(), base.size(), source));
+  TEST_ASSERT_NULL(tooSmall.records());
+  auto copy = base;
+  TEST_ASSERT_FALSE(mapping.begin(fixture.apply, copy.data(), copy.size(), source));
+  TEST_ASSERT_FALSE(mapping.begin(fixture.apply, base.data(), 1, source));
+  TEST_ASSERT_TRUE(mapping.begin(fixture.apply, base.data(), base.size(), source));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, mapping.step(0));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, mapping.step(1));
+  ++source.sourceGeneration;
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, mapping.step(1));
+  TEST_ASSERT_NULL(mapping.records()); TEST_ASSERT_EQUAL_UINT32(0, mapping.size());
+  mapping.discard();
+  TEST_ASSERT_NULL(mapping.baseRanks());
+}
+
+void test_reference_same_tick_off_helper_preserves_event_bytes() {
+  MidiEventVec events{MidiEvent::NoteOn(0, 1, 60, 90), MidiEvent::NoteOn(96, 1, 60, 80),
+                      MidiEvent::NoteOff(192, 1, 60, 11), MidiEvent::NoteOff(192, 1, 60, 22)};
+  for (size_t i = 0; i < events.size(); ++i) events[i].noteId = i + 1;
+  const auto original = events;
+  NoteUtils::orderSamePitchNoteOffsForLifo(events, 1, 60);
+  assertMidiEventVecEquivalent(original, events, "legacy helper writes rows back to their own indices");
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_bounded_companion_apply_maximum_candidate_order_and_helper_exclusion);
+  RUN_TEST(test_per_pass_companions_preserve_scope_and_repeated_identity);
+  RUN_TEST(test_per_pass_companions_match_generated_canonical_merges);
+  RUN_TEST(test_per_pass_companions_maximum_aggregate_and_empty_pass_count);
+  RUN_TEST(test_per_pass_companions_hide_overflow_and_stale_or_reused_work);
+  RUN_TEST(test_companion_pass_scope_differs_from_merged_capture_scope);
+  RUN_TEST(test_companion_bridge_map_preserves_batch_order_separately_from_provenance);
+  RUN_TEST(test_companion_bridge_map_guards_source_capacity_and_cancellation);
+  RUN_TEST(test_reference_same_tick_off_helper_preserves_event_bytes);
+  RUN_TEST(test_bounded_companion_batch_matches_sequential_reference_and_base_provenance);
+  RUN_TEST(test_create_history_preserves_equal_tick_append_order);
+  RUN_TEST(test_bounded_history_updates_match_canonical_sequence);
+  RUN_TEST(test_bounded_create_reactivates_identity_with_surviving_duplicate);
+  RUN_TEST(test_bounded_create_empty_maximum_capacity_and_cancellation);
+  RUN_TEST(test_canonical_pass_inputs_feed_per_pass_companions);
+  RUN_TEST(test_canonical_pass_inputs_capacity_stale_and_borrow_guards);
+  RUN_TEST(test_canonical_pass_inputs_maximum_and_pending_consumer_invalidation);
+  RUN_TEST(test_canonical_pass_selection_and_filtered_history_match_materialization);
+  RUN_TEST(test_canonical_selection_denies_ambiguous_order_and_stale_source);
+  RUN_TEST(test_canonical_frozen_source_invalidates_without_producer_turn);
+  RUN_TEST(test_canonical_frozen_source_refuses_unclosed_or_mismatched_admission);
+  RUN_TEST(test_frozen_companion_owner_binds_per_pass_reference_and_reuse);
+  RUN_TEST(test_frozen_companion_owner_rejects_other_capture_and_unbound_inputs);
+  RUN_TEST(test_frozen_overdub_inputs_match_committed_capture_reference);
+  RUN_TEST(test_frozen_overdub_inputs_maximum_capacity_and_stale_order);
+  RUN_TEST(test_companion_continuation_preserves_history_membership);
+  RUN_TEST(test_companion_history_prefix_quantum_and_capacity_guards);
+  RUN_TEST(test_frozen_tail_reuse_guards_and_invalidates_old_consumers);
+  RUN_TEST(test_empty_row_paths_do_not_borrow_or_copy_through_apply);
+  RUN_TEST(test_canonical_selection_maximum_metadata_horizons);
+  RUN_TEST(test_bounded_history_collapsing_capacity_and_stale_guards);
+  RUN_TEST(test_bounded_history_wrap_updates_and_unpaired_move);
+  RUN_TEST(test_bounded_companion_batch_denial_keeps_prior_rows_unpublished);
+  RUN_TEST(test_bounded_companion_apply_matches_delete_and_length_reference);
+  RUN_TEST(test_bounded_companion_apply_synthesizes_off_and_keeps_shortening_order);
+  RUN_TEST(test_bounded_companion_apply_capacity_and_stale_source_hide_partial_candidate);
+  RUN_TEST(test_bounded_companion_reconstruction_matches_pitch_reference);
+  RUN_TEST(test_bounded_companion_reconstruction_rejects_stale_and_partial_output);
+  RUN_TEST(test_bounded_companion_reconstruction_maximum_unique_and_duplicate_geometry);
+  RUN_TEST(test_bounded_companion_spans_match_canonical_reconstruction);
+  RUN_TEST(test_bounded_companion_spans_cover_equal_tick_deferred_end_and_zero_wrap);
+  RUN_TEST(test_bounded_companion_spans_maximum_capacity_and_discard);
+  RUN_TEST(test_reconstruction_wrap_lookup_matches_legacy_queries);
+  RUN_TEST(test_reconstruction_wrap_lookup_retains_reconstruct_specific_rules);
+  RUN_TEST(test_reconstruction_wrap_lookup_maximum_grain_bound_and_tie_order);
+  RUN_TEST(test_companion_overlap_walk_holds_actions_and_preserves_legacy_action_order);
+  RUN_TEST(test_companion_overlap_walk_matches_actual_length_application);
+  RUN_TEST(test_companion_overlap_walk_maximum_input_and_denied_admission);
+  RUN_TEST(test_bounded_delete_capacity_bound_and_discard);
+  RUN_TEST(test_bounded_wrap_head_lookup_matches_reference);
+  RUN_TEST(test_bounded_delete_selection_matches_actual_delete_with_retained_rows);
+  RUN_TEST(test_bounded_delete_selects_both_tail_and_wrap_off_and_preserves_source);
+  RUN_TEST(test_companion_lane_run_counterexample_pairs_index_3_at_tick_96);
+  RUN_TEST(test_companion_runs_are_filtered_by_lane_and_stable_within_kind);
+  RUN_TEST(test_bounded_companion_pair_preserves_tagged_and_unique_wrap_fallback);
+  RUN_TEST(test_bounded_companion_pair_matches_revised_reference_across_generated_lanes);
   RUN_TEST(test_121141_gate5a_on_then_off_length_pairing);
   RUN_TEST(test_121141_gate4_per_layer_6040_cannot_steal_off168_from_6073_layer);
   RUN_TEST(test_121141_gate4_tick_sorted_early_layer_length_6040_leaves_off168);

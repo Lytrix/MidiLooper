@@ -1,3 +1,61 @@
+## Current implementation direction: reuse playback windows
+
+The user's DRY correction supersedes the recording-only prototype described in
+the historical increments below. First-record preparation must use the existing
+RuntimePlaybackView, RuntimePlaybackViewFill/Build, RuntimePlaybackOrderBuilder,
+coverage lifecycle, bridges and MIDI cursor path. Do not introduce another row
+store, tick-bucket sorter, closure engine, stream adapter or recording-specific
+memory pool. RuntimeRecordingWindow and its stream/runtime member were removed.
+
+The shared fill/build path now accepts an explicit PlaybackCoverage scope. It
+scans an immutable source in bounded entry quanta, retains only events whose
+playback phase belongs to the existing coverage interval, and orders those rows
+with the same builder as ordinary playback. Source extent can exceed window
+capacity; matching events must fit the existing unpublished candidate or its
+build is denied. This is candidate-build behavior, not permission to reject
+recording input. AllSource remains the default for existing callers.
+
+Production integration stays in TrackPlaybackWindowBuild / TrackDeferredMaintenance
+and the existing Loop playback-source adapters; the live-capture source must
+feed that path rather than create a second Track playback dispatcher.
+The existing RuntimePlaybackViewLifecycle now supports retaining its current
+immutable view while the other two views alternate current/successor builds.
+Both already-complete and pending successor paths protect the retained buffer.
+Returning to it changes roles and detaches the other views without clearing
+ledger/event arrays; the next shared builder resets detached metadata. The owner
+must discard in-flight workers and preflight canonical source/geometry/ledger
+before that operation. Full runtime reset still invalidates all views, including
+the retained role; do not preserve stale capture content through source changes.
+Recording integration must distinguish cache refresh from source invalidation.
+The runtime coverage-build wrapper now selects PlaybackCoverage fills.
+These methods are not yet called by Track's recording/deferred-maintenance path.
+
+Raw-tick preparation now uses the same fill and order workers. RawCoverage
+requires an unknown projection length (zero) and filters the raw interval without
+modulo. RawPlaybackTick uses the shared audible Off/On/other comparator, unlike
+CanonicalCaptureTick's stable capture ordering. A completed raw view can bind its
+final loop length without copying or reordering because all retained raw ticks
+are already inside that non-wrapping coverage interval. This does not synthesize
+or admit held-note closures; those remain part of owner/bridge preparation.
+
+The existing lifecycle accepts an explicit Preparation handoff mode for rotating
+unbound views while retaining bar 1. Default audible handoff and retained-return
+activation reject unbound raw views. Binding must be serialized by the owner;
+retained raw views are protected from fill mutation even though geometry remains
+unbound. Tests cover eight preparation bars followed by final binding and return.
+Track::startRecording now establishes the new raw tick origin before pre-roll is
+ingested through recordMidiEvents; otherwise pre-roll used the previous origin.
+
+Remaining first-record work belongs in the existing source adapter and owner
+lifecycle: establish bar-1 preparation when capture starts; preserve raw capture
+ticks until final geometry is known; keep accepted late input/held-note closures
+ready through the existing preparation and bridge mechanisms; retain return
+coverage while preparing successors; and select it on the original return
+boundary. The new PlaybackCoverage mode requires valid final projection geometry
+and must not modulo raw recording ticks by a provisional one-bar length.
+Capacity, source lifetime and timing bounds must be solved for the shared path.
+The no-delay/no-rewind/no-omission contract and all open HITL gates remain.
+
 ## Context
 
 See [proposal.md](proposal.md) for the measured DMA baseline and motivation.
@@ -186,6 +244,47 @@ Display may show canonical content before that later revision is audible, but it
 must report the pending-audible generation; no playback decision may treat
 display freshness as audible-source admission.
 
+### Companion application scope (approved canonical reference)
+
+Historical Create rows follow DEC-061: append their stored payload to the
+individual pass, then stably sort the complete pass by raw tick. Equal ticks
+retain existing events before appended events and order within each group.
+Empty Create rows still sort. This explicitly replaces the old unstable Create
+reference; parity uses the revised reference. Create reactivates added nonzero
+NoteOn identities after earlier Delete rows. It does not add an Off-before-On
+stored-order tie-break or change DEC-059 pairing and DEC-060 merge scope.
+
+Combined capture preparation applies the frozen companion sequence independently
+to each participating canonical pass, including the frozen capture pass, before
+merging pass results in canonical pass order. Preserve the existing stable
+raw-tick merge and within-pass result order; do not flatten the inputs before
+applying edits or add a sorting repair. A repeated NoteId in separate passes is
+resolved separately in every pass. DEC-060 records user approval.
+
+The producer retains immutable pass membership, pass order, source identity,
+and original event provenance until preparation completes. Each pass uses the
+bounded companion apply continuation; bounded pairwise merge carries pass/event
+provenance into the aggregate candidate. Its publication, mapping to published
+base indexes, capacity reservation, and aggregate stop-latency proof remain
+required by task 2.3. Existing incremental append-then-edit admission is not the
+parity reference for combined capture preparation.
+
+### Companion pairing reference (approved semantic correction)
+
+Companion note-pair lookup first filters the input sequence to the target
+channel/pitch lane. Equal-tick runs are contiguous within that filtered lane;
+equal ticks separated by a different tick remain separate runs. Each run
+processes Offs before Ons, preserving input order within each kind. Existing
+LIFO pairing and wrap fallback remain unchanged. This is an explicit semantic
+correction to the former non-transitive comparator, not preservation of its
+library-dependent output. Companion parity SHALL be measured against this
+revised reference.
+
+For lane [On@96, On@0, Off@96, Off@96, Off@0], target On index 0 pairs with
+Off index 3 at tick 96. See `COMPANION-PAIRING-REASSESSMENT.md` for the approved
+counterexample and rationale. Task 2.3 and all listed validation/HITL gates
+remain open until their complete requirements pass.
+
 ### Stop requests latch a bounded deferred-stop admission
 
 An active overdub stop is not required to synchronously finish an arbitrary
@@ -346,12 +445,30 @@ at most one eligible child grain per active-transport opportunity:
    when that work is eligible for the current transport state.
 
 Each child reports complete, pending, or yielded. During active transport the
-parent selects exactly one expensive child; the frame continuation resumes at
-that child on the next eligible `LoadAndDisplay` owner turn. The existing
+parent selects exactly one expensive child. An admitted due or pending display
+frame takes priority over a retained load child at the next eligible
+`LoadAndDisplay` owner turn. Its resolve/draw/transfer phases retain their
+continuation until the frame completes. Load progress remains in
+`StorageManager`, so yielding between load slices for a display frame does not
+restart reading or parsing. Once no display phase is due, eligible load work
+resumes. Owner denial still leaves domain progress untouched. The existing
 post-overdub policy continues to poll MIDI before and after the selected child
 and continues to prevent persistence from stacking with the load/display owner.
 STOPPED may retain its broader throughput policy, but its timing samples cannot
 prove active-transport bounds.
+
+Playback display starvation correction (2026-09-15):
+`allowDeferredSlotRestore` is permission, not proof of unfinished work. During
+active transport, load-child admission and retention also check actual pending
+slot restoration via `StorageManager::hasPendingLoopSlotRestore()` (or focused
+restore work). Previously an idle load turn stayed selected indefinitely during
+PLAYING because permission remained true; RECORDING/OVERDUBBING disabled that
+permission and therefore released the display. Due-display priority also covers
+real queued background work that cannot progress during playback. This priority
+applies after existing display admission gates; it does not override focused
+slot-load display suppression or admit unbounded Commit/cleanup work. STOPPED
+retains the broader load-frame path needed for idle housekeeping even with an
+empty load queue.
 
 For this change, **active transport** explicitly includes RECORDING, PLAYING,
 OVERDUBBING, and `OVERDUB_STOPPING`. While STOPPING, playback continuity,
@@ -536,3 +653,168 @@ or lost samples from closing the 4b.3 gate.
   merge, phase-fill, display, load-job, and prewarm grain will be chosen from
   baseline measurement during implementation; the design requires them to be
   fixed and independently observable, not a particular numerical value.
+
+## Provisional ranked-preparation allowance (DEC-062, 2026-09-14)
+
+The user approves 6240 ranked-preparation grains for continued implementation
+and integration testing. This is a separate allowance from the existing
+order/rewrite reservation, not a total-stop or realtime-duration claim.
+The prepared-order aggregate at C=2048,P=2,B=2048,H=R=0,Q=32 fits it; larger
+horizons must be checked independently. Keep source/capacity/epoch validation,
+bounded grains, accepted-event preservation and MIDI-separated service.
+Determine realtime reservations and latency limits using overflow-free HITL
+when the complete path is runnable. Do not block provisional integration on
+comparison with the old 3072 allowance or unavailable device timing evidence.
+Final realtime qualification and the existing validation/HITL gates remain open.
+
+### Accepted protected undo transaction (DEC-063)
+
+The user accepted the recommended transaction and latest-request Undo/Redo rule
+in [UNDO-PUBLICATION-REASSESSMENT.md](UNDO-PUBLICATION-REASSESSMENT.md).
+The existing resource owners must implement bounded final-reference release,
+per-entry pressure rechecks, reserved attachment storage and one final
+canonical/audible/undo publication. Retired resources cannot be needed for rollback
+past the no-fail point. Undo/Redo commands coalesce to the latest request per Track
+and execute once after finalization under the destination policy. Transport Stop
+remains immediate. This approval does not satisfy the native or HITL gates.
+
+
+### First-record window preparation preserves the existing launch boundary
+
+User decision (2026-09-15): first-record playback must remain synchronized with the running transport. A deferred first-record launch, including waiting for a later loop boundary, is rejected. This corrects the proposed remedy in `FIRST-RECORD-ADMISSION-PROPOSAL.md`; that document is rejected history.
+
+At recording start, the slot runtime establishes prewarmed bar-1 playback coverage, initially empty, in the recording coordinate frame. Accepted input prepares that window as it arrives. “Ready from record start” means the window and its admission machinery already exist and remain current with accepted input; future notes are not assumed known. Preparation cannot wait for a record-stop command, canonical snapshot publication, or entry into PLAYING.
+
+The implementation uses the existing `RuntimePlaybackViewFill`/`Build` and
+lifecycle buffers. A borrowed source descriptor reads the chunked canonical
+capture store with a capture-display generation token; one fill or order grain
+is serviced from the existing VisualCache owner turn, and an append invalidates
+the unpublished candidate so it can restart from the new source extent. The
+retained raw bar survives playback-cache reset and is bound to final loop
+geometry immediately before the normal audible handoff.
+
+Maintain bar 1 independently of rolling preparation of later one-bar windows. A later-window build must not overwrite the prepared return window. Stable prepared prefixes and generation-matched bounded tails/bridges cover changes made by incoming input, minimum-length filtering, and final geometry. At the existing final-bar boundary, select the complete bar-1 source/order/cursor/ledger bundle atomically at phase zero on the existing transport clock. Do not rewind the global clock, launch on a later cycle, omit earlier notes, or replay them as delayed catch-up.
+
+The one-bar take is the tightest case: input at the end of bar 1, a held note crossing the return boundary, and a stop command with no intervening maintenance turn must already have bounded admission/closure paths. A final NoteOff or geometry adjustment cannot introduce a full sort, full gather, allocation, or unbounded ledger reconstruction at that boundary. Final loop length may be unknown during recording; provisional bar coverage must therefore not be confused with a committed one-bar loop or bind event phases to the wrong modulo length.
+
+After launch, the prepared window chain must cover each following bar without omission or delayed refill, including the final-bar-to-bar-1 handoff. Canonical record-pass publication and later snapshot replacement must refer to the same admitted audible content and preserve the cycle-qualified emission cursor and held-note closure path.
+
+Implementation must extend the current overdub-only capture staging integration to first-record preparation. `startRecording()` currently reserves capacity but `recordMidiEvents()` stages only overdub input, and `stopRecording()` enters PLAYING while its first snapshot is still pending. These are the integration points; merely advancing `lastTickInLoop` on the empty-source early return does not implement this contract. No new first-record input rejection policy or numerical service reservation is implied by this decision; capacity and scheduling proofs must cover accepted input under the existing recording contract.
+
+
+## Superseded recording-only prototype history
+
+The following component increments are historical evidence, not the current
+implementation plan. Their recording-only code and associated tests were removed
+in favor of the shared playback-window path above. Their test counts do not prove
+recording integration through the shared path.
+
+First-record ordering implementation increment (2026-09-15): `RuntimeRecordingWindow`
+now provides private, prewarmed tick/kind buckets for a single raw-tick bar.
+Append and unlink each touch one event and a constant number of links; record
+start resets bucket visibility through an epoch rather than scanning old rows.
+Off, On, and other-event buckets preserve input order independently at each tick.
+The fixed event storage's order/scratch arrays are private prev/next links while
+this owner is live and cannot also be used by a merge-order builder. Sealing
+makes the window immutable; explicit retirement permits reuse. The fixed bucket
+cost is three 8-byte buckets per bar tick (18,432 bytes at 768 ticks), in addition
+to event storage. Allocation remains a cold prewarm operation with a fallible
+result. No production slot currently allocates or selects this component.
+
+This component establishes append-ready ordering only. It does not certify
+first-record note lifetime reservations, canonical filtering or geometry,
+held-note closure, source identity, ledger summary, concurrent ownership transfer,
+or coverage-service capacity. Those must be integrated before connecting this
+private order to audible playback. A capacity failure here is not a newly
+approved first-record input rejection policy.
+
+
+The recording return window is now a member of `LoopPlaybackRuntime`, with explicit
+cold allocation and record-session lifetime distinct from derived playback-cache
+refresh. Its private same-window reservation API uses the fixed phase array for
+closure ownership while the window is live; this array must not concurrently hold
+projected phases for another builder. Each reserved On owns an invisible Off row.
+Closure validates owner, recording epoch, identity, channel, pitch and raw tick before
+linking that row. Full capacity cannot displace it. Sealing denies unresolved local
+reservations. Notes spanning beyond this raw-tick bar still need a separately proven
+closure handoff; this local reservation is not a cross-window admission receipt.
+
+
+Recording-window closure continuation (2026-09-15): a later raw-tick window can
+reserve an invisible incoming terminal row before ordinary events consume its
+capacity. Cross-bar closure validates source identity/epoch and destination
+credit/epoch before changing either private window. It consumes the source's
+local closure obligation and links the Off in the destination, with no append
+allocation or sort. Source and destination remain unsealed while their respective
+obligations are unresolved. A foreign, stale, wrong-tick or wrong-identity attempt
+preserves both halves. Canonical short-pair removal consumes both credits without
+emitting either event.
+
+Loop-end closure explicitly binds final whole-bar length and places the reserved
+Off in bar 1's phase-zero bucket while preserving `event.tick == loopLengthTicks`.
+A note originating in bar 1 uses its existing local terminal row; a note originating
+in a later bar requires a reserved incoming row in bar 1. Bucket phase is stored
+separately from raw tick in the private fixed phase array, so unlinking a loop-end
+Off accesses phase zero rather than indexing beyond the bar. Ordinary cross-bar
+closure does not apply modulo arithmetic to an unknown final length.
+
+These are private owner operations, not concurrent atomic publication. The Track
+integration still has to establish incoming credits before ordinary input,
+carry obligations across rolling-window reuse, prove accepted-input capacity and
+all end-boundary work, and atomically select canonical source/geometry/cursor/ledger.
+Tests of one closure do not establish the bound for all simultaneously held notes.
+The current capture/playback path is not changed by these new methods.
+
+
+Final recording geometry and cursor extent (2026-09-15): the first explicit
+loop-end closure now binds final loop length for the return window's epoch,
+before any pair filtering. Conflicting subsequent closures deny before mutation.
+Removing a terminal does not erase this binding; retire/begin creates a new epoch
+and clears it. Ordinary rows remain constrained to their raw bar, and the only
+projected exception is an explicitly bound loop-end Off. These invariants let
+stream selection check geometry without walking retained events. Sparse initial
+bucket seeking and optional after-phase seeking still have their documented
+bounds; this is not yet a complete constant-time boundary activation.
+
+The existing MIDI cursor advancement implementation now also accepts 32-bit
+logical positions through a typed stream/state overload. Both widths use the
+same emission, interval, jam and ledger implementation. Existing production
+callers retain their 16-bit types. A synthetic stream spanning all 131,072 shared
+pool rows verifies progress across 65,535, invalid-entry denial and recovery
+without replay. The recording window's physical rows and reservation handles
+remain 16-bit; pool-sized storage and capture admission are still integration
+work. No new input cap or first-record rejection policy is introduced.
+
+
+Recording physical extent continuation (2026-09-15): RuntimeRecordingWindow
+now owns dedicated contiguous rows containing the event, 32-bit previous/next
+links, phase/reservation tags and retained state. It no longer borrows the
+16-bit sort arrays from FixedPlaybackEventStorage. Bucket links, reservation
+handles and the borrowed stream use 32-bit positions. Cold prewarm checks
+allocation-size overflow and reservation-tag index limits; active append,
+closure and epoch reuse neither resize nor allocate. Failed cold allocation
+preserves the prior reservation. reservedBytes() reports row/bucket payload
+bytes, excluding allocator overhead, for subsequent device reservation work.
+
+Native fixtures now fill actual storage to the shared pool's 131,072-row extent,
+remove a row across 65,535 without breaking links, close a full-capacity reserved
+loop-end Off, and traverse the resulting wide stream without replay. A separate
+fixture closes an incoming terminal at destination row 65,536 under full
+capacity. These are cardinality/identity tests, not claims that a same-tick flood
+can meet MIDI deadlines.
+
+The physical index limit is resolved, but memory admission is not: do not reserve
+a full-pool copy per slot or silently reject existing capture input when a
+window fills. Before Track wiring, establish how return and rolling windows
+share prewarmed device memory, including simultaneous recording owners and
+closure obligations, and prove that reservation against existing capture
+admission. Sparse seeks and final boundary publication remain integration work.
+
+The existing 2026-09-15 09:52 device capture reports an 8 MB PSRAM chip (8185 KB
+pool). This rules out multiple full-pool event copies as the deployed return /
+rolling reservation strategy. The dedicated wide rows above establish the index
+and closure semantics, but device integration needs shared canonical event
+references (or equivalent sharing), with an explicit immutable lifetime through
+capture canonicalization, snapshot publication and window retirement. Merely
+allocating the native fixture's capacity for each window is not the implementation
+plan. Preserve existing record admission and the no-delayed-launch contract.

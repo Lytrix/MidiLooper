@@ -18,7 +18,7 @@ _RECORD_STOP_STAGE_RE = re.compile(
     r"#CAP,(\d+),RECS,stage,([^,]+),\d+,(\d+),"
 )
 
-_PLAYBACK_ACTIVE_STATES = frozenset({"PLAYING", "OVERDUBBING"})
+_PLAYBACK_ACTIVE_STATES = frozenset({"PLAYING", "OVERDUBBING", "OVERDUB_STOPPING"})
 # Short persist windows can sit between MO ticks while PLAYING continues.
 _ACTIVE_SNAPSHOT_PAD_US = 500_000
 

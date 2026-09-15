@@ -235,14 +235,19 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     uint32_t now, uint32_t& lastDisplayUpdate, bool timingCriticalTrackActive,
     bool postOverdubPlayingMidiDrain) {
   static bool bootSlotLoadRefreshPending = true;
+  static bool firstCommitPrewarmPending = false;
+  static uint8_t firstCommitPrewarmTrack = 0;
+  static uint8_t firstCommitPrewarmSlot = 0;
+  static MidiServiceDrain::ActiveLoadDisplayContinuation activeLoadDisplayContinuation{};
   StorageManager::setBootTitleLoadDrain(bootSlotLoadRefreshPending);
   bool captureActive = false;
+  bool overdubStopping = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing()) {
+    if (t.isRecording() || t.isOverdubbing() || t.isOverdubStopping()) {
       captureActive = true;
-      break;
     }
+    overdubStopping = overdubStopping || t.isOverdubStopping();
   }
   const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
   const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
@@ -270,14 +275,48 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
       timingCriticalTrackActive;
 
   const bool pollDuringDeferredLoadFrame =
-      MidiServiceDrain::aroundDeferredLoadFrame(postOverdubPlayingMidiDrain);
+      MidiServiceDrain::aroundDeferredLoadFrame(postOverdubPlayingMidiDrain, overdubStopping);
+  const bool loadJobRequested =
+      (allowDeferredSlotRestore &&
+       (!timingCriticalTrackActive || StorageManager::hasPendingLoopSlotRestore())) ||
+      focusSlotRestoreWork;
+  // Publish currently transfers a complete loaded slot and frees parser storage
+  // synchronously. It has no content-independent active-transport bound yet, so
+  // leave it pending until the STOPPED policy admits it.
+  const bool activeCommitPending = StorageManager::hasLoadLoopJobCommitPending();
+  const bool loadJobPending =
+      loadJobRequested &&
+      MidiServiceDrain::admitLoadJobChild(timingCriticalTrackActive, activeCommitPending);
+  const bool displaySkippedAtTurnStart = skipFocusLoadForSlotSession;
+  const bool displayDueAtTurnStart =
+      !displaySkippedAtTurnStart && admitDisplayPaintTurn(now, lastDisplayUpdate);
+  const MidiServiceDrain::ActiveLoadDisplayChild activeChild =
+      activeLoadDisplayContinuation.select(timingCriticalTrackActive, displayDueAtTurnStart,
+                                           loadJobPending);
+
+  // A prewarm created by an active Commit is deliberately retained until a
+  // noncritical LoadAndDisplay turn. It must never become a second hidden child
+  // inside the committing turn.
+  if (!timingCriticalTrackActive && firstCommitPrewarmPending &&
+      !StorageManager::hasLoadLoopJobCommitPending()) {
+    prewarmPlaybackMergedEventsForSlot(firstCommitPrewarmTrack, firstCommitPrewarmSlot);
+    firstCommitPrewarmPending = false;
+  }
+
+  if (timingCriticalTrackActive &&
+      activeChild == MidiServiceDrain::ActiveLoadDisplayChild::Display) {
+    finishAdmittedDisplayPaintTurn(now, lastDisplayUpdate);
+    activeLoadDisplayContinuation.finish(
+        activeChild, displayManager.hasPendingPaintPhase());
+    if (pollDuringDeferredLoadFrame) {
+      midiHandler.handleMidiInput();
+    }
+  }
 
   // Paint before background LoadLoopJob while PLAYING (session_20260718_213044).
   // Skip OLED only on focus Commit / focus-load session — not every SlotLoadSession.
-  if (playBackgroundLoad) {
-    const bool skipFocusLoad =
-        skipDisplayAfterFocusCommit || skipFocusLoadForSlotSession;
-    if (!skipFocusLoad && admitDisplayPaintTurn(now, lastDisplayUpdate)) {
+  if (playBackgroundLoad && !timingCriticalTrackActive) {
+    if (displayDueAtTurnStart) {
       finishAdmittedDisplayPaintTurn(now, lastDisplayUpdate);
       if (pollDuringDeferredLoadFrame) {
         midiHandler.handleMidiInput();
@@ -285,9 +324,11 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  // Finish focus LoadLoopJob (especially Committing) even when tap/revision hold would
-  // otherwise skip the deferred frame — 000205 starved apply after parse_leave.
-  if (allowDeferredSlotRestore || focusSlotRestoreWork) {
+  // Resume the admitted Read/Parse LoadLoopJob even when tap/revision hold would
+  // otherwise skip the deferred frame. Commit remains STOPPED-only until bounded.
+  if (loadJobPending &&
+      (!timingCriticalTrackActive ||
+       activeChild == MidiServiceDrain::ActiveLoadDisplayChild::LoadJob)) {
     const uint32_t budgetUs =
         allowDeferredSlotRestore
             ? LoadLoopBudget::resolveLoadLoopSliceBudgetUs(
@@ -300,16 +341,27 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
 #if defined(SESSION_CAPTURE)
     RUNTIME_TIMING_RECORD_LOAD_FRAME_CHILD_REM(1, loadJobStartUs);
 #endif
+    // Permission to restore is not unfinished work: retaining the load child
+    // on permission alone used to starve OLED updates throughout PLAYING.
+    const bool loadJobStillPending =
+        (allowDeferredSlotRestore && StorageManager::hasPendingLoopSlotRestore()) ||
+        StorageManager::isFocusedLoopSlotRestoreWork();
+    if (timingCriticalTrackActive) {
+      activeLoadDisplayContinuation.finish(activeChild, loadJobStillPending);
+    }
     if (pollDuringDeferredLoadFrame) {
       midiHandler.handleMidiInput();
     }
     if (!focusHadCommittedPasses &&
         trackManager.getTrack(focusTrack).getLoop(focusSlot).hasCommittedPasses()) {
       skipDisplayAfterFocusCommit = true;
-      // 2fd209a / 154353: first-commit prewarm stays on the load-frame that
-      // committed the slot (128 ms). Deferring it until after the first piano
-      // roll hung 160519 immediately after that frame.
-      prewarmPlaybackMergedEventsForSlot(focusTrack, focusSlot);
+      // Commit makes the loop visible, but its session/parser cleanup is a
+      // separate owner turn. Queue prewarm only after that continuation has
+      // retired; doing it here would stack a third expensive child behind
+      // Commit and Cleanup.
+      firstCommitPrewarmPending = true;
+      firstCommitPrewarmTrack = focusTrack;
+      firstCommitPrewarmSlot = focusSlot;
     }
     if (allowDeferredSlotRestore && !timingCriticalTrackActive &&
         !SlotLoadSession::isActive()) {
@@ -319,7 +371,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  if (!playBackgroundLoad) {
+  if (!playBackgroundLoad && !timingCriticalTrackActive) {
     const bool skipFocusLoad =
         skipDisplayAfterFocusCommit || skipFocusLoadForSlotSession;
     if (!skipFocusLoad && admitDisplayPaintTurn(now, lastDisplayUpdate)) {
@@ -330,7 +382,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
   }
 
-  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady()) {
+  if (bootSlotLoadRefreshPending && StorageManager::bootInteractiveReady() &&
+      !timingCriticalTrackActive) {
 #if defined(SESSION_CAPTURE)
     const uint32_t bootCommitStartUs = micros();
 #endif
@@ -378,7 +431,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
   const uint8_t scannedTrackCount = trackManager.getTrackCount();
   for (uint8_t i = 0; i < scannedTrackCount; ++i) {
     const Track& t = trackManager.getTrack(i);
-    if (t.isPlaying() || t.isRecording() || t.isOverdubbing() || t.isStoppedRecording()) {
+    if (t.isAudiblePlaybackActive() || t.isRecording() || t.isStoppedRecording()) {
       anyRealtimeTrackActive = true;
     }
     const bool pendingSnapshot = t.hasPendingSnapshotPublishOnAnySlot();
@@ -460,7 +513,8 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       Track& selectedTrack = trackManager.getTrack(selectedTrackIndex);
       const bool selectedTrackIsRealtime =
           selectedTrack.isPlaying() || selectedTrack.isRecording() ||
-          selectedTrack.isOverdubbing() || selectedTrack.isStoppedRecording();
+          selectedTrack.isOverdubbing() || selectedTrack.isOverdubStopping() ||
+          selectedTrack.isStoppedRecording();
       // Preserve the selected track's existing snapshot behaviour. This is
       // the current interaction target, including its live-record path.
       if (selectedTrackIsRealtime) {
@@ -485,7 +539,7 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
           Track& track = trackManager.getTrack(trackIndex);
           const bool backgroundTrackEligible =
               (track.isPlaying() || track.isStoppedRecording()) &&
-              !track.isRecording() && !track.isOverdubbing();
+              !track.isRecording() && !track.isOverdubbing() && !track.isOverdubStopping();
           if (!backgroundTrackEligible) {
             continue;
           }
@@ -498,6 +552,21 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
       }
     }
     return;
+  }
+  static uint8_t sCanonicalPrefixTrackCursor = 0;
+  if (MidiServiceDrain::serviceCanonicalPrefixTurn(
+          deferredOwner, realtimeTrackCount, sCanonicalPrefixTrackCursor,
+          [](uint8_t index) {
+            Track& track = trackManager.getTrack(index);
+            if (track.isOverdubStopping() || track.isRecording()) return true;
+            if ((!track.isAudiblePlaybackActive() && !track.isStoppedRecording()) ||
+                !track.loopsAllocated()) return false;
+            const Loop& loop = track.getActiveLoop();
+            return loop.visualCacheDirty || loop.hasDeferredVisualCacheWrapAppend() ||
+                   (track.isOverdubbing() && !loop.overdubSourceSpanCacheReady());
+          },
+          [](uint8_t index) { return trackManager.getTrack(index).processDeferredCanonicalPrefix(); })) {
+    return; // No other track, visual cleanup, or idle child stacks with this grain.
   }
   for (uint8_t i = 0; i < realtimeTrackCount; ++i) {
     trackManager.getTrack(i).processDeferredIdleMaintenance(
@@ -656,7 +725,7 @@ void loop() {
   bool timingCriticalTrackActive = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing() || t.isPlaying()) {
+    if (t.isRecording() || t.isAudiblePlaybackActive()) {
       timingCriticalTrackActive = true;
     }
   }
@@ -675,12 +744,13 @@ void loop() {
   }
 
   bool captureActiveForMidiDrain = false;
+  bool overdubStoppingForMidiDrain = false;
   for (uint8_t i = 0; i < trackManager.getTrackCount(); ++i) {
     const Track& t = trackManager.getTrack(i);
-    if (t.isRecording() || t.isOverdubbing()) {
+    if (t.isRecording() || t.isOverdubbing() || t.isOverdubStopping()) {
       captureActiveForMidiDrain = true;
-      break;
     }
+    overdubStoppingForMidiDrain = overdubStoppingForMidiDrain || t.isOverdubStopping();
   }
   const bool postOverdubPlayingMidiDrain = trackManager.anyPlayingMidiDrainAfterOverdubStop();
   const MidiServiceDrain::DeferredIdleOwner deferredIdleOwner =
@@ -699,8 +769,10 @@ void loop() {
   maybeRecordLoopPrefixRemainder(loopPrefixStartUs);
 #endif
 
-  // Post-overdub PLAYING only: poll before idle so visual-cache work cannot start a stacked gap.
-  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
+  // Drain transport commands before a STOPPING grain validates its destination,
+  // and preserve the post-overdub PLAYING polls at these same call sites.
+  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain,
+                                              overdubStoppingForMidiDrain)) {
     midiHandler.handleMidiInput();
   }
 #if defined(SESSION_CAPTURE)
@@ -714,7 +786,8 @@ void loop() {
   RUNTIME_TIMING_NOTE_IDLE_MAINT(idleMaintUs);
   DebugSessionCapture::recordLoopRemainderSpan("idle_maint", idleMaintUs);
 #endif
-  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain)) {
+  if (MidiServiceDrain::aroundIdleMaintenance(postOverdubPlayingMidiDrain,
+                                              overdubStoppingForMidiDrain)) {
     midiHandler.handleMidiInput();
   }
 #if defined(SESSION_CAPTURE)
@@ -732,7 +805,7 @@ void loop() {
   // deferred prewarm path (000659: commit_prewarm_q then silence).
   uint32_t loadFrameUs = 0;
   if (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::LoadAndDisplay &&
-      deferredIdleOwnerAllowed) {
+      deferredIdleOwnerAllowed && !overdubStoppingForMidiDrain) {
     const uint32_t loadFrameStartUs = micros();
     runDeferredLoadAndDisplayFrame(now, lastDisplayUpdate, timingCriticalTrackActive,
                                    postOverdubPlayingMidiDrain);
@@ -754,10 +827,13 @@ void loop() {
 
   MemoryMonitor::updateAdvisoryPressureLevel(now);
   const MemoryPressureLevel pressure = MemoryMonitor::getAdvisoryPressureLevel();
-  if (pressure >= MemoryPressureLevel::Low) {
+  // OVERDUB_STOPPING owns the active capture until its next deferred grain.
+  // Pressure reclamation can walk derived caches and starve that owner after
+  // its first turn, leaving a clean normal stop permanently pending.
+  if (!overdubStoppingForMidiDrain && pressure >= MemoryPressureLevel::Low) {
     trackManager.tryReclaimDerivedViewCachesUnderPressure(pressure);
   }
-  if (pressure >= MemoryPressureLevel::Critical) {
+  if (!overdubStoppingForMidiDrain && pressure >= MemoryPressureLevel::Critical) {
     // Policy: Critical reclaims disabled-pass chunks (memory_pressure_reclaim_refinement §Policy).
     // Idle-only reclaim at line ~114 misses chunk pressure during RECORDING/PLAYING/OVERDUBBING
     // (session_20260811_021117: append failures with heap headroom, pool at CHUNK_RESERVE).
@@ -781,7 +857,8 @@ void loop() {
       (allowPrioritizedWorkspaceSaveDrain ||
        (deferredIdleOwner == MidiServiceDrain::DeferredIdleOwner::Persistence &&
         deferredIdleOwnerAllowed && allowDeferredSaveAfterLoadFrame &&
-        MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending)));
+        MidiServiceDrain::allowDeferredSave(postOverdubPlayingMidiDrain, deferredSavePending,
+                                             overdubStoppingForMidiDrain)));
   if (runDeferredSaveState) {
     StorageManager::processDeferredSaveState(looperState.getLooperState());
   }

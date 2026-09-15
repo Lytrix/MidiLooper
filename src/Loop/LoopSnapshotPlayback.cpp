@@ -170,6 +170,14 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     }
   }
 
+  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) {
+    for (const PassId id : sessionExitSnapshotHandoff_->passIds) {
+      if (!isRecordPassId(passes, id)) appendUniquePassId(unpublishedPassIds, id);
+    }
+    if (!isRecordPassId(passes, sessionExitSnapshotHandoff_->lastPassId))
+      appendUniquePassId(unpublishedPassIds, sessionExitSnapshotHandoff_->lastPassId);
+  }
+
   std::vector<const CommittedChunkIdList*> unpublishedLists;
   for (const PassId passId : unpublishedPassIds) {
     appendChunkListForPass(passes, passId, unpublishedLists);
@@ -194,6 +202,14 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
   if (pendingSnapshotPublishBox_) {
     for (const EditPassId companionId : pendingSnapshotPublishBox_->companionIds) {
       appendUniqueEditPassId(unpublishedCompanionIds, companionId);
+    }
+  }
+
+  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) {
+    const auto& receipt = *sessionExitSnapshotHandoff_;
+    for (size_t i = 0; i < receipt.companionRowCount; ++i) {
+      for (const EditPassId id : receipt.companionIds[i])
+        appendUniqueEditPassId(unpublishedCompanionIds, id);
     }
   }
 

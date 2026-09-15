@@ -111,6 +111,70 @@ size_t snapshotEventCount(const LoopSnapshotRef& snapshot) {
 
 }  // namespace
 
+NoteUtils::DisplayNote makeAdoptedNote(NoteId noteId, uint8_t pitch, uint32_t startTick,
+                                       uint32_t endTick);
+
+void test_prepared_capture_transfer_moves_pass_without_vector_growth() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  seedCommittedPair(loop);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+                    loop.stagePreparedCapturePass(248, CommitReason::OverdubStop));
+  TEST_ASSERT_TRUE(loop.hasPendingCapturePass());
+  // Seal preparation reserves canonical pass storage. The handoff itself may
+  // only transfer that prepared candidate without a vector growth.
+  TEST_ASSERT_TRUE(loop.canTransferPendingCapturePassWithoutAllocation());
+  const size_t preparedCapacity = loop.passes.overdubPasses.capacity();
+  const uint32_t revisionBeforeTransfer = loop.playbackRevision;
+  PreparedCapturePassTransfer transferred{};
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transferred));
+
+  TEST_ASSERT_FALSE(loop.hasPendingCapturePass());
+  TEST_ASSERT_EQUAL_UINT32(preparedCapacity, loop.passes.overdubPasses.capacity());
+  TEST_ASSERT_EQUAL_UINT32(revisionBeforeTransfer + 1u, loop.playbackRevision);
+  TEST_ASSERT_EQUAL(CapturePassPhase::Overdub, transferred.phase);
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(transferred.id, loop.passes.overdubPasses.back().id);
+  TEST_ASSERT_FALSE(loop.passes.overdubPasses.back().committedChunkIds.empty());
+  TEST_ASSERT_FALSE(loop.captureActive());
+  // The atomic handoff must leave content-sized display/source work for the
+  // deferred owner; clearing this preview belongs to the next continuation.
+  TEST_ASSERT_FALSE(loop.capturePreview.notes.empty());
+  loop.completePreparedCapturePassDeferredCleanup();
+  TEST_ASSERT_TRUE(loop.capturePreview.notes.empty());
+}
+
+void test_active_overdub_transfer_uses_prewarmed_capacity() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  seedCommittedPair(loop);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(2));
+  const size_t passCapacity = loop.passes.overdubPasses.capacity();
+
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(248, 1, 64, 0)));
+  TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+                    loop.stagePreparedCapturePassFromActiveAdmission(
+                        248, CommitReason::OverdubStop));
+  TEST_ASSERT_TRUE(loop.canTransferPendingCapturePassWithoutAllocation());
+
+  PreparedCapturePassTransfer transferred{};
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transferred));
+  TEST_ASSERT_EQUAL_UINT32(passCapacity, loop.passes.overdubPasses.capacity());
+  TEST_ASSERT_EQUAL_UINT32(1u, loop.passes.overdubPasses.size());
+  // One row remains from the two-pass admission horizon.
+  TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+}
+
 void test_imported_takes_survive_invalidateCaches() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -963,6 +1027,148 @@ void test_overdub_publish_keeps_pass_events_when_companion_is_missing() {
   loop.copyEffectiveCommittedEventsInRange(compatibilityEvents, 0, 3072, false);
   TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 64));
   TEST_ASSERT_EQUAL(1, countNoteOns(compatibilityEvents, 64));
+}
+
+void test_prepared_stop_handoff_preserves_restart_before_and_after_publication() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(2));
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.stagePreparedCapturePassFromActiveAdmission(
+      480, CommitReason::OverdubStopToStopped));
+  PreparedCapturePassTransfer transfer{};
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transfer));
+  TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
+  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  TEST_ASSERT_FALSE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
+  loop.completePreparedCapturePassDeferredCleanup();
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  // No idle queue assembly is permitted in a construction-disabled turn.
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, false));
+  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  SessionMidiEventVec events;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 64));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 64));
+}
+
+void test_stop_handoff_retains_session_companions_and_clear_cancels_receipt() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto membership = loop.publishedSnapshot()->noteMembership(60, 0);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(2));
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 480));
+  EditPass hide{};
+  hide.passType = EditPassType::Note;
+  hide.actionType = EditActionType::Delete;
+  hide.targetNoteId = membership->references[0]->noteId;
+  hide.pitch = 60;
+  hide.startTick = 100;
+  hide.endTick = 200;
+  const EditPassId hideId = loop.saveNoteEditPass(0, hide);
+  TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, hideId);
+  loop.pushOverdubSessionPass(loop.lastCommittedPassId(), {hideId});
+  TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStop));
+  loop.closeOverdubSession();
+  SessionMidiEventVec events;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
+  TEST_ASSERT_EQUAL(0, countNoteOns(events, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 64));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
+  TEST_ASSERT_NULL(loop.publishedSnapshot()->findNote(hide.targetNoteId, 60).get());
+  TEST_ASSERT_EQUAL(0, countNoteOns(events, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 64));
+  loop.openOverdubSession(0);
+  TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStop));
+  loop.closeOverdubSession();
+  loop.resetPassTimeline();
+  TEST_ASSERT_FALSE(loop.pendingSnapshotSessionExitQueued());
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+}
+
+void test_empty_stop_handoff_does_not_duplicate_published_record() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(2));
+  loop.openOverdubSession(0);
+  TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
+  loop.closeOverdubSession();
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
+  SessionMidiEventVec events;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 60));
+  TEST_ASSERT_EQUAL_UINT32(2, events.size());
+}
+
+void test_stop_handoff_keeps_inflight_wrap_and_final_pass_once() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(2));
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(300, 1, 62, 90)));
+  const NoteId wrappedId = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(360, 1, 62, 0)));
+  pushClosedPendingAdd(loop, wrappedId, 62, 300, 360);
+  commitOverdubWrapLikeDevice(loop, 360, true);
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1));
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.stagePreparedCapturePassFromActiveAdmission(
+      480, CommitReason::OverdubStopToStopped));
+  PreparedCapturePassTransfer transfer{};
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transfer));
+  TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
+  loop.completePreparedCapturePassDeferredCleanup();
+  loop.closeOverdubSession();
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec events;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 62));
+  TEST_ASSERT_EQUAL(1, countNoteOns(events, 64));
+  TEST_ASSERT_EQUAL_UINT32(6, events.size());
 }
 
 void test_queue_overdub_snapshot_waits_for_idle_steps() {
@@ -2824,6 +3030,66 @@ void test_queue_session_exit_keeps_wrap_journals_without_new_pass() {
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
 }
 
+void test_bounded_session_close_keeps_snapshot_work_and_limits_each_turn() {
+  using Phase = Loop::SessionClose::Phase;
+  for (const size_t quantum : {size_t(1), size_t(7), size_t(32)}) {
+    LoopEventStore::resetPoolForTests();
+    LoopEventStore::initPool();
+    Loop loop;
+    loop.loopId = 7;
+    loop.loopLengthTicks = 3072;
+    recordLinearNote(loop, 100, 200, 60);
+    loop.openOverdubSession(0);
+    loop.beginCapture(CapturePhase::Overdub);
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 72, 90)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 72, 0)));
+    pushClosedPendingAdd(loop, 10, 72, 400, 480);
+    commitOverdubWrapLikeDevice(loop, 480, true);
+    TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+    for (PassId id = 100; id < 105; ++id)
+      loop.pushOverdubSessionPass(id, EditPassIdList{10, 11, 12});
+    Loop::SessionClose work;
+    TEST_ASSERT_TRUE(loop.beginCloseOverdubSession(work));
+    TEST_ASSERT_FALSE(loop.beginCloseOverdubSession(work));
+    TEST_ASSERT_EQUAL(Phase::Denied, loop.stepCloseOverdubSession(work, 0));
+    TEST_ASSERT_EQUAL(Phase::Passes, work.phase);
+    const auto revision = loop.playbackRevision;
+    const auto storage = loop.canonicalStorageGeneration;
+    for (size_t turn = 0; work.phase != Phase::Complete && turn < 1000; ++turn) {
+      const size_t before = work.units;
+      TEST_ASSERT_TRUE(loop.hasOverdubSession());
+      TEST_ASSERT_NOT_EQUAL(Phase::Denied, loop.stepCloseOverdubSession(work, quantum));
+      TEST_ASSERT_TRUE(work.units - before <= quantum);
+    }
+    TEST_ASSERT_EQUAL(Phase::Complete, work.phase);
+    TEST_ASSERT_FALSE(loop.hasOverdubSession());
+    TEST_ASSERT_EQUAL(0, loop.overdubSessionUndoDepth());
+    TEST_ASSERT_EQUAL(0, loop.overdubSessionRedoDepth());
+    TEST_ASSERT_FALSE(loop.hasOverdubSourceView());
+    TEST_ASSERT_EQUAL(revision, loop.playbackRevision);
+    TEST_ASSERT_EQUAL(storage, loop.canonicalStorageGeneration);
+    TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+    drainWrapJournalsUntilCurrent(loop);
+    SessionMidiEventVec gathered;
+    TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+    TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+    TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
+  }
+}
+
+void test_bounded_session_close_rejects_a_changed_session() {
+  Loop loop;
+  loop.openOverdubSession(0);
+  loop.pushOverdubSessionPass(1, EditPassIdList{10, 11});
+  Loop::SessionClose work;
+  TEST_ASSERT_TRUE(loop.beginCloseOverdubSession(work));
+  loop.pushOverdubSessionPass(2, {});
+  TEST_ASSERT_EQUAL(Loop::SessionClose::Phase::Denied, loop.stepCloseOverdubSession(work, 1));
+  TEST_ASSERT_EQUAL(0, work.units);
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_EQUAL(2, loop.overdubSessionUndoDepth());
+}
+
 /// 150650 ordering: the sealed pass reached neither committed tier when the frame was painted,
 /// so the frame fell back to the previous pass. Retained rows must survive the seal and only be
 /// released once the representation the painter selects proves coverage.
@@ -3310,7 +3576,7 @@ void applyDrawSourceDisplayOverlays(const Loop& loop, uint32_t firstBar, uint32_
       }
     }
   }
-  if (!captureActive) {
+  if (!captureActive && !loop.hasOverdubSession()) {
     return;
   }
   for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
@@ -3417,6 +3683,46 @@ void gatherDrawSourceDisplayNotes(const Loop& loop, uint32_t firstBar, uint32_t 
     }
   }
   (void)playheadBar;
+}
+
+uint32_t previewComposeMatchHost(const NoteUtils::DisplayNoteVec& compose,
+                                 const NoteUtils::DisplayNote& preview) {
+  const NoteUtils::DisplayNote* byId = findDisplayNoteById(compose, preview.noteId);
+  if (byId != nullptr) {
+    return (byId->note == preview.note && byId->startTick == preview.startTick &&
+            byId->endTick == preview.endTick)
+               ? 1u
+               : 2u;
+  }
+  for (const NoteUtils::DisplayNote& note : compose) {
+    if (note.note == preview.note && note.startTick == preview.startTick) {
+      return 2u;
+    }
+  }
+  return 0u;
+}
+
+void seedPublishedRecordGridHost(Loop& loop, uint32_t bars) {
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * bars;
+  loop.beginCapture(CapturePhase::Record);
+  for (uint32_t bar = 0; bar < bars; ++bar) {
+    const uint32_t tick = bar * Config::TICKS_PER_BAR;
+    const uint8_t pitch = static_cast<uint8_t>(84 - bar);
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(tick + 10, 1, pitch, 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(tick + 50, 1, pitch, 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, loop.loopLengthTicks - 48));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+}
+
+void pushClosedCapturePreviewRowHost(Loop& loop, NoteId noteId, uint8_t pitch, uint32_t startTick,
+                                     uint32_t endTick) {
+  loop.capturePreview.notes.push_back(makeAdoptedNote(noteId, pitch, startTick, endTick));
+  CapturePreviewNoteState state{};
+  state.open = false;
+  loop.capturePreview.noteStates.push_back(state);
 }
 
 uint32_t clampOpenNoteCloseTick(uint32_t closeTick, uint32_t loopLength) {
@@ -4837,6 +5143,66 @@ void applyLiveRecordCompletedTicks(Loop& loop, uint32_t completedTicks) {
 }
 
 /// GAP-8: publication-gap handoff may omit bars 2–5; unpublished snapshot supplements them.
+/// Stage 7 (`130411` @ `111807617`): closed overdub preview rows must appear in
+/// snapshot-backed compose while capture is active and snap is current.
+void test_stage7_snapshot_compose_includes_active_overdub_preview_130411() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kBars = 4;
+  constexpr uint32_t kLastBar = kBars - 1;
+  seedPublishedRecordGridHost(loop, kBars);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  struct PreviewRow {
+    NoteId id;
+    uint8_t pitch;
+    uint32_t start;
+    uint32_t end;
+  };
+  const PreviewRow slice[] = {{334, 76, 384, 432}, {335, 75, 432, 480}, {336, 74, 480, 528},
+                              {337, 73, 528, 576}, {338, 72, 576, 624}, {339, 71, 624, 672},
+                              {340, 70, 672, 720}};
+  for (const PreviewRow& row : slice) {
+    pushClosedCapturePreviewRowHost(loop, row.id, row.pitch, row.start, row.end);
+  }
+  TEST_ASSERT_TRUE(loop.captureActive());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec compose;
+  gatherDrawSourceDisplayNotes(loop, 0, kLastBar, 0, 0, 127, compose);
+  for (const PreviewRow& row : slice) {
+    const NoteUtils::DisplayNote preview = makeAdoptedNote(row.id, row.pitch, row.start, row.end);
+    TEST_ASSERT_EQUAL_UINT32(1u, previewComposeMatchHost(compose, preview));
+  }
+}
+
+/// Stage 7 (`130411`): between-pass overdub idle keeps closed preview rows that
+/// must still union into compose when the session is open.
+void test_stage7_snapshot_compose_includes_idle_overdub_preview_130411() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  constexpr uint32_t kBars = 4;
+  constexpr uint32_t kLastBar = kBars - 1;
+  seedPublishedRecordGridHost(loop, kBars);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  pushClosedCapturePreviewRowHost(loop, 334, 76, 384, 432);
+  loop.capture.store.clear();
+  loop.capture.phase = CapturePhase::None;
+  TEST_ASSERT_FALSE(loop.captureActive());
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+
+  NoteUtils::DisplayNoteVec compose;
+  gatherDrawSourceDisplayNotes(loop, 0, kLastBar, 0, 0, 127, compose);
+  const NoteUtils::DisplayNote preview = makeAdoptedNote(334, 76, 384, 432);
+  TEST_ASSERT_EQUAL_UINT32(1u, previewComposeMatchHost(compose, preview));
+}
+
 void test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5594,6 +5960,8 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
+  RUN_TEST(test_prepared_capture_transfer_moves_pass_without_vector_growth);
+  RUN_TEST(test_active_overdub_transfer_uses_prewarmed_capacity);
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
   RUN_TEST(test_gather_committed_preserves_takes);
   RUN_TEST(test_restore_empty_pass_snapshot_clears_takes);
@@ -5636,6 +6004,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_stale_snapshot_overlays_unpublished_overdub_pass);
   RUN_TEST(test_stale_snapshot_applies_unpublished_hide_companion);
   RUN_TEST(test_overdub_publish_keeps_pass_events_when_companion_is_missing);
+  RUN_TEST(test_prepared_stop_handoff_preserves_restart_before_and_after_publication);
+  RUN_TEST(test_stop_handoff_retains_session_companions_and_clear_cancels_receipt);
+  RUN_TEST(test_empty_stop_handoff_does_not_duplicate_published_record);
+  RUN_TEST(test_stop_handoff_keeps_inflight_wrap_and_final_pass_once);
   RUN_TEST(test_queue_overdub_snapshot_waits_for_idle_steps);
   RUN_TEST(test_live_record_pending_after_length_reaches_one_bar);
   RUN_TEST(test_live_record_does_not_start_in_progress_bar);
@@ -5663,6 +6035,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_journal_equal_tick_non_note_event_order);
   RUN_TEST(test_skipped_overdub_stop_retains_in_flight_wrap_journals);
   RUN_TEST(test_queue_session_exit_keeps_wrap_journals_without_new_pass);
+  RUN_TEST(test_bounded_session_close_keeps_snapshot_work_and_limits_each_turn);
+  RUN_TEST(test_bounded_session_close_rejects_a_changed_session);
   RUN_TEST(test_seal_retains_capture_rows_until_snapshot_covers_revision);
   RUN_TEST(test_retain_at_seal_merges_uncovered_laps);
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
@@ -5700,6 +6074,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_closed_same_note_id_keeps_linear_end_after_wrap_two_gather);
   RUN_TEST(test_session_exit_closed_notes_do_not_pair_across_passes);
   RUN_TEST(test_wrap_journal_drain_keeps_first_record_while_session_exit_pending);
+  RUN_TEST(test_stage7_snapshot_compose_includes_active_overdub_preview_130411);
+  RUN_TEST(test_stage7_snapshot_compose_includes_idle_overdub_preview_130411);
   RUN_TEST(test_gap_handoff_supplements_uncovered_bars_from_unpublished_snapshot);
   RUN_TEST(test_session_exit_handoff_when_live_record_notes_fit_sealed_length);
   RUN_TEST(test_session_exit_handoff_when_candidate_shorter_than_sealed_length);

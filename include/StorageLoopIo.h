@@ -42,6 +42,24 @@ struct PersistedLoopSnapshot {
 
 using LoopSnapshotRef = std::shared_ptr<PersistedLoopSnapshot>;
 
+/// Exclusive retired DTO ownership. Keep this cursor alive until complete during
+/// active transport; no readers may reacquire the retired object between grains.
+class PersistedLoopSnapshotReleaseCursor {
+ public:
+  PersistedLoopSnapshotReleaseCursor() = default;
+  PersistedLoopSnapshotReleaseCursor(const PersistedLoopSnapshotReleaseCursor&) = delete;
+  PersistedLoopSnapshotReleaseCursor& operator=(const PersistedLoopSnapshotReleaseCursor&) = delete;
+  bool begin(LoopSnapshotRef& root);
+  bool step(size_t maximumUnits);
+  bool complete() const { return !root_; }
+  size_t completedUnits() const { return units_; }
+ private:
+  LoopSnapshotRef root_;
+  uint8_t phase_ = 0;
+  size_t units_ = 0;
+};
+
+
 /// Capture/overdub pass header in loop slot file (v4 take-shaped) (recordPass / overdubPass on disk).
 struct CapturePassSlotFileHeader {
   PassId id = kInvalidPassId;

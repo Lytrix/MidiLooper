@@ -19,6 +19,9 @@ enum TrackState {
   TRACK_STOPPED_RECORDING,  // First layer recorded, ready for playback or overdub
   TRACK_PLAYING,            // Playing back recorded content
   TRACK_OVERDUBBING,        // Recording additional layers while playing
+  // Overdub capture is closed, but its bounded finalization still runs between
+  // MIDI service turns. Playback remains audible; capture input is closed.
+  TRACK_OVERDUB_STOPPING,
   NUM_TRACK_STATES          // Always helpful to validate range
 };
 

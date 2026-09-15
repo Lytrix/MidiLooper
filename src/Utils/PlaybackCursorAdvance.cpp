@@ -1,9 +1,10 @@
 #include "Utils/PlaybackCursorAdvance.h"
 
-PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdvance,
+template <typename Index>
+static PlaybackAdvanceResult advancePlaybackCursorImpl(PlaybackCursorAdvanceStateFor<Index> cursorAdvance,
                                             const PlaybackTickFrame& frame,
                                             PlaybackEmitPolicy policy,
-                                            const PlaybackEventStream& stream, PlaybackSendFn send,
+                                            const PlaybackEventStreamFor<Index>& stream, PlaybackSendFn send,
                                             void* sendCtx, uint8_t playbackSlotIndex,
                                             PlaybackJamFilterFn jamFilter, void* jamCtx,
                                             uint8_t trackMidiChannelForDedup,
@@ -22,7 +23,7 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
   uint8_t lastSentNote = 0;
   uint8_t lastSentType = 0xFF;
 
-  uint16_t& cursor = *cursorAdvance.cursor;
+  Index& cursor = *cursorAdvance.cursor;
   const size_t streamSize = stream.size(stream.ctx);
   while (static_cast<size_t>(cursor) < streamSize) {
     if (stream.isCursorValid != nullptr && !stream.isCursorValid(stream.ctx, cursor)) {
@@ -42,11 +43,13 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
         break;
       }
       cursor++;
+      if (stream.consume != nullptr) stream.consume(stream.ctx);
       continue;
     }
 
     if (applyJam && !jamFilter(jamCtx, evStorageTick)) {
       cursor++;
+      if (stream.consume != nullptr) stream.consume(stream.ctx);
       continue;
     }
 
@@ -72,9 +75,28 @@ PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdv
     }
 
     cursor++;
+    if (stream.consume != nullptr) stream.consume(stream.ctx);
   }
 
   return PlaybackAdvanceResult::Completed;
+}
+
+PlaybackAdvanceResult advancePlaybackCursor(PlaybackCursorAdvanceState cursorAdvance,
+    const PlaybackTickFrame& frame, PlaybackEmitPolicy policy,
+    const PlaybackEventStream& stream, PlaybackSendFn send, void* sendCtx,
+    uint8_t playbackSlotIndex, PlaybackJamFilterFn jamFilter, void* jamCtx,
+    uint8_t trackMidiChannelForDedup, PlaybackSendFn applyLedgerOnly) {
+  return advancePlaybackCursorImpl(cursorAdvance, frame, policy, stream, send,
+      sendCtx, playbackSlotIndex, jamFilter, jamCtx, trackMidiChannelForDedup, applyLedgerOnly);
+}
+
+PlaybackAdvanceResult advancePlaybackCursor(WidePlaybackCursorAdvanceState cursorAdvance,
+    const PlaybackTickFrame& frame, PlaybackEmitPolicy policy,
+    const WidePlaybackEventStream& stream, PlaybackSendFn send, void* sendCtx,
+    uint8_t playbackSlotIndex, PlaybackJamFilterFn jamFilter, void* jamCtx,
+    uint8_t trackMidiChannelForDedup, PlaybackSendFn applyLedgerOnly) {
+  return advancePlaybackCursorImpl(cursorAdvance, frame, policy, stream, send,
+      sendCtx, playbackSlotIndex, jamFilter, jamCtx, trackMidiChannelForDedup, applyLedgerOnly);
 }
 
 PlaybackAdvanceResult advancePlaybackCursorAcrossOverdubWrap(

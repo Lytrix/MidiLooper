@@ -40,8 +40,12 @@ uint16_t Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& r
   passes.editPasses.erase(
       std::remove_if(passes.editPasses.begin(), passes.editPasses.end(),
                      [&](const EditPass& editPass) {
-                       return editPass.state == EditPassState::Disabled &&
-                              !refs.referencesEditPass(editPass.id);
+                       const bool remove = editPass.state == EditPassState::Disabled &&
+                                           !refs.referencesEditPass(editPass.id);
+                       // remove_if may move retained rows after this predicate.
+                       // Audible content/revision stays unchanged by reclamation.
+                       if (remove) ++canonicalStorageGeneration;
+                       return remove;
                      }),
       passes.editPasses.end());
   const size_t after = passes.editPasses.size();
@@ -121,6 +125,7 @@ EditPassId Loop::saveNoteEditPass(uint8_t editPassIndex, EditPass row, EditPassT
   row.passType = passType;
   row.editPassIndex = editPassIndex;
   row.state = EditPassState::Active;
+  ++canonicalStorageGeneration; // Append may relocate history even with deferred revision.
   passes.editPasses.push_back(std::move(row));
   const EditPassId savedId = passes.editPasses.back().id;
   // DEC-056: already-stale published root — admit into the existing companion

@@ -14,6 +14,11 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-063](#dec-063--protected-stop-undo-publication-and-bounded-reclamation) | 2026-09-14 | Protected stop transaction preserves feedback trimming; latest deferred Undo/Redo wins per Track | Accepted — implementation authorized; validation gates remain open |
+| [DEC-062](#dec-062--provisional-ranked-preparation-allowance) | 2026-09-14 | Allow 6240 ranked-preparation grains for integration; realtime reservations determined with HITL | Accepted — provisional; validation/HITL gates remain open |
+| [DEC-061](#dec-061--stable-raw-tick-ordering-after-create) | 2026-09-14 | Create appends then stably sorts raw ticks, including empty payloads | Accepted — explicit semantic correction; task 2.3 and validation/HITL gates remain open |
+| [DEC-060](#dec-060--canonical-per-pass-companion-application) | 2026-09-13 | Combined capture preparation applies companions per canonical pass before merging | Accepted — user endorsed; task 2.3 and validation/HITL gates remain open |
+| [DEC-059](#dec-059--deterministic-companion-pairing-lane-runs) | 2026-09-13 | Deterministic filtered-lane runs replace the invalid companion-pair comparator | Accepted — semantic correction; task 2.3 and validation/HITL gates remain open |
 | [DEC-058](#dec-058--runtime-owned-derived-playback-views-and-bounded-stop-admission) | 2026-09-13 | Runtime-owned derived playback views and bounded deferred overdub stop; canonical content remains in `Loop` | Accepted — implementation authorized; capacity, grain, coverage, stop-latency, and MIDI-trace gates remain required |
 | [DEC-057](#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write) | 2026-09-11 | LoopSnapshot body format version 1 (`LSV1` wire discriminator); dual-write `PersistedLoopSnapshot` + `LoopSnapshot`; load undo depth 0 | Accepted — OpenSpec task 5.2 docs/decision only; firmware is 5.3 |
 | [DEC-056](#dec-056--note-edit-rows-enter-the-existing-pending-companion-set-when-the-published-root-is-stale) | 2026-09-08 | NOTE_EDIT `saveNoteEditPass` admits the row into `pendingSnapshotPublishBox.companionIds` when the published root is already stale; not a new publication owner | Accepted — miss-path device PASS [`000740`](../captures/session_20260909_000740.log); current-root close [`000237`](../captures/session_20260909_000237.log) |
@@ -72,7 +77,150 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-058 -->
+<!-- Append new entries below (newest first). Next ID: DEC-064 -->
+
+## DEC-063 — Protected stop undo publication and bounded reclamation
+
+**Date:** 2026-09-14
+
+**Status:** Accepted — user: “accept recommended solution”
+
+### Decision
+
+Implement the [recommended undo publication transaction](../openspec/changes/resumable-midi-boundary-playback-maintenance/UNDO-PUBLICATION-REASSESSMENT.md).
+Preserve feedback-based oldest-entry trimming: complete each entry's bounded
+final-reference release before rechecking actual memory pressure. Prewarm private
+entry, stack bookkeeping and retirement capacity before accepting capture; charge
+this work separately from DEC-062's 6240 ranked grains.
+
+Protect the affected Track from competing mutations and hide intermediate stack
+state. Reserve deferred snapshot attachment storage. Preserve one final
+canonical/audible/undo publication boundary and defer disabled-pass reclaim until
+it cannot invalidate prepared proofs. Physical retirement must begin only when
+recovery no longer requires the removed state.
+
+While protected, keep the latest pending Undo or Redo request per Track and
+report deferral. Execute that request exactly once after finalization using the
+latched destination's normal command policy. Repeated/conflicting presses
+coalesce. Transport Stop remains immediate and cannot restore PLAYING; other
+Tracks keep independent command state.
+
+### Reuse, alternatives and verification
+
+Extend TrackUndo, Track/GlobalUndoStack, LoopSnapshot lifetime, PassReclaim and
+TrackManager. No new Manager, undo kind or SD schema. Do not adopt fixed trim
+counts, latched pressure, restricted redo/pressure eligibility or synchronous
+unbounded release at the handoff. The controlled 11-entry counterexample proves
+retaining roots can change survivors from 10 to 8; it is not hardware timing.
+Native lifetime, survivor parity, command, attachment, recovery and quantum-bound
+gates precede active integration. Task 2.3 and remaining validation/HITL gates
+stay open. Approval does not authorize firmware upload or claim completion.
+
+---
+
+## DEC-062 — Provisional ranked-preparation allowance
+
+**Date:** 2026-09-14
+
+**Status:** Accepted — user explicitly approved provisional allowance
+
+### Decision
+
+Allow **6240 grains** for ranked preparation while integration proceeds. Determine
+realtime reservations, service rate and acceptable elapsed stop latency when
+HITL can exercise the complete path. Lack of a measured realtime reservation is
+not a blocker to implementing and testing this provisional path.
+
+This allowance covers the prepared-order ranked-tail aggregate, whose current
+C=2048,P=2,B=2048,H=R=0,Q=32 bound is 6240. It is separate from the legacy
+3072 order/rewrite credits and excludes closures, initial canonical ordering,
+canonical rewrite/transfer, cleanup and denied service turns. It is not a
+6240-grain total-stop claim or an exemption from source/capacity/epoch checks.
+Other horizons must fit the allowance or remain outside this provisional case;
+accepted capture must never be silently omitted when a bound is exceeded.
+
+### Rationale and validation
+
+The old 3072 was an implementation work reservation, not an established product
+latency limit. Comparing the new aggregate against it must not block continued
+integration. Preserve explicit bounded grains and native parity; use overflow-free
+HITL to measure costs, scheduling gaps, total stopping latency and MIDI deadlines
+before finalizing realtime reservations. Task 2.3 and the listed validation/HITL
+gates remain open. No upload is authorized by this allowance alone.
+
+### Related OpenSpec
+
+`resumable-midi-boundary-playback-maintenance`; supersedes treating the old
+3072 allowance or missing HITL-derived realtime sizing as prerequisites to
+implementing the provisional ranked path. Final realtime qualification remains required.
+
+---
+
+## DEC-061 — Stable raw-tick ordering after Create
+
+**Date:** 2026-09-14. **Status:** Accepted; user explicitly approved the Create
+reference correction and continued implementation.
+
+Each canonical per-pass Create appends its payload in stored order, then stably
+sorts the complete pass by ascending raw tick. Existing events precede appended
+events at equal ticks; each group retains its internal order. Empty Create
+payloads still sort. No Off-before-On tie-break is added to stored Create order;
+DEC-059 pairing and DEC-060 per-pass application/merge remain unchanged.
+
+This explicitly corrects the previous tick-only `std::sort` reference. Existing
+histories may consequently materialize equal-tick identities in a different
+order. Parity is measured against the revised reference. Create's existing
+present-ID bookkeeping remains: added nonzero NoteOn identities re-enter the
+sequence's present-ID set after earlier Delete rows.
+
+The [Create reassessment](../openspec/changes/resumable-midi-boundary-playback-maintenance/CREATE-HISTORY-REASSESSMENT.md)
+contains a native 25-event counterexample and the approved reference patch.
+Task 2.3, production integration, aggregate bounds, and validation/HITL gates
+remain open; semantic approval does not close them.
+
+## DEC-060 — Canonical per-pass companion application
+
+**Date:** 2026-09-13. **Status:** Accepted; user explicitly endorsed canonical
+per-pass application as the reference for combined capture preparation.
+
+Apply the frozen companion sequence independently within each participating
+canonical pass, including frozen capture, then merge pass results in canonical
+pass order with the existing stable raw-tick merge. Repeated NoteIds in separate
+passes are resolved independently. Pairing within each pass retains DEC-059.
+The flattened incremental seal path is not the reference for this preparation.
+
+The approved [scope reassessment](../openspec/changes/resumable-midi-boundary-playback-maintenance/COMPANION-SCOPE-REASSESSMENT.md)
+records Length-overlap and repeated-NoteId Delete counterexamples. Input must
+retain immutable pass membership/order and provenance through application and
+merge; flattened base events alone cannot prove canonical parity. This preserves
+canonical materialization semantics. Production transfer, bounded admission,
+MIDI trace validation, and HITL remain open; approval is not evidence of completion.
+
+## DEC-059 — Deterministic companion-pairing lane runs
+
+**Status:** Accepted — explicit user authorization, 2026-09-13. Task 2.3 and
+listed validation/HITL gates remain open.
+
+**OpenSpec:** `resumable-midi-boundary-playback-maintenance`.
+**Evidence:** [companion pairing reassessment](../openspec/changes/resumable-midi-boundary-playback-maintenance/COMPANION-PAIRING-REASSESSMENT.md).
+
+### Decision
+
+Runs are contiguous within the filtered channel/pitch lane of note events.
+Equal ticks separated by a different tick remain separate runs. Each run
+processes Offs before Ons, preserving order within each kind. Existing LIFO
+pairing and wrap fallback remain unchanged. In the counterexample
+`On@96, On@0, Off@96, Off@96, Off@0`, target 0 pairs with Off index 3 at tick 96.
+
+This is an explicit semantic correction to the companion-pairing reference.
+Parity must be measured against the revised reference. The former comparator
+was non-transitive and could produce different pairings with different sorting
+algorithms. This decision authorizes applying the reviewed patch and matching
+bounded lookup; it does not change playback's global phase ordering or waive
+DEC-058 capacity, grain, coverage, latency, MIDI-trace, and recovery gates.
+The approving review itself changed no repository files or firmware behavior.
+
+---
 
 ## DEC-058 — Runtime-owned derived playback views and bounded stop admission
 

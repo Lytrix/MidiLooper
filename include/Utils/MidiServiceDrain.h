@@ -18,6 +18,81 @@ enum class DeferredIdleOwner : uint8_t {
   LoadAndDisplay = 4,
 };
 
+// One pre-stop canonical normalization child in a VisualCache turn. Existing
+// stop/visual work has priority across all tracks, not just the selected track.
+constexpr uint8_t kCanonicalPrefixInputQuantum = 32;
+template <typename HasPriorityWork, typename StepPrefix>
+bool serviceCanonicalPrefixTurn(DeferredIdleOwner owner, uint8_t trackCount,
+                                uint8_t& nextTrack, HasPriorityWork hasPriorityWork,
+                                StepPrefix stepPrefix) {
+  if (owner != DeferredIdleOwner::VisualCache || trackCount == 0) return false;
+  for (uint8_t i = 0; i < trackCount; ++i)
+    if (hasPriorityWork(i)) return false;
+  for (uint8_t offset = 0; offset < trackCount; ++offset) {
+    const uint8_t index = static_cast<uint8_t>((nextTrack + offset) % trackCount);
+    if (stepPrefix(index)) {
+      nextTrack = static_cast<uint8_t>((index + 1) % trackCount);
+      return true;
+    }
+  }
+  return false;
+}
+
+/// The LoadAndDisplay owner may run only one expensive child while a track is
+/// timing-critical. The unselected child remains pending for a later owner turn.
+enum class ActiveLoadDisplayChild : uint8_t { None, Display, LoadJob };
+
+inline ActiveLoadDisplayChild selectActiveLoadDisplayChild(bool displayDue,
+                                                           bool loadJobPending) {
+  if (displayDue) {
+    return ActiveLoadDisplayChild::Display;
+  }
+  return loadJobPending ? ActiveLoadDisplayChild::LoadJob
+                        : ActiveLoadDisplayChild::None;
+}
+
+/// An unbounded LoadLoopJob publish cannot enter an active-transport owner
+/// turn. It remains pending for the STOPPED load/display policy.
+inline bool admitLoadJobChild(bool timingCritical, bool commitPending) {
+  return !timingCritical || !commitPending;
+}
+
+/// Fixed owner-local continuation for a timing-critical LoadAndDisplay turn.
+/// A display frame retains its resolve/draw/transfer continuation. Load jobs
+/// retain their progress in StorageManager and yield between bounded slices
+/// when a display frame is due, including when queued loads cannot run yet.
+/// A denied owner turn does not touch this state.
+struct ActiveLoadDisplayContinuation {
+  ActiveLoadDisplayChild pendingChild = ActiveLoadDisplayChild::None;
+
+  ActiveLoadDisplayChild select(bool timingCritical, bool displayPending,
+                                bool loadJobPending) {
+    if (!timingCritical) {
+      return ActiveLoadDisplayChild::None;
+    }
+    if (displayPending) {
+      pendingChild = ActiveLoadDisplayChild::Display;
+      return pendingChild;
+    }
+    if (pendingChild == ActiveLoadDisplayChild::LoadJob && loadJobPending) {
+      return pendingChild;
+    }
+    pendingChild = selectActiveLoadDisplayChild(displayPending, loadJobPending);
+    return pendingChild;
+  }
+
+  void finish(ActiveLoadDisplayChild child, bool remainsPending) {
+    if (child != pendingChild) {
+      return;
+    }
+    if (!remainsPending) {
+      pendingChild = ActiveLoadDisplayChild::None;
+    }
+  }
+
+  bool hasPendingChild() const { return pendingChild != ActiveLoadDisplayChild::None; }
+};
+
 constexpr uint8_t kDeferredIdleOwnerCount = 5;
 
 /// Snapshot idle admits two construction units per turn (DEC-053). Each unit
@@ -115,16 +190,16 @@ inline bool allowDeferredIdleOwner(DeferredIdleOwner owner,
          !deferredIdleOwnerDependsOnVisualCacheWrap(owner);
 }
 
-inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain) {
-  return postOverdubPlayingDrain;
+inline bool aroundIdleMaintenance(bool postOverdubPlayingDrain, bool overdubStopping = false) {
+  return postOverdubPlayingDrain || overdubStopping;
 }
 
 inline bool afterDeferredDisplay(bool captureActive, bool postOverdubPlayingDrain) {
   return captureActive || postOverdubPlayingDrain;
 }
 
-inline bool aroundDeferredLoadFrame(bool postOverdubPlayingDrain) {
-  return postOverdubPlayingDrain;
+inline bool aroundDeferredLoadFrame(bool postOverdubPlayingDrain, bool overdubStopping = false) {
+  return postOverdubPlayingDrain || overdubStopping;
 }
 
 /// DEC-045 amendment: OVERDUBBING idle does not reconstruct `visualCache`.
@@ -134,10 +209,11 @@ inline bool allowVisualCacheReconstructSlice(bool isOverdubbing) {
   return !isOverdubbing;
 }
 
-inline bool allowDeferredSave(bool postOverdubPlayingDrain, bool deferredSavePending) {
+inline bool allowDeferredSave(bool postOverdubPlayingDrain, bool deferredSavePending,
+                               bool overdubStopping = false) {
   // During the post-overdub drain window, do not stack pending save work into the same
   // PLAYING turn that is already draining idle maintenance debt.
-  return !postOverdubPlayingDrain || !deferredSavePending;
+  return !(postOverdubPlayingDrain || overdubStopping) || !deferredSavePending;
 }
 
 inline bool allowDeferredSaveAfterLoadFrame(bool timingCriticalTrackActive,

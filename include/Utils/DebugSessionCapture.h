@@ -142,13 +142,39 @@ SC_MEM_ATTR void runtimeTimingUsbBatch(uint32_t maxSize, uint32_t saturatedCount
                                        uint32_t maxConsecutive);
 /** USB-device batch buckets: DIAG,{usb_bkt_size|usb_bkt_clk|usb_bkt_disp},<b1_8>,<b9_16>,<b17_32>,<b33_64>,<b65_128> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingUsbBatchBuckets(const char* kind, const uint32_t buckets[5]);
-/** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick> (Tier-A). */
-SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick);
+/** Stop-phase summary, device timestamps; maximum-duration call plus all-call counts. */
+SC_MEM_ATTR void stopPhaseTiming(uint8_t track, uint8_t slot, uint8_t phase,
+    uint32_t generation, uint32_t epoch, uint8_t destination, uint32_t calls,
+    uint32_t crossed, uint32_t unknown, uint32_t startUs, uint32_t endUs, uint32_t slackUs);
+
+/** Stop-finalization device-clock trace records (Tier-A). */
+SC_MEM_ATTR void stopGrainTiming(uint8_t track, uint8_t slot, uint8_t phase,
+    uint32_t generation, uint32_t epoch, uint8_t destination, uint32_t serviceSequence,
+    uint32_t grainStartUs, uint32_t grainEndUs, uint32_t serviceActualUs,
+    uint32_t serviceDueUs, uint32_t serviceDeadlineUs, uint32_t servicePeriodUs,
+    uint32_t slackUs, uint8_t finishedPhase);
+SC_MEM_ATTR void stopStateTiming(uint8_t track, uint8_t slot, uint8_t fromState,
+    uint8_t toState, uint32_t tick, uint32_t atUs, uint32_t serviceSequence,
+    uint32_t serviceDueUs, uint32_t serviceDeadlineUs, uint32_t servicePeriodUs);
+SC_MEM_ATTR void stopServiceTiming(uint32_t serviceSequence, uint32_t actualUs,
+    uint32_t dueUs, uint32_t deadlineUs, uint32_t periodUs);
+SC_MEM_ATTR void stopMidiEmissionTiming(uint32_t serviceSequence, uint8_t isNoteOn,
+    uint32_t tick, uint32_t sendUs, uint32_t dueUs, uint32_t deadlineUs,
+    uint32_t latenessUs, uint8_t track, uint8_t slot, uint8_t channel, uint8_t note);
+SC_MEM_ATTR void stopTimelineDropped(uint32_t droppedRecords);
+
+/** First late MIDI send in a 5 s window: DIAG,late_event,<on|off|clk>,<latenessUs>,<tick>,<sendUs>,<dueUs>,<deadlineUs> (Tier-A). Due is cadence-derived; the CAP timestamp is emission time, not send time. */
+SC_MEM_ATTR void midiDeadlineLateEvent(const char* midiClass, uint32_t latenessUs, uint32_t tick,
+                                      uint32_t sendUs, uint32_t dueUs, uint32_t deadlineUs);
 /** Playback gather rebuild: DIAG,playback_build,<path>,... Tier-A path labels include
- * snapshot, overlay, session_exit_compat, hold_empty, compatibility, incremental, note_edit. */
+ * snapshot, overlay, session_exit_compat, hold_empty, compatibility, incremental, note_edit.
+ * Trailing fields: rebuildStartUs, previousPhase, currentPhase, eventCount.
+ * A zero rebuildStartUs means legacy/unspecified occurrence context. */
 SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t windowLengthTicks, uint32_t revision, uint8_t trackIndex,
-                                 uint8_t slotIndex, uint32_t rebuildCount, const char* path);
+                                 uint8_t slotIndex, uint32_t rebuildCount, const char* path,
+                                 uint32_t atUs = 0, uint32_t previousPhase = UINT32_MAX,
+                                 uint32_t currentPhase = 0, uint32_t eventCount = 0);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */

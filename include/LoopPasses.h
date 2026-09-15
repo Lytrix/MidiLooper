@@ -46,6 +46,12 @@ constexpr uint8_t kUngroupedOverdubSessionIndex = 0;
 namespace PassConfig {
 /// Chunks held back so playback and admission retain headroom.
 constexpr uint16_t CHUNK_RESERVE = 16;
+/// Active overdub canonical-transfer horizon. Each admitted pass needs one
+/// prewarmed pass row and at most this many committed chunk references. The
+/// horizon is replenished only while STOPPED; active transport never grows
+/// either canonical vector.
+constexpr uint16_t ACTIVE_OVERDUB_TRANSFER_HORIZON = 16;
+constexpr uint16_t ACTIVE_OVERDUB_TRANSFER_CHUNKS = 8;
 }  // namespace PassConfig
 
 struct RecordPass {
@@ -69,6 +75,17 @@ struct PendingCapturePass {
   CapturePassPhase phase = CapturePassPhase::Record;
   uint32_t mergeSequence = 0;
   CommittedChunkIdList committedChunkIds;
+  uint32_t sealedAtTick = 0;
+  uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
+};
+
+/// Scalar receipt for the no-allocation canonical transfer. Chunk references move directly
+/// into the canonical pass and are intentionally absent here, so collecting the receipt cannot
+/// release, copy, or allocate event storage.
+struct PreparedCapturePassTransfer {
+  PassId id = kInvalidPassId;
+  CapturePassPhase phase = CapturePassPhase::Record;
+  uint32_t mergeSequence = 0;
   uint32_t sealedAtTick = 0;
   uint8_t overdubSessionIndex = kUngroupedOverdubSessionIndex;
 };

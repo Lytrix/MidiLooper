@@ -18,6 +18,7 @@
 #include "Utils/LoopMem.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
+#include "Utils/PendingNoteCompanion.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
 #include <algorithm>
@@ -1335,19 +1336,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
       continue;
     }
     EditPass row{};
-    row.passType = EditPassType::Note;
-    row.targetNoteId = change.noteId;
-    row.pitch = change.pitch;
-    row.velocity = change.velocity;
-    row.startTick = change.startTick;
-    row.endTick = change.endTick;
-    if (change.kind == PendingNoteChangeKind::Hide) {
-      row.actionType = EditActionType::Delete;
-      row.propertyType = EditPropertyType::None;
-    } else {
-      row.actionType = EditActionType::Update;
-      row.propertyType = EditPropertyType::Length;
-    }
+    (void)preparePendingNoteCompanion(change, row);
     const EditPassId id = saveNoteEditPass(kOverdubCompanionEditPassIndex, std::move(row),
                                            EditPassType::Note, true, batchHeapReserveAdmitted);
     if (id != kInvalidEditPassId) {

@@ -4,9 +4,11 @@
 #include "Loop.h"
 
 #include "LoopInternal.h"
+#include "LoopSnapshotBoxes.h"
 #include "Utils/IntervalProjection.h"
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
+#include <algorithm>
 
 LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
   uint8_t maxIndex = kUngroupedOverdubSessionIndex;
@@ -40,6 +42,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
   }
   overdubWrapArmed_ = false;
   overdubWrapSuppressNext_ = false;
+  ++overdubSessionUndoGeneration_;
   overdubSessionPassIds_.clear();
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
@@ -47,6 +50,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
 }
 
 LOOP_COLD_MEM void Loop::closeOverdubSession() {
+  ++overdubSessionUndoGeneration_;
   playheadPhaseTick = UINT32_MAX;
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
   overdubWrapArmed_ = false;
@@ -57,6 +61,67 @@ LOOP_COLD_MEM void Loop::closeOverdubSession() {
   overdubSessionLiveUndoEvents_.clear();
   clearOverdubSourceView();
   discardUnpublishedSnapshotIfNotSessionExit();
+}
+
+LOOP_COLD_MEM bool Loop::beginCloseOverdubSession(SessionClose& work) {
+  using Phase = SessionClose::Phase;
+  if ((work.phase != Phase::Idle && work.phase != Phase::Complete) ||
+      !hasOverdubSession() || overdubSessionUndoGeneration_ == UINT64_MAX ||
+      (pendingSnapshotPublishBox_ && !pendingSnapshotSessionExitQueued())) return false;
+  work = {};
+  work.owner = this;
+  work.generation = ++overdubSessionUndoGeneration_;
+  work.phase = Phase::Passes;
+  return true;
+}
+
+LOOP_COLD_MEM Loop::SessionClose::Phase Loop::stepCloseOverdubSession(
+    SessionClose& work, size_t quantum) {
+  using Phase = SessionClose::Phase;
+  if (work.owner != this || !quantum) return Phase::Denied;
+  if (work.generation != overdubSessionUndoGeneration_ ||
+      (pendingSnapshotPublishBox_ && !pendingSnapshotSessionExitQueued())) {
+    work.phase = Phase::Denied;
+    return work.phase;
+  }
+  while (quantum-- && work.phase >= Phase::Passes && work.phase <= Phase::Finish) {
+    ++work.units;
+    switch (work.phase) {
+      case Phase::Passes:
+        if (!overdubSessionPassIds_.empty()) overdubSessionPassIds_.pop_back();
+        else work.phase = Phase::Companions;
+        break;
+      case Phase::Companions:
+        if (overdubSessionCompanionIds_.empty()) work.phase = Phase::LiveEvents;
+        else if (!overdubSessionCompanionIds_.back().empty())
+          overdubSessionCompanionIds_.back().pop_back();
+        else overdubSessionCompanionIds_.pop_back();
+        break;
+      case Phase::LiveEvents:
+        if (!overdubSessionLiveUndoEvents_.empty()) overdubSessionLiveUndoEvents_.pop_back();
+        else work.phase = Phase::SourceEvents;
+        break;
+      case Phase::SourceEvents:
+        if (!overdubSourceViewEvents_.empty()) overdubSourceViewEvents_.pop_back();
+        else work.phase = Phase::SourceNotes;
+        break;
+      case Phase::SourceNotes:
+        if (!overdubSourceViewNotes_.empty()) overdubSourceViewNotes_.pop_back();
+        else work.phase = Phase::Finish;
+        break;
+      case Phase::Finish:
+        playheadPhaseTick = UINT32_MAX;
+        currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
+        overdubWrapArmed_ = overdubWrapSuppressNext_ = false;
+        overdubSessionCursor_ = 0;
+        overdubSourceViewLoopLengthTicks_ = 0;
+        overdubSourceViewEstablished_ = false;
+        work.phase = Phase::Complete;
+        break;
+      default: break;
+    }
+  }
+  return work.phase;
 }
 
 LOOP_COLD_MEM void Loop::armOverdubWrapAfterLeavingStart(uint32_t currentPhase) {
@@ -171,6 +236,7 @@ LOOP_COLD_MEM void Loop::pushOverdubSessionPass(PassId passId, EditPassIdList co
     return;
   }
   dropOverdubSessionRedoTail();
+  ++overdubSessionUndoGeneration_;
   overdubSessionPassIds_.push_back(passId);
   overdubSessionCompanionIds_.push_back(std::move(companionIds));
   overdubSessionCursor_ = overdubSessionPassIds_.size();
@@ -215,8 +281,105 @@ LOOP_COLD_MEM void Loop::collectOverdubSessionUndoPasses(PassIdList& passIds,
   }
 }
 
+LOOP_COLD_MEM uint64_t Loop::requiredSessionUndoCollectionGrains(
+    size_t rows, size_t companions, size_t quantum) {
+  if (!quantum || rows > 2048 || companions > 2048) return UINT64_MAX;
+  // One pass visit, one companion-row boundary per valid pass, each companion,
+  // and a final completion visit. Invalid pass rows need only the pass visit.
+  return 1 + (uint64_t(rows) * 2 + companions) / quantum;
+}
+
+LOOP_COLD_MEM bool Loop::beginCollectOverdubSessionUndoPasses(
+    SessionUndoCollection& work, PassIdList& passIds, EditPassIdList& companionIds) const {
+  using Phase = SessionUndoCollection::Phase;
+  const size_t limit = std::min(overdubSessionCursor_, overdubSessionPassIds_.size());
+  if ((work.phase >= Phase::Pass && work.phase <= Phase::FinalCompanions) || limit > 2048 ||
+      !passIds.empty() || !companionIds.empty() || passIds.capacity() < limit ||
+      static_cast<const void*>(&passIds) == static_cast<const void*>(&companionIds)) return false;
+  work = {};
+  work.owner = this; work.generation = overdubSessionUndoGeneration_;
+  work.passIds = &passIds; work.companionIds = &companionIds; work.limit = limit;
+  work.phase = Phase::Pass;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::collectedOverdubSessionUndoPassesCurrent(
+    const SessionUndoCollection& work) const {
+  return work.phase == SessionUndoCollection::Phase::Complete && work.owner == this &&
+      work.generation == overdubSessionUndoGeneration_ && work.passIds && work.companionIds &&
+      (!work.finalReceipt || (work.receiptGeneration == preparedCompanionHistory_.preparationGeneration &&
+          preparedCompanionHistory_.storageGeneration == canonicalStorageGeneration &&
+          preparedCompanionHistory_.revision == playbackRevision && preparedCompanionHistory_.firstId == nextPassId_ &&
+          (preparedCompanionHistory_.phase == PreparedCompanionHistory::Phase::Ready ||
+           preparedCompanionHistory_.phase == PreparedCompanionHistory::Phase::Committed) &&
+          work.receiptCount == preparedCompanionHistory_.companionIds.size())) &&
+      work.passIds->size() == work.passCount && work.companionIds->size() == work.companionCount;
+}
+
+LOOP_COLD_MEM Loop::SessionUndoCollection::Phase Loop::stepCollectOverdubSessionUndoPasses(
+    SessionUndoCollection& work, size_t quantum) const {
+  using Phase = SessionUndoCollection::Phase;
+  // A call on the wrong owner or with no quantum must not cancel valid work.
+  if (!quantum || work.owner != this) return Phase::Denied;
+  if (work.phase == Phase::Complete && collectedOverdubSessionUndoPassesCurrent(work)) return Phase::Complete;
+  if ((work.phase < Phase::Pass || work.phase > Phase::FinalCompanions) ||
+      (work.finalReceipt && (work.receiptGeneration != preparedCompanionHistory_.preparationGeneration ||
+          preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
+          preparedCompanionHistory_.revision != playbackRevision || preparedCompanionHistory_.firstId != nextPassId_ ||
+          (preparedCompanionHistory_.phase != PreparedCompanionHistory::Phase::Ready &&
+           preparedCompanionHistory_.phase != PreparedCompanionHistory::Phase::Committed) ||
+          work.receiptCount != preparedCompanionHistory_.companionIds.size())) ||
+      work.generation != overdubSessionUndoGeneration_ || !work.passIds || !work.companionIds ||
+      work.passIds->size() != work.passCount || work.companionIds->size() != work.companionCount) {
+    work.phase = Phase::Denied;
+    return work.phase;
+  }
+  while (quantum-- && work.phase != Phase::Complete) {
+    if (work.phase == Phase::Pass) {
+      if (work.row == work.limit) {
+        work.phase = work.finalReceipt ? Phase::FinalPass : Phase::Complete;
+        continue;
+      }
+      const PassId id = overdubSessionPassIds_[work.row];
+      if (id == kInvalidPassId) { ++work.row; continue; }
+      if (work.passCount == work.passIds->capacity()) { work.phase = Phase::Denied; break; }
+      work.passIds->push_back(id); ++work.passCount;
+      work.companion = 0; work.phase = Phase::Companions;
+    } else if (work.phase == Phase::Companions) {
+      if (work.row >= overdubSessionCompanionIds_.size() ||
+          work.companion == overdubSessionCompanionIds_[work.row].size()) {
+        ++work.row; work.phase = Phase::Pass;
+      } else {
+        if (work.companionCount == 2048 || work.companionCount == work.companionIds->capacity()) {
+          work.phase = Phase::Denied; break;
+        }
+        work.companionIds->push_back(overdubSessionCompanionIds_[work.row][work.companion++]);
+        ++work.companionCount;
+      }
+    } else if (work.phase == Phase::FinalPass) {
+      if (work.includeFinalPass && work.finalPassId != kInvalidPassId &&
+          (work.passIds->empty() || work.passIds->back() != work.finalPassId)) {
+        if (work.passCount == 2048 || work.passCount == work.passIds->capacity()) {
+          work.phase = Phase::Denied; break;
+        }
+        work.passIds->push_back(work.finalPassId); ++work.passCount;
+      }
+      work.phase = Phase::FinalCompanions;
+    } else {
+      if (work.receiptIndex == work.receiptCount) { work.phase = Phase::Complete; continue; }
+      if (work.companionCount == 2048 || work.companionCount == work.companionIds->capacity()) {
+        work.phase = Phase::Denied; break;
+      }
+      work.companionIds->push_back(preparedCompanionHistory_.companionIds[work.receiptIndex++]);
+      ++work.companionCount;
+    }
+  }
+  return work.phase;
+}
+
 LOOP_COLD_MEM void Loop::dropOverdubSessionRedoTail() {
   if (overdubSessionCursor_ < overdubSessionPassIds_.size()) {
+    ++overdubSessionUndoGeneration_;
     overdubSessionPassIds_.resize(overdubSessionCursor_);
     overdubSessionCompanionIds_.resize(overdubSessionCursor_);
   }
@@ -268,6 +431,7 @@ LOOP_COLD_MEM bool Loop::undoOverdubSession() {
   }
   if (overdubSessionCursor_ > 0) {
     clearLastOverdubSeal();
+    ++overdubSessionUndoGeneration_;
     --overdubSessionCursor_;
     const PassId passId = overdubSessionPassIds_[overdubSessionCursor_];
     disableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
@@ -300,6 +464,7 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
     enableEditPasses(overdubSessionCompanionIds_[overdubSessionCursor_]);
     const bool ok = setCapturePassState(passId, CapturePassState::Active);
     if (ok) {
+      ++overdubSessionUndoGeneration_;
       ++overdubSessionCursor_;
       if (hasOverdubSourceView()) {
         rebuildOverdubSourceView(playheadPhaseTick, "redo");

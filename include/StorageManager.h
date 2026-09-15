@@ -170,6 +170,15 @@ public:
     /// Call only from DeferredJobScheduler::runFrame after selectSubmittedLoadJobs (Phase B.2/B.3).
     /// @param activatedThisFrame result of the preceding selectSubmittedLoadJobs call.
     static void stepSubmittedLoadJobs(uint32_t budgetUs, bool activatedThisFrame);
+    /// True when the active job has reached its unbounded publish operation
+    /// or its ownership-releasing cleanup continuation. Active transport
+    /// leaves either phase pending until a STOPPED owner turn.
+    static bool hasActiveLoadLoopJobCommitPending();
+    /// True when either active or parked work has reached the unbounded
+    /// publish operation or cleanup continuation. Active-transport admission
+    /// must check this before selection, because focus promotion can make a
+    /// parked job active.
+    static bool hasLoadLoopJobCommitPending();
     /// Idle slice: restore deferred loop slot payload(s) via DeferredJobScheduler.
     static void processDeferredLoopSlotRestore();
     /// Idle slice: hydrate one track undo stack snapshot body from the runtime bundle.

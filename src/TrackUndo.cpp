@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "TrackUndo.h"
+#include "TrackPreparedUndo.h"
 #include "Track.h"
 #include "TrackInternal.h"
 #include "PendingNoteChange.h"
@@ -552,7 +553,7 @@ TRACK_COLD_MEM void applyClearSlotUndoSideEffects(Track& track, const UndoEntry&
     const uint32_t now = clockManager.getCurrentTick();
     if (entry.hasTrackState && entry.beforeTrackState == TRACK_PLAYING) {
         track.resetPlaybackStateForSlot(slotIndex, now);
-        if (!track.isPlaying() && !track.isOverdubbing()) {
+        if (!track.isAudiblePlaybackActive()) {
             track.startPlaying(now);
         }
     }
@@ -677,6 +678,12 @@ TRACK_COLD_MEM void TrackUndo::selectPublishedSnapshotForEntry(Loop& loop,
     } else {
         loop.clearPublishedSnapshot();
     }
+}
+
+TRACK_COLD_MEM bool TrackUndo::prepareOverdubSessionEntry(Loop& loop,
+    Loop::SessionUndoCollection& collection, uint8_t slotIndex,
+    const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry) {
+    return TrackPreparedUndo::prepareOverdubSessionEntry(loop, collection, slotIndex, beforePublished, entry);
 }
 
 TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t slotIndex,

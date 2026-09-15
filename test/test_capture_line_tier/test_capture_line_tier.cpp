@@ -70,6 +70,13 @@ void test_timing_telemetry_lines_are_tier_a() {
       "itickus=80"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,39804843,DIAG,loop_rem,load_frame,3981504,0,4,2,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,stop_phase,4,0,2,1,0,0,3,1,0,100,130,20"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,stop_grain,4,0,2,1,0,0,93,100,130,90,90,110,20,10,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,stop_state,4,0,6,7,93,100,93,90,110,20"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,stop_service,94,120,110,130,20"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,stop_emit,94,off,48,121,110,130,0"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,stop_trace_drop,1"));
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,500,DIAG,late_event,off,10,42,250,200,240"));
   TEST_ASSERT_TRUE(
       CaptureLineTier::isTierALine("#CAP,39804843,DIAG,loop_rem,display_frame,64000,0,7,0,0"));
   TEST_ASSERT_TRUE(

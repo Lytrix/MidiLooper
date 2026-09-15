@@ -74,12 +74,23 @@ struct MergedPlaybackStreamCtx {
   const SessionMidiEventVec* merged = nullptr;
 };
 
+/// Immutable, fixed-capacity equivalent of the legacy merged stream. The
+/// active MIDI tick may read it only after the owner has published a complete
+/// full-loop view with the exact source identity.
+struct FixedPlaybackStreamCtx {
+  const FixedPlaybackEventStorage* storage = nullptr;
+};
+
 TRACK_INTERNAL_MEM ProjectionContext makePlaybackContext(const Track& track, const Loop& loop,
                                                          uint32_t currentTick);
 
 TRACK_INTERNAL_MEM void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents,
                                               const PlaybackOrderVec& order,
                                               const ProjectionContext& playbackContext);
+
+TRACK_INTERNAL_MEM void reanchorFixedPlaybackIndex(Loop& loop,
+                                                   const FixedPlaybackEventStorage& storage,
+                                                   const ProjectionContext& playbackContext);
 
 TRACK_INTERNAL_MEM bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop,
                                                             LoopPlaybackRuntime& runtime,
@@ -95,6 +106,8 @@ TRACK_INTERNAL_MEM void rebuildPlaybackOrder(Loop& loop, const SessionMidiEventV
 TRACK_INTERNAL_MEM void reanchorCaptureIndex(Loop& loop);
 
 TRACK_INTERNAL_MEM PlaybackEventStream makeMergedPlaybackStream(MergedPlaybackStreamCtx& ctx);
+
+TRACK_INTERNAL_MEM PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx);
 
 TRACK_INTERNAL_MEM PlaybackEventStream makeCapturePlaybackStream(Loop& loop);
 

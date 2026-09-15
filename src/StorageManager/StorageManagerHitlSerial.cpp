@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "CurrentSetStorage.h"
+#include "ClockManager.h"
 #include "DisplayManager.h"
 #include "Globals.h"
 #include "HitlDisplayBridge.h"
@@ -436,7 +437,14 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
         }
         if (ch == '\n') {
             sHitlSerialLineBuffer[sHitlSerialLineLength] = '\0';
-            if (std::strcmp(sHitlSerialLineBuffer, "!REV_COMMIT") == 0) {
+            if (std::strncmp(sHitlSerialLineBuffer, "!TRACE_FENCE ", 13) == 0 &&
+                std::strlen(sHitlSerialLineBuffer + 13) == 32 &&
+                !clockManager.isTransportRunning()) {
+                // Explicit host request only; bypass the retained capture ring
+                // so an old buffered run cannot impersonate this acknowledgement.
+                Serial.printf("#CAP,%lu,TRACE_FENCE,%s\r\n",
+                              static_cast<unsigned long>(micros()), sHitlSerialLineBuffer + 13);
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_COMMIT") == 0) {
                 requestCommitRevisionForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_CLEANUP") == 0) {
                 cleanupHitlRevisionCommit();

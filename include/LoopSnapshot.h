@@ -68,11 +68,13 @@ struct LoopSnapshotEvent {
 using LoopSnapshotNoteRef = std::shared_ptr<const LoopSnapshotNote>;
 using LoopSnapshotEventRef = std::shared_ptr<const LoopSnapshotEvent>;
 
+// Child ownership slots are mutable solely for final-reference retirement.
+// Published/shared nodes remain immutable; release only clears exclusive nodes.
 template <typename Reference>
 struct SnapshotMembership {
-  std::array<Reference, kSnapshotMembershipPageCapacity> references{};
+  mutable std::array<Reference, kSnapshotMembershipPageCapacity> references{};
   uint8_t count = 0;
-  std::shared_ptr<const SnapshotMembership<Reference>> next;
+  mutable std::shared_ptr<const SnapshotMembership<Reference>> next;
 };
 
 template <typename Reference>
@@ -102,7 +104,7 @@ using SnapshotMembershipRef = std::shared_ptr<const SnapshotMembership<Reference
 
 template <typename Reference>
 struct SnapshotBarPage {
-  std::array<SnapshotMembershipRef<Reference>, kLoopSnapshotBarsPerPage>
+  mutable std::array<SnapshotMembershipRef<Reference>, kLoopSnapshotBarsPerPage>
       memberships{};
 };
 
@@ -111,7 +113,7 @@ using SnapshotBarPageRef = std::shared_ptr<const SnapshotBarPage<Reference>>;
 
 template <typename Reference>
 struct SnapshotBarPageDirectory {
-  std::vector<SnapshotBarPageRef<Reference>,
+  mutable std::vector<SnapshotBarPageRef<Reference>,
               ExternalMemoryFirstAllocator<SnapshotBarPageRef<Reference>>>
       pages;
 };
@@ -123,7 +125,7 @@ struct SnapshotPitchDirectory {
 using SnapshotPitchDirectoryRef = std::shared_ptr<const SnapshotPitchDirectory>;
 
 struct SnapshotSpanRoot {
-  std::array<SnapshotPitchDirectoryRef, kLoopSnapshotPitchCount> pitches{};
+  mutable std::array<SnapshotPitchDirectoryRef, kLoopSnapshotPitchCount> pitches{};
 };
 
 struct SnapshotEventRoot {
@@ -177,6 +179,30 @@ struct SnapshotWrapJournalFragment {
 /// Complete immutable effective-state root after construction is frozen.
 class LoopSnapshot {
  public:
+  /// Owner-local final-reference retirement; drain before destroying during active
+  /// transport. No semantic reader or weak-reference resurrection may acquire the
+  /// retired root. Shared descendants remain untouched. Fixed depth, no allocation.
+  class ReleaseCursor {
+   public:
+    ReleaseCursor() = default;
+    ReleaseCursor(const ReleaseCursor&) = delete;
+    ReleaseCursor& operator=(const ReleaseCursor&) = delete;
+    bool complete() const { return !root_; }
+    size_t completedUnits() const { return units_; }
+   private:
+    friend class LoopSnapshot;
+    ImmutableLoopSnapshotRef root_;
+    std::array<size_t, 5> positions_{};
+    uint8_t phase_ = 0;
+    size_t units_ = 0;
+  };
+  /// Consumes the caller's reference only when the cursor is idle.
+  static bool beginRelease(ReleaseCursor& cursor, ImmutableLoopSnapshotRef& root);
+  /// Each unit visits one child ownership slot or releases one emptied node.
+  /// Destruction visits at most 128 empty fixed-array slots, never a variable
+  /// directory or linked membership tail. Zero quantum performs no work.
+  static bool stepRelease(ReleaseCursor& cursor, size_t maximumUnits);
+
   LoopSnapshot() = default;
   LoopSnapshot(LoopId loopId, uint32_t loopLengthTicks, uint32_t loopStartTick,
                uint32_t nextNoteId, uint32_t nextEventId);
@@ -214,8 +240,8 @@ class LoopSnapshot {
   uint32_t loopStartTick_ = 0;
   uint32_t nextNoteId_ = 1;
   uint32_t nextEventId_ = 1;
-  std::shared_ptr<const SnapshotSpanRoot> spanRoot_;
-  std::shared_ptr<const SnapshotEventRoot> eventRoot_;
+  mutable std::shared_ptr<const SnapshotSpanRoot> spanRoot_;
+  mutable std::shared_ptr<const SnapshotEventRoot> eventRoot_;
 };
 
 /// Candidate construction with persistent bar-cursor progress. Publication is

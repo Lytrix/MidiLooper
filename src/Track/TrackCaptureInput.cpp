@@ -23,6 +23,12 @@
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "OverlapNoteIdSet.h"
 
+#if defined(__IMXRT1062__)
+#define TRACK_CAPTURE_ADMISSION_MEM FLASHMEM
+#else
+#define TRACK_CAPTURE_ADMISSION_MEM
+#endif
+
 namespace {
 const OverlapNoteIdSet kEmptyOverlapNoteIds{};
 }
@@ -355,14 +361,38 @@ void Track::startRecording(uint32_t currentTick) {
     loop.loopLengthTicks = 0;
     loop.loopStartTick = 0;
   }
+  // The transfer admission owns external rows needed by the later
+  // OVERDUB_STOPPING handoff. It may allocate only while every track is
+  // inactive, so it must run before this record command enters RECORDING.
+  // Calling this below setState(TRACK_RECORDING) made every fresh take reach
+  // PLAYING without the capacity required to begin its first overdub.
+  // First-record entry owns the same playback-window preparation used by
+  // ordinary playback. This makes bar 1 available before capture starts and
+  // leaves the retained view ready for the record-stop handoff.
+  prewarmPlaybackForSlot(activeLoopIndex, true);
   auto preRoll = std::move(armedPreRollNotes);
+  if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
+    // Establish the empty bar-1 playback view before the first accepted input.
+    // Later capture updates are still admitted by the canonical capture store;
+    // this preparation step must never become a new input rejection policy.
+    if (!runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR)) {
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "First-record bar-1 playback preparation unavailable; capture admission retained");
+    }
+  }
   if (!setState(TRACK_RECORDING)) {
     armedPreRollNotes = std::move(preRoll);
     return;
   }
+  transportStopOutputBarrier_ = false;
   recordAddedNoteOnCount = 0;
   loop.resetPassTimeline();
   loop.beginCapture(CapturePhase::Record);
+  // Establish raw recording coordinates before pre-roll enters the same input
+  // path. Using the previous slot origin here misplaces its first notes.
+  loop.startLoopTick = currentTick;
+  loop.loopStartTick = 0;
+  projectionCycleStartTick = static_cast<int32_t>(currentTick);
   pendingNotes.clear();
   for (const auto& entry : preRoll) {
     const PendingNote& pn = entry.second;
@@ -376,14 +406,8 @@ void Track::startRecording(uint32_t currentTick) {
   // shift the new notes on the piano roll — playback and grid use raw storage ticks.
   loop.loopStartTick = 0;
 
-  // Stamp the new start tick quantized to a beat.
-  loop.startLoopTick = currentTick;
-  projectionCycleStartTick = static_cast<int32_t>(currentTick);
 
   invalidateCaches();
-  // Prewarm playback runtime while heap headroom is higher than at record-stop tail;
-  // stopRecording must not be the first trySlot on this slot (null-deref on alloc failure).
-  prewarmPlaybackForSlot(activeLoopIndex);
   SC_REC_START(activeLoopIndex, currentTick);
   logger.logTrackEvent("Recording started", currentTick, "startLoopTick=%lu loopStart=0",
                        static_cast<unsigned long>(loop.startLoopTick));
@@ -414,7 +438,7 @@ uint32_t Track::computeLoopLengthTicks(uint32_t lastTick) const {
   return RecordStopLength::computeLoopLengthTicks(lastTick);
 }
 
-uint32_t Track::capturePhaseTick(uint32_t absTick) const {
+TRACK_CAPTURE_ADMISSION_MEM uint32_t Track::capturePhaseTick(uint32_t absTick) const {
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || loop.startLoopTick == UINT32_MAX) {
     if (absTick >= loop.startLoopTick) {
@@ -422,7 +446,7 @@ uint32_t Track::capturePhaseTick(uint32_t absTick) const {
     }
     return 0;
   }
-  if (isOverdubbing() || (isRecording() && isPlaying())) {
+  if (isOverdubbing() || isOverdubStopping() || (isRecording() && isPlaying())) {
     return IntervalProjection::tickPhaseInProjectionCycle(
         absTick, projectionCycleStartTick, loop.loopLengthTicks);
   }
@@ -432,7 +456,8 @@ uint32_t Track::capturePhaseTick(uint32_t absTick) const {
   return tickPhaseInLoop(absTick, loop.startLoopTick, loop.loopLengthTicks);
 }
 
-bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t phaseTick) {
+TRACK_CAPTURE_ADMISSION_MEM bool Track::appendCaptureNoteOffAtPhase(
+    uint8_t channel, uint8_t note, uint32_t phaseTick) {
   Loop& loop = getActiveLoop();
   if (!loop.captureActive()) {
     return false;
@@ -451,6 +476,20 @@ bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t 
     newEvt.noteId = prior.noteId;
     break;
   }
+  CaptureAdmissionStaging* staging = nullptr;
+  CaptureNoteReservation* reservation = nullptr;
+  if ((isOverdubbing() || isOverdubStopping()) && newEvt.noteId != kInvalidNoteId) {
+    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+    CaptureAdmissionStaging* viewSet =
+        runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+    if (viewSet != nullptr) {
+      staging = viewSet;
+      reservation = staging->matchingOpenReservation(newEvt.noteId, channel, note);
+    }
+  }
+  if (reservation != nullptr) {
+    return appendReservedCaptureNoteOffAtPhase(*reservation, phaseTick);
+  }
   const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(newEvt);
   if (!appendResult.accepted) {
     return false;
@@ -458,7 +497,50 @@ bool Track::appendCaptureNoteOffAtPhase(uint8_t channel, uint8_t note, uint32_t 
   return true;
 }
 
-void Track::finalizePendingNotes(uint32_t offAbsTick) {
+TRACK_CAPTURE_ADMISSION_MEM bool Track::appendReservedCaptureNoteOffAtPhase(
+    CaptureNoteReservation& reservation, uint32_t phaseTick) {
+  Loop& loop = getActiveLoop();
+  if (!reservation.open || !loop.captureActive()) {
+    return false;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  CaptureAdmissionStaging* viewSet =
+      runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+  CaptureAdmissionStaging* staging =
+      viewSet != nullptr ? viewSet : nullptr;
+  if (staging == nullptr ||
+      staging->matchingOpenReservation(reservation.noteId, reservation.channel,
+                                       reservation.note) != &reservation) {
+    return false;
+  }
+  uint32_t tickRelative = phaseTick;
+  if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks) {
+    tickRelative = loop.loopLengthTicks - 1;
+  }
+  MidiEvent terminal =
+      MidiEvent::NoteOff(tickRelative, reservation.channel, reservation.note, 0);
+  terminal.noteId = reservation.noteId;
+  const CaptureAppendResult appendResult = loop.appendCaptureEventWithResult(terminal);
+  if (!appendResult.accepted) {
+    return false;
+  }
+  bool retainPair = true;
+  if (noteMinLengthRemoveEnabled && noteMinLengthTicks != 0 &&
+      reservation.noteOnStagingIndex < staging->storage.eventCount) {
+    const MidiEvent& noteOn = staging->storage.events[reservation.noteOnStagingIndex];
+    retainPair = terminal.tick < noteOn.tick ||
+                 terminal.tick - noteOn.tick >= noteMinLengthTicks;
+  }
+  if (!staging->appendReservedNoteOff(terminal, retainPair)) {
+    return false;
+  }
+  if (!staging->frozen) {
+    ++staging->captureGeneration;
+  }
+  return true;
+}
+
+TRACK_CAPTURE_ADMISSION_MEM void Track::finalizePendingNotes(uint32_t offAbsTick) {
   const uint32_t phaseTick = capturePhaseTick(offAbsTick);
   Loop& loop = getActiveLoop();
 
@@ -475,7 +557,7 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
     const uint8_t channel = key.second;
     ++pendingFinalized;
 
-    if (isOverdubbing()) {
+    if (isOverdubbing() || isOverdubStopping()) {
       const auto pendingIt = pendingNotes.find(key);
       const uint32_t pendingOnAbsTick =
           pendingIt != pendingNotes.end() ? pendingIt->second.startNoteTick : offAbsTick;
@@ -536,8 +618,8 @@ void Track::finalizePendingNotes(uint32_t offAbsTick) {
   invalidateCaches();
 }
 
-void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte data2,
-                             uint32_t currentTick) {
+TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEvents(
+    midi::MidiType type, byte channel, byte data1, byte data2, uint32_t currentTick) {
   if ((isRecording() && !isPlaying()) || isOverdubbing()) {
     Loop& loop = getActiveLoop();
     uint32_t tickRelative;
@@ -546,11 +628,11 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       tickRelative = currentTick - loop.startLoopTick;
 
     } else if (isOverdubbing()) {
-      if (loop.loopLengthTicks == 0) return;
+      if (loop.loopLengthTicks == 0) return false;
       tickRelative = capturePhaseTick(currentTick);
 
     } else {
-      return;
+      return false;
     }
 
     // Build the new event first (needed for duplicate check)
@@ -583,10 +665,10 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         eventAdded = true;
         break;
       default:
-        return;
+        return false;
     }
 
-    if (!eventAdded) return;
+    if (!eventAdded) return false;
 
     if (type == midi::NoteOff) {
       const LoopEventStore& capture = loop.capture.store;
@@ -615,6 +697,60 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
       newEvt.tick = tickRelative;
     }
 
+    // Overdub admission must reserve the complete NoteOn lifetime before the
+    // mutable capture store changes.  Two staging/bridge rows cover On+Off;
+    // the stop grain receives one reserved closure credit.  Runtime views are
+    // prewarmed at setup/load and record start, never from this MIDI path.
+    CaptureAdmissionStaging* staging = nullptr;
+    CaptureNoteReservation* reservation = nullptr;
+    bool independentEventReservation = false;
+    if (isOverdubbing()) {
+      LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+      CaptureAdmissionStaging* viewSet =
+          runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+      if (viewSet == nullptr) {
+        logger.log(CAT_TRACK, LOG_WARNING,
+                   "Capture admission rejected: runtime staging unavailable ch=%u note=%u",
+                   static_cast<unsigned>(channel), static_cast<unsigned>(data1));
+        return false;
+      }
+      staging = viewSet;
+      if (type == midi::NoteOn) {
+        // noteOn() may have reserved this exact identity before it created a
+        // PendingNote. Direct callers retain the same admission rule here.
+        reservation = staging->matchingOpenReservation(newEvt.noteId, channel, data1);
+        if (reservation == nullptr) {
+          reservation = staging->reserve(newEvt.noteId, channel, data1, 2, 2, 1);
+        }
+        if (reservation == nullptr) {
+          logger.log(CAT_TRACK, LOG_WARNING,
+                     "Capture admission rejected: NoteOn lifetime unreservable ch=%u note=%u",
+                     static_cast<unsigned>(channel), static_cast<unsigned>(data1));
+          return false;
+        }
+      } else if (type == midi::NoteOff) {
+        reservation = staging->matchingOpenReservation(newEvt.noteId, channel, data1);
+        if (reservation == nullptr) {
+          logger.log(CAT_TRACK, LOG_WARNING,
+                     "Capture admission rejected: unmatched NoteOff ch=%u note=%u",
+                     static_cast<unsigned>(channel), static_cast<unsigned>(data1));
+          return false;
+        }
+      } else {
+        // Every accepted controller/program/pressure event must enter the
+        // fixed candidate too. Unlike a NoteOn it has no terminal closure, so
+        // reserve its one staging row and bridge row immediately.
+        independentEventReservation = staging->reserveIndependentEvent();
+        if (!independentEventReservation) {
+          logger.log(CAT_TRACK, LOG_WARNING,
+                     "Capture admission rejected: event staging unavailable type=%u ch=%u data=%u",
+                     static_cast<unsigned>(type), static_cast<unsigned>(channel),
+                     static_cast<unsigned>(data1));
+          return false;
+        }
+      }
+    }
+
 #if RUNTIME_TIMING_ENABLED
     const uint32_t appendStartUs = micros();
 #endif
@@ -623,6 +759,12 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
     RUNTIME_TIMING_ADD_NOTE_APPEND(micros() - appendStartUs);
 #endif
     if (!appendResult.accepted) {
+      if (type == midi::NoteOn && staging != nullptr && reservation != nullptr) {
+        staging->close(*reservation);
+      }
+      if (independentEventReservation && staging != nullptr) {
+        staging->releaseIndependentEvent();
+      }
       logger.log(CAT_TRACK, LOG_WARNING,
                  "Capture append failed (%s) ch=%u note=%u",
                  captureAppendDenyReasonLabel(appendResult.reason),
@@ -631,7 +773,38 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
 #if defined(SESSION_CAPTURE)
       logCaptureAppendDeny(loop, appendResult, channel, data1, newEvt.tick);
 #endif
-      return;
+      return false;
+    }
+
+    bool retainStagedPair = true;
+    if (type == midi::NoteOff && reservation != nullptr && noteMinLengthRemoveEnabled &&
+        noteMinLengthTicks != 0 && reservation->noteOnStagingIndex < staging->storage.eventCount) {
+      const MidiEvent& noteOn = staging->storage.events[reservation->noteOnStagingIndex];
+      retainStagedPair = newEvt.tick < noteOn.tick ||
+                         newEvt.tick - noteOn.tick >= noteMinLengthTicks;
+    }
+    const bool stagingAccepted =
+        staging == nullptr ||
+        (type == midi::NoteOff && reservation != nullptr
+             ? staging->appendReservedNoteOff(newEvt, retainStagedPair)
+             : staging->storage.append(newEvt));
+    if (stagingAccepted && staging != nullptr && type == midi::NoteOn && reservation != nullptr) {
+      reservation->noteOnStagingIndex = staging->storage.eventCount - 1;
+    }
+    if (!stagingAccepted) {
+      // This is an invariant breach: NoteOn reservation proved capacity before
+      // the canonical append.  Keep the canonical capture and reservation for
+      // STOPPED recovery; do not silently release its required closing event.
+      logger.log(CAT_TRACK, LOG_ERROR,
+                 "Capture staging invariant breach after canonical append ch=%u note=%u",
+                 static_cast<unsigned>(channel), static_cast<unsigned>(data1));
+      return false;
+    }
+    if (staging != nullptr) {
+      // The candidate identity advances only after canonical and fixed staging
+      // storage both contain the accepted event.  A failed staging append is
+      // an invariant breach and must not advertise a partially frozen prefix.
+      ++staging->captureGeneration;
     }
 
 #if defined(SESSION_CAPTURE)
@@ -672,7 +845,9 @@ void Track::recordMidiEvents(midi::MidiType type, byte channel, byte data1, byte
         break;
       }
     }
+    return true;
   }
+  return false;
 }
 
 void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tick) {
@@ -693,11 +868,31 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
       SC_PENDING_SAME_PITCH_NOTE_ON_REJECT(note, channel, pendingIt->second.startNoteTick, tick);
       return;
     }
+
+    // An overdub NoteOn is admissible only if its terminal NoteOff, bridge,
+    // staging, and deferred-stop credits are reserved before this function
+    // creates any pending-note or preview state. `recordMidiEvents()` consumes
+    // this exact reservation when it assigns the canonical identity.
+    if (trackState == TRACK_OVERDUBBING) {
+      Loop& loop = getActiveLoop();
+      LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+      CaptureAdmissionStaging* viewSet =
+          runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+      CaptureAdmissionStaging* staging =
+          viewSet != nullptr ? viewSet : nullptr;
+      if (staging == nullptr ||
+          staging->reserve(loop.peekNextNoteId(), channel, note, 2, 2, 1) == nullptr) {
+        return;
+      }
+    }
     PendingNote pending{note, channel, tick, velocity};
     snapshotOverlapHoldCandidates(pending);
     pendingNotes[key] = pending;
 
-    recordMidiEvents(midi::NoteOn, channel, note, velocity, tick);
+    if (!recordMidiEvents(midi::NoteOn, channel, note, velocity, tick)) {
+      // Rejected NoteOns must not leave pending/preview/ledger capture state.
+      pendingNotes.erase(key);
+    }
   }
 }
 
@@ -713,8 +908,9 @@ void Track::noteOff(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t ti
     auto key = std::make_pair(note, channel);
     auto it = pendingNotes.find(key);
     if (it != pendingNotes.end()) {
-      recordMidiEvents(midi::NoteOff, channel, note, 0, tick);
-      pendingNotes.erase(it);
+      if (recordMidiEvents(midi::NoteOff, channel, note, 0, tick)) {
+        pendingNotes.erase(it);
+      }
     } else {
       logger.log(CAT_MIDI, LOG_WARNING, "NoteOff for note %d on ch %d with no matching NoteOn",
                  note, channel);

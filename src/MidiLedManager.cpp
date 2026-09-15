@@ -68,7 +68,7 @@ void MidiLedManager::updateLeds(Track& track, uint32_t currentTick, uint8_t disp
     if (singleBarLoop) {
         const bool alignWithPlaybackCycle =
             displaySlotIndex == track.getActiveLoopIndex() &&
-            (track.isPlaying() || track.isOverdubbing());
+            track.isAudiblePlaybackActive();
         const uint32_t tickInLoopStorage =
             alignWithPlaybackCycle
                 ? IntervalProjection::tickPhaseInProjectionCycle(
@@ -249,7 +249,7 @@ uint32_t MidiLedManager::getCurrentBar(uint32_t currentTick, const Loop& loop, c
     uint32_t ticksPerBar = 16 * Config::TICKS_PER_16TH_STEP;
     const bool alignWithPlaybackCycle =
         displaySlotIndex == track.getActiveLoopIndex() &&
-        (track.isPlaying() || track.isOverdubbing());
+        track.isAudiblePlaybackActive();
     const uint32_t tickInLoopStorage =
         alignWithPlaybackCycle
             ? IntervalProjection::tickPhaseInProjectionCycle(
@@ -390,7 +390,7 @@ void MidiLedManager::updateCurrentTick(Track& track, uint32_t currentTick, uint8
     // Position in loop relative to loop start (matches OLED playhead when this slot is playing).
     const bool alignWithPlaybackCycle =
         displaySlotIndex == track.getActiveLoopIndex() &&
-        (track.isPlaying() || track.isOverdubbing());
+        track.isAudiblePlaybackActive();
     const uint32_t tickInLoopStorage =
         alignWithPlaybackCycle
             ? IntervalProjection::tickPhaseInProjectionCycle(
@@ -455,4 +455,4 @@ void MidiLedManager::analyzeAndUpdateBar(Loop& loop, uint32_t barStartTickDispla
     ledPattern[NUM_LEDS] = '\0';
     logger.log(CAT_MIDI_LED, LOG_DEBUG, "LED Manager: Bar pattern (tick %lu): %s",
                barStartTickDisplay, ledPattern);
-} 
+}

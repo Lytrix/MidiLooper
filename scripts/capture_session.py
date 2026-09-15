@@ -58,12 +58,20 @@ def main() -> int:
         action="store_true",
         help="Write !SNAPSHOT_YIELD once after the first timing-critical ST line",
     )
+    parser.add_argument("--run-token", default=None,
+                        help="Hex token echoed by capture firmware with its device timestamp")
     args = parser.parse_args()
+    if args.run_token is not None and (len(args.run_token) != 32 or
+            any(c not in "0123456789abcdef" for c in args.run_token)):
+        parser.error("--run-token must be 32 lowercase hexadecimal characters")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = args.out_dir / f"session_{stamp}.log"
     pointer = args.out_dir / ".current_session"
+    ready_pointer = args.out_dir / ".current_session.ready"
+    if ready_pointer.exists():
+        ready_pointer.unlink()
     pointer.write_text(str(out_path) + "\n", encoding="utf-8")
 
     print(f"Recording {args.port} -> {out_path}", flush=True)
@@ -131,7 +139,12 @@ def main() -> int:
                                     _sync_log(log)
                             else:
                                 time.sleep(0.05)
+                        if args.run_token:
+                            ser.write(f"!TRACE_FENCE {args.run_token}\n".encode("ascii"))
+                            ser.flush()
                         boot_wait_done = True
+                        ready_pointer.write_text(str(out_path) + "\n", encoding="utf-8")
+                        print("[capture] boot settle complete", flush=True)
                     else:
                         marker = (
                             f"\n#CAPTURE_RECONNECT,{datetime.now().isoformat()},port={args.port}\n"

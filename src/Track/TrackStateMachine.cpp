@@ -24,7 +24,14 @@ bool isValidTransition(TrackState current, TrackState next) {
             return next == TRACK_RECORDING || next == TRACK_OVERDUBBING || next == TRACK_STOPPED || next == TRACK_EMPTY;
 
         case TRACK_OVERDUBBING:
-            return next == TRACK_PLAYING || next == TRACK_STOPPED || next == TRACK_OVERDUBBING || next == TRACK_EMPTY;
+            return next == TRACK_OVERDUB_STOPPING || next == TRACK_PLAYING ||
+                   next == TRACK_STOPPED || next == TRACK_OVERDUBBING || next == TRACK_EMPTY;
+
+        // The requested destination is resolved by the finalization owner:
+        // ordinary overdub stop returns to PLAYING; transport stop wins and
+        // enters STOPPED. New capture is deliberately not admitted here.
+        case TRACK_OVERDUB_STOPPING:
+            return next == TRACK_PLAYING || next == TRACK_STOPPED || next == TRACK_EMPTY;
 
         case TRACK_STOPPED:
             return next == TRACK_PLAYING || next == TRACK_OVERDUBBING || next == TRACK_ARMED ||
@@ -44,6 +51,7 @@ const char* toString(TrackState state) {
         case TRACK_STOPPED_RECORDING:  return "STOPPED_RECORDING";
         case TRACK_PLAYING:            return "PLAYING";
         case TRACK_OVERDUBBING:        return "OVERDUBBING";
+        case TRACK_OVERDUB_STOPPING:   return "OVERDUB_STOPPING";
         default:                       return "UNKNOWN";
     }
 }

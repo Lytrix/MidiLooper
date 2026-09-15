@@ -13,8 +13,234 @@
 #include "StorageManager.h"
 #include "TickPhase.h"
 #include "TrackUndo.h"
+#include "TrackPreparedStopCommit.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/HotPathTelemetry.h"
+#include "Utils/RuntimeTimingTelemetry.h"
+
+namespace {
+
+constexpr uint16_t kDeferredStopOrderQuantum = 32;
+constexpr StopAdmissionContract kDeferredStopContract{
+    PendingStopAdmission::kMaximumClosureGrains,
+    3072,  // 2x fixed orders + rewrite/trim upper bound for 2,048 staging rows at 32 entries.
+    1,
+    kDeferredStopOrderQuantum,
+};
+
+}  // namespace
+
+TRACK_COLD_MEM bool Track::commitPreparedOverdubStopBridge(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, const EmissionCursor& cursor,
+    PreparedCapturePassTransfer& transferred) {
+  return TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred);
+}
+
+TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination destination,
+                                                     uint32_t currentTick) {
+  if (!isOverdubbing() || pendingStopAdmission_.pending) {
+    return false;
+  }
+  Loop& loop = getActiveLoop();
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+  if (runtime == nullptr || views == nullptr || !loop.hasActiveOverdubTransferAdmission()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                       views != nullptr, loop.hasActiveOverdubTransferAdmission(), "storage_denied");
+    return false;
+  }
+  CaptureAdmissionStaging& staging = *views;
+  const size_t openReservations = staging.openReservationCount();
+  const size_t finalFrozenCount = staging.storage.eventCount + openReservations;
+  const uint32_t generation = staging.captureGeneration;
+  if (!pendingStopAdmission_.begin(generation, currentTick, 0, openReservations,
+                                   finalFrozenCount, kDeferredStopContract) ||
+      !staging.freeze(generation)) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                       finalFrozenCount, openReservations, "freeze_or_contract_denied");
+    pendingStopAdmission_.reset();
+    return false;
+  }
+  // There is no closure grain when every captured NoteOn already has its
+  // matching NoteOff. Advance directly to canonical ordering; otherwise the
+  // deferred owner would remain in ReservedClosure forever waiting for a
+  // reservation that cannot exist (the clean normal-stop hang).
+  if (openReservations == 0) {
+    pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalOrder);
+  }
+  pendingStopAdmission_.destination = destination;
+  if (!isValidStateTransition(TRACK_OVERDUB_STOPPING)) {
+    pendingStopAdmission_.reset();
+    return false;
+  }
+  // This is the MIDI button-handler boundary.  The ordinary state transition
+  // helper logs and formats a capture record, which is work owned by the
+  // deferred stop grain.  Publish the already-validated state now; the first
+  // grain reports its device-clock edge after MIDI service has returned.
+  trackState = TRACK_OVERDUB_STOPPING;
+#if RUNTIME_TIMING_ENABLED
+  RuntimeTimingTelemetry::recordStopStateTransition(
+      resolveTrackIndexForPersistence(*this), activeLoopIndex,
+      TRACK_OVERDUBBING, TRACK_OVERDUB_STOPPING, pendingStopAdmission_.stopTick, micros());
+#endif
+  return true;
+}
+
+TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
+  pendingStopAdmission_.requestTransportStop();
+  if (auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
+    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*runtime, pendingStopAdmission_);
+  }
+}
+
+TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
+  if (!isOverdubStopping() || !pendingStopAdmission_.pending) {
+    return false;
+  }
+  Loop& loop = getActiveLoop();
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+  if (runtime == nullptr || views == nullptr ||
+      views->frozenGeneration != pendingStopAdmission_.frozenGeneration) {
+    return false;
+  }
+  CaptureAdmissionStaging& staging = *views;
+  const uint32_t phaseTick = capturePhaseTick(pendingStopAdmission_.stopTick);
+
+  // A clean stop commonly follows a completed wrap with no successor rows.
+  // There is no canonical or audible ordering work in that candidate; advance
+  // directly to the admitted transfer tail instead of invoking zero-row
+  // builders on the active transport path.
+  if (staging.storage.eventCount == 0 &&
+      pendingStopAdmission_.phase == PendingStopPhase::CanonicalOrder) {
+    pendingStopAdmission_.setPhase(PendingStopPhase::PrepareTransfer);
+    return false;
+  }
+
+  if (pendingStopAdmission_.phase == PendingStopPhase::ReservedClosure) {
+    CaptureNoteReservation* reservation = staging.firstOpenReservation();
+    if (reservation == nullptr) {
+      if (staging.openReservationCount() == 0) {
+        pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalOrder);
+      }
+      return false;
+    }
+    if (!appendReservedCaptureNoteOffAtPhase(*reservation, phaseTick)) {
+      return false;
+    }
+    (void)pendingStopAdmission_.consumeClosureGrain();
+    return false;
+  }
+  if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalOrder) {
+    if (!runtime->beginFrozenCaptureCanonicalOrder(pendingStopAdmission_.frozenGeneration)) {
+      return false;
+    }
+    const RuntimePlaybackOrderBuildResult result =
+        runtime->stepFrozenCaptureCanonicalOrder(kDeferredStopOrderQuantum);
+    if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      return false;
+    }
+    (void)pendingStopAdmission_.consumeOrderGrain();
+    if (result == RuntimePlaybackOrderBuildResult::Complete) {
+      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalRewrite);
+    }
+    return false;
+  }
+  if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalRewrite) {
+    const LoopEventStoreRewriteResult result = runtime->stepFrozenCaptureCanonicalRewrite(
+        loop.capture.store, pendingStopAdmission_.frozenGeneration, kDeferredStopOrderQuantum);
+    if (result == LoopEventStoreRewriteResult::Denied) {
+      return false;
+    }
+    (void)pendingStopAdmission_.consumeOrderGrain();
+    if (result == LoopEventStoreRewriteResult::Complete) {
+      const size_t count = runtime->frozenCaptureCanonicalOrder.orderedEventCount();
+      const uint32_t lastTick = count == 0 ? 0 : staging.storage.events[staging.storage.order[count - 1]].tick;
+      loop.noteCaptureEventsCanonicalized(lastTick);
+      // An empty successor capture has no audible rows to project.  Skip the
+      // zero-work audible-order builder and continue with the already-admitted
+      // transfer tail; this keeps a clean stop from parking on an unnecessary
+      // owner turn after canonical rewrite.
+      pendingStopAdmission_.setPhase(count == 0 ? PendingStopPhase::PrepareTransfer
+                                                : PendingStopPhase::AudibleOrder);
+    }
+    return false;
+  }
+  if (pendingStopAdmission_.phase == PendingStopPhase::AudibleOrder) {
+    if (!runtime->beginFrozenCaptureOrder(loop.loopLengthTicks,
+                                          pendingStopAdmission_.frozenGeneration)) {
+      return false;
+    }
+    const RuntimePlaybackOrderBuildResult result =
+        runtime->stepFrozenCaptureOrder(kDeferredStopOrderQuantum);
+    if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      return false;
+    }
+    (void)pendingStopAdmission_.consumeOrderGrain();
+    if (result == RuntimePlaybackOrderBuildResult::Complete) {
+      pendingStopAdmission_.setPhase(PendingStopPhase::PrepareTransfer);
+    }
+    return false;
+  }
+  if (pendingStopAdmission_.phase == PendingStopPhase::PrepareTransfer) {
+    // The contract reserves an upper bound. Spend excess denied-free turns
+    // before its one atomic handoff so latency remains bounded by admission.
+    if (pendingStopAdmission_.remainingOrderGrains != 0) {
+      (void)pendingStopAdmission_.consumeOrderGrain();
+      return false;
+    }
+    const SealOutcome staged = loop.capture.store.empty()
+                                   ? SealOutcome::SkippedEmpty
+                                   : loop.stagePreparedCapturePassFromActiveAdmission(
+                                         pendingStopAdmission_.stopTick,
+                                         pendingStopAdmission_.destination == PendingStopDestination::Playing
+                                             ? CommitReason::OverdubStop
+                                             : CommitReason::OverdubStopToStopped);
+    if (staged != SealOutcome::Ok && staged != SealOutcome::SkippedEmpty) {
+      return false;
+    }
+    pendingStopAdmission_.setPhase(PendingStopPhase::AtomicTransfer);
+    return false;
+  }
+  if (pendingStopAdmission_.phase == PendingStopPhase::AtomicTransfer) {
+    if (!pendingStopAdmission_.canCommit(pendingStopAdmission_.transportCommandEpoch,
+                                         pendingStopAdmission_.destination)) {
+      return false;
+    }
+    if (loop.hasPendingCapturePass()) {
+      PreparedCapturePassTransfer transferred{};
+      if (!loop.commitPreparedCapturePassAtomic(transferred)) {
+        return false;
+      }
+    }
+    pendingStopAdmission_.setPhase(PendingStopPhase::DeferredCleanup);
+    return false;
+  }
+
+  if (!loop.handoffSessionExitSnapshot(
+          pendingStopAdmission_.destination == PendingStopDestination::Playing
+              ? CommitReason::OverdubStop : CommitReason::OverdubStopToStopped)) {
+    return false;
+  }
+  loop.completePreparedCapturePassDeferredCleanup();
+  pendingNotes.clear();
+  const PendingStopDestination destination = pendingStopAdmission_.destination;
+  pendingStopAdmission_.reset();
+  loop.closeOverdubSession();
+  if (destination == PendingStopDestination::Stopped) {
+    silenceTrackMidiOutput();
+    setState(TRACK_STOPPED);
+    resetPlaybackState(clockManager.getCurrentTick());
+  } else {
+    silenceTrackMidiOutput();
+    playbackRuntime.clearAllLedgers();
+    reanchorPlaybackCycle(clockManager.getCurrentTick());
+    setState(TRACK_PLAYING);
+    armPlayingMidiDrainAfterOverdubStop();
+  }
+  return true;
+}
 
 bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t closeTick,
                                uint32_t stopStartUs) {
@@ -87,10 +313,38 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
   return true;
 }
 void Track::startOverdubbing(uint32_t currentTick) {
+  // A frozen stop candidate owns capture staging until it reaches its
+  // command-epoch-validated destination. This guard must sit before any
+  // staging reset so direct callers cannot destroy that candidate while the
+  // manager-level admission gate is bypassed.
+  if (isOverdubStopping()) {
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Overdub start deferred while previous overdub finalization is pending");
+    return;
+  }
   Loop& loopRef = getActiveLoop();
   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
     return;
   }
+  // Admission storage must already exist. Do not allocate it from this active
+  // transport command: setup/load/record-start prewarm owns that work.
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  CaptureAdmissionStaging* viewSet =
+      runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+  if (viewSet == nullptr) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub start rejected: capture admission staging is not prewarmed");
+    return;
+  }
+  if (!loopRef.hasActiveOverdubTransferAdmission() || !loopRef.canHandoffSessionExitSnapshot()) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub start rejected: canonical transfer capacity is not prewarmed");
+    return;
+  }
+  runtime->discardFrozenCaptureOrder();
+  runtime->discardFrozenCaptureCanonicalOrder();
+  viewSet->reset();
+  viewSet->captureGeneration = playbackGeneration;
   playingMidiDrainAfterOverdubStop_ = false;
   playingMidiDrainAfterOverdubStopIdleNoted_ = false;
   overdubDrainFallbackRetryAtMs_ = 0;
@@ -111,6 +365,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
                   DebugSessionCapture::kUnsampledHeapBytes, "failed");
     return;
   }
+  transportStopOutputBarrier_ = false;
   SC_ODUB_STAGE("set_state", micros() - stateAdvanceStartUs,
                 DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
@@ -158,9 +413,6 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   const bool probeSavePendingBeforeStop = StorageManager::hasDeferredSaveWork();
 #endif
   const uint32_t stopStartUs = micros();
-  logOverdubStopStage(loop, stopStartUs, "enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
-                      DebugSessionCapture::kUnsampledHeapBytes, "entered");
-  SC_REC_FLUSH_PENDING_REVTS(128);
   uint32_t closeTick = UINT32_MAX;
   if (loop.loopLengthTicks > 0) {
     closeTick = capturePhaseTick(currentTick);
@@ -169,6 +421,24 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
     loop.closeOverdubSession();
     return;
   }
+  // Normal capture uses the frozen, generation-matched tail. The legacy path
+  // remains a fault fallback until the stop owner has its explicit recovery
+  // state; ordinary admitted input never reaches it.
+  if (beginDeferredOverdubStop(PendingStopDestination::Playing, currentTick)) {
+    return;
+  }
+  // The admitted path above must leave the MIDI button handler without
+  // formatting capture traffic. Its state edge and all stop work are emitted
+  // later from the main-loop grain owner. Retain the legacy diagnostics only
+  // for the fault fallback that still performs a synchronous stop here.
+  logOverdubStopStage(loop, stopStartUs, "enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
+                      DebugSessionCapture::kUnsampledHeapBytes, "fallback");
+  // The fallback still runs from the MIDI button boundary, so it must not
+  // perform a blocking USB drain before it can publish PLAYING.  The old
+  // 128-record flush could wait indefinitely on CDC backpressure and made a
+  // clean normal stop look hung.  The timing-critical budget only sheds
+  // nonessential records; the idle owner drains the retained trace later.
+  SC_REC_FLUSH_PENDING_REVTS(8);
   finalizePendingNotes(currentTick);
   const uint32_t sealStartUs = micros();
   const CommitResult sideEffectResult =
@@ -194,7 +464,9 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
                       DebugSessionCapture::kUnsampledHeapBytes,
                       DebugSessionCapture::kUnsampledHeapBytes, "ok");
   const uint32_t flushStartUs = micros();
-  SC_REC_FLUSH_PENDING_REVTS(128);
+  // Keep the MIDI command bounded after the state edge as well.  Retained
+  // capture evidence is drained by the idle owner once PLAYING is published.
+  SC_REC_FLUSH_PENDING_REVTS(8);
   logOverdubStopStage(loop, stopStartUs, "flush", micros() - flushStartUs,
                       DebugSessionCapture::kUnsampledHeapBytes,
                       DebugSessionCapture::kUnsampledHeapBytes, "ok");
@@ -268,6 +540,13 @@ TRACK_COLD_MEM void Track::noteLoopPrefixMeasureAfterUndo() {
 
 TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
+  suppressMidiOutputForTransportStop();
+  if (isOverdubStopping()) {
+    // Transport Stop wins over a pending return to PLAYING. The frozen source
+    // remains valid, but its continuation may resolve only to STOPPED.
+    requestDeferredOverdubStopToStopped();
+    return;
+  }
   overdubStopDebtProbeArmed_ = false;
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
@@ -280,6 +559,9 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   }
   if (handleNoteEditFold(false, currentTick, closeTick, stopStartUs)) {
     loop.closeOverdubSession();
+    return;
+  }
+  if (beginDeferredOverdubStop(PendingStopDestination::Stopped, currentTick)) {
     return;
   }
   finalizePendingNotes(currentTick);

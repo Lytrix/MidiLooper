@@ -266,6 +266,11 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 uint32_t now = getCurrentTick();
                 Track& track = getCurrentTrack();
 
+                if (track.isOverdubStopping()) {
+                    logger.info("Loop %d: Overdub finalization pending", slot + 1);
+                    return;
+                }
+
                 const bool slotHasData = track.hasDataInSlot(slot);
                 const uint8_t selectedSlot = trackManager.getSelectedSlotIndex(tidx);
 
@@ -360,7 +365,7 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 // Ensure we are not in TRACK_EMPTY before starting overdub.
                 if (track.isEmpty()) {
                     track.startPlaying(now);
-                } else if (!track.isPlaying() && !track.isOverdubbing()) {
+                } else if (!track.isAudiblePlaybackActive()) {
                     track.startPlaying(now);
                 }
 
@@ -460,7 +465,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
 
     const bool editFocusSlotChange =
         editManager.isLoopEditSession() || editManager.isNoteEditActive();
-    if (!track.isPlaying() && !track.isRecording() && !track.isOverdubbing() && slotHasData &&
+    if (!track.isAudiblePlaybackActive() && !track.isRecording() && slotHasData &&
         slotSelectionChanged && editFocusSlotChange) {
         trackManager.forceMidiLedUpdate(now);
         return;
@@ -475,6 +480,9 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     } else if (track.isOverdubbing()) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
+    } else if (track.isOverdubStopping()) {
+        logger.info("Loop %d: Overdub finalization pending", slotIndex + 1);
+        return;
     } else if (track.isPlaying()) {
         // Empty slot while playing => existing short-press record/queue flow.
         if (slotCanArmForRecord) {
@@ -580,6 +588,9 @@ void MidiButtonActions::handleToggleRecord() {
     if (track.isOverdubbing()) {
         logger.info("MIDI Button A: Stop Overdub");
         track.stopOverdubbing();
+        return;
+    }
+    if (track.isOverdubStopping()) {
         return;
     }
 
@@ -926,4 +937,4 @@ void MidiButtonActions::handleToggleLengthEditMode() {
 
 bool MidiButtonActions::isValidTrackNumber(uint8_t trackNumber) {
     return trackNumber < trackManager.getTrackCount();
-} 
+}

@@ -30,6 +30,45 @@ using CaptureChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint
 using CommittedChunkIdList = std::vector<uint16_t, CommittedChunkIdAllocator<uint16_t>>;
 using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 
+/// Cursor for a copy-on-write capture canonicalization.  The source remains
+/// outside the store while this cursor overwrites one already allocated chunk
+/// row at a time, so no sort scratch or chunk allocation is needed on the
+/// continuation path.
+struct LoopEventStoreRewriteCursor {
+  size_t sourceIndex = 0;
+  size_t chunkIndex = 0;
+  size_t targetCount = 0;
+  size_t trimRemaining = 0;
+  uint16_t eventIndexInChunk = 0;
+  bool trimming = false;
+  bool active = false;
+};
+
+enum class LoopEventStoreRewriteResult : uint8_t { Pending, Complete, Denied };
+
+enum class LoopEventStoreReadResult : uint8_t { Pending, Complete, Denied };
+
+/// Unpublished raw input for one pass. The owner retains immutable chunk refs,
+/// output storage, and the generation token for this cursor's entire lifetime.
+/// Invalidate the token BEFORE releasing/replacing refs (including pool reuse).
+/// This reads stored order only; historical edits and pass ordering are separate.
+class LoopEventStoreReadCursor {
+ public:
+  bool ready() const { return complete_ && generation_ && *generation_ == expected_; }
+  size_t size() const { return ready() ? count_ : 0; }
+  const MidiEvent* data() const { return ready() ? output_ : nullptr; }
+  void discard() { *this = LoopEventStoreReadCursor{}; }
+ private:
+  friend class LoopEventStore;
+  const uint16_t* refs_ = nullptr;
+  size_t refCount_ = 0, chunk_ = 0, count_ = 0, capacity_ = 0;
+  uint16_t event_ = 0;
+  MidiEvent* output_ = nullptr;
+  const uint64_t* generation_ = nullptr;
+  uint64_t expected_ = 0;
+  bool active_ = false, complete_ = false;
+};
+
 /// Runtime chunk lifecycle (ChunkManager). Independent of persistence state.
 enum class ChunkLifecycleState : uint8_t { Free, Recording, Sealed };
 
@@ -68,6 +107,8 @@ class LoopEventStore {
   /// Release runtime references held by a chunk-ref list (does not clear the list).
   static void releaseChunkRefs(const CaptureChunkIdList& refs);
   static void releaseChunkRefs(const CommittedChunkIdList& refs);
+  /// Release and remove one owned tail reference; leaves list capacity reserved.
+  static bool releaseLastCommittedChunkRef(CommittedChunkIdList& refs);
 
   /// Sole internal→committed chunk-id transition (≤1 alloc, ≤1 copy). Clears \p src on success.
   static bool transferCaptureChunkIdsToCommittedChunkIds(CommittedChunkIdList& dest,
@@ -90,6 +131,20 @@ class LoopEventStore {
   size_t size() const { return eventCount_; }
   bool empty() const { return size() == 0; }
   const MidiEvent& at(size_t globalIndex) const;
+
+  /// Start replacing this store's fixed rows from an immutable source. The
+  /// source count may shrink this store but never grow it. Shrinking releases
+  /// one surplus chunk per later rewrite grain; canonicalization never
+  /// allocates a chunk.
+  bool beginRewriteFromOrderedSource(LoopEventStoreRewriteCursor& cursor,
+                                     size_t sourceCount) const;
+  /// Copy at most `eventQuantum` source rows selected by `orderedIndices`.
+  /// `source` must remain immutable until Complete. The caller owns ordering;
+  /// this method only performs the bounded in-place canonical-store rewrite.
+  LoopEventStoreRewriteResult stepRewriteFromOrderedSource(
+      LoopEventStoreRewriteCursor& cursor, const MidiEvent* source,
+      const uint16_t* orderedIndices, size_t sourceCount, size_t sourceCapacity,
+      size_t eventQuantum);
 
   /// First global index whose event tick is >= tick, or size() if none.
   size_t lowerBoundIndex(uint32_t tick) const;
@@ -122,6 +177,19 @@ class LoopEventStore {
       uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out);
   /// Live pool chunk event count. 0 when the id is unused or out of range.
   static uint16_t chunkUsedCount(uint16_t id);
+  /// Constant-work read: one sealed event or its end marker, without allocation.
+  /// Caller retains the sealed chunk reference; out is untouched for an end marker.
+  static bool readSealedChunkEvent(uint16_t id, size_t index, MidiEvent& out, bool& atEnd);
+  /// O(1) binding, no allocation/refcount changes. Output must be disjoint from
+  /// pool events and immutable published storage. An active cursor cannot restart.
+  static bool beginReadSealedChunks(LoopEventStoreReadCursor& cursor,
+      const uint16_t* refs, size_t refCount, MidiEvent* output, size_t capacity,
+      const uint64_t& generation);
+  /// At most quantum visits, each copying one event OR advancing one chunk.
+  /// Invalid/unsealed refs and insufficient capacity deny the entire result.
+  /// N events + K refs require max(1, ceil((N+K)/Q)) calls for positive Q.
+  static LoopEventStoreReadResult stepReadSealedChunks(
+      LoopEventStoreReadCursor& cursor, size_t quantum);
   static void appendChunkRefEventRange(uint16_t id, uint32_t begin, uint32_t endExclusive,
                                        MidiEventVec& out);
   static void appendChunkRefEventRange(

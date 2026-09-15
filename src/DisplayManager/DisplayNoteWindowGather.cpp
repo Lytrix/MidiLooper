@@ -336,8 +336,11 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBa
             }
         }
     }
-    if (!captureActive) {
-        return;
+    // Between overdub passes, capture has been closed while the session still
+    // owns its preview rows. Keep composing that tier until session close;
+    // otherwise a current snapshot alone can erase the just-recorded row.
+    if (!captureActive && !loop.hasOverdubSession()) {
+      return;
     }
     for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
         bool intersectsWindow = false;
@@ -837,7 +840,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                 resolvePlayheadInLoop(track, displaySlot, currentTick);
             const bool allowWrapContinuation =
                 DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
-                    track.isRecording(), track.isPlaying() || track.isOverdubbing(),
+                    track.isRecording(), track.isAudiblePlaybackActive(),
                     track.isOverdubbing());
             applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,

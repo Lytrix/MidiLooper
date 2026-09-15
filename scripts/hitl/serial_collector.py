@@ -58,6 +58,13 @@ class CaptureLineClock:
     def note_line(self, line: str, *, now: Optional[float] = None) -> None:
         stamp = now if now is not None else time.monotonic()
         self.last_reader_at = stamp
+        # The firmware reports this when the fixed evidence ring had to evict
+        # retained records.  The notice may be emitted on a later safe flush,
+        # but it still proves that this session cannot support trace-parity
+        # conclusions.  Stop the run as inconclusive instead of allowing a
+        # later verifier to turn missing rows into a firmware contradiction.
+        if "#CAP," in line and ",RING,overflow" in line:
+            self.mark_incomplete("firmware capture ring overflow")
         if serial_line_resets_heartbeat(line):
             self.last_firmware_at = stamp
         if serial_line_is_transport(line):
