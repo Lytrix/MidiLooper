@@ -166,6 +166,12 @@ void DisplayManager::drawTrackStatus(uint8_t selectedTrack, uint32_t currentMill
 }
 
 DisplayManager::SidebarMode DisplayManager::resolveSidebarMode(const Track& selectedTrack, uint8_t displaySlot) const {
+    if (!clockManager.isTransportRunning() &&
+        (selectedTrack.getState() == TRACK_OVERDUBBING ||
+         selectedTrack.getState() == TRACK_OVERDUB_STOPPING)) {
+        return selectedTrack.hasDataInSlot(displaySlot) ? SidebarMode::STOP
+                                                        : SidebarMode::EMPTY_STATE;
+    }
     const SlotOpState slotState = selectedTrack.getSlotOpState(displaySlot);
     if (slotState == SlotOpState::SLOT_OP_RECORDING || selectedTrack.getState() == TRACK_RECORDING) {
         return SidebarMode::REC;

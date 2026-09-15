@@ -266,7 +266,7 @@ void MidiButtonActions::executeAction(MidiButtonConfig::ActionType actionType, u
                 uint32_t now = getCurrentTick();
                 Track& track = getCurrentTrack();
 
-                if (track.isOverdubStopping()) {
+                if (track.hasPendingDeferredOverdubStop()) {
                     logger.info("Loop %d: Overdub finalization pending", slot + 1);
                     return;
                 }
@@ -480,7 +480,7 @@ void MidiButtonActions::handleToggleRecordForSlot(uint8_t slotIndex) {
     } else if (track.isOverdubbing()) {
         logger.info("Loop %d: Stop Overdub", slotIndex + 1);
         track.stopOverdubbing();
-    } else if (track.isOverdubStopping()) {
+    } else if (track.hasPendingDeferredOverdubStop()) {
         logger.info("Loop %d: Overdub finalization pending", slotIndex + 1);
         return;
     } else if (track.isPlaying()) {
@@ -590,7 +590,8 @@ void MidiButtonActions::handleToggleRecord() {
         track.stopOverdubbing();
         return;
     }
-    if (track.isOverdubStopping()) {
+    if (track.hasPendingDeferredOverdubStop()) {
+        logger.info("MIDI Button A: Overdub finalization continues in playback");
         return;
     }
 
@@ -738,10 +739,20 @@ void MidiButtonActions::handleClearTrack() {
     const uint32_t now = getCurrentTick();
 
     // Clear mutates pass ownership; complete any in-flight deferred save first so
-    // the writer cannot read a slot while it is being reset.
+    // the writer cannot read a slot while it is being reset.  A playing track
+    // would intentionally block the persistence scheduler, so stop it before
+    // the synchronous drain.  restorePlaybackAfterSlotClear() below selects and
+    // restarts any remaining enabled slot.
     if (StorageManager::hasDeferredSaveWork()) {
+        const bool wasPlaying = track.isAudiblePlaybackActive();
+        if (wasPlaying) {
+            track.stopPlaying();
+        }
         logger.info("Clear waiting for deferred save completion");
         if (!StorageManager::saveState(looperState.getLooperState())) {
+            if (wasPlaying && track.hasDataInSlot(slot)) {
+                track.startPlaying(now);
+            }
             logger.error("Clear aborted: could not complete deferred save first");
             return;
         }

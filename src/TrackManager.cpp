@@ -111,7 +111,7 @@ bool TrackManager::anyTrackRecordingOrOverdubbing() const {
     // It must therefore keep the same cross-track maintenance exclusions as
     // RECORDING and OVERDUBBING until its continuation reaches a destination.
     if (tracks[i].isRecording() || tracks[i].isOverdubbing() ||
-        tracks[i].isOverdubStopping()) {
+        tracks[i].hasPendingDeferredOverdubStop()) {
       return true;
     }
   }
@@ -144,6 +144,15 @@ TrackState TrackManager::getTrackState(uint8_t trackIndex) const {
   if (trackIndex >= Config::NUM_TRACKS) return TRACK_STOPPED;
   const Track& track = tracks[trackIndex];
   const uint8_t selectedSlot = slotStateMachine.getSelectedSlotIndex(trackIndex);
+  // A MIDI transport Stop publishes the deferred overdub destination as
+  // STOPPED while its cleanup grains continue. Reflect that destination in the
+  // status column immediately instead of letting the still-live capture slot
+  // operation keep the indicator at O.
+  if (!clockManager.isTransportRunning() &&
+      (track.getState() == TRACK_OVERDUBBING ||
+       track.getState() == TRACK_OVERDUB_STOPPING)) {
+    return track.hasDataInSlot(selectedSlot) ? TRACK_STOPPED : TRACK_EMPTY;
+  }
   return resolveDisplayTrackState(
       track.getState(), track.getSlotOpState(selectedSlot), track.hasDataInSlot(selectedSlot),
       track.hasCommittedPassesInSlot(selectedSlot), pendingRecord[trackIndex],

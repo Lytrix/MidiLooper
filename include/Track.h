@@ -133,6 +133,9 @@ public:
   void startOverdubbing(uint32_t currentTick);
   void stopOverdubbing();
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
+#if defined(SESSION_CAPTURE)
+  void printStoppedServiceStatusForHitl();
+#endif
   /// Arm gated PLAYING MIDI polls after overdub→PLAYING. Not all PLAYING.
   void armPlayingMidiDrainAfterOverdubStop();
   bool playingMidiDrainAfterOverdubStopActive() const;
@@ -302,6 +305,10 @@ public:
   bool isOverdubbing() const;
   /// Overdub finalization is pending while committed playback remains audible.
   bool isOverdubStopping() const;
+  /// The frozen stop transaction can continue after the track has resumed its
+  /// prepared PLAYING window. It remains an admission barrier until its
+  /// companion metadata and bridge publication have completed.
+  bool hasPendingDeferredOverdubStop() const;
   bool isPlaying() const;
   /// True for every state whose committed MIDI playback must keep advancing.
   bool isAudiblePlaybackActive() const;

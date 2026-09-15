@@ -25,7 +25,7 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   if (trackIndex >= Config::NUM_TRACKS) return;
 
   Track& tr = tracks[trackIndex];
-  if (tr.isOverdubStopping()) {
+  if (tr.hasPendingDeferredOverdubStop()) {
     logger.log(CAT_TRACK, LOG_INFO,
                "Track %d: record admission deferred while overdub finalization is pending",
                trackIndex);
@@ -164,7 +164,7 @@ bool TrackManager::hasQueuedRecordingTrack(uint8_t trackIndex) const {
 bool TrackManager::hasActiveOrPendingCapture() const {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     const Track& t = tracks[i];
-    if (t.isRecording() || t.isArmed() || t.isOverdubbing() || t.isOverdubStopping() ||
+    if (t.isRecording() || t.isArmed() || t.isOverdubbing() || t.hasPendingDeferredOverdubStop() ||
         pendingRecord[i]) {
       return true;
     }
@@ -209,7 +209,7 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
     return;
   }
   Track& track = tracks[trackIndex];
-  if (track.isOverdubStopping()) {
+  if (track.hasPendingDeferredOverdubStop()) {
     logger.log(CAT_TRACK, LOG_INFO,
                "Track %d: overdub admission deferred while finalization is pending",
                trackIndex);
@@ -327,7 +327,7 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     requestLoopSlotPersistAndSaveState(t, trackIndex, captureSlot);
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();
-  } else if (t.isOverdubStopping()) {
+  } else if (t.hasPendingDeferredOverdubStop()) {
     // The pending finalizer owns its active slot until it resolves the
     // requested destination. Slot selection cannot preempt that ownership.
     return;

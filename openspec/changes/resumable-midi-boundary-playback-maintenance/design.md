@@ -306,6 +306,17 @@ candidate and bridge/successor are ready, one bounded atomic transfer commits
 the pass and transitions to its still-valid requested destination. The display
 and telemetry expose this pending-stop state and measured latency.
 
+### DROID USB-host feedback is deferred from the real-time boundary
+
+Playback deadline scoring covers the immediate Teensy USB and physical MIDI
+serial sends. The DROID USB-host copy is feedback traffic for LEDs, faders, and
+controller state; it may be delayed and paced from the existing main-loop drain.
+Playback emission SHALL enqueue that copy without waiting for
+`MIN_PACKET_GAP_MICROS`, and the queue SHALL have fixed storage, coalescing for
+replaceable feedback, preserved order for non-coalescible messages, and explicit
+age/depth/overflow telemetry. A DROID queue delay SHALL never cause a real-time
+playback deadline miss or be hidden by rebasing the service deadline.
+
 `TransportStop` has higher priority than pending stop completion. Each
 `PendingStopAdmission` stores a `transportCommandEpoch` and requested
 destination, initially `PLAYING`. At every grain and immediately before atomic
@@ -822,3 +833,23 @@ references (or equivalent sharing), with an explicit immutable lifetime through
 capture canonicalization, snapshot publication and window retirement. Merely
 allocating the native fixture's capacity for each window is not the implementation
 plan. Preserve existing record admission and the no-delayed-launch contract.
+
+
+Button A stop ownership correction (2026-09-15): the accepted normal stop freezes
+capture admission and publishes PLAYING while the prepared playback source remains
+available. The pending transaction, rather than the visible Track state, owns
+closure, ordering, canonical transfer, companion preparation and cleanup. New
+capture cannot overwrite that frozen owner. Transport Stop retains precedence and
+a stopped destination cannot publish a new PLAYING state edge.
+
+An empty successor after wrap, or a capture fully removed by filtering, skips
+canonical-tail and audible-bridge construction. At PrepareTransfer the shared
+retirement helper releases unused companion credits only after closure/order
+obligations have completed. Atomic transfer still checks destination and command
+epoch. Without that retirement, the one setup credit left a permanent admission
+barrier even though no pending capture pass existed.
+
+Functional evidence includes two empty passes and two wrapped passes after upload.
+UI state publication is not proof of canonical commit, audible handoff or deadline
+success. Stop service/emission telemetry must cover the background transaction as
+well as its early visible state edge; the full 4.1/5.3 gates remain open.

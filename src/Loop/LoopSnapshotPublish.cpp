@@ -1659,7 +1659,7 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
     publishedSnapshotBox_.reset();
   }
   clearPendingSnapshotPublish();
-  pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
   box.sessionExitQueued = true;
   box.fromLoadedPasses = true;

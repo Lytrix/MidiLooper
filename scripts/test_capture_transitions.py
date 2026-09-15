@@ -17,6 +17,7 @@ from hitl.capture_transitions import (
     _serial_capture_sparse_for_verification,
     _serial_has_armed_after,
     _serial_has_overdubbing_after,
+    _serial_has_overdubbing_stopped,
     _serial_has_playing_after_record_stop,
     _serial_has_recording_active,
 )
@@ -94,6 +95,14 @@ class CaptureTransitionEvidenceTests(unittest.TestCase):
         self.assertFalse(_serial_has_playing_after_record_stop(stop_only))
         both = stop_only + ["[57.947] [DEBUG] [TRACK] Playback started @ tick 2704"]
         self.assertTrue(_serial_has_playing_after_record_stop(both))
+
+    def test_overdub_stop_request_is_not_completion(self) -> None:
+        request_only = ["[57.931] [INFO] MIDI Button A: Stop Overdub"]
+        self.assertFalse(_serial_has_overdubbing_stopped(request_only))
+        completed = request_only + [
+            "[57.947] [DEBUG] [TRACK] Overdubbing stopped @ tick 2704"
+        ]
+        self.assertTrue(_serial_has_overdubbing_stopped(completed))
 
     def test_merge_transition_counts_uses_human_logs_when_st_missing(self) -> None:
         lines = [

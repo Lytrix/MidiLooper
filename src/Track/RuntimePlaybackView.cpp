@@ -179,6 +179,7 @@ bool FixedPlaybackEventStorage::append(const MidiEvent& event) {
 
 RUNTIME_PLAYBACK_VIEW_COLD_MEM RuntimePlaybackView::~RuntimePlaybackView() {
   releaseExternalMemoryFirst(passOrigins);
+  releaseExternalMemoryFirst(canonicalRanks);
 }
 RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::prewarm(size_t eventCapacity) {
   if (!storage.prewarm(eventCapacity)) return false;
@@ -187,7 +188,8 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::prewarm(size_t eventCap
     if (passOrigins == nullptr) return false;
     for (size_t i = 0; i < eventCapacity; ++i) new (&passOrigins[i]) PlaybackPassEventOrigin{};
   }
-  return true;
+  if (!canonicalRanks) canonicalRanks = static_cast<uint16_t*>(allocateExternalMemoryFirst(eventCapacity * sizeof(uint16_t)));
+  return canonicalRanks != nullptr;
 }
 
 bool RuntimePlaybackView::bindRawCoverage(uint32_t loopLengthTicks) {
@@ -200,8 +202,9 @@ bool RuntimePlaybackView::bindRawCoverage(uint32_t loopLengthTicks) {
 }
 
 void RuntimePlaybackView::resetMetadata() {
+  ++storageGeneration;
   rawCoveragePrepared = false;
-  passOriginsReady = false; passOriginSource = {};
+  passOriginsReady = canonicalRanksReady = false; passOriginSource = {};
   storage.clear();
   source = PlaybackViewSourceIdentity{};
   cursorAnchor = EmissionCursor{};
@@ -240,6 +243,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool FixedPlaybackBridgeStorage::prewarm(size_t r
   secondCycleInsertionOrder = static_cast<uint16_t*>(allocateExternalMemoryFirst(requestedCapacity * sizeof(uint16_t)));
   insertionCycleMask = static_cast<uint8_t*>(allocateExternalMemoryFirst(requestedCapacity));
   baseRetained = static_cast<uint8_t*>(allocateExternalMemoryFirst(baseCapacity));
+  canonicalCycleMasks = static_cast<uint8_t*>(allocateExternalMemoryFirst(baseCapacity));
   insertionProvenance = static_cast<uint32_t*>(allocateExternalMemoryFirst(requestedCapacity * sizeof(uint32_t)));
   insertionRanks = static_cast<uint32_t*>(allocateExternalMemoryFirst(requestedCapacity * sizeof(uint32_t)));
   baseRanks = static_cast<uint32_t*>(allocateExternalMemoryFirst(baseCapacity * sizeof(uint32_t)));
@@ -248,7 +252,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool FixedPlaybackBridgeStorage::prewarm(size_t r
   if (baseOrder == nullptr || nextCycleBaseOrder == nullptr || currentCycleInsertionOrder == nullptr ||
       secondCycleBaseOrder == nullptr || steadyBaseOrder == nullptr ||
       nextCycleInsertionOrder == nullptr || secondCycleInsertionOrder == nullptr ||
-      insertionCycleMask == nullptr || baseRetained == nullptr || insertionProvenance == nullptr ||
+      insertionCycleMask == nullptr || baseRetained == nullptr || canonicalCycleMasks == nullptr || insertionProvenance == nullptr ||
       insertionRanks == nullptr || baseRanks == nullptr || rankedBaseOrder == nullptr || baseOrderScratch == nullptr ||
       !insertions.prewarm(requestedCapacity)) {
     release();
@@ -274,6 +278,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::release() {
   releaseExternalMemoryFirst(secondCycleInsertionOrder);
   releaseExternalMemoryFirst(insertionCycleMask);
   releaseExternalMemoryFirst(baseRetained);
+  releaseExternalMemoryFirst(canonicalCycleMasks);
   releaseExternalMemoryFirst(insertionProvenance);
   releaseExternalMemoryFirst(insertionRanks); releaseExternalMemoryFirst(baseRanks);
   releaseExternalMemoryFirst(rankedBaseOrder); releaseExternalMemoryFirst(baseOrderScratch);
@@ -287,7 +292,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::release() {
   nextCycleInsertionOrder = nullptr;
   secondCycleInsertionOrder = nullptr;
   insertionCycleMask = nullptr;
-  baseRetained = nullptr;
+  baseRetained = canonicalCycleMasks = nullptr;
   insertionProvenance = insertionRanks = baseRanks = nullptr;
   rankedBaseOrder = baseOrderScratch = nullptr;
   baseCapacity = 0;
@@ -296,17 +301,21 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::release() {
 }
 
 void FixedPlaybackBridgeStorage::resetMetadata() {
+  ++storageGeneration;
   recordCount = 0;
   baseEventCount = 0;
   nextCycleBaseEventCount = 0;
   secondCycleBaseEventCount = steadyBaseEventCount = 0;
-  currentCycleInsertionCount = nextCycleInsertionCount = secondCycleInsertionCount = 0;
+  currentCycleInsertionCount = nextCycleInsertionCount = secondCycleInsertionCount = steadyInsertionCount = 0;
+  canonicalRankCount = 0; canonicalMasksReady = false;
+  heldClosureCount = 0; // Retire metadata without clearing the fixed payload array.
   protectsOpenNotes = false;
   hasRetainedClosure = false;
   retainedClosurePhaseLimit = UINT32_MAX;
   preparedAdmissionPhase = 0;
   insertions.clear();
   baseSource = PlaybackViewSourceIdentity{};
+  baseStorageGeneration = 0;
   streamPrepared = false;
   source = PlaybackViewSourceIdentity{};
   coverage = PlaybackCoverageInterval{};
@@ -724,10 +733,10 @@ size_t RuntimePlaybackViewSet::fixedExternalBytes() const {
   constexpr size_t eventBytes = sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) +
                                 sizeof(uint16_t) + sizeof(uint8_t);
   return RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
-             (eventBytes + sizeof(PlaybackPassEventOrigin)) +
+             (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
          RuntimePlaybackViewConfig::kBridgeCount *
              (RuntimePlaybackViewConfig::kRecordsPerBridge * (sizeof(PlaybackBridgeRecord) + eventBytes +
                                                             2 * sizeof(uint32_t) + 3 * sizeof(uint16_t) + sizeof(uint8_t)) +
-              RuntimePlaybackViewConfig::kEventsPerView * (6 * sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint8_t))) +
+              RuntimePlaybackViewConfig::kEventsPerView * (6 * sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint8_t))) +
          RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes;
 }

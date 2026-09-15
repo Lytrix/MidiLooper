@@ -34,6 +34,7 @@ struct SyncDrainProgressSnapshot {
   PersistWorkType activeWorkType = PersistWorkType::GlobalMeta;
   uint8_t bundleStage = 0;
   uint8_t loopStage = 0;
+  uint32_t workItemSliceCount = 0;
   uint16_t capturePassCursor = 0;
   uint16_t chunkCursor = 0;
   bool pendingFlush = false;

@@ -172,6 +172,13 @@ void test_timing_telemetry_lines_are_tier_a() {
 #endif
 }
 
+void test_bridge_begin_denial_is_critical_capture_evidence() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isCriticalLine(
+      "#CAP,500,ODUB,stop,bridge_begin,0,0,4294967295,4294967295,8192,1,denied"));
+  TEST_ASSERT_FALSE(CaptureLineTier::isCriticalLine(
+      "#CAP,500,ODUB,stop,bridge_base,0,0,4294967295,4294967295,1,1,present"));
+}
+
 void test_snapshot_idle_lines_fit_capture_text_budget() {
   // DebugSessionCapture kMaxCaptureTextBytes is 192; payload is 191 + NUL.
   // Parent uses observed-class maxima plus 10-digit micros. Child uses 6-digit
@@ -296,6 +303,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(test_tag_is_the_field_after_micros);
   RUN_TEST(test_timing_telemetry_lines_are_tier_a);
+  RUN_TEST(test_bridge_begin_denial_is_critical_capture_evidence);
   RUN_TEST(test_snapshot_idle_lines_fit_capture_text_budget);
   RUN_TEST(test_snapshot_unit_lines_fit_capture_text_budget);
   RUN_TEST(test_transport_and_persistence_lines_are_tier_a);

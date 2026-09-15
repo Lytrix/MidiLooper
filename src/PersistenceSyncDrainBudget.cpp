@@ -178,6 +178,9 @@ bool madeSyncDrainProgress(const SyncDrainProgressSnapshot& before,
   if (after.loopStage != before.loopStage) {
     return true;
   }
+  if (after.workItemSliceCount != before.workItemSliceCount) {
+    return true;
+  }
   if (after.capturePassCursor != before.capturePassCursor) {
     return true;
   }

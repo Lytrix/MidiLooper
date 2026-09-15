@@ -328,8 +328,6 @@ def _serial_has_overdubbing_stopped(lines: list[str], *, after_index: int = 0) -
     suffix = lines[after_index:]
     if any("Overdubbing stopped" in line for line in suffix):
         return True
-    if any("MIDI Button A: Stop Overdub" in line for line in suffix):
-        return True
     if any(",ST,Track,OVERDUBBING,PLAYING" in line for line in suffix):
         return True
     return False

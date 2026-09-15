@@ -81,6 +81,10 @@ void test_made_sync_drain_progress_detects_queue_and_stage_changes() {
   afterStage.loopStage = 1;
   TEST_ASSERT_TRUE(PersistenceSyncDrainBudget::madeSyncDrainProgress(before, afterStage));
 
+  SyncDrainProgressSnapshot afterPayloadSlice = before;
+  afterPayloadSlice.workItemSliceCount = 1;
+  TEST_ASSERT_TRUE(PersistenceSyncDrainBudget::madeSyncDrainProgress(before, afterPayloadSlice));
+
   SyncDrainProgressSnapshot afterPendingClear = before;
   afterPendingClear.pendingFlush = false;
   TEST_ASSERT_TRUE(PersistenceSyncDrainBudget::madeSyncDrainProgress(before, afterPendingClear));

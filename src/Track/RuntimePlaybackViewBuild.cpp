@@ -13,6 +13,20 @@
 #endif
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
+    RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
+    const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
+    const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
+    RuntimePlaybackViewFillScope scope) {
+  destination_ = nullptr;
+  phase_ = Phase::Denied;
+  if (!fill_.begin(destination, baseline, sourceIdentity, coverage, cursorAnchor,
+                   ledgerBoundary, scope)) return false;
+  destination_ = &destination;
+  phase_ = Phase::Fill;
+  return true;
+}
+
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,

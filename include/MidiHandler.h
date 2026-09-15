@@ -41,6 +41,8 @@ public:
   // --- MIDI Output ---
   // Use the new MidiEvent constructors for all MIDI output
   void sendMidiEvent(const MidiEvent& event); // Unified event-based output
+  /// Playback boundary output: USB/serial is immediate; DROID host feedback is queued.
+  void sendRealtimePlaybackEvent(const MidiEvent& event);
 
   void sendNoteOn(uint8_t channel, uint8_t note, uint8_t velocity);
   void sendNoteOff(uint8_t channel, uint8_t note, uint8_t velocity);
@@ -102,6 +104,9 @@ private:
   void paceDroidUsbHostBeforeSend();
   void markDroidUsbHostSent();
   void queueLedUsbHostFeedback(uint8_t note, uint8_t velocityOrZero);
+  FLASHMEM bool queueDeferredDroidHostEvent(const MidiEvent& event);
+  void sendDeferredDroidHostEvent(uint8_t type, uint8_t channel, uint8_t data1,
+                                  uint8_t data2, int16_t pitchBend);
 
   bool canSendUsbHostMidi() { return usbHostReady_ && static_cast<bool>(usbHostMIDI); }
 
@@ -111,6 +116,7 @@ private:
   size_t ledPendingCount_ = 0;
   bool droidMotorOutboundPriority_ = false;
   bool usbHostReady_ = false;
+  bool deferDroidHost_ = false;
 
   // --- Message Handlers ---
   void handleNoteOn(byte channel, byte note, byte velocity, uint32_t tickNow);

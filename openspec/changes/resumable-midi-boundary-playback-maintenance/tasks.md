@@ -6,6 +6,28 @@
 
 ## 2. Resumable playback-order successor
 
+Latest Button A checkpoint (2026-09-15): the live DROID investigation found an
+empty frozen tail stuck at atomic transfer with one unused canonical setup
+credit. Skipped companion work now retires its credits after closure/order
+completion, allowing both normal and transport-retargeted empty stops to finish.
+Uploaded firmware passes two empty overdubs and two eight-second wrapped
+overdubs on track 5 / slot 1. Final status is STOPPED with no pending stop.
+Native playback-prewarm regressions: 147 passed; host probe/transition tests:
+26 passed. See [focused evidence](FOCUSED-STOP-HITL.md#droid-button-a-empty-tail-deadlock-2026-09-15).
+
+The immediate PLAYING state edge is distinct from canonical/audible commit.
+The 17/20 µs state measurements do not prove emission deadlines or DROID feedback
+latency. Task 2.3 remains open for the full atomic handoff/cleanup requirements;
+task 4.1 must retain service/emission correlation through background finalization;
+5.3, the real-time reservation for 6,240 grains, and 5.4 remain open. Restored-slot
+prewarm and the wider implementation/matrix tasks retain their existing gates.
+
+Implementation note (2026-09-15): successor bridge preparation now carries
+canonical row ranks, cycle masks, and owned held-note closures across contiguous
+coverage windows. The closure is emitted once at its due phase and cannot repeat
+in steady cycles. This remains an implementation checkpoint only: production
+Track dispatch, rolling refill, and HITL are still open.
+
 2026-09-15 update: the missing reserved session-exit identity handoff remains
 repaired; the forced four-bar wrap fixture now reaches `OVERDUB_STOPPING` and
 passes transport-Stop silence after the output-barrier repair. Task 2.3 remains
@@ -31,7 +53,7 @@ admission/parity requirements. Full timing and layered gates remain open. See
 
 ## 4. Attribution and capture gates
 
-- [ ] 4.1 Extend capture-only telemetry with owner, grain kind, input quantum, capture/staging/frozen generation, NoteReservation allocation/closure/rejection, stop-admission state, command epoch, requested destination, and latency, effective/pending canonical source generation, cycle-qualified emission cursor, ledger-summary result, coverage interval/service-contract state including source-change horizon, bridge state, load-job phase, duration, and complete/yield/denied/discarded outcome; verify `test_runtime_timing_telemetry` and `test_capture_line_tier` retain parent `track_order`/`load_frame` compatibility and recognize every new line.
+- [ ] 4.1 Extend capture-only telemetry with owner, grain kind, input quantum, capture/staging/frozen generation, NoteReservation allocation/closure/rejection, stop-admission state, command epoch, requested destination, and latency, effective/pending canonical source generation, cycle-qualified emission cursor, ledger-summary result, coverage interval/service-contract state including source-change horizon, bridge state, load-job phase, duration, and complete/yield/denied/discarded outcome. Separate immediate USB/serial playback deadline scoring from deferred DROID USB-host feedback, and retain bounded queue age/depth/overflow telemetry for the latter. Verify `test_runtime_timing_telemetry` and `test_capture_line_tier` retain parent `track_order`/`load_frame` compatibility and recognize every new line.
 - [x] 4.2 Add a host-side timing report that scores RECORDING, PLAYING, OVERDUBBING, and `OVERDUB_STOPPING` intervals; segment `OVERDUBBING → OVERDUB_STOPPING → PLAYING|STOPPED` without relying on the old direct transition; reject `RING,overflow` inside every scored interval; and assert no extra MIDI service call sites. Verify fixtures reject mixed stopping/post-overdub windows and attribute each retained outlier to a single grain.
 
 ## 5. Verification and closeout
@@ -277,3 +299,180 @@ with missing object files. No upload or device verification was performed.
 Task 5.3 remains open and must include sustained PLAYING refresh with empty and
 deferred background-load queues, plus RECORDING/OVERDUBBING transitions and
 MIDI timing checks. This fix does not close the other playback or Commit gates.
+
+### 2026-09-15 stop liveness and display regression
+
+device `!TRACE_FENCE` answered
+while the interface appeared frozen: main-loop liveness was retained. A stopped-only
+`!STOP_STATUS` query now exposes the selected track's stop and history worker phases.
+`captures/normal-stop-status-20260915/stopped-status.log` proves a stall in
+CompanionHistory, with canonical tail complete. Recording start prewarmed resources
+before resetting their canonical generation; the reset now precedes prewarm, and
+snapshot cleanup retains the reserved companion-ID destination. The next device
+report (`captures/normal-stop-resources-fix-20260915/stopped-status.log`) proves
+matching generations but history Trim parked with zero canonical estimates.
+Preparation/recycle counters now saturate as estimates rather than denying further
+valid worker turns. Completed workers retire unused estimates without padding turns.
+The display owner reuses its sliced paint continuation during OVERDUB_STOPPING.
+Native prewarm/edit suites passed 259 tests after resource fixes; final continuation
+prewarm/survival suites passed 259 tests (edit suite also passed 124). Capture firmware
+built/uploaded. The next device run advanced through history to CompanionBridge
+(phase 8), with history Ready and bridge Idle; normal stop still fails. Evidence:
+`captures/normal-stop-continuous-display-20260915/stopped-status.log`. The current
+full-loop bridge requirement and transport-stop retarget need further investigation.
+The user-observed rerun also failed normal-stop verification:
+`captures/normal-stop-display-user-verify-20260915/result.json`. Transport Stop was
+sent for cleanup; completion was not established. Screen responsiveness still needs
+the user observation. No task 2.3, timing reservation, or HITL acceptance gate closes.
+
+### 2026-09-15 first-record frame gaps
+
+**2026-09-15 first-record display regression:** user confirmed the screen now
+continues updating in OVERDUB_STOPPING, but reported multi-second frame gaps during
+the first two recording bars. A recording-only mode in the existing stop probe
+isolates that interval from the stalled stop trace flood. Before the scheduler
+fix, stopped background tracks rebuilt 56/353/1429-row display caches during the
+recording owner turns: idle maintenance reached 281,346 us, a sampled display frame
+538,356 us, and the window MIDI-service gap 281,883 us. The realtime dispatcher now
+services realtime tracks only; pending stopped-track wrap work cannot block the
+active display. The after-run sampled frames were 14,260–15,942 us, with no reported
+long idle-maintenance span. Both captures are overflow-free. The after window still
+has a 180,003 us MIDI-service maximum around recording entry; this is not deadline
+acceptance. Evidence: `captures/record-only-background-fix-20260915/comparison.json`
+and both linked session logs. Capture build/upload succeeded; six existing host
+probe tests pass. The recording sequence completed and transport ended STOPPED.
+CompanionBridge stop liveness remains open; no OpenSpec acceptance gate closes.
+A stopped-only `!TRACE_DRAIN` diagnostic retrieves retained logs on explicit request.
+
+### 2026-09-15 companion bridge and stopped recovery
+
+**2026-09-15 companion-bridge checkpoint:** user confirmed first-record display
+responsiveness after the background-cache dispatch correction. The remaining
+normal-stop stall is now explicitly attributed on device:
+`ODUB,stop,bridge_base,...,missing_full_loop_base`. A first recording retains a
+one-bar raw playback view; the compatibility bridge mapper, selection preflight,
+and hot-path consumer still require a full-loop view with canonical provenance.
+Do not fix this by synchronously materializing a full-loop base or weakening
+provenance/coverage checks. Task 2.3 must integrate coverage-aware canonical
+successor preparation with the existing window lifecycle and task 2.4 consumer,
+including current-phase cursor/ledger and subsequent-window handoffs.
+
+Transport-Stop recovery from CompanionBridge is repaired: completed history skips
+audible bridge work and calls the existing stopped canonical/companion commit
+body, shared with its undo-aware entry point. Frozen-command/owner checks and
+history cleanup remain enforced. Native stop/prewarm and take-survival suites:
+259 tests passed, including no-published-base recovery and stale-command rejection.
+Capture build/upload passed. Device `captures/bridge-stopped-recovery-20260915/`
+shows OVERDUB_STOPPING -> STOPPED, retained correlated state/grain evidence, no
+trace drops and no ring overflow. The normal-stop verifier still fails, correctly;
+this is recovery evidence, not normal-stop, silence-matrix, or realtime acceptance.
+The device was left STOPPED. No task checkbox closes.
+
+### 2026-09-15 canonical window worker implementation
+
+**2026-09-15 canonical window implementation (partial task 2.3):** the existing
+RuntimePlaybackViewFill and RuntimePlaybackViewBuild now accept typed canonical
+coverage-scoped sources, copy events and pass provenance together, and keep fill
+and order on separate bounded turns. Whole-source length need not fit the view;
+only retained rows consume destination capacity. The existing companion bridge
+mapper now filters the prepared per-pass result to that same coverage and checks
+the borrowed base's coverage, publication, storage and provenance receipt on every
+turn. The bridge compiler accepts a matching partial coverage with an empty ledger;
+open-note obligations remain denied until carried across subsequent window rotation.
+No raw/projected source is silently accepted as canonical provenance.
+
+Native verification covers nonwrapped, wrapped and empty windows, one-entry quanta,
+source larger than destination, provenance surviving worker reuse, per-pass MIDI
+parity, changed coverage and unsupported held-note closure rejection. Final focused
+prewarm suite: 138 passed; edit suite: 124 passed. Capture firmware build passed.
+This is shared-worker implementation, NOT completed Track integration: stop-owner
+base-window preparation, current-phase admission, closure-carrying rotation and the
+ordinary PLAYING consumer must be connected together before enabling normal stop.
+The new pieces were not uploaded; the device retains the verified display fix and
+transport-Stop recovery. Normal-stop device verification and task 2.3 stay open.
+
+**2026-09-15 stop-owner canonical window preparation (partial task 2.3):**
+CanonicalPrefix now prepares a one-bar canonical base when the current view has
+no usable full canonical provenance. It merges the normalized prefix through the
+existing RuntimeCompanionPasses worker, fills/orders a spare view through the shared
+RuntimePlaybackViewBuild, and publishes an immutable ready view without changing
+audible current. Fill, order and publication resume on separate turns. The pass
+worker is released before frozen-tail processing; copied origins survive its reuse.
+A busy shared builder stays pending, and source/storage changes cancel only the
+owned preparation. Both initial-ready and post-record no-ready lifecycle shapes
+are covered. No new event buffers or active allocations were introduced.
+
+Native prewarm/take-survival: 265 passed. Capture build passes with 6,176 bytes of
+RAM1 local headroom. This does not fix normal-stop liveness yet: the bridge selector
+and PLAYING consumer still require the full-loop compatibility base. Current-phase
+admission and held-note closure carry through subsequent window rotation remain
+required before enabling the new ready base. No upload, HITL verdict or task closure.
+
+**2026-09-15 ready-window bridge integration (partial task 2.3):** frozen
+companion bridge preparation now borrows the exact prepared canonical ready
+window, falling back to the existing full current base when needed. Mapping and
+compilation no longer re-resolve through the audible-current index. Admission
+checks that the preparation anchor lies inside this base coverage. Retirement,
+provenance loss and coverage changes invalidate the borrowed base, including
+completed candidates. Physical views now advance a storage generation on reuse;
+mappers, bridge compilation, selection and stream cursors reject stale indexes
+even when source identity and coverage repeat. The stopped diagnostic identifies
+`prepared_window` separately from a missing canonical base.
+
+The integrated native fixture covers prefix -> ready window -> frozen tail ->
+bridge compilation -> the existing read-only MIDI cursor, with nonwrapped,
+wrapped and empty coverage and equal-phase Off-before-On output. It verifies that
+retiring the unrelated old current does not invalidate the ready base, while
+retiring/reusing the borrowed base does. Audible Track selection remains guarded:
+held-note closure carry, current-phase admission and following-window playback
+are not complete, so this is not a normal-stop or HITL pass. No firmware upload.
+Native prewarm/take-survival: 265 passed; capture firmware build passed with
+6,176 bytes RAM1 local headroom. Strict OpenSpec validation and diff checks pass.
+
+**2026-09-15 bridge-owned held-note closure state (partial task 2.3):** the
+existing bridge compiler now stores its affected-open-note flags, closure time
+and next-On phase in the bridge's fixed ledger-sized storage. When the existing
+closure walk finds the original Off, it also copies that event into the bridge.
+The copied closure survives compiler discard and base-window reuse. The old
+base index remains only for the current compiled stream; it is not a transferable
+closure receipt. No alternate pairing or closure-resolution algorithm was added.
+Bridge reset retires closure metadata by count without clearing every payload;
+compilation rejects a changed ledger count. Unresolved or incomplete receipts
+are not exposed by the closure accessor.
+
+Native prewarm/take-survival: 266 passed, including the unchanged cross-wrap MIDI
+trace, all 128 ledger slots, base reuse, bridge reuse and changed-ledger rejection.
+Capture build passes with 6,176 bytes RAM1 local headroom. Successor inheritance,
+closures outside the initial window, current-phase selection and rolling playback
+consumption remain required; the partial-window held-note guard stays in place.
+This is ownership preparation, not completed cross-window playback or a normal-stop
+fix. No upload or HITL acceptance; task 2.3 remains open.
+
+**2026-09-15 successor closure integration (partial tasks 2.3–2.4):** the
+existing RuntimePlaybackBridgeBuild now has a same-source successor entry point.
+It checks contiguous coverage/cycle boundaries and a stable selected predecessor,
+then inherits owned closures in bounded grains. A copied Off is inserted only in
+the window containing its original due phase and only in its original cycle.
+Steady insertion ordering compacts already-read indexes so closure-only Offs cannot
+repeat in later loops; the existing MIDI cursor consumes the resulting streams.
+
+Typed shared view fills now retain each row's complete canonical merge rank.
+Compiled bridges retain canonical cycle masks across the complete rank horizon,
+so later windows inherit gating decisions without reconstructing them from NoteIds.
+Masks shift at cycle advance and survive windows containing no events. Replaced
+old base rows cannot overwrite the effective canonical row's mask. Both bridge and
+view buffer generations protect builders and cursors against reuse. All new slabs
+are prewarmed; the existing 6,240-grain reference-case estimate remains unchanged.
+
+Native prewarm/take-survival: 270 passed. Fixtures verify original Off emission,
+no repeated closure in steady cycles, carry through two windows at quanta 1/32,
+shortening the revised Off before the old closure, stale predecessor/source denial,
+and canonical ranks surviving source-worker reuse. Capture firmware build passed:
+RAM1 local headroom remains 6,176 bytes. This is shared compiler/cursor integration,
+not completed production Track dispatch or a device normal-stop verdict.
+
+Still required before enabling rolling Track selection: initial partial-window
+closure context for already-open notes (its guard remains); coverage-qualified
+cursor consumption across wrapped windows; atomic current-phase view/bridge handoff;
+ordinary successor refill; and normal-stop cleanup without silence/reanchor.
+No upload, task checkbox closure or HITL acceptance is claimed.

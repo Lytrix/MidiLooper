@@ -14,6 +14,7 @@
 #include "ClockManager.h"
 #include "DisplayManager.h"
 #include "Globals.h"
+#include "TrackManager.h"
 #include "HitlDisplayBridge.h"
 #include "PersistenceLayout.h"
 #include "SetRevisionCatalog.h"
@@ -444,6 +445,15 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // so an old buffered run cannot impersonate this acknowledgement.
                 Serial.printf("#CAP,%lu,TRACE_FENCE,%s\r\n",
                               static_cast<unsigned long>(micros()), sHitlSerialLineBuffer + 13);
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!STOP_STATUS") == 0 &&
+                       !clockManager.isTransportRunning()) {
+                trackManager.getTrack(trackManager.getSelectedTrackIndex())
+                    .printStoppedServiceStatusForHitl();
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!TRACE_DRAIN") == 0 &&
+                       !clockManager.isTransportRunning()) {
+                // Explicit stopped-only retrieval also works while a pending
+                // stop keeps the automatic capture drain timing-protected.
+                DebugSessionCapture::flushCaptureBuffer(64);
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_COMMIT") == 0) {
                 requestCommitRevisionForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_CLEANUP") == 0) {

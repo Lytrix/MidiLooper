@@ -132,6 +132,8 @@ SC_MEM_ATTR void architectureTiming(const char* name, uint32_t sumMicros, uint32
 SC_MEM_ATTR void architectureTimingMax(const char* name, uint32_t maxMicros);
 /** S0 timing telemetry: DIAG,{midi_gap|midi_input|clk|tracks|usbdev|din|hosttask|hostdrain|usbread|usbdisp|usbcap|usbthru|usbclk|usbnote|usbcc|usbtrans|noteappend|notechg|noterecon|notepair|idle_maint|load_frame|persist_save|late_on|late_off|late_clk|extclk_arrival|extclk_dispatch|clk_batch|service_period|track_rebuild|track_order|track_send|track_slot|track_resid},<maxUs>,<overCount> (Tier-A). Historical captures used msi/midisvc for midi_gap/midi_input. late_* overCount is late_event_count. extclk_arrival is USB-device clock-batch arrival vs expected instant (not late_clk). clk_batch overCount is clock-bearing batch count. service_period overCount is 0. Stage 4a track_* spans are one `updateAllTracks` iteration; residual is track_update minus attributed spans. */
 SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_t overCount);
+/** Deferred DROID host feedback queue: depth, oldest age, and overflow count (Tier-A). */
+SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs, uint32_t overflowCount);
 /** Per-track S0 timing telemetry: DIAG,track_update,<track>,<maxUs>,<overCount> (Tier-A). */
 SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
                                           uint32_t overCount);
@@ -292,6 +294,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                        sealPendUs, beginUs)
 #define SC_PLAYBACK_ORDER(durationUs, eventCount) \
   DebugSessionCapture::playbackOrder(durationUs, eventCount)
+#define SC_DROID_FEEDBACK_QUEUE(depth, oldestAgeUs, overflowCount) \
+  DebugSessionCapture::droidFeedbackQueue(depth, oldestAgeUs, overflowCount)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) \
                                            DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
@@ -398,6 +402,7 @@ inline void restartCaptureBootGrace() {}
                           beginUs) \
   ((void)0)
 #define SC_PLAYBACK_ORDER(durationUs, eventCount) ((void)0)
+#define SC_DROID_FEEDBACK_QUEUE(depth, oldestAgeUs, overflowCount) ((void)0)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) ((void)0)

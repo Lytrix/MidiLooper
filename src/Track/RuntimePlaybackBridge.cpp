@@ -89,6 +89,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimeCaptureBr
 PLAYBACK_BRIDGE_MAINTENANCE_MEM void RuntimePlaybackBridgeBuild::discard() {
   base_ = nullptr;
   bridge_ = nullptr;
+  predecessor_ = nullptr; predecessorGeneration_ = bridgeStorageGeneration_ = 0;
   mapping_ = nullptr; mappingGeneration_ = 0; mappedRecordsCopied_ = 0; ranked_ = false;
   order_.discard();
   phase_ = Phase::Idle;
@@ -99,7 +100,8 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM uint64_t RuntimePlaybackBridgeBuild::requiredRan
     size_t baseCount, size_t recordCount, size_t quantum) {
   if (!quantum || baseCount > RuntimePlaybackViewConfig::kEventsPerView ||
       recordCount > RuntimePlaybackViewConfig::kRecordsPerBridge) return UINT64_MAX;
-  const uint64_t linear = 3*uint64_t(baseCount) + 3*uint64_t(recordCount);
+  const uint64_t linear = 3*uint64_t(baseCount) + 3*uint64_t(recordCount) +
+      (RuntimePlaybackViewConfig::kEventsPerView - baseCount); // Mask rows beyond the existing base-clear walk.
   return (linear ? 1 + (linear-1)/quantum : 0) +
       RuntimePlaybackOrderBuilder::requiredGrains(baseCount, quantum) +
       RuntimePlaybackOrderBuilder::requiredGrains(recordCount, quantum) + 6;
@@ -111,34 +113,48 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeBuild::begin(const Run
   discard();
   if (!base.published || !base.complete || !base.coverage.isValid() ||
       bridge.selected || bridge.complete || !bridge.coverage.isValid() ||
+      bridge.ledgerBoundary.overflowed || bridge.ledgerBoundary.count > bridge.heldClosures.size() ||
       bridge.coverage.loopLengthTicks != base.coverage.loopLengthTicks ||
       base.storage.eventCount > bridge.baseCapacity || bridge.records == nullptr ||
       bridge.baseOrder == nullptr || bridge.baseRetained == nullptr || bridge.insertionProvenance == nullptr ||
-      bridge.baseRanks == nullptr || bridge.insertionRanks == nullptr ||
+      bridge.baseRanks == nullptr || bridge.insertionRanks == nullptr || bridge.canonicalCycleMasks == nullptr ||
       bridge.rankedBaseOrder == nullptr || bridge.baseOrderScratch == nullptr ||
       bridge.nextCycleBaseOrder == nullptr || bridge.currentCycleInsertionOrder == nullptr ||
       bridge.secondCycleBaseOrder == nullptr || bridge.steadyBaseOrder == nullptr ||
       bridge.nextCycleInsertionOrder == nullptr || bridge.secondCycleInsertionOrder == nullptr ||
       bridge.cursorAnchor.phase >= bridge.coverage.loopLengthTicks || bridge.insertionCycleMask == nullptr ||
       !bridge.insertions.isPrewarmed() || bridge.recordCount > bridge.capacity) return false;
-  if (mapping != nullptr && (base.coverage.lengthTicks != base.coverage.loopLengthTicks ||
-      bridge.recordCount != 0 || mapping->size() > bridge.capacity ||
+  // A partial window does not yet own closures beyond its coverage. Preserve
+  // the existing held-note guard until those obligations span window rotation.
+  if (mapping != nullptr && ((base.coverage.lengthTicks != base.coverage.loopLengthTicks &&
+      bridge.ledgerBoundary.count != 0) ||
+      bridge.coverage.startPhase != base.coverage.startPhase ||
+      bridge.coverage.lengthTicks != base.coverage.lengthTicks ||
+      bridge.recordCount != 0 || mapping->size() > bridge.capacity || mapping->candidateCount() > bridge.baseCapacity ||
       !mapping->matchesBase(base.storage.events, base.storage.eventCount, base.source))) return false;
   mapping_ = mapping; ranked_ = mapping != nullptr;
   mappingGeneration_ = mapping != nullptr ? mapping->generation() : 0;
   base_ = &base;
   bridge_ = &bridge;
+  bridgeStorageGeneration_ = bridge.storageGeneration;
   bridge.baseSource = base.source;
+  bridge.baseStorageGeneration = base.storageGeneration;
   source_ = bridge.source;
   recordCount_ = mapping != nullptr ? mapping->size() : bridge.recordCount;
-  openNoteFlags_.fill(0);
-  closureTime_.fill(UINT64_MAX);
-  newOnPhase_.fill(UINT32_MAX);
+  bridge.canonicalRankCount = mapping ? mapping->candidateCount() : 0;
+  bridge.canonicalMasksReady = false;
+  bridge.heldClosureCount = bridge.ledgerBoundary.count;
+  for (size_t i = 0; i < bridge.heldClosureCount; ++i) {
+    auto& closure = bridge.heldClosures[i];
+    closure.flags = 0;
+    closure.relativeTick = UINT64_MAX;
+    closure.nextOnPhase = UINT32_MAX;
+  }
   closureIndex_.fill(UINT16_MAX);
   bridge.baseEventCount = 0;
   bridge.nextCycleBaseEventCount = 0;
   bridge.secondCycleBaseEventCount = bridge.steadyBaseEventCount = 0;
-  bridge.currentCycleInsertionCount = bridge.nextCycleInsertionCount = bridge.secondCycleInsertionCount = 0;
+  bridge.currentCycleInsertionCount = bridge.nextCycleInsertionCount = bridge.secondCycleInsertionCount = bridge.steadyInsertionCount = 0;
   bridge.protectsOpenNotes = false;
   bridge.hasRetainedClosure = false;
   bridge.retainedClosurePhaseLimit = UINT32_MAX;
@@ -146,6 +162,43 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeBuild::begin(const Run
   bridge.insertions.clear();
   bridge.streamPrepared = false;
   phase_ = Phase::Clear;
+  return true;
+}
+
+PLAYBACK_BRIDGE_MAINTENANCE_MEM uint64_t RuntimePlaybackBridgeBuild::requiredSuccessorGrainsUpperBound(
+    size_t baseCount, size_t ledgerCount, size_t quantum) {
+  if (!quantum || ledgerCount > ActiveNoteLedger::kMaxOpenNotes) return UINT64_MAX;
+  const auto compile = requiredRankedGrainsUpperBound(baseCount, ledgerCount, quantum);
+  if (compile == UINT64_MAX) return compile;
+  // Treat every ledger entry as a possible copied Off; include inheritance and
+  // copy walks plus their phase transitions. This also overbounds the unused
+  // ranked-base sort, keeping the existing compiler's order estimate reusable.
+  return compile + 2 * (ledgerCount ? 1 + (ledgerCount - 1) / quantum : 0) + 3;
+}
+
+PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeBuild::beginSuccessor(
+    const RuntimePlaybackView& base, FixedPlaybackBridgeStorage& bridge,
+    const FixedPlaybackBridgeStorage& predecessor) {
+  if (&bridge == &predecessor || !predecessor.selected || !predecessor.complete ||
+      !predecessor.streamPrepared || !predecessor.hasRetainedClosure || !predecessor.canonicalMasksReady ||
+      predecessor.canonicalRankCount > bridge.baseCapacity || !base.canonicalRanksReady || !base.canonicalRanks ||
+      !predecessor.coverage.isValid() || !base.coverage.isValid() ||
+      !(predecessor.source == base.source) || !(bridge.source == base.source) || bridge.recordCount ||
+      predecessor.coverage.loopLengthTicks != base.coverage.loopLengthTicks ||
+      bridge.coverage.startPhase != base.coverage.startPhase ||
+      bridge.coverage.lengthTicks != base.coverage.lengthTicks ||
+      bridge.cursorAnchor.phase != base.coverage.startPhase ||
+      predecessor.heldClosureCount != predecessor.ledgerBoundary.count) return false;
+  const uint64_t end = uint64_t(predecessor.coverage.startPhase) + predecessor.coverage.lengthTicks;
+  const uint32_t length = base.coverage.loopLengthTicks;
+  if (base.coverage.startPhase != end % length ||
+      bridge.cursorAnchor.projectionCycle != uint32_t(predecessor.cursorAnchor.projectionCycle + end / length))
+    return false;
+  if (!begin(base, bridge)) return false;
+  bridge.canonicalRankCount = predecessor.canonicalRankCount;
+  predecessor_ = &predecessor;
+  predecessorGeneration_ = predecessor.storageGeneration;
+  phase_ = Phase::Inherit;
   return true;
 }
 
@@ -157,7 +210,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeBuild::touchesOpenNote
   for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
     const auto& open = bridge_->ledgerBoundary.openNotes[i];
     if (matchesOpenNote(event, open)) {
-      if (mark) openNoteFlags_[i] |= 1;
+      if (mark) bridge_->heldClosures[i].flags |= 1;
       found = true;
     }
   }
@@ -183,10 +236,10 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM uint8_t RuntimePlaybackBridgeBuild::effectiveMas
   const uint32_t phase = event.tick % length;
   // The open instance owns its original Off. Start the new pair on its first
   // On after that closure; its Off may belong to a further projection cycle.
-  uint64_t onTime = event.isNoteOn() ? phase : newOnPhase_[openIndex];
+  uint64_t onTime = event.isNoteOn() ? phase : bridge_->heldClosures[openIndex].nextOnPhase;
   if (onTime == UINT32_MAX) onTime = phase;
-  if (onTime < closureTime_[openIndex])
-    onTime += ((closureTime_[openIndex] - onTime + length - 1) / length) * uint64_t(length);
+  if (onTime < bridge_->heldClosures[openIndex].relativeTick)
+    onTime += ((bridge_->heldClosures[openIndex].relativeTick - onTime + length - 1) / length) * uint64_t(length);
   uint64_t time = onTime;
   if (event.isNoteOff()) {
     const uint32_t onPhase = static_cast<uint32_t>(onTime % length);
@@ -197,13 +250,21 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM uint8_t RuntimePlaybackBridgeBuild::effectiveMas
 
 PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackBridgeBuild::step(size_t quantum) {
   if (quantum == 0 || base_ == nullptr || bridge_ == nullptr ||
-      phase_ == Phase::Denied || bridge_->selected ||
+      phase_ == Phase::Denied || bridge_->storageGeneration != bridgeStorageGeneration_ ||
+      bridge_->selected || !base_->published || !base_->complete ||
+      base_->storageGeneration != bridge_->baseStorageGeneration ||
+      bridge_->heldClosureCount != bridge_->ledgerBoundary.count ||
       !(base_->source == bridge_->baseSource) || !(bridge_->source == source_) ||
       ((mapping_ == nullptr ? recordCount_ : mappedRecordsCopied_) != bridge_->recordCount)) return RuntimePlaybackOrderBuildResult::Denied;
   if (mapping_ != nullptr && (mapping_->generation() != mappingGeneration_ ||
       !mapping_->matchesBase(base_->storage.events, base_->storage.eventCount, base_->source))) {
     phase_ = Phase::Denied; return RuntimePlaybackOrderBuildResult::Denied;
   }
+  if (predecessor_ && (predecessor_->storageGeneration != predecessorGeneration_ ||
+      !predecessor_->selected || !predecessor_->complete || !(predecessor_->source == source_) ||
+      !predecessor_->canonicalMasksReady || predecessor_->canonicalRankCount != bridge_->canonicalRankCount ||
+      !base_->canonicalRanksReady || !base_->canonicalRanks))
+    return RuntimePlaybackOrderBuildResult::Denied;
   if (phase_ == Phase::Complete) return RuntimePlaybackOrderBuildResult::Complete;
   if (bridge_->ledgerBoundary.overflowed ||
       bridge_->ledgerBoundary.count > bridge_->ledgerBoundary.openNotes.size()) {
@@ -215,14 +276,52 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
     return RuntimePlaybackOrderBuildResult::Denied;
   };
   while (quantum != 0) {
-    if (phase_ == Phase::Clear) {
-      if (cursor_ < base_->storage.eventCount) {
+    if (phase_ == Phase::Inherit) {
+      if (cursor_ < bridge_->heldClosureCount) {
         const size_t index = cursor_++;
-        const uint32_t rank = mapping_ != nullptr ? mapping_->baseRanks()[index] : index;
-        // A removed Off can remain temporarily as a ledger closure. It keeps
-        // its old index as a tie key; equal rank collisions use provenance.
-        bridge_->baseRanks[index] = rank == UINT16_MAX ? index : rank;
-        bridge_->baseRetained[index] = 15;  // Admission, first wrap, second wrap, steady state.
+        --quantum;
+        const auto& open = bridge_->ledgerBoundary.openNotes[index];
+        const uint64_t elapsed = uint64_t(bridge_->cursorAnchor.projectionCycle -
+            predecessor_->cursorAnchor.projectionCycle) * base_->coverage.loopLengthTicks;
+        for (size_t i = 0; i < predecessor_->heldClosureCount; ++i) {
+          const auto* previous = predecessor_->heldClosure(i);
+          const auto& old = predecessor_->ledgerBoundary.openNotes[i];
+          if (!previous || open.channel != old.channel || open.note != old.note ||
+              open.noteId != old.noteId || open.startTick != old.startTick || open.velocity != old.velocity ||
+              previous->relativeTick < elapsed + bridge_->cursorAnchor.phase) continue;
+          auto& closure = bridge_->heldClosures[index];
+          closure = *previous;
+          closure.relativeTick -= elapsed;
+          closure.flags |= 4;
+          bridge_->protectsOpenNotes = true;
+          break;
+        }
+        continue;
+      }
+      cursor_ = 0;
+      phase_ = Phase::Clear;
+      return RuntimePlaybackOrderBuildResult::Pending;
+    }
+    if (phase_ == Phase::Clear) {
+      if (cursor_ < base_->storage.eventCount || cursor_ < bridge_->canonicalRankCount) {
+        const size_t index = cursor_++;
+        if (index < bridge_->canonicalRankCount) {
+          uint8_t mask = 15;
+          if (predecessor_) {
+            mask = predecessor_->canonicalCycleMasks[index];
+            const uint32_t age = bridge_->cursorAnchor.projectionCycle - predecessor_->cursorAnchor.projectionCycle;
+            mask = age >= 3 ? ((mask & 8) ? 15 : 0)
+                : uint8_t((mask >> age) | ((mask & 8) ? (15u << (4-age)) : 0)) & 15;
+          }
+          bridge_->canonicalCycleMasks[index] = mask;
+        }
+        if (index < base_->storage.eventCount) {
+          const uint32_t rank = mapping_ ? mapping_->baseRanks()[index]
+              : predecessor_ ? base_->canonicalRanks[index] : index;
+          if (predecessor_ && rank >= bridge_->canonicalRankCount) return deny();
+          bridge_->baseRanks[index] = rank == UINT16_MAX ? index : rank;
+          bridge_->baseRetained[index] = 15;
+        }
         --quantum;
         continue;
       }
@@ -265,6 +364,24 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         continue;
       }
       cursor_ = 0;
+      phase_ = predecessor_ ? Phase::CarryOffs : Phase::Closures;
+    }
+    if (phase_ == Phase::CarryOffs) {
+      if (cursor_ < bridge_->heldClosureCount) {
+        const size_t i = cursor_++;
+        --quantum;
+        const auto& closure = bridge_->heldClosures[i];
+        if (!(closure.flags & 4) || !base_->coverage.contains(closure.originalOff.tick % base_->coverage.loopLengthTicks))
+          continue;
+        const size_t index = bridge_->insertions.eventCount;
+        if (!bridge_->insertions.append(closure.originalOff)) return deny();
+        bridge_->insertionProvenance[index] = bridge_->baseCapacity + recordCount_ + i;
+        bridge_->insertionRanks[index] = closure.rank;
+        bridge_->insertionCycleMask[index] = 0;
+        closureIndex_[i] = bridge_->baseCapacity + index;
+        continue;
+      }
+      cursor_ = 0;
       phase_ = Phase::Closures;
     }
     if (phase_ == Phase::Closures) {
@@ -277,29 +394,31 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         if (!event.isNoteOn() && !event.isNoteOff()) continue;
         const uint32_t phase = event.tick % base_->coverage.loopLengthTicks;
         for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
-          if (!(openNoteFlags_[i] & 1) ||
+          if (!(bridge_->heldClosures[i].flags & 1) ||
               !(inserted ? insertionMatches(index, i) : matchesOpenNote(event, bridge_->ledgerBoundary.openNotes[i])))
             continue;
-          if (!inserted && event.isNoteOff()) {
+          if (!inserted && event.isNoteOff() && !(bridge_->heldClosures[i].flags & 4)) {
             const uint64_t time = uint64_t(phase) + (phase < bridge_->preparedAdmissionPhase ? base_->coverage.loopLengthTicks : 0);
-            if (time < closureTime_[i]) {
-              closureTime_[i] = time;
+            if (time < bridge_->heldClosures[i].relativeTick) {
+              bridge_->heldClosures[i].relativeTick = time;
+              bridge_->heldClosures[i].originalOff = event;
+              bridge_->heldClosures[i].rank = bridge_->baseRanks[index];
               closureIndex_[i] = static_cast<uint16_t>(index);
             }
-            openNoteFlags_[i] |= 2;
+            bridge_->heldClosures[i].flags |= 2;
           }
           if (event.isNoteOn() && (inserted || bridge_->baseRetained[index])) {
-            if (newOnPhase_[i] == UINT32_MAX || phase > newOnPhase_[i]) newOnPhase_[i] = phase;
+            if (bridge_->heldClosures[i].nextOnPhase == UINT32_MAX || phase > bridge_->heldClosures[i].nextOnPhase) bridge_->heldClosures[i].nextOnPhase = phase;
           }
         }
         continue;
       }
       bridge_->hasRetainedClosure = true;
       for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
-        if (openNoteFlags_[i] == 1) bridge_->hasRetainedClosure = false;
-        if ((openNoteFlags_[i] & 1) && closureTime_[i] < base_->coverage.loopLengthTicks &&
-            closureTime_[i] < bridge_->retainedClosurePhaseLimit)
-          bridge_->retainedClosurePhaseLimit = closureTime_[i];
+        if (bridge_->heldClosures[i].flags == 1) bridge_->hasRetainedClosure = false;
+        if ((bridge_->heldClosures[i].flags & 1) && bridge_->heldClosures[i].relativeTick < base_->coverage.loopLengthTicks &&
+            bridge_->heldClosures[i].relativeTick < bridge_->retainedClosurePhaseLimit)
+          bridge_->retainedClosurePhaseLimit = bridge_->heldClosures[i].relativeTick;
       }
       if (!order_.begin(bridge_->insertions, base_->coverage.loopLengthTicks,
                         bridge_->insertionRanks)) return deny();
@@ -343,26 +462,37 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         --quantum;
         const auto& event = inserted ? bridge_->insertions.events[index] : base_->storage.events[index];
         uint8_t mask = inserted ? 15 : bridge_->baseRetained[index];
+        if (predecessor_ && !inserted) mask &= bridge_->canonicalCycleMasks[base_->canonicalRanks[index]];
         uint8_t closureMask = 0;
-        if (bridge_->hasRetainedClosure && (event.isNoteOn() || event.isNoteOff())) {
+        if (bridge_->hasRetainedClosure && (!predecessor_ || inserted) && (event.isNoteOn() || event.isNoteOff())) {
           for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
-            if (!(openNoteFlags_[i] & 1) ||
+            if (!(bridge_->heldClosures[i].flags & 1) ||
                 !(inserted ? insertionMatches(index, i) : matchesOpenNote(event, bridge_->ledgerBoundary.openNotes[i]))) continue;
             // Ordered traversal pairs each Off with its preceding canonical
             // On, including repeated NoteIds and pairs that cross phase zero.
             if (event.isNoteOn() && (inserted || bridge_->baseRetained[index]))
-              newOnPhase_[i] = event.tick % base_->coverage.loopLengthTicks;
+              bridge_->heldClosures[i].nextOnPhase = event.tick % base_->coverage.loopLengthTicks;
             mask &= effectiveMask(event, i);
-            if (!inserted && closureIndex_[i] == index)
-              closureMask |= 1u << (closureTime_[i] / base_->coverage.loopLengthTicks);
+            if (closureIndex_[i] == (inserted ? bridge_->baseCapacity + index : index)) {
+              closureMask |= 1u << (bridge_->heldClosures[i].relativeTick / base_->coverage.loopLengthTicks);
+              if (inserted && (bridge_->heldClosures[i].flags & 4)) mask = 0;
+            }
           }
         }
         mask |= closureMask;
+        if (mapping_) {
+          const auto rank = inserted ? bridge_->insertionRanks[index]
+              : bridge_->baseRetained[index] ? mapping_->baseRanks()[index] : UINT16_MAX;
+          if (rank != UINT16_MAX && rank < bridge_->canonicalRankCount) bridge_->canonicalCycleMasks[rank] = mask;
+        }
         if (inserted) {
           bridge_->insertionCycleMask[index] = mask;
           if (mask & 1) bridge_->currentCycleInsertionOrder[bridge_->currentCycleInsertionCount++] = index;
           if (mask & 2) bridge_->nextCycleInsertionOrder[bridge_->nextCycleInsertionCount++] = index;
           if (mask & 4) bridge_->secondCycleInsertionOrder[bridge_->secondCycleInsertionCount++] = index;
+          // Compact only already-read order slots. Closure-only inserts must
+          // disappear from steady playback rather than repeat each loop.
+          if (mask & 8) bridge_->insertions.order[bridge_->steadyInsertionCount++] = index;
         } else {
           if (mask & 1) bridge_->baseOrder[bridge_->baseEventCount++] = index;
           if (mask & 2) bridge_->nextCycleBaseOrder[bridge_->nextCycleBaseEventCount++] = index;
@@ -371,6 +501,8 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         }
         continue;
       }
+      bridge_->canonicalMasksReady = predecessor_ || mapping_;
+      predecessor_ = nullptr;
       mapping_ = nullptr;  // The compiled bridge owns all records and tie ranks.
       bridge_->streamPrepared = bridge_->complete = true;
       phase_ = Phase::Complete;
@@ -384,6 +516,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeCursor::selectAfterPha
     const FixedPlaybackBridgeStorage& bridge, uint32_t cycle, uint32_t completedPhase) {
   if (!base.published || !base.complete || !bridge.complete || !bridge.streamPrepared ||
       !bridge.selected || !(base.source == bridge.baseSource) ||
+      base.storageGeneration != bridge.baseStorageGeneration ||
       bridge.baseEventCount > base.storage.eventCount || bridge.nextCycleBaseEventCount > base.storage.eventCount ||
       bridge.secondCycleBaseEventCount > base.storage.eventCount || bridge.steadyBaseEventCount > base.storage.eventCount ||
       static_cast<int32_t>(cycle - bridge.cursorAnchor.projectionCycle) < 0 ||
@@ -393,7 +526,9 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeCursor::selectAfterPha
         completedPhase >= bridge.retainedClosurePhaseLimit || completedPhase + 1 < bridge.preparedAdmissionPhase)) ||
       (completedPhase != UINT32_MAX && completedPhase >= base.coverage.loopLengthTicks)) return false;
   base_ = &base;
+  baseStorageGeneration_ = base.storageGeneration;
   bridge_ = &bridge;
+  bridgeStorageGeneration_ = bridge.storageGeneration;
   const uint32_t age = cycle - bridge.cursorAnchor.projectionCycle;
   baseOrder_ = age == 0 ? bridge.baseOrder : age == 1 ? bridge.nextCycleBaseOrder :
                age == 2 ? bridge.secondCycleBaseOrder : bridge.steadyBaseOrder;
@@ -402,7 +537,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeCursor::selectAfterPha
   insertionOrder_ = age == 0 ? bridge.currentCycleInsertionOrder : age == 1 ? bridge.nextCycleInsertionOrder :
                     age == 2 ? bridge.secondCycleInsertionOrder : bridge.insertions.order;
   insertionCount_ = age == 0 ? bridge.currentCycleInsertionCount : age == 1 ? bridge.nextCycleInsertionCount :
-                    age == 2 ? bridge.secondCycleInsertionCount : bridge.insertions.eventCount;
+                    age == 2 ? bridge.secondCycleInsertionCount : bridge.steadyInsertionCount;
   baseCursor_ = afterPhase(base.storage, baseOrder_, baseCount_, completedPhase);
   insertionCursor_ = afterPhase(bridge.insertions, insertionOrder_, insertionCount_, completedPhase);
   emitted_ = EmissionCursor{cycle, 0, 0, 0, bridge.source.sourceGeneration};
@@ -428,7 +563,11 @@ bool RuntimePlaybackBridgeCursor::insertionFirst() const {
 }
 
 const MidiEvent* RuntimePlaybackBridgeCursor::peek() const {
-  if (bridge_ == nullptr || (baseCursor_ == baseCount_ &&
+  if (bridge_ == nullptr || base_ == nullptr || !base_->published || !base_->complete ||
+      !bridge_->selected || !bridge_->complete || bridge_->storageGeneration != bridgeStorageGeneration_ ||
+      base_->storageGeneration != baseStorageGeneration_ ||
+      baseStorageGeneration_ != bridge_->baseStorageGeneration ||
+      (baseCursor_ == baseCount_ &&
       insertionCursor_ == insertionCount_)) return nullptr;
   return insertionFirst()
       ? &bridge_->insertions.events[insertionOrder_[insertionCursor_]]
@@ -465,7 +604,10 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeStream::selectAfterPha
 PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeStream::matches(const RuntimePlaybackView& base,
     const FixedPlaybackBridgeStorage& bridge, uint32_t cycle) const {
   return base_ == &base && bridge_ == &bridge && cycle_ == cycle &&
-         baseSource_ == base.source && bridgeSource_ == bridge.source && bridge.selected;
+         baseSource_ == base.source && bridgeSource_ == bridge.source && bridge.selected &&
+         base.published && base.complete && bridge.complete && cursor.matchesBaseStorage(base) &&
+         cursor.matchesBridgeStorage(bridge) &&
+         base.storageGeneration == bridge.baseStorageGeneration;
 }
 
 PLAYBACK_BRIDGE_MAINTENANCE_MEM void RuntimePlaybackBridgeStream::reset() {

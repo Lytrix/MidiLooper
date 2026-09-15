@@ -512,7 +512,7 @@ void Track::releasePlaybackMergedMidiEventsMemory() {
 }
 
 TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
-  if (isRecording() || isOverdubbing() || isOverdubStopping() || getState() == TRACK_ARMED) {
+  if (isRecording() || isOverdubbing() || hasPendingDeferredOverdubStop() || getState() == TRACK_ARMED) {
     return false;
   }
 

@@ -147,6 +147,7 @@ STORAGE_PERSIST_MEM void resetActivePersistenceWorkItem(PersistenceWorkItemJob& 
   job.bundleWriteActive = false;
   job.skipLoopSlotStage = false;
   job.bundleStartedAtUs = 0;
+  job.workItemSliceCount = 0;
   job.bundleSliceCount = 0;
   job.bundleMaxSliceUs = 0;
   job.bundleUndoEntryCount = 0;
@@ -219,6 +220,7 @@ STORAGE_PERSIST_MEM bool beginPersistenceWorkItem(PersistenceWorkItemJob& job,
   }
 
   job.itemActive = true;
+  job.workItemSliceCount = 0;
   job.stateSnapshot = state;
   emitPersistenceWorkTelemetry(job.item, "start", "ok");
 
@@ -498,20 +500,31 @@ STORAGE_PERSIST_MEM bool stepPersistenceWorkItem(const LooperState& state) {
     }
   }
 
+  bool sliceOk = false;
   switch (job.item.type) {
     case PersistWorkType::LoopPersist:
-      return stepLoopPersistWorkItem(job);
+      sliceOk = stepLoopPersistWorkItem(job);
+      break;
     case PersistWorkType::GlobalMeta:
     case PersistWorkType::TrackMeta:
     case PersistWorkType::SlotMeta:
     case PersistWorkType::WorkspaceFooter:
-      return stepRuntimeBundleWorkItem(job);
+      sliceOk = stepRuntimeBundleWorkItem(job);
+      break;
     case PersistWorkType::LoopUndoHistory:
-      return completePersistenceWorkItem(job, "skip_stage3", true);
+      sliceOk = completePersistenceWorkItem(job, "skip_stage3", true);
+      break;
     case PersistWorkType::FinalizeWorkspace:
-      return stepFinalizeWorkspaceWorkItem(job);
+      sliceOk = stepFinalizeWorkspaceWorkItem(job);
+      break;
   }
-  return completePersistenceWorkItem(job, "sched", false);
+  // A loop payload can require hundreds of bounded slices while retaining the
+  // same public stage/cursor. Record each successful active slice so the
+  // synchronous drain can distinguish that work from a writer stall.
+  if (sliceOk && job.itemActive) {
+    ++job.workItemSliceCount;
+  }
+  return sliceOk;
 #endif
 }
 

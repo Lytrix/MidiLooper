@@ -472,7 +472,7 @@ void Track::sendMidiEvent(const MidiEvent& evt, uint8_t playbackSlotIndex) {
   // A Stop can arrive while an internal-clock interval is already walking its
   // due cursor. Recheck the volatile barrier directly before the physical send.
   if (playbackEmitMidiOutput_ && !transportStopOutputBarrier_) {
-    midiHandler.sendMidiEvent(evtCopy);
+    midiHandler.sendRealtimePlaybackEvent(evtCopy);
 #if RUNTIME_TIMING_ENABLED
     if (evt.isNoteOn() || evt.isNoteOff()) {
       const uint32_t sentUs = micros();

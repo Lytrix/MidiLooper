@@ -35,6 +35,12 @@ inline bool tagStartsWith(const char* line, const char* prefix) {
   return strncmp(tag, prefix, strlen(prefix)) == 0;
 }
 
+// A one-shot root-cause record must outlive a prolonged Tier-A timing stream.
+// Keep this deliberately narrow: normal stop telemetry remains Tier-A.
+inline bool isCriticalLine(const char* line) {
+  return tagStartsWith(line, "ODUB,stop,bridge_begin,");
+}
+
 /**
  * Transport state, persistence, record stage, session header, visual cache coverage, and
  * timing telemetry lines.

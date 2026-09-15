@@ -20,7 +20,7 @@ void TrackManager::setActiveLoopIndex(uint8_t trackIndex, uint8_t index) {
     Track& t = tracks[trackIndex];
     const uint8_t prev = t.getActiveLoopIndex();
     if (prev != index &&
-        (t.isRecording() || t.isOverdubbing() || t.isOverdubStopping())) {
+        (t.isRecording() || t.isOverdubbing() || t.hasPendingDeferredOverdubStop())) {
       finalizeCaptureAndSelectSlot(trackIndex, index, clockManager.getCurrentTick());
       return;
     }
@@ -82,7 +82,7 @@ void TrackManager::beginSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex)
     return;
   }
   if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
-      tracks[trackIndex].isOverdubStopping() ||
+      tracks[trackIndex].hasPendingDeferredOverdubStop() ||
       pendingRecord[trackIndex]) {
     return;
   }
@@ -116,7 +116,7 @@ void TrackManager::endSlotSelectionHold(uint8_t trackIndex, uint8_t slotIndex, u
   if (pendingHoldCount[trackIndex] > 0) pendingHoldCount[trackIndex]--;
 
   if (tracks[trackIndex].isRecording() || tracks[trackIndex].isOverdubbing() ||
-      tracks[trackIndex].isOverdubStopping() ||
+      tracks[trackIndex].hasPendingDeferredOverdubStop() ||
       pendingRecord[trackIndex]) {
     if (pendingHoldCount[trackIndex] == 0) {
       cancelSlotSelectionHold(trackIndex);
