@@ -1618,6 +1618,21 @@ LOOP_COLD_MEM bool Loop::releaseSealedCaptureRangeBorrow(const void* owner) {
   return true;
 }
 
+LOOP_COLD_MEM bool Loop::borrowPendingNoteChanges(const PendingNoteChangeVec& changes,
+                                                 const void* owner) {
+  if (owner == nullptr) return false;
+  borrowedPendingChanges_ = &changes;
+  borrowedPendingChangesOwner_ = owner;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::releasePendingNoteChangesBorrow(const void* owner) {
+  if (borrowedPendingChanges_ == nullptr || borrowedPendingChangesOwner_ != owner) return false;
+  borrowedPendingChanges_ = nullptr;
+  borrowedPendingChangesOwner_ = nullptr;
+  return true;
+}
+
 LOOP_COLD_MEM bool Loop::copyCaptureIntervalEvents(SessionMidiEventVec& out) const {
   out.clear();
   const CaptureReadSource source = captureReadSource();

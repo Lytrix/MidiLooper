@@ -763,6 +763,56 @@ void test_sealed_range_borrow_release_is_owner_identified() {
   TEST_ASSERT_FALSE(loop.hasSealedCaptureBorrow());
 }
 
+/// Pending note changes (Add/Shorten/Hide intents) are moved into job ownership
+/// at punch-out. The worker must resolve against that owned set, and read
+/// consumers must keep seeing it through the job-identified borrow.
+void test_stop_job_owns_pending_note_changes() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(0);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(48, 24, 72);
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE(loop.hasPendingNoteChanges());
+  const size_t changeCount = loop.pendingNoteChanges().size();
+  TEST_ASSERT_TRUE(changeCount > 0);
+
+  clockManager.assignCurrentTickSilently(100);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  auto& job = TrackCaptureStopTestAccess::job(track);
+  // Ownership moved to the job; the readable set is the borrowed job copy.
+  TEST_ASSERT_EQUAL(changeCount, job.pendingChanges.size());
+  TEST_ASSERT_EQUAL_PTR(&job.pendingChanges, &loop.pendingNoteChanges());
+
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  // The borrow is retired with the job, and the live session's own set — which
+  // a successor interval would use — is independent of the job's.
+  TEST_ASSERT_TRUE(&loop.pendingNoteChanges() != &job.pendingChanges);
+  TEST_ASSERT_TRUE(loop.pendingNoteChanges().empty());
+  TEST_ASSERT_EQUAL(changeCount, job.pendingChanges.size());
+}
+
+/// A stale job may not drop a successor job's pending-change borrow.
+void test_pending_change_borrow_release_is_owner_identified() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  PendingNoteChangeVec changesA;
+  PendingNoteChangeVec changesB;
+  const int ownerA = 1;
+  const int ownerB = 2;
+  TEST_ASSERT_TRUE(loop.borrowPendingNoteChanges(changesA, &ownerA));
+  TEST_ASSERT_TRUE(loop.borrowPendingNoteChanges(changesB, &ownerB));
+  TEST_ASSERT_FALSE(loop.releasePendingNoteChangesBorrow(&ownerA));
+  TEST_ASSERT_EQUAL_PTR(&changesB, &loop.pendingNoteChanges());
+  TEST_ASSERT_TRUE(loop.releasePendingNoteChangesBorrow(&ownerB));
+  const PendingNoteChangeVec* live = &loop.pendingNoteChanges();
+  TEST_ASSERT_TRUE(live != &changesA);
+  TEST_ASSERT_TRUE(live != &changesB);
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -913,6 +963,8 @@ int main() {
   RUN_TEST(test_read_source_yields_same_rows_before_and_after_sealing);
   RUN_TEST(test_sealed_extent_resolves_closure_note_id);
   RUN_TEST(test_sealed_range_borrow_release_is_owner_identified);
+  RUN_TEST(test_stop_job_owns_pending_note_changes);
+  RUN_TEST(test_pending_change_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);
