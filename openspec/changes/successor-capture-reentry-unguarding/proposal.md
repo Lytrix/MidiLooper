@@ -22,14 +22,32 @@ and its deeper capacity is a follow-up, not a silent assumption.
   precise, ownership-based predicates, layer by layer: **Track** (`Track::startOverdubbing`),
   then **TrackManager** (cross-track maintenance exclusion and slot-change finalize
   path), then **Button A** (`MidiButtonActions::handleToggleRecord`).
-- Declare the successor capacity explicitly: **one admitted deferred predecessor plus
-  one live successor interval per track** (the two prewarmed
-  `CaptureAdmissionStaging` roles plus the single `captureStopOwner`). Starting the
-  successor while the predecessor finalizes is admitted; **stopping the successor
-  while the predecessor is still pending is explicitly denied** (no frozen/admission
-  role is free), keeps the successor recording with its rows and reservations
-  intact, and is reported with its own outcome (`queue_full` / `storage_denied`)
-  rather than queued silently or dropped after acceptance.
+- Declare the successor capacity explicitly and split it by direction:
+  **START capacity requires the live role to be free; STOP capacity requires the
+  deferred/frozen role to be free.** A pending predecessor therefore must not block
+  a successor **start**, and must block a successor **stop** while it owns the sole
+  deferred role. The successor whose stop is denied remains live and completely
+  intact until a later stop request succeeds. Increment B supports **depth 2 in
+  capture lifecycle, not depth 2 in deferred-stop queueing**: one finalizing
+  predecessor plus one independently recording successor; it does not permit two
+  simultaneously deferred capture intervals. The supported sequence is:
+
+  ```text
+  A recording
+  -> stop A                      A owns the frozen/deferred role
+  B start                        admitted into the live role
+  B recording                    B events accepted exactly
+  B stop while A owns frozen     denied: queue/capacity full
+                                 B remains the live recording interval; no events,
+                                 notes, reservations or stop descriptor consumed
+  A retires                      frozen role becomes available
+  B's subsequent stop request    admitted; B transfers into the frozen role exactly
+                                 once; the live role becomes available again
+  C start                        now legal
+  ```
+
+  A denied stop reports its own explicit outcome (`queue_full` /
+  `storage_denied`) rather than being queued silently or dropped after acceptance.
 - Keep a successor's ingress bound to the **live** staging role and the live
   interval's identity/routing/preview for its whole life; a predecessor's finalization
   resolves only against its own receipts (sealed raw range, pending changes, preview,
@@ -60,12 +78,15 @@ and its deeper capacity is a follow-up, not a silent assumption.
 
 ## Open decisions (must be resolved before implementation)
 
-- **The three-interval reproducer vs. the declared capacity.** Recommended: re-scope
-  it to the supported envelope (A deferred, B start admitted, B capture exact, B stop
-  explicitly denied and still recording, the denied C press identified as the same
-  live interval's stop) and move the three-deep "A and B remain queued" expectation
-  to a follow-up capacity change. Expanding this change to N-job queuing instead
-  contradicts the agreed non-goals. See `design.md` Open Question 1.
+- **The three-interval reproducer vs. the declared capacity — RESOLVED (re-scope).**
+  `test_button_a_three_intervals_accept_notes_with_service_paused` is renamed to
+  state its actual contract,
+  `test_button_a_successor_stop_denied_until_deferred_role_available`, and asserts
+  the supported sequence above: A deferred, B start admitted, B capture exact, B stop
+  **denied and non-destructive**, then B's subsequent stop admitted once A retires,
+  after which C may start. The original three-deep "A and B remain queued" scenario
+  is kept as a documented **follow-up capacity** test/spec (N-job deferred queueing),
+  not as a skipped red case in the current suite. See `design.md` D2.
 
 ## Capabilities
 

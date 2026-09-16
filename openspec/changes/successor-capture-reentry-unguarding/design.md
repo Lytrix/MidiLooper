@@ -80,34 +80,38 @@ already owns a distinct live interval, and each step flips one reproducer withou
 unguarding two layers at once. Alternative considered: remove all three together —
 rejected because a failure would not identify which invariant is missing.
 
-**D2 — Capacity: one admitted deferred predecessor plus one live successor per
-track.**
-Starting the successor while the predecessor finalizes is permitted. **Stopping that
-successor requires a free frozen/admission role**: if the predecessor has not
-retired, a successor stop is explicitly denied without consuming, freezing,
-clearing or corrupting the live successor (it keeps recording, keeps its rows, and
-keeps its reservations). This is what the two staging roles and the single
-`captureStopOwner` support, and it implies the supported envelope:
+**D2 — Capacity is directional: START needs the live role, STOP needs the deferred
+role.**
+Increment B supports **depth 2 in capture lifecycle, not depth 2 in deferred-stop
+queueing**: one finalizing predecessor plus one independently recording successor;
+two simultaneously deferred capture intervals are not supported here. A pending
+predecessor therefore must not block a successor **start**, and must block a
+successor **stop** while it owns the sole frozen/deferred role.
 
 ```text
 A recording
-A stop            -> A deferred (frozen role = A)
-B start           -> admitted (B writes the live role)
-B capture         -> accepted
-B stop            -> DENIED while A is pending (no frozen role available)
-A retires         -> frozen role freed
-B stop            -> admitted
+-> stop A                      A owns the frozen/deferred role
+B start                        admitted into the live role
+B recording                    B events accepted exactly
+B stop while A owns frozen     denied: queue/capacity full
+                               B remains the live recording interval; no events,
+                               notes, reservations or stop descriptor consumed
+A retires                      frozen role becomes available
+B's subsequent stop request    admitted; B transfers into the frozen role exactly
+                               once; the live role becomes available again
+C start                        now legal
 ```
 
-A further interval cannot start while B still captures, because one track has one
-live capture interval. Capacity failure is explicit (`queue_full` from the ring tail
-or `storage_denied` from staging/admission, surfaced as the successor-stop denial)
-and non-destructive. Alternative considered: reserve a third and fourth staging role
-to admit C and D before A drains — rejected for this change, because it is new
-ownership work (per-role frozen generations, an N-job drain order, a PSRAM
-admission measurement) and the parent plan already sanctions capacity-limited
-denial. **The three-interval reproducer depends on that deferred alternative** (see
-Open Questions).
+The denial is explicit (`queue_full` from the ring tail or `storage_denied` from
+staging/admission) and **non-destructive**: B's event count, pending notes,
+reservation/NoteId identity, capture extent, preview state and interval identity are
+unchanged across it, no stop descriptor is created for B, and B keeps recording.
+When capacity frees, the *same* interval's subsequent stop request transfers B
+exactly once, and the finalized B output equals the accepted B input exactly.
+Alternative considered: reserve a third and fourth admission role so C and D can be
+admitted before A drains — deferred to a follow-up capacity change (per-role frozen
+generations, an N-job drain order, and a PSRAM admission measurement), which owns the
+original three-deep reproducer scenario.
 
 **D3 — Admission predicates ask the semantic question; deferred work is not itself a
 live-ingress exclusion.**
@@ -191,16 +195,12 @@ capture path.
   RAM1/PSRAM admissions should be unchanged; this must still be confirmed on the
   device, since static build success does not prove external-pool or heap headroom.
 
-## Open Questions
+## Resolved review questions
 
-1. **The three-interval reproducer (blocking implementation).** Confirm one of:
-   - **(a) Re-scope it to the supported envelope (recommended):** assert A deferred,
-     B start admitted, B capture exact, **B stop explicitly denied while A pends (B
-     keeps recording)**, and the denied C press named as the same live interval's
-     stop rather than a silent start; the three-deep "A and B remain queued" case
-     becomes an acceptance case of the follow-up capacity change. This keeps the
-     parent change's public reentry evidence honest at two deferred intervals'
-     worth of nothing, i.e. one deferred + one live.
-   - **(b) Expand this change to N-job queuing:** add admission roles for a second
-     frozen job, multi-job FIFO drain order, and their PSRAM admission measurement.
-     This contradicts the agreed non-goal and would make this a much larger change.
+1. **The three-interval reproducer — resolved: re-scope (Option 1).** The test is
+   renamed to `test_button_a_successor_stop_denied_until_deferred_role_available` and
+   asserts the D2 sequence, including the non-destructive denial and the
+   exactly-once transfer of the same interval after A retires. The original
+   three-deep "A and B remain queued" expectation becomes a documented follow-up
+   capacity case (N-job deferred queueing) rather than a skipped red test. This
+   change does **not** expand into N-job queuing.

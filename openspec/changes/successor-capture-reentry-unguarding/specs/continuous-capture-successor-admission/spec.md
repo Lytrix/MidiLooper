@@ -31,9 +31,13 @@ input arrives and SHALL NOT be substituted with a later start.
 
 ### Requirement: Successor admission capacity is declared and explicit
 
-The system SHALL declare its successor admission capacity per track — one admitted
-deferred predecessor plus one live successor interval — and SHALL deny, explicitly
-and observably, any operation that exceeds it. A denied operation SHALL leave every
+The system SHALL declare its successor admission capacity per track and split it by
+direction: **starting** a successor requires the live admission role to be free, and
+**stopping** an interval requires the deferred/frozen admission role to be free. The
+supported capacity is one finalizing predecessor plus one independently recording
+successor; two simultaneously deferred capture intervals are not supported. A
+pending predecessor SHALL NOT block a successor start, and SHALL block a successor
+stop while it owns the sole deferred role. A denied operation SHALL leave every
 previously accepted interval intact, and no press SHALL be queued silently, dropped
 after acceptance, or reported as ordinary latency.
 
@@ -47,22 +51,27 @@ after acceptance, or reported as ordinary latency.
 
 - **WHEN** the live successor is stopped while the deferred predecessor still owns
   the frozen admission role
-- **THEN** the stop is refused with an explicit exhaustion outcome
-- **AND** the successor keeps recording, keeps its captured rows, reservations,
-  pending changes and preview, and is not frozen, cleared or truncated
+- **THEN** the stop is refused with an explicit exhaustion outcome and no stop
+  descriptor is created for the successor
+- **AND** the successor remains the live recording interval and keeps recording
+- **AND** its event count, pending notes, reservation/NoteId identity, capture
+  extent, preview state and interval identity are unchanged across the denial
 
-#### Scenario: A further interval cannot start while a successor records
+#### Scenario: The same interval transfers once capacity frees
 
-- **WHEN** a start is requested on a track whose live successor is still capturing
-- **THEN** it resolves as that live interval's own stop/start semantics rather than
-  silently producing a second live interval
+- **WHEN** the predecessor's finalization retires and releases its frozen role, and
+  the still-live successor is stopped again
+- **THEN** that stop is admitted, the same interval transfers into the deferred role
+  exactly once, and the live role becomes available
+- **AND** the finalized successor output equals the accepted successor input exactly,
+  with no event duplicated or dropped by the earlier denial
 
-#### Scenario: Capacity frees after finalization
+#### Scenario: A further interval starts only after the successor transfers
 
-- **WHEN** the predecessor's finalization retires and releases its frozen staging
-  role
-- **THEN** the successor's stop is admitted again without requiring transport stop or
-  a slot reload
+- **WHEN** a start is requested while the successor is still the live interval
+- **THEN** it is not admitted as a second live interval
+- **AND** once the successor has transferred to the deferred role, a subsequent start
+  is admitted
 
 ### Requirement: Interval ownership survives concurrent finalization
 
@@ -105,6 +114,13 @@ interval SHALL retire without publishing an audible successor window rather than
 selecting a window for a source it did not succeed. Transport Stop at any
 finalization phase SHALL likewise preserve accepted data and SHALL NOT publish a
 stale playback window.
+
+#### Scenario: Capacity denial is distinguishable from latency
+
+- **WHEN** a stop is denied because the deferred role is occupied
+- **THEN** the denial is observable as its own outcome rather than as an absent or
+  delayed result
+- **AND** the interval continues recording in the meantime
 
 #### Scenario: A publication supersedes the recorded predecessor
 
