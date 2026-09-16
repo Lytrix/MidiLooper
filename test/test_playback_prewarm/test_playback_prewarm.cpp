@@ -5011,7 +5011,11 @@ void test_bridge_keeps_open_note_closure_until_changed_pair_next_cycle() {
   TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
   TEST_ASSERT_FALSE(stop.pending);
   TEST_ASSERT_FALSE(loop.hasOverdubSession());
-  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  // The receipt ring gate is a free slot, not an unconsumed singleton: the
+  // handoff queued exactly one receipt and remains open for a successor.
+  TEST_ASSERT_TRUE(loop.hasPendingSessionExitReceipt());
+  TEST_ASSERT_EQUAL(1, loop.sessionExitReceiptCount());
+  TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
   TEST_ASSERT_TRUE(runtime.ledger.isActive(1, 60));
   TEST_ASSERT_EQUAL_PTR(stream, runtime.prepareFullLoopBridgeStream(bridge.source, 768, 15));
   TEST_ASSERT_EQUAL_UINT16(playbackIndex, stream->playbackIndex);
@@ -5961,6 +5965,44 @@ void test_shared_raw_preparation_rotates_then_returns_only_after_final_binding()
   TEST_ASSERT_FALSE(set.views[life.current].rawCoveragePrepared);
 }
 
+/// The session-exit receipt is a ring, not a singleton: a successor session is
+/// gated by a *free slot*, never by an unconsumed publisher turn, and the idle
+/// publisher drains the oldest receipt first.
+void test_session_exit_receipt_ring_is_fifo_and_not_serialized() {
+  Loop loop;
+  loop.loopLengthTicks = 768;
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  TEST_ASSERT_FALSE(loop.hasPendingSessionExitReceipt());
+  TEST_ASSERT_EQUAL(0, loop.sessionExitReceiptCount());
+
+  const CommitReason reasons[Loop::kSessionExitReceiptCapacity] = {
+      CommitReason::OverdubStop, CommitReason::OverdubStopToStopped,
+      CommitReason::OverdubStop, CommitReason::OverdubStopToStopped};
+  for (size_t i = 0; i < Loop::kSessionExitReceiptCapacity; ++i) {
+    loop.openOverdubSession(static_cast<uint32_t>(i));
+    // The old singleton refused this once a receipt was pending.
+    TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
+    TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(reasons[i]));
+    TEST_ASSERT_EQUAL(i + 1, loop.sessionExitReceiptCount());
+    loop.closeOverdubSession();
+  }
+
+  // Capacity is a free-slot gate: the next handoff is refused explicitly and the
+  // queued receipts stay intact.
+  loop.openOverdubSession(0);
+  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  TEST_ASSERT_FALSE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStop));
+  TEST_ASSERT_EQUAL(Loop::kSessionExitReceiptCapacity, loop.sessionExitReceiptCount());
+
+  // FIFO order: index 0 is the oldest receipt handed off.
+  for (size_t i = 0; i < Loop::kSessionExitReceiptCapacity; ++i) {
+    const SessionExitSnapshotHandoff* receipt = loop.sessionExitReceiptAt(i);
+    TEST_ASSERT_NOT_NULL(receipt);
+    TEST_ASSERT_EQUAL(static_cast<int>(reasons[i]), static_cast<int>(receipt->reason));
+  }
+  TEST_ASSERT_NULL(loop.sessionExitReceiptAt(Loop::kSessionExitReceiptCapacity));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_shared_raw_preparation_rotates_then_returns_only_after_final_binding);
@@ -6127,5 +6169,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_continuous_prefix_retains_transferred_tail);
   RUN_TEST(test_continuous_prefix_preserves_completed_work_when_append_interrupts_read);
   RUN_TEST(test_maximum_frozen_capture_has_a_declared_stop_budget);
+  RUN_TEST(test_session_exit_receipt_ring_is_fifo_and_not_serialized);
   return UNITY_END();
 }

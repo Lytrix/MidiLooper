@@ -1,5 +1,29 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 session-exit handoff receipt ring
+(resumable-midi-boundary-playback-maintenance).** The session-exit
+`SessionExitSnapshotHandoff` receipt is now a Loop-owned FIFO ring of
+`kSessionExitReceiptCapacity = 4` (external-memory-first, cold-prewarmed by
+`Loop::prewarmSessionExitSnapshotHandoff()`), replacing the single-slot unique
+pointer. This closes "Finding 2" of the deferred-stop receipt audit: the receipt
+outlives the stop job, so it cannot be job-owned. `canHandoffSessionExitSnapshot()`
+is now a **free-slot** gate; "one receipt per open session" is enforced inside
+`handoffSessionExitSnapshot()` by `sessionExitHandedOff_` (set on handoff, cleared by
+`openOverdubSession()`), so a successor session is never serialized behind an
+unconsumed publisher turn while a repeat handoff for the same session is refused. The
+idle publisher consumes the oldest receipt one per turn (retaining it when
+construction is disallowed), and playback's stale-root overlay folds every pending
+receipt (passes and companion ids) rather than one. New native
+`test_session_exit_receipt_ring_is_fifo_and_not_serialized`; the stale
+"unconsumed receipt closes the gate" assertions in `test_playback_prewarm` and
+`test_loop_take_survival` were rewritten to the ring contract. Native:
+`test_playback_prewarm` 165/165, full suite 2,189 cases — 2,184 passed, 1 skipped, the
+same three intentional public-reentry failures; capture-serial builds with 6,752
+bytes RAM1 headroom (13 banks, code 425,208). No new boot allocation, so the increment
+A/B device memory check (build `91e6b38c…`) still covers this slice. Remaining in 2.3:
+prepared-companion history qualification, causal predecessor/source identity, then
+successor-capture unguarding in a separate change. Task 2.3 remains unchecked.
+
 **2026-09-16 task 2.3 increments A/B boot abort — ROOT-CAUSED, FIXED, device-verified.**
 The memory check found the increment A/B firmware never reached a running sketch
 (`a7f10733…` emitted only `boot_reset,crash=1` before the USB port dropped; the

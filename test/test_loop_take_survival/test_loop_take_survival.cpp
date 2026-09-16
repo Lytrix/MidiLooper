@@ -1134,16 +1134,21 @@ void test_prepared_stop_handoff_preserves_restart_before_and_after_publication()
   PreparedCapturePassTransfer transfer{};
   TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transfer));
   TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
-  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  // The slot stays free for a successor, but one open session hands off once:
+  // the handoff consumed its identities, so a repeat must be refused.
+  TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
   TEST_ASSERT_FALSE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
+  TEST_ASSERT_EQUAL(1, loop.sessionExitReceiptCount());
   loop.completePreparedCapturePassDeferredCleanup();
   loop.closeOverdubSession();
   TEST_ASSERT_FALSE(loop.hasOverdubSession());
   TEST_ASSERT_TRUE(loop.pendingSnapshotSessionExitQueued());
   TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
-  // No idle queue assembly is permitted in a construction-disabled turn.
+  // No idle queue assembly is permitted in a construction-disabled turn, and the
+  // unconsumed receipt must not close the ring for the next session.
   TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, false));
-  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  TEST_ASSERT_TRUE(loop.hasPendingSessionExitReceipt());
+  TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
   SessionMidiEventVec events;
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(events, 0, 768));
   TEST_ASSERT_EQUAL(1, countNoteOns(events, 60));

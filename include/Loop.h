@@ -815,10 +815,22 @@ struct Loop {
   bool tryPublishSessionExitSnapshot(CommitReason reason,
                                      const EditPassIdList& companionIds = {});
   /// Queue session-exit snapshot work without constructing. Safe on the stop path.
-  // Cold prewarm reserves the receipt; the stopping handoff only swaps ownership.
+  // Cold prewarm reserves the receipt ring; the stopping handoff only swaps ownership.
   bool prewarmSessionExitSnapshotHandoff();
   bool canHandoffSessionExitSnapshot() const;
   bool handoffSessionExitSnapshot(CommitReason reason);
+  /// FIFO of session-exit receipts. Sized to the stop-job ring so a successor
+  /// session is never serialized behind an unconsumed publisher turn. Index 0 is
+  /// the oldest pending receipt; the idle publisher consumes that one per turn.
+  /// The gate is a free slot; one receipt per open session is enforced by the
+  /// handoff itself, which consumes the session identities.
+  static constexpr size_t kSessionExitReceiptCapacity = 4;
+  size_t sessionExitReceiptCount() const { return sessionExitReceiptCount_; }
+  const SessionExitSnapshotHandoff* sessionExitReceiptAt(size_t index) const;
+  const SessionExitSnapshotHandoff* oldestPendingSessionExitReceipt() const {
+    return sessionExitReceiptAt(0);
+  }
+  bool hasPendingSessionExitReceipt() const { return sessionExitReceiptCount_ != 0; }
   bool queueSessionExitSnapshot(CommitReason reason, const EditPassIdList& companionIds = {});
   /// OpenSpec 5.1 Pin A: bind deferred after-root attach to this GUS entry id
   /// (`UndoEntryId`; 0 clears). No-op when no session-exit pending box exists.
@@ -1145,7 +1157,19 @@ struct Loop {
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
   std::unique_ptr<PublishedSnapshotBox> publishedSnapshotBox_;
   std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
-  std::unique_ptr<SessionExitSnapshotHandoff> sessionExitSnapshotHandoff_;
+  /// Externally allocated ring of session-exit receipts; the type stays
+  /// incomplete here, so the deleter is defined beside the box definition.
+  struct SessionExitReceiptsDeleter {
+    void operator()(SessionExitSnapshotHandoff* receipts) const;
+  };
+  std::unique_ptr<SessionExitSnapshotHandoff[], SessionExitReceiptsDeleter>
+      sessionExitReceipts_;
+  size_t sessionExitReceiptHead_ = 0;
+  size_t sessionExitReceiptCount_ = 0;
+  /// One receipt per open session: the handoff swaps the session identities out,
+  /// so a second handoff for the same session would queue an empty successor.
+  /// Cleared by `openOverdubSession`.
+  bool sessionExitHandedOff_ = false;
   uint64_t pendingSnapshotCompanionGeneration_ = 0; // Clear/swap ABA guard; appends use size.
 #if defined(PIO_UNIT_TEST_NATIVE)
   size_t snapshotFragmentFailAfterUnitsForTest_ = static_cast<size_t>(-1);
