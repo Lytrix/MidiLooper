@@ -590,6 +590,33 @@ void test_ineligible_stored_verification_queue_keeps_pending_dump() {
   TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
 }
 
+/// The deferred overdub-stop completion is the normal commit route for a stop during
+/// OVERDUBBING (both destinations share this completion). It must request the stored-MIDI
+/// verification dump exactly like the synchronous `commitCaptureForStop(OverdubStop*, ...)`
+/// fallback, otherwise the SEVT rows are never emitted (`sevt-diag-stop` capture had zero
+/// `stored_verify` markers despite a completed stop grain). The STOPPED destination cannot be
+/// driven to completion natively (it calls `silenceTrackMidiOutput`), so the shared completion
+/// is asserted on the PLAYING destination.
+void test_deferred_overdub_stop_completion_queues_stored_verification() {
+  Track& track = preparePlayingTrack();
+  track.setDeferredStoredVerificationArmedForTest(true);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.deferredStoredVerificationPendingForTest());
+
+  for (unsigned i = 0; i < 10000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE_MESSAGE(
+      track.deferredStoredVerificationPendingForTest(),
+      "a completed deferred overdub stop must queue the stored-MIDI verification dump");
+  TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_first_interval_uses_production_routes_and_freezes_at_punch_out);
@@ -611,5 +638,6 @@ int main() {
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);
   RUN_TEST(test_ineligible_stored_verification_queue_keeps_pending_dump);
+  RUN_TEST(test_deferred_overdub_stop_completion_queues_stored_verification);
   return UNITY_END();
 }

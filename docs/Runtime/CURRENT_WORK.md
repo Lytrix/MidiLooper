@@ -35,13 +35,31 @@ drain_reset_heap|drain_reset_no_events|drain_emit_start|drain_complete`) and run
   overdubbing. `stopPlaying()` re-arms and `rearmDeferredStoredMidiVerification()` calls the
   queue. That path is why the good run scored SEVT=511 and why runs that stop *during*
   overdubbing score zero.
-- **Proposed narrow fix (needs approval — outside the landed #2 scope):** queue the stored-MIDI
-  verification from the deferred overdub-stop completion, at the same point the synchronous
-  path queues it (the `Track`-side `processDeferredOverdubStopGrain` / `completeDeferredCleanup`
-  success for an `OverdubStop*` reason), so both commit routes have one owner.
-- **Temporary instrumentation is committed separately and is still in the tree** alongside
-  temporary C (host advisory gate). Remove both together once the SEVT gate is restored to
-  required after a deterministic device rerun.
+- **Fix landed (was the re-scoped #1):** `Track::processDeferredOverdubStopGrain` now calls
+  `queueDeferredStoredMidiVerification()` immediately after a successful
+  `TrackPreparedStopCommit::completeDeferredCleanup`, so the deferred completion requests the
+  dump at the same point the synchronous `finalizeCommitSideEffects` route does. One owner per
+  commit route; the non-deferred fallback is untouched. Native regression
+  `test_deferred_overdub_stop_completion_queues_stored_verification` in
+  `test_continuous_capture` fails before the fix and passes after (the STOPPED destination
+  itself cannot be driven to completion natively because it calls `silenceTrackMidiOutput`, so
+  the shared completion is asserted on the PLAYING destination).
+- **Device verification (deterministic, sanctioned stop-reproduction recipe
+  `scripts/hitl_stop_interruption.py`):** SEVT=98 (`captures/sevt-fix-verify1`) and SEVT=196
+  (`captures/sevt-fix-verify2`), each with `queue_accepted` -> `drain_emit_start` ->
+  `drain_complete`. Verify2 also shows the one-shot contract intact: a second cycle
+  re-arms/queues/emits, and the following redundant stop logs `queue_skip_unarmed` without
+  destroying a dump.
+- **The plain canonical `--preset base` still cannot demonstrate SEVT, for host reasons only:**
+  on an empty slot its Loop-row select starts recording and the following clear wipes it
+  (`skipped_empty`, `captures/sevt-fix-verify4`), and on a seeded slot it aborts at the
+  overdub-stop press and tears the capture down
+  (`captures/sevt-fix-rerun10`). Restoring `sevt_gate_required = True` therefore still needs
+  either a canonical host that observes past the stop press, or an accepted decision that the
+  stop-interruption recipe is the SEVT gate.
+- **Temporary artifacts still in the tree (remove together after the gate is restored):**
+  temporary C (host advisory SEVT gate) and the committed session-capture SEVT decision
+  markers `bf8fb6a4`.
 
 **2026-09-16 stored-MIDI verification lifecycle — bugfix #2 landed, #1 frozen (SPLIT gate).**
 RCA for the missing `VERIFY stored overdub span (SEVT ticks)` produced two independent

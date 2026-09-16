@@ -531,6 +531,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   const PendingStopDestination destination = stop.destination;
   if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop))
     return false;
+  // The deferred completion is the normal route for an overdub stop (both destinations).
+  // The synchronous fallback `commitCaptureForStop(OverdubStopToStopped, ...)` requests the
+  // stored-MIDI verification from `finalizeCommitSideEffects`; mirror it here so both commit
+  // routes request the dump from the one place that owns the overdub-stop commit. Without
+  // this the transport-stop-during-overdub path never queues the dump at all (capture
+  // `sevt-diag-stop` showed zero `stored_verify` markers despite a completed stop grain).
+  queueDeferredStoredMidiVerification();
   captureStopJob().owner = nullptr;
   captureStopJob().loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
