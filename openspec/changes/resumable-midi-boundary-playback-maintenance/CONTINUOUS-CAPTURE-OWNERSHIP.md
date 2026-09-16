@@ -53,9 +53,14 @@ remains incomplete and the production admission guards remain necessary.
   continuation and recycle receipt. It must refer to the queue head's interval;
   completing it must not unconditionally transition newer live capture to PLAYING.
 - `Loop::pendingCapturePass_`, pending changes and prepared companion history:
-  currently tied to the active Loop/capture session. Borrowing shared worker
-  scratch must be explicitly job-qualified; successor semantic resolution must
-  wait for its causal predecessor. Range storage alone does not establish this.
+  currently tied to the active Loop/capture session. **Pending note changes are
+  now job-owned** (2026-09-16, see below): swapped into `CaptureStopJob.pendingChanges`
+  at admission with a job-identified read borrow for display, so the worker
+  resolves against its own set while a successor keeps an independent prewarmed
+  set. `pendingCapturePass_` and the prepared companion history are still tied to
+  the active session; borrowing shared worker scratch must be explicitly
+  job-qualified and successor semantic resolution must wait for its causal
+  predecessor.
 - Overdub session undo, Track's before snapshot, session-exit snapshot handoff
   and prepared transfer receipts: retain originating interval/session/slot until
   their actual consumer accepts them. No old-job cleanup may consume a newer
@@ -858,3 +863,42 @@ padding 152, local headroom **6,752**; RAM2 free 472,928.
 **Still open:** per-job session/preview/undo/snapshot receipts, causal predecessor
 and source identity, the three public reentry cases, and unguarding successor
 capture (explicitly out of scope for this change). Task 2.3 stays unchecked.
+
+
+## Job-owned pending note changes — checkpoint, 2026-09-16
+
+First piece of the session/preview/undo receipt slice, and a concrete hazard the
+worker previously had: `beginFrozenCanonicalTail` and the admission-sizing path
+read `Loop::pendingNoteChanges()`, the *live* session's Add/Shorten/Hide intents.
+A successor interval would have appended to that same vector while the predecessor
+finalized.
+
+- `CaptureStopJob` owns `PendingNoteChangeVec pendingChanges`. At admission the
+  live set is **swapped** into the job (constant work) and the live session keeps
+  the job's prewarmed empty vector, so a successor interval starts with an
+  independent set and neither the swap nor the next interval allocates.
+  `prewarmCaptureStopJobs` reserves `kRecordsPerBridge` capacity per descriptor.
+- `Loop::pendingNoteChanges()` is now the single readable accessor: it returns the
+  job's owned set while a job-identified borrow is bound, else the live member.
+  Writers keep using the live member directly, so a successor's edits can never
+  enter the predecessor's set.
+- The borrow is job-identified and released with the job
+  (`releasePendingNoteChangesBorrow(&job.admission)`), matching the sealed-range
+  borrow rule: a stale job cannot drop a successor's binding.
+- The worker now calls
+  `beginFrozenCanonicalTail(frozenSource, job.pendingChanges, targetSource)`, so
+  canonical-tail resolution uses the interval's own intents.
+
+**Verification:** new native `test_stop_job_owns_pending_note_changes` (production
+route: a real Shorten intent moves to the job, the readable accessor is the
+borrowed job copy, and after cleanup the live set is independent and empty) and
+`test_pending_change_borrow_release_is_owner_identified`. The existing
+`test_overdub_shortens_record_pass_note_and_completes_stop` now exercises the
+job-owned path end to end. `test_continuous_capture` 26 pass with the same three
+intentional public-reentry failures; full native 2,184 cases — 2,179 passed, one
+skipped, the same three; `teensy41-capture-serial` builds with 6,752 bytes RAM1
+headroom (unchanged).
+
+**Still open in this slice:** `capturePreview` ownership across the stop (the
+worker consumes it at DeferredCleanup), the overdub session/undo before-snapshot,
+the session-exit snapshot handoff receipt, and the prepared-companion history.
