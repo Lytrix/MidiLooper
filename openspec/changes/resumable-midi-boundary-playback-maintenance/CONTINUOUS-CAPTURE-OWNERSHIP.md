@@ -1136,3 +1136,27 @@ still unwired (DEC-063), so trim pressure is measured without it — that can on
 trim at least as much as the fully wired policy would. The STOPPED/empty routes
 still publish no protected entry because they skip companion preparation; the
 legacy fault-fallback path keeps its cold `pushOverdubSessionOnStop`.
+
+### DEVICE BLOCKER — increments A/B do not boot (2026-09-16)
+
+**Do not flash the branch tip to hardware.** The memory check found that the
+increment A/B firmware does not boot, and the device had to be restored from
+commit `82a42221`.
+
+- Build `a7f10733…` (increment B, eager 512-entry per-track undo-stack prewarm):
+  uploaded; the device emitted only `#CAP,3534734,DIAG,boot_reset,crash=1` before
+  the USB serial port dropped mid-boot.
+- Build `8c03dcfc…` (same code, prewarm bounded to 32 entries): uploaded; the
+  device again produced nothing, and the USB serial port then disappeared
+  entirely. So the prewarm **size** is not the cause on its own.
+- Recovery: commit `82a42221` rebuilt and flashed; the device boots and streams
+  28,108 bytes with the reference prewarm samples
+  (`captures/task23-recover-verify/result.json`). Its `crash=1` is the retained
+  report from the earlier increment-B faults.
+
+The cause is therefore somewhere between `82a42221` and `8bef8ae8`
+(pending-note-change ownership, capture-preview ownership, deferred undo
+collection/publication) and is **not isolated**. The next step is a hardware
+bisect, one commit at a time, confirming boot and stream after each; it needs
+device access and a PROGRAM press whenever USB drops. Until then increments A/B
+are device-unverified and must be treated as not flashable.
