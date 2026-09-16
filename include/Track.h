@@ -169,6 +169,13 @@ public:
   /// SESSION_CAPTURE: re-arm the one-shot dump so the selected track’s transport STOPPED
   /// can emit effective / frame after an earlier overdub stop consumed the boot arm.
   void rearmDeferredStoredMidiVerification();
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Native observability for the stored-MIDI verification queue lifecycle.
+  bool deferredStoredVerificationPendingForTest() const;
+  bool deferredStoredVerificationArmedForTest() const;
+  void setDeferredStoredVerificationArmedForTest(bool armed);
+  uint32_t deferredStoredVerificationOpportunityCountForTest() const;
+#endif
   /// Idle maintenance: deferred full validate + session REVT flush (non-blocking stop path).
   // Called only by the single selected VisualCache prefix child. Never allocates.
   bool processDeferredCanonicalPrefix();
@@ -455,6 +462,11 @@ private:
   SessionMidiEventVec deferredRecordRevtChunkEvents;
   size_t deferredRecordRevtChunkEventCursor = 0;
   bool deferredStoredVerificationPending = false;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Counts accepted `queueDeferredStoredMidiVerification()` calls (native-only) so
+  /// the pending-survives-redundant-queue regression can assert one opportunity.
+  uint32_t deferredStoredVerificationOpportunityCount = 0;
+#endif
   uint8_t storedNoteCountLoggedMask_ = 0;
   uint8_t deferredStoredVerificationPhase = 0;
   size_t deferredStoredVerificationCursor = 0;

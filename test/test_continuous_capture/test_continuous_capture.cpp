@@ -54,6 +54,7 @@
 #include "../../src/Track/TrackPlaybackWindowBuild.cpp"
 #include "../../src/Track/TrackLoopJamGeometry.cpp"
 #include "../../src/Track/TrackOverdubLifecycle.cpp"
+#include "../../src/Track/TrackDeferredMaintenance.cpp"
 #include "../../src/TrackManager.cpp"
 
 #include "../../src/MidiButtonActions.cpp"
@@ -555,6 +556,40 @@ void test_missing_stop_descriptors_rejects_before_opening_capture() {
 
 #include "off_path_deps.h"
 
+/// Regression for the reset-before-guard defect: a redundant or ineligible
+/// queueDeferredStoredMidiVerification() call must not cancel an already-queued dump.
+/// Production reaches this with two overdub-stop finalize attempts (two
+/// ODUB,stop,prefix_reuse lines); here the two queue attempts are direct.
+void test_redundant_stored_verification_queue_keeps_pending_dump() {
+  Track& track = preparePlayingTrack();
+  track.setDeferredStoredVerificationArmedForTest(true);
+  track.queueDeferredStoredMidiVerification();
+  TEST_ASSERT_TRUE(track.deferredStoredVerificationPendingForTest());
+  TEST_ASSERT_FALSE(track.deferredStoredVerificationArmedForTest());
+  TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
+
+  // Second call with the arm already consumed is ineligible and must be a no-op.
+  track.queueDeferredStoredMidiVerification();
+  TEST_ASSERT_TRUE_MESSAGE(track.deferredStoredVerificationPendingForTest(),
+                           "ineligible queue must not clear a pending dump");
+  TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
+}
+
+/// Ineligible because the loop is not representable (no committed pass): also a no-op.
+void test_ineligible_stored_verification_queue_keeps_pending_dump() {
+  Track& track = preparePlayingTrack();
+  track.setDeferredStoredVerificationArmedForTest(true);
+  track.queueDeferredStoredMidiVerification();
+  TEST_ASSERT_TRUE(track.deferredStoredVerificationPendingForTest());
+
+  track.setDeferredStoredVerificationArmedForTest(true);
+  track.getActiveLoop().loopLengthTicks = 0;
+  track.queueDeferredStoredMidiVerification();
+  TEST_ASSERT_TRUE_MESSAGE(track.deferredStoredVerificationPendingForTest(),
+                           "ineligible (unrepresentable) queue must not clear a pending dump");
+  TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_first_interval_uses_production_routes_and_freezes_at_punch_out);
@@ -574,5 +609,7 @@ int main() {
   RUN_TEST(test_button_a_three_intervals_accept_notes_with_service_paused);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
+  RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);
+  RUN_TEST(test_ineligible_stored_verification_queue_keeps_pending_dump);
   return UNITY_END();
 }

@@ -304,12 +304,15 @@ namespace {
 // Do not skip the dump when the flatten is larger than this — `230400` had 552 SEVT and
 // emitted WRAP=0. Bound work per slice instead.
 
-#if defined(SESSION_CAPTURE)
 // One stored-MIDI verification dump after each queue. Overdub stop consumes the boot arm so
 // later stops stay cheap. Selected-track `stopPlaying` re-arms so occupy HITL can score that
-// loop’s first-STOPPED effective / frame. Leftover tracks in the transport-stop hop do not re-arm.
+// loop's first-STOPPED effective / frame. Leftover tracks in the transport-stop hop do not re-arm.
+//
+// The arm/pending bookkeeping is not SESSION_CAPTURE-only: native tests exercise the queue
+// lifecycle (arm -> eligible queue -> redundant queue) without the emission path.
 bool sStoredMidiVerificationArmed = true;
 
+#if defined(SESSION_CAPTURE)
 void logStoredMidiVerificationArmState(bool armed) {
   Serial.printf("#CAP,DIAG,stored_verify,armed,%u\n", armed ? 1u : 0u);
 }
@@ -510,12 +513,8 @@ TRACK_COLD_MEM void Track::resetDeferredStoredMidiVerification() {
 }
 
 TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
-#if !defined(SESSION_CAPTURE)
-  // Every emission in the drain compiles out without SESSION_CAPTURE; queueing would only buy a
-  // flatten, a wrap-pair scan and a reconstruct that produce nothing.
-  return;
-#else
-  resetDeferredStoredMidiVerification();
+  // Eligibility is evaluated BEFORE any state mutation: an ineligible call (already
+  // consumed arm, empty/uncommitted loop) must not destroy an already-queued dump.
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
     return;
@@ -523,21 +522,43 @@ TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
   if (!sStoredMidiVerificationArmed) {
     return;
   }
+  // Accepted as a new queue operation: replace any prior deferred verification state.
+  resetDeferredStoredMidiVerification();
   deferredStoredVerificationPending = true;
   sStoredMidiVerificationArmed = false;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  ++deferredStoredVerificationOpportunityCount;
+#endif
+#if defined(SESSION_CAPTURE)
   logStoredMidiVerificationArmState(false);
 #endif
 }
 
 TRACK_COLD_MEM void Track::rearmDeferredStoredMidiVerification() {
-#if !defined(SESSION_CAPTURE)
-  return;
-#else
   sStoredMidiVerificationArmed = true;
+#if defined(SESSION_CAPTURE)
   logStoredMidiVerificationArmState(true);
-  queueDeferredStoredMidiVerification();
 #endif
+  queueDeferredStoredMidiVerification();
 }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+bool Track::deferredStoredVerificationPendingForTest() const {
+  return deferredStoredVerificationPending;
+}
+
+void Track::setDeferredStoredVerificationArmedForTest(bool armed) {
+  sStoredMidiVerificationArmed = armed;
+}
+
+bool Track::deferredStoredVerificationArmedForTest() const {
+  return sStoredMidiVerificationArmed;
+}
+
+uint32_t Track::deferredStoredVerificationOpportunityCountForTest() const {
+  return deferredStoredVerificationOpportunityCount;
+}
+#endif
 
 TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEventsPerSlice) {
 #if !defined(SESSION_CAPTURE)
