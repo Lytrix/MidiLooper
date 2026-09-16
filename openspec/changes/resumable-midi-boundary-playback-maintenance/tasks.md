@@ -10,6 +10,21 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 causal predecessor/source identity — increment A (partial 2.3):** the audit
+found a deferred stop re-derives its predecessor source live at every consumer turn
+(admission's `baseSource` is used for credit sizing and discarded; the worker recomputes
+`baseSource`/`targetSource`/`frozenSource`/`currentSource`; the atomic commit recomputes
+`base`), so a successor's publication could change what a predecessor resolves against.
+`CaptureStopJob` now records `causalBase`, pins its root with `causalBaseSnapshot`, and
+sets `causalBaseRecorded`; admission resolves and pins it before the raw-range ownership
+transfer and denies `causal_base_unavailable` when a non-null published identity cannot
+be pinned, and retirement clears all three. Increment A records only — the consumers
+still read live state — so it changes no behavior; increment B switches them over and
+decides the epoch-qualified publication rule (including STOPPED recovery). New native
+`test_deferred_stop_records_and_pins_its_causal_predecessor_source`; full native 2,191
+cases — 2,186 passed, 1 skipped, the same three intentional public-reentry failures;
+capture-serial builds with 6,752 bytes RAM1 headroom.
+
 **2026-09-16 prepared companion history interval qualification (partial 2.3):** the
 Loop-owned prepared companion history is now qualified by the admitted interval that
 owns it. The identity is `PendingStopAdmission::intervalToken()` (frozenGeneration +

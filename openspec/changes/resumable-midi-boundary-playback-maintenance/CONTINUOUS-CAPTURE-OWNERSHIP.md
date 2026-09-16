@@ -1282,3 +1282,45 @@ variable cost.
 **Note:** the shared worker scratch item from the ownership list is now closed;
 `pendingCapturePass_` remains session-tied and is the next thing to qualify if a
 second simultaneous job is ever admitted.
+
+## Causal predecessor/source identity — increment A, 2026-09-16
+
+The audit behind this slice found that a deferred stop re-derives its predecessor
+source **live** at every consumer turn:
+
+- `Track::beginDeferredOverdubStop` computes
+  `PlaybackViewSourceIdentity baseSource{loop.playbackRevision, playbackGeneration,
+  loop.publishedSnapshotIdentity()}` for credit sizing only, and throws it away.
+- The worker (`Track::processDeferredOverdubStopGrain`, CanonicalOrder/CanonicalPrefix)
+  recomputes `baseSource`, `targetSource`, `frozenSource` and `currentSource` from the
+  live Loop when the grain runs.
+- `TrackPreparedStopCommit::commitPreparedStop` recomputes
+  `base{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()}`.
+- `TrackPreparedStopCommit::requiresBridgeRefresh` / `advanceAtomicTransfer` compare
+  the live published identity through the runtime's frozen admission.
+
+So a successor interval that published while a predecessor finalized could change
+what the predecessor resolved against. Requirement (f) of task 2.3 — bind successor
+jobs to causal predecessor/source identity and epoch-qualified publication.
+
+**Increment A (landed): the identity is recorded and pinned.** `CaptureStopJob`
+carries `causalBase` (`PlaybackViewSourceIdentity`), `causalBaseSnapshot` (an
+`ImmutableLoopSnapshotRef` that keeps `causalBase.snapshotIdentity` alive), and
+`causalBaseRecorded`. Admission resolves and pins it **before** the raw-range
+ownership transfer and denies with `causal_base_unavailable` if a non-null published
+identity cannot be pinned (the transfer must have no fallible step after it).
+Retirement clears all three so a reused ring descriptor cannot carry a stale
+predecessor. New native
+`test_deferred_stop_records_and_pins_its_causal_predecessor_source`.
+
+**Increment A changes no behavior:** the consumers above still read live state.
+Increment B (next) switches the worker's `baseSource`/`targetSource`/`frozenSource`/
+`currentSource` and the atomic commit's `base` to the recorded identity, and decides
+the epoch-qualified publication rule for the case where the live revision has
+legitimately advanced (the STOPPED-recovery route included). Until then the recorded
+identity is evidence, not authority.
+
+Verification for increment A: full native 2,191 cases — 2,186 passed, 1 skipped, the
+same three intentional public-reentry failures; `teensy41-capture-serial` builds with
+**6,752 bytes** RAM1 headroom (the job descriptor lives in the externally allocated
+ring, so the pinned ref adds no RAM1 variables).
