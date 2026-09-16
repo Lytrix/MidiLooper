@@ -626,7 +626,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     const bool captureRevisionChanged =
         !cacheCold && loop.captureDisplayRevision != liveDisplayCacheCaptureRevision;
     const bool capturePreviewChanged =
-        !cacheCold && loop.capturePreview.revision != liveDisplayCacheCapturePreviewRevision_;
+        !cacheCold && loop.capturePreviewView().revision != liveDisplayCacheCapturePreviewRevision_;
     if (eventsAdded) {
         DIAG_COUNTER_INC(DisplayCaptureEventsAdded);
     }
@@ -649,28 +649,28 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         // Rate-limited Tier-A DIAG when full capture-layer copy runs on a large preview
         // (second-overdub lag investigation).
         constexpr size_t kReplaceCaptureLayerLogThreshold = 256;
-        if (loop.capturePreview.notes.size() >= kReplaceCaptureLayerLogThreshold) {
+        if (loop.capturePreviewView().notes.size() >= kReplaceCaptureLayerLogThreshold) {
             static uint32_t sLastReplaceCaptureLogMs = 0;
             const uint32_t nowMs = millis();
             if (sLastReplaceCaptureLogMs == 0 || (nowMs - sLastReplaceCaptureLogMs) >= 5000u) {
                 sLastReplaceCaptureLogMs = nowMs;
                 DebugSessionCapture::architectureTimingMax(
                     "replaceCaptureLayer",
-                    static_cast<uint32_t>(loop.capturePreview.notes.size()));
+                    static_cast<uint32_t>(loop.capturePreviewView().notes.size()));
             }
         }
 #endif
         syncLiveDisplayComposeCounts();
         resizeLiveDisplayNotesNoGrow(liveDisplayCacheCommittedNoteCount_);
         liveDisplayCacheCommittedNoteCount_ = liveDisplayNotes.size();
-        liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreview.notes.begin(),
-                                loop.capturePreview.notes.end());
-        liveDisplayCacheCaptureNoteCount_ = loop.capturePreview.notes.size();
-        liveDisplayCacheCaptureChangeCount_ = loop.capturePreview.changedNoteIndices.size();
+        liveDisplayNotes.insert(liveDisplayNotes.end(), loop.capturePreviewView().notes.begin(),
+                                loop.capturePreviewView().notes.end());
+        liveDisplayCacheCaptureNoteCount_ = loop.capturePreviewView().notes.size();
+        liveDisplayCacheCaptureChangeCount_ = loop.capturePreviewView().changedNoteIndices.size();
         liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
         liveDisplayCacheCaptureReplacementRevision_ =
-            loop.capturePreview.replacementRevision;
-        liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
+            loop.capturePreviewView().replacementRevision;
+        liveDisplayCacheCapturePreviewRevision_ = loop.capturePreviewView().revision;
         DIAG_TIMING_RECORD(DisplayCaptureReplace, micros() - replaceStartUs);
     };
 
@@ -686,10 +686,10 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
         const uint32_t syncStartUs = micros();
         const bool captureMirrorInvalid =
             liveDisplayCacheCaptureReplacementRevision_ !=
-                loop.capturePreview.replacementRevision ||
-            liveDisplayCacheCaptureNoteCount_ > loop.capturePreview.notes.size() ||
+                loop.capturePreviewView().replacementRevision ||
+            liveDisplayCacheCaptureNoteCount_ > loop.capturePreviewView().notes.size() ||
             liveDisplayCacheCaptureChangeCount_ >
-                loop.capturePreview.changedNoteIndices.size() ||
+                loop.capturePreviewView().changedNoteIndices.size() ||
             liveDisplayCacheCommittedNoteCount_ + liveDisplayCacheCaptureNoteCount_ >
                 liveDisplayCacheBaseNoteCount_ ||
             liveDisplayCacheBaseNoteCount_ > liveDisplayNotes.size();
@@ -702,25 +702,25 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 
         resizeLiveDisplayNotesNoGrow(liveDisplayCacheBaseNoteCount_);
         for (size_t changeIndex = liveDisplayCacheCaptureChangeCount_;
-             changeIndex < loop.capturePreview.changedNoteIndices.size(); ++changeIndex) {
+             changeIndex < loop.capturePreviewView().changedNoteIndices.size(); ++changeIndex) {
             const size_t previewNoteIndex =
-                loop.capturePreview.changedNoteIndices[changeIndex];
+                loop.capturePreviewView().changedNoteIndices[changeIndex];
             if (previewNoteIndex >= liveDisplayCacheCaptureNoteCount_ ||
-                previewNoteIndex >= loop.capturePreview.notes.size()) {
+                previewNoteIndex >= loop.capturePreviewView().notes.size()) {
                 continue;
             }
             liveDisplayNotes[liveDisplayCacheCommittedNoteCount_ + previewNoteIndex] =
-                loop.capturePreview.notes[previewNoteIndex];
+                loop.capturePreviewView().notes[previewNoteIndex];
         }
         liveDisplayNotes.insert(
             liveDisplayNotes.end(),
-            loop.capturePreview.notes.begin() +
+            loop.capturePreviewView().notes.begin() +
                 static_cast<std::ptrdiff_t>(liveDisplayCacheCaptureNoteCount_),
-            loop.capturePreview.notes.end());
-        liveDisplayCacheCaptureNoteCount_ = loop.capturePreview.notes.size();
-        liveDisplayCacheCaptureChangeCount_ = loop.capturePreview.changedNoteIndices.size();
+            loop.capturePreviewView().notes.end());
+        liveDisplayCacheCaptureNoteCount_ = loop.capturePreviewView().notes.size();
+        liveDisplayCacheCaptureChangeCount_ = loop.capturePreviewView().changedNoteIndices.size();
         liveDisplayCacheBaseNoteCount_ = liveDisplayNotes.size();
-        liveDisplayCacheCapturePreviewRevision_ = loop.capturePreview.revision;
+        liveDisplayCacheCapturePreviewRevision_ = loop.capturePreviewView().revision;
         DIAG_TIMING_RECORD(DisplayCaptureSync, micros() - syncStartUs);
     };
 
@@ -840,7 +840,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
     }
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), reuseLastValidFrame, budgetExceeded(),
-        !loop.capturePreview.openNoteIndices.empty());
+        !loop.capturePreviewView().openNoteIndices.empty());
     const bool haveOpenPlayheadTails = applyLiveCaptureTails;
     const bool havePendingPaint =
         track.isOverdubbing() &&
@@ -848,12 +848,12 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
 
     // Stage 1j: compose base stays at capture-preview lengths (open and closed).
     // Playhead tails write the paint copy only.
-    const size_t previewCount = loop.capturePreview.notes.size();
+    const size_t previewCount = loop.capturePreviewView().notes.size();
     for (size_t previewNoteIndex = 0; previewNoteIndex < previewCount; ++previewNoteIndex) {
         const size_t displayNoteIndex = committedDisplayEnd + previewNoteIndex;
         if (displayNoteIndex < liveDisplayCacheBaseNoteCount_ &&
             displayNoteIndex < liveDisplayNotes.size()) {
-            liveDisplayNotes[displayNoteIndex] = loop.capturePreview.notes[previewNoteIndex];
+            liveDisplayNotes[displayNoteIndex] = loop.capturePreviewView().notes[previewNoteIndex];
         }
     }
 
@@ -881,7 +881,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesLiveCa
                 DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
                     track.isRecording(), track.isAudiblePlaybackActive(),
                     track.isOverdubbing());
-            applyCapturePlayheadTails(loop.capturePreview, liveLoopLength, playheadCloseTick,
+            applyCapturePlayheadTails(loop.capturePreviewView(), liveLoopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
             DIAG_TIMING_RECORD(DisplayCaptureTails, micros() - tailsStartUs);

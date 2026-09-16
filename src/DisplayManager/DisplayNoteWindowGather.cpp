@@ -342,7 +342,7 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBa
     if (!captureActive && !loop.hasOverdubSession()) {
       return;
     }
-    for (const NoteUtils::DisplayNote& previewNote : loop.capturePreview.notes) {
+    for (const NoteUtils::DisplayNote& previewNote : loop.capturePreviewView().notes) {
         bool intersectsWindow = false;
         for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
             if (previewNoteIntersectsBar(previewNote, bar, loopLength)) {
@@ -626,7 +626,7 @@ DisplayWindowUtils::DrawSourceGatherKey makeDrawSourceGatherKey(
     key.windowLength = windowLength;
     key.playbackRevision = loop.playbackRevision;
     key.captureDisplayRevision = loop.captureDisplayRevision;
-    key.capturePreviewRevision = loop.capturePreview.revision;
+    key.capturePreviewRevision = loop.capturePreviewView().revision;
     key.visualCacheRevision = loop.visualCache.revision;
     key.publishedSnapshotRevision = loop.publishedSnapshotRevision();
     key.publishedSnapshotIdentity = loop.publishedSnapshotIdentity();
@@ -820,7 +820,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
 
     const bool applyLiveCaptureTails = DisplayWindowUtils::shouldApplyLiveCapturePlayheadTails(
         track.isRecording(), track.isOverdubbing(), false, false,
-        !loop.capturePreview.openNoteIndices.empty());
+        !loop.capturePreviewView().openNoteIndices.empty());
     const bool havePendingPaint = DisplayWindowUtils::shouldPaintPendingDrawSourceRepresentation(
         track.isOverdubbing(), loop.hasPendingNoteChanges(), loop.hasSealedCompanionOverlay());
     const DisplayNoteVec* paintedNotes = &liveDisplayNotes;
@@ -842,7 +842,7 @@ DISP_CAPTURE_MEM const DisplayNoteVec& DisplayManager::resolveDisplayNotesByDraw
                 DisplayWindowUtils::shouldAllowCapturePlayheadWrapContinuation(
                     track.isRecording(), track.isAudiblePlaybackActive(),
                     track.isOverdubbing());
-            applyCapturePlayheadTails(loop.capturePreview, loopLength, playheadCloseTick,
+            applyCapturePlayheadTails(loop.capturePreviewView(), loopLength, playheadCloseTick,
                                       committedDisplayEnd, liveDisplayPendingPaintNotes_,
                                       allowWrapContinuation);
         }

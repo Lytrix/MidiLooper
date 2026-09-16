@@ -813,6 +813,54 @@ void test_pending_change_borrow_release_is_owner_identified() {
   TEST_ASSERT_TRUE(live != &changesB);
 }
 
+/// The capture preview is moved into job ownership at punch-out, so the deferred
+/// cleanup seals this interval's preview even if a successor replaces the live
+/// one. Display readers keep seeing it through the job-identified borrow.
+void test_stop_job_owns_capture_preview() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_TRUE(loop.capturePreview.notes.size() > 0);
+  const size_t previewRows = loop.capturePreview.notes.size();
+
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  auto& job = TrackCaptureStopTestAccess::job(track);
+  // Ownership moved to the job; the display view is the borrowed job preview.
+  TEST_ASSERT_EQUAL(previewRows, job.preview.notes.size());
+  TEST_ASSERT_EQUAL_PTR(&job.preview, &loop.capturePreviewView());
+  TEST_ASSERT_EQUAL(previewRows, loop.capturePreviewView().notes.size());
+
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  // The borrow is retired with the job; the live preview a successor would use is
+  // a different buffer and the job's copy was consumed by the deferred seal.
+  TEST_ASSERT_TRUE(&loop.capturePreviewView() != &job.preview);
+  TEST_ASSERT_TRUE(job.preview.notes.empty());
+}
+
+/// A stale job may not drop a successor job's preview borrow.
+void test_capture_preview_borrow_release_is_owner_identified() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  CapturePreview previewA;
+  CapturePreview previewB;
+  const int ownerA = 1;
+  const int ownerB = 2;
+  TEST_ASSERT_TRUE(loop.borrowCapturePreview(previewA, &ownerA));
+  TEST_ASSERT_TRUE(loop.borrowCapturePreview(previewB, &ownerB));
+  TEST_ASSERT_FALSE(loop.releaseCapturePreviewBorrow(&ownerA));
+  TEST_ASSERT_EQUAL_PTR(&previewB, &loop.capturePreviewView());
+  TEST_ASSERT_TRUE(loop.releaseCapturePreviewBorrow(&ownerB));
+  const CapturePreview* live = &loop.capturePreviewView();
+  TEST_ASSERT_TRUE(live != &previewA);
+  TEST_ASSERT_TRUE(live != &previewB);
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -965,6 +1013,8 @@ int main() {
   RUN_TEST(test_sealed_range_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_owns_pending_note_changes);
   RUN_TEST(test_pending_change_borrow_release_is_owner_identified);
+  RUN_TEST(test_stop_job_owns_capture_preview);
+  RUN_TEST(test_capture_preview_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);

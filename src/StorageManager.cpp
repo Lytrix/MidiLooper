@@ -321,7 +321,7 @@ void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
     loop.nextEventIndex = 0;
     loop.clearEditStateDirty();
     loop.visualCache.clear();
-    loop.capturePreview.clear();
+    loop.capturePreviewView().clear();
     loop.pendingVisualDelta.clear();
     loop.invalidateCaches();
 }

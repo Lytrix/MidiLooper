@@ -50,11 +50,6 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
   for (size_t index = 0; index < CaptureStopJobs::kCapacity; ++index) {
     CaptureStopJob& entry = captureStopJobs_->entries[index];
     if (!entry.rawRange.ready() && !entry.rawRange.reserveTail()) return false;
-    // The successor session must inherit a prewarmed vector after the swap, so
-    // the switch itself and the next interval both stay allocation-free.
-    if (entry.pendingChanges.capacity() < RuntimePlaybackViewConfig::kRecordsPerBridge) {
-      entry.pendingChanges.reserve(RuntimePlaybackViewConfig::kRecordsPerBridge);
-    }
   }
   return true;
 }
@@ -335,6 +330,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   // independent, prewarmed set for a successor interval.
   loop.swapPendingNoteChanges(job.pendingChanges);
   (void)loop.borrowPendingNoteChanges(job.pendingChanges, &job.admission);
+  // Job-owned capture preview: the deferred cleanup seals this interval's preview
+  // even if a successor interval has already replaced the live one.
+  loop.swapCapturePreview(job.preview);
+  (void)loop.borrowCapturePreview(job.preview, &job.admission);
   // Button A closes input at this boundary. The sealed frozen capture owns all
   // remaining canonical/companion work, while the existing prepared playback
   // window remains the active source. Publish PLAYING immediately so the
@@ -632,7 +631,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   const bool ownsTrackState = job.interval == captureInterval_ &&
       job.slot == activeLoopIndex;
   const PendingStopDestination destination = stop.destination;
-  if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop))
+  if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop, job.preview))
     return false;
   // Retire this job's immutable frozen admission rows now that no consumer
   // borrows them. The role then returns to clean ingress ownership on the next
@@ -646,6 +645,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // `sevt-diag-stop` showed zero `stored_verify` markers despite a completed stop grain).
   queueDeferredStoredMidiVerification();
   (void)loop.releasePendingNoteChangesBorrow(&job.admission);
+  (void)loop.releaseCapturePreviewBorrow(&job.admission);
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
