@@ -37,7 +37,7 @@ flowchart TB
 
 | Layer | Question | Child doc |
 |-------|----------|-----------|
-| Authoritative content / storage | What is the authoritative timeline? | [Storage.md](Storage.md) |
+| Authoritative content / storage | What is the authoritative timeline? | [Storage.md](Storage.md); effective-state snapshot in [Snapshots.md](Snapshots.md) |
 | Derived representations | How should data be shaped for consumers? | [DerivedViews.md](DerivedViews.md) |
 | Interval projection | Which part of the timeline matters? | [IntervalProjection.md](IntervalProjection.md) |
 | Consumers | Who reads the result? | [Playback.md](Playback.md), [Display.md](Display.md); analyze and LEDs in [DerivedViews.md](DerivedViews.md) § Consumers |

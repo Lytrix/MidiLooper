@@ -49,6 +49,7 @@ Playback **does not** own storage or display representations.
 ## Related
 
 - [Storage.md](Storage.md) — authoritative passes
+- [Snapshots.md](Snapshots.md) — `LoopSnapshot` source, construction, and publication
 - [DerivedViews.md](DerivedViews.md) — event representation
 - [IntervalProjection.md](IntervalProjection.md) — phase / wrap
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](../../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — merge / materialize

@@ -84,6 +84,28 @@ flowchart TB
 
 **Dependency rule:** imports flow downward only.
 
+### Execution layers outside the modular framework
+
+The layer stack above is the modular framework. Three older layers still sit
+around it and are the ones agents trip over. They are **not** new owners; they are
+execution wrappers and the legacy baseline the `base` preset drives.
+
+| Layer | Module | Role |
+|---|---|---|
+| **Managed capture** | `hitl/managed_capture.py` → `scripts/capture_session.py` | Spawns the serial capture as a child and owns the session log. A wall-clock watchdog bounds one run (`HITL_MANAGED_RUN_TIMEOUT_S`, default 360 s; `0` disables); a parent-death pipe makes the capture child exit when the harness dies, so the USB serial port is never leaked. Opt out with `--no-managed-capture` + `--serial-port` (never both). |
+| **Wrapper fixtures** | `scripts/hitl_stop_interruption.py` | Installs a `StopInterventionPort` around the legacy overdub-stop phase to send a timed transport Stop, then writes `interruption-result.json`. It writes `command.json` — the **inner** `host_midi_hitl.py run` argv. `command.json` is a run artifact, **not** an entry point; executing it directly omits the intervention. |
+| **Legacy baseline** | `scripts/host_midi_automation_baseline.py` → `hitl/legacy_record_baseline.py` | The dense record/overdub body (~5.7k lines) that the `base` preset runs. Unknown CLI flags reaching `host_midi_hitl.py` are collected by `parse_known_args` and forwarded here as `legacy_args`. |
+
+**Forwarding rule:** `host_midi_hitl.py run` parses the modular flags and passes
+everything it does not recognise through to the legacy baseline. That is why a
+captured `command.json` (a legacy argv) looks runnable but is not a valid entry
+point on its own.
+
+**Content verification** is a separate procedure over the same capture layer:
+dump `record` / `overdub` / `effective`, capture playback, compare inventory. The
+executable recipe is the `hitl-content-verification` skill; semantics are in
+[Guides/SNAPSHOT_CONTENT_VERIFICATION.md](../../Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
+
 ---
 
 ## 3. Single-owner principle
