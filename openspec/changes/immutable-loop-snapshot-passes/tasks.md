@@ -224,6 +224,13 @@ cursors rather than treating that locality as an execution bound.
     pre-existing terminal loop-boundary Off (`NoteId = 0`, tick 3839) absent.
     The 24-row representability omission is fixed on device. Ordering parity and
     the terminal-Off ledger/pairing behavior remain separate pre-existing items.
+  - **Re-stress `task23-dense-fix-rerun3`** (fresh upload/reset, focused
+    interruption PASS: stop +10.1 ms, all-notes-off 3.0 ms, 19.0 s silence):
+    bar 2 held **260 refs (> 256)**, 732 effective rows; four cycles played 730
+    with **0 duplicates**. The two absent rows are both ledger/pairing
+    semantics, not capacity: the loop-boundary Off (`NoteId = 0`, tick 3839)
+    and one of two coincident same-pitch Offs (`NoteId` 26/138, tick 1669).
+    Confirms the representability fix under a fresh >256-ref bar.
 
 ## 4. Direct consumers
 
