@@ -196,6 +196,26 @@ OpenSpec 5.6 adds `VERIFY deferred persist large-loop bounds`: full LoopPersist 
 
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
 
+### Stop/interruption fixture
+
+`scripts/hitl_stop_interruption.py` runs the single-overdub recipe while a
+`StopInterventionPort` sends a timed transport Stop after the overdub-stop
+button release. It writes `interruption-result.json` (stop precedence, recovery,
+all-notes-off, post-stop silence) and `command.json`.
+
+`command.json` is the **inner** `host_midi_hitl.py run` argv — a run artifact,
+not an entry point. Executing it directly omits the intervention wrapper and does
+not reproduce the fixture. See
+[`SNAPSHOT_CONTENT_VERIFICATION.md`](SNAPSHOT_CONTENT_VERIFICATION.md#the-interruption-fixture-concept).
+
+### Snapshot content parity
+
+Dump `record` / `overdub` / `effective` with `!CAPTURE_CONTENT` (transport
+stopped), capture playback cycles, and compare inventories. The executable recipe
+is the `hitl-content-verification` skill; semantics, `content-review.json`, and
+the expected ledger residuals are in
+[`SNAPSHOT_CONTENT_VERIFICATION.md`](SNAPSHOT_CONTENT_VERIFICATION.md).
+
 ### `overdub_occupy_paint` (source OD1 + occupy OD2 + GUS)
 
 **Stimulus:** `STIM-OCCUPY-PAINT-01` v1 (do not edit in place).
