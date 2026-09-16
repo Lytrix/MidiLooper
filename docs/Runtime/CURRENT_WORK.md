@@ -5,6 +5,44 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 SEVT device verification — operative cause is the deferred overdub-stop completion, not #1.**
+Re-evaluation requested at the SPLIT gate ("re-evaluate whether #1 is necessary from fresh
+evidence"). A session-capture-gated decision trace was added to the SEVT lifecycle
+(`DIAG,stored_verify,queue_skip_loop|queue_skip_unarmed|queue_accepted|drain_reset_loop|
+drain_reset_heap|drain_reset_no_events|drain_emit_start|drain_complete`) and run on device.
+
+- **Evidence (fresh boot, `captures/sevt-diag-stop/session_20260916_191231.log`):** a
+  transport Stop while the selected track is OVERDUBBING produced **zero** `stored_verify`
+  markers — no `armed`, no `queue_*`, no `drain_*`. The `DIAG,stop_grain` trace advances the
+  deferred job to its terminal phase and `PERS`/`SAVE` complete afterwards, so the dump is not
+  "cancelled": **it is never requested.**
+- **Causal chain:** `Track::stopOverdubbingToStopped()` normally takes
+  `beginDeferredOverdubStop(...)` and returns; the overdub pass is staged and later finalised
+  through `TrackPreparedStopCommit::completeDeferredCleanup` ->
+  `Loop::handoffSessionExitSnapshot(OverdubStopToStopped)`, which never reaches
+  `Track::finalizeCommitSideEffects`. The only call to `queueDeferredStoredMidiVerification()`
+  is inside `finalizeCommitSideEffects`, and it is reached from the *synchronous* fallback
+  `commitCaptureForStop(OverdubStopToStopped, ...)` at `TrackOverdubLifecycle.cpp`. The
+  deferred path — the normal one — has no equivalent call.
+- **#1 as previously framed does not fix this.** Arming before state dispatch in
+  `TrackManager::handleTransportStop()` only makes an *existing* queue call succeed; on this
+  path there is no queue call to arm. Keep #1 frozen/closed and re-scope to the missing call.
+- **#2 remains valid but is not the operative cause here** either: it protects a *queued* dump
+  from an ineligible re-queue. In this flow nothing was ever queued. Keep the landed fix and
+  its native regressions; do not bundle it with the new scope.
+- **What did emit SEVT (`164505`)**: its `armed,1`/`armed,0` pair comes from
+  `Track::stopPlaying()`, i.e. a transport stop while the selected track was *PLAYING*, not
+  overdubbing. `stopPlaying()` re-arms and `rearmDeferredStoredMidiVerification()` calls the
+  queue. That path is why the good run scored SEVT=511 and why runs that stop *during*
+  overdubbing score zero.
+- **Proposed narrow fix (needs approval — outside the landed #2 scope):** queue the stored-MIDI
+  verification from the deferred overdub-stop completion, at the same point the synchronous
+  path queues it (the `Track`-side `processDeferredOverdubStopGrain` / `completeDeferredCleanup`
+  success for an `OverdubStop*` reason), so both commit routes have one owner.
+- **Temporary instrumentation is committed separately and is still in the tree** alongside
+  temporary C (host advisory gate). Remove both together once the SEVT gate is restored to
+  required after a deterministic device rerun.
+
 **2026-09-16 stored-MIDI verification lifecycle — bugfix #2 landed, #1 frozen (SPLIT gate).**
 RCA for the missing `VERIFY stored overdub span (SEVT ticks)` produced two independent
 causes, so the fix was split rather than bundled:
