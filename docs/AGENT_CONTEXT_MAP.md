@@ -300,7 +300,7 @@ Always load first:
 
 - [Authority/Architecture/HITL_ARCHITECTURE.md](Authority/Architecture/HITL_ARCHITECTURE.md) — layering, single-owner rules, execution layers (managed capture, legacy baseline, wrappers)
 - [Guides/HITL_TEST_SCENARIOS.md](Guides/HITL_TEST_SCENARIOS.md) — presets, scenarios, stimuli, interruption fixture, content parity
-- [Guides/SNAPSHOT_CONTENT_VERIFICATION.md](Guides/SNAPSHOT_CONTENT_VERIFICATION.md) — what content verification proves; `content-review.json`; expected residuals
+- [Guides/HITL_CONTENT_VERIFICATION.md](Guides/HITL_CONTENT_VERIFICATION.md) — what content verification proves; `content-review.json`; expected residuals
 - [Guides/HOST_MIDI_AUTOMATION_BASELINE.md](Guides/HOST_MIDI_AUTOMATION_BASELINE.md) — legacy baseline invocation
 - `.cursor/rules/HITL-Test-Flow.mdc`, `.cursor/rules/HITL-Edit-Test-Flow.mdc` — authoritative entry points and pass criteria
 - Skill `hitl-content-verification` — executable recipe (device prep, capture, evidence, recovery)

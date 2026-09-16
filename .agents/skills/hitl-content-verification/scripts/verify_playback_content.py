@@ -10,7 +10,7 @@ Verdicts:
   FAIL                       unexplained missing or any extra/duplicated row
   INCONCLUSIVE_CAPTURE       no usable anchor or malformed dump
 
-Known residuals are defined in docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md:
+Known residuals are defined in docs/Guides/HITL_CONTENT_VERIFICATION.md:
 loop-boundary Offs (stored with NoteId=0 at the final tick) and coincident
 same-pitch Offs (one emitted for two notes ending on the same tick).
 

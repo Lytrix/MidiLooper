@@ -43,7 +43,7 @@ List named live-MIDI recipes before inventing a new HITL:
 - Serial-open does not reliably reset the Teensy. No boot banner + large device
   uptime + `RING,overflow` means a stale run: re-upload before retrying.
 - Content semantics, `content-review.json`, and the expected ledger residuals:
-  [`docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md`](../../docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
+  [`docs/Guides/HITL_CONTENT_VERIFICATION.md`](../../docs/Guides/HITL_CONTENT_VERIFICATION.md).
 
 ### Default — managed dual-session (one command)
 

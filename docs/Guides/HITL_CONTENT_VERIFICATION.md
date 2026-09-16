@@ -1,4 +1,4 @@
-# Snapshot content verification
+# HITL content verification
 
 This guide defines what the dense **record + overdub → content dump → playback
 inventory** procedure proves about a running device, what each artifact means,

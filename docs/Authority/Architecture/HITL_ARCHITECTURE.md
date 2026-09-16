@@ -104,7 +104,7 @@ point on its own.
 **Content verification** is a separate procedure over the same capture layer:
 dump `record` / `overdub` / `effective`, capture playback, compare inventory. The
 executable recipe is the `hitl-content-verification` skill; semantics are in
-[Guides/SNAPSHOT_CONTENT_VERIFICATION.md](../../Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
+[Guides/HITL_CONTENT_VERIFICATION.md](../../Guides/HITL_CONTENT_VERIFICATION.md).
 
 ---
 
@@ -575,7 +575,7 @@ When a scenario has previously passed:
 
 These rules are owned by this section — no separate `HITL_REGRESSION_WORKFLOW.md`
 exists or is planned — and are reinforced by [HITL-Test-Flow.mdc](../../../.cursor/rules/HITL-Test-Flow.mdc)
-and the `hitl-content-verification` skill with [SNAPSHOT_CONTENT_VERIFICATION.md](../../Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
+and the `hitl-content-verification` skill with [HITL_CONTENT_VERIFICATION.md](../../Guides/HITL_CONTENT_VERIFICATION.md).
 
 ### 11.5 Long-term objective
 
