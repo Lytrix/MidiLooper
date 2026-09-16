@@ -7,7 +7,7 @@ description: Run hardware-in-the-loop content verification on the Teensy looper 
 
 Prove that committed loop content reaches the MIDI output row for row, and read
 the evidence correctly. Semantics and artifact meanings live in
-[`docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md`](../../../docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md);
+[`docs/Guides/HITL_CONTENT_VERIFICATION.md`](../../../docs/Guides/HITL_CONTENT_VERIFICATION.md);
 this skill is the executable recipe.
 
 ## 1. Pick the entry point (decision tree)

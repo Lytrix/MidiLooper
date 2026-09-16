@@ -206,7 +206,7 @@ all-notes-off, post-stop silence) and `command.json`.
 `command.json` is the **inner** `host_midi_hitl.py run` argv — a run artifact,
 not an entry point. Executing it directly omits the intervention wrapper and does
 not reproduce the fixture. See
-[`SNAPSHOT_CONTENT_VERIFICATION.md`](SNAPSHOT_CONTENT_VERIFICATION.md#the-interruption-fixture-concept).
+[`HITL_CONTENT_VERIFICATION.md`](HITL_CONTENT_VERIFICATION.md#the-interruption-fixture-concept).
 
 ### Snapshot content parity
 
@@ -214,7 +214,7 @@ Dump `record` / `overdub` / `effective` with `!CAPTURE_CONTENT` (transport
 stopped), capture playback cycles, and compare inventories. The executable recipe
 is the `hitl-content-verification` skill; semantics, `content-review.json`, and
 the expected ledger residuals are in
-[`SNAPSHOT_CONTENT_VERIFICATION.md`](SNAPSHOT_CONTENT_VERIFICATION.md).
+[`HITL_CONTENT_VERIFICATION.md`](HITL_CONTENT_VERIFICATION.md).
 
 ### `overdub_occupy_paint` (source OD1 + occupy OD2 + GUS)
 

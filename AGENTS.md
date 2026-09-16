@@ -58,7 +58,7 @@ path and confidence when alternatives exist; do not block on vagueness.
   (default 360 s). Recipe and evidence expectations:
   [`.agents/skills/hitl-content-verification`](.agents/skills/hitl-content-verification/SKILL.md);
   semantics:
-  [`docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md`](docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
+  [`docs/Guides/HITL_CONTENT_VERIFICATION.md`](docs/Guides/HITL_CONTENT_VERIFICATION.md).
 - **Instrumentation:** performance instrumentation stays gated behind session
   capture or an explicit debug gate.
 - **Naming:** [`docs/Authority/NAMING.md`](docs/Authority/NAMING.md) is canonical

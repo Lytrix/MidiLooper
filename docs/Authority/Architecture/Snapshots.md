@@ -133,7 +133,7 @@ Publication is **atomic** and conditional:
   fixture.
 - **Hardware:** the `hitl-content-verification` skill dumps
   `record` / `overdub` / `effective` and compares playback inventory; semantics
-  in [SNAPSHOT_CONTENT_VERIFICATION.md](../../Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
+  in [HITL_CONTENT_VERIFICATION.md](../../Guides/HITL_CONTENT_VERIFICATION.md).
 
 ---
 
