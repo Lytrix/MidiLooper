@@ -235,6 +235,21 @@ TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepHist
       ? RuntimePlaybackOrderBuildResult::Complete : RuntimePlaybackOrderBuildResult::Pending;
 }
 
+TRACK_COLD_MEM bool TrackPreparedStopCommit::commitSupersededCausalBase(
+    Loop& loop, PendingStopAdmission& stop, PreparedCapturePassTransfer& transferred,
+    TrackUndoPublication* undo) {
+  if (stop.phase != PendingStopPhase::AtomicTransfer) return false;
+  // No bridge, no companion publication, no stale PLAYING successor selection.
+  // The accepted capture pass is still committed, and a prepared undo entry for
+  // it is published in the same turn.
+  if (loop.hasPendingCapturePass()) {
+    if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+    if (undo != nullptr) undo->publishAtCommit();
+  }
+  stop.setPhase(PendingStopPhase::DeferredCleanup);
+  return true;
+}
+
 TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepPreparation(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop, size_t quantum) {
   const auto* views = runtime.viewSetIfPrewarmed();

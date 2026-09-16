@@ -10,6 +10,29 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 causal predecessor/source identity — increment B, superseded rule
+(partial 2.3):** the user approved option (A). The implemented shape is narrower than
+the audit's first sketch because the implementation falsified its premise: the
+canonical pipeline binds its owner identity *by address* to the live Loop scalars and
+its ordering phases need one coherent live epoch, so preparation must keep resolving
+live (measurement confirmed the live revision and root are unchanged during a normal
+finalization). The recorded `causalBase` is therefore the **supersession reference**:
+`causalBaseCurrent` is checked at the start of `CompanionBridge` (before any bridge is
+built) and at the start of `AtomicTransfer`, and when it is false the interval retires
+its ranked credit (`retireSupersededPreparation()`) and commits through
+`TrackPreparedStopCommit::commitSupersededCausalBase` — the staged accepted capture
+pass is committed, no bridge is selected or published
+(`causal_base_superseded`), and a prepared protected undo entry is published in the
+same turn. The unpublished horizon returns to `Prewarmed` through the new
+allocation-free `Loop::restoreSupersededPreparedCompanionHistory(owner)` (the recycle
+receipt guard cannot admit it by design), with discard-and-reprewarm as the fallback.
+New assertions in `test_deferred_stop_records_and_pins_its_causal_predecessor_source`
+cover the whole rule. Recorded deviation: the superseded route publishes the capture
+pass only, relying on the newer root to already carry the companion rows. Full native
+2,191 cases — 2,186 passed, 1 skipped, the same three intentional public-reentry
+failures; capture-serial builds with 6,752 bytes RAM1 headroom. Remaining in 2.3:
+successor-capture unguarding in a separate change (the three reentry cases).
+
 **2026-09-16 causal predecessor/source identity — increment A (partial 2.3):** the audit
 found a deferred stop re-derives its predecessor source live at every consumer turn
 (admission's `baseSource` is used for credit sizing and discarded; the worker recomputes

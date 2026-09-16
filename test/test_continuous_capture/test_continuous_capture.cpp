@@ -155,6 +155,9 @@ struct TrackCaptureStopTestAccess {
   static void* pinnedCausalSnapshot(Track& track) {
     return const_cast<void*>(static_cast<const void*>(track.captureStopJob().causalBaseSnapshot.get()));
   }
+  static uint8_t bridgeSelected(Track& track) {
+    return runtime(track).viewSetIfPrewarmed()->bridgeLifecycle.selected;
+  }
   static uint32_t playbackRevision(const Track& track) {
     return track.getActiveLoop().playbackRevision;
   }
@@ -268,6 +271,11 @@ void test_track_reentry_does_not_depend_on_manager_guard() {
 /// The deferred stop records the published source it succeeded, and pins that
 /// source's root, at admission. A later grain must never re-resolve it against a
 /// source a successor published in the meantime.
+/// The deferred stop records the published source it succeeded and pins that
+/// source's root at admission. A later grain must never re-resolve it against a
+/// source published in the meantime: once the recorded predecessor is no longer
+/// the live root, the interval retires without a successor window, keeping its
+/// accepted capture pass and publishing no audible bridge.
 void test_deferred_stop_records_and_pins_its_causal_predecessor_source() {
   Track& track = preparePlayingTrack();
   Loop& loop = track.getActiveLoop();
@@ -290,16 +298,25 @@ void test_deferred_stop_records_and_pins_its_causal_predecessor_source() {
   TEST_ASSERT_EQUAL_UINT32(TrackCaptureStopTestAccess::generation(track), recorded.sourceGeneration);
   TEST_ASSERT_EQUAL_PTR(admittedSnapshot, recorded.snapshotIdentity);
   TEST_ASSERT_EQUAL_PTR(recorded.snapshotIdentity, TrackCaptureStopTestAccess::pinnedCausalSnapshot(track));
-  // A successor's publication must not rewrite where this interval came from.
+  // A later publication must not rewrite where this interval came from.
   TrackCaptureStopTestAccess::setPlaybackRevision(track, admittedRevision + 7);
   TEST_ASSERT_EQUAL_UINT32(admittedRevision, TrackCaptureStopTestAccess::causalBase(track).playbackRevision);
   TEST_ASSERT_EQUAL_PTR(admittedSnapshot, TrackCaptureStopTestAccess::pinnedCausalSnapshot(track));
-  // Restoration lets the (still live-resolving) worker finish so the descriptor
-  // retires; retirement must clear the receipt for the next interval.
-  TrackCaptureStopTestAccess::setPlaybackRevision(track, admittedRevision);
+  TEST_ASSERT_EQUAL_UINT32(admittedRevision + 7, TrackCaptureStopTestAccess::playbackRevision(track));
+  // Approved superseded rule: retire the interval, keep its accepted capture, and
+  // never select an audible bridge against a source it did not succeed.
+  const size_t passesBefore = loop.passes.overdubPasses.size();
   for (unsigned grain = 0; grain < 4096 && track.hasPendingDeferredOverdubStop(); ++grain)
     (void)TrackCaptureStopTestAccess::step(track);
   TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(passesBefore + 1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackBridgeLifecycle::kNoBridge,
+                          TrackCaptureStopTestAccess::bridgeSelected(track));
+  // The unpublished companion preparation is back on its prewarmed horizon, so
+  // the next interval needs no STOPPED-only re-prewarm, and the retired
+  // descriptor carries no causal receipt.
+  TEST_ASSERT_FALSE(loop.preparedCompanionHistoryInFlight());
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed());
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::entryCausalBaseRecorded(track, admittedHead));
 }
 

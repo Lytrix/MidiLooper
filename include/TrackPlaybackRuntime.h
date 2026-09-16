@@ -152,6 +152,12 @@ struct PendingStopAdmission {
   /// Owner calls only after this stage's worker readiness has been verified.
   /// Release unused estimates in one turn; they are upper bounds, not work.
   bool retireCompletedPreparation();
+  /// The recorded causal predecessor is no longer the published root, so no
+  /// successor window will be published. Retire every remaining preparation
+  /// credit in one place: the accepted capture pass still commits through the
+  /// plain route and the unpublished companion preparation recycles back to its
+  /// prewarmed horizon. The phase order guarantees closure and order completed.
+  bool retireSupersededPreparation();
   /// STOPPED or an empty sealed capture skips audible/companion preparation before
   /// those workers start. Preserve closure/order and command-epoch obligations.
   bool retireSkippedCompanionPreparation(bool emptyCapture);

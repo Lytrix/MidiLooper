@@ -1,5 +1,28 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 causal predecessor/source identity — increment B, approved
+superseded rule (resumable-midi-boundary-playback-maintenance).** Option (A) is
+implemented and verified. A deferred stop whose recorded `causalBase` is no longer the
+live published root retires without publishing a successor window: the staged accepted
+capture pass is committed through
+`TrackPreparedStopCommit::commitSupersededCausalBase`, no bridge is selected or
+published (`causal_base_superseded`), a prepared protected undo entry is published in
+the same turn, and the unpublished companion horizon returns to `Prewarmed` through the
+new allocation-free `Loop::restoreSupersededPreparedCompanionHistory(owner)` (with
+discard-and-reprewarm as fallback). The checks sit at the start of `CompanionBridge`
+and `AtomicTransfer`, with `PendingStopAdmission::retireSupersededPreparation()`
+retiring the ranked/canonical/undo-collection credits so the job retires instead of
+stalling. Implementation finding recorded: resolution must stay live — the canonical
+owner identity is compared by address against the live Loop scalars, so the recorded
+identity is the supersession reference, not the resolver, and the live revision/root
+were measured unchanged during a normal finalization. Full native 2,191 cases — 2,186
+passed, 1 skipped, the same three intentional public-reentry failures;
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom. Recorded deviation: the
+superseded route publishes the capture pass only, relying on the newer root to already
+carry the companion rows (to be re-verified when successor capture is unguarded).
+Remaining in 2.3: successor-capture unguarding, in a separate change. Task 2.3 remains
+unchecked.
+
 **2026-09-16 task 2.3 causal predecessor/source identity — increment A
 (resumable-midi-boundary-playback-maintenance).** Auditing task 2.3(f) found that a
 deferred stop re-derives its predecessor source live at every consumer turn: admission
