@@ -52,6 +52,13 @@ path and confidence when alternatives exist; do not block on vagueness.
   `.venv/bin/python scripts/host_midi_hitl.py stimulus list`. Never edit a
   canonical stimulus to chase a new condition; create a temporary variant, and
   promote to a new `STIM-…-02` only when the user accepts it as the reproducer.
+- **HITL entry points:** run the authoritative entry point (baseline preset, or
+  the `scripts/hitl_stop_interruption.py` wrapper); **never** execute a captured
+  `command.json`. Managed runs are bounded by `HITL_MANAGED_RUN_TIMEOUT_S`
+  (default 360 s). Recipe and evidence expectations:
+  [`.agents/skills/hitl-content-verification`](.agents/skills/hitl-content-verification/SKILL.md);
+  semantics:
+  [`docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md`](docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
 - **Instrumentation:** performance instrumentation stays gated behind session
   capture or an explicit debug gate.
 - **Naming:** [`docs/Authority/NAMING.md`](docs/Authority/NAMING.md) is canonical
@@ -109,7 +116,8 @@ Optional roles: [`docs/Agents/architect.md`](docs/Agents/architect.md),
 `openspec-*` skills load automatically from `.agents/skills/`. Prefer
 `openspec-explore` or `openspec-propose` for planning, `openspec-apply-change`
 for implementation, and archive only after the native (plus HITL where required)
-gates pass.
+gates pass. For hardware content parity or a dense HITL rerun, use
+`hitl-content-verification`.
 
 ## Untrusted, generated, and disposable areas
 

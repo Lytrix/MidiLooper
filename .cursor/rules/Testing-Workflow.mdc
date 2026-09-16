@@ -31,3 +31,17 @@ If the native env is misconfigured, fix `platformio.ini` first.
 
 - **CI** should ideally run the same `pio test -e native` on every PR.
 - Routine `pio run -e teensy41` for local firmware does **not** replace the host test run before sharing code.
+
+## Focused runs and sandboxed agents
+
+- Run one suite while iterating: `pio test -e native -f <suite>`.
+- The default PlatformIO cache (`~/Library/Caches/pio-build-<project>`) sits
+  outside a workspace-only sandbox. Set
+  `PLATFORMIO_BUILD_DIR="$PWD/.pio-build-local-fw"` (gitignored) when needed.
+- Do **not** relocate `PLATFORMIO_CORE_DIR` to a fresh directory: it installs a
+  newer Teensy toolchain whose section handling fails this build
+  (`NoteEditFocus*.cpp` `.flashmem` section-type conflicts). Use the pinned
+  `~/.platformio`.
+- Confirm the current expected-failure baseline (see
+  [`docs/Runtime/CURRENT_WORK.md`](../../docs/Runtime/CURRENT_WORK.md)) before
+  treating a failing suite as a regression.

@@ -14,7 +14,7 @@ Host result contract: `PASS` / `FAIL` / `INCONCLUSIVE_CAPTURE` in `scripts/hitl/
 
 **Default:** assume `teensy41-capture-serial` is already on the device. HITL does **not** build or upload unless you pass `--build-upload`.
 
-Preferred entry point: `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/Plans/hitl_modular_scenarios_enhancement.md`](docs/Plans/hitl_modular_scenarios_enhancement.md).
+Preferred entry point: `host_midi_hitl.py run --preset base` (legacy `host_midi_automation_baseline.py` delegates to the same preset). See [`docs/Plans/hitl_modular_scenarios_enhancement.md`](../../docs/Plans/hitl_modular_scenarios_enhancement.md).
 
 List named live-MIDI recipes before inventing a new HITL:
 
@@ -23,6 +23,27 @@ List named live-MIDI recipes before inventing a new HITL:
 ```
 
 `base` sends **STIM-BASE-2-2-01**. Do not label a record-only edit seed as that stimulus.
+
+## Authoritative entry points (do not improvise)
+
+| Goal | Entry point |
+|---|---|
+| Baseline record/overdub | `host_midi_hitl.py run --preset base ...` |
+| Stop/interruption reproduction | `scripts/hitl_stop_interruption.py ...` (wrapper; installs the timed Stop) |
+| Snapshot / playback content parity | `hitl-content-verification` skill |
+| Native logic regression only | `pio test -e native [-f <suite>]` |
+
+- A captured `command.json` is the **inner** `host_midi_hitl.py` argv written by
+  `hitl_stop_interruption.py`. **Never execute it as an entry point** — it omits
+  the intervention wrapper and does not reproduce the fixture.
+- Reaching the device (USB serial + MIDI) is required; a workspace-only agent
+  sandbox must be widened for the run.
+- A managed run is bounded by `HITL_MANAGED_RUN_TIMEOUT_S` (default 360 s; `0`
+  disables). Raise it only for a legitimately long run.
+- Serial-open does not reliably reset the Teensy. No boot banner + large device
+  uptime + `RING,overflow` means a stale run: re-upload before retrying.
+- Content semantics, `content-review.json`, and the expected ledger residuals:
+  [`docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md`](../../docs/Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
 
 ### Default — managed dual-session (one command)
 
