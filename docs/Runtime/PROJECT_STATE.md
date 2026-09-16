@@ -1,5 +1,20 @@
 # Project state (execution context)
 
+**2026-09-16 DEVICE BLOCKER — task 2.3 increments A/B do not boot.** The memory
+check found the increment A/B firmware never reaches a running sketch: build
+`a7f10733…` emitted only `#CAP,3534734,DIAG,boot_reset,crash=1` before the USB
+serial port dropped; the variant with the undo prewarm bounded to 32 entries
+(`8c03dcfc…`) behaved the same and the port disappeared entirely. Bounding the
+prewarm therefore does not fix it. The device was restored by rebuilding and
+flashing commit `82a42221`, which boots and streams with the reference prewarm
+samples (`captures/task23-recover-verify/result.json`; its `crash=1` is the
+retained report from the increment-B faults). **Do not flash the branch tip to
+hardware.** The cause lies between `82a42221` and `8bef8ae8` (pending-note-change
+ownership, capture-preview ownership, deferred undo collection/publication) and is
+not isolated; the next step is a one-commit-at-a-time hardware bisect, which needs
+device access and a PROGRAM press whenever USB drops. Increments A/B are
+device-unverified.
+
 **2026-09-16 task 2.3 deferred protected undo publication wired
 (resumable-midi-boundary-playback-maintenance):** the normal deferred overdub stop
 now records its `OverdubPassAdded` entry. `TrackUndoPublication` is externally
