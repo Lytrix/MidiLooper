@@ -10,8 +10,7 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
-**2026-09-16 deferred-stop receipt wiring — audit (decision required):** the two
-remaining receipt items need a design decision before implementation. (1) The
+**2026-09-16 deferred-stop receipt wiring — audit (decision required):** the tworemaining receipt items need a design decision before implementation. (1) The
 normal deferred overdub stop publishes **no** `OverdubPassAdded` entry:
 `pushOverdubPassAdded` is only reached via `Track::finalizeCommitSideEffects` from
 the fault fallback `commitCaptureForStop`, while the deferred path calls
