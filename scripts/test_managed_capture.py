@@ -174,5 +174,46 @@ class ManagedCaptureTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0)
 
 
+    def test_managed_run_writes_metadata(self) -> None:
+        import json
+        from contextlib import contextmanager
+        from unittest.mock import patch
+
+        from hitl.managed_capture import run_with_managed_capture
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            config = HitlConfig(
+                preset="base",
+                scenario_ids=("base",),
+                track_number=5,
+                loop_slot=1,
+                midi_channel=5,
+                record_bars=2,
+                overdub_bars=2,
+                midi_out_name="Teensy",
+                midi_in_name="Teensy",
+                serial_port=None,
+                verify_serial_log=None,
+                verify_only=False,
+                out_dir=out,
+                build_env="__no_such_env__",
+            )
+            target = out / "new-session.log"
+
+            @contextmanager
+            def session(_config):
+                yield target
+
+            with patch("hitl.managed_capture.managed_capture_session", session):
+                self.assertEqual(0, run_with_managed_capture(config, lambda _active: 0, timeout_s=0))
+
+            meta = json.loads((out / "metadata.json").read_text())
+            self.assertEqual(meta["preset"], "base")
+            self.assertEqual(meta["scenario_ids"], ["base"])
+            self.assertEqual(meta["session_log"], str(target))
+            self.assertIsNone(meta["firmware_hex_sha256"])
+
+
 if __name__ == "__main__":
     unittest.main()

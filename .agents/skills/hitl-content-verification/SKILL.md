@@ -85,6 +85,9 @@ A content-verification result is complete only when all hold:
   the guide (loop-boundary `NoteId=0` Off; coincident same-pitch Off dedupe).
   Anything else is unexplained and must be investigated.
 - The session log is fresh (boot banner at the top) and free of `RING,overflow`.
+- The run's `metadata.json` (managed runs) records `git_commit` and
+  `firmware_hex_sha256` — cite them as the run identity, and treat a missing or
+  null firmware hash as "this evidence is not pinned to a build".
 
 For a HITL run, also check `interruption-result.json` (`result: PASS`) and the
 base report `overall_ok`; `INCONCLUSIVE_CAPTURE` is not a pass.

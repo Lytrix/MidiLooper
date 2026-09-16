@@ -538,6 +538,15 @@ Example `metadata.json`:
 
 `report.json` also carries `schema_version`. Treat capture bundles as a **public project format** — extend via additive fields; bump version on breaking changes. Older bundles must remain readable.
 
+**Status (2026-09-16):** the managed run writes `metadata.json`
+(`scripts/hitl/run_metadata.py`) next to its report with `schema_version`,
+`timestamp`, `git_commit`, `git_dirty`, `build_env`, `firmware_hex` /
+`firmware_hex_sha256`, preset, scenario ids, slot target, bars, capture port, and
+the session log path. The full dated bundle directory shown above
+(`report.json`, `serial.log`, `config.json`, `firmware.txt`) remains a **target**;
+today the report JSON, session log, and `metadata.json` sit flat in the run's
+out-dir. `--no-managed-capture` runs do not yet emit `metadata.json`.
+
 **Corpus growth:** `captures/` accumulates known-good behaviour over time — bisecting regressions, validating optimisations preserved external behaviour, and auditing verification rule changes against history.
 
 ### 11.6 Immutable evidence
@@ -564,7 +573,9 @@ When a scenario has previously passed:
 
 **Evidence priority:** report JSON, serial logs, captured artifacts, and metadata are primary evidence — not memory or abbreviated console output.
 
-Document these rules in [`HITL_REGRESSION_WORKFLOW.md`](../../Guides/HITL_REGRESSION_WORKFLOW.md) (Phase 4) and reinforce via slim [HITL-Test-Flow.mdc](../../../.cursor/rules/HITL-Test-Flow.mdc).
+These rules are owned by this section — no separate `HITL_REGRESSION_WORKFLOW.md`
+exists or is planned — and are reinforced by [HITL-Test-Flow.mdc](../../../.cursor/rules/HITL-Test-Flow.mdc)
+and the `hitl-content-verification` skill with [SNAPSHOT_CONTENT_VERIFICATION.md](../../Guides/SNAPSHOT_CONTENT_VERIFICATION.md).
 
 ### 11.5 Long-term objective
 

@@ -145,4 +145,5 @@ def config_from_runner_args(args: argparse.Namespace, legacy: list[str]) -> Hitl
         managed_capture=managed_capture,
         capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
+        build_env=getattr(args, "build_env", "teensy41-capture-serial"),
     )
