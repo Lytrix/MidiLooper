@@ -144,11 +144,12 @@ void PendingStopAdmission::reset() {
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::begin(uint32_t generation, uint32_t tick, uint32_t commandEpoch,
                                  size_t openReservationCount, size_t frozenEventCount,
                                  const StopAdmissionContract& contract, uint64_t rankedPreparationGrains,
-                                 uint64_t canonicalPreparationGrains, uint64_t historyRecycleGrains) {
+                                 uint64_t canonicalPreparationGrains, uint64_t historyRecycleGrains,
+                                 uint64_t undoCollectionGrains) {
   if (pending || openReservationCount > kMaximumClosureGrains ||
       !contract.canFinalize(openReservationCount, frozenEventCount) ||
       rankedPreparationGrains == UINT64_MAX || canonicalPreparationGrains == UINT64_MAX ||
-      historyRecycleGrains == UINT64_MAX) {
+      historyRecycleGrains == UINT64_MAX || undoCollectionGrains == UINT64_MAX) {
     return false;
   }
   frozenGeneration = generation;
@@ -162,6 +163,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::begin(uint32_t genera
   canonicalPreparationQuantum = canonicalPreparationGrains ? contract.orderEntryQuantum : 0;
   remainingHistoryRecycleGrains = historyRecycleGrains;
   historyRecycleQuantum = historyRecycleGrains ? contract.orderEntryQuantum : 0;
+  remainingUndoCollectionGrains = undoCollectionGrains;
+  undoCollectionQuantum = undoCollectionGrains ? contract.orderEntryQuantum : 0;
   historyRecycleOwner = nullptr;
   historyRecycleGeneration = 0;
   historyRecycleStarted = false;
@@ -203,6 +206,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::consumeCanonicalPrepa
   return true;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::consumeUndoCollectionGrain() {
+  if (!pending || remainingClosureGrains != 0 || !undoCollectionQuantum) return false;
+  if (remainingUndoCollectionGrains) --remainingUndoCollectionGrains;
+  return true;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::consumeHistoryRecycleGrain() {
   if (phase != PendingStopPhase::DeferredCleanup || !finalizationComplete() ||
       !historyRecycleQuantum) return false;
@@ -239,6 +248,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireSkippedCompanio
       phase != PendingStopPhase::PrepareTransfer || remainingClosureGrains || remainingOrderGrains)
     return false;
   remainingRankedPreparationGrains = remainingCanonicalPreparationGrains = 0;
+  // The STOPPED/empty route skips companion preparation, so it has no prepared
+  // undo-collection inputs. Retire that estimate with the others.
+  remainingUndoCollectionGrains = 0;
   return true;
 }
 

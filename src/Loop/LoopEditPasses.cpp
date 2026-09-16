@@ -35,7 +35,10 @@ void Loop::assignMissingNoteIds(MidiEventVec& events) {
   }
 }
 
-uint16_t Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs) {
+// Cold maintenance: reclamation runs from idle/commit owners, never from a
+// capture or emission tick. Kept in flash so the deferred stop's undo-collection
+// phase does not push ITCM into another 32 KB RAM1 bank.
+LOOP_COLD_MEM uint16_t Loop::reclaimUnreferencedDisabledEditPasses(const SlotPassReferences& refs) {
   const size_t before = passes.editPasses.size();
   passes.editPasses.erase(
       std::remove_if(passes.editPasses.begin(), passes.editPasses.end(),
