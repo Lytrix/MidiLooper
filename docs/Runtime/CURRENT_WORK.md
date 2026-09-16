@@ -1,5 +1,10 @@
 # Current work (implementation scope)
 
+> **Implementation scope:** the authoritative scope is
+> [§ Now implementing](#now-implementing). Everything above that section is a
+> reverse-chronological session journal (newest first); read it for evidence, not
+> for scope. `AGENTS.md` step 2 points here.
+
 **2026-09-16 dense snapshot representability + fragment transaction (openspec 2.3 /
 immutable-loop-snapshot-passes 3.7):** the captured record/overdub pair is now a
 native snapshot regression (`test_dense_device_capture_snapshot_preserves_every_committed_row`,

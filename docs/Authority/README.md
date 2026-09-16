@@ -148,7 +148,7 @@ Do not resolve conflicts by:
 | [NAMING.md](NAMING.md) | Architectural vocabulary, concept boundaries, verb conventions, migration policy |
 | [Architecture/RuntimeArchitecture.md](Architecture/RuntimeArchitecture.md) | Runtime data flow: storage → derived representations → interval projection → consumers |
 | [Architecture/ExecutionBounds.md](Architecture/ExecutionBounds.md) | Interval-path bound classes and owner inventory (DEC-043) |
-| [Architecture/](Architecture/) | Child docs: Storage, DerivedViews, IntervalProjection, Playback, Display, ExecutionBounds |
+| [Architecture/](Architecture/) | Child docs: Storage, Snapshots, DerivedViews, IntervalProjection, Playback, Display, HITL_ARCHITECTURE, ExecutionBounds |
 | [DELIVERY_RULES.md](DELIVERY_RULES.md) | How work is tracked, verified, and shipped |
 | [WORKFLOW_LIFECYCLE.md](WORKFLOW_LIFECYCLE.md) | Discovery → decision → work item → verify → docs closeout |
 | [GITHUB_WORK_TRACKING.md](GITHUB_WORK_TRACKING.md) | **WOW** — Work project capability roadmap; Issues/PRs for implementation only |

@@ -131,12 +131,20 @@ snapshot-based compatibility adapter until its caller gates pass.
 
 | Representation | Owner | Storage (today) | Revision | Build policy | Consumers |
 |----------------|-------|-----------------|----------|--------------|-----------|
-| **Event (loop)** | `Loop` | `passesMaterializedStore_` / `midiEvents()` | Materialize dirty | On demand; not on MIDI-clock tick | Playback seed, display reconstruct input |
+| **Committed content (loop)** | `Loop` | Published `LoopSnapshot` ([Snapshots.md](Snapshots.md)); `CommittedMidiScratch` for the effective-query scratch | Snapshot identity / `playbackRevision` | Snapshot publication at session exit; `copyEffectiveCommittedEvents*`; **not** on a MIDI-clock tick | Playback seed, display, analyze, persistence |
 | **Event (NOTE_EDIT)** | `EditManager` | `NoteEditSession.store` | `sessionPreviewRevision_` | On geometry commit / store write | `sessionMidiEvents()`, overlap analyze |
 | **Display** | `Loop` | `visualCache.notes`, `capturePreview.notes` | `revision` fields | **Target:** idle-deferred when dirty; not every PLAYING frame | `DisplayManager` |
-| **Playback order** | `Track` / `LoopPlaybackRuntime` | `mergedEvents`, `playbackOrder` | Runtime rebuild flag | Prewarm off hot path; rebuild on transport / invalidation | `playMidiEvents` |
+| **Playback order** | `Track` / `LoopPlaybackRuntime` | `mergedEvents`, `playbackOrder`; `RuntimePlaybackViewSet` window + `RuntimePlaybackBridge` overlay | Runtime rebuild flag / source generation | Prewarm off hot path; rebuild on transport / invalidation | `playMidiEvents` |
 | **LED bar hint** | `MidiLedManager` | Reads `visualCache.notes` + `capture.store`; no private gather list | Inherits display revision | Bar change / wrap only; do not flatten when cache empty | 16-step + 8 bar pads |
 | **Analyze indexes** | `Loop` / `LoopContentResolution` | Prepared `tickEvents` / `spanBoundaries` | `playbackRevision` stamp | Idle / STOPPED construct; consume when stamp matches | Overdub overlap today; NOTE_EDIT select / overlap (hydrate target) |
+
+> **Retired:** `passesMaterializedStore_` / `midiEvents()` / `getMidiEvents()` and
+> `materializeToEventVector` as a normal consumer path were removed by
+> `immutable-loop-snapshot-passes` tasks 6.3.3–6.3.6. Committed content is read
+> through the published `LoopSnapshot` and `copyEffectiveCommittedEvents*`;
+> `materializeToEventVector` survives only as a test/oracle path. See
+> [Snapshots.md](Snapshots.md) for construction and publication ownership.
+
 
 **Exception:** `NoteEditSession.store` is a live **overlay** on passes during edit — not a pure derivative of `materialize()` alone. Tier-2 playback audition **target** (DEC-037 Editor amendment 2026-08-16): overlay selected + participating overlap `NoteId`s onto the playback window around `currentTick`. Today’s firmware still full-replaces `mergedEvents` from `sessionMidiEvents()`; that replace is not the architecture.
 
@@ -202,6 +210,7 @@ What is **not** per-bar yet:
 
 ## Related
 
+- [Snapshots.md](Snapshots.md) — the `LoopSnapshot` source: representation, construction, publication
 - [IntervalProjection.md](IntervalProjection.md) — interval math after representation exists
 - [Display.md](Display.md), [Playback.md](Playback.md) — consumer contracts
 - [note_edit_hydrate_enhancement.md](../../Plans/note_edit_hydrate_enhancement.md) — NOTE_EDIT analyze around `selectedTick`

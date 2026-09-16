@@ -72,6 +72,8 @@ Always load first:
 
 - [Authority/Architecture/RuntimeArchitecture.md](Authority/Architecture/RuntimeArchitecture.md) — layers and revision chain
 - [Authority/Architecture/Playback.md](Authority/Architecture/Playback.md)
+- [Authority/Architecture/Snapshots.md](Authority/Architecture/Snapshots.md) — `LoopSnapshot` source: representation, construction, publication, consumers
+- [Authority/Architecture/DerivedViews.md](Authority/Architecture/DerivedViews.md) — derived-representation owner table (playback + display + analyze + LEDs)
 - [Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md](Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md) — materialize / merge paths
 - [Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md](Guides/OVERDUB_LEDGER_NOTE_EVALUATIONS.md) — open ledger identities, catch-up vs clock, wrap exclusion
 - `TrackManager`, `LoopPasses` materialize APIs
@@ -289,6 +291,24 @@ Always load first:
 **Optional**
 
 - [plans/set_revision_persistence_architecture_enhancement.md](Plans/set_revision_persistence_architecture_enhancement.md)
+
+---
+
+## HITL (hardware-in-the-loop verification)
+
+**Required**
+
+- [Authority/Architecture/HITL_ARCHITECTURE.md](Authority/Architecture/HITL_ARCHITECTURE.md) — layering, single-owner rules, execution layers (managed capture, legacy baseline, wrappers)
+- [Guides/HITL_TEST_SCENARIOS.md](Guides/HITL_TEST_SCENARIOS.md) — presets, scenarios, stimuli, interruption fixture, content parity
+- [Guides/SNAPSHOT_CONTENT_VERIFICATION.md](Guides/SNAPSHOT_CONTENT_VERIFICATION.md) — what content verification proves; `content-review.json`; expected residuals
+- [Guides/HOST_MIDI_AUTOMATION_BASELINE.md](Guides/HOST_MIDI_AUTOMATION_BASELINE.md) — legacy baseline invocation
+- `.cursor/rules/HITL-Test-Flow.mdc`, `.cursor/rules/HITL-Edit-Test-Flow.mdc` — authoritative entry points and pass criteria
+- Skill `hitl-content-verification` — executable recipe (device prep, capture, evidence, recovery)
+
+**Avoid**
+
+- Executing a captured `command.json` as an entry point (it is the interruption wrapper's inner argv)
+- Mixing capture owners (`--serial-port` together with the managed capture default)
 
 ---
 
