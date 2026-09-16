@@ -34,6 +34,7 @@ class HitlConfig:
     capture_serial_port: str = DEFAULT_CAPTURE_SERIAL_PORT
     capture_boot_wait_s: float = 10.0
     arm_snapshot_yield: bool = False
+    build_env: str = "teensy41-capture-serial"
 
     def needs_managed_capture(self) -> bool:
         return bool(self.managed_capture and not self.verify_only and not self.serial_port)

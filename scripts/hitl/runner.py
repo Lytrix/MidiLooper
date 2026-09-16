@@ -189,6 +189,7 @@ def _should_use_managed_capture(args: argparse.Namespace, legacy: list[str]) -> 
 def _run_with_optional_managed_capture(
     args: argparse.Namespace,
     legacy: list[str],
+    scenario_ids: list[str],
     run_fn: Callable[[], int],
 ) -> int:
     if not _should_use_managed_capture(args, legacy):
@@ -199,7 +200,7 @@ def _run_with_optional_managed_capture(
     track_number, loop_slot, midi_channel = require_slot_target(args, legacy)
     config = HitlConfig(
         preset=getattr(args, "preset", None),
-        scenario_ids=(),
+        scenario_ids=tuple(scenario_ids),
         track_number=track_number,
         loop_slot=loop_slot,
         midi_channel=midi_channel,
@@ -215,6 +216,7 @@ def _run_with_optional_managed_capture(
         capture_serial_port=getattr(args, "capture_port", DEFAULT_CAPTURE_SERIAL_PORT),
         capture_boot_wait_s=float(getattr(args, "capture_boot_wait", 10.0)),
         arm_snapshot_yield=bool(getattr(args, "arm_snapshot_yield", False)),
+        build_env=getattr(args, "build_env", "teensy41-capture-serial"),
     )
 
     def _legacy_run(_active: HitlConfig) -> int:
@@ -379,5 +381,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     return _run_with_optional_managed_capture(
         args,
         legacy,
+        scenario_ids,
         lambda: run_scenarios(args, scenario_ids),
     )

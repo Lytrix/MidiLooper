@@ -238,7 +238,8 @@ class ManagedCaptureActiveTests(unittest.TestCase):
             self.assertFalse(active.follow_current_session)
             self.assertEqual(("--follow-serial-log", str(target)), active.legacy_extra_args)
             return 17
-        with patch("hitl.managed_capture.managed_capture_session", session):
+        with patch("hitl.managed_capture.managed_capture_session", session), \
+                patch("hitl.managed_capture.write_metadata_best_effort"):
             self.assertEqual(17, run_with_managed_capture(config, check))
 
 

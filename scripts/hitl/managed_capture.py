@@ -335,7 +335,35 @@ def run_with_managed_capture(
         active = replace(config, follow_current_session=False, follow_serial_log=log_path,
                          legacy_extra_args=tuple(legacy_args_with_managed_capture(
                              list(config.legacy_extra_args), config, log_path)))
+        write_metadata_best_effort(active, session_log=log_path)
         return _run_with_watchdog(lambda: run_fn(active), timeout)
+
+
+def write_metadata_best_effort(config: HitlConfig, *, session_log: Optional[Path] = None) -> None:
+    """Record this run's identity next to its report (HITL_ARCHITECTURE.md §11.1).
+
+    Best-effort: a missing git binary or firmware hex records null and never fails
+    the run.
+    """
+    from hitl.run_metadata import write_run_metadata
+
+    try:
+        path = write_run_metadata(
+            config.out_dir,
+            preset=config.preset,
+            scenario_ids=config.scenario_ids,
+            track_number=config.track_number,
+            loop_slot=config.loop_slot,
+            midi_channel=config.midi_channel,
+            record_bars=config.record_bars,
+            overdub_bars=config.overdub_bars,
+            build_env=config.build_env,
+            capture_serial_port=config.capture_serial_port,
+            session_log=session_log,
+        )
+        print(f"[hitl-capture] run metadata: {path}", flush=True)
+    except OSError as exc:
+        print(f"[hitl-capture] metadata.json not written: {exc}", flush=True)
 
 
 def legacy_args_with_managed_capture(
