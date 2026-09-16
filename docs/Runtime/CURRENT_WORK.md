@@ -5,6 +5,31 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 job-owned pending note changes.** First piece of the
+session/preview/undo receipt slice. The worker previously read the *live* session's
+`Loop::pendingNoteChanges()` while resolving the canonical tail, so a successor
+interval would have mixed its Add/Shorten/Hide intents into the predecessor's
+finalization. `CaptureStopJob` now owns `PendingNoteChangeVec pendingChanges`:
+admission swaps the live set into the job in constant work and leaves the live
+session the job's prewarmed empty vector, so a successor starts independent and
+neither the swap nor the next interval allocates. `Loop::pendingNoteChanges()` is
+the single readable accessor — it returns the job's owned set while a
+job-identified borrow is bound, otherwise the live member — and writers keep using
+the live member directly. The borrow is released with the job and is
+identity-guarded, and the worker now resolves
+`beginFrozenCanonicalTail(frozenSource, job.pendingChanges, targetSource)`.
+
+Evidence: new native `test_stop_job_owns_pending_note_changes` (production route,
+real Shorten intent, borrow read, independent live set after cleanup) and
+`test_pending_change_borrow_release_is_owner_identified`; the existing
+shorten-and-complete stop test now exercises the job-owned path.
+`test_continuous_capture` 26 pass with the same three intentional reentry
+failures; full native 2,184 cases — 2,179 passed, one skipped, the same three;
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom. Still open in this
+slice: `capturePreview` ownership across the stop, the overdub session/undo
+before-snapshot, the session-exit snapshot handoff receipt, and the
+prepared-companion history. Task 2.3 stays unchecked.
+
 **2026-09-16 task 2.3 sealed raw-range ownership wired (approved transfer).**
 `CaptureStopJob` now owns `LoopEventStore::CaptureRange rawRange`.
 `Track::beginDeferredOverdubStop` proves `LoopEventStore::canSealCaptureRange`
@@ -1003,11 +1028,16 @@ read source exposes producer and finalizing extents separately, ordering is
 scratch-only, closure NoteId resolves from the finalizing extent, and
 `retireJobCaptureSourceGrain` retires the owned extent in grains and re-arms the
 descriptor. DisplayManager is unchanged and the successor-capture guard is
-deliberately still in place. Then (3) job-owned session/preview/undo/snapshot
-receipts; (4) causal predecessor and source identity per job; (5) only then remove
-the Button A, manager and Track reentry guards and turn the three public reentry
-cases green — explicitly not in the same change as the ownership layer. Device
-PSRAM admission was measured for the staging change and **passes** (160,536 B/slot,
+deliberately still in place. Then (3) **job-owned session/preview/undo/snapshot
+receipts — pending note changes landed** (the worker resolves against
+`job.pendingChanges`, the live session keeps an independent prewarmed set, and the
+Loop's readable accessor serves the job-identified borrow); remaining in that
+slice: `capturePreview`, the overdub session/undo before-snapshot, the
+session-exit snapshot handoff receipt and the prepared-companion history. Then (4)
+causal predecessor and source identity per job; (5) only then remove the Button A,
+manager and Track reentry guards and turn the three public reentry cases green —
+explicitly not in the same change as the ownership layer. Device PSRAM admission
+was measured for the staging change and **passes** (160,536 B/slot,
 3.86 MB of 8.38 MB free); the sealed-range build adds four destination directories
 per track (+4 pool chunks/slot, −32 KB internal heap) and its boot-prewarm admission
 was measured and **passes** (`captures/task23-sealed-range-prewarm/result.json`).

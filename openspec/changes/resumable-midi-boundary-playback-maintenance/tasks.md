@@ -10,6 +10,24 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 job-owned pending note changes (partial 2.3):** first piece of the
+session/preview/undo receipt slice. `CaptureStopJob` now owns
+`PendingNoteChangeVec pendingChanges`; admission swaps the live Add/Shorten/Hide
+set into the job in constant work and leaves the live session a prewarmed empty
+set, so a successor interval is independent and neither the swap nor the next
+interval allocates. `Loop::pendingNoteChanges()` is the single readable accessor
+returning the job's owned set while a job-identified borrow is bound (writers use
+the live member directly), and the borrow is released with the job. The worker
+resolves the canonical tail against `job.pendingChanges`. New native
+`test_stop_job_owns_pending_note_changes` and
+`test_pending_change_borrow_release_is_owner_identified`; the existing
+shorten-and-complete stop test now exercises the job-owned path.
+`test_continuous_capture` 26 pass with the same three reentry failures; full native
+2,179 pass / 1 skipped / the same three; capture-serial builds with 6,752 bytes
+RAM1 headroom. Still open in this slice: `capturePreview` ownership across the stop,
+the overdub session/undo before-snapshot, the session-exit snapshot handoff receipt,
+and the prepared-companion history.
+
 **2026-09-16 sealed raw-range ownership wired (partial 2.3):** the approved
 ownership transfer is implemented. `CaptureStopJob` owns
 `LoopEventStore::CaptureRange rawRange`; `beginDeferredOverdubStop` proves
