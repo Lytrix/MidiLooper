@@ -154,13 +154,13 @@ The run is considered valid only when all are true:
  - `OVERDUBBING -> PLAYING` (≥ 2)
 - serial `VERIFY second overdub on/off/open/out/seq` — matched pairs, notes in range
 - `VERIFY stored second overdub span (SEVT ticks)` — `count_ok` and `span_ok`
-  - **TEMPORARY (2026-09-16): advisory, does not fail.** The canonical transport
-    Stop is routed into `stopOverdubbingToStopped()`, which does not re-arm the
-    one-shot stored-MIDI dump, and a redundant queue call clears a pending dump.
-    Until the verification-lifecycle fix lands and is device-verified, a missing
-    SEVT dump is reported under `VERIFY advisory` and excluded from `issues`.
-    Re-enable as a required criterion (`sevt_gate_required = True` in
-    `legacy_record_baseline.py`) once the fix is verified.
+  - **TEMPORARY (2026-09-16): advisory, does not fail.** Bugfix #2 (an ineligible
+    queue call no longer cancels a pending dump) is landed; the transport-stop
+    arming path (#1) is frozen pending a device rerun. Until the canonical flow
+    deterministically emits SEVT and that is device-verified, a missing SEVT dump is
+    reported under `VERIFY advisory` and excluded from `issues`. Re-enable as a
+    required criterion (`sevt_gate_required = True` in `legacy_record_baseline.py`)
+    only after the rerun is deterministic.
 - undo/redo after overdub stop (default on): serial logs include `Overdub undone` and `Overdub redone` (≥ 1 each)
 
 ## Serial verification policy (mandatory)

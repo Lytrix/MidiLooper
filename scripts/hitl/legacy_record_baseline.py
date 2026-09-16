@@ -3223,13 +3223,12 @@ def _build_serial_verification(
     issues: list[str] = []
     timing_warnings: list[str] = []
     # TEMPORARY (2026-09-16): the stored-MIDI (SEVT) dump is not reliably armed by
-    # the canonical base flow. The transport Stop is routed into
-    # stopOverdubbingToStopped(), which does not re-arm the one-shot dump, and a
-    # redundant queue call currently clears an already-pending dump. Until the
-    # firmware verification-lifecycle fix lands and is device-verified, a missing
-    # SEVT dump must not by itself turn an otherwise valid run into
-    # INCONCLUSIVE_CAPTURE. Tracked in the active HITL/content-verification work.
-    # Set to True (and remove this block) when the fix is verified.
+    # the canonical base flow. Bugfix #2 (an ineligible queue call no longer cancels
+    # a pending dump) is landed, but the transport-stop arming path (#1) is frozen
+    # pending a device rerun. Until the canonical flow deterministically emits SEVT
+    # and that is device-verified, a missing SEVT dump must not by itself turn an
+    # otherwise valid run into INCONCLUSIVE_CAPTURE. See CURRENT_WORK.
+    # Set to True (and remove this block) when the rerun is deterministic.
     sevt_gate_required = False
     advisory_issues: list[str] = []
     if record["phase_missing"] or (not record_only and overdub["phase_missing"]):

@@ -5,6 +5,36 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 stored-MIDI verification lifecycle — bugfix #2 landed, #1 frozen (SPLIT gate).**
+RCA for the missing `VERIFY stored overdub span (SEVT ticks)` produced two independent
+causes, so the fix was split rather than bundled:
+
+- **#2 (landed):** `Track::queueDeferredStoredMidiVerification` called
+  `resetDeferredStoredMidiVerification()` *before* the eligibility guards, so a redundant
+  or ineligible call (arm already consumed, or loop not representable) cleared an
+  already-pending dump. Invariant now explicit: **an ineligible queue call must not
+  destroy an already-queued verification dump.** The guards are evaluated first; the
+  reset/replace happens only once the call is accepted. The arm/pending bookkeeping is no
+  longer `SESSION_CAPTURE`-only so native tests can drive the lifecycle. Native regression:
+  `test_redundant_stored_verification_queue_keeps_pending_dump` and
+  `test_ineligible_stored_verification_queue_keeps_pending_dump` in
+  `test_continuous_capture` (fails before the fix, passes after; that TU had no native
+  coverage before). Firmware `teensy41-capture-serial` build SUCCESS.
+- **#1 (frozen, gate OPEN):** transport-stop arming. `Track::stopOverdubbingToStopped()`
+  never re-arms the one-shot dump; `Track::stopPlaying()` is the only re-arm. Ordering is
+  resolved: the overdub branch reaches `commitCaptureForStop` -> `finalizeCommitSideEffects`
+  -> `queueDeferredStoredMidiVerification()` **synchronously inside** the
+  `TrackManager::handleTransportStop` loop, so any arm must be established **before state
+  dispatch**, restricted to `isOverdubbing() || hasPendingDeferredOverdubStop()`, preserving
+  the existing PLAYING re-arm. Do **not** implement until the rerun below says it is needed.
+- **Cause #2 may already explain the 175335 failure** (it logged two `ODUB,stop,prefix_reuse`
+  finalize attempts). Next: rerun the 175335-style canonical base on the #2 firmware and
+  see whether SEVT appears without touching transport arming. If it does, #1 becomes a
+  separate robustness question; if not, proceed to the #1 gate with cleaner evidence.
+- **Temporary C stays until deterministic device verification.** The host gate reports a
+  missing SEVT dump under `VERIFY advisory` (`sevt_gate_required = False`) rather than
+  failing the run. Restore it to required only after the rerun deterministically emits SEVT.
+
 **2026-09-16 dense snapshot representability + fragment transaction (openspec 2.3 /
 immutable-loop-snapshot-passes 3.7):** the captured record/overdub pair is now a
 native snapshot regression (`test_dense_device_capture_snapshot_preserves_every_committed_row`,
