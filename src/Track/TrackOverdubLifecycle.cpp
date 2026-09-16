@@ -482,7 +482,7 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop&
     job.undoCollectionStarted = true;
     job.undoCollectable = loop.beginCollectOverdubStopUndoPasses(
         job.undoCollection, job.undoPassIds, job.undoCompanionIds,
-        loop.pendingCapturePass().id, true);
+        loop.pendingCapturePass().id, true, job.admission.intervalToken());
     (void)stop.consumeUndoCollectionGrain();
     if (!job.undoCollectable) {
       // No prepared session identities to record for this interval.
@@ -722,11 +722,12 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     return false;
   }
   if (stop.phase == PendingStopPhase::CompanionHistory) {
-    if (!loop.preparedCompanionHistoryReady()) {
+    if (!loop.preparedCompanionHistoryReady(job.admission.intervalToken())) {
       if (!loop.preparedCompanionHistoryCanStep(runtime->frozenCaptureCompanions,
-                                                staging, runtime->canonicalPassInputs)) {
+                                                staging, runtime->canonicalPassInputs,
+                                                job.admission.intervalToken())) {
         if (!loop.beginPreparedCompanionHistory(runtime->frozenCaptureCompanions,
-                                                 staging, &runtime->canonicalPassInputs)) {
+                                                 staging, &runtime->canonicalPassInputs, job.admission.intervalToken())) {
           return false;
         }
         return false; // Setup is its own admitted owner turn.
