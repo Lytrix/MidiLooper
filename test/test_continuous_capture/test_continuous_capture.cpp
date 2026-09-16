@@ -208,30 +208,137 @@ void test_first_interval_uses_production_routes_and_freezes_at_punch_out() {
   TEST_ASSERT_TRUE(track.isPlaying());
 }
 
-void test_button_a_three_intervals_accept_notes_with_service_paused() {
+/// Button A successor reentry under the directional capacity. Starting a successor
+/// while the predecessor finalizes is admitted (live role free). Stopping that
+/// successor is denied while the predecessor owns the sole frozen/deferred role, and
+/// the denial must be non-destructive: the successor stays the live recording
+/// interval with no stop descriptor, and its rows, notes, reservations and preview
+/// are untouched. Once the predecessor retires, the same interval's subsequent stop
+/// is admitted and only then may a further interval start.
+///
+/// The N-job deferred queueing scenario these guards previously shaded (two frozen
+/// jobs plus a live third interval) is a documented follow-up capacity case; see
+/// openspec/changes/successor-capture-reentry-unguarding/design.md (D2).
+
+/// A successor-stop admission failure because the deferred capacity is occupied
+/// leaves the live interval completely intact and still recording. Once capacity
+/// becomes available, a subsequent stop request transfers that same interval
+/// exactly once, and the finalized output equals the accepted input exactly.
+void test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive() {
   Track& track = preparePlayingTrack();
-  bool accepted[3]{};
-  bool exactInput[3]{};
-  for (unsigned i = 0; i < 3; ++i) {
-    const uint32_t punch = 96 + i * 96;
-    const uint8_t pitch = 60 + i * 2;
-    clockManager.assignCurrentTickSilently(punch);
-    midiButtonActions.handleToggleRecord();
-    accepted[i] = track.isOverdubbing();
-    inputNote(pitch, punch + 1, punch + 24);
-    const auto& capture = track.getActiveLoop().capture.store;
-    exactInput[i] = capture.size() == 2 && capture.at(0).tick == punch + 1 &&
-        capture.at(1).tick == punch + 24 && capture.at(0).data.noteData.note == pitch;
-    clockManager.assignCurrentTickSilently(punch + 48);
-    midiButtonActions.handleToggleRecord();
-    TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
-    // Deliberately no deferred maintenance, playback preparation or stop grains.
-  }
-  TEST_ASSERT_TRUE(accepted[0] && exactInput[0]);
-  TEST_ASSERT_TRUE_MESSAGE(accepted[1] && exactInput[1],
-      "B must capture its original input ticks while A has received zero worker turns");
-  TEST_ASSERT_TRUE_MESSAGE(accepted[2] && exactInput[2],
-      "C must capture independently while A and B remain queued");
+  Loop& loop = track.getActiveLoop();
+  // A deferred (owns the frozen role).
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // B live (Track-level admission) with exact input.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 193, 216);
+  const size_t rowsBefore = loop.capture.store.size();
+  const size_t notesBefore = TrackCaptureStopTestAccess::liveNotes(track).size();
+  const size_t queueBefore = TrackCaptureStopTestAccess::queueSize(track);
+  TEST_ASSERT_EQUAL(2, rowsBefore);
+  // Denied stop: no descriptor, no consumed rows/notes, still recording.
+  clockManager.assignCurrentTickSilently(240);
+  track.stopOverdubbing();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "an occupied deferred role must deny the stop without ending the live interval");
+  TEST_ASSERT_EQUAL(queueBefore, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_EQUAL(rowsBefore, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(notesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(216, loop.capture.store.at(1).tick);
+  // A retires. Its cleanup is job-local: B stays live and intact.
+  for (unsigned i = 0; i < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++i)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "the predecessor's completion must not end the live successor");
+  TEST_ASSERT_EQUAL(rowsBefore, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(notesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+  // The same interval's subsequent stop is admitted and transfers exactly once.
+  inputNote(63, 241, 264);
+  clockManager.assignCurrentTickSilently(288);
+  track.stopOverdubbing();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
+  const SessionMidiEventVec finalized = sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL(4, finalized.size());
+  TEST_ASSERT_EQUAL(193, finalized[0].tick);
+  TEST_ASSERT_EQUAL(216, finalized[1].tick);
+  TEST_ASSERT_EQUAL(241, finalized[2].tick);
+  TEST_ASSERT_EQUAL(264, finalized[3].tick);
+}
+
+void test_button_a_successor_stop_denied_until_deferred_role_available() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // A: record at 96, stop at 144 -> A owns the frozen/deferred role.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  const SessionMidiEventVec aRows = sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL(2, aRows.size());
+  // B: start at 192 while A pends -> admitted into the live role, exact input.
+  clockManager.assignCurrentTickSilently(192);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "B must start while A's deferred finalization is pending");
+  inputNote(62, 193, 216);
+  const size_t bRowsBeforeStop = loop.capture.store.size();
+  const size_t bNotesBeforeStop = TrackCaptureStopTestAccess::liveNotes(track).size();
+  TEST_ASSERT_EQUAL(2, bRowsBeforeStop);
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(216, loop.capture.store.at(1).tick);
+  // B stop at 240 while A owns the frozen role: explicit, non-destructive denial.
+  clockManager.assignCurrentTickSilently(240);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "a denied successor stop must leave the live interval recording");
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_EQUAL(bRowsBeforeStop, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(bNotesBeforeStop, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  // A retires -> the frozen role frees. A completes while B is live, so its cleanup
+  // must be job-local: B's state, rows and notes stay its own.
+  for (unsigned i = 0; i < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++i)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL(0, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "A's completion must not end B's live interval");
+  TEST_ASSERT_EQUAL(bRowsBeforeStop, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(bNotesBeforeStop, TrackCaptureStopTestAccess::liveNotes(track).size());
+  // B's subsequent stop request is admitted: the same interval transfers once.
+  inputNote(63, 241, 264);
+  clockManager.assignCurrentTickSilently(288);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_EQUAL(4, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(241, loop.capture.store.at(2).tick);
+  TEST_ASSERT_EQUAL(264, loop.capture.store.at(3).tick);
+  // C start is legal now that the live role is free.
+  clockManager.assignCurrentTickSilently(336);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "C must start once B has transferred into the deferred role");
+  inputNote(64, 337, 360);
+  TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(337, loop.capture.store.at(0).tick);
 }
 
 void test_manager_reentry_with_a_held_same_pitch_note() {
@@ -1191,7 +1298,8 @@ int main() {
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
   RUN_TEST(test_stop_job_owns_held_notes_and_closes_original_slot);
   RUN_TEST(test_stop_job_denies_changed_geometry_before_closure_mutation);
-  RUN_TEST(test_button_a_three_intervals_accept_notes_with_service_paused);
+  RUN_TEST(test_button_a_successor_stop_denied_until_deferred_role_available);
+  RUN_TEST(test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);

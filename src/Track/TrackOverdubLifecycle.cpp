@@ -1011,15 +1011,13 @@ bool Track::handleNoteEditFold(bool endInPlaying, uint32_t currentTick, uint32_t
   return true;
 }
 void Track::startOverdubbing(uint32_t currentTick) {
-  // A frozen stop candidate owns capture staging until it reaches its
-  // command-epoch-validated destination. This guard must sit before any
-  // staging reset so direct callers cannot destroy that candidate while the
-  // manager-level admission gate is bypassed.
-  if (hasPendingDeferredOverdubStop()) {
-    logger.log(CAT_TRACK, LOG_INFO,
-               "Overdub start deferred while previous overdub finalization is pending");
-    return;
-  }
+  // A pending predecessor is not by itself a reason to refuse live ingress: its
+  // frozen stop candidate owns the *frozen* admission role, while this interval
+  // only ever resets the *live* role below. The predecessor-pending refusal that
+  // used to sit here predated the dual-role split. What still bounds reentry is
+  // capacity: this start needs the live role and the frozen role is what a *stop*
+  // needs, so a successor may record while the predecessor finalizes but its own
+  // stop is denied until the predecessor retires (`beginDeferredOverdubStop`).
   Loop& loopRef = getActiveLoop();
   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
     return;
@@ -1134,6 +1132,19 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   // remains a fault fallback until the stop owner has its explicit recovery
   // state; ordinary admitted input never reaches it.
   if (beginDeferredOverdubStop(PendingStopDestination::Playing, currentTick)) {
+    return;
+  }
+  // Capacity denial: a predecessor still owns the sole frozen/deferred admission
+  // role, so this live interval cannot freeze into a second deferred job. The
+  // denial is explicit and non-destructive — the interval keeps recording with its
+  // rows, reservations, pending notes and preview intact, and no stop descriptor is
+  // created for it. A later stop request is admitted once the predecessor retires.
+  // This is the precise capacity question the pending-deferred predicate answers.
+  if (hasPendingDeferredOverdubStop()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                       captureStopQueueDepth(), 0, "successor_stop_denied_capacity");
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Overdub stop deferred: deferred/frozen admission role is occupied");
     return;
   }
   // The admitted path above must leave the MIDI button handler without
