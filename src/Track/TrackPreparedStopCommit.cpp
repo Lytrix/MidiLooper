@@ -98,6 +98,27 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransfer(
   return true;
 }
 
+TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, const EmissionCursor& cursor,
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack,
+    TrackUndoPublication& undo) {
+  if (stop.phase != PendingStopPhase::AtomicTransfer ||
+      !stop.canCommit(stop.transportCommandEpoch, stop.destination)) return false;
+  if (loop.hasPendingCapturePass()) {
+    if (stop.destination == PendingStopDestination::Playing)
+      return commitWithUndo(loop, runtime, stop, generation, cursor, transferred, stack, undo);
+    if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs))
+      return commitStoppedWithUndo(loop, runtime, stop, generation, transferred, stack, undo);
+    // Transport Stop can recover the frozen canonical pass before companion
+    // preparation. This route never authorizes an audible PLAYING successor, and
+    // it publishes no protected undo entry.
+    if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+  }
+  stop.setPhase(PendingStopPhase::DeferredCleanup);
+  return true;
+}
+
 TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     CapturePreview& preview) {

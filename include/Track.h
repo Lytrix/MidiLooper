@@ -28,6 +28,7 @@
 #include "OverlapNoteIdSet.h"
 
 class TrackUndo; // Forward declaration
+class TrackUndoPublication; // Track-owned protected stop undo transaction
 
 // Pending note structure
 struct PendingNote {
@@ -519,6 +520,10 @@ private:
     bool undoCollectionStarted = false;
     bool undoCollectable = false;
     bool undoCollected = false;
+    /// Protected undo publication state: the transaction is begun and prepared
+    /// before the atomic commit, then drained in bounded DeferredCleanup turns.
+    bool undoPublicationStarted = false;
+    bool undoPublicationReady = false;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
@@ -534,6 +539,15 @@ private:
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs();
+  /// Protected undo transaction. Externally allocated: it carries an UndoEntry
+  /// plus retirement storage, and it must outlive the admitted job through its
+  /// post-commit drain, so it cannot be DTCM-resident or job-owned.
+  struct ProtectedUndoDeleter {
+    void operator()(TrackUndoPublication* undo) const;
+  };
+  std::unique_ptr<TrackUndoPublication, ProtectedUndoDeleter> protectedUndo_;
+  bool prewarmProtectedUndo();
+  TrackUndoPublication* protectedUndo();
   /// FIFO head: the stable descriptor the one worker is servicing. Null when the
   /// ring is empty. A grain must bind this once and use it throughout, so a later
   /// head advance can never redirect work already in progress.
@@ -553,6 +567,12 @@ private:
   /// One bounded turn of the deferred undo-identity collection. Returns true when
   /// the job's prepared entry is ready (or the session had nothing to record).
   bool stepDeferredUndoCollection(CaptureStopJob& job, Loop& loop, PendingStopAdmission& stop);
+  /// One bounded turn of the protected transaction's prepare (begin + detach
+  /// redo). Returns true when the entry is Ready to publish at the atomic commit.
+  bool stepDeferredUndoPublication(CaptureStopJob& job, PendingStopAdmission& stop);
+  /// One bounded turn of the protected transaction's post-commit drain. Returns
+  /// true once the transaction is back to Idle.
+  bool stepProtectedUndoDrain();
   uint64_t captureInterval_ = 0;
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};

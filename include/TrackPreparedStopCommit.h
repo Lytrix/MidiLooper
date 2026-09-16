@@ -23,6 +23,13 @@ bool requiresBridgeRefresh(const Loop& loop, const LoopPlaybackRuntime& runtime,
 bool advanceAtomicTransfer(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
     PreparedCapturePassTransfer& transferred);
+/// Same atomic dispatch, publishing the prepared protected undo entry in the same
+/// turn as the canonical/audible commit. The caller must already have proven
+/// `undo.canPublish(stack, loopId, finalPassId)` through the readiness path.
+bool advanceAtomicTransferWithUndo(Loop& loop, LoopPlaybackRuntime& runtime,
+    PendingStopAdmission& stop, const uint32_t& generation, const EmissionCursor& cursor,
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack,
+    TrackUndoPublication& undo);
 // Finish canonical session bookkeeping after recycling. Preserve the selected
 // audible source, its cursor and ledger; Track owns transport-Stop silence.
 // `preview` is the admitted job's owned capture preview, so the deferred seal
