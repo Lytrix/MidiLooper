@@ -1,5 +1,23 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 causal predecessor/source identity — increment A
+(resumable-midi-boundary-playback-maintenance).** Auditing task 2.3(f) found that a
+deferred stop re-derives its predecessor source live at every consumer turn: admission
+computes a `PlaybackViewSourceIdentity baseSource` for credit sizing and discards it, the
+worker recomputes `baseSource`/`targetSource`/`frozenSource`/`currentSource` when the grain
+runs, and the atomic commit recomputes `base` from the live `playbackRevision` and
+`publishedSnapshotIdentity()`. A successor publication during finalization could therefore
+change what the predecessor resolved against. `CaptureStopJob` now records `causalBase`,
+pins its root with `causalBaseSnapshot` (`ImmutableLoopSnapshotRef`) and sets
+`causalBaseRecorded`; admission resolves and pins it before the raw-range ownership transfer
+and denies `causal_base_unavailable` if a non-null published identity cannot be pinned, and
+retirement clears all three. Increment A records only, so behavior is unchanged; increment B
+(next) makes the worker and the atomic commit resolve against the recorded identity and
+decides the epoch-qualified publication rule including STOPPED recovery. New native
+`test_deferred_stop_records_and_pins_its_causal_predecessor_source`; full native 2,191 cases
+— 2,186 passed, 1 skipped, the same three intentional public-reentry failures;
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom. Task 2.3 remains unchecked.
+
 **2026-09-16 task 2.3 prepared companion history interval qualification
 (resumable-midi-boundary-playback-maintenance).** The Loop-owned prepared companion
 history (`preparedCompanionHistory_`) is borrowed worker scratch that outlives one
