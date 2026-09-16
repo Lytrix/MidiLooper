@@ -655,13 +655,20 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     entry.editPassType = EditPassType::Note;
     entry.editPassIndex = kOverdubCompanionEditPassIndex;
     entry.editPassIds = std::move(companionEditPassIds);
-    if (track.hasOverdubSessionBeforePublished_) {
-        entry.beforePublishedSnapshot = track.overdubSessionBeforePublished_;
+    // The admitted stop job owns the interval's baseline; a successor session's
+    // beginOverdubSession sets the live member independently, so prefer the job.
+    Track::CaptureStopJob* stopJob = track.captureStopJobHead();
+    if (stopJob != nullptr && stopJob->hasBeforePublished) {
+        entry.beforePublishedSnapshot = std::move(stopJob->beforePublished);
+        stopJob->hasBeforePublished = false;
+        stopJob->beforePublished = {};
+    } else if (track.hasOverdubSessionBeforePublished_) {
+        entry.beforePublishedSnapshot = std::move(track.overdubSessionBeforePublished_);
+        track.hasOverdubSessionBeforePublished_ = false;
+        track.overdubSessionBeforePublished_ = {};
     } else {
         entry.beforePublishedSnapshot = capturePublishedSnapshot(loop);
     }
-    track.hasOverdubSessionBeforePublished_ = false;
-    track.overdubSessionBeforePublished_ = {};
     // after attaches when session-exit publish completes (Pin A).
     entry.afterPublishedSnapshot = {};
     pushUndoEntry(track, std::move(entry));

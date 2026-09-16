@@ -505,6 +505,11 @@ private:
     /// Job-owned capture preview. Swapped out of the live session at admission so
     /// the deferred cleanup seals this interval's preview, not a successor's.
     CapturePreview preview;
+    /// Job-owned overdub-session undo baseline (published root at session open).
+    /// Moved out of the live session at admission, so a successor session's
+    /// beginOverdubSession cannot rewrite this interval's undo entry baseline.
+    ImmutableLoopSnapshotRef beforePublished;
+    bool hasBeforePublished = false;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
