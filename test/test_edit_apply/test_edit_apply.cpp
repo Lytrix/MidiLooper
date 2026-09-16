@@ -5598,7 +5598,7 @@ void test_canonical_pass_inputs_maximum_and_pending_consumer_invalidation() {
   }
   CompanionApplyFixture fixture; fixture.prewarm(2048);
   RuntimeCanonicalPassInputs inputs; TEST_ASSERT_TRUE(inputs.prewarm(2048));
-  TEST_ASSERT_EQUAL_UINT64(2048 * (2 * sizeof(MidiEvent) + sizeof(RuntimeCompanionPasses::Pass) + sizeof(RuntimeCanonicalPassInputs::SealedPass) + 2 * sizeof(uint16_t) + sizeof(const EditPass*)), inputs.fixedExternalBytes());
+  TEST_ASSERT_EQUAL_UINT64(2048 * (2 * sizeof(MidiEvent) + 2 * sizeof(RuntimeCompanionPasses::Pass) + sizeof(RuntimeCanonicalPassInputs::SealedPass) + 2 * sizeof(uint16_t) + sizeof(const EditPass*)), inputs.fixedExternalBytes());
   PlaybackViewSourceIdentity source{1, 2, passes};
   TEST_ASSERT_TRUE(inputs.begin(fixture.apply, fixture.work, passes, 2, nullptr, 0, source, 768));
   const auto bound = RuntimeCanonicalPassInputs::requiredGrainsUpperBound(2048, 2, 0, 7);

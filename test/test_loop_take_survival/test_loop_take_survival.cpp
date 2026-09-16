@@ -149,6 +149,44 @@ void test_prepared_capture_transfer_moves_pass_without_vector_growth() {
   TEST_ASSERT_TRUE(loop.capturePreview.notes.empty());
 }
 
+void test_job_owned_capture_commit_and_preview_cleanup_preserve_live_capture() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedCommittedPair(loop);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(1));
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(300, 1, 67, 95)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(348, 1, 67, 0)));
+  const auto livePreviewRevision = loop.capturePreview.revision;
+  const auto livePreviewSize = loop.capturePreview.notes.size();
+  const auto liveCaptureIndex = loop.captureNextEventIndex;
+  Capture job;
+  job.phase = CapturePhase::Overdub;
+  TEST_ASSERT_TRUE(job.store.append(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(job.store.append(MidiEvent::NoteOff(148, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+      loop.stagePreparedCapturePassFromActiveAdmission(job, 150, CommitReason::OverdubStop));
+  TEST_ASSERT_TRUE(job.store.empty());
+  TEST_ASSERT_EQUAL(CapturePhase::None, job.phase);
+  TEST_ASSERT_FALSE(loop.pendingCapturePass().retiresLiveCapture);
+  PreparedCapturePassTransfer transferred;
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transferred));
+  TEST_ASSERT_FALSE(transferred.retiresLiveCapture);
+  TEST_ASSERT_EQUAL(CapturePhase::Overdub, loop.capture.phase);
+  TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(300, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(liveCaptureIndex, loop.captureNextEventIndex);
+  CapturePreview jobPreview;
+  jobPreview.notes.push_back(makeAdoptedNote(900, 60, 100, 148));
+  loop.completePreparedCapturePassDeferredCleanup(jobPreview);
+  TEST_ASSERT_TRUE(jobPreview.notes.empty());
+  TEST_ASSERT_EQUAL(livePreviewRevision, loop.capturePreview.revision);
+  TEST_ASSERT_EQUAL(livePreviewSize, loop.capturePreview.notes.size());
+  TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+}
+
 void test_active_overdub_transfer_uses_prewarmed_capacity() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -173,6 +211,55 @@ void test_active_overdub_transfer_uses_prewarmed_capacity() {
   TEST_ASSERT_EQUAL_UINT32(1u, loop.passes.overdubPasses.size());
   // One row remains from the two-pass admission horizon.
   TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+}
+
+void test_active_transfer_at_full_pool_uses_owned_chunks() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedCommittedPair(loop);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(1));
+  Capture source;
+  source.phase = CapturePhase::Overdub;
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::NoteOff(148, 1, 60, 0)));
+  LoopEventStore::ChunkReservation pressure;
+  TEST_ASSERT_TRUE(pressure.reserveChunks(LoopEventStore::freeChunkCount()));
+  TEST_ASSERT_EQUAL(0, LoopEventStore::freeChunkCount());
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+      loop.stagePreparedCapturePassFromActiveAdmission(source, 150, CommitReason::OverdubStop));
+  PreparedCapturePassTransfer transferred;
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transferred));
+  TEST_ASSERT_EQUAL(0, LoopEventStore::freeChunkCount());
+  SessionMidiEventVec rows;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, rows);
+  TEST_ASSERT_EQUAL(2, rows.size());
+  TEST_ASSERT_EQUAL(100, rows[0].tick);
+}
+
+void test_active_transfer_denial_preserves_source_and_admission() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedCommittedPair(loop);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(1));
+  Capture empty;
+  TEST_ASSERT_EQUAL(SealOutcome::SkippedEmpty,
+      loop.stagePreparedCapturePassFromActiveAdmission(empty, 150, CommitReason::OverdubStop));
+  TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+  Capture source;
+  source.phase = CapturePhase::Overdub;
+  const size_t count = PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS * 256 + 1;
+  for (size_t i = 0; i < count; ++i)
+    TEST_ASSERT_TRUE(source.store.append(MidiEvent::ControlChange(i, 1, 7, 1)));
+  const auto tail = source.store.chunkIds().back();
+  TEST_ASSERT_EQUAL(SealOutcome::PoolExhausted,
+      loop.stagePreparedCapturePassFromActiveAdmission(source, 3000, CommitReason::OverdubStop));
+  TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+  TEST_ASSERT_FALSE(loop.hasPendingCapturePass());
+  TEST_ASSERT_EQUAL(count, source.store.size());
+  TEST_ASSERT_EQUAL(CapturePhase::Overdub, source.phase);
+  TEST_ASSERT_EQUAL(ChunkLifecycleState::Recording, LoopEventStore::chunkLifecycleState(tail));
 }
 
 void test_imported_takes_survive_invalidateCaches() {
@@ -1434,10 +1521,10 @@ void test_live_record_dense_bar_keeps_cursor_inside_bar() {
         MidiEvent::NoteOff(onTick + 10, 1, static_cast<uint8_t>(40 + i), 0)));
   }
   TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  // DEC-047 transaction: the fragment is built on working progress, so
+  // authoritative live-record progress advances only after incorporation.
   TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
-  const size_t afterFirst = loop.liveRecordAppliedEventIndex();
-  TEST_ASSERT_TRUE(afterFirst > 0);
-  TEST_ASSERT_TRUE(afterFirst < kPairs * 2);
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedEventIndex());
   const LoopSnapshotChangeSet* changes = loop.pendingSnapshotConstructionChanges();
   TEST_ASSERT_NOT_NULL(changes);
   for (const SnapshotEventChange& change : changes->events) {
@@ -1445,7 +1532,9 @@ void test_live_record_dense_bar_keeps_cursor_inside_bar() {
   }
   drainInFlightSnapshotPublish(loop);
   TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
-  TEST_ASSERT_EQUAL(afterFirst, loop.liveRecordAppliedEventIndex());
+  const size_t afterFirst = loop.liveRecordAppliedEventIndex();
+  TEST_ASSERT_TRUE(afterFirst > 0);
+  TEST_ASSERT_TRUE(afterFirst < kPairs * 2);
 
   size_t steps = 0;
   while (loop.liveRecordAppliedCompletedTicks() < Config::TICKS_PER_BAR && steps < 16) {
@@ -2895,6 +2984,228 @@ void test_wrap_journal_hide_removes_published_note() {
   TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
   TEST_ASSERT_EQUAL(0, countNoteOns(gathered, 60));
   TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 72));
+}
+
+#include "dense_capture_fixture.h"
+
+void test_dense_device_capture_snapshot_preserves_every_committed_row() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3840;
+  auto append = [&loop](const DenseCapturedRow& row) {
+    MidiEvent event;
+    event.tick = row.tick;
+    event.type = static_cast<midi::MidiType>(row.type);
+    event.channel = row.channel;
+    event.noteId = row.id;
+    event.data.noteData = {row.data1, row.data2};
+    TEST_ASSERT_TRUE(loop.capture.store.append(event));
+  };
+  loop.beginCapture(CapturePhase::Record);
+  for (const auto& row : dense_record) append(row);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 3840));
+  drainPendingSnapshotPublish(loop);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  for (const auto& row : dense_overdub) append(row);
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStopToStopped, 3022));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStopToStopped, {}));
+  loop.closeOverdubSession();
+  for (size_t turns = 0; loop.hasPendingSnapshotPublish() && turns < 65536; ++turns) {
+    loop.stepPendingSnapshotPublish(1);
+  }
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3840));
+  TEST_ASSERT_EQUAL_UINT32(734, gathered.size());
+}
+
+void test_snapshot_journal_preserves_distinct_coincident_control_changes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(400, 1, 74, 52)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 480));
+  drainPendingSnapshotPublish(loop);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(400, 1, 74, 68)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(400, 1, 75, 99)));
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  drainWrapJournalsUntilCurrent(loop);
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  size_t ccCount = 0;
+  for (const auto& event : gathered) {
+    if (event.type == midi::ControlChange) ++ccCount;
+  }
+  TEST_ASSERT_EQUAL_UINT32(3, ccCount);
+}
+
+/// DEC-047 amendment 2026-09-16: one bar with more references than the legacy
+/// 16-page (256-reference) ceiling must still be fully representable. 257 is
+/// the surgical boundary; the 734-row device fixture is the real-world case.
+void test_snapshot_bar_membership_crosses_legacy_chunk_boundary() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  constexpr size_t kEvents = 257;
+  for (size_t i = 0; i < kEvents; ++i) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(
+        Config::TICKS_PER_BAR + static_cast<uint32_t>(i), 1, 74,
+        static_cast<uint8_t>(i & 0x7F))));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop,
+                                           Config::TICKS_PER_BAR * 4));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(
+      gathered, 0, loop.loopLengthTicks));
+  TEST_ASSERT_EQUAL_UINT32(kEvents, gathered.size());
+}
+
+namespace {
+
+void seedCommittedRecordForFragmentTransaction(Loop& loop) {
+  loop.loopId = 7;
+  loop.loopLengthTicks = Config::TICKS_PER_BAR * 4;
+  loop.beginCapture(CapturePhase::Record);
+  for (size_t i = 0; i < 8; ++i) {
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(100 + static_cast<uint32_t>(i) * 40, 1,
+                          static_cast<uint8_t>(60 + i), 100)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(120 + static_cast<uint32_t>(i) * 40, 1,
+                           static_cast<uint8_t>(60 + i), 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop,
+                                           Config::TICKS_PER_BAR));
+  drainPendingSnapshotPublish(loop);
+}
+
+void seedCommittedOverdubForFragmentTransaction(Loop& loop) {
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  for (size_t i = 0; i < 20; ++i) {
+    const uint32_t tick = Config::TICKS_PER_BAR + 20 + static_cast<uint32_t>(i) * 30;
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOn(tick, 1, static_cast<uint8_t>(40 + i), 90)));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(
+        MidiEvent::NoteOff(tick + 15, 1, static_cast<uint8_t>(40 + i), 0)));
+  }
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStopToStopped,
+                                           Config::TICKS_PER_BAR * 2));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStopToStopped, {}));
+  loop.closeOverdubSession();
+}
+
+}  // namespace
+
+/// DEC-047 transaction: a failed fragment must not consume authoritative
+/// progress, must keep the previous published root, must discard the partial
+/// candidate, and must be retried exactly once.
+void test_failed_fragment_retries_without_losing_or_duplicating_rows() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedCommittedRecordForFragmentTransaction(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef r0 = loop.publishedSnapshot();
+  const uint32_t r0Revision = loop.publishedSnapshotRevision();
+  TEST_ASSERT_NOT_NULL(r0.get());
+
+  seedCommittedOverdubForFragmentTransaction(loop);
+
+  // One-shot partial-apply failure on the next pass-change fragment.
+  loop.failNextSnapshotFragmentAfterUnitsForTest(1);
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));  // start fragment F
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
+  const auto before = loop.snapshotFragmentProgressForTest();
+  size_t turns = 0;
+  while (loop.snapshotFragmentConsecutiveFailuresForTest() == 0 && turns < 1000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++turns;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, loop.snapshotFragmentConsecutiveFailuresForTest());
+  const auto afterFail = loop.snapshotFragmentProgressForTest();
+
+  // Previous root still selected (stale vs the advanced revision, but stored)
+  // and authoritative progress identical to pre-F.
+  TEST_ASSERT_EQUAL(r0.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_EQUAL(r0Revision, loop.publishedSnapshotRevision());
+  TEST_ASSERT_EQUAL(before.active, afterFail.active);
+  TEST_ASSERT_EQUAL(before.batchIndex, afterFail.batchIndex);
+  TEST_ASSERT_EQUAL(before.nextStoreIndex, afterFail.nextStoreIndex);
+  TEST_ASSERT_EQUAL(before.nextEventId, afterFail.nextEventId);
+  TEST_ASSERT_EQUAL(before.nextCanonicalOrder, afterFail.nextCanonicalOrder);
+  TEST_ASSERT_EQUAL(before.openNoteCount, afterFail.openNoteCount);
+  TEST_ASSERT_EQUAL(before.cursorComplete, afterFail.cursorComplete);
+
+  // Retry without injection: publication completes with each row exactly once.
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec expected;
+  loop.passes.materializeToEventVector(expected, loop.loopLengthTicks);
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(
+      gathered, 0, loop.loopLengthTicks));
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), gathered.size());
+  size_t sentinel = 0;
+  for (const auto& event : gathered) {
+    if (event.type == midi::NoteOn && event.data.noteData.note == 40 &&
+        event.tick == Config::TICKS_PER_BAR + 20) {
+      ++sentinel;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, sentinel);
+}
+
+/// A persistent representability failure must park publication rather than
+/// rebuild the same impossible fragment forever.
+void test_persistent_representability_failure_parks_publication() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedCommittedRecordForFragmentTransaction(loop);
+  const ImmutableLoopSnapshotRef r0 = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(r0.get());
+
+  seedCommittedOverdubForFragmentTransaction(loop);
+
+  for (uint16_t expected = 1; expected <= 2; ++expected) {
+    loop.failNextSnapshotFragmentAfterUnitsForTest(
+        1, LoopSnapshotFailureReason::MembershipCapacity);
+    size_t turns = 0;
+    while (loop.snapshotFragmentConsecutiveFailuresForTest() < expected && turns < 1000) {
+      loop.stepPendingSnapshotPublish(1, true);
+      ++turns;
+    }
+  }
+  TEST_ASSERT_TRUE(loop.snapshotFragmentBlockedForTest());
+  TEST_ASSERT_EQUAL(r0.get(), loop.publishedSnapshot().get());
+  for (size_t turns = 0; turns < 64; ++turns) {
+    loop.stepPendingSnapshotPublish(1, true);
+  }
+  // Still blocked: the previous root stays selected and no prefix is published.
+  TEST_ASSERT_EQUAL(r0.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
 }
 
 /// Task 3.6: wrap-journal non-note events keep EventId and equal-tick canonical order.
@@ -5308,10 +5619,14 @@ void test_session_exit_handoff_when_candidate_shorter_than_sealed_length() {
         MidiEvent::NoteOff(onTick + 10, 1, static_cast<uint8_t>(40 + i), 0)));
   }
   TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true, 0, Config::TICKS_PER_BAR));
+  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
+  // DEC-047 transaction: authoritative live-record progress commits only when
+  // the fragment is incorporated, not when it is built.
+  TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedEventIndex());
+  drainInFlightSnapshotPublish(loop);
   TEST_ASSERT_EQUAL(0u, loop.liveRecordAppliedCompletedTicks());
   const size_t appliedEventIndex = loop.liveRecordAppliedEventIndex();
   TEST_ASSERT_TRUE(appliedEventIndex > 0);
-  TEST_ASSERT_TRUE(loop.hasInFlightSnapshotConstruction());
 
   TEST_ASSERT_EQUAL(CommitResult::Committed,
                     loop.commitCapturePass(CommitReason::RecordStop, 200));
@@ -5961,7 +6276,10 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_prepared_capture_transfer_moves_pass_without_vector_growth);
+  RUN_TEST(test_job_owned_capture_commit_and_preview_cleanup_preserve_live_capture);
   RUN_TEST(test_active_overdub_transfer_uses_prewarmed_capacity);
+  RUN_TEST(test_active_transfer_at_full_pool_uses_owned_chunks);
+  RUN_TEST(test_active_transfer_denial_preserves_source_and_admission);
   RUN_TEST(test_imported_takes_survive_invalidateCaches);
   RUN_TEST(test_gather_committed_preserves_takes);
   RUN_TEST(test_restore_empty_pass_snapshot_clears_takes);
@@ -6032,6 +6350,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_journal_repeated_same_note_id_replace);
   RUN_TEST(test_wrap_journal_replaces_wrap_note_on_off_pair);
   RUN_TEST(test_wrap_journal_hide_removes_published_note);
+  RUN_TEST(test_dense_device_capture_snapshot_preserves_every_committed_row);
+  RUN_TEST(test_snapshot_journal_preserves_distinct_coincident_control_changes);
+  RUN_TEST(test_snapshot_bar_membership_crosses_legacy_chunk_boundary);
+  RUN_TEST(test_failed_fragment_retries_without_losing_or_duplicating_rows);
+  RUN_TEST(test_persistent_representability_failure_parks_publication);
   RUN_TEST(test_wrap_journal_equal_tick_non_note_event_order);
   RUN_TEST(test_skipped_overdub_stop_retains_in_flight_wrap_journals);
   RUN_TEST(test_queue_session_exit_keeps_wrap_journals_without_new_pass);

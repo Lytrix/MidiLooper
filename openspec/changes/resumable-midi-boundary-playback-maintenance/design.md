@@ -1,3 +1,62 @@
+## Production closure ownership and window integration (2026-09-15)
+
+
+**2026-09-16 bridge boundary reconciliation implementation:**
+`refreshFrozenCompanionBridge` now invokes the shared compiler's
+`rebindBoundary` rather than resetting bridge storage. Records, mapping, base
+ranks, sorted base order and complete insertion order survive. The existing
+merge scratch retains the complete insertion permutation after sorting; steady
+compaction no longer destroys the order needed by another boundary binding.
+Reconciliation runs only inheritance, affected-record checks, closure resolution
+and cycle-index output in the existing entry quantum. No allocation, copy of
+canonical events, or sort is introduced during this path. Original carried Offs
+are enabled only by a matching live closure and disappear after it closes.
+
+Admission checks the relevant subset of the ledger using fixed pitch/identity
+summaries built from all changed records and inherited closures. Identity hash
+collisions conservatively request reconciliation; they cannot bypass protection.
+Changes to unrelated notes no longer invalidate preparation. Changes to affected
+notes, cycle or original-Off deadline retain the closure-only reconciliation
+path; no note protection or command-epoch check is removed. These smaller steps
+still require device service/reservation validation; no unconditional deadline
+or maximum stop-latency claim is made.
+
+Native coverage compares repeated bindings against fresh compilation over six
+cycles, changes unrelated notes every preparation turn, verifies unchanged map
+and bridge storage generations, and preserves an inherited original Off during
+a second source change. Capture refresh telemetry now says `closure_only`.
+The provisional 6,240-grain baseline remains unchanged. Task 2.3 and hardware
+acceptance remain open.
+
+
+Extend the existing `LoopPlaybackRuntime` / `RuntimePlaybackViewSet` ownership:
+two immutable source bases are paired with the selected/candidate bridges, while
+three views remain the rolling emission-window lifecycle. Build source bases
+with the existing canonical pass merge and fill/order workers in admitted grains.
+Their owned events and provenance survive stop cleanup and are reused only when
+the corresponding bridge is no longer selected. This is source retention for
+closure compilation, not a loop-length-dependent playback mode. External-memory
+accounting includes both source bases; no active-path allocation is introduced.
+
+Expose `RuntimePlaybackBridgeStream` itself as a `RuntimePlaybackViewSource`.
+The shared coverage builder copies its compiled cycle stream, including original
+Offs and canonical tie order; no second closure engine or emission dispatcher is
+introduced. Ordinary PLAYING consumes matching cycle-qualified one-bar views.
+The already prepared bridge stream remains the continuity path across initial
+source handoff and late refill, until full service reservations are established.
+Synchronize its indexes after window emission so returning to it cannot replay
+an already serviced event. No unprepared source, full gather, or delayed launch
+is permitted by that continuity path.
+
+Use the current serviced phase/cycle for source admission. When the live ledger
+changes during preparation, retain the canonical mapping and refresh bridge
+compilation against the new boundary. A second source change copies unresolved
+original Off obligations from the selected context using the same Inherit and
+CarryOffs phases; new-source masks are computed from the new canonical mapping.
+Retained-closure work has a separate bounded copy/sort estimate; 6,240 remains the
+provisional baseline rather than an inferred real-time reservation or admission
+ceiling. Keep task 2.3 and hardware/deadline gates open until device validation.
+
 ## Current implementation direction: reuse playback windows
 
 The user's DRY correction supersedes the recording-only prototype described in
@@ -853,3 +912,167 @@ Functional evidence includes two empty passes and two wrapped passes after uploa
 UI state publication is not proof of canonical commit, audible handoff or deadline
 success. Stop service/emission telemetry must cover the background transaction as
 well as its early visible state edge; the full 4.1/5.3 gates remain open.
+
+Normal-stop cleanup correction (2026-09-15): Track delegates terminal canonical
+bookkeeping to the existing `TrackPreparedStopCommit` owner. After history
+recycling and snapshot receipt handoff, it discards both completed bridge-build
+and frozen canonical-tail workers. Retaining the attached tail otherwise denies
+every prefix turn of the next nonempty stop. The selected bridge owns its event
+storage independently and survives this retirement. PLAYING cleanup must not
+send silence, clear ledgers or reanchor the cursor; transport-Stop cleanup still
+owns silence and reset. Native coverage exercises the production cleanup body,
+snapshot-handoff retry, held-note closure and subsequent prefix preparation.
+The focused probe requires a completed PLAYING-destination cleanup grain for
+every requested stop, independently of visible state transitions.
+
+Second-stop ready-window ownership correction (2026-09-15): when the selected
+bridge borrows the ready canonical window, the same atomic publication promotes
+that window to current through the existing view lifecycle. The current/ready
+indices are preflighted with the bridge before canonical mutation. Cleanup then
+discards the canonical-window preparation receipt; current audible storage
+survives that discard. Otherwise the next completed prefix sees the old ready
+receipt, cannot build its own window, and remains pending until transport Stop.
+The native regression prepares a second window while the first selected bridge
+remains readable. The strict two-pass device checkpoint now completes both
+normal cleanups. Full rolling coverage and emission-deadline proof remain open.
+
+Atomic dispatch correction (2026-09-15): the production Track owner now delegates
+the entire AtomicTransfer branch to `TrackPreparedStopCommit::advanceAtomicTransfer`.
+A populated PLAYING candidate returns the joint commit result directly. It can
+no longer fall through from a failed source/ledger/cursor/credit proof into
+canonical-only commit. Empty completion and stopped canonical recovery retain
+their existing semantics. Native tests exercise this actual dispatch body for
+denied proofs and successful joint publication; the lower-level helper alone
+did not cover the former caller fallthrough. This does not resolve the separate
+current-phase cursor and rolling-coverage integration requirements.
+
+Companion-derived target revision correction (2026-09-15): pending Add changes
+do not produce companion edit passes. Treating any pending change as a second
+revision prepared Add-only overdubs under revision +2 while canonical publication
+advances by +1. The reserved tail now binds its target revision after the existing
+bounded companion-row worker finishes, before starting derived companion passes.
+Zero companion rows mean +1; nonempty rows mean +2. Track reads that same completed
+row count for later bridge preparation and atomic dispatch. This adds no input
+scan or alternative pairing logic. Removing the fallback exposed this mismatch;
+earlier state/cleanup checkpoints alone did not prove joint bridge publication.
+
+Running-cycle anchor correction (2026-09-15): canonical-window preparation,
+companion-bridge preparation and atomic dispatch now obtain their cycle component
+from the existing runtime through `currentCycleCursor`. Ordinary/overdub playback
+advances the same cycle identity on serviced wraps even without a bridge stream;
+the selected-bridge route retains its existing increment. Resetting the new
+bridge anchor to zero could make its first consumer select next/steady-cycle
+masks after previous playback wraps. Native closure coverage now runs at initial
+cycles zero and three and checks the original cross-wrap Off is emitted once.
+The phase component still uses the frozen stop phase: current-phase admission
+and rolling coverage remain separate open integration work, not acceptance implied
+by this cycle fix.
+
+### Live overdub canonical-base prework (2026-09-16)
+
+The existing pre-stop VisualCache child advances the shared canonical-base
+continuation, including prefix normalization, per-pass merge and immutable base
+fill/order. Each turn runs one existing child; completing prefix preparation
+cannot stack base work in the same turn. Source/storage invalidation restarts
+the spare continuation and never selects it audibly. Stop resumes this worker.
+Overdub paint dirtiness does not prioritize disabled visual reconstruction;
+wrap append and source-span readiness remain prerequisites. Stop service
+estimates use prewarmed capacity and include the incoming pass, independently
+of final-tail size and rolling-window availability. No latency ceiling changes.
+
+### Architectural amendment: falsified singleton ownership (2026-09-16)
+
+The singleton stop design is not sufficient for immediate reentry. The current
+`Loop::capture.store`, `Track::pendingNotes`, Track state, pending note changes,
+undo/session-exit receipts and `captureStaging` are shared state. The decisive
+counterexample is: A records a held C4, stops; B starts and records C4; A
+finishes while B is live. Any old-job cleanup that clears pending notes, clears
+the capture store, consumes B's changes, replaces B's preview or sets the Track
+to PLAYING falsifies the design.
+
+The replacement is a scoped fixed interval queue, not a generic scheduler:
+
+```text
+TrackCaptureIngress
+    live interval -> accepts input and owns live pending notes/preview
+          |
+          +-- punch-out: immutable CaptureIntervalJob enters FIFO
+                         (range, reservations, stop receipts, predecessor id)
+
+LoopPlaybackRuntime
+    one shared worker graph -> borrows only FIFO head scratch
+    current published view -> remains immutable during every job build
+```
+
+Each `CaptureIntervalJob` owns or references, with an explicit release point:
+the sealed event range and end offset; interval/version identity; predecessor
+logical version; begin/end positions and transport epoch; NoteOff/wrap/bridge/
+stop credits; pending changes; undo and snapshot receipts; and publication/
+cleanup status. The live interval has a distinct staging owner. The worker may
+borrow shared runtime scratch only while processing the head and must validate
+the job identity on every continuation.
+
+The event-range cut must use stable chunk references with immutable end offsets
+when the pool can retain them safely, or constant-work tail rotation to a
+pre-reserved successor chunk when a boundary lands in a partial chunk. The
+producer must never append beyond a sealed end. No button-edge operation may
+sort, gather, clone, detach an unbounded chunk list, resolve companions or grow
+a vector.
+
+Track state is a projection of live ingress and transport, not ownership of all
+worker lifecycles. Add separate `liveCaptureActive` and `captureWorkerBusy`
+predicates. An old job completing while a newer interval is live cannot set
+PLAYING, clear live pending notes, close the newer session or replace its
+preview. If no live interval exists, `OVERDUB_STOPPING` may describe the head
+job's visible lifecycle; otherwise the live overdub state wins.
+
+Queue capacity is explicit and finite. The implementation must declare the
+supported simultaneous live-plus-queued interval count and prewarm metadata,
+staging, chunk reservations and closure credits. When full, a new punch-in or
+NoteOn is denied before mutation, with a distinct capacity diagnostic. Already
+accepted intervals remain recoverable. A third rapid punch must not reuse the
+first job's staging; a fourth is either admitted by the declared capacity or
+explicitly rejected.
+
+The queue head resolves against its stored predecessor id/source identity. A
+successor captures raw accepted input immediately but does not permanently bind
+to the stale canonical source visible at punch-in. Source-dependent companion,
+overlap and bridge work starts only after the predecessor reaches the required
+published or STOPPED recovery version.
+
+Required falsification tests are: service-paused A/B/C reentry through the real
+Button A route; same-pitch held-note overlap; old completion while the newest
+interval is live; a partial-chunk boundary; queue-full admission; source change
+while a predecessor is pending; selected-bridge immutability; and Transport
+Stop between every finalization phase. Every test checks exact interval
+membership, state/preview ownership, causal publication, no replay/omission,
+and zero allocation at punch edges. This amendment does not close task 2.3 or
+any HITL gate until those tests and device evidence pass.
+
+**2026-09-16 continuous preparation across punch-in/out:**
+Canonical preparation now runs during PLAYING as well as OVERDUBBING, using the
+existing VisualCache owner and otherwise-unused wrap-append turns. Existing
+record, stop, wrap-append and source-span priority remains. A confirmed newest
+pass append with unchanged companion history preserves completed normalized
+passes and resumes the first unfinished/new pass; snapshot identity publication
+at the same content revision also preserves completed normalization. Unproven
+source changes or changed history retain the existing safe invalidation path.
+
+The companion merge now retains final per-pass output, in its original order,
+in the canonical owner's existing raw scratch buffer. One extra prewarmed pass
+descriptor array is required (16 KiB at 2,048 entries on Teensy); no additional
+event buffer or active allocation is introduced. Each existing merge addition
+also writes its normalized scratch entry, within the same Q-entry grain.
+Successful stop cleanup adopts these results with pointer swaps after matching
+source/worker generations, including when the committed companions changed
+history. Reselecting current descriptors/history is resumable; completed pass
+normalization is not replayed. Selected bridge/base and audible cursor remain
+untouched. A scratch-owner receipt prevents another builder from being mistaken
+for the retained result. `prefix_reuse` / `prefix_restart` records describe the
+low-frequency ownership transitions rather than logging every prework grain.
+
+Task 2.3 and HITL acceptance stay open. This does not claim instant reentry:
+frozen-tail/bridge/finalization work remains, and new history during a wrap may
+invalidate normalization for all potentially affected passes. The provisional
+6,240-grain baseline remains unchanged; added bounded stores need device timing
+validation alongside rapid punch-in/out, wraps and original-Off preservation.

@@ -596,6 +596,10 @@ bool mergedStreamHasNoteOnId(const SessionMidiEventVec& events, NoteId noteId) {
 }
 
 bool mergedStreamContainsEvent(const SessionMidiEventVec& events, const MidiEvent& candidate) {
+  // Non-note rows have no NoteId. Coincident controllers (including distinct
+  // values for the same CC) are separate events, not identity duplicates.
+  // The revision-qualified seal receipt already prevents admitting a pass twice.
+  if (!candidate.isNoteOn() && !candidate.isNoteOff()) return false;
   for (const MidiEvent& existing : events) {
     if (candidate.noteId != kInvalidNoteId) {
       if (existing.noteId == candidate.noteId && existing.isNoteOn() == candidate.isNoteOn() &&
@@ -1491,22 +1495,26 @@ void Loop::clearPendingNoteChanges() {
 }
 
 LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal() {
+  retainCapturePreviewAtSeal(capturePreview);
+}
+
+LOOP_COLD_MEM void Loop::retainCapturePreviewAtSeal(const CapturePreview& source) {
   // Uncovered sealed rows stay. Only releaseSealedCapturePreviewIfCovered may drop them
   // (`120321` wrap 2: clear() replaced lap-1 sealed with lap-2 only).
   sealedCapturePreviewRevision_ = playbackRevision;
-  if (capturePreview.notes.empty()) {
+  if (source.notes.empty()) {
     return;
   }
-  for (size_t index = 0; index < capturePreview.notes.size(); ++index) {
+  for (size_t index = 0; index < source.notes.size(); ++index) {
     // An open hold continues through the next capture pass and remains owned
     // by the live capture tier. The sealed handoff owns closed rows only;
     // retaining an open row here duplicates it beside that live continuation.
-    if (index < capturePreview.noteStates.size() && capturePreview.noteStates[index].open) {
+    if (index < source.noteStates.size() && source.noteStates[index].open) {
       continue;
     }
     // Draw-side upsert keeps this handoff from double-painting a fresh row.
     DisplayWindowUtils::upsertDisplayNoteAtPitchStart(sealedCapturePreviewNotes_,
-                                                      capturePreview.notes[index]);
+                                                      source.notes[index]);
   }
 }
 
@@ -1563,6 +1571,19 @@ void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   } else {
     clearOverdubSourceView();
   }
+}
+
+LOOP_COLD_MEM bool Loop::retireCopiedCaptureSourceGrain(bool closeCapture) {
+  const bool complete = capture.store.releaseCaptureChunkGrain();
+  ++captureDisplayRevision;
+  if (complete) {
+    if (closeCapture) capture.phase = CapturePhase::None;
+    captureNextEventIndex = 0;
+    captureEventsSortDirty = false;
+    captureHasLastAppendTick_ = false;
+    captureLastAppendTick_ = 0;
+  }
+  return complete;
 }
 
 void Loop::discardCapture() {
@@ -2040,7 +2061,7 @@ LOOP_COLD_MEM SealOutcome Loop::sealCapture(uint32_t sealedAtTick, CommitReason 
 
 LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePass(uint32_t sealedAtTick,
                                                           CommitReason reason) {
-  return stagePreparedCapturePassWithChunkStorage(sealedAtTick, reason, nullptr);
+  return stagePreparedCapturePassWithChunkStorage(capture, sealedAtTick, reason, nullptr);
 }
 
 LOOP_COLD_MEM bool Loop::prewarmActiveOverdubTransferHorizon(uint16_t horizon) {
@@ -2081,7 +2102,18 @@ LOOP_COLD_MEM bool Loop::hasActiveOverdubTransferAdmission() const {
 
 LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassFromActiveAdmission(
     uint32_t sealedAtTick, CommitReason reason) {
+  return stagePreparedCapturePassFromActiveAdmission(capture, sealedAtTick, reason);
+}
+
+LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassFromActiveAdmission(
+    Capture& source, uint32_t sealedAtTick, CommitReason reason) {
   if (!hasActiveOverdubTransferAdmission()) {
+    return SealOutcome::PoolExhausted;
+  }
+  if (source.store.empty()) return SealOutcome::SkippedEmpty;
+  // Active transfer may only use the admitted directory. Reject before moving
+  // its row or sealing source chunks; the legacy detach fallback can allocate.
+  if (source.store.chunkIds().size() > prewarmedCommittedChunkIdPool_.back().capacity()) {
     return SealOutcome::PoolExhausted;
   }
 
@@ -2090,28 +2122,29 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassFromActiveAdmission(
   CommittedChunkIdList prewarmedChunkIds =
       std::move(prewarmedCommittedChunkIdPool_.back());
   prewarmedCommittedChunkIdPool_.pop_back();
-  return stagePreparedCapturePassWithChunkStorage(sealedAtTick, reason,
+  return stagePreparedCapturePassWithChunkStorage(source, sealedAtTick, reason,
                                                    &prewarmedChunkIds);
 }
 
 LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
-    uint32_t sealedAtTick, CommitReason reason, CommittedChunkIdList* prewarmedChunkIds) {
+    Capture& source, uint32_t sealedAtTick, CommitReason reason, CommittedChunkIdList* prewarmedChunkIds) {
   if (hasPendingCapturePass_) {
     return SealOutcome::AlreadyPending;
   }
-  if (capture.store.empty()) {
+  if (source.store.empty()) {
     return SealOutcome::SkippedEmpty;
   }
-  if (!LoopEventStore::canAllocChunkWithReserve()) {
+  if (prewarmedChunkIds == nullptr && !LoopEventStore::canAllocChunkWithReserve()) {
     return SealOutcome::PoolExhausted;
   }
 
-  const CapturePassPhase phase = effectiveCapturePassPhase(capture.phase, passes.hasRecordPass());
+  const CapturePassPhase phase = effectiveCapturePassPhase(source.phase, passes.hasRecordPass());
 
   pendingCapturePass_ = PendingCapturePass{};
   if (prewarmedChunkIds != nullptr) {
     pendingCapturePass_.committedChunkIds = std::move(*prewarmedChunkIds);
   }
+  pendingCapturePass_.retiresLiveCapture = &source == &capture;
   pendingCapturePass_.id = nextPassId_++;
   pendingCapturePass_.mergeSequence = nextMergeSequence_++;
   pendingCapturePass_.phase = phase;
@@ -2120,7 +2153,7 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
       (phase == CapturePassPhase::Overdub && hasOverdubSession())
           ? currentOverdubSessionIndex_
           : kUngroupedOverdubSessionIndex;
-  if (!capture.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
+  if (!source.store.detachChunksToCommittedChunkIds(pendingCapturePass_.committedChunkIds)) {
     pendingCapturePass_ = PendingCapturePass{};
     return SealOutcome::FailedValidation;
   }
@@ -2130,7 +2163,7 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
     return SealOutcome::FailedValidation;
   }
 
-  pendingVisualDelta.clear();
+  if (&source == &capture) pendingVisualDelta.clear();
   hasPendingCapturePass_ = true;
   // Legacy staging may establish canonical capacity here. Active admission
   // arrives with that proof from the STOPPED-only horizon and must only verify
@@ -2142,6 +2175,7 @@ LOOP_COLD_MEM SealOutcome Loop::stagePreparedCapturePassWithChunkStorage(
     discardPendingCapturePass();
     return SealOutcome::FailedValidation;
   }
+  if (&source != &capture) source.phase = CapturePhase::None;
   return SealOutcome::Ok;
 }
 
@@ -2176,6 +2210,7 @@ LOOP_COLD_MEM bool Loop::transferPreparedCapturePass(PreparedCapturePassTransfer
   // Preserve only scalar metadata. Chunk refs move exactly once, from the prepared pass
   // into its canonical owner below.
   transferred = PreparedCapturePassTransfer{};
+  transferred.retiresLiveCapture = pendingCapturePass_.retiresLiveCapture;
   transferred.id = pendingCapturePass_.id;
   transferred.phase = pendingCapturePass_.phase;
   transferred.mergeSequence = pendingCapturePass_.mergeSequence;
@@ -2216,31 +2251,37 @@ LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
   if (!transferPreparedCapturePass(transferred)) {
     return false;
   }
-  completePreparedCapturePassAtomic();
+  completePreparedCapturePassAtomic(transferred.retiresLiveCapture);
   return true;
 }
 
-void Loop::completePreparedCapturePassAtomic() {
+void Loop::completePreparedCapturePassAtomic(bool retiresLiveCapture) {
   // The prepared pass has already detached every mutable chunk. This handoff
   // changes only scalar capture ownership and derived invalidation state.
-  capture.store.clear();
-  capture.phase = CapturePhase::None;
-  captureNextEventIndex = 0;
-  captureEventsSortDirty = false;
-  captureHasLastAppendTick_ = false;
-  captureLastAppendTick_ = 0;
+  if (retiresLiveCapture) {
+    capture.store.clear();
+    capture.phase = CapturePhase::None;
+    captureNextEventIndex = 0;
+    captureEventsSortDirty = false;
+    captureHasLastAppendTick_ = false;
+    captureLastAppendTick_ = 0;
+  }
   notifyCommittedContentChanged();
 }
 
 LOOP_COLD_MEM void Loop::completePreparedCapturePassDeferredCleanup() {
+  completePreparedCapturePassDeferredCleanup(capturePreview);
+}
+
+LOOP_COLD_MEM void Loop::completePreparedCapturePassDeferredCleanup(CapturePreview& source) {
   // Seal handoff (150650 / 120321): keep uncovered sealed rows and merge this
   // pass's closed preview. This is intentionally outside the atomic transfer.
-  retainCapturePreviewAtSeal();
-  capturePreview.clear();
+  retainCapturePreviewAtSeal(source);
+  source.clear();
   // Wrap and stop commit keep the session source view. Clearing here makes
   // applyPendingNoteChangesToOverdubSourceView a no-op and beginCapture
   // re-establishes from a dirty cache (000417 src,why=open every wrap).
-  if (!hasOverdubSession()) {
+  if (&source == &capturePreview && !hasOverdubSession()) {
     clearOverdubSourceView();
   }
 }

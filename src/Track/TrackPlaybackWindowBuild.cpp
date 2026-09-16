@@ -378,7 +378,7 @@ void Track::reanchorPlaybackCycle(uint32_t currentTick) {
   loop.lastTickInLoop = phase;
 }
 
-void Track::resetPlaybackState(uint32_t currentTick) {
+TRACK_COLD_MEM void Track::resetPlaybackState(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   loop.nextEventIndex = 0;
   invalidatePlaybackMergedMidiEvents(true);
@@ -407,7 +407,14 @@ void Track::resetPlaybackStateForSlot(uint8_t slotIndex, uint32_t currentTick) {
   invalidatePlaybackMergedMidiEvents(true);
 }
 
-void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
+TRACK_COLD_MEM void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedger) {
+  // The job borrows generation-qualified scratch. Preserve it until STOPPED
+  // recovery has consumed accepted input; terminal cleanup retries this reset.
+  if (hasPendingDeferredOverdubStop()) {
+    suppressMidiOutputForTransportStop();
+    requestDeferredOverdubStopToStopped();
+    return;
+  }
   bumpPlaybackGeneration();
   playbackRuntime.resetAll(preserveLedger);
 }
@@ -416,14 +423,23 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
+  (void)prewarmCaptureStopJobs();
   Loop& loop = loopForSlot(slotIndex);
   LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
   if (runtime != nullptr) {
     // This is a boot/load or pre-transport path. The hot MIDI path deliberately
     // has no equivalent allocation call.
-    if (prepareCapture) (void)runtime->prewarmViews();
-    else (void)runtime->prewarmCaptureStaging();
+    if (prepareCapture) {
+      (void)runtime->prewarmViews();
+    } else (void)runtime->prewarmCaptureStaging();
+    (void)runtime->prewarmCanonicalCaptureOutput();
   }
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::capturePrewarm(resolveTrackIndexForPersistence(*this), slotIndex,
+      prepareCapture, runtime && runtime->canonicalCaptureOutputAdmitted(),
+      runtime ? runtime->canonicalCaptureChunks.availableChunks() : 0,
+      LoopEventStore::freeChunkCount(), MemoryMonitor::getInternalHeapFreeBytes());
+#endif
   // Canonical ownership transfer is a pre-capture resource.  Explicit capture
   // preparation (the RECORDING entry point) must reserve the target loop's
   // horizon even when other tracks are already playing; otherwise the later

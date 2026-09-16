@@ -32,11 +32,73 @@ constexpr uint16_t kDeferredStopPreparationQuantum = 32;
 
 }  // namespace
 
+TRACK_COLD_MEM void Track::CaptureStopJobsDeleter::operator()(CaptureStopJobs* jobs) const {
+  if (!jobs) return;
+  jobs->~CaptureStopJobs();
+  ExternalMemoryFirstAllocator<CaptureStopJobs>{}.deallocate(jobs, 1);
+}
+
+TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
+  if (!captureStopJobs_) {
+    auto* storage = ExternalMemoryFirstAllocator<CaptureStopJobs>{}.allocate(1);
+    if (!storage) return false;
+    captureStopJobs_.reset(new (storage) CaptureStopJobs{});
+  }
+  return true;
+}
+
+TRACK_COLD_MEM Track::CaptureStopJob& Track::captureStopJob() {
+  return captureStopJobs_->entries[captureStopJobs_->head];
+}
+
+TRACK_COLD_MEM const Track::CaptureStopJob& Track::captureStopJob() const {
+  return captureStopJobs_->entries[captureStopJobs_->head];
+}
+
 #if defined(SESSION_CAPTURE)
+TRACK_COLD_MEM void Track::printStoppedCaptureContentForHitl() {
+  if (clockManager.isTransportRunning() || hasPendingDeferredOverdubStop() ||
+      !loopsAllocated() || isRecording() || isOverdubbing()) {
+    Serial.println("CAPTURE_CONTENT,denied");
+    return;
+  }
+  const auto& loop = getActiveLoop();
+  Serial.printf("CAPTURE_CONTENT,begin,track=%u,slot=%u,length=%lu\r\n",
+      midiChannel, activeLoopIndex, static_cast<unsigned long>(loop.loopLengthTicks));
+  SessionMidiEventVec rows;
+  auto printRows = [&rows](const char* kind, unsigned pass) {
+    Serial.printf("CAPTURE_CONTENT,rows,%s,%u,%u\r\n", kind, pass,
+                  static_cast<unsigned>(rows.size()));
+    for (const auto& e : rows) {
+      Serial.printf("CAPTURE_CONTENT,event,%s,%u,%lu,%u,%u,%u,%u,%lu\r\n",
+          kind, pass, static_cast<unsigned long>(e.tick), static_cast<unsigned>(e.type),
+          e.channel, e.data.noteData.note, e.data.noteData.velocity,
+          static_cast<unsigned long>(e.noteId));
+    }
+  };
+  LoopEventStore::appendChunkRefEvents(loop.passes.recordPass.committedChunkIds, rows);
+  printRows("record", 0);
+  for (size_t i = 0; i < loop.passes.overdubPasses.size(); ++i) {
+    rows.clear();
+    LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses[i].committedChunkIds, rows);
+    printRows("overdub", static_cast<unsigned>(i));
+  }
+  loop.passes.materializeToEventVector(rows, loop.loopLengthTicks);
+  printRows("effective", 0);
+  Serial.println("CAPTURE_CONTENT,end");
+}
+
 TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
-  if (clockManager.isTransportRunning()) return;
-  const auto& stop = pendingStopAdmission_;
+  if (clockManager.isTransportRunning() || !captureStopJobs_) return;
+  const auto& stop = captureStopJob().admission;
   const auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  const uint8_t trackIndex = resolveTrackIndexForPersistence(*this);
+  Serial.printf("#STOP_OUTPUT,track=%u,slot=%u,muted=%u,audible=%u,enabled=%u,slot_muted=%u,barrier=%u,tick=%lu,last=%lu\r\n",
+      trackIndex, activeLoopIndex, isMuted(), trackManager.isTrackAudible(trackIndex),
+      trackManager.isSlotEnabled(trackIndex, activeLoopIndex),
+      trackManager.isSlotMuted(trackIndex, activeLoopIndex), transportStopOutputBarrier_,
+      static_cast<unsigned long>(clockManager.getCurrentTick()),
+      static_cast<unsigned long>(loopsAllocated() ? getActiveLoop().lastTickInLoop : UINT32_MAX));
   Serial.printf("#STOP_STATUS,us=%lu,state=%s,pending=%u,phase=%u,dest=%u,order=%llu,ranked=%llu,canonical=%llu,prefix=%u,tail=%u,bridge=%u,wrap=%u\r\n",
       static_cast<unsigned long>(micros()), getStateName(getState()), stop.pending,
       static_cast<unsigned>(stop.phase), static_cast<unsigned>(stop.destination),
@@ -48,6 +110,14 @@ TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
       runtime ? static_cast<unsigned>(runtime->captureBridgePhase) : 255u,
       loopsAllocated() && getActiveLoop().hasDeferredVisualCacheWrapAppend());
   if (loopsAllocated() && runtime) {
+    const auto* set = runtime->viewSetIfPrewarmed();
+    Serial.printf("#STOP_PREFIX,phase=%u,window=%u,attached=%u,inputs=%u,apply=%u,passes=%u,build_active=%u,index=%u,current=%u,ready=%u,build=%u,retained=%u\r\n",
+        static_cast<unsigned>(runtime->canonicalPrefixPhase), static_cast<unsigned>(runtime->canonicalWindowPhase),
+        runtime->canonicalPassInputs.captureAttached(), runtime->canonicalPassInputs.ready(),
+        runtime->frozenCompanionApply.available(), runtime->frozenCompanionPasses.idle(), runtime->viewBuild.active(),
+        runtime->canonicalWindowIndex, set ? set->lifecycle.current : 255u,
+        set ? set->lifecycle.ready : 255u, set ? set->lifecycle.build : 255u,
+        set ? set->lifecycle.retained : 255u);
     const auto& loop = getActiveLoop();
     const auto& work = loop.preparedCompanionHistory_;
     Serial.printf("#STOP_HISTORY,phase=%u,storage=%llu,current=%llu,history=%u,current_history=%u,rows=%u,prewarmed=%u,pass=%u,chunks=%u\r\n",
@@ -71,7 +141,8 @@ TRACK_COLD_MEM bool Track::commitPreparedOverdubStopBridge(
 
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination destination,
                                                      uint32_t currentTick) {
-  if (!isOverdubbing() || pendingStopAdmission_.pending) {
+  if (!captureStopJobs_ || !isOverdubbing() || hasPendingDeferredOverdubStop() ||
+      !captureStopJob().pendingNotes.empty()) {
     return false;
   }
   Loop& loop = getActiveLoop();
@@ -85,7 +156,8 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     runtime->discardFrozenCaptureBridge();
   }
   CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
-  if (runtime == nullptr || views == nullptr || !loop.hasActiveOverdubTransferAdmission()) {
+  if (runtime == nullptr || views == nullptr || runtime->captureStopOwner != nullptr ||
+      !loop.hasActiveOverdubTransferAdmission()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        views != nullptr, loop.hasActiveOverdubTransferAdmission(), "storage_denied");
     return false;
@@ -105,19 +177,18 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   const bool stoppedDestination = destination == PendingStopDestination::Stopped;
   const PlaybackViewSourceIdentity baseSource{
       loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity()};
-  const RuntimePlaybackView* baseView = runtime->publishedFullLoopView(
-      baseSource, loop.loopLengthTicks);
-  const size_t baseEventCount = baseView == nullptr
-      ? finalFrozenCount : baseView->storage.eventCount;
-  const size_t candidateCapacity = std::min(
-      std::max(baseEventCount, finalFrozenCount), RuntimePlaybackViewConfig::kEventsPerView);
-  const uint64_t rankedCredits = stoppedDestination || finalFrozenCount == 0 ? 0 :
-      StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(
-          candidateCapacity,
-          std::min(loop.passes.overdubPasses.size() + 1,
+  // Rolling emission windows do not describe the canonical candidate horizon.
+  // Use the prewarmed owner, even when the last capture contains only one event.
+  uint64_t rankedCredits = stoppedDestination || finalFrozenCount == 0 ? 0 :
+      runtime->requiredStopRankedGrains(baseSource,
+          std::min(loop.passes.overdubPasses.size() + 2,
                    RuntimePlaybackViewConfig::kRecordsPerBridge),
-          baseEventCount, historyCount, pendingChangeCount,
-          kDeferredStopPreparationQuantum);
+          historyCount, pendingChangeCount, kDeferredStopPreparationQuantum);
+  if (rankedCredits != UINT64_MAX && rankedCredits &&
+      runtime->selectedFullLoopBridge(baseSource, loop.loopLengthTicks)) {
+    rankedCredits += RuntimePlaybackBridgeBuild::requiredRetainedClosureGrains(
+        ActiveNoteLedger::kMaxOpenNotes, kDeferredStopPreparationQuantum);
+  }
   const uint64_t canonicalRequired = stoppedDestination || finalFrozenCount == 0 ? 0 :
       Loop::requiredPreparedCompanionHistoryGrains(
           historyCount, 0, pendingChangeCount, kDeferredStopPreparationQuantum,
@@ -136,13 +207,13 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
                        rankedCredits, canonicalCredits, "preparation_service_unavailable");
     return false;
   }
-  if (!pendingStopAdmission_.begin(generation, currentTick, 0, openReservations,
+  if (!captureStopJob().admission.begin(generation, currentTick, 0, openReservations,
                                    finalFrozenCount, kDeferredStopContract,
                                    rankedCredits, canonicalCredits, recycleCredits) ||
       !staging.freeze(generation)) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        finalFrozenCount, openReservations, "freeze_or_contract_denied");
-    pendingStopAdmission_.reset();
+    captureStopJob().admission.reset();
     return false;
   }
   // There is no closure grain when every captured NoteOn already has its
@@ -150,31 +221,40 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   // deferred owner would remain in ReservedClosure forever waiting for a
   // reservation that cannot exist (the clean normal-stop hang).
   if (openReservations == 0) {
-    pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalPrefix);
+    captureStopJob().admission.setPhase(PendingStopPhase::CanonicalPrefix);
   }
-  pendingStopAdmission_.destination = destination;
+  captureStopJob().admission.destination = destination;
   if (!isValidStateTransition(TRACK_OVERDUB_STOPPING)) {
-    pendingStopAdmission_.reset();
+    captureStopJob().admission.reset();
     return false;
   }
+  captureStopJob().owner = &loop;
+  runtime->captureStopOwner = &captureStopJob().admission;
+  captureStopJob().loopId = loop.loopId;
+  captureStopJob().slot = activeLoopIndex;
+  captureStopJob().phaseTick = capturePhaseTick(currentTick);
+  captureStopJob().loopLengthTicks = loop.loopLengthTicks;
+  captureStopJob().interval = captureInterval_;
+  captureStopJob().pendingNotes.swap(pendingNotes);
+  ++captureStopJobs_->count;
   // Button A closes input at this boundary. The sealed frozen capture owns all
   // remaining canonical/companion work, while the existing prepared playback
   // window remains the active source. Publish PLAYING immediately so the
   // control surface never waits behind a resumable preparation pass.
-  // `pendingStopAdmission_` remains the capture-admission and transport-stop
+  // `captureStopJob().admission` remains the capture-admission and transport-stop
   // barrier until the joint commit and cleanup retire it.
   trackState = TRACK_OVERDUB_STOPPING;
 #if RUNTIME_TIMING_ENABLED
   RuntimeTimingTelemetry::recordStopStateTransition(
       resolveTrackIndexForPersistence(*this), activeLoopIndex,
-      TRACK_OVERDUBBING, TRACK_OVERDUB_STOPPING, pendingStopAdmission_.stopTick, micros());
+      TRACK_OVERDUBBING, TRACK_OVERDUB_STOPPING, captureStopJob().admission.stopTick, micros());
 #endif
   if (destination == PendingStopDestination::Playing) {
     trackState = TRACK_PLAYING;
 #if RUNTIME_TIMING_ENABLED
     RuntimeTimingTelemetry::recordStopStateTransition(
         resolveTrackIndexForPersistence(*this), activeLoopIndex,
-        TRACK_OVERDUB_STOPPING, TRACK_PLAYING, pendingStopAdmission_.stopTick, micros());
+        TRACK_OVERDUB_STOPPING, TRACK_PLAYING, captureStopJob().admission.stopTick, micros());
 #endif
     armPlayingMidiDrainAfterOverdubStop();
   }
@@ -182,59 +262,69 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
 }
 
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
-  pendingStopAdmission_.requestTransportStop();
-  if (auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
-    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*runtime, pendingStopAdmission_);
+  if (!hasPendingDeferredOverdubStop()) return;
+  captureStopJob().admission.requestTransportStop();
+  if (auto* runtime = playbackRuntime.slotIfAllocated(captureStopJob().slot)) {
+    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*runtime, captureStopJob().admission);
   }
 }
 
 TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
-  if (!pendingStopAdmission_.pending) {
+  if (!hasPendingDeferredOverdubStop()) return false;
+  auto& stop = captureStopJob().admission;
+  if (!stop.pending) {
     return false;
   }
-  Loop& loop = getActiveLoop();
-  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  // Never reinterpret a saved job through the currently selected slot.
+  if (!captureStopJob().owner || !loopsAllocated() ||
+      loopIdForSlot(captureStopJob().slot) != captureStopJob().loopId ||
+      &getLoop(captureStopJob().slot) != captureStopJob().owner ||
+      captureStopJob().owner->loopLengthTicks != captureStopJob().loopLengthTicks) return false;
+  Loop& loop = *captureStopJob().owner;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(captureStopJob().slot);
   CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
   if (runtime == nullptr || views == nullptr ||
-      views->frozenGeneration != pendingStopAdmission_.frozenGeneration) {
+      views->frozenGeneration != stop.frozenGeneration) {
     return false;
   }
   CaptureAdmissionStaging& staging = *views;
-  const uint32_t phaseTick = capturePhaseTick(pendingStopAdmission_.stopTick);
+  const uint32_t phaseTick = captureStopJob().phaseTick;
 
   // A clean stop commonly follows a completed wrap with no successor rows.
   // There is no canonical or audible ordering work in that candidate; advance
   // directly to the admitted transfer tail instead of invoking zero-row
   // builders on the active transport path.
   if (staging.storage.eventCount == 0 &&
-      (pendingStopAdmission_.phase == PendingStopPhase::CanonicalPrefix ||
-       pendingStopAdmission_.phase == PendingStopPhase::CanonicalOrder)) {
-    pendingStopAdmission_.setPhase(PendingStopPhase::PrepareTransfer);
+      (stop.phase == PendingStopPhase::CanonicalPrefix ||
+       stop.phase == PendingStopPhase::CanonicalOrder)) {
+    stop.setPhase(PendingStopPhase::PrepareTransfer);
     return false;
   }
 
-  if (pendingStopAdmission_.phase == PendingStopPhase::ReservedClosure) {
+  if (stop.phase == PendingStopPhase::ReservedClosure) {
     CaptureNoteReservation* reservation = staging.firstOpenReservation();
     if (reservation == nullptr) {
       if (staging.openReservationCount() == 0) {
-        pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalOrder);
+        stop.setPhase(PendingStopPhase::CanonicalOrder);
       }
       return false;
     }
-    if (!appendReservedCaptureNoteOffAtPhase(*reservation, phaseTick)) {
+    if (!appendReservedCaptureNoteOffForOwner(loop, staging, *reservation, phaseTick)) {
       return false;
     }
-    (void)pendingStopAdmission_.consumeClosureGrain();
-    if (pendingStopAdmission_.remainingClosureGrains == 0) {
-      pendingStopAdmission_.setPhase(
-          pendingStopAdmission_.destination == PendingStopDestination::Stopped
+    (void)stop.consumeClosureGrain();
+    if (stop.remainingClosureGrains == 0) {
+      stop.setPhase(
+          stop.destination == PendingStopDestination::Stopped
               ? PendingStopPhase::CanonicalOrder : PendingStopPhase::CanonicalPrefix);
     }
     return false;
   }
   const PlaybackViewSourceIdentity baseSource{
       loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity()};
-  const uint32_t targetRevisionDelta = loop.hasPendingNoteChanges() ? 2u : 1u;
+  const uint32_t targetRevisionDelta = runtime->frozenCaptureCompanions.ready(staging)
+      ? (runtime->frozenCaptureCompanions.size() == 0 ? 1u : 2u)
+      : (loop.hasPendingNoteChanges() ? 2u : 1u);
   const PlaybackViewSourceIdentity targetSource{
       loop.playbackRevision + targetRevisionDelta, playbackGeneration, nullptr};
   const RuntimeCanonicalPassInputs::CurrentSource currentSource{
@@ -242,35 +332,22 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       loop.canonicalStorageGeneration};
   const RuntimeCanonicalPassInputs::FrozenSource frozenSource{
       loop.playbackRevision, playbackGeneration,
-      pendingStopAdmission_.transportCommandEpoch, loop.loopLengthTicks, staging};
+      stop.transportCommandEpoch, loop.loopLengthTicks, staging};
 
-  if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalPrefix) {
-    if (pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
-      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalOrder);
+  if (stop.phase == PendingStopPhase::CanonicalPrefix) {
+    if (stop.destination == PendingStopDestination::Stopped) {
+      stop.setPhase(PendingStopPhase::CanonicalOrder);
       return false;
     }
-    const bool prefixWasReady = runtime->canonicalPrefixPhase == LoopPlaybackRuntime::CanonicalPrefixPhase::Ready;
-    const auto result = runtime->stepCanonicalPrefix(
-        loop.passes, baseSource, currentSource, kDeferredStopPreparationQuantum);
-    if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
-    if (result == RuntimePlaybackOrderBuildResult::Complete) {
-      if (!prefixWasReady) return false; // Window work starts on its own owner turn.
-      const auto* base = runtime->publishedFullLoopView(baseSource, loop.loopLengthTicks);
-      if (!base || !base->sourceFilled || !base->passOriginsReady || !(base->passOriginSource == baseSource)) {
-        const uint32_t windowLength = std::min(uint32_t(Config::TICKS_PER_BAR), loop.loopLengthTicks);
-        if (!windowLength) return false;
-        const PlaybackCoverageInterval coverage{phaseTick / windowLength * windowLength,
-                                                windowLength, loop.loopLengthTicks};
-        const EmissionCursor anchor{0, phaseTick, 0, 0, baseSource.sourceGeneration};
-        if (runtime->stepCanonicalWindow(coverage, anchor, kDeferredStopPreparationQuantum) !=
-            RuntimePlaybackOrderBuildResult::Complete) return false;
-      }
-      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalOrder);
-    }
+    const auto anchor = runtime->currentCycleCursor(phaseTick, baseSource.sourceGeneration);
+    if (runtime->stepCanonicalBase(loop.passes, baseSource, currentSource, anchor,
+                                   kDeferredStopPreparationQuantum) ==
+        RuntimePlaybackOrderBuildResult::Complete)
+      stop.setPhase(PendingStopPhase::CanonicalOrder);
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalOrder) {
-    if (!runtime->beginFrozenCaptureCanonicalOrder(pendingStopAdmission_.frozenGeneration)) {
+  if (stop.phase == PendingStopPhase::CanonicalOrder) {
+    if (!runtime->beginFrozenCaptureCanonicalOrder(stop.frozenGeneration)) {
       return false;
     }
     const RuntimePlaybackOrderBuildResult result =
@@ -278,35 +355,36 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (result == RuntimePlaybackOrderBuildResult::Denied) {
       return false;
     }
-    (void)pendingStopAdmission_.consumeOrderGrain();
+    (void)stop.consumeOrderGrain();
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
-      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalRewrite);
+      stop.setPhase(PendingStopPhase::CanonicalRewrite);
     }
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalRewrite) {
-    const LoopEventStoreRewriteResult result = runtime->stepFrozenCaptureCanonicalRewrite(
-        loop.capture.store, pendingStopAdmission_.frozenGeneration, kDeferredStopOrderQuantum);
+  if (stop.phase == PendingStopPhase::CanonicalRewrite) {
+    const LoopEventStoreRewriteResult result = runtime->stepFrozenCaptureCanonicalCopy(
+        stop.frozenGeneration, kDeferredStopOrderQuantum);
     if (result == LoopEventStoreRewriteResult::Denied) {
       return false;
     }
-    (void)pendingStopAdmission_.consumeOrderGrain();
+    (void)stop.consumeOrderGrain();
     if (result == LoopEventStoreRewriteResult::Complete) {
       const size_t count = runtime->frozenCaptureCanonicalOrder.orderedEventCount();
-      const uint32_t lastTick = count == 0 ? 0 : staging.storage.events[staging.storage.order[count - 1]].tick;
-      loop.noteCaptureEventsCanonicalized(lastTick);
+      // The prepared output owns different physical chunks. Retire only one
+      // copied raw chunk per turn; never rewrite sealed persistence input.
+      if (!loop.retireCopiedCaptureSourceGrain()) return false;
       // An empty successor capture has no audible rows to project.  Skip the
       // zero-work audible-order builder and continue with the already-admitted
       // transfer tail; this keeps a clean stop from parking on an unnecessary
       // owner turn after canonical rewrite.
-      pendingStopAdmission_.setPhase(count == 0 ? PendingStopPhase::PrepareTransfer
+      stop.setPhase(count == 0 ? PendingStopPhase::PrepareTransfer
                                                 : PendingStopPhase::AudibleOrder);
     }
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::AudibleOrder) {
+  if (stop.phase == PendingStopPhase::AudibleOrder) {
     if (!runtime->beginFrozenCaptureOrder(loop.loopLengthTicks,
-                                          pendingStopAdmission_.frozenGeneration)) {
+                                          stop.frozenGeneration)) {
       return false;
     }
     const RuntimePlaybackOrderBuildResult result =
@@ -314,20 +392,20 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (result == RuntimePlaybackOrderBuildResult::Denied) {
       return false;
     }
-    (void)pendingStopAdmission_.consumeOrderGrain();
+    (void)stop.consumeOrderGrain();
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
-      pendingStopAdmission_.setPhase(PendingStopPhase::PrepareTransfer);
+      stop.setPhase(PendingStopPhase::PrepareTransfer);
     }
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::PrepareTransfer) {
+  if (stop.phase == PendingStopPhase::PrepareTransfer) {
     // Ordering/rewrite have finished. Unused estimates are not service work.
-    if (!pendingStopAdmission_.retireCompletedPreparation()) return false;
-    const SealOutcome staged = loop.capture.store.empty()
+    if (!stop.retireCompletedPreparation()) return false;
+    const SealOutcome staged = runtime->canonicalCaptureOutput.store.empty()
                                    ? SealOutcome::SkippedEmpty
                                    : loop.stagePreparedCapturePassFromActiveAdmission(
-                                         pendingStopAdmission_.stopTick,
-                                         pendingStopAdmission_.destination == PendingStopDestination::Playing
+                                         runtime->canonicalCaptureOutput, stop.stopTick,
+                                         stop.destination == PendingStopDestination::Playing
                                              ? CommitReason::OverdubStop
                                              : CommitReason::OverdubStopToStopped);
     if (staged != SealOutcome::Ok && staged != SealOutcome::SkippedEmpty) {
@@ -337,31 +415,31 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // existing bounded transfer path for that case; populated captures use
     // the prepared joint handoff below.
     if (staged == SealOutcome::SkippedEmpty ||
-        pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
-      if (!pendingStopAdmission_.retireSkippedCompanionPreparation(
+        stop.destination == PendingStopDestination::Stopped) {
+      if (!stop.retireSkippedCompanionPreparation(
               staged == SealOutcome::SkippedEmpty)) return false;
-      pendingStopAdmission_.setPhase(PendingStopPhase::AtomicTransfer);
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
     } else {
       // The control boundary already released the track to the current
       // prepared PLAYING window. Continue only the frozen companion work here.
-      pendingStopAdmission_.setPhase(PendingStopPhase::CanonicalTail);
+      stop.setPhase(PendingStopPhase::CanonicalTail);
     }
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::CanonicalTail) {
+  if (stop.phase == PendingStopPhase::CanonicalTail) {
     if (!runtime->frozenCanonicalTailReady(targetSource)) {
       if (runtime->beginFrozenCanonicalTail(frozenSource, loop.pendingNoteChanges(), targetSource)) {
         return false;
       }
       const auto result = runtime->stepReservedFrozenCanonicalTail(
-          pendingStopAdmission_, kDeferredStopPreparationQuantum);
+          stop, kDeferredStopPreparationQuantum);
       if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
       if (result != RuntimePlaybackOrderBuildResult::Complete) return false;
     }
-    pendingStopAdmission_.setPhase(PendingStopPhase::CompanionHistory);
+    stop.setPhase(PendingStopPhase::CompanionHistory);
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::CompanionHistory) {
+  if (stop.phase == PendingStopPhase::CompanionHistory) {
     if (!loop.preparedCompanionHistoryReady()) {
       if (!loop.preparedCompanionHistoryCanStep(runtime->frozenCaptureCompanions,
                                                 staging, runtime->canonicalPassInputs)) {
@@ -372,11 +450,11 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         return false; // Setup is its own admitted owner turn.
       }
       const auto result = TrackPreparedStopCommit::stepPreparation(
-          loop, *runtime, pendingStopAdmission_, kDeferredStopPreparationQuantum);
+          loop, *runtime, stop, kDeferredStopPreparationQuantum);
       if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
       return false;
     }
-    if (!pendingStopAdmission_.retireCompletedPreparation()) return false;
+    if (!stop.retireCompletedPreparation()) return false;
 #if defined(SESSION_CAPTURE)
     const auto* windowBase = runtime->preparedCanonicalWindow(baseSource);
     const auto* publishedBase = windowBase ? windowBase : runtime->publishedFullLoopView(baseSource, loop.loopLengthTicks);
@@ -384,102 +462,89 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         publishedBase != nullptr, publishedBase && publishedBase->passOriginsReady,
         windowBase ? "prepared_window" : publishedBase ? "present" : "missing_canonical_base");
 #endif
-    pendingStopAdmission_.setPhase(PendingStopPhase::CompanionBridge);
+    stop.setPhase(PendingStopPhase::CompanionBridge);
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::CompanionBridge) {
-    if (pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
+  if (stop.phase == PendingStopPhase::CompanionBridge) {
+    if (stop.destination == PendingStopDestination::Stopped) {
       // History is complete; a stopped destination has no audible bridge.
-      if (!pendingStopAdmission_.retireCompletedPreparation()) return false;
-      pendingStopAdmission_.setPhase(PendingStopPhase::AtomicTransfer);
+      if (!stop.retireCompletedPreparation()) return false;
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
       return false;
     }
-    const EmissionCursor anchor{
-        0, phaseTick, 0, 0, targetSource.sourceGeneration};
+    const auto anchor = runtime->currentCycleCursor(
+        loop.lastTickInLoop == UINT32_MAX ? phaseTick : loop.lastTickInLoop, targetSource.sourceGeneration);
     if (!runtime->canSelectFrozenCaptureBridge(
-            pendingStopAdmission_.frozenGeneration,
-            pendingStopAdmission_.transportCommandEpoch, loop.loopLengthTicks, anchor)) {
+            stop.frozenGeneration,
+            stop.transportCommandEpoch, loop.loopLengthTicks, anchor)) {
+      if (runtime->refreshFrozenCompanionBridge(anchor)) return false;
       if (runtime->beginFrozenCompanionBridge(
-              baseSource, targetSource, pendingStopAdmission_.frozenGeneration,
-              pendingStopAdmission_.transportCommandEpoch, loop.loopLengthTicks, anchor)) {
+              baseSource, targetSource, stop.frozenGeneration,
+              stop.transportCommandEpoch, loop.loopLengthTicks, anchor)) {
         return false;
       }
       const auto result = runtime->stepReservedFrozenCaptureBridge(
-          pendingStopAdmission_, kDeferredStopPreparationQuantum);
+          stop, kDeferredStopPreparationQuantum);
       if (result == RuntimePlaybackOrderBuildResult::Denied) return false;
       return false;
     }
-    if (!pendingStopAdmission_.retireCompletedPreparation()) return false;
-    pendingStopAdmission_.setPhase(PendingStopPhase::AtomicTransfer);
+    if (!stop.retireCompletedPreparation()) return false;
+    stop.setPhase(PendingStopPhase::AtomicTransfer);
     return false;
   }
-  if (pendingStopAdmission_.phase == PendingStopPhase::AtomicTransfer) {
-    const EmissionCursor anchor{0, phaseTick, 0, 0, targetSource.sourceGeneration};
-    PreparedCapturePassTransfer transferred{};
-    if (pendingStopAdmission_.destination == PendingStopDestination::Stopped &&
-        loop.preparedCompanionCaptureVerified(runtime->canonicalPassInputs)) {
-      (void)TrackPreparedStopCommit::commitStopped(loop, *runtime, pendingStopAdmission_,
-                                                  playbackGeneration, transferred);
+  if (stop.phase == PendingStopPhase::AtomicTransfer) {
+    const auto anchor = runtime->currentCycleCursor(
+        loop.lastTickInLoop == UINT32_MAX ? phaseTick : loop.lastTickInLoop, targetSource.sourceGeneration);
+    if (TrackPreparedStopCommit::requiresBridgeRefresh(
+            loop, *runtime, stop, anchor)) {
+      stop.setPhase(PendingStopPhase::CompanionBridge);
       return false;
     }
-    const bool prepared = loop.hasPendingCapturePass() &&
-        pendingStopAdmission_.destination == PendingStopDestination::Playing &&
-        TrackPreparedStopCommit::commit(loop, *runtime, pendingStopAdmission_,
-                                        playbackGeneration, anchor, transferred);
-    if (prepared) return false;
-    if (!pendingStopAdmission_.canCommit(pendingStopAdmission_.transportCommandEpoch,
-                                         pendingStopAdmission_.destination)) return false;
-    if (loop.hasPendingCapturePass()) {
-      if (pendingStopAdmission_.destination == PendingStopDestination::Stopped) {
-        if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
-      } else {
-        if (!loop.canCommitPreparedCaptureAndCompanions() ||
-            !loop.commitPreparedCaptureAndCompanionsAtomic(transferred)) return false;
-        pendingStopAdmission_.historyRecycleOwner = &loop;
-        pendingStopAdmission_.historyRecycleGeneration = loop.preparedCompanionHistoryGeneration();
-        pendingStopAdmission_.historyRecycleStarted = false;
-      }
-    }
-    pendingStopAdmission_.setPhase(PendingStopPhase::DeferredCleanup);
+    PreparedCapturePassTransfer transferred{};
+    (void)TrackPreparedStopCommit::advanceAtomicTransfer(
+        loop, *runtime, stop, playbackGeneration, anchor, transferred);
     return false;
   }
 
-  if (pendingStopAdmission_.historyRecycleOwner == &loop) {
-    if (!pendingStopAdmission_.historyRecycleStarted) {
-      if (!TrackPreparedStopCommit::beginHistoryRecycle(loop, pendingStopAdmission_)) return false;
+  if (stop.historyRecycleOwner == &loop) {
+    if (!stop.historyRecycleStarted) {
+      if (!TrackPreparedStopCommit::beginHistoryRecycle(loop, stop)) return false;
       return false;
     }
     const auto result = TrackPreparedStopCommit::stepHistoryRecycle(
-        loop, pendingStopAdmission_, kDeferredStopPreparationQuantum);
+        loop, stop, kDeferredStopPreparationQuantum);
     if (result != RuntimePlaybackOrderBuildResult::Complete) return false;
-    pendingStopAdmission_.historyRecycleOwner = nullptr;
+    stop.historyRecycleOwner = nullptr;
   }
 
-  if (!loop.handoffSessionExitSnapshot(
-          pendingStopAdmission_.destination == PendingStopDestination::Playing
-              ? CommitReason::OverdubStop : CommitReason::OverdubStopToStopped)) {
+  // One retired pending-note node per turn; never clear the live ingress map.
+  if (!captureStopJob().pendingNotes.empty()) {
+    captureStopJob().pendingNotes.erase(captureStopJob().pendingNotes.begin());
     return false;
   }
-  loop.completePreparedCapturePassDeferredCleanup();
-  pendingNotes.clear();
-  const PendingStopDestination destination = pendingStopAdmission_.destination;
-  // Atomic publication selected the completed bridge, but its preparation
-  // workers still describe the just-finished pass. Retire only that temporary
-  // state before accepting a later record/overdub stop; discard preserves the
-  // selected bridge and releases the alternate candidate for the next pass.
-  runtime->discardFrozenCaptureBridge();
-  pendingStopAdmission_.reset();
-  loop.closeOverdubSession();
+  // Restore one consumed physical output credit per owner turn. If physical
+  // storage is exhausted, finish this accepted job; the next admission must
+  // explicitly deny until a later refill succeeds.
+  if (runtime->replenishCanonicalCaptureChunk()) return false;
+  const bool ownsTrackState = captureStopJob().interval == captureInterval_ &&
+      captureStopJob().slot == activeLoopIndex;
+  const PendingStopDestination destination = stop.destination;
+  if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop))
+    return false;
+  captureStopJob().owner = nullptr;
+  captureStopJob().loopId = kInvalidLoopId;
+  captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
+  --captureStopJobs_->count;
+  if (!ownsTrackState) return true;
+  (void)loop.retireCopiedCaptureSourceGrain(true);
   if (destination == PendingStopDestination::Stopped) {
     silenceTrackMidiOutput();
     setState(TRACK_STOPPED);
     resetPlaybackState(clockManager.getCurrentTick());
   } else {
-    silenceTrackMidiOutput();
-    playbackRuntime.clearAllLedgers();
-    reanchorPlaybackCycle(clockManager.getCurrentTick());
-    // Normal Button A release has already published PLAYING. A later
-    // transport-stop retarget is the only path that still needs this state edge.
+    // Playback continued during finalization. Keep its cursor and held-note
+    // ledger so cleanup cannot truncate a note or replay earlier events.
+    // Normal Button A release has already published PLAYING.
     if (!isPlaying()) {
       setState(TRACK_PLAYING);
     }
@@ -577,14 +642,24 @@ void Track::startOverdubbing(uint32_t currentTick) {
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   CaptureAdmissionStaging* viewSet =
       runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
-  if (viewSet == nullptr) {
+  if (viewSet == nullptr || !captureStopJobs_) {
     logger.log(CAT_TRACK, LOG_WARNING,
-               "Overdub start rejected: capture admission staging is not prewarmed");
+               "Overdub start rejected: capture staging or stop descriptors are not prewarmed");
     return;
   }
-  if (!loopRef.hasActiveOverdubTransferAdmission() || !loopRef.canHandoffSessionExitSnapshot()) {
+  if (!runtime->canonicalCaptureOutputAdmitted()) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub start rejected: canonical copy chunks are not reserved");
+    return;
+  }
+  if (!loopRef.hasActiveOverdubTransferAdmission()) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "Overdub start rejected: canonical transfer capacity is not prewarmed");
+    return;
+  }
+  if (!loopRef.canHandoffSessionExitSnapshot()) {
+    logger.log(CAT_TRACK, LOG_WARNING,
+               "Overdub start deferred: previous session snapshot handoff is pending");
     return;
   }
   runtime->discardFrozenCaptureOrder();
@@ -611,6 +686,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
                   DebugSessionCapture::kUnsampledHeapBytes, "failed");
     return;
   }
+  ++captureInterval_;
   transportStopOutputBarrier_ = false;
   SC_ODUB_STAGE("set_state", micros() - stateAdvanceStartUs,
                 DebugSessionCapture::kUnsampledHeapBytes,

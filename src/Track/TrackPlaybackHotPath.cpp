@@ -16,9 +16,10 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/PlaybackCursorAdvance.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "Utils/TrackMem.h"
 #include "PlaybackMergedMidiEvents.h"
 
-void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
+TRACK_COLD_MEM void Track::reanchorPlaybackProjection(uint32_t currentTick, bool preserveLoopPhaseOrigin) {
   Loop& loop = getActiveLoop();
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
     runtime->bridgeStream.reset();
@@ -209,13 +210,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   }
   LoopPlaybackRuntime& runtime = *runtimePtr;
 
-  // The fixed view is deliberately a narrow first consumer: only the active,
-  // ordinary PLAYING state can emit from a complete full-loop view. Capture,
-  // overdub, preview, layered, long-window, and source-mismatch cases retain
-  // the legacy gather/order path until their independent handoffs exist.
-  // A stop finalization retains the same committed source as OVERDUBBING.
-  // Keep that proven legacy route until the deferred owner atomically selects
-  // a complete replacement; the fixed view is only valid for ordinary PLAYING.
+  // Ordinary PLAYING consumes the selected immutable bridge source. Rolling
+  // windows below use that same compiled stream; its indexed cursor remains
+  // available across source handoff or a pending refill. Capture, layered and
+  // edited playback retain their existing paths until their separate gates.
   const bool fixedViewEligible =
       isActive && isPlaying() && !editManager.isNoteEditActive();
   const PlaybackViewSourceIdentity expectedFixedSource{
@@ -225,18 +223,16 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
           ? runtime.selectedFullLoopBridge(expectedFixedSource, loop.loopLengthTicks)
           : nullptr;
   const RuntimePlaybackView* fixedView =
-      fixedViewEligible
-          ? runtime.publishedFullLoopView(fixedBridge != nullptr ? fixedBridge->baseSource
-                                                               : expectedFixedSource,
-                                          loop.loopLengthTicks)
-          : nullptr;
+      fixedBridge != nullptr ? runtime.fullLoopBridgeBase(*fixedBridge, loop.loopLengthTicks)
+          : fixedViewEligible ? runtime.publishedFullLoopView(expectedFixedSource, loop.loopLengthTicks)
+                              : nullptr;
 
   if (runtime.isStale(loop.playbackRevision, playbackGeneration)) {
     // A fixed view already proved its exact generation and source. Do not
     // erase it merely because the legacy runtime cache has not been touched
     // since STOPPED prewarm.
     if (runtime.cachedTrackGeneration != playbackGeneration && fixedView == nullptr) {
-      runtime.reset(true);
+      if (!runtime.reset(true)) return;
     }
     loop.nextEventIndex = 0;
     if (isActive) {
@@ -309,6 +305,10 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
           midiChannel, playbackCursorAdvanceApplyLedger);
       bridgeStream = runtime.prepareFullLoopBridgeStream(
           expectedFixedSource, loop.loopLengthTicks, UINT32_MAX, true);
+    } else {
+      // Overdub/ordinary playback still advances the same cycle identity used
+      // when a later prepared bridge joins this running stream.
+      ++runtime.bridgeProjectionCycle;
     }
     if (isActive) {
       projectionCycleStartTick = IntervalProjection::advanceProjectionCycleStartTickOnWrap(
@@ -340,13 +340,31 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   if (fixedView == nullptr) {
     mergedCtx = MergedPlaybackStreamCtx{&loop.getPlaybackOrder(), mergedEvents};
   }
-  FixedPlaybackStreamCtx fixedCtx{fixedView != nullptr ? &fixedView->storage : nullptr};
+  const auto* emissionWindow = fixedBridge != nullptr
+      ? runtime.publishedBridgeWindow(expectedFixedSource, tickInLoop) : nullptr;
+  if (emissionWindow) {
+    // The compiled bridge and the window contain the same cycle stream. A
+    // logarithmic seek excludes the already serviced interval on a handoff.
+    const auto& storage = emissionWindow->storage;
+    size_t first = 0, end = storage.eventCount;
+    if (prevTickInLoop != UINT32_MAX && prevTickInLoop <= tickInLoop) {
+      while (first < end) {
+        const size_t middle = first + (end - first) / 2;
+        if (storage.phases[storage.order[middle]] <= prevTickInLoop) first = middle + 1;
+        else end = middle;
+      }
+    }
+    loop.nextEventIndex = first;
+  }
+  FixedPlaybackStreamCtx fixedCtx{emissionWindow ? &emissionWindow->storage
+      : fixedView != nullptr ? &fixedView->storage : nullptr};
   const PlaybackEventStream committedStream =
-      bridgeStream != nullptr ? bridgeStream->stream()
+      emissionWindow ? makeFixedPlaybackStream(fixedCtx)
+      : bridgeStream != nullptr ? bridgeStream->stream()
                               : (fixedView != nullptr ? makeFixedPlaybackStream(fixedCtx)
                                                       : makeMergedPlaybackStream(mergedCtx));
   PlaybackCursorAdvanceState mergedAdvance{
-      bridgeStream != nullptr ? &bridgeStream->playbackIndex : &loop.nextEventIndex,
+      !emissionWindow && bridgeStream != nullptr ? &bridgeStream->playbackIndex : &loop.nextEventIndex,
       fixedView != nullptr ? nullptr : &loop.playbackOrderDirty};
 
   // Wrap-tick ledger catch-up lives in FLASHMEM. Occupy reads Entry.noteId;
@@ -366,6 +384,8 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
         isActive ? playbackCursorAdvanceJamFilter : nullptr, isActive ? &jamCtx : nullptr,
         midiChannel, isActive ? playbackCursorAdvanceApplyLedger : nullptr);
   }
+
+  if (emissionWindow && bridgeStream) bridgeStream->acknowledgeThroughPhase(tickInLoop);
 
   // Once STOPPING freezes the capture generation, its terminal closures and
   // canonical ordering belong exclusively to the deferred stop owner. Do not
@@ -390,7 +410,8 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 }
 
 void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
-  if (transportStopOutputBarrier_ || !pendingStopAdmission_.permitsPlaybackEmission()) return;
+  if (transportStopOutputBarrier_ ||
+      (hasPendingDeferredOverdubStop() && !captureStopJob().admission.permitsPlaybackEmission())) return;
   if (isStoppedRecording()) {
     return;
   }
@@ -403,7 +424,8 @@ void Track::playMidiEvents(uint32_t currentTick, bool emitMidiOutput) {
 }
 
 void Track::playMidiEventsForSlot(uint8_t slotIndex, uint32_t currentTick, bool emitMidiOutput) {
-  if (transportStopOutputBarrier_ || !pendingStopAdmission_.permitsPlaybackEmission()) return;
+  if (transportStopOutputBarrier_ ||
+      (hasPendingDeferredOverdubStop() && !captureStopJob().admission.permitsPlaybackEmission())) return;
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }

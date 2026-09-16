@@ -34,6 +34,15 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
   companion resolution in MIDI-separated resumable grains, and remains in that
   state until an atomic command-epoch-validated commit is ready. A later
   transport Stop selects STOPPED and invalidates any pending return to PLAYING.
+- Separate live capture admission from deferred stop ownership with a fixed,
+  prewarmed capture-interval queue. Punch-out seals an immutable interval job;
+  punch-in claims a distinct live interval immediately, while the existing
+  worker graph processes only the queue head. Capacity is finite and explicit:
+  new unreservable input may be rejected, but accepted intervals are never
+  aliased, dropped, or converted into hidden latency.
+- Make pending notes, capture preview, stop receipts, undo/snapshot ownership,
+  and lifecycle completion interval-qualified. An older job may publish its
+  canonical successor, but may not clear or transition a newer live overdub.
 - Split each owner into explicit, bounded grains that may yield after MIDI has
   been serviced and resume in a later eligible main-loop turn.
 - Keep the display refreshing during PLAYING: distinguish permission to load
@@ -122,8 +131,10 @@ DMA-display work; it does not claim that display DMA alone closes the MIDI gate.
 
 ## Non-goals
 
-- A general interval-reservation framework, a second top-level scheduler, or
-  changing MIDI dispatch order.
+- A general-purpose interval-reservation framework, a second top-level
+  scheduler, or changing MIDI dispatch order. The scoped fixed capture-interval
+  queue is included because it is required to separate live ingress from
+  deferred stop work.
 - Altering `Loop` ownership of canonical content, persistence format, OLED
   visuals, SPI frequency, or DMA transport behavior. Active capture admission
   gains the explicit preflight rejection and bounded deferred-stop behavior

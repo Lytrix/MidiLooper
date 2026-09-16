@@ -77,7 +77,42 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-064 -->
+<!-- Append new entries below (newest first). Next ID: DEC-065 -->
+
+## DEC-064 — Exclusive raw capture ranges for queued overdub preparation
+
+**Date:** 2026-09-16
+**Status:** Accepted direction; storage foundation only, integration gates open
+**Owner:** LoopEventStore storage; Track/Loop capture lifecycle
+
+**Context:** The user-approved continuous-capture plan requires immediate reentry
+with earlier stop jobs pending. The real Button A, manager and Track routes all
+reject reentry because live capture, staging and cleanup still share singletons.
+Existing chunk detachment walks the whole directory and cannot be the action edge.
+
+**Decision:** Extend LoopEventStore with an exclusive read-only CaptureRange and
+pre-reserved tail rotation. Swap ownership directories, retain the exact end,
+validate pool/range/rewrite generations, and reclaim in bounded chunk units.
+Do not share writable prefixes, clone Loop/Track, add a worker graph, remove
+reentry guards prematurely or reinterpret faster cleanup as immediate capture.
+
+**Constraints:** Range tests do not prove interval queue, note-lifetime credits,
+fallible cold heap admission, causal companion resolution, undo/snapshot ownership,
+old-job cleanup isolation or audible readiness. Keep task 2.3 and HITL open.
+Canonical/persistence ownership and SD format are unchanged. No production Track
+caller uses the range cut in this checkpoint.
+
+**References:** [ownership audit and migration](../openspec/changes/resumable-midi-boundary-playback-maintenance/CONTINUOUS-CAPTURE-OWNERSHIP.md),
+[authorized plan](../openspec/changes/resumable-midi-boundary-playback-maintenance/CONTINUOUS-CAPTURE-IMPLEMENTATION-PLAN.md).
+
+---
+
+**2026-09-16 integration follow-up:** Extend Track's existing worker with a
+stopped-interval receipt rather than introduce another worker. Save owner/slot,
+closure phase, geometry and interval identity; transfer pending notes by swap.
+Reclaim only job-owned notes and qualify Track-state completion by interval.
+This implements part of the approved migration; shared Loop/runtime capture
+owners and immediate reentry remain guarded and incomplete.
 
 ## DEC-063 — Protected stop undo publication and bounded reclamation
 
@@ -247,6 +282,15 @@ has precedence over a pending PLAYING transition and forces STOPPED recovery.
 `DeferredJobScheduler::runFrame()` remains the existing load-job child. No
 `RuntimeWorkBudget`, second scheduler, extra MIDI service call site, persistent
 schema change, or partial publication is authorized.
+
+### Implementation correction (2026-09-16)
+
+A moving ledger must not restart stable canonical bridge sorting/copying.
+Boundary reconciliation reuses the same compiler, owned records and sorted
+indexes; affected-note summaries conservatively narrow admission validation.
+Original closure and command-epoch protection remain mandatory. This changes
+neither audible timing semantics nor the provisional reservation policy;
+consecutive-overdub HITL and real-time service bounds remain acceptance gates.
 
 ### Rationale
 
@@ -929,6 +973,41 @@ the stable `NoteId` shared by a logical NoteOn/NoteOff pair. Note-event
 replacement and removal are keyed by that `NoteId`. `EventId` remains only for
 non-note event objects. A provisional `O:` snapshot is private and unselected;
 the prior complete root remains active until atomic publication.
+
+**Amendment (2026-09-16) — membership design envelope and fragment transaction.**
+Two defects were reproduced from the device record/overdub pair preserved as
+`test_dense_device_capture_snapshot_preserves_every_committed_row`
+(`task23-dense-snapshot-cc-playback`, 734 committed effective rows, bar 2 = 260
+event references). Construction failed at the fixed 16-page
+(256-reference) per-bar ceiling, and the failed fragment was then dropped
+because pass-change progress had already advanced. This amendment fixes the
+representation contract; it does not change item 4's bounded-unit rule.
+
+1. **Bar membership capacity is an explicit design-envelope bound.** The
+   representable reference count per bar is expressed as
+   `kSnapshotMembershipMaxRefsPerBar` and derived page count, not as an
+   accidental side effect of a page constant. The same envelope applies to
+   event-bar membership and note-bar membership. Membership pages remain
+   lazily allocated; raising the envelope preallocates nothing.
+2. **Valid committed content must be representable.** Exceeding the bound must
+   never result in publication of a partial candidate. The envelope is sized
+   to the documented design envelope with measured headroom over the observed
+   dense fixture, not to the whole-store theoretical maximum.
+3. **Fragment incorporation is transactional.** Pass-change traversal and
+   progress (`batch`, `batchIndex`, cursor, open notes, next `EventId` /
+   canonical order) become authoritative only after the corresponding fragment
+   has been successfully incorporated into the candidate. Failed incorporation
+   leaves both the selected published root and the authoritative pass-change
+   progress unchanged. Any partially constructed candidate is discarded before
+   retry, so a retried fragment cannot double-apply content.
+4. **Failure classes are distinguished for diagnostics.** A transient or
+   budget failure leaves the exact fragment pending for retry. A persistent
+   representability or invariant failure keeps the previous root selected,
+   blocks publication, and emits a diagnostic; it must not become a silent
+   infinite reconstruction loop.
+
+Item 6 is reaffirmed: a failed fragment is retained for retry, never
+discarded, and the settled compatibility mutation is never silently lost.
 
 ## DEC-046 — Round-robin admission over playback-relevant destinations; representation coverage is a prerequisite
 
@@ -2985,3 +3064,95 @@ N/A
 Supersedes informal “keep the tab open” workflow.
 
 ---
+
+2026-09-16 task-2.3 follow-up: keep canonical prefix and base preparation in
+one shared resumable continuation used by live overdub and Stop. Reuse the
+existing VisualCache owner, quantum and pass/view workers. Disabled overdub
+visual reconstruction cannot block this prework merely because paint is dirty.
+Stop estimates use owned prewarmed capacity, not the final tail size, and count
+the incoming capture in the pass horizon. This implements the approved earlier
+preparation direction; it does not close the manual reentry or deadline gates.
+
+2026-09-16 user-approved continuous preparation: overdub punches in/out of the
+existing record/play/stop process; it does not define the lifetime of derived
+canonical work. Reuse completed passes after a proven append or same-revision
+snapshot publication. Retain final companion normalization through successful
+stop via existing scratch storage and a prewarmed descriptor array. Preserve
+per-pass order, owner/generation checks and selected-source immutability. Use
+existing idle owners and workers; keep timing and repeated-punch HITL gates open.
+
+
+**DEC-064 implementation follow-up (2026-09-16):** the existing stop worker now
+copies canonical rows at Q=32 into an explicit Capture backed by eight pre-reserved
+physical chunks. Raw chunks remain unchanged until one-chunk retirement turns.
+Prepared pass receipts distinguish live capture retirement from external-source
+transfer. Active transfer checks its admitted directory before source mutation
+and can transfer already-owned chunks at full pool. These changes establish
+single-head copy ownership only; they do not authorize removal of reentry guards.
+The descriptor FIFO, causal predecessor and full session/preview/undo/snapshot
+lifetime migration remain required. Generic runtime reset still owns shared frozen
+staging; its isolation remains part of that migration. No task/HITL gate closes.
+
+
+**DEC-064 reset-lifetime follow-up (2026-09-16):** the admitted stop receipt now
+pins the existing runtime scratch until cleanup. Cache reset denies destructive
+reset, requests STOPPED recovery and preserves accepted source/copy/companion
+state. Track cache invalidation defers its generation change until that recovery.
+This closes the admitted singleton reset hole, not FIFO ownership. Phase-by-phase
+native reset regressions preserve accepted data. Before additional simultaneous
+interval reservations, take an intermediate on-device prewarm/memory and copy/Stop
+timing checkpoint, prompted by the recorded 2026-09-14 eager-prewarm PSRAM failure.
+Added Tier-A output-credit diagnostics use counters, not a PSRAM allocator walk.
+Reentry requirements and all task-2.3/task-5.3 acceptance gates stay open.
+
+
+**DEC-064 hardware follow-up (2026-09-16):** authorized track-5/slot-1 checks pass
+normal cleanup, focused Stop silence and three restart-content cycles. Host
+interruption verification now binds the pending job's grain identity/epoch and
+cleanup, preserving the earlier obsolete-transition report separately. Twenty-four
+host regressions pass. Dense capture rebooted/disconnected with no retained cause;
+its result is INCONCLUSIVE_CAPTURE, not a firmware-fault diagnosis or PASS. No
+FIFO/reentry or task-5.3 acceptance is claimed. See active FOCUSED-STOP-HITL.md.
+
+
+**DEC-064 crash-evidence follow-up (2026-09-16):** user confirmed spontaneous
+reboot at record-pass/overdub overlap. Native overlap regression passes but does
+not explain the device failure. Installed core clears CrashReport when printed;
+startup now snapshots the flag and renders once to Serial plus SD. Previous
+crash=0 is not exculpatory evidence. Diagnostic build uploaded; human reproduction
+pending on the already authorized scratch slot. No acceptance gate waived.
+
+**DEC-064 diagnostic stack follow-up:**
+
+**2026-09-16 dense reboot fix verified:** matching fault report recovered into
+crash-log-retrieval.log: stack-boundary DACCVIOL in _svfprintf_r. Overlap diagnostic
+scratch moved to RAM2; local frame reduced 1,372 -> 76 bytes. Two dense automated
+runs now complete without reboot; adjusted Stop-window run passes focused silence
+(18.9 s observation). Broad baseline/content/timing checks remain inconclusive;
+no FIFO/reentry/task-2.3 completion. Firmware hash and details are in active
+FOCUSED-STOP-HITL.md. All serial/MIDI runners are closed.
+
+**DEC-064 descriptor integration / dense validation:**
+
+**2026-09-16 dense verification / FIFO descriptor slice:** stored dense overdub
+content matches input (568 events, three chunks, five expected short-pair removals).
+Timing is NOT passed: a stop ordering grain crossed a service deadline and two
+late clock samples are retained. Restored musical playback produced no target
+channel rows in the probes; output policy/readiness remains under investigation.
+Stable external Track descriptors replace the singleton stop receipt; sequential
+rotation passes, but staging/session/predecessor isolation and three reentry tests
+remain open. Full native: 2,159 pass, one skipped, three expected reentry failures;
+final focused admission/rotation: 14 pass and the same three failures. Build passes
+with 6,752 bytes RAM1 headroom. See active FOCUSED-STOP-HITL.md for evidence and
+latest upload status; no task checkbox closes.
+
+**DEC-064 latest verification:**
+
+**2026-09-16 latest checkpoint (14:29):** descriptor build a9a7217f uploaded on
+retry; dense hardware test then lost USB during initial recording, before overdub.
+No reboot marker or fault cause retained; serial port absent. Native full run has
+2,159 pass / one skipped / three known reentry failures; final focused guard run
+has 14 pass / the same three failures. Stored dense content verification on the
+prior fixture passed its scoped input comparison; audible timing and restored
+playback remain open. Device reconnection is required to continue hardware
+investigation. No capture reader is running. See active FOCUSED-STOP-HITL.md.

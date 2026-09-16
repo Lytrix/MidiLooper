@@ -22,7 +22,7 @@ NOTE_EDIT_MEM RuntimeCanonicalPassInputs::~RuntimeCanonicalPassInputs() {
   // Explicit runtime discard handles live borrowed workers; destruction must
   // not dereference a worker that may already have been destroyed.
   for (size_t i = 0; i < capacity_; ++i) { raw_[i].~MidiEvent(); effective_[i].~MidiEvent(); }
-  canonicalInputFree(raw_); canonicalInputFree(effective_); canonicalInputFree(outputs_);
+  canonicalInputFree(raw_); canonicalInputFree(effective_); canonicalInputFree(outputs_); canonicalInputFree(nextOutputs_);
   canonicalInputFree(selectedPasses_); canonicalInputFree(selectedHistory_);
   canonicalInputFree(captureOrder_); canonicalInputFree(captureScratch_);
 }
@@ -32,22 +32,24 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::prewarm(size_t capacity) {
   auto* raw = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
   auto* effective = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
   auto* outputs = static_cast<RuntimeCompanionPasses::Pass*>(canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+  auto* nextOutputs = static_cast<RuntimeCompanionPasses::Pass*>(canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
   auto* selected = static_cast<SealedPass*>(canonicalInputAllocate(capacity * sizeof(SealedPass)));
   auto* history = static_cast<const EditPass**>(canonicalInputAllocate(RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*)));
   auto* order = static_cast<uint16_t*>(canonicalInputAllocate(capacity * sizeof(uint16_t)));
   auto* scratch = static_cast<uint16_t*>(canonicalInputAllocate(capacity * sizeof(uint16_t)));
-  if (!raw || !effective || !outputs || !selected || !history || !order || !scratch) {
-    canonicalInputFree(raw); canonicalInputFree(effective); canonicalInputFree(outputs);
+  if (!raw || !effective || !outputs || !nextOutputs || !selected || !history || !order || !scratch) {
+    canonicalInputFree(raw); canonicalInputFree(effective); canonicalInputFree(outputs); canonicalInputFree(nextOutputs);
     canonicalInputFree(selected); canonicalInputFree(history);
     canonicalInputFree(order); canonicalInputFree(scratch); return false;
   }
   for (size_t i = 0; i < capacity; ++i) {
     new (&raw[i]) MidiEvent(); new (&effective[i]) MidiEvent();
     new (&outputs[i]) RuntimeCompanionPasses::Pass{};
+    new (&nextOutputs[i]) RuntimeCompanionPasses::Pass{};
     new (&selected[i]) SealedPass{};
   }
   for (size_t i = 0; i < RuntimePlaybackViewConfig::kRecordsPerBridge; ++i) new (&history[i]) const EditPass*(nullptr);
-  raw_ = raw; effective_ = effective; outputs_ = outputs; capacity_ = capacity;
+  raw_ = raw; effective_ = effective; outputs_ = outputs; nextOutputs_ = nextOutputs; capacity_ = capacity;
   selectedPasses_ = selected; selectedHistory_ = history;
   captureOrder_ = order; captureScratch_ = scratch;
   return true;
@@ -67,7 +69,7 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredGrainsUpperBound(
       ceilGrains(capacity + LoopEventStoreConfig::POOL_CHUNK_COUNT) + ceilGrains(capacity) + 3);
 }
 NOTE_EDIT_MEM void RuntimeCanonicalPassInputs::discard() {
-  ++generation_; releaseApply(); read_.discard(); work_.reset(); apply_ = nullptr;
+  ++generation_; normalizedOwner_ = nullptr; releaseApply(); read_.discard(); work_.reset(); apply_ = nullptr;
   passes_ = nullptr; history_ = nullptr; source_ = nullptr;
   live_.reset(); current_.reset(); preparedCaptureOrder_.reset(); captureOrderedCount_ = 0; captureOrderBuild_.discard(); includeCapture_ = captureStarted_ = false;
   count_ = passCount_ = pass_ = copy_ = rowCount_ = 0; phase_ = Phase::Idle;
@@ -134,6 +136,63 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::beginCurrent(
   storageGeneration_ = live.storageGeneration;
   return true;
 }
+NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::resumeCurrentAfterAppend(
+    const LoopPasses& passes, uint32_t priorRevision,
+    const PlaybackViewSourceIdentity& source, const CurrentSource& live, bool committedFrozenTail) {
+  // A source revision alone never licenses reuse: the caller certifies the
+  // append, and unchanged history storage/owners protect normalized output.
+  if (phase_ == Phase::Idle || phase_ == Phase::Denied || !current_ ||
+      loopPasses_ != &passes || expected_.playbackRevision != priorRevision ||
+      !((priorRevision != UINT32_MAX && source.playbackRevision == priorRevision + 1) ||
+        (!committedFrozenTail && source.playbackRevision == priorRevision &&
+         source.snapshotIdentity != expected_.snapshotIdentity)) ||
+      source.sourceGeneration != expected_.sourceGeneration ||
+      live.playbackRevision != source.playbackRevision || live.sourceGeneration != source.sourceGeneration ||
+      live.loopLengthTicks != loopLength_ || live.storageGeneration != storageGeneration_ ||
+      &current_->storageGeneration != &live.storageGeneration ||
+      &current_->playbackRevision != &live.playbackRevision ||
+      &current_->sourceGeneration != &live.sourceGeneration ||
+      &current_->loopLengthTicks != &live.loopLengthTicks ||
+      includeCapture_ != committedFrozenTail ||
+      (committedFrozenTail && phase_ != Phase::Complete)) return false;
+  ++generation_;
+  releaseApply(); read_.discard(); captureOrderBuild_.discard();
+  live_.reset(); preparedCaptureOrder_.reset();
+  includeCapture_ = captureStarted_ = false; captureOrderedCount_ = 0;
+  // count_ and outputs_[0..pass_) remain owned and immutable. Partially copied
+  // output lies beyond count_ and will be overwritten by the existing worker.
+  expected_ = source; source_ = &source; current_.emplace(live);
+  passCount_ = rowCount_ = copy_ = selectionCursor_ = 0;
+  bestOverdub_ = SIZE_MAX; haveSequence_ = false;
+  phase_ = Phase::SelectRecord;
+  return true;
+}
+
+NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::adoptCommittedNormalization(
+    const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
+    const CurrentSource& live, const RuntimeCompanionPasses& resolved) {
+  if (!current_ || loopPasses_ != &passes || !includeCapture_ ||
+      !resolved.normalizationMatches(*this, source) ||
+      live.playbackRevision != source.playbackRevision ||
+      live.sourceGeneration != source.sourceGeneration || live.loopLengthTicks != loopLength_ ||
+      &current_->playbackRevision != &live.playbackRevision ||
+      &current_->sourceGeneration != &live.sourceGeneration ||
+      &current_->loopLengthTicks != &live.loopLengthTicks ||
+      &current_->storageGeneration != &live.storageGeneration) return false;
+  const size_t normalizedCount = resolved.normalizedEventCount();
+  const size_t normalizedPasses = resolved.normalizedPassCount();
+  ++generation_; releaseApply(); read_.discard(); captureOrderBuild_.discard();
+  std::swap(raw_, effective_); std::swap(outputs_, nextOutputs_);
+  count_ = normalizedCount; pass_ = normalizedPasses;
+  expected_ = source; source_ = &source; current_.emplace(live);
+  storageGeneration_ = live.storageGeneration;
+  live_.reset(); preparedCaptureOrder_.reset(); includeCapture_ = captureStarted_ = false;
+  captureOrderedCount_ = passCount_ = rowCount_ = copy_ = selectionCursor_ = 0;
+  bestOverdub_ = SIZE_MAX; haveSequence_ = false;
+  phase_ = Phase::SelectRecord;
+  return true;
+}
+
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::beginFrozenOverdub(
     RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
@@ -263,8 +322,11 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCanonicalPassInputs::step(s
       const auto& row = rows[selectionCursor_++];
       if (row.state == EditPassState::Active && row.passType == EditPassType::Note) selectedHistory_[rowCount_++] = &row;
     }
-    if (selectionCursor_ == rows.size())
-      phase_ = passCount_ ? Phase::Start : (includeCapture_ ? Phase::CaptureOrder : Phase::Complete);
+    if (selectionCursor_ == rows.size()) {
+      if (pass_ > passCount_) return deny();
+      phase_ = pass_ < passCount_ ? Phase::Start :
+          (includeCapture_ ? Phase::CaptureOrder : Phase::Complete);
+    }
   } else if (phase_ == Phase::Start) {
     const auto& pass = passes_[pass_];
     if (pass.count > LoopEventStoreConfig::POOL_CHUNK_COUNT ||

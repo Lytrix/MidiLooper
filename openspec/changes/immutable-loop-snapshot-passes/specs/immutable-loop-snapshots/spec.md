@@ -84,6 +84,32 @@ Path-copy SHALL NOT be used as the semantic overlap model. A flat full-loop
 - **THEN** the logical indexes are pitch → bar → NoteRef and bar → EventRef
 - **AND** no firmware phase treats a concrete directory structure as already selected
 
+### Requirement: Explicit bar-membership design envelope
+
+The representable reference count for one bar SHALL be an explicit design
+envelope (`kSnapshotMembershipMaxRefsPerBar`) from which the page-count limit
+is derived, and the same envelope SHALL apply to event-bar membership and
+note-bar membership. Membership pages SHALL remain lazily allocated, so the
+envelope consumes no memory until content uses it. The envelope SHALL be sized
+to the documented design envelope with measured headroom over the observed
+dense device fixture, and SHALL NOT be derived from the whole-store theoretical
+maximum. Whatever the envelope, a construction that cannot represent an
+otherwise valid committed bar SHALL NOT publish a partial candidate.
+
+#### Scenario: Dense bar remains representable
+
+- **WHEN** one bar of valid committed content holds more references than a single 256-reference chunk
+- **THEN** the snapshot represents every committed reference in that bar
+- **AND** no candidate is published with a subset of the committed content
+- **AND** pages beyond the first are allocated lazily
+
+#### Scenario: Envelope overflow never truncates
+
+- **WHEN** construction would exceed `kSnapshotMembershipMaxRefsPerBar` for a bar
+- **THEN** the previous complete published root remains selected
+- **AND** no partial candidate is published
+- **AND** a representability diagnostic is emitted instead of a silent retry loop
+
 ### Requirement: Dirty region follows resolver geometry changes
 
 Dirty pitch SHALL be the incoming note's pitch. Dirty bars SHALL be the union of bars intersected by the incoming span, every existing note whose geometry changes, and every existing note whose membership changes because of resolution. The existing overlap / pairing / NOTE_EDIT geometry owner SHALL determine which note geometries changed and SHALL supply those changed `NoteRef`s and affected spans. Snapshot construction SHALL translate that mutation into pitch/bar membership updates and SHALL NOT independently recompute overlap.
@@ -259,6 +285,33 @@ identity, and no fragment SHALL publish an incomplete candidate.
 - **THEN** the previous complete snapshot remains selected
 - **AND** the exact fragment and parent identity remain available for retry
 - **AND** the settled compatibility mutation is not silently lost
+- **AND** authoritative pass-change progress is identical to its pre-fragment
+  state
+- **AND** any partially constructed candidate is discarded before retry, so the
+  retried fragment is incorporated exactly once
+- **AND** a persistent representability failure emits a diagnostic instead of
+  retrying the same impossible fragment silently
+
+### Requirement: Transactional fragment incorporation
+
+Pass-change traversal and progress (`batch`, `batchIndex`, the committed-event
+cursor, open notes, and the next `EventId` / canonical order) SHALL become
+authoritative only after the corresponding fragment has been successfully
+incorporated into the candidate. Construction SHALL therefore prepare a
+fragment on working progress, apply it, and commit that working progress only
+on success. Failed incorporation SHALL leave both the selected published root
+and authoritative pass-change progress unchanged, and SHALL discard any
+partially constructed candidate before retry. A candidate SHALL NOT be
+published after a construction failure unless the failed fragment has
+subsequently succeeded.
+
+#### Scenario: Retry after partial apply is exactly once
+
+- **WHEN** a fragment fails after some but not all of its changes have been applied to the candidate
+- **THEN** the previous published root remains selected
+- **AND** authoritative pass-change progress matches its pre-fragment state
+- **AND** the partially constructed candidate is discarded
+- **AND** retrying the fragment yields each change exactly once in the final published snapshot
 
 ### Requirement: Bounded immutable membership construction
 

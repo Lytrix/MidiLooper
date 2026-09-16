@@ -331,6 +331,13 @@ admission path.
 - **AND** both successive handoffs occur with complete contiguous coverage and
   without overwriting a published or pending view
 
+#### Scenario: Completed future coverage yields maintenance time
+
+- **WHEN** the current, ready and successor-after-next windows are complete
+- **THEN** releasing the completed builder preserves its unpublished destination
+- **AND** subsequent window service turns yield until coverage advances or its source changes
+- **AND** the existing session-exit snapshot receipt consumer can progress without waiting for transport Stop
+
 #### Scenario: A second source change preempts the source-change build
 
 - **WHEN** a second source change arrives while the selected bridge spans the
@@ -576,10 +583,21 @@ scored as evidence of audible handoff or real-time deadline completion.
 
 #### Scenario: Empty successor capture stops after a wrap
 
+
 - **WHEN** an overdub stop has no remaining capture events after wrap or filtering
 - **THEN** the owner retires credits for skipped companion preparation after reserved closure and ordering work completes
 - **AND** atomic completion validates the current destination and command epoch
+- **AND** with no pending capture pass, atomic routing does not require a new bridge or return to companion preparation
 - **AND** the completed transaction releases its admission barrier so a later overdub can begin
+
+#### Scenario: Live ledger changes preserve stable bridge preparation
+
+- **WHEN** playback advances while a frozen candidate's bridge is being prepared
+- **THEN** changes to notes outside the edit's affected pitch and identity set do not invalidate bridge admission
+- **AND** a relevant ledger or closure-boundary change reuses the completed records, mapping and sorted indexes while reconciling closure gates in bounded entry grains
+- **AND** reconciliation does not repeat canonical copying or ordering
+- **AND** a retained original NoteOff survives another source change and is not emitted again after its closure has retired
+- **AND** affected-note, source-generation and transport-command checks remain required before atomic publication
 
 #### Scenario: Transport Stop supersedes visible playback release
 
@@ -593,3 +611,139 @@ scored as evidence of audible handoff or real-time deadline completion.
 - **WHEN** PLAYING is visible before the frozen transaction completes
 - **THEN** deadline acceptance requires correlated service and emission evidence through background finalization and audible handoff
 - **AND** state-assignment latency alone cannot satisfy that gate
+
+#### Scenario: Normal-stop cleanup preserves ongoing playback
+
+- **WHEN** frozen canonical transfer and history recycling finish with destination PLAYING
+- **THEN** session-exit cleanup preserves the selected playback source, emission cursor, cycle position and active-note ledger
+- **AND** cleanup does not send silence or restart playback at the current phase
+- **AND** completed frozen-tail preparation releases its canonical input attachment so the next nonempty stop can prepare its prefix
+- **AND** an already-emitted NoteOn retains its prepared closure until that Off is emitted once at its due phase
+- **AND** an unavailable snapshot handoff leaves the transaction pending without changing audible playback state
+
+#### Scenario: A selected ready-window bridge permits the next stop
+
+- **WHEN** atomic bridge selection uses a prepared ready canonical window
+- **THEN** the existing view lifecycle promotes that base to current in the same publication turn
+- **AND** normal-stop cleanup retires its preparation receipt without resetting the audible base
+- **AND** a subsequent nonempty stop can prepare another window while the previous bridge remains readable
+
+#### Scenario: Failed joint handoff cannot publish canonical data alone
+
+- **WHEN** a populated normal-stop candidate reaches atomic transfer
+- **AND** its joint canonical/bridge preflight fails
+- **THEN** the owner retains the pending canonical candidate and current audible source without changing the canonical revision
+- **AND** it does not fall through to a canonical-only transfer
+- **AND** canonical-only recovery remains restricted to a transport-Stop destination; an empty stop may retire without publishing a new audible source
+
+#### Scenario: Add-only overdub prepares the canonical commit revision
+
+- **WHEN** bounded companion preparation finishes for a frozen overdub
+- **THEN** its target revision advances once for the capture pass and once more only when companion edit rows exist
+- **AND** pending Add changes alone do not add a companion revision
+- **AND** derived pass preparation, bridge admission and atomic canonical publication use the same target revision
+
+#### Scenario: A later bridge joins the ongoing projection cycle
+
+- **WHEN** playback has advanced through loop wraps before another bridge is prepared
+- **THEN** bridge preparation and publication use the running runtime cycle identity rather than cycle zero
+- **AND** ordinary playback and overdub wraps advance that same identity even when no bridge stream is selected
+- **AND** a held-note closure belonging to the newly selected bridge is not skipped by selecting a later-cycle event mask on its first use
+
+#### Scenario: Live overdub reuses canonical-base preparation at Stop
+- **WHEN** the sealed source is stable while live overdub capture continues
+- **THEN** the existing deferred preparation owner may normalize and prepare its immutable canonical base using the shared playback workers, one child per turn
+- **AND** Stop resumes that continuation or reuses its ready base without changing the audible source early
+- **AND** a changed source or storage generation invalidates that prework
+- **AND** final-tail event count and rolling-window availability do not define prewarmed candidate capacity for the stop service estimate
+
+#### Scenario: Preparation survives overdub punch-in and punch-out
+- **WHEN** a track is PLAYING or OVERDUBBING
+- **THEN** the existing deferred preparation service SHALL advance eligible canonical work independently of the punch state
+- **AND** a proven append with unchanged history SHALL retain completed per-pass normalization
+- **AND** a snapshot identity change at the same content revision SHALL NOT require replaying completed pass normalization
+- **AND** successful stop publication SHALL retain the already-computed final per-pass companion results using generation-validated ownership transfer
+- **AND** history or source changes without a reuse proof SHALL invalidate affected preparation before reading borrowed storage
+- **AND** preparation SHALL preserve the selected audible source, original-Off protection and canonical per-pass ordering
+
+### Requirement: Live capture is independent from queued stop jobs
+
+The system SHALL maintain one explicitly owned live capture interval and a
+fixed-capacity FIFO of immutable sealed capture jobs. Punch-out SHALL seal the
+current interval and enqueue its job without requiring prior jobs to finish.
+Punch-in SHALL claim a distinct prewarmed live interval immediately when capacity
+and NoteOn lifetime reservations permit it. The deferred worker SHALL process
+only the FIFO head using shared scratch; it SHALL NOT read or reset live capture
+storage, live pending-note state, preview state, or a newer job's receipts.
+
+#### Scenario: Old cleanup completes while a newer overdub is live
+
+- **WHEN** interval A is queued for deferred completion and interval B is actively
+  accepting input
+- **AND** A's worker completes a canonical, companion, bridge, publication, or
+  cleanup phase
+- **THEN** B's capture store, pending notes, reservations and preview remain
+  unchanged
+- **AND** the Track remains in its live overdub state
+- **AND** A releases only A-owned storage and receipts
+
+#### Scenario: Three rapid punch cycles remain distinct
+
+- **WHEN** service is paused and A, B and C are punched in and out before any
+  queued job is serviced
+- **THEN** the three sealed jobs retain distinct interval identities, ranges,
+  stop ticks and reservation owners
+- **AND** notes immediately following each punch-in belong to that interval
+- **AND** no job reuses another job's staging or mutable capture store
+
+#### Scenario: Capture interval capacity is exhausted
+
+- **WHEN** the declared live-plus-queued interval capacity is full
+- **AND** another NoteOn or punch-in is requested
+- **THEN** that new request is rejected before capture, pending-note, preview or
+  ledger mutation
+- **AND** all previously accepted intervals remain intact and recoverable
+- **AND** telemetry reports explicit interval-capacity exhaustion rather than
+  ordinary finalization pending
+
+#### Scenario: A boundary cuts a partial event chunk
+
+- **WHEN** punch-out occurs after only part of the producer's current chunk is
+  filled
+- **THEN** the sealed range has an immutable end offset and the producer cannot
+  append into its sealed portion
+- **AND** the next live interval uses a distinct reserved tail or independently
+  owned range
+- **AND** no unbounded copy, sort, or chunk-list detachment runs at the action edge
+
+#### Scenario: Same-pitch held notes do not cross ownership
+
+- **WHEN** A has a held NoteOn, A is sealed, and B receives a same-pitch NoteOn
+- **THEN** A's terminal closure remains owned by A
+- **AND** B's pending note and matching Off are owned by B
+- **AND** completion of A cannot erase, close or substitute B's pending note
+
+#### Scenario: Successor resolves after its causal predecessor
+
+- **WHEN** B begins while A has not published
+- **THEN** B accepts and retains its raw input immediately
+- **AND** B records A's logical predecessor identity and required source intent
+- **AND** source-dependent resolution uses A's completed result rather than the
+  stale source visible at B's punch-in
+
+#### Scenario: Transport Stop interrupts queued finalization
+
+- **WHEN** Transport Stop arrives between any two finalization grains
+- **THEN** every queued PLAYING publication is invalidated by the controlling
+  command epoch
+- **AND** accepted ranges remain available for ordered STOPPED recovery
+- **AND** no later worker completion reopens emission or resurrects PLAYING
+
+#### Scenario: Selected bridge survives another job's preparation
+
+- **WHEN** A's bridge is selected for playback and B prepares a successor or
+  source-change bridge
+- **THEN** A's selected bridge and cursor remain immutable and readable
+- **AND** B uses alternate prewarmed storage
+- **AND** replacement occurs only after the new bridge covers its earliest
+  affected un-emitted event

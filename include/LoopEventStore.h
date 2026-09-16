@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <memory>
@@ -30,11 +31,16 @@ using CaptureChunkIdList = std::vector<uint16_t, InternalHeapFirstAllocator<uint
 using CommittedChunkIdList = std::vector<uint16_t, CommittedChunkIdAllocator<uint16_t>>;
 using BarIndexVec = std::vector<size_t, InternalHeapFirstAllocator<size_t>>;
 
+class LoopEventStore;
+
 /// Cursor for a copy-on-write capture canonicalization.  The source remains
 /// outside the store while this cursor overwrites one already allocated chunk
 /// row at a time, so no sort scratch or chunk allocation is needed on the
 /// continuation path.
 struct LoopEventStoreRewriteCursor {
+  const LoopEventStore* owner = nullptr;
+  uint64_t ownershipGeneration = 0;
+  uint64_t poolLifetime = 0;
   size_t sourceIndex = 0;
   size_t chunkIndex = 0;
   size_t targetCount = 0;
@@ -81,6 +87,26 @@ enum class LoopEventStoreAppendDeny : uint8_t {
 /// Append-only fixed-size event chunks backed by a global PSRAM pool.
 class LoopEventStore {
  public:
+  class CaptureRange;
+  class ChunkReservation;
+
+  /// Cold admission: reserve the complete chunk-id directory and one empty tail.
+  /// Only an empty store may become a capture-range producer. Returns false on
+  /// pool exhaustion; vector allocation retains the existing allocator policy.
+  bool reserveCaptureTail();
+  /// Cold directory/persistence admission, without claiming an event chunk.
+  bool prewarmCaptureDirectory();
+  bool reservedAppendReady() const;
+  /// Retire at most one raw-input reference after its canonical copy is complete.
+  bool releaseCaptureChunkGrain();
+  /// Consume pre-owned physical capacity; never grow a directory/bar index or
+  /// allocate from the pool. Unused reservation chunks remain caller-owned.
+  bool appendReserved(const MidiEvent& event, ChunkReservation& reservation);
+  /// O(1) ownership cut, using the destination's previously reserved empty tail.
+  /// The producer must be append-only: no outstanding mutable/rewrite borrowers.
+  /// No copy, refcount walk, directory growth or pool allocation occurs here.
+  bool sealCaptureRange(CaptureRange& destination);
+
   static constexpr size_t NO_EVENT_INDEX = static_cast<size_t>(-1);
 
   static void initPool();
@@ -136,6 +162,7 @@ class LoopEventStore {
   /// source count may shrink this store but never grow it. Shrinking releases
   /// one surplus chunk per later rewrite grain; canonicalization never
   /// allocates a chunk.
+  bool ownsRewriteCursor(const LoopEventStoreRewriteCursor& cursor) const;
   bool beginRewriteFromOrderedSource(LoopEventStoreRewriteCursor& cursor,
                                      size_t sourceCount) const;
   /// Copy at most `eventQuantum` source rows selected by `orderedIndices`.
@@ -267,6 +294,8 @@ class LoopEventStore {
                                         size_t count);
 
   CaptureChunkIdList chunkIds_;
+  uint64_t capturePoolLifetime_ = 0;
+  uint64_t ownershipGeneration_ = 1;
   size_t eventCount_ = 0;
   mutable BarIndexVec barFirstIndices_;
   mutable bool barIndexDirty_ = true;
@@ -277,6 +306,7 @@ class LoopEventStore {
   static ChunkLifecycleState poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static uint16_t poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static bool poolReady_;
+  static uint64_t poolLifetime_;
   static uint8_t sdLoadStagingDepth_;
   static uint8_t ephemeralSealDepth_;
 
@@ -291,9 +321,64 @@ class LoopEventStore {
   bool hasSealedChunks() const;
   EventChunk& chunk(uint16_t id);
   const EventChunk& chunk(uint16_t id) const;
-  bool appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut = nullptr);
+  bool appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut = nullptr,
+                         ChunkReservation* reservation = nullptr);
   void rebuildBarIndex() const;
   void markBarIndexDirty();
+};
+
+/// Physical capacity distinct from raw input ownership. Reserve before accepting
+/// input; a canonical writer consumes it without touching sealed input chunks.
+/// Store this fixed directory in cold/prewarmed owner storage, not on the stack
+/// of a MIDI callback. One reservation never borrows another owner's credits.
+class LoopEventStore::ChunkReservation {
+ public:
+  ChunkReservation() = default;
+  ~ChunkReservation();
+  ChunkReservation(const ChunkReservation&) = delete;
+  ChunkReservation& operator=(const ChunkReservation&) = delete;
+  /// Grow to `chunks` total credits. A failed request preserves prior credits.
+  /// Each newly reserved chunk is one fixed pool allocation; caller bounds Q.
+  bool reserveChunks(size_t chunks);
+  size_t availableChunks() const;
+  bool releaseGrain(size_t quantum);
+ private:
+  friend class LoopEventStore;
+  std::array<uint16_t, LoopEventStoreConfig::POOL_CHUNK_COUNT> chunks_{};
+  size_t count_ = 0;
+  uint64_t lifetime_ = 0;
+  uint16_t take();
+};
+
+/// Exclusive raw capture ownership. Consumers can only copy bounded rows; the
+/// canonical worker must write its result elsewhere. Not a canonical pass or a
+/// snapshot: no mutable chunk-id accessor and no implicit shared ownership.
+class LoopEventStore::CaptureRange {
+ public:
+  CaptureRange() = default;
+  ~CaptureRange();  // cold teardown only; active owners use releaseGrain()
+  CaptureRange(const CaptureRange&) = delete;
+  CaptureRange& operator=(const CaptureRange&) = delete;
+  bool reserveTail();  // cold, after all prior consumers and releases finish
+  bool ready() const;
+  size_t size() const { return ready() ? eventCount_ : 0; }
+  size_t chunkCount() const { return ready() ? storage_.chunkIds_.size() : 0; }
+  uint64_t generation() const { return generation_; }
+  /// One chunk row read, bounded by the captured end rather than a live extent.
+  /// Generation must be the receipt from this seal, including after reuse.
+  bool read(uint64_t generation, size_t chunkIndex, uint16_t eventIndex,
+            MidiEvent& out, bool& atEnd) const;
+  /// Invalidates reads before releasing at most quantum references. True when
+  /// empty. A stale pool receipt never decrements a new pool occupant's refs.
+  bool releaseGrain(size_t quantum);
+ private:
+  friend class LoopEventStore;
+  LoopEventStore storage_;
+  uint64_t generation_ = 0;
+  size_t eventCount_ = 0;
+  uint16_t tailEnd_ = 0;
+  bool sealed_ = false;
+  bool releasing_ = false;
 };
 
 template <typename AssignNoteIdFn>

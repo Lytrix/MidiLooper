@@ -49,6 +49,15 @@ namespace {
 constexpr size_t kOccupyMismatchSpanLogLimit = 6;
 constexpr size_t kOccupyMismatchEventLogLimit = 8;
 
+// Foreground-only observation scratch. The two 128-ID sets and formatting
+// buffer must not stack on top of noteOn's PendingNote and libc formatting.
+// Reset on every use; no musical/session state is retained here.
+struct OccupyObservationScratch {
+  OverlapNoteIdSet sourceViewIds;
+  OverlapNoteIdSet preparedIds;
+  char line[256];
+};
+
 /// Circular tick distance on the loop, so a hold near the wrap still sees its lane events.
 uint32_t occupyMismatchTickDistance(uint32_t phase, uint32_t holdStart, uint32_t loopLength) {
   const uint32_t linear = phase >= holdStart ? phase - holdStart : holdStart - phase;
@@ -221,9 +230,16 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
                                 pending.overlapNoteIds, holdStart,
                                 &pending.occupancyResolvedNoteIds);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-  OverlapNoteIdSet sourceViewIds;
+#if defined(__IMXRT1062__)
+  static DMAMEM OccupyObservationScratch sOccupyObservationScratch;
+#else
+  static OccupyObservationScratch sOccupyObservationScratch;
+#endif
+  auto& sourceViewIds = sOccupyObservationScratch.sourceViewIds;
+  sourceViewIds.clear();
   loop.collectOverdubSourceHoldParticipantIds(holdStart, pending.note, sourceViewIds);
-  OverlapNoteIdSet preparedIds;
+  auto& preparedIds = sOccupyObservationScratch.preparedIds;
+  preparedIds.clear();
   const uint32_t observeStartUs = micros();
   const bool prepared =
       loop.tryCollectPreparedPresentNoteIdsAtTick(holdStart, pending.note, preparedIds);
@@ -256,7 +272,7 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::snapshotOverlapHoldCandidat
       }
     }
   }
-  char line[256];
+  auto& line = sOccupyObservationScratch.line;
   snprintf(line, sizeof(line),
            "#CAP,%lu,DIAG,lcr,part,why=on,from=ledger,pitch=%u,n=%u,a=%u,b=%u,eq=%u,ao=%u,bo=%u,"
            "as=%lu,ae=%lu,hs=%lu,us=%lu",
@@ -510,11 +526,16 @@ TRACK_CAPTURE_ADMISSION_MEM bool Track::appendReservedCaptureNoteOffAtPhase(
       runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
   CaptureAdmissionStaging* staging =
       viewSet != nullptr ? viewSet : nullptr;
-  if (staging == nullptr ||
+  return staging && appendReservedCaptureNoteOffForOwner(loop, *staging, reservation, phaseTick);
+}
+
+TRACK_CAPTURE_ADMISSION_MEM bool Track::appendReservedCaptureNoteOffForOwner(
+    Loop& loop, CaptureAdmissionStaging& ownerStaging,
+    CaptureNoteReservation& reservation, uint32_t phaseTick) {
+  auto* staging = &ownerStaging;
+  if (!reservation.open || !loop.captureActive() ||
       staging->matchingOpenReservation(reservation.noteId, reservation.channel,
-                                       reservation.note) != &reservation) {
-    return false;
-  }
+                                       reservation.note) != &reservation) return false;
   uint32_t tickRelative = phaseTick;
   if (loop.loopLengthTicks > 0 && tickRelative >= loop.loopLengthTicks) {
     tickRelative = loop.loopLengthTicks - 1;

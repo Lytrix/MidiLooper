@@ -308,6 +308,7 @@ void FixedPlaybackBridgeStorage::resetMetadata() {
   secondCycleBaseEventCount = steadyBaseEventCount = 0;
   currentCycleInsertionCount = nextCycleInsertionCount = secondCycleInsertionCount = steadyInsertionCount = 0;
   canonicalRankCount = 0; canonicalMasksReady = false;
+  affectedPitches.fill(0); affectedIdentities.fill(0);
   heldClosureCount = 0; // Retire metadata without clearing the fixed payload array.
   protectsOpenNotes = false;
   hasRetainedClosure = false;
@@ -323,6 +324,38 @@ void FixedPlaybackBridgeStorage::resetMetadata() {
   ledgerBoundary.clear();
   complete = false;
   selected = false;
+}
+
+RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::markAffected(const MidiEvent& event) {
+  if (!event.isNoteOn() && !event.isNoteOff()) return;
+  const unsigned pitch = event.data.noteData.note;
+  if (pitch < 128) affectedPitches[pitch / 32] |= uint32_t(1) << (pitch % 32);
+  if (event.noteId != kInvalidNoteId) {
+    const unsigned key = event.noteId % 128;
+    affectedIdentities[key / 32] |= uint32_t(1) << (key % 32);
+  }
+}
+
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool FixedPlaybackBridgeStorage::matchesAffectedLedger(
+    const ActiveNoteLedger& ledger) const {
+  if (ledger.overflowed() || ledgerBoundary.overflowed) return false;
+  const auto relevant = [&](const ActiveNoteLedger::Entry& entry) {
+    const unsigned key = entry.noteId % 128;
+    return (entry.note < 128 && (affectedPitches[entry.note / 32] & (uint32_t(1) << (entry.note % 32)))) ||
+        (entry.noteId != kInvalidNoteId && (affectedIdentities[key / 32] & (uint32_t(1) << (key % 32))));
+  };
+  size_t index = 0;
+  bool same = true;
+  ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry& entry) {
+    if (!relevant(entry)) return;
+    while (index < ledgerBoundary.count && !relevant(ledgerBoundary.openNotes[index])) ++index;
+    if (index == ledgerBoundary.count) { same = false; return; }
+    const auto& old = ledgerBoundary.openNotes[index++];
+    same = same && old.channel == entry.channel && old.note == entry.note &&
+        old.noteId == entry.noteId && old.startTick == entry.startTick && old.velocity == entry.velocity;
+  });
+  while (index < ledgerBoundary.count && !relevant(ledgerBoundary.openNotes[index])) ++index;
+  return same && index == ledgerBoundary.count;
 }
 
 bool FixedPlaybackBridgeStorage::append(const PlaybackBridgeRecord& record) {
@@ -553,7 +586,7 @@ bool RuntimePlaybackViewLifecycle::handoffToRetained(
   return true;
 }
 
-bool RuntimePlaybackViewLifecycle::handoff(
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewLifecycle::handoff(
     std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views, PlaybackViewHandoffMode mode) {
   if (current == kNoView || ready == kNoView || !views[ready].complete ||
       (views[ready].rawCoveragePrepared && mode == PlaybackViewHandoffMode::Audible)) {
@@ -654,6 +687,8 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm() {
       return false;
     }
   }
+  for (auto& base : bridgeBases)
+    if (!base.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) return false;
   for (FixedPlaybackBridgeStorage& bridge : bridges) {
     if (!bridge.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge)) {
       for (RuntimePlaybackView& allocated : views) {
@@ -681,6 +716,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm() {
 }
 
 RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadata() {
+  for (auto& base : bridgeBases) base.resetMetadata();
   for (RuntimePlaybackView& view : views) {
     view.resetMetadata();
   }
@@ -732,7 +768,7 @@ bool RuntimePlaybackViewSet::selectCandidateBridge(const EmissionCursor& earlies
 size_t RuntimePlaybackViewSet::fixedExternalBytes() const {
   constexpr size_t eventBytes = sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) +
                                 sizeof(uint16_t) + sizeof(uint8_t);
-  return RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
+  return (RuntimePlaybackViewConfig::kViewCount + RuntimePlaybackViewConfig::kBridgeCount) * RuntimePlaybackViewConfig::kEventsPerView *
              (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
          RuntimePlaybackViewConfig::kBridgeCount *
              (RuntimePlaybackViewConfig::kRecordsPerBridge * (sizeof(PlaybackBridgeRecord) + eventBytes +

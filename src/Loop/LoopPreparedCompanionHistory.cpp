@@ -68,15 +68,29 @@ LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
     const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
     const RuntimeCanonicalPassInputs* captureInputs) {
   auto& work = preparedCompanionHistory_;
-  if (!preparedCompanionHistoryPrewarmed(rows.size()) ||
+  const size_t historyCount = passes.editPasses.size();
+  // Prewarm reserves storage, not a borrowed canonical-history version. Wrap
+  // publication can append metadata before this worker begins. Bind the live
+  // version below, after checking that the existing reservation still fits.
+  // Once begun, preparedCompanionHistorySourceCurrent keeps the strict version
+  // checks; never restart an in-flight worker by rebinding its inputs.
+  if (work.phase != PreparedCompanionHistory::Phase::Prewarmed ||
+      historyCount > work.rows.size() || rows.size() > work.rows.size() - historyCount ||
+      historyCount > work.rowLimit || rows.size() > work.rowLimit - historyCount ||
+      rows.size() > work.companionCapacity || rows.size() > work.companionIds.capacity() ||
+      passes.editPasses.capacity() < work.rowLimit ||
       !rows.ready(capture) ||
       nextPassId_ == kInvalidPassId || rows.size() > UINT32_MAX - nextPassId_) return false;
   const size_t snapshotCount = pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->companionIds.size() : 0;
   if (!pendingSnapshotPublishBox_ || snapshotCount > work.snapshotIds.capacity() ||
-      rows.size() > work.snapshotIds.capacity() - snapshotCount) return false;
+      rows.size() > work.snapshotIds.capacity() - snapshotCount ||
+      snapshotCount > work.snapshotLimit || rows.size() > work.snapshotLimit - snapshotCount ||
+      pendingSnapshotPublishBox_->companionIds.capacity() < work.snapshotLimit) return false;
   if (captureInputs && (!hasPendingCapturePass_ || pendingCapturePass_.committedChunkIds.empty() ||
       pendingCapturePass_.committedChunkIds.size() > PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS ||
       !captureInputs->includesFrozenOverdub() || captureInputs->frozenCapture() != &capture)) return false;
+  work.historyCount = historyCount;
+  work.storageGeneration = canonicalStorageGeneration;
   work.captureInputs = captureInputs;
   ++work.preparationGeneration;
   work.captureInputsGeneration = captureInputs ? captureInputs->generation() : 0;
@@ -235,8 +249,9 @@ LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanions() const {
       preparedCompanionHistory_.capturePassId != kInvalidPassId &&
       preparedCompanionHistory_.capturePassId == pendingCapturePass_.id &&
       pendingCapturePass_.phase == CapturePassPhase::Overdub &&
-      !pendingCapturePass_.committedChunkIds.empty() && capture.phase == CapturePhase::Overdub &&
-      capture.store.empty();
+      !pendingCapturePass_.committedChunkIds.empty() &&
+      (!pendingCapturePass_.retiresLiveCapture ||
+       (capture.phase == CapturePhase::Overdub && capture.store.empty()));
 }
 
 LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
@@ -249,11 +264,13 @@ LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
   publishPreparedCompanionHistory();
   // Staging already detached the capture store. Retire scalar ownership only;
   // the legacy completion notification scans visual coverage in capture builds.
-  capture.phase = CapturePhase::None;
-  captureNextEventIndex = 0;
-  captureEventsSortDirty = false;
-  captureHasLastAppendTick_ = false;
-  captureLastAppendTick_ = 0;
+  if (transferred.retiresLiveCapture) {
+    capture.phase = CapturePhase::None;
+    captureNextEventIndex = 0;
+    captureEventsSortDirty = false;
+    captureHasLastAppendTick_ = false;
+    captureLastAppendTick_ = 0;
+  }
   visualCacheDirty = true;
   invalidatePlaybackCaches();
   return true;

@@ -84,6 +84,17 @@ struct PendingSnapshotPublishBox {
   std::vector<PassId> journaledPassIds;
   std::vector<SnapshotWrapJournalFragment> queuedWrapJournals;
   PendingPassChangeProgress passChangeProgress;
+  /// Transactional pass-change fragment (DEC-047 amendment 2026-09-16). A
+  /// fragment is built on this working copy; authoritative `passChangeProgress`
+  /// advances only after the fragment is successfully incorporated. On failure
+  /// the working copy is dropped, so the exact fragment is rebuilt and never
+  /// partially applied twice.
+  PendingPassChangeProgress fragmentProgress;
+  bool fragmentProgressValid = false;
+  /// Consecutive failed incorporations of the current fragment. A persistent
+  /// representability failure parks publication instead of retrying forever.
+  uint16_t consecutiveFragmentFailures = 0;
+  bool fragmentBlocked = false;
   PassId constructionPassId = kInvalidPassId;
   size_t appliedLiveRecordEventIndex = 0;
   uint32_t appliedLiveRecordCompletedTicks = 0;

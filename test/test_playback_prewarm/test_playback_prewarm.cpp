@@ -109,7 +109,7 @@ void test_runtime_view_set_prewarm_has_fixed_capacity_and_no_growth() {
   TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kRecordsPerBridge,
                            views.bridges[0].capacity);
   const size_t expectedBytes =
-      RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
+      (RuntimePlaybackViewConfig::kViewCount + RuntimePlaybackViewConfig::kBridgeCount) * RuntimePlaybackViewConfig::kEventsPerView *
           (sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t) + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
       RuntimePlaybackViewConfig::kBridgeCount *
           (RuntimePlaybackViewConfig::kRecordsPerBridge *
@@ -363,6 +363,84 @@ void test_filtered_capture_rewrite_trims_rows_in_later_grains() {
   }
   TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
   TEST_ASSERT_TRUE(store.empty());
+}
+
+void test_canonical_copy_uses_reserved_output_at_maximum_staging_capacity() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prewarmCanonicalCaptureOutput());
+  auto& staging = *runtime.captureStagingIfPrewarmed();
+  const auto count = RuntimePlaybackViewConfig::kCaptureStagingEvents;
+  for (size_t i = 0; i < count; ++i)
+    TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(count - i, 1, 7, i % 128)));
+  staging.captureGeneration = 61;
+  TEST_ASSERT_TRUE(staging.freeze(61));
+  TEST_ASSERT_TRUE(runtime.beginFrozenCaptureCanonicalOrder(61));
+  while (!runtime.frozenCaptureCanonicalOrderComplete())
+    (void)runtime.stepFrozenCaptureCanonicalOrder(32);
+  LoopEventStore::ChunkReservation pressure;
+  TEST_ASSERT_TRUE(pressure.reserveChunks(LoopEventStore::freeChunkCount()));
+  const auto capacity = runtime.canonicalCaptureOutput.store.chunkIds().capacity();
+  auto result = LoopEventStoreRewriteResult::Pending;
+  size_t grains = 0;
+  while (result == LoopEventStoreRewriteResult::Pending && grains++ <= count) {
+    const auto before = runtime.canonicalCaptureOutput.store.size();
+    result = runtime.stepFrozenCaptureCanonicalCopy(61, 32);
+    TEST_ASSERT_TRUE(runtime.canonicalCaptureOutput.store.size() - before <= 32);
+    TEST_ASSERT_EQUAL(0, LoopEventStore::freeChunkCount());
+    TEST_ASSERT_EQUAL(capacity, runtime.canonicalCaptureOutput.store.chunkIds().capacity());
+  }
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, result);
+  TEST_ASSERT_EQUAL((count + 31) / 32, grains);
+  TEST_ASSERT_EQUAL(count, runtime.canonicalCaptureOutput.store.size());
+  TEST_ASSERT_EQUAL(0, runtime.canonicalCaptureChunks.availableChunks());
+  for (size_t i = 0; i < count; ++i) {
+    TEST_ASSERT_EQUAL(i + 1, runtime.canonicalCaptureOutput.store.at(i).tick);
+    TEST_ASSERT_EQUAL(count - i, staging.storage.events[i].tick);
+  }
+}
+
+void test_canonical_copy_denies_stale_generation_and_replaced_output() {
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prewarmCanonicalCaptureOutput());
+  auto& staging = *runtime.captureStagingIfPrewarmed();
+  for (size_t i = 0; i < 64; ++i)
+    TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(64 - i, 1, 7, 1)));
+  staging.captureGeneration = 62;
+  TEST_ASSERT_TRUE(staging.freeze(62));
+  TEST_ASSERT_TRUE(runtime.beginFrozenCaptureCanonicalOrder(62));
+  while (!runtime.frozenCaptureCanonicalOrderComplete())
+    (void)runtime.stepFrozenCaptureCanonicalOrder(32);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Pending, runtime.stepFrozenCaptureCanonicalCopy(62, 32));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, runtime.stepFrozenCaptureCanonicalCopy(63, 32));
+  TEST_ASSERT_EQUAL(32, runtime.canonicalCaptureOutput.store.size());
+  runtime.canonicalCaptureOutput.store.clear();
+  TEST_ASSERT_TRUE(runtime.canonicalCaptureOutput.store.append(MidiEvent::ControlChange(999, 1, 7, 2)));
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Denied, runtime.stepFrozenCaptureCanonicalCopy(62, 32));
+  TEST_ASSERT_EQUAL(1, runtime.canonicalCaptureOutput.store.size());
+  TEST_ASSERT_EQUAL(999, runtime.canonicalCaptureOutput.store.at(0).tick);
+}
+
+void test_canonical_copy_of_filtered_pair_consumes_no_chunks() {
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prewarmCanonicalCaptureOutput());
+  auto& staging = *runtime.captureStagingIfPrewarmed();
+  auto on = MidiEvent::NoteOn(100, 1, 60, 100); on.noteId = 93;
+  auto off = MidiEvent::NoteOff(101, 1, 60); off.noteId = 93;
+  TEST_ASSERT_TRUE(staging.appendContinuationNoteOn(on));
+  TEST_ASSERT_TRUE(staging.appendReservedNoteOff(off, false));
+  staging.captureGeneration = 63;
+  TEST_ASSERT_TRUE(staging.freeze(63));
+  TEST_ASSERT_TRUE(runtime.beginFrozenCaptureCanonicalOrder(63));
+  while (!runtime.frozenCaptureCanonicalOrderComplete())
+    (void)runtime.stepFrozenCaptureCanonicalOrder(1);
+  TEST_ASSERT_EQUAL(LoopEventStoreRewriteResult::Complete, runtime.stepFrozenCaptureCanonicalCopy(63, 1));
+  TEST_ASSERT_TRUE(runtime.canonicalCaptureOutput.store.empty());
+  TEST_ASSERT_EQUAL(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS, runtime.canonicalCaptureChunks.availableChunks());
 }
 
 void test_frozen_capture_order_uses_only_fixed_staging_storage() {
@@ -1115,6 +1193,17 @@ void test_empty_stop_retires_skipped_tail_before_playing_or_transport_stop_commi
     stop.setPhase(PendingStopPhase::AtomicTransfer);
     TEST_ASSERT_TRUE(stop.canCommit(transportStop ? 8 : 7,
         transportStop ? PendingStopDestination::Stopped : PendingStopDestination::Playing));
+    Loop loop;
+    LoopPlaybackRuntime runtime;
+    const EmissionCursor cursor{};
+    PreparedCapturePassTransfer transferred{};
+    // Execute the same routing gate as Track, with no prepared bridge: a wrap
+    // already committed all rows, so there is no new audible source to admit.
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::requiresBridgeRefresh(loop, runtime, stop, cursor));
+    TEST_ASSERT_TRUE(TrackPreparedStopCommit::advanceAtomicTransfer(
+        loop, runtime, stop, 0, cursor, transferred));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopPhase::DeferredCleanup),
+        static_cast<uint8_t>(stop.phase));
   }
   PendingStopAdmission filtered;
   TEST_ASSERT_TRUE(filtered.begin(4,100,7,1,2,contract,6240,12,9));
@@ -1259,9 +1348,11 @@ struct RankedBridgeFixture {
   RuntimePlaybackView base;
   FixedPlaybackBridgeStorage bridge;
   RuntimePlaybackBridgeBuild build;
-  void prepare(const std::vector<MidiEvent>& events, const std::vector<EditPass>& rows) {
+  void prepare(const std::vector<MidiEvent>& events, const std::vector<EditPass>& rows,
+               const PlaybackViewSourceIdentity* baseIdentity = nullptr) {
     TEST_ASSERT_TRUE(runtime.prewarmViews());
     prepareBridgeBase(base, events);
+    if (baseIdentity) base.source = *baseIdentity;
     TEST_ASSERT_TRUE(bridge.prewarm(2048));
     bridge.coverage = base.coverage; bridge.source = {2, 2, nullptr};
     RuntimeCompanionApply::Work work{runtime.frozenCompanionPairLookup, runtime.frozenCompanionDeleteLookup,
@@ -1337,6 +1428,192 @@ struct CanonicalPrefixFixture {
   }
 };
 
+void test_continuous_prefix_reuses_completed_passes_after_appends() {
+  CanonicalPrefixFixture f;
+  f.passes.editPasses.push_back(lengthRow(1, 70));
+  f.finish();
+  const auto* record = f.runtime.canonicalPassInputs.data()[0].events;
+  for (unsigned pass = 0; pass < 4; ++pass) {
+    const auto prior = f.revision;
+    OverdubPass added; added.id = pass + 2; added.mergeSequence = pass + 1;
+    LoopEventStore events;
+    auto on = MidiEvent::NoteOn(10 + pass, 1, 60, 90); on.noteId = pass + 2;
+    TEST_ASSERT_TRUE(events.append(on));
+    TEST_ASSERT_TRUE(events.append(MidiEvent::NoteOff(80 + pass, 1, 60)));
+    TEST_ASSERT_TRUE(events.detachChunksToCommittedChunkIds(added.committedChunkIds));
+    f.passes.overdubPasses.push_back(std::move(added)); ++f.revision;
+    const auto kept = f.runtime.canonicalPassInputs.completedPassCount();
+    TEST_ASSERT_TRUE(f.runtime.resumeCanonicalAfterAppend(f.passes, prior, f.source(), f.live()));
+    TEST_ASSERT_EQUAL_UINT32(kept, f.runtime.canonicalPassInputs.completedPassCount());
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    for (unsigned turn = 0; turn < 10000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+      result = f.step();
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_EQUAL_PTR(record, f.runtime.canonicalPassInputs.data()[0].events);
+    TEST_ASSERT_EQUAL_UINT32(70, record[1].tick);
+    LoopPlaybackRuntime fresh; TEST_ASSERT_TRUE(fresh.prewarmViews());
+    result = RuntimePlaybackOrderBuildResult::Pending;
+    for (unsigned turn = 0; turn < 10000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+      result = fresh.stepCanonicalPrefix(f.passes, f.source(), f.live(), 1);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    const auto& reused = f.runtime.canonicalPassInputs;
+    TEST_ASSERT_EQUAL_UINT32(fresh.canonicalPassInputs.passCount(), reused.passCount());
+    for (size_t i = 0; i < reused.passCount(); ++i) {
+      const auto& a = reused.data()[i]; const auto& b = fresh.canonicalPassInputs.data()[i];
+      TEST_ASSERT_EQUAL_UINT32(b.count, a.count);
+      for (size_t j = 0; j < a.count; ++j) {
+        TEST_ASSERT_EQUAL_UINT32(b.events[j].tick, a.events[j].tick);
+        TEST_ASSERT_EQUAL_UINT32(b.events[j].noteId, a.events[j].noteId);
+        TEST_ASSERT_EQUAL(b.events[j].type, a.events[j].type);
+        TEST_ASSERT_EQUAL_UINT8(b.events[j].data.noteData.note, a.events[j].data.noteData.note);
+      }
+    }
+  }
+  // A history mutation potentially affects every pass: do not reuse old results.
+  const auto prior = f.revision; ++f.revision; ++f.storageGeneration;
+  f.passes.editPasses[0].endTick = 55;
+  TEST_ASSERT_FALSE(f.runtime.resumeCanonicalAfterAppend(f.passes, prior, f.source(), f.live()));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn = 0; turn < 10000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn) result = f.step();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT32(55, f.runtime.canonicalPassInputs.data()[0].events[1].tick);
+  f.runtime.reset(false);
+  for (auto& pass : f.passes.overdubPasses) LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+}
+
+void test_continuous_prefix_retains_transferred_tail() {
+  CanonicalPrefixFixture f; f.finish();
+  auto& inputs = f.runtime.canonicalPassInputs;
+  const auto* record = inputs.data()[0].events;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  capture.captureGeneration = 4;
+  const auto cc = MidiEvent::ControlChange(123, 1, 7, 64);
+  TEST_ASSERT_TRUE(capture.storage.append(cc)); TEST_ASSERT_TRUE(capture.freeze(4));
+  RuntimeCanonicalPassInputs::FrozenSource frozen{f.revision, f.generation, f.epoch, f.length, capture};
+  TEST_ASSERT_TRUE(inputs.appendFrozenOverdub(frozen));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = inputs.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  OverdubPass pass; pass.id = 2; pass.mergeSequence = 1;
+  LoopEventStore committed; TEST_ASSERT_TRUE(committed.append(cc));
+  TEST_ASSERT_TRUE(committed.detachChunksToCommittedChunkIds(pass.committedChunkIds));
+  f.passes.overdubPasses.push_back(std::move(pass)); const auto prior = f.revision++;
+  TEST_ASSERT_TRUE(f.runtime.resumeCanonicalAfterAppend(f.passes, prior, f.source(), f.live(), true));
+  TEST_ASSERT_FALSE(inputs.captureAttached());
+  TEST_ASSERT_EQUAL_UINT32(2, inputs.completedPassCount());
+  // The former capture can now be reused without invalidating retained output.
+  capture.reset();
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = f.step();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL_PTR(record, inputs.data()[0].events);
+  TEST_ASSERT_EQUAL_UINT32(3, inputs.eventCount());
+  TEST_ASSERT_EQUAL_UINT32(123, inputs.data()[1].events[0].tick);
+  f.runtime.reset(false);
+  LoopEventStore::releaseChunkRefs(f.passes.overdubPasses[0].committedChunkIds);
+}
+
+void test_continuous_prefix_preserves_completed_work_when_append_interrupts_read() {
+  CanonicalPrefixFixture f; f.finish();
+  for (unsigned p = 0; p < 2; ++p) {
+    OverdubPass pass; pass.id = p + 2; pass.mergeSequence = p + 1;
+    LoopEventStore events;
+    for (unsigned i = 0; i < 64; ++i) TEST_ASSERT_TRUE(events.append(MidiEvent::ControlChange(i, 1, 7, i)));
+    TEST_ASSERT_TRUE(events.detachChunksToCommittedChunkIds(pass.committedChunkIds));
+    f.passes.overdubPasses.push_back(std::move(pass)); const auto prior = f.revision++;
+    TEST_ASSERT_TRUE(f.runtime.resumeCanonicalAfterAppend(f.passes, prior, f.source(), f.live()));
+    TEST_ASSERT_EQUAL_UINT32(1, f.runtime.canonicalPassInputs.completedPassCount());
+    if (!p) for (unsigned i = 0; i < 12; ++i) TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, f.step());
+  }
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = f.step();
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT32(130, f.runtime.canonicalPassInputs.eventCount());
+  TEST_ASSERT_EQUAL_UINT32(3, f.runtime.canonicalPassInputs.passCount());
+  f.runtime.reset(false);
+  for (auto& pass : f.passes.overdubPasses) LoopEventStore::releaseChunkRefs(pass.committedChunkIds);
+}
+
+void test_normalization_scratch_receipt_rejects_superseded_builder() {
+  CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
+  RuntimeCompanionApply::Work work{runtime.frozenCompanionPairLookup, runtime.frozenCompanionDeleteLookup,
+      runtime.frozenCompanionSpans, runtime.frozenCompanionReconstruction, runtime.frozenCompanionOverlaps};
+  RuntimeCompanionPasses first, second;
+  TEST_ASSERT_TRUE(first.prewarm(2048)); TEST_ASSERT_TRUE(second.prewarm(2048));
+  const auto source = f.source();
+  TEST_ASSERT_TRUE(first.begin(runtime.frozenCompanionApply, work, runtime.canonicalPassInputs, nullptr, 0, source, f.length));
+  TEST_ASSERT_TRUE(second.begin(runtime.frozenCompanionApply, work, runtime.canonicalPassInputs, nullptr, 0, source, f.length));
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, first.step(1));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = second.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_FALSE(first.normalizationMatches(runtime.canonicalPassInputs, source));
+  TEST_ASSERT_TRUE(second.normalizationMatches(runtime.canonicalPassInputs, source));
+  second.discard();
+  TEST_ASSERT_FALSE(second.normalizationMatches(runtime.canonicalPassInputs, source));
+}
+
+void test_continuous_prefix_reuses_snapshot_identity_refresh() {
+  CanonicalPrefixFixture f; f.finish();
+  const auto count = f.runtime.canonicalPassInputs.completedPassCount();
+  const PlaybackViewSourceIdentity refreshed{f.revision, f.generation, nullptr};
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending,
+      f.runtime.stepCanonicalPrefix(f.passes, refreshed, f.live(), 1));
+  TEST_ASSERT_EQUAL_UINT32(count, f.runtime.canonicalPassInputs.completedPassCount());
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn = 0; turn < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result = f.runtime.stepCanonicalPrefix(f.passes, refreshed, f.live(), 1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT32(2, f.runtime.canonicalPassInputs.eventCount());
+}
+
+void test_live_canonical_base_prework_reuses_stop_worker_and_invalidates_source() {
+  CanonicalPrefixFixture f;
+  auto& runtime = f.runtime;
+  auto& set = *runtime.viewSetIfPrewarmed();
+  const auto current = set.lifecycle.current;
+  const auto selected = set.bridgeLifecycle.selected;
+  // A tiny live tail must not shrink either the event or pass horizon.
+  TEST_ASSERT_TRUE(set.captureStaging.storage.append(MidiEvent::ControlChange(1, 1, 7, 64)));
+  TEST_ASSERT_EQUAL_UINT64(
+      StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 12, 2048, 0, 0, 32),
+      runtime.requiredStopRankedGrains(f.source(), 12, 0, 0, 32));
+  for (unsigned revision = 0; revision < 2; ++revision) {
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    for (unsigned turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn) {
+      const bool prefixReady = runtime.canonicalPrefixPhase == LoopPlaybackRuntime::CanonicalPrefixPhase::Ready;
+      result = runtime.stepCanonicalBase(f.passes, f.source(), f.live(),
+          runtime.currentCycleCursor(turn % f.length, f.generation), 1);
+      if (!prefixReady)
+        TEST_ASSERT_EQUAL(LoopPlaybackRuntime::CanonicalWindowPhase::Idle, runtime.canonicalWindowPhase);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    const auto* base = runtime.preparedCanonicalWindow(f.source());
+    TEST_ASSERT_NOT_NULL(base);
+    TEST_ASSERT_EQUAL_UINT32(2, base->storage.eventCount);
+    const auto generation = runtime.canonicalPassInputs.generation();
+    // Stop resumes the very same prepared base, without rebuilding or selecting it.
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete,
+        runtime.stepCanonicalBase(f.passes, f.source(), f.live(),
+            runtime.currentCycleCursor(700, f.generation), 1));
+    TEST_ASSERT_EQUAL_UINT64(generation, runtime.canonicalPassInputs.generation());
+    TEST_ASSERT_EQUAL_PTR(base, runtime.preparedCanonicalWindow(f.source()));
+    TEST_ASSERT_EQUAL_UINT8(current, set.lifecycle.current);
+    TEST_ASSERT_EQUAL_UINT8(selected, set.bridgeLifecycle.selected);
+    TEST_ASSERT_EQUAL_UINT64(
+        StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 12, 2, 0, 0, 32),
+        runtime.requiredStopRankedGrains(f.source(), 12, 0, 0, 32));
+    if (revision == 1) {
+      runtime.canonicalPassInputs.discard();
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied,
+          runtime.stepCanonicalBase(f.passes, f.source(), f.live(),
+              runtime.currentCycleCursor(700, f.generation), 1));
+    }
+    ++f.revision; ++f.storageGeneration;
+    TEST_ASSERT_NULL(runtime.preparedCanonicalWindow(f.source()));
+  }
+}
+
 static void prepareUnsortedFrozenTailCapture(LoopPlaybackRuntime& runtime) {
   auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
   auto on = MidiEvent::NoteOn(96, 2, 64, 80); on.noteId = 2;
@@ -1356,10 +1633,84 @@ static void finishRuntimeCanonicalCaptureOrder(LoopPlaybackRuntime& runtime) {
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
 }
 
+void test_runtime_canonical_bridge_base_survives_live_ledger_refresh() {
+  CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
+  auto& set = *runtime.viewSetIfPrewarmed();
+  auto* initialCurrent = &set.views[set.lifecycle.current];
+  const EmissionCursor anchor{0,11,0,0,f.generation};
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result = runtime.stepCanonicalWindow({0,f.length,f.length}, anchor, 1, true);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  const auto* base = runtime.preparedCanonicalWindow(f.source());
+  TEST_ASSERT_EQUAL_PTR(&set.bridgeBases[0], base);
+  TEST_ASSERT_EQUAL_PTR(initialCurrent, &set.views[set.lifecycle.current]);
+  prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
+  PendingNoteChangeVec changes{{PendingNoteChangeKind::Shorten,1,1,60,90,10,70}};
+  const RuntimeCanonicalPassInputs::FrozenSource live{f.revision,f.generation,f.epoch,f.length,set.captureStaging};
+  const PlaybackViewSourceIdentity target{f.revision + 2, f.generation, nullptr};
+  TEST_ASSERT_TRUE(runtime.beginFrozenCanonicalTail(live, changes, target));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result = runtime.stepFrozenCanonicalTail(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  runtime.ledger.noteOn(1,60,1,10,90);
+  TEST_ASSERT_TRUE(runtime.beginFrozenCompanionBridge(f.source(),target,4,f.epoch,f.length,anchor));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result = runtime.stepFrozenCaptureBridge(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_TRUE(runtime.canSelectFrozenCaptureBridge(4,f.epoch,f.length,anchor));
+  TEST_ASSERT_FALSE(runtime.canSelectFrozenCaptureBridge(4,f.epoch,f.length,{0,90,0,0,f.generation}));
+  const auto mapGeneration = runtime.frozenCompanionBridgeMap.generation();
+  const auto bridgeGeneration = set.bridges[set.bridgeLifecycle.candidate].storageGeneration;
+  const auto recordCount = set.bridges[set.bridgeLifecycle.candidate].recordCount;
+  runtime.ledger.clear(); // Original note ended while preparation was running.
+  const EmissionCursor later{0,120,0,0,f.generation};
+  TEST_ASSERT_FALSE(runtime.canSelectFrozenCaptureBridge(4,f.epoch,f.length,later));
+  TEST_ASSERT_TRUE(runtime.refreshFrozenCompanionBridge(later));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn) {
+    // Continuous unrelated note changes must not force another bridge build.
+    runtime.ledger.noteOff(1,127);
+    if (turn % 2) runtime.ledger.noteOn(1,127,127,120+turn,90);
+    result = runtime.stepFrozenCaptureBridge(1);
+  }
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+  TEST_ASSERT_EQUAL_UINT64(mapGeneration,runtime.frozenCompanionBridgeMap.generation());
+  TEST_ASSERT_EQUAL_UINT64(bridgeGeneration,set.bridges[set.bridgeLifecycle.candidate].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(recordCount,set.bridges[set.bridgeLifecycle.candidate].recordCount);
+  TEST_ASSERT_TRUE(runtime.selectFrozenCaptureBridge(4,f.epoch,f.length,later));
+  runtime.discardFrozenCaptureBridge(); runtime.discardCanonicalWindow(); runtime.discardFrozenCanonicalTail();
+  const auto* selected = runtime.selectedFullLoopBridge(target,f.length);
+  TEST_ASSERT_NOT_NULL(selected);
+  TEST_ASSERT_EQUAL_PTR(base, runtime.fullLoopBridgeBase(*selected,f.length));
+  bool yieldedAfterPreparingWindows = false;
+  for (unsigned turn = 0; turn < 1000; ++turn) {
+    if (!runtime.serviceBridgeWindow(120,192,1)) {
+      yieldedAfterPreparingWindows = true;
+      break;
+    }
+  }
+  TEST_ASSERT_TRUE(yieldedAfterPreparingWindows);
+  TEST_ASSERT_LESS_THAN(set.views.size(), set.lifecycle.ready);
+  TEST_ASSERT_LESS_THAN(set.views.size(), set.lifecycle.build);
+  TEST_ASSERT_TRUE(set.views[set.lifecycle.ready].complete);
+  TEST_ASSERT_TRUE(set.views[set.lifecycle.build].complete);
+  const auto readyGeneration = set.views[set.lifecycle.ready].storageGeneration;
+  const auto buildGeneration = set.views[set.lifecycle.build].storageGeneration;
+  for (unsigned turn = 0; turn < 32; ++turn)
+    TEST_ASSERT_FALSE(runtime.serviceBridgeWindow(120,192,1));
+  TEST_ASSERT_EQUAL_UINT64(readyGeneration,set.views[set.lifecycle.ready].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT64(buildGeneration,set.views[set.lifecycle.build].storageGeneration);
+  TEST_ASSERT_NOT_NULL(runtime.publishedBridgeWindow(target,120));
+}
+
 void test_runtime_canonical_window_prepares_spare_coverage_and_releases_tail_workers() {
   for (const auto coverage : {PlaybackCoverageInterval{0,192,768},
                               PlaybackCoverageInterval{650,200,768},
-                              PlaybackCoverageInterval{192,192,768}}) {
+                              PlaybackCoverageInterval{192,192,768},
+                              PlaybackCoverageInterval{384,192,768}}) {
     CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
     auto* set = runtime.viewSetIfPrewarmed();
     const MidiEvent audible[] = {MidiEvent::ControlChange(22, 1, 7, 99)};
@@ -1445,6 +1796,27 @@ void test_runtime_canonical_window_prepares_spare_coverage_and_releases_tail_wor
       TEST_ASSERT_TRUE(cursor.advance());
     }
     TEST_ASSERT_NULL(cursor.peek());
+    if (coverage.startPhase == 384) {
+      // A published bridge takes ownership of its ready base. Cleanup must
+      // release the preparation receipt without retiring that audible view,
+      // so the next pass can build in the remaining slot.
+      Loop loop; loop.loopLengthTicks = f.length; loop.openOverdubSession(384);
+      TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+      PendingStopAdmission stop; stop.pending = true;
+      stop.setPhase(PendingStopPhase::DeferredCleanup);
+      TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop));
+      TEST_ASSERT_TRUE(window->published);
+      TEST_ASSERT_TRUE(cursor.selectAfterPhase(*window, bridge, 7));
+      f.revision = target.playbackRevision; f.generation = target.sourceGeneration;
+      f.finish();
+      result = RuntimePlaybackOrderBuildResult::Pending;
+      for (unsigned turn = 0; turn < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+        result = runtime.stepCanonicalWindow(coverage, bridgeAnchor, 1);
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+      TEST_ASSERT_NOT_EQUAL(window, runtime.preparedCanonicalWindow(f.source()));
+      TEST_ASSERT_TRUE(cursor.selectAfterPhase(*window, bridge, 7));
+      continue;
+    }
     bridge.selected = false;
     // Retirement or same-identity buffer reuse invalidates completed indexes.
     auto& retired = set->views[runtime.canonicalWindowIndex];
@@ -1708,7 +2080,7 @@ void test_frozen_canonical_tail_coordinates_children_and_reuses_owned_prefix() {
     TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(100, 2, 7, 80)));
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Shorten, 1, 1, 60, 90, 10, 50}};
     RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
-    PlaybackViewSourceIdentity target{2, 3, &f.passes};
+    PlaybackViewSourceIdentity target{3, 3, &f.passes};
     TEST_ASSERT_FALSE(runtime.beginFrozenCanonicalTail(live, changes, target));
     TEST_ASSERT_TRUE(runtime.canonicalPassInputs.ready());
     TEST_ASSERT_TRUE(capture.freeze(4));
@@ -1850,6 +2222,60 @@ void test_companion_history_reservation_survives_snapshot_cleanup() {
   TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed(4));
 }
 
+void test_companion_history_binds_wrap_publication_before_begin() {
+  for (unsigned mode = 0; mode < 3; ++mode) {
+    Loop loop; loop.nextPassId_ = 100;
+    TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(4));
+    auto* reservedRows = loop.preparedCompanionHistory_.rows.data();
+    auto* reservedIds = loop.preparedCompanionHistory_.snapshotIds.data();
+    // Use the same canonical append as wrap companion sealing. It changes
+    // storage generation after prewarm but before final-stop preparation.
+    const auto wrapId = loop.saveNoteEditPass(kOverdubCompanionEditPassIndex,
+        lengthRow(1, 70), EditPassType::Note, true, true);
+    TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, wrapId);
+    CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
+    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& rows = f.runtime.frozenCaptureCompanions;
+    PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 2, 1, 62, 80, 20, 60}};
+    TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
+    while (rows.step(1) == RuntimePlaybackOrderBuildResult::Pending) {}
+    if (mode == 2) {
+      for (unsigned i = 0; i < 3; ++i)
+        loop.saveNoteEditPass(kOverdubCompanionEditPassIndex,
+            lengthRow(1, 60), EditPassType::Note, true, true);
+      TEST_ASSERT_FALSE(loop.beginPreparedCompanionHistory(rows, capture));
+      continue;
+    }
+    TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture));
+    if (mode == 1) {
+      loop.saveNoteEditPass(kOverdubCompanionEditPassIndex,
+          lengthRow(1, 60), EditPassType::Note, true, true);
+      TEST_ASSERT_FALSE(loop.stepPreparedCompanionHistory(1));
+      TEST_ASSERT_FALSE(loop.preparedCompanionHistoryReady());
+      continue;
+    }
+    for (unsigned turn = 0; turn < 32 && !loop.preparedCompanionHistoryReady(); ++turn)
+      TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1));
+    TEST_ASSERT_TRUE(loop.preparedCompanionHistoryReady());
+    TEST_ASSERT_EQUAL_PTR(reservedRows, loop.preparedCompanionHistory_.rows.data());
+    TEST_ASSERT_EQUAL_PTR(reservedIds, loop.preparedCompanionHistory_.snapshotIds.data());
+    TEST_ASSERT_EQUAL_UINT32(2, loop.preparedCompanionHistory()->size());
+    TEST_ASSERT_EQUAL_UINT32(wrapId, loop.preparedCompanionHistory()->at(0).id);
+    TEST_ASSERT_EQUAL_UINT32(70, loop.preparedCompanionHistory()->at(0).endTick);
+    TEST_ASSERT_TRUE(loop.commitPreparedCompanionHistoryAtomic());
+    TEST_ASSERT_EQUAL_UINT32(2, loop.passes.editPasses.size());
+    TEST_ASSERT_TRUE(loop.beginRecyclePreparedCompanionHistory());
+    for (unsigned turn = 0; turn < 32 && !loop.preparedCompanionHistoryPrewarmed(); ++turn)
+      TEST_ASSERT_TRUE(loop.stepRecyclePreparedCompanionHistory(1));
+    TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed(1));
+    TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture));
+    for (unsigned turn = 0; turn < 32 && !loop.preparedCompanionHistoryReady(); ++turn)
+      TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1));
+    TEST_ASSERT_TRUE(loop.commitPreparedCompanionHistoryAtomic());
+    TEST_ASSERT_EQUAL_UINT32(3, loop.passes.editPasses.size());
+  }
+}
+
 void test_companion_history_stages_metadata_payloads_and_ids_without_publication() {
   Loop loop; loop.nextPassId_ = 100;
   EditPass create; create.id = 7; create.actionType = EditActionType::Create;
@@ -1944,6 +2370,40 @@ void test_companion_history_atomic_swap_preserves_snapshot_and_undo_ids() {
     TEST_ASSERT_EQUAL_UINT64(generation + !empty, loop.canonicalStorageGeneration);
     TEST_ASSERT_EQUAL_UINT32(100 + !empty, loop.nextPassId_);
   }
+}
+
+void test_job_owned_capture_and_companions_commit_without_retiring_live_capture() {
+  Loop loop; loop.loopLengthTicks = 768; loop.nextPassId_ = 100;
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(1));
+  TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(1));
+  loop.beginCapture(CapturePhase::Overdub);
+  const auto liveEvent = MidiEvent::ControlChange(200, 1, 9, 99);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(liveEvent));
+  Capture job; job.phase = CapturePhase::Overdub;
+  const auto event = MidiEvent::ControlChange(10, 1, 7, 80);
+  TEST_ASSERT_TRUE(job.store.append(event));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+      loop.stagePreparedCapturePassFromActiveAdmission(job, 100, CommitReason::OverdubStop));
+  LoopPlaybackRuntime runtime; TEST_ASSERT_TRUE(runtime.prewarmViews());
+  auto& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  TEST_ASSERT_TRUE(staging.storage.append(event));
+  staging.captureGeneration = 1; TEST_ASSERT_TRUE(staging.freeze(1));
+  PendingNoteChangeVec changes;
+  changes.push_back({PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50});
+  auto& rows = runtime.frozenCaptureCompanions;
+  TEST_ASSERT_TRUE(rows.begin(staging, 1, changes));
+  while (rows.step(1) == RuntimePlaybackOrderBuildResult::Pending) {}
+  TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, staging));
+  while (!loop.preparedCompanionHistoryReady()) TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1));
+  TEST_ASSERT_TRUE(loop.canCommitPreparedCaptureAndCompanions());
+  PreparedCapturePassTransfer transferred;
+  TEST_ASSERT_TRUE(loop.commitPreparedCaptureAndCompanionsAtomic(transferred));
+  TEST_ASSERT_FALSE(transferred.retiresLiveCapture);
+  TEST_ASSERT_EQUAL(CapturePhase::Overdub, loop.capture.phase);
+  TEST_ASSERT_EQUAL(1, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(200, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(1, loop.passes.overdubPasses.size());
+  TEST_ASSERT_EQUAL(1, loop.passes.editPasses.size());
 }
 
 void test_capture_and_companion_history_commit_together_or_leave_both_pending() {
@@ -2070,11 +2530,15 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
       loop.playbackRevision, generation, stop.transportCommandEpoch, loop.loopLengthTicks, capture};
     PendingNoteChangeVec changes;
     if (companions) changes.push_back({PendingNoteChangeKind::Shorten, 1, 1, 60, 90, 10, 50});
-    TEST_ASSERT_TRUE(runtime.beginFrozenCanonicalTail(frozen, changes, target));
+    if (!companions) changes.push_back({PendingNoteChangeKind::Add, 2, 1, 62, 90, 100, 120});
+    auto provisionalTarget = target;
+    if (!companions) ++provisionalTarget.playbackRevision;
+    TEST_ASSERT_TRUE(runtime.beginFrozenCanonicalTail(frozen, changes, provisionalTarget));
     result = RuntimePlaybackOrderBuildResult::Pending;
     for (size_t i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
-      result = runtime.stepFrozenCanonicalTail(32);
+      result = runtime.stepReservedFrozenCanonicalTail(stop, 32);
     TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_TRUE(runtime.frozenCanonicalTailReady(target));
     // Verify the sealed bytes/order rather than trusting capture event count.
     TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.stagePreparedCapturePassFromActiveAdmission(100, CommitReason::OverdubStop));
     TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(runtime.frozenCaptureCompanions, capture,
@@ -2136,28 +2600,35 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     const auto candidate = views.bridgeLifecycle.candidate;
     // Equal numeric counters on a different owner cannot authorize this commit.
     uint32_t foreignGeneration = generation;
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stop, foreignGeneration, cursor, transferred));
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, foreignGeneration, cursor, transferred));
     auto noRecycle = stop; noRecycle.remainingHistoryRecycleGrains = 0;
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, noRecycle, generation, cursor, transferred));
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, noRecycle, generation, cursor, transferred));
     noRecycle = stop; noRecycle.historyRecycleQuantum = 0;
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, noRecycle, generation, cursor, transferred));
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, noRecycle, generation, cursor, transferred));
     auto outside = cursor; outside.phase = 768;
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stop, generation, outside, transferred));
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::requiresBridgeRefresh(loop, runtime, stop, cursor));
+    TEST_ASSERT_TRUE(TrackPreparedStopCommit::requiresBridgeRefresh(loop, runtime, stop, outside));
+    auto stoppedRefresh = stop;
+    stoppedRefresh.requestTransportStop();
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::requiresBridgeRefresh(loop, runtime, stoppedRefresh, outside));
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, outside, transferred));
     runtime.ledger.noteOn(1, 60, 1, 10, 90);
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred));
+    TEST_ASSERT_EQUAL(companions, TrackPreparedStopCommit::requiresBridgeRefresh(loop, runtime, stop, cursor));
+    if (companions)
+      TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, cursor, transferred));
     runtime.ledger.clear();
     auto stopped = stop; stopped.requestTransportStop();
     TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stopped, generation, cursor, transferred));
     const auto savedTarget = runtime.frozenCaptureSourceAdmission.targetSource;
     ++runtime.frozenCaptureSourceAdmission.targetSource.playbackRevision;
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred));
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, cursor, transferred));
     runtime.frozenCaptureSourceAdmission.targetSource = savedTarget;
     TEST_ASSERT_EQUAL_UINT32(999, transferred.id);
     TEST_ASSERT_EQUAL_UINT32(base.playbackRevision, loop.playbackRevision);
     TEST_ASSERT_TRUE(loop.hasPendingCapturePass());
     TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackBridgeLifecycle::kNoBridge, views.bridgeLifecycle.selected);
     if (variant == 6) {
-      TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred));
+      TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, cursor, transferred));
       TEST_ASSERT_TRUE(loop.hasPendingCapturePass());
       TEST_ASSERT_EQUAL_UINT32(base.playbackRevision, loop.playbackRevision);
       TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackBridgeLifecycle::kNoBridge, views.bridgeLifecycle.selected);
@@ -2244,7 +2715,7 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
       TEST_ASSERT_TRUE(undoPublication.finish());
       TEST_ASSERT_EQUAL(TrackUndoPublication::Command::Undo, undoPublication.takePendingCommand().kind);
     } else {
-      TEST_ASSERT_TRUE(TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred));
+      TEST_ASSERT_TRUE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, cursor, transferred));
     }
     TEST_ASSERT_EQUAL_UINT32(100, transferred.id);
     TEST_ASSERT_EQUAL_UINT32(target.playbackRevision, loop.playbackRevision);
@@ -2253,9 +2724,8 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     TEST_ASSERT_EQUAL(PendingStopPhase::DeferredCleanup, stop.phase);
     TEST_ASSERT_EQUAL(variant < 9, runtime.selectedFullLoopBridge(target, 768) != nullptr);
     TEST_ASSERT_FALSE(runtime.canSelectFrozenCaptureBridge(4, 0, 768, cursor)); // Old owners invalidated.
-    TEST_ASSERT_FALSE(TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred));
-    runtime.discardFrozenCanonicalTail();
-    TEST_ASSERT_EQUAL(variant < 9, runtime.selectedFullLoopBridge(target, 768) != nullptr); // Selected data owns its storage.
+    TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, cursor, transferred));
+    TEST_ASSERT_TRUE(runtime.canonicalPassInputs.captureAttached());
     TEST_ASSERT_EQUAL_UINT16(recycleCredits, stop.remainingHistoryRecycleGrains);
     TEST_ASSERT_EQUAL_UINT32(companions ? 1 : 0, loop.preparedCompanionHistoryIds()->size());
     TEST_ASSERT_EQUAL_PTR(&loop, stop.historyRecycleOwner);
@@ -2305,7 +2775,42 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(1));
     TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied,
         TrackPreparedStopCommit::stepHistoryRecycle(loop, stop, 32)); // Same source, replaced preparation.
-    stop.reset();
+    // Production cleanup must retire the attached tail, not just the bridge
+    // compiler. Otherwise every prefix turn of the next nonempty stop denies.
+    loop.openOverdubSession(100);
+    TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+    stop.historyRecycleOwner = nullptr;
+    const size_t retainedNormalizedPasses = runtime.frozenCompanionPasses.normalizedPassCount();
+    TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop));
+    TEST_ASSERT_EQUAL_UINT32(retainedNormalizedPasses, runtime.canonicalPassInputs.completedPassCount());
+    TEST_ASSERT_FALSE(runtime.canonicalPassInputs.captureAttached());
+    TEST_ASSERT_EQUAL(variant < 9, runtime.selectedFullLoopBridge(target, 768) != nullptr);
+    result = RuntimePlaybackOrderBuildResult::Pending;
+    for (size_t i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+      result = runtime.stepCanonicalPrefix(loop.passes, target,
+          {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}, 32);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    // Compare adopted per-pass ordering and edits with full canonical replay.
+    LoopPlaybackRuntime fresh; TEST_ASSERT_TRUE(fresh.prewarmViews());
+    result = RuntimePlaybackOrderBuildResult::Pending;
+    for (size_t i = 0; i < 1000 && result == RuntimePlaybackOrderBuildResult::Pending; ++i)
+      result = fresh.stepCanonicalPrefix(loop.passes, target,
+          {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}, 32);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    TEST_ASSERT_EQUAL_UINT32(fresh.canonicalPassInputs.passCount(), runtime.canonicalPassInputs.passCount());
+    for (size_t p = 0; p < fresh.canonicalPassInputs.passCount(); ++p) {
+      const auto& expected = fresh.canonicalPassInputs.data()[p];
+      const auto& adopted = runtime.canonicalPassInputs.data()[p];
+      TEST_ASSERT_EQUAL_UINT32(expected.count, adopted.count);
+      for (size_t e = 0; e < expected.count; ++e) {
+        TEST_ASSERT_EQUAL_UINT32(expected.events[e].tick, adopted.events[e].tick);
+        TEST_ASSERT_EQUAL_UINT32(expected.events[e].noteId, adopted.events[e].noteId);
+        TEST_ASSERT_EQUAL(expected.events[e].type, adopted.events[e].type);
+        TEST_ASSERT_EQUAL_UINT8(expected.events[e].channel, adopted.events[e].channel);
+        TEST_ASSERT_EQUAL_UINT8(expected.events[e].data.noteData.note, adopted.events[e].data.noteData.note);
+        TEST_ASSERT_EQUAL_UINT8(expected.events[e].data.noteData.velocity, adopted.events[e].data.noteData.velocity);
+      }
+    }
     TEST_ASSERT_NULL(stop.historyRecycleOwner);
     TEST_ASSERT_FALSE(stop.historyRecycleStarted);
     TEST_ASSERT_EQUAL_UINT64(0, stop.historyRecycleGeneration);
@@ -2742,7 +3247,8 @@ void test_companion_history_denies_stale_sources_capacity_and_id_overflow() {
   TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(1)); loop.nextPassId_ = UINT32_MAX;
   TEST_ASSERT_FALSE(loop.beginPreparedCompanionHistory(rows, capture));
   loop.nextPassId_ = 10; ++loop.canonicalStorageGeneration;
-  TEST_ASSERT_FALSE(loop.beginPreparedCompanionHistory(rows, capture));
+  // Unborrowed reserved storage binds at begin; in-flight versions are checked above.
+  TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture));
 }
 
 void test_stopped_canonical_construction_matches_oracle_and_releases_workers() {
@@ -3707,6 +4213,125 @@ void test_ranked_bridge_retains_original_cross_wrap_off() {
   TEST_ASSERT_NULL(fixture.bridge.heldClosure(0));
 }
 
+void test_bridge_boundary_rebind_matches_fresh_compile_across_live_cycles() {
+  auto on = MidiEvent::NoteOn(700,1,60,90); on.noteId = 42;
+  auto off = MidiEvent::NoteOff(100,1,60); off.noteId = 42;
+  RankedBridgeFixture reused; reused.prepare({on,off},{lengthRow(42,150)});
+  TEST_ASSERT_TRUE(reused.build.begin(reused.base,reused.bridge,&reused.runtime.frozenCompanionBridgeMap));
+  auto initial = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn=0; turn<10000 && initial==RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    initial=reused.build.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete,initial);
+  const auto generation = reused.bridge.storageGeneration;
+  const auto mapGeneration = reused.runtime.frozenCompanionBridgeMap.generation();
+  for (unsigned cycle=0; cycle<6; ++cycle) {
+    ActiveNoteLedger ledger;
+    const uint32_t phase = cycle%2 ? 120 : 710;
+    if (!(cycle%2)) ledger.noteOn(1,60,42,700,90);
+    ledger.noteOn(1,127,127,phase,90); // Not affected by this edit.
+    const EmissionCursor anchor{cycle,phase,0,0,reused.bridge.source.sourceGeneration};
+    reused.bridge.selected = false;
+    const size_t insertionCount = reused.bridge.insertions.eventCount;
+    const size_t records = reused.bridge.recordCount;
+    TEST_ASSERT_TRUE(reused.build.rebindBoundary(reused.base,reused.bridge,
+        reused.runtime.frozenCompanionBridgeMap,ledger,anchor));
+    const auto bound = RuntimePlaybackBridgeBuild::requiredBoundaryGrains(
+        reused.base.storage.eventCount,insertionCount,records,2,1);
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    for (uint64_t turn=0; turn<bound && result==RuntimePlaybackOrderBuildResult::Pending; ++turn) {
+      ledger.noteOff(1,127);
+      if (turn%2) ledger.noteOn(1,127,127,phase+turn,90);
+      result=reused.build.step(1);
+    }
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete,result);
+    TEST_ASSERT_TRUE(reused.bridge.matchesAffectedLedger(ledger));
+    TEST_ASSERT_EQUAL_UINT64(generation,reused.bridge.storageGeneration);
+    TEST_ASSERT_EQUAL_UINT64(mapGeneration,reused.runtime.frozenCompanionBridgeMap.generation());
+    TEST_ASSERT_EQUAL_UINT32(records,reused.bridge.recordCount);
+    TEST_ASSERT_EQUAL_UINT32(insertionCount,reused.bridge.insertions.eventCount);
+    RankedBridgeFixture fresh; fresh.prepare({on,off},{lengthRow(42,150)});
+    fresh.bridge.ledgerBoundary.capture(ledger); fresh.bridge.cursorAnchor=anchor;
+    fresh.compile(1); reused.bridge.selected=true;
+    for (unsigned age=0; age<4; ++age) {
+      RuntimePlaybackBridgeCursor left,right;
+      const auto completed=age ? UINT32_MAX : phase-1;
+      TEST_ASSERT_TRUE(left.selectAfterPhase(reused.base,reused.bridge,cycle+age,completed));
+      TEST_ASSERT_TRUE(right.selectAfterPhase(fresh.base,fresh.bridge,cycle+age,completed));
+      while (const auto* expected=right.peek()) {
+        const auto* actual=left.peek(); TEST_ASSERT_NOT_NULL(actual);
+        TEST_ASSERT_EQUAL_UINT32(expected->tick,actual->tick);
+        TEST_ASSERT_EQUAL_UINT32(expected->noteId,actual->noteId);
+        TEST_ASSERT_EQUAL(expected->isNoteOn(),actual->isNoteOn());
+        TEST_ASSERT_TRUE(left.advance()); TEST_ASSERT_TRUE(right.advance());
+      }
+      TEST_ASSERT_NULL(left.peek());
+    }
+  }
+}
+
+void test_second_source_keeps_selected_original_off() {
+  auto on = MidiEvent::NoteOn(700,1,60,90); on.noteId = 42;
+  auto off = MidiEvent::NoteOff(300,1,60); off.noteId = 42;
+  RankedBridgeFixture original; original.prepare({on,off},{lengthRow(42,150)});
+  ActiveNoteLedger ledger; ledger.noteOn(1,60,42,700,90);
+  original.bridge.ledgerBoundary.capture(ledger); original.bridge.cursorAnchor.phase = 701;
+  original.compile(1);
+  auto firstRevisionOff = off; firstRevisionOff.tick = 918;
+  RankedBridgeFixture next;
+  next.prepare({on,firstRevisionOff},{lengthRow(42,50)},&original.bridge.source);
+  next.bridge.source = {3,2,nullptr}; next.bridge.cursorAnchor = {0,701,0,0,2};
+  next.bridge.ledgerBoundary.capture(ledger);
+  const auto bound = RuntimePlaybackBridgeBuild::requiredRankedGrainsUpperBound(
+      next.base.storage.eventCount,next.runtime.frozenCompanionBridgeMap.size(),1) +
+      RuntimePlaybackBridgeBuild::requiredRetainedClosureGrains(1,1);
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX,RuntimePlaybackBridgeBuild::requiredRetainedClosureGrains(129,1));
+  TEST_ASSERT_EQUAL_UINT64(UINT64_MAX,RuntimePlaybackBridgeBuild::requiredRetainedClosureGrains(1,0));
+  TEST_ASSERT_TRUE(next.build.begin(next.base,next.bridge,&next.runtime.frozenCompanionBridgeMap,&original.bridge));
+  auto result = RuntimePlaybackOrderBuildResult::Pending;
+  for (uint64_t turn = 0; turn < bound && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result = next.build.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete,result);
+  TEST_ASSERT_EQUAL_UINT64(1068,next.bridge.heldClosure(0)->relativeTick);
+  const auto stableGeneration = next.bridge.storageGeneration;
+  TEST_ASSERT_TRUE(next.build.rebindBoundary(next.base,next.bridge,
+      next.runtime.frozenCompanionBridgeMap,ledger,{0,710,0,0,2},&original.bridge));
+  result = RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn=0; turn<1000 && result==RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result=next.build.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete,result);
+  TEST_ASSERT_EQUAL_UINT64(stableGeneration,next.bridge.storageGeneration);
+  TEST_ASSERT_EQUAL_UINT64(1068,next.bridge.heldClosure(0)->relativeTick);
+  original.bridge.resetMetadata(); // The selected successor now owns its obligation.
+  next.bridge.selected = true;
+  std::vector<uint32_t> actual;
+  RuntimePlaybackBridgeCursor cursor;
+  for (unsigned cycle = 0; cycle < 4; ++cycle) {
+    TEST_ASSERT_TRUE(cursor.selectAfterPhase(next.base,next.bridge,cycle,cycle ? UINT32_MAX : 709));
+    while (const auto* event = cursor.peek()) {
+      actual.push_back((cycle * 768 + event->tick % 768) * 2 + event->isNoteOn());
+      TEST_ASSERT_TRUE(cursor.advance());
+    }
+  }
+  const std::vector<uint32_t> expected{1068*2,1468*2+1,1586*2,2236*2+1,2354*2,3004*2+1};
+  TEST_ASSERT_EQUAL_UINT32(expected.size(),actual.size());
+  for (size_t i = 0; i < actual.size(); ++i) TEST_ASSERT_EQUAL_UINT32(expected[i],actual[i]);
+  // A carried original Off must not turn into a recurring insertion after it closes.
+  ledger.clear(); next.bridge.selected=false;
+  TEST_ASSERT_TRUE(next.build.rebindBoundary(next.base,next.bridge,
+      next.runtime.frozenCompanionBridgeMap,ledger,{4,200,0,0,2}));
+  result=RuntimePlaybackOrderBuildResult::Pending;
+  for (unsigned turn=0; turn<1000 && result==RuntimePlaybackOrderBuildResult::Pending; ++turn)
+    result=next.build.step(1);
+  TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete,result);
+  next.bridge.selected=true;
+  TEST_ASSERT_TRUE(cursor.selectAfterPhase(next.base,next.bridge,4,199));
+  TEST_ASSERT_NOT_NULL(cursor.peek());
+  TEST_ASSERT_TRUE(cursor.peek()->isNoteOn());
+  TEST_ASSERT_EQUAL_UINT32(700,cursor.peek()->tick);
+  TEST_ASSERT_TRUE(cursor.advance()); TEST_ASSERT_NULL(cursor.peek());
+
+}
+
 void test_bridge_successor_inherits_wrap_closure_without_replaying_it() {
   auto on = MidiEvent::NoteOn(700, 1, 60, 90); on.noteId = 42;
   auto off = MidiEvent::NoteOff(100, 1, 60); off.noteId = 42;
@@ -3750,6 +4375,124 @@ void test_bridge_successor_inherits_wrap_closure_without_replaying_it() {
     TEST_ASSERT_TRUE(cursor.advance());
     TEST_ASSERT_NULL(cursor.peek()); // No repeated original Off in steady cycles.
   }
+}
+
+void test_initial_window_inherits_off_beyond_coverage_then_rotates() {
+  auto on = MidiEvent::NoteOn(700, 1, 60, 90); on.noteId = 42;
+  auto off = MidiEvent::NoteOff(300, 1, 60); off.noteId = 42;
+  RankedBridgeFixture context; context.prepare({on, off}, {lengthRow(42, 350)});
+  ActiveNoteLedger ledger; ledger.noteOn(1, 60, 42, 700, 90);
+  context.bridge.ledgerBoundary.capture(ledger); context.bridge.cursorAnchor.phase = 701;
+  context.compile(1); context.bridge.selected = false;
+  RuntimePlaybackView windows[3];
+  FixedPlaybackBridgeStorage bridges[3];
+  const FixedPlaybackBridgeStorage* predecessor = &context.bridge;
+  const auto rank = context.bridge.insertionRanks[0];
+  for (unsigned i = 0; i < 3; ++i) {
+    auto& base = windows[i]; auto& bridge = bridges[i];
+    auto canonicalOff = off; canonicalOff.tick = 1118;
+    prepareBridgeBase(base, i == 2 ? std::vector<MidiEvent>{canonicalOff} : std::vector<MidiEvent>{});
+    base.source = context.bridge.source;
+    base.coverage = {i == 0 ? 576u : (i - 1) * 192u, 192, 768};
+    base.canonicalRanksReady = true; base.canonicalRanks[0] = rank;
+    TEST_ASSERT_TRUE(bridge.prewarm(32));
+    bridge.source = base.source; bridge.coverage = base.coverage;
+    bridge.cursorAnchor = {i == 0 ? 0u : 1u, i == 0 ? 701u : base.coverage.startPhase,
+                           0, 0, base.source.sourceGeneration};
+    bridge.ledgerBoundary.capture(ledger);
+    RuntimePlaybackBridgeBuild build;
+    if (i == 0) {
+      ++bridge.ledgerBoundary.openNotes[0].startTick;
+      TEST_ASSERT_FALSE(build.beginInitialWindow(base, bridge, *predecessor));
+      --bridge.ledgerBoundary.openNotes[0].startTick;
+      TEST_ASSERT_TRUE(build.beginInitialWindow(base, bridge, *predecessor));
+      ++context.bridge.storageGeneration;
+      TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, build.step(1));
+      --context.bridge.storageGeneration;
+      build.discard();
+    }
+    TEST_ASSERT_TRUE(i == 0 ? build.beginInitialWindow(base, bridge, *predecessor)
+                           : build.beginSuccessor(base, bridge, *predecessor));
+    auto result = RuntimePlaybackOrderBuildResult::Pending;
+    for (uint64_t turn = 0; turn < RuntimePlaybackBridgeBuild::requiredSuccessorGrainsUpperBound(
+        base.storage.eventCount, 1, 1) && result == RuntimePlaybackOrderBuildResult::Pending; ++turn)
+      result = build.step(1);
+    TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
+    bridge.selected = true;
+    TEST_ASSERT_NOT_NULL(bridge.heldClosure(0));
+    TEST_ASSERT_EQUAL_UINT64(i == 0 ? 1068 : 300, bridge.heldClosure(0)->relativeTick);
+    RuntimePlaybackBridgeCursor cursor;
+    TEST_ASSERT_TRUE(cursor.selectAfterPhase(base, bridge, i == 0 ? 0 : 1,
+                                             i == 0 ? 700 : i == 1 ? UINT32_MAX : 191));
+    if (i < 2) TEST_ASSERT_NULL(cursor.peek());
+    else {
+      TEST_ASSERT_TRUE(RuntimeCompanionBridgeMap::inputEventsMatch(off, *cursor.peek()));
+      TEST_ASSERT_TRUE(cursor.advance()); TEST_ASSERT_NULL(cursor.peek());
+      TEST_ASSERT_TRUE(cursor.selectAfterPhase(base, bridge, 4));
+      TEST_ASSERT_EQUAL_UINT32(1118, cursor.peek()->tick);
+      TEST_ASSERT_TRUE(cursor.advance()); TEST_ASSERT_NULL(cursor.peek());
+    }
+    predecessor = &bridge;
+  }
+}
+
+void test_runtime_bridge_windows_keep_closure_after_worker_cleanup() {
+  LoopPlaybackRuntime runtime; TEST_ASSERT_TRUE(runtime.prewarmViews());
+  auto& set = *runtime.viewSetIfPrewarmed();
+  auto& base = set.bridgeBases[0]; auto& bridge = set.bridges[0];
+  auto on = MidiEvent::NoteOn(700, 1, 60, 90); on.noteId = 42;
+  auto off = MidiEvent::NoteOff(100, 1, 60); off.noteId = 42;
+  prepareBridgeBase(base, {on, off});
+  bridge.source = {2, 2, nullptr}; bridge.coverage = base.coverage;
+  bridge.cursorAnchor = {0, 701, 0, 0, 2};
+  runtime.ledger.noteOn(1, 60, 42, 700, 90); bridge.ledgerBoundary.capture(runtime.ledger);
+  auto changed = off; changed.tick = 150;
+  TEST_ASSERT_TRUE(bridge.append({PlaybackBridgeOperation::Replace, 1, changed}));
+  compileBridge(base, bridge, false);
+  TEST_ASSERT_TRUE(runtime.selectPreparedFullLoopBridge(bridge.source, 768, bridge.cursorAnchor));
+  auto* storage = base.storage.events;
+  runtime.discardFrozenCaptureBridge(); runtime.discardCanonicalWindow(); runtime.discardFrozenCanonicalTail();
+  TEST_ASSERT_EQUAL_PTR(storage, runtime.fullLoopBridgeBase(bridge, 768)->storage.events);
+  std::vector<uint32_t> actual;
+  unsigned directEvents = 0, windowEvents = 0;
+  for (unsigned cycle = 0; cycle < 4; ++cycle) {
+    for (unsigned phase = cycle ? 0 : 701; phase < 768; phase += 1) {
+      auto* stream = runtime.prepareFullLoopBridgeStream(bridge.source, 768,
+          cycle == 0 && phase == 701 ? 700 : phase ? phase - 1 : UINT32_MAX,
+          cycle > 0 && phase == 0);
+      TEST_ASSERT_NOT_NULL(stream);
+      // A missed maintenance horizon must not delay, lose or replay the Off.
+      if (!(cycle == 1 && phase < 210))
+        for (unsigned turn = 0; turn < 32; ++turn) runtime.serviceBridgeWindow(phase, 192, 1);
+      const auto* window = runtime.publishedBridgeWindow(bridge.source, phase);
+      if (window) {
+        for (size_t i = 0; i < window->storage.eventCount; ++i) {
+          const auto index = window->storage.order[i];
+          if (window->storage.phases[index] == phase) {
+            actual.push_back((cycle * 768 + phase) * 2 + window->storage.events[index].isNoteOn());
+            ++windowEvents;
+          }
+        }
+      } else {
+        while (const auto* event = stream->cursor.peek()) {
+          if (event->tick % 768 > phase) break;
+          actual.push_back((cycle * 768 + event->tick % 768) * 2 + event->isNoteOn());
+          ++directEvents;
+          TEST_ASSERT_TRUE(stream->cursor.advance());
+        }
+      }
+      stream->acknowledgeThroughPhase(phase);
+    }
+  }
+  TEST_ASSERT_TRUE(directEvents > 0); TEST_ASSERT_TRUE(windowEvents > 0);
+  const std::vector<uint32_t> expected{868 * 2, 1468 * 2 + 1, 1686 * 2,
+                                     2236 * 2 + 1, 2454 * 2, 3004 * 2 + 1};
+  TEST_ASSERT_EQUAL_UINT32(expected.size(), actual.size());
+  for (size_t i = 0; i < actual.size(); ++i) TEST_ASSERT_EQUAL_UINT32(expected[i], actual[i]);
+  // Beginning the next source may rewrite only its alternate base/bridge.
+  TEST_ASSERT_TRUE(set.beginCandidateBridge());
+  prepareBridgeBase(set.bridgeBases[1], {MidiEvent::ControlChange(0, 1, 7, 80)});
+  TEST_ASSERT_EQUAL_PTR(storage, runtime.fullLoopBridgeBase(bridge, 768)->storage.events);
 }
 
 void test_bridge_closure_crosses_two_successor_windows() {
@@ -4206,6 +4949,33 @@ void test_bridge_keeps_open_note_closure_until_changed_pair_next_cycle() {
   auto* stream = runtime.prepareFullLoopBridgeStream(bridge.source, 768, 15);
   TEST_ASSERT_NOT_NULL(stream);
   TEST_ASSERT_EQUAL_UINT32(100, stream->cursor.peek()->tick);
+  // Normal-stop bookkeeping runs while this original NoteOn is still held.
+  // Exercise the production cleanup body, including a retry before the snapshot
+  // receipt is available. Neither attempt may restart or silence the stream.
+  Loop loop; loop.loopLengthTicks = 768;
+  loop.openOverdubSession(15);
+  PendingStopAdmission stop;
+  stop.pending = true;
+  stop.destination = PendingStopDestination::Playing;
+  stop.setPhase(PendingStopPhase::DeferredCleanup);
+  const auto playbackIndex = stream->playbackIndex;
+  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop));
+  TEST_ASSERT_TRUE(stop.pending);
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_TRUE(runtime.ledger.isActive(1, 60));
+  TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
+  stop.historyRecycleOwner = &loop;
+  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop));
+  stop.historyRecycleOwner = nullptr;
+  TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop));
+  TEST_ASSERT_FALSE(stop.pending);
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  TEST_ASSERT_FALSE(loop.canHandoffSessionExitSnapshot());
+  TEST_ASSERT_TRUE(runtime.ledger.isActive(1, 60));
+  TEST_ASSERT_EQUAL_PTR(stream, runtime.prepareFullLoopBridgeStream(bridge.source, 768, 15));
+  TEST_ASSERT_EQUAL_UINT16(playbackIndex, stream->playbackIndex);
+  TEST_ASSERT_EQUAL_UINT32(100, stream->cursor.peek()->tick);
+  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop));
   TEST_ASSERT_TRUE(runtime.ledger.applyPlaybackEvent(1, *stream->cursor.peek()));
   TEST_ASSERT_TRUE(stream->cursor.advance());
   TEST_ASSERT_FALSE(runtime.ledger.isActive(1, 60));
@@ -4222,38 +4992,41 @@ void test_bridge_keeps_open_note_closure_until_changed_pair_next_cycle() {
 }
 
 void test_bridge_retains_cross_wrap_closure_and_retires_it_once() {
-  LoopPlaybackRuntime runtime;
-  TEST_ASSERT_TRUE(runtime.prewarmViews());
-  auto& set = *runtime.viewSetIfPrewarmed();
-  auto& base = set.views[set.lifecycle.current];
-  MidiEvent on = MidiEvent::NoteOn(700, 1, 60, 90);
-  MidiEvent off = MidiEvent::NoteOff(768, 1, 60);
-  on.noteId = off.noteId = 42;
-  prepareBridgeBase(base, {on, off});
-  runtime.ledger.noteOn(1, 60, 42, 700, 90);
-  auto& candidate = set.bridges[set.bridgeLifecycle.candidate];
-  candidate.ledgerBoundary.capture(runtime.ledger);
-  candidate.cursorAnchor.phase = 701;
-  TEST_ASSERT_TRUE(candidate.append({PlaybackBridgeOperation::Suppress, 0, {}}));
-  TEST_ASSERT_TRUE(candidate.append({PlaybackBridgeOperation::Suppress, 1, {}}));
-  compileBridge(base, candidate, false);
-  TEST_ASSERT_FALSE(runtime.selectPreparedFullLoopBridge(candidate.source, 768, {0, 600, 0, 0, 2}));
-  TEST_ASSERT_TRUE(runtime.selectPreparedFullLoopBridge(candidate.source, 768, {0, 701, 0, 0, 2}));
-  auto* stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, 700);
-  TEST_ASSERT_NOT_NULL(stream);
-  TEST_ASSERT_NULL(stream->cursor.peek());
-  stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, UINT32_MAX, true);
-  TEST_ASSERT_NOT_NULL(stream);
-  TEST_ASSERT_EQUAL_UINT32(768, stream->cursor.peek()->tick);
-  TEST_ASSERT_TRUE(runtime.ledger.applyPlaybackEvent(1, *stream->cursor.peek()));
-  TEST_ASSERT_TRUE(stream->cursor.advance());
-  TEST_ASSERT_NULL(stream->cursor.peek());
-  TEST_ASSERT_FALSE(runtime.ledger.isActive(1, 60));
-  stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, UINT32_MAX, true);
-  TEST_ASSERT_NULL(stream->cursor.peek());
-  stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, UINT32_MAX, true);
-  TEST_ASSERT_NULL(stream->cursor.peek());
-  TEST_ASSERT_EQUAL_UINT32(42, base.storage.events[1].noteId);
+  for (uint32_t initialCycle : {0u, 3u}) {
+    LoopPlaybackRuntime runtime;
+    runtime.bridgeProjectionCycle = initialCycle;
+    TEST_ASSERT_TRUE(runtime.prewarmViews());
+    auto& set = *runtime.viewSetIfPrewarmed();
+    auto& base = set.views[set.lifecycle.current];
+    MidiEvent on = MidiEvent::NoteOn(700, 1, 60, 90);
+    MidiEvent off = MidiEvent::NoteOff(768, 1, 60);
+    on.noteId = off.noteId = 42;
+    prepareBridgeBase(base, {on, off});
+    runtime.ledger.noteOn(1, 60, 42, 700, 90);
+    auto& candidate = set.bridges[set.bridgeLifecycle.candidate];
+    candidate.ledgerBoundary.capture(runtime.ledger);
+    candidate.cursorAnchor = runtime.currentCycleCursor(701, 2);
+    TEST_ASSERT_TRUE(candidate.append({PlaybackBridgeOperation::Suppress, 0, {}}));
+    TEST_ASSERT_TRUE(candidate.append({PlaybackBridgeOperation::Suppress, 1, {}}));
+    compileBridge(base, candidate, false);
+    TEST_ASSERT_FALSE(runtime.selectPreparedFullLoopBridge(candidate.source, 768, runtime.currentCycleCursor(600, 2)));
+    TEST_ASSERT_TRUE(runtime.selectPreparedFullLoopBridge(candidate.source, 768, runtime.currentCycleCursor(701, 2)));
+    auto* stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, 700);
+    TEST_ASSERT_NOT_NULL(stream);
+    TEST_ASSERT_NULL(stream->cursor.peek());
+    stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, UINT32_MAX, true);
+    TEST_ASSERT_NOT_NULL(stream);
+    TEST_ASSERT_EQUAL_UINT32(768, stream->cursor.peek()->tick);
+    TEST_ASSERT_TRUE(runtime.ledger.applyPlaybackEvent(1, *stream->cursor.peek()));
+    TEST_ASSERT_TRUE(stream->cursor.advance());
+    TEST_ASSERT_NULL(stream->cursor.peek());
+    TEST_ASSERT_FALSE(runtime.ledger.isActive(1, 60));
+    stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, UINT32_MAX, true);
+    TEST_ASSERT_NULL(stream->cursor.peek());
+    stream = runtime.prepareFullLoopBridgeStream(candidate.source, 768, UINT32_MAX, true);
+    TEST_ASSERT_NULL(stream->cursor.peek());
+    TEST_ASSERT_EQUAL_UINT32(42, base.storage.events[1].noteId);
+  }
 }
 
 void test_bridge_cross_wrap_replacement_trace_matches_safe_note_instances() {
@@ -5163,6 +5936,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_frozen_canonical_order_receipt_expires_after_audible_discard);
   RUN_TEST(test_frozen_audible_order_receipt_denies_shared_storage_invalidation);
   RUN_TEST(test_prepared_frozen_tail_capacity_and_all_filtered_bounds);
+  RUN_TEST(test_runtime_canonical_bridge_base_survives_live_ledger_refresh);
   RUN_TEST(test_runtime_canonical_window_prepares_spare_coverage_and_releases_tail_workers);
   RUN_TEST(test_runtime_canonical_window_source_change_cancels_only_pending_work);
   RUN_TEST(test_runtime_canonical_window_waits_for_shared_builder_without_stealing_it);
@@ -5171,8 +5945,10 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_frozen_tail_uses_private_sort_when_shared_order_is_audible);
   RUN_TEST(test_companion_history_stages_metadata_payloads_and_ids_without_publication);
   RUN_TEST(test_companion_history_reservation_survives_snapshot_cleanup);
+  RUN_TEST(test_companion_history_binds_wrap_publication_before_begin);
   RUN_TEST(test_companion_history_atomic_swap_preserves_snapshot_and_undo_ids);
   RUN_TEST(test_capture_and_companion_history_commit_together_or_leave_both_pending);
+  RUN_TEST(test_job_owned_capture_and_companions_commit_without_retiring_live_capture);
   RUN_TEST(test_track_prepared_stop_publishes_matching_canonical_and_audible_sources);
   RUN_TEST(test_stop_canonical_credits_are_separate_checked_and_preserved_on_transport_stop);
   RUN_TEST(test_bounded_stop_undo_collection_appends_final_receipt_with_legacy_semantics);
@@ -5229,7 +6005,11 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_ranked_bridge_batches_match_sequential_reference);
   RUN_TEST(test_ranked_bridge_retains_original_cross_wrap_off);
   RUN_TEST(test_bridge_owns_every_reserved_ledger_closure_and_retires_receipts);
+  RUN_TEST(test_bridge_boundary_rebind_matches_fresh_compile_across_live_cycles);
+  RUN_TEST(test_second_source_keeps_selected_original_off);
   RUN_TEST(test_bridge_successor_inherits_wrap_closure_without_replaying_it);
+  RUN_TEST(test_initial_window_inherits_off_beyond_coverage_then_rotates);
+  RUN_TEST(test_runtime_bridge_windows_keep_closure_after_worker_cleanup);
   RUN_TEST(test_bridge_closure_crosses_two_successor_windows);
   RUN_TEST(test_bridge_successor_preserves_gate_when_revised_off_moves_before_original_closure);
   RUN_TEST(test_bridge_successor_rejects_retired_predecessor_and_changed_source);
@@ -5263,6 +6043,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_capture_staging_reseeds_a_cross_wrap_note_with_a_fresh_closure_reservation);
   RUN_TEST(test_frozen_capture_filter_excludes_a_completed_short_pair);
   RUN_TEST(test_filtered_capture_rewrite_trims_rows_in_later_grains);
+  RUN_TEST(test_canonical_copy_uses_reserved_output_at_maximum_staging_capacity);
+  RUN_TEST(test_canonical_copy_denies_stale_generation_and_replaced_output);
+  RUN_TEST(test_canonical_copy_of_filtered_pair_consumes_no_chunks);
   RUN_TEST(test_frozen_capture_order_uses_only_fixed_staging_storage);
   RUN_TEST(test_frozen_capture_order_waits_for_every_reserved_terminal_closure);
   RUN_TEST(test_frozen_capture_canonical_order_rewrites_store_in_fixed_grains);
@@ -5295,6 +6078,12 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_transport_stop_before_tail_retires_only_skipped_preparation);
   RUN_TEST(test_prepared_ranked_tail_bound_preserves_other_children_and_invalid_inputs);
   RUN_TEST(test_ranked_tail_bound_uses_declared_pass_and_base_horizons);
+  RUN_TEST(test_live_canonical_base_prework_reuses_stop_worker_and_invalidates_source);
+  RUN_TEST(test_continuous_prefix_reuses_completed_passes_after_appends);
+  RUN_TEST(test_continuous_prefix_reuses_snapshot_identity_refresh);
+  RUN_TEST(test_normalization_scratch_receipt_rejects_superseded_builder);
+  RUN_TEST(test_continuous_prefix_retains_transferred_tail);
+  RUN_TEST(test_continuous_prefix_preserves_completed_work_when_append_interrupts_read);
   RUN_TEST(test_maximum_frozen_capture_has_a_declared_stop_budget);
   return UNITY_END();
 }

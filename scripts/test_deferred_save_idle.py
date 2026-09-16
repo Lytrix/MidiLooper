@@ -22,6 +22,30 @@ from hitl.serial_transport import serial_global_transport_running
 
 
 class DeferredSaveIdleTests(unittest.TestCase):
+    def test_final_work_receipt_after_result_does_not_reopen_save(self) -> None:
+        lines = [
+            "#CAP,79701554,SAVE,in_progress,2",
+            "#CAP,79702016,PERS,result,54159,266240,266240,ok",
+            "#CAP,79702051,PERS,work,71,0,0,FinalizeWorkspace,singleton,done,ok",
+        ]
+        self.assertFalse(deferred_save_active_in_suffix(lines))
+        self.assertTrue(deferred_save_idle_in_suffix(lines))
+        for next_work in (
+            "#CAP,79703000,PERS,request,0,0,0,queued",
+            "#CAP,79703000,PERS,work,40,0,0,GlobalMeta,singleton,start,ok",
+        ):
+            with self.subTest(next_work=next_work):
+                self.assertTrue(deferred_save_active_in_suffix(lines + [next_work]))
+                self.assertFalse(deferred_save_idle_in_suffix(lines + [next_work]))
+
+    def test_intermediate_work_done_does_not_settle_save(self) -> None:
+        lines = [
+            "#CAP,1,SAVE,in_progress,2",
+            "#CAP,2,PERS,work,71,0,0,GlobalMeta,singleton,done,ok",
+        ]
+        self.assertTrue(deferred_save_active_in_suffix(lines))
+        self.assertFalse(deferred_save_idle_in_suffix(lines))
+
     def test_save_completed_counts_as_idle(self) -> None:
         lines = [
             "#CAP,1,SAVE,pending,0",

@@ -4,6 +4,7 @@
 
 #include "RuntimePlaybackOrderBuilder.h"
 #include "RuntimeCompanionBridgeMap.h"
+#include "RuntimePlaybackViewFill.h"
 #include "Utils/PlaybackCursorAdvance.h"
 
 /// Copies a frozen, semantically prepared capture and its prepared companion
@@ -41,18 +42,35 @@ class RuntimePlaybackBridgeBuild {
   /// and linear clear/record/closure/output walks. Fixed ledger scans remain
   /// part of each entry's timing cost, not additional scheduling grains.
   static uint64_t requiredRankedGrainsUpperBound(size_t baseCount, size_t recordCount, size_t quantum);
+  // Additional inheritance/copy turns when begin borrows a selected closure context.
+  static uint64_t requiredRetainedClosureGrains(size_t ledgerCount, size_t quantum);
+  static uint64_t requiredBoundaryGrains(size_t baseCount, size_t insertionCount,
+      size_t recordCount, size_t ledgerCount, size_t quantum);
   /// Optional mapping is copied in bounded grains and must stay immutable until
   /// completion. Ranked mapping requires matching canonical coverage and an
   /// empty bridge; partial coverage currently requires an empty ledger.
+  /// A selected retained context preserves original Offs during a second source
+  /// change. Its storage remains immutable until compilation has copied them.
   bool begin(const RuntimePlaybackView& base, FixedPlaybackBridgeStorage& bridge,
-             const RuntimeCompanionBridgeMap* mapping = nullptr);
+             const RuntimeCompanionBridgeMap* mapping = nullptr,
+             const FixedPlaybackBridgeStorage* retained = nullptr);
   // Continue the same canonical source at a contiguous coverage boundary.
   // Caller has drained the predecessor window. No second source edit is admitted
   // through this entry point. The predecessor stays immutable until completion.
   bool beginSuccessor(const RuntimePlaybackView& base, FixedPlaybackBridgeStorage& bridge,
                       const FixedPlaybackBridgeStorage& predecessor);
+  /// Project an already compiled immutable closure context into its initial
+  /// canonical window. Shares successor inheritance and cycle-mask handling.
+  /// The context must cover the complete loop and use the same admission
+  /// cursor/ledger; it need not have been selected for audible playback.
+  bool beginInitialWindow(const RuntimePlaybackView& base, FixedPlaybackBridgeStorage& bridge,
+                          const FixedPlaybackBridgeStorage& context);
   static uint64_t requiredSuccessorGrainsUpperBound(size_t baseCount, size_t ledgerCount, size_t quantum);
   RuntimePlaybackOrderBuildResult step(size_t entryQuantum);
+  // Reconcile only closure gates. Reuse the immutable records and sorted ranks.
+  bool rebindBoundary(const RuntimePlaybackView& base, FixedPlaybackBridgeStorage& bridge,
+      const RuntimeCompanionBridgeMap& mapping, const ActiveNoteLedger& ledger,
+      const EmissionCursor& anchor, const FixedPlaybackBridgeStorage* retained = nullptr);
   void discard();
 
  private:
@@ -64,9 +82,13 @@ class RuntimePlaybackBridgeBuild {
   uint64_t mappingGeneration_ = 0;
   const FixedPlaybackBridgeStorage* predecessor_ = nullptr;
   uint64_t predecessorGeneration_ = 0;
+  bool initialWindow_ = false;
+  bool inheritMasks_ = true;
+  PlaybackViewSourceIdentity predecessorSource_;
   uint64_t bridgeStorageGeneration_ = 0;
   size_t mappedRecordsCopied_ = 0;
   bool ranked_ = false;
+  bool rebinding_ = false;
   Phase phase_ = Phase::Idle;
   size_t cursor_ = 0;
   size_t recordCount_ = 0;
@@ -88,6 +110,7 @@ class RuntimePlaybackBridgeCursor {
                         uint32_t cycle, uint32_t completedPhase = UINT32_MAX);
   const MidiEvent* peek() const;
   bool advance();
+  void acknowledgeThroughPhase(uint32_t phase);
   const EmissionCursor& emissionCursor() const { return emitted_; }
   bool matchesBaseStorage(const RuntimePlaybackView& base) const {
     return base_ == &base && baseStorageGeneration_ == base.storageGeneration;
@@ -126,6 +149,9 @@ struct RuntimePlaybackBridgeStream {
   bool selectAfterPhase(const RuntimePlaybackView& base, const FixedPlaybackBridgeStorage& bridge,
                         uint32_t cycle, uint32_t completedPhase = UINT32_MAX);
   PlaybackEventStream stream();
+  // Same ordered cursor exposed to the existing coverage fill worker.
+  RuntimePlaybackViewSource source();
+  void acknowledgeThroughPhase(uint32_t phase);
   bool matches(const RuntimePlaybackView& base, const FixedPlaybackBridgeStorage& bridge,
                 uint32_t cycle) const;
   void reset();
@@ -136,4 +162,5 @@ struct RuntimePlaybackBridgeStream {
   PlaybackViewSourceIdentity baseSource_;
   PlaybackViewSourceIdentity bridgeSource_;
   uint32_t cycle_ = 0;
+  uint64_t sourceGeneration_ = 0;
 };

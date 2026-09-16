@@ -236,7 +236,7 @@ struct MutableMembershipEdit {
   SnapshotBarPageDirectory<Reference>* directory = nullptr;
   uint32_t barIndex = 0;
   std::shared_ptr<SnapshotMembership<Reference>> membership;
-  uint8_t pageCount = 0;
+  uint16_t pageCount = 0;
 };
 
 template <typename Reference>
@@ -271,7 +271,7 @@ struct SnapshotMembershipCopyProgress {
   SnapshotMembershipRef<Reference> source;
   std::shared_ptr<SnapshotMembership<Reference>> head;
   std::shared_ptr<SnapshotMembership<Reference>> tail;
-  uint8_t pageCount = 0;
+  uint16_t pageCount = 0;
   bool sourceWasEmpty = false;
   bool complete = false;
 
@@ -667,12 +667,15 @@ struct LoopSnapshotNoteBarApply {
   SnapshotMembership<LoopSnapshotNoteRef>* mutationPage = nullptr;
   SnapshotMembership<LoopSnapshotNoteRef>* appendPage = nullptr;
   SnapshotBarPageDirectory<LoopSnapshotNoteRef>* currentDirectory = nullptr;
-  uint8_t currentPageCount = 0;
+  uint16_t currentPageCount = 0;
   uint32_t currentBarIndex = 0;
   bool currentBarActive = false;
   bool currentBarRemovesReference = false;
   bool currentBarAppendsReference = false;
   bool currentBarRemovesPreviousReference = false;
+  /// True when this apply failed because the bar hit
+  /// `kSnapshotMembershipMaxRefsPerBar` rather than an allocation failure.
+  bool pageCapacityExceeded = false;
   BarStage barStage = BarStage::Select;
 
   bool done() const {
@@ -800,6 +803,7 @@ struct LoopSnapshotNoteBarApply {
     }
     if (appendPage->count == kSnapshotMembershipPageCapacity) {
       if (currentPageCount >= kSnapshotMembershipMaxPages) {
+        pageCapacityExceeded = true;
         return false;
       }
       auto nextPage = allocateSnapshotShared<SnapshotMembership<LoopSnapshotNoteRef>>();
@@ -932,12 +936,15 @@ struct LoopSnapshotEventBarApply {
   SnapshotMembership<LoopSnapshotEventRef>* appendPage = nullptr;
   SnapshotMembership<LoopSnapshotEventRef>* sortPage = nullptr;
   SnapshotBarPageDirectory<LoopSnapshotEventRef>* currentDirectory = nullptr;
-  uint8_t currentPageCount = 0;
+  uint16_t currentPageCount = 0;
   uint32_t currentBarIndex = 0;
   bool currentBarActive = false;
   bool currentBarRemovesReference = false;
   bool currentBarAppendsReference = false;
   bool currentBarRemovesPreviousReference = false;
+  /// True when this apply failed because the bar hit
+  /// `kSnapshotMembershipMaxRefsPerBar` rather than an allocation failure.
+  bool pageCapacityExceeded = false;
   BarStage barStage = BarStage::Select;
 
   bool done() const { return remainingBars.empty() && !currentBarActive; }
@@ -1048,6 +1055,7 @@ struct LoopSnapshotEventBarApply {
     }
     if (appendPage->count == kSnapshotMembershipPageCapacity) {
       if (currentPageCount >= kSnapshotMembershipMaxPages) {
+        pageCapacityExceeded = true;
         return false;
       }
       auto nextPage = allocateSnapshotShared<SnapshotMembership<LoopSnapshotEventRef>>();
@@ -1217,6 +1225,9 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
     uint32_t playheadPhaseTick) {
   if (noteApply_) {
     if (!noteApply_->applySoonestBar(candidate_, playheadPhaseTick)) {
+      failureReason_ = noteApply_->pageCapacityExceeded
+                           ? LoopSnapshotFailureReason::MembershipCapacity
+                           : LoopSnapshotFailureReason::Allocation;
       return false;
     }
     if (noteApply_->done()) {
@@ -1227,6 +1238,9 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
   }
   if (eventApply_) {
     if (!eventApply_->applySoonestBar(candidate_, playheadPhaseTick)) {
+      failureReason_ = eventApply_->pageCapacityExceeded
+                           ? LoopSnapshotFailureReason::MembershipCapacity
+                           : LoopSnapshotFailureReason::Allocation;
       return false;
     }
     if (eventApply_->done()) {
@@ -1250,6 +1264,7 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
     noteApply_ = std::make_unique<LoopSnapshotNoteBarApply>();
     if (!noteApply_->begin(candidate_, incoming, constructionSpanRoot_)) {
       noteApply_.reset();
+      failureReason_ = LoopSnapshotFailureReason::Allocation;
       return false;
     }
     return applyNextBar(playheadPhaseTick);
@@ -1259,6 +1274,7 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
   if (!eventApply_->begin(candidate_, changes_.events[eventIndex],
                          constructionEventRoot_)) {
     eventApply_.reset();
+    failureReason_ = LoopSnapshotFailureReason::Allocation;
     return false;
   }
   return applyNextBar(playheadPhaseTick);
@@ -1275,6 +1291,16 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::step(size_t maximumUnits,
 
   size_t processed = 0;
   while (processed < maximumUnits && !complete()) {
+#if defined(PIO_UNIT_TEST_NATIVE)
+    // Inject a partial-apply failure: units already applied stay in
+    // `candidate_`, but nothing is frozen, so the publisher must discard this
+    // candidate and retain authoritative progress (DEC-047 transaction).
+    if (failAfterUnits_ != kNoFailureInjection && completedUnits_ >= failAfterUnits_) {
+      failureReason_ = injectedReason_;
+      failed_ = true;
+      return false;
+    }
+#endif
     if (!applyNextBar(playheadPhaseTick)) {
       failed_ = true;
       return false;

@@ -114,6 +114,8 @@ uint16_t countChunksInState(const QueueState& state, ChunkPersistenceState targe
 
 }  // namespace
 
+bool prewarm() { return queueState() != nullptr; }
+
 uint16_t queueDepth() {
   QueueState* state = queueState();
   return state != nullptr ? countChunksInState(*state, ChunkPersistenceState::Queued) : 0;

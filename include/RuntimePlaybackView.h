@@ -180,6 +180,10 @@ struct FixedPlaybackBridgeStorage {
   uint8_t* canonicalCycleMasks = nullptr;
   size_t canonicalRankCount = 0;
   bool canonicalMasksReady = false;
+  std::array<uint32_t, 4> affectedPitches{};
+  std::array<uint32_t, 4> affectedIdentities{};
+  void markAffected(const MidiEvent& event);
+  bool matchesAffectedLedger(const ActiveNoteLedger& ledger) const;
   uint32_t* insertionProvenance = nullptr;
   uint32_t* insertionRanks = nullptr;
   uint32_t* baseRanks = nullptr;
@@ -348,6 +352,10 @@ struct RuntimePlaybackBridgeLifecycle {
 struct RuntimePlaybackViewSet {
   std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount> views;
   std::array<FixedPlaybackBridgeStorage, RuntimePlaybackViewConfig::kBridgeCount> bridges;
+  // Immutable source bases belong to selected/candidate bridges, independently
+  // of the three rolling emission windows. Cleanup may release preparation
+  // workers without invalidating a source still supplying future windows.
+  std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kBridgeCount> bridgeBases;
   CaptureAdmissionStaging captureStaging;
   RuntimePlaybackViewLifecycle lifecycle;
   RuntimePlaybackBridgeLifecycle bridgeLifecycle;

@@ -62,7 +62,8 @@ def run_fixture():
 
     def focused_transition(**options):
         policy = strict_normal_stop_transition_options if config.normal_stop else strict_stop_transition_options
-        return original_transition(**policy(options))
+        return original_transition(**(policy(options) if config.normal_stop else
+            policy(options, track=config.track_number - 1, slot=config.loop_slot - 1)))
     baseline.request_state_transition = focused_transition
     interventions = []
 
@@ -105,7 +106,7 @@ def run_fixture():
     from hitl.stop_intervention import verify_interruption
     serial_logs = list(out.glob('session_*.log'))
     if serial_logs and not config.normal_stop:
-        result = verify_interruption(serial_logs[-1].read_text(errors='replace').splitlines(), [json.loads(x) for x in (out / 'intervention.jsonl').read_text().splitlines()], [json.loads(x) for x in (out / 'midi-output.jsonl').read_text().splitlines()], channel=config.track_number - 1)
+        result = verify_interruption(serial_logs[-1].read_text(errors='replace').splitlines(), [json.loads(x) for x in (out / 'intervention.jsonl').read_text().splitlines()], [json.loads(x) for x in (out / 'midi-output.jsonl').read_text().splitlines()], channel=config.track_number - 1, slot=config.loop_slot - 1)
         (out / 'interruption-result.json').write_text(json.dumps(result, indent=2) + '\n')
         print('Focused interruption:', json.dumps(result), flush=True)
 if __name__ == '__main__':

@@ -88,6 +88,36 @@ class InterruptionVerdictTests(unittest.TestCase):
         self.assertEqual(result['intervention_offset_us'],10)
         self.assertEqual(result['all_notes_off_delay_us'],5)
         self.assertFalse(result['restart_survival_verified'])
+    def queued_job_lines(self):
+        return [
+            '#CAP,100,DIAG,stop_state,4,0,6,7,10,100,1,0,0,0',
+            '#CAP,101,ST,Track,OVERDUB_STOPPING,PLAYING',
+            '#CAP,900,DIAG,stop_grain,4,0,3,8,0,0,1,102,105,0,0,0,0,4294967295,1',
+            '#CAP,110,MI,U,252,0,0,0',
+            '#CAP,115,MO,176,5,123,0',
+            '#CAP,200,ST,Track,PLAYING,STOPPED',
+            '#CAP,901,DIAG,stop_grain,4,0,10,8,1,1,2,190,200,0,0,0,0,4294967295,1',
+            '#CAP,8000200,DIAG,clockrate,0']
+    def test_pending_job_after_visible_playing_uses_device_occurrence_time(self):
+        result = verify_interruption(self.queued_job_lines(), self.actions, self.midi)
+        self.assertEqual(result['result'], 'PASS')
+        self.assertEqual(result['stopped_us'], 200)
+    def test_other_slot_epoch_or_generation_cannot_prove_recovery(self):
+        for old, new in [('10,8,1,1', '10,9,1,1'), ('10,8,1,1', '10,8,0,1'),
+                         ('stop_grain,4,0,10', 'stop_grain,4,1,10')]:
+            lines = [line.replace(old, new) for line in self.queued_job_lines()]
+            self.assertEqual(verify_interruption(lines, self.actions, self.midi)['result'],
+                             'INCONCLUSIVE_CAPTURE')
+    def test_already_completed_job_cannot_prove_stop_overlap(self):
+        lines = self.queued_job_lines()
+        lines.insert(3, '#CAP,902,DIAG,stop_grain,4,0,10,8,0,0,1,106,108,0,0,0,0,4294967295,1')
+        self.assertEqual(verify_interruption(lines, self.actions, self.midi)['result'],
+                         'INCONCLUSIVE_CAPTURE')
+    def test_later_job_cannot_supply_previous_jobs_recovery(self):
+        lines = self.queued_job_lines()
+        lines.insert(6, '#CAP,150,DIAG,stop_state,4,0,6,7,15,150,2,0,0,0')
+        self.assertEqual(verify_interruption(lines, self.actions, self.midi)['result'],
+                         'INCONCLUSIVE_CAPTURE')
     def test_stop_after_destination_is_inconclusive(self):
         self.lines[1]="#CAP,210,MI,U,252,0,0,0"
         self.assertEqual(verify_interruption(self.lines,self.actions,self.midi)['result'],'INCONCLUSIVE_CAPTURE')
