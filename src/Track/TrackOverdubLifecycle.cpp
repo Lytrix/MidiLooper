@@ -50,6 +50,11 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
   for (size_t index = 0; index < CaptureStopJobs::kCapacity; ++index) {
     CaptureStopJob& entry = captureStopJobs_->entries[index];
     if (!entry.rawRange.ready() && !entry.rawRange.reserveTail()) return false;
+    // The successor session must inherit a prewarmed vector after the swap, so
+    // the switch itself and the next interval both stay allocation-free.
+    if (entry.pendingChanges.capacity() < RuntimePlaybackViewConfig::kRecordsPerBridge) {
+      entry.pendingChanges.reserve(RuntimePlaybackViewConfig::kRecordsPerBridge);
+    }
   }
   return true;
 }
@@ -325,6 +330,11 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
                          finalFrozenCount, openReservations, "raw_seal_unexpected");
     }
   }
+  // Job-owned pending note changes (Add/Shorten/Hide intents). Constant-work
+  // swap: this job resolves against its own set while the live session keeps an
+  // independent, prewarmed set for a successor interval.
+  loop.swapPendingNoteChanges(job.pendingChanges);
+  (void)loop.borrowPendingNoteChanges(job.pendingChanges, &job.admission);
   // Button A closes input at this boundary. The sealed frozen capture owns all
   // remaining canonical/companion work, while the existing prepared playback
   // window remains the active source. Publish PLAYING immediately so the
@@ -521,7 +531,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   if (stop.phase == PendingStopPhase::CanonicalTail) {
     if (!runtime->frozenCanonicalTailReady(targetSource)) {
-      if (runtime->beginFrozenCanonicalTail(frozenSource, loop.pendingNoteChanges(), targetSource)) {
+      if (runtime->beginFrozenCanonicalTail(frozenSource, job.pendingChanges, targetSource)) {
         return false;
       }
       const auto result = runtime->stepReservedFrozenCanonicalTail(
@@ -635,6 +645,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // this the transport-stop-during-overdub path never queues the dump at all (capture
   // `sevt-diag-stop` showed zero `stored_verify` markers despite a completed stop grain).
   queueDeferredStoredMidiVerification();
+  (void)loop.releasePendingNoteChangesBorrow(&job.admission);
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;

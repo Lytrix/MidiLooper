@@ -499,6 +499,9 @@ private:
     /// producer at admission; the Loop keeps only a job-identified read borrow.
     LoopEventStore::CaptureRange rawRange;
     bool ownsRawRange = false;
+    /// Job-owned pending note changes (Add/Shorten/Hide intents). Swapped out of
+    /// the live session at admission; the Loop keeps a read borrow for display.
+    PendingNoteChangeVec pendingChanges;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not

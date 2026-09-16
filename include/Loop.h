@@ -126,6 +126,8 @@ struct Loop {
   const LoopEventStore::CaptureRange* borrowedSealedCapture_ = nullptr;
   const void* borrowedSealedCaptureOwner_ = nullptr;
   uint64_t borrowedSealedCaptureGeneration_ = 0;
+  const PendingNoteChangeVec* borrowedPendingChanges_ = nullptr;
+  const void* borrowedPendingChangesOwner_ = nullptr;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   bool captureHasLastAppendTick_ = false;
@@ -500,8 +502,26 @@ struct Loop {
 
   /// Session pending logical delta (Add/Shorten/Hide) — not a timeline pass.
   void clearPendingNoteChanges();
-  bool hasPendingNoteChanges() const { return !pendingNoteChanges_.empty(); }
-  const PendingNoteChangeVec& pendingNoteChanges() const { return pendingNoteChanges_; }
+  bool hasPendingNoteChanges() const {
+    return !pendingNoteChanges().empty();
+  }
+  /// Readable pending-change set: the live session's own set, or the admitted
+  /// stop job's owned set while that job borrows it. Read consumers (display
+  /// geometry) must keep seeing the interval's changes after the live session
+  /// has moved on; writers always use the live member directly.
+  const PendingNoteChangeVec& pendingNoteChanges() const {
+    return borrowedPendingChanges_ != nullptr ? *borrowedPendingChanges_ : pendingNoteChanges_;
+  }
+  /// Job-identified non-owning borrow of an admitted stop job's owned changes.
+  bool borrowPendingNoteChanges(const PendingNoteChangeVec& changes, const void* owner);
+  /// Clears the borrow only while it still identifies `owner`, so a stale job can
+  /// never drop a successor's binding.
+  bool releasePendingNoteChangesBorrow(const void* owner);
+  /// Move the live pending-change set into job ownership. O(1) swap; the live
+  /// session then owns the job's prewarmed empty vector for its successor.
+  void swapPendingNoteChanges(PendingNoteChangeVec& other) {
+    pendingNoteChanges_.swap(other);
+  }
   /// Resolve incoming note against hold-candidate ids, then geometry.
   /// Wrap-head off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold.
   /// Empty `overlapNoteIds` skips id lookup and uses source-view geometric completion.
