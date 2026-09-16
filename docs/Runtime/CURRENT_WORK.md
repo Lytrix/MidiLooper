@@ -5,6 +5,26 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 increments A/B boot abort — bisected, root-caused, fixed.**
+The memory check found the increment A/B firmware would not boot (`a7f10733…` emitted
+only `boot_reset,crash=1` before the USB port dropped; the 32-entry-prewarm variant
+`8c03dcfc…` behaved the same). A one-commit-per-flash hardware bisect isolated it to
+`0f398715` (increment A): `7a275d1f` boots (21386 B, crash=0) while `0f398715` and
+`162df28f` produce 0 bytes. Root cause: `prewarmCaptureStopJobs` reserved
+`kRecordsPerBridge` (2048) rows for each job's `undoPassIds`/`undoCompanionIds`, both
+`InternalHeapFirstAllocator` vectors — 4 ring entries × 8 tracks × 2 lists × 2048 × 4 B
+= 512 KB demanded from a ~340 KB internal heap at boot, so the allocation aborted
+before the sketch could stream. Fixed by bounding that reserve to
+`kUndoCollectionReserveRows = 64` (16 KB); a session longer than that publishes no
+prepared undo entry and takes the plain commit. The fixed tip is flashed and verified:
+build `91e6b38c…`, 22091 bytes, 0 warnings, prewarm `PSRAM 5,141,952 -> 3,775,872`,
+`heap 352,256 -> 290,816` — about +79 KB PSRAM and +20 KB internal heap over the
+reference (`captures/task23-undo-prewarm-fix/result.json`). Native: 2188 cases, 2183
+passed, one skipped, the same three reentry failures. Lesson recorded: a per-entry cold
+reserve multiplied by ring capacity and track count must be sized against the
+allocator's heap tier, not the policy maximum — both this and the 512-entry undo
+prewarm were caught only by the boot sample.
+
 **2026-09-16 task 2.3 deferred protected undo publication wired (increment B).**
 The normal deferred overdub stop now records its `OverdubPassAdded` entry, closing
 the long-standing "protected undo publication not connected to the production stop
