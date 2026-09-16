@@ -1,5 +1,24 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 deferred undo collection, job-owned prepared entry
+(resumable-midi-boundary-playback-maintenance):** a new
+`PendingStopPhase::UndoCollection` on the prepared PLAYING route collects the
+session's undo identities in bounded grains and builds the `OverdubPassAdded` entry
+from the job's own slot and baseline via `TrackUndo::prepareOverdubSessionEntry`.
+The collection has its own admission grain class
+(`remainingUndoCollectionGrains`/`undoCollectionQuantum`, sized from
+`Loop::requiredSessionStopUndoCollectionGrains`, included in
+`finalizationComplete()`), so saturation denies admission instead of stalling. The
+STOPPED/empty routes skip companion preparation and never enter the phase. Private
+outputs are pre-reserved in `prewarmCaptureStopJobs`; `Loop::reclaimUnreferencedDisabledEditPasses`
+moved to flash to hold 13 ITCM banks. New native
+`test_deferred_stop_prepares_job_owned_undo_entry`; full native 2,188 cases — 2,183
+passed, one skipped, the same three known reentry failures; capture-serial builds
+with 6,752 bytes RAM1 headroom. Increment B remains: publish through
+`TrackUndoPublication` + `commitWithUndo`/`commitStoppedWithUndo` and drain its
+`ReleaseRedo → AwaitReclaim → Trim → Complete` phases in DeferredCleanup. Task 2.3
+remains unchecked.
+
 **2026-09-16 task 2.3 deferred-stop receipt audit — design decision required
 (resumable-midi-boundary-playback-maintenance):** the last two receipt items need a
 decision before implementation. The normal deferred overdub stop publishes **no**

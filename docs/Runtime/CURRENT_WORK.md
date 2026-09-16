@@ -5,6 +5,31 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 deferred undo collection, job-owned prepared entry (increment A).**
+The deferred overdub stop now collects its session undo identities in bounded grains
+and builds the `OverdubPassAdded` entry from the job's own slot and baseline. New
+`PendingStopPhase::UndoCollection` runs on the prepared PLAYING route between
+`CompanionHistory` and `CompanionBridge` (the collection needs the current prepared
+companion receipt); the STOPPED/empty routes skip companion preparation and never
+enter it, and `retireSkippedCompanionPreparation` retires the estimate. A dedicated
+`remainingUndoCollectionGrains`/`undoCollectionQuantum` class (sized from
+`Loop::requiredSessionStopUndoCollectionGrains`) is included in
+`finalizationComplete()`, so a saturated estimate denies admission instead of
+stalling a phase. `Track::stepDeferredUndoCollection` drives the resumable collection
+and calls `TrackUndo::prepareOverdubSessionEntry`; the collection's private outputs
+are pre-reserved in `prewarmCaptureStopJobs` (the API never grows them, and an
+unreserved output is a denied collection, not silent corruption).
+`Loop::reclaimUnreferencedDisabledEditPasses` moved to flash to hold 13 ITCM banks.
+
+Evidence: new native `test_deferred_stop_prepares_job_owned_undo_entry` (production
+route: entry kind/slot/loop from the job, baseline pointer identical to the job's).
+`test_continuous_capture` 30 pass with the same three intentional reentry failures;
+full native 2,188 cases — 2,183 passed, one skipped, the same three;
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom. Increment B (next):
+externally allocate `TrackUndoPublication`, begin/stepPrepare from the prepared entry,
+flip the atomic transfer to `commitWithUndo`/`commitStoppedWithUndo`, and drain
+`ReleaseRedo → AwaitReclaim → Trim → Complete` in bounded DeferredCleanup turns.
+
 **2026-09-16 task 2.3 deferred-stop receipt audit — design decision required.**
 Auditing the last two receipt items found the consumer side is not wired, which
 changes what "job-owned" must mean. (1) The normal deferred overdub stop publishes

@@ -10,6 +10,28 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 deferred undo collection with a job-owned prepared entry (increment A):**
+new `PendingStopPhase::UndoCollection` on the prepared PLAYING route (between
+`CompanionHistory` and `CompanionBridge`, because the collection needs the current
+prepared companion receipt); STOPPED/empty routes skip companion preparation and
+never enter it, and `retireSkippedCompanionPreparation` retires the estimate. New
+dedicated `remainingUndoCollectionGrains`/`undoCollectionQuantum` +
+`consumeUndoCollectionGrain()`, included in `finalizationComplete()` and sized from
+`Loop::requiredSessionStopUndoCollectionGrains(...)`, so a saturated estimate denies
+admission rather than stalling the phase. `Track::stepDeferredUndoCollection` runs
+the resumable collection in bounded grains and builds the entry via
+`TrackUndo::prepareOverdubSessionEntry` from the **job's** slot and baseline; the
+collection's private outputs are pre-reserved in `prewarmCaptureStopJobs` (the API
+never grows them). `Loop::reclaimUnreferencedDisabledEditPasses` moved to flash to
+hold 13 ITCM banks. New native
+`test_deferred_stop_prepares_job_owned_undo_entry`; `test_continuous_capture` 30 pass
+with the same three reentry failures; full native 2,188 cases — 2,183 passed, one
+skipped, the same three; capture-serial builds with 6,752 bytes RAM1 headroom.
+Increment B (next): externally allocate `TrackUndoPublication`, begin/stepPrepare it
+from the prepared entry, flip the atomic transfer to `commitWithUndo` /
+`commitStoppedWithUndo`, and add the bounded `ReleaseRedo → AwaitReclaim → Trim →
+Complete` drain in DeferredCleanup.
+
 **2026-09-16 deferred-stop receipt wiring — audit (decision required):** the tworemaining receipt items need a design decision before implementation. (1) The
 normal deferred overdub stop publishes **no** `OverdubPassAdded` entry:
 `pushOverdubPassAdded` is only reached via `Track::finalizeCommitSideEffects` from
