@@ -1,5 +1,72 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 sealed raw-range ownership wired (resumable-midi-boundary-playback-maintenance):**
+The approved ownership transfer is implemented. `CaptureStopJob` owns
+`LoopEventStore::CaptureRange rawRange`; `beginDeferredOverdubStop` proves
+`canSealCaptureRange` before any mutation, seals the producer extent at punch-out
+and binds a job-identified read borrow on `Loop`. A denied admission performs no
+seal and no transfer; an empty capture skips the seal. `Loop::captureReadSource()`
+exposes producer and finalizing extents separately and ordering is scratch-only, so
+the borrowed range is never mutated; closure NoteId resolves from the finalizing
+extent first. `Track::retireJobCaptureSourceGrain` retires the owned extent in
+grains, drops the borrow only while it still identifies that job, and re-arms the
+descriptor's reserved destination. DisplayManager is unchanged; the
+successor-capture guard stays deliberately in place. Five new native regressions
+plus three migrated ownership assertions; `test_continuous_capture` 24 pass with the
+same three intentional reentry failures; full native 2,182 cases — 2,177 passed,
+one skipped, the same three; capture-serial builds with 6,752 bytes RAM1 headroom
+(new functions are FLASHMEM and `Loop::beginCapture`/`discardCapture` moved to flash
+to hold 13 ITCM banks). Device boot prewarm admission **PASS** on this build
+(`41b30d18…`, `captures/task23-sealed-range-prewarm/result.json`): PSRAM free
+5,142,912 -> 3,856,320 B (160,824 B/slot, unchanged), internal heap 352,256 ->
+311,296 B, pool chunks 512 -> 416 (+4/slot = the four range destinations per track),
+all slots `ready=1` with 8 credits and zero warnings. Task 2.3 remains
+unchecked; per-job session/preview/undo/snapshot receipts, causal predecessor/source
+identity and unguarding successor capture remain open.
+
+**2026-09-16 task 2.3 FIFO/queue-head binding (resumable-midi-boundary-playback-maintenance):**
+The stop-descriptor ring is now the explicit admission authority —
+`Track::captureStopJobTail()` admits (null when full, `queue_full` stop stage),
+`captureStopJobHead()` is the worker's stable per-grain descriptor, and
+`!STOP_STATUS` reports `queue=depth/capacity`. Behaviour is unchanged at one job
+(tail == head). Two new native regressions; full native 2,178 cases — 2,173
+passed, one skipped, the same three intentional public-reentry failures;
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom.
+
+**Sealed raw-range wiring is audited but not wired:** during the deferred stop
+`Loop::capture.store` is still read (and sorted in place) by the Loop
+display-window merge helpers and scanned by `appendCaptureNoteOffAtPhase` for
+closure note identity, and `Loop::beginCapture` frees a pre-reserved tail. Sealing
+at punch-out therefore needs a Loop-internal producer-or-sealed read fallback; the
+recommended design and the rejected lazy-seal alternative are recorded in
+CONTINUOUS-CAPTURE-OWNERSHIP.md. It moves capture-interval ownership between `Loop`
+and the admitted Track job, so the architecture ownership-transfer protocol
+applies — approval required before implementation. Task 2.3 remains unchecked.
+
+**2026-09-16 task 2.3 ingress/staging isolation (resumable-midi-boundary-playback-maintenance):**
+`RuntimePlaybackViewSet::captureStaging` is split into two independently prewarmed
+roles in the same owner: a *live* ingress staging and a *frozen* stop-job staging.
+Live ingress writes only the live role; the one admitted stop job borrows the frozen
+role. Punch-out freezes the live role and exchanges the two indexes in constant work
+(`LoopPlaybackRuntime::exchangeCaptureStagingRoles`); job cleanup resets only its own
+retired frozen role, so old-job cleanup cannot clear or alias a successor interval's
+ingress rows. No new owner/module, no canonical/persistence/SD change, no action-edge
+copy. New native regressions in `test_playback_prewarm` and `test_continuous_capture`
+(production Button A route) pass; full native 2,176 cases — 2,171 passed, one skipped,
+the same three intentional public-reentry failures; `teensy41-capture-serial` builds
+with 6,752 bytes RAM1 local headroom, RAM2 free 472,928. Added cost is one
+2,048-event staging buffer per fully-prewarmed runtime slot (now counted by
+`fixedExternalBytes`); boot prewarm admission was measured on device and passes —
+build `fb4ab3a9…` reports PSRAM free 5,143,968 → 3,859,680 B across the 8 boot
+slots (160,536 B/slot, two stagings per slot, no internal-heap fallback), all
+slots `ready=1` with 8 credits, zero warnings, and 46.1 % of the 8.38 MB pool still
+free (`captures/task23-staging-prewarm/result.json`; the run used a capture-only
+SESSION_CAPTURE boot line). The selected-slot full-prewarm plus dense loaded
+content still needs its own footprint check before the guards come off. FIFO/queue-head
+binding, sealed raw-range wiring, causal predecessor/source, per-job
+session/preview/undo/snapshot receipts and the three reentry cases stay open; task
+2.3 remains unchecked. DEC-064 follow-up recorded.
+
 **2026-09-16 dense snapshot representability + fragment transaction (openspec 2.3 / immutable-loop-snapshot-passes 3.7):**
 The dense record/overdub pair (`task23-dense-snapshot-cc-playback`, 734 effective
 rows) was lossy in publication: bar 2 needs 260 event references, above the fixed

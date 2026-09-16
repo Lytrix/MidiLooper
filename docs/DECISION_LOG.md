@@ -114,6 +114,56 @@ Reclaim only job-owned notes and qualify Track-state completion by interval.
 This implements part of the approved migration; shared Loop/runtime capture
 owners and immediate reentry remain guarded and incomplete.
 
+**2026-09-16 integration follow-up — dual capture-admission staging roles:**
+Split the runtime's single `RuntimePlaybackViewSet::captureStaging` into two
+independently prewarmed roles inside the same owner: a *live* ingress staging and
+a *frozen* stop-job staging. Live ingress (`TrackCaptureInput`, overdub wrap,
+`startOverdubbing`) always writes the live role; the one admitted stop job
+borrows the frozen role. Punch-out freezes the live role and exchanges the two
+indexes in constant work (`LoopPlaybackRuntime::exchangeCaptureStagingRoles`),
+so the job keeps its immutable rows while a successor interval owns a physically
+separate buffer. Job cleanup resets only its own retired frozen role. No staging
+is copied at the action edge, no new owner/module is introduced, and no canonical,
+persistence or SD ownership moves. This closes the "staging is shared by live
+input and the frozen stop" gap named in the ownership audit. Cost is one extra
+2,048-event staging buffer per fully-prewarmed runtime slot (external-first).
+Boot prewarm admission was measured on device and passes: PSRAM free
+5,143,968 -> 3,859,680 B across the 8 boot slots (160,536 B/slot, matching two
+stagings per slot with no internal-heap fallback), all slots ready with 8 credits,
+and 46.1 % of the 8.38 MB pool still free after prewarm
+(`captures/task23-staging-prewarm/result.json`, build `fb4ab3a9…`). The
+selected-slot full view/bridge prewarm plus loaded dense content still needs its
+own footprint check before the reentry guards are removed. FIFO, causal
+predecessor/source, session/preview/undo receipts and the three public reentry
+cases remain open.
+
+**2026-09-16 integration follow-up — sealed capture ownership transfer (APPROVED):**
+On successful stop-job admission, ownership of the stopped raw capture extent
+transfers from `Loop`'s producer to the admitted `CaptureStopJob::rawRange`. `Loop`
+retains only a **job-identified** non-owning borrow for consumers whose semantics
+span deferred finalization: capture-overlay materialization and pending NoteOff
+identity resolution. Borrowed ranges are immutable to Loop consumers — ordering
+operations use scratch storage, never an in-place sort of the range. Producer
+reset/reuse (`resetCaptureExtentPreservingReservedStorage`) must not alter
+transferred storage. Release is conditional on matching job identity, so job A's
+cleanup cannot clear job B's binding. Queue-full or otherwise denied admission
+performs no seal and no transfer. Consumers resolve capture material through one
+internal Loop read source that exposes the producer and finalizing sources
+separately, so mutual exclusivity is not a permanent architectural truth.
+DisplayManager is unchanged. Wire this before removing the successor-capture
+guard, and do not unguard continuous successor capture in the same change.
+**Status 2026-09-16: wired.** `CaptureStopJob::rawRange` + job-identified Loop
+borrow, a single read source exposing producer and finalizing extents separately,
+scratch-only ordering, closure identity resolved from the finalizing extent,
+`canSealCaptureRange` precheck so denial performs no transfer, and
+`resetCaptureExtentPreservingReservedStorage` for the producer. New functions are
+FLASHMEM; `Loop::beginCapture`/`discardCapture` moved to flash to hold 13 ITCM
+banks (RAM1 headroom 6,752). Device boot-prewarm admission was re-measured and
+passes: PSRAM free 5,142,912 -> 3,856,320 B (unchanged from the dual-staging
+build), internal heap 352,256 -> 311,296 B, pool chunks 512 -> 416 (+4/slot = the
+four range destinations per track), all slots ready with 8 credits
+(`captures/task23-sealed-range-prewarm/result.json`, build `41b30d18…`).
+
 ## DEC-063 — Protected stop undo publication and bounded reclamation
 
 **Date:** 2026-09-14
