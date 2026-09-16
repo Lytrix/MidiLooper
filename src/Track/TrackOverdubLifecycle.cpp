@@ -253,6 +253,21 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   const bool stoppedDestination = destination == PendingStopDestination::Stopped;
   const PlaybackViewSourceIdentity baseSource{
       loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity()};
+  // Causal predecessor identity. Resolve and pin it here, before the raw-range
+  // ownership transfer, so a later grain resolves this interval's successor
+  // semantics against the source it actually succeeded. A published identity that
+  // cannot be pinned must deny admission rather than be recorded as a dangling
+  // pointer: nothing after the transfer may fail.
+  ImmutableLoopSnapshotRef causalBaseSnapshot;
+  if (baseSource.snapshotIdentity) {
+    causalBaseSnapshot = loop.publishedSnapshot();
+    if (!causalBaseSnapshot ||
+        static_cast<const void*>(causalBaseSnapshot.get()) != baseSource.snapshotIdentity) {
+      SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                         finalFrozenCount, openReservations, "causal_base_unavailable");
+      return false;
+    }
+  }
   // Rolling emission windows do not describe the canonical candidate horizon.
   // Use the prewarmed owner, even when the last capture contains only one event.
   uint64_t rankedCredits = stoppedDestination || finalFrozenCount == 0 ? 0 :
@@ -338,6 +353,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   job.phaseTick = capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
   job.interval = captureInterval_;
+  job.causalBase = baseSource;
+  job.causalBaseSnapshot = std::move(causalBaseSnapshot);
+  if (!job.causalBase.snapshotIdentity) job.causalBaseSnapshot = {};
+  job.causalBaseRecorded = true;
   job.pendingNotes.swap(pendingNotes);
   ++captureStopJobs_->count;
   // Ownership transfer. The precheck proved this cut and nothing between it and
@@ -859,6 +878,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // A baseline left unconsumed by the commit must not leak into a later interval.
   job.hasBeforePublished = false;
   job.beforePublished = {};
+  job.causalBase = {};
+  job.causalBaseSnapshot = {};
+  job.causalBaseRecorded = false;
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
