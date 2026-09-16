@@ -316,6 +316,15 @@ bool sStoredMidiVerificationArmed = true;
 void logStoredMidiVerificationArmState(bool armed) {
   Serial.printf("#CAP,DIAG,stored_verify,armed,%u\n", armed ? 1u : 0u);
 }
+
+// TEMPORARY DEVICE DIAGNOSTIC (remove with temporary C once SEVT is restored to a
+// required gate). The 175335-style "no SEVT" families are only distinguishable when
+// the queue decision and the drain reset reason are visible in the capture.
+void logStoredMidiVerificationDecision(const char* decision) {
+  Serial.printf("#CAP,DIAG,stored_verify,%s\n", decision);
+}
+#else
+void logStoredMidiVerificationDecision(const char*) {}
 #endif
 
 enum StoredVerificationPhase : uint8_t {
@@ -517,15 +526,18 @@ TRACK_COLD_MEM void Track::queueDeferredStoredMidiVerification() {
   // consumed arm, empty/uncommitted loop) must not destroy an already-queued dump.
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
+    logStoredMidiVerificationDecision("queue_skip_loop");
     return;
   }
   if (!sStoredMidiVerificationArmed) {
+    logStoredMidiVerificationDecision("queue_skip_unarmed");
     return;
   }
   // Accepted as a new queue operation: replace any prior deferred verification state.
   resetDeferredStoredMidiVerification();
   deferredStoredVerificationPending = true;
   sStoredMidiVerificationArmed = false;
+  logStoredMidiVerificationDecision("queue_accepted");
 #if defined(PIO_UNIT_TEST_NATIVE)
   ++deferredStoredVerificationOpportunityCount;
 #endif
@@ -571,12 +583,14 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
 
   const Loop& loop = getActiveLoop();
   if (loop.loopLengthTicks == 0 || !loop.hasCommittedPasses()) {
+    logStoredMidiVerificationDecision("drain_reset_loop");
     resetDeferredStoredMidiVerification();
     return;
   }
 
   const uint32_t heapBeforeMerge = MemoryMonitor::getInternalHeapFreeBytes();
   if (!LoopEventStore::hasInternalHeapHeadroomForNonCriticalWork(heapBeforeMerge)) {
+    logStoredMidiVerificationDecision("drain_reset_heap");
     resetDeferredStoredMidiVerification();
     return;
   }
@@ -586,9 +600,11 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
       deferredStoredVerificationPhase == kStoredVerificationNotes) {
     loop.mergeActiveCapturePasses(deferredStoredVerificationEvents);
     if (deferredStoredVerificationEvents.empty()) {
+      logStoredMidiVerificationDecision("drain_reset_no_events");
       resetDeferredStoredMidiVerification();
       return;
     }
+    logStoredMidiVerificationDecision("drain_emit_start");
   }
 
   const SessionMidiEventVec& flat = deferredStoredVerificationEvents;
@@ -731,6 +747,7 @@ TRACK_COLD_MEM void Track::processDeferredStoredMidiVerification(size_t maxEvent
     if (displayManager.emitStoppedFrameNoteDump(maxEventsPerSlice) > 0) {
       return;
     }
+    logStoredMidiVerificationDecision("drain_complete");
     resetDeferredStoredMidiVerification();
   }
 #endif  // SESSION_CAPTURE
