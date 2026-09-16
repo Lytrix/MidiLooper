@@ -10,6 +10,32 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-17 successor reentry unguarding — split out and re-scoped (preflight).** The
+final slice of 2.3 opens as its own change,
+`successor-capture-reentry-unguarding`, which removes the three admission guards in
+the order Track → TrackManager → Button A. Its preflight resolved the public
+acceptance list for task 2.3:
+
+- **Made green by that change:** `test_track_reentry_does_not_depend_on_manager_guard`
+  and `test_manager_reentry_with_a_held_same_pitch_note`.
+- **Re-scoped, renamed and made green by that change:**
+  `test_button_a_three_intervals_accept_notes_with_service_paused` →
+  `test_button_a_successor_stop_denied_until_deferred_role_available`. The original
+  test pressed Button A three times with no worker turns and asserted C captures
+  "while A and B remain queued", which needs **two simultaneously frozen jobs** — more
+  than the two `CaptureAdmissionStaging` roles and one `captureStopOwner` support.
+- **Deferred to a follow-up capacity change:** the three-deep (N-job deferred
+  queueing) scenario itself, with its additional admission roles, per-job drain order
+  and PSRAM admission measurement. It is a documented follow-up, not a skipped red
+  test.
+
+Declared capacity for the unguarding change is **directional**: a successor *start*
+requires the live role to be free, a successor *stop* requires the deferred/frozen
+role to be free. Depth 2 in capture lifecycle (one finalizing predecessor plus one
+recording successor), **not** depth 2 in deferred-stop queueing. Recording the split
+here so task 2.3's checkbox closes on two public reentry cases plus device evidence,
+with the third named as deferred rather than silently dropped.
+
 **2026-09-16 causal predecessor/source identity — increment B, superseded rule
 (partial 2.3):** the user approved option (A). The implemented shape is narrower than
 the audit's first sketch because the implementation falsified its premise: the

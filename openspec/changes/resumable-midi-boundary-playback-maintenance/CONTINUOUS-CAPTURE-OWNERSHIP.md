@@ -1432,3 +1432,74 @@ superseded this interval is expected to already carry them; if that assumption i
 ever violated the interval's edits would be dropped, so a future successor-capture
 change must re-verify it. The route is not reachable by any current public input
 (successor capture stays guarded), so this is forward-looking coverage.
+
+## Successor-capture reentry unguarding — preflight, 2026-09-17
+
+Opens the follow-up change `successor-capture-reentry-unguarding`, which removes the
+three admission guards that still refuse a successor interval while a predecessor
+finalizes. Preflight items 1.1–1.3 of that change are recorded here.
+
+### Declared capacity (directional)
+
+**START capacity requires the live admission role to be free; STOP capacity requires
+the deferred/frozen admission role to be free.** The supported envelope is **depth 2
+in capture lifecycle, not depth 2 in deferred-stop queueing**: one finalizing
+predecessor plus one independently recording successor. Two simultaneously deferred
+capture intervals are **not** supported by this change.
+
+```text
+A recording
+-> stop A                      A owns the frozen/deferred role
+B start                        admitted into the live role
+B recording                    B events accepted exactly
+B stop while A owns frozen     denied (queue_full / storage_denied); B stays the live
+                               recording interval, no events/notes/reservations or
+                               stop descriptor consumed
+A retires                      frozen role becomes available
+B's subsequent stop request    admitted; the same interval transfers into the frozen
+                               role exactly once; the live role becomes free
+C start                        now legal
+```
+
+Resource justification: `RuntimePlaybackViewSet` has exactly two
+`CaptureAdmissionStaging` roles (`liveStagingIndex` / `frozenStagingIndex`), punch-out
+freezes the live role and exchanges the indexes, and a frozen role is held until its
+job retires because it owns the admission rows (reserved closures) the deferred worker
+consumes; `runtime->captureStopOwner` additionally admits one job at a time. The stop
+ring's four descriptors are therefore not a four-deep *frozen* capacity.
+
+**Decision (review Option 1, 2026-09-17): re-scope the reproducer, do not expand to
+N-job queueing.**
+`test_button_a_three_intervals_accept_notes_with_service_paused` pressed Button A
+three times with zero worker turns and asserted that C captures "while A and B remain
+queued" — i.e. two frozen jobs plus a live third interval. It becomes
+`test_button_a_successor_stop_denied_until_deferred_role_available`, asserting the
+envelope above (A deferred, B start admitted, B capture exact, B stop denied and
+non-destructive, B's subsequent stop admitted after A retires, C start then legal).
+The original three-deep case is retained as a **documented follow-up capacity
+case** — N-job deferred queueing needs additional admission roles, a per-job drain
+order and its own PSRAM admission measurement — and is not a skipped red test in the
+current suite.
+
+### Reentry-path site inventory (1.1)
+
+Classified by the question the site actually asks. "Keep" means the pending-deferred
+exclusion is semantically correct there; "Replace/re-site" means it must stop
+standing in for an unrelated question.
+
+| Site | Question | Verdict |
+|---|---|---|
+| `Track::startOverdubbing` (`TrackOverdubLifecycle.cpp`): `canonicalCaptureOutputAdmitted`, `hasActiveOverdubTransferAdmission`, `canHandoffSessionExitSnapshot`, `runtime->captureStopOwner` | May ingress enter **the live interval**, and can that interval later freeze? | **Replace.** The storage/ownership preconditions stay as *start* preconditions for the successor's own interval; the predecessor-pending implications must not block a successor start (frozen role ≠ live role; the handoff ring holds four). |
+| `MidiButtonActions::handleToggleRecord` | May ingress enter the live interval? | **Replace.** Start is admitted; a *stop* that exceeds capacity must surface the explicit denial instead of returning silently. |
+| `TrackManager::anyTrackRecordingOrOverdubbing` | Is **cross-track maintenance** excluded? | **Split.** Needs a live-capture-activity predicate and a deferred-maintenance predicate; callers choose. Global redefinition would change unrelated cross-track behavior. |
+| `TrackManager::setActiveLoopIndex` (TrackManagerSlotMatrix) | Must this slot change finalize first? | **Re-site.** The live interval's capture matters; a pending predecessor does not need to block the live interval's own slot change. |
+| `Track::hasPendingDeferredOverdubStop` (`TrackStateFacade.cpp`) | Definition | **Keep.** The predicate is unchanged; only call-site semantics move. |
+| `TrackCaptureInput.cpp` tick-phase projection (`isOverdubbing() \|\| hasPendingDeferredOverdubStop() \|\| …`) | Which projection cycle applies? | **Keep.** A pending predecessor legitimately puts the live interval in the mid-cycle projection. |
+| `TrackCaptureInput.cpp` closure-identity role pick (`hasPendingDeferredOverdubStop() ? captureStagingIfPrewarmed() : liveCaptureStagingIfPrewarmed()`, both `appendCaptureNoteOffAtPhase` and `appendReservedCaptureNoteOffAtPhase`) | Which role owns this open reservation? | **Replace.** Resolve in the role that actually owns the open NoteId: a live successor's note must resolve in the live role even while a predecessor job pends (otherwise B's closure is matched against A's frozen reservations). |
+| `TrackCaptureInput.cpp` ingress admission (`liveCaptureStagingIfPrewarmed`, lines ~738/~908) | Where does new live ingress write? | **Keep** — already the live role after the dual-role split; must stay that way. |
+| `TrackPlaybackWindowBuild.cpp` `invalidatePlaybackMergedMidiEvents` | May caches be invalidated? | **Keep**, with D6: a pending job retargets to STOPPED and must not mutate the live successor's state. |
+| `TrackPlaybackWindowBuild.cpp` `tryReleasePlaybackMergedMidiEventsMemory` | May memory be released? | **Keep.** Deferred work retains its generation-qualified scratch. |
+| `TrackPlaybackHotPath.cpp` emission gates | May playback emit? | **Keep.** |
+| `TrackDeferredMaintenance.cpp` idle-maintenance gates | May idle maintenance run? | **Keep.** |
+| `TrackSlotPool.cpp` slot-mutation gate | May the slot pool mutate this slot? | **Keep.** |
+| `StorageManager` persistence gates (`PersistenceAdmit`, `Internal`, `MidPassChunkPersist`) | May playback/persistence proceed? | **Keep.** |
