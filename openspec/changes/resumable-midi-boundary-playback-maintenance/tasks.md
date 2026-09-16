@@ -10,6 +10,26 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 session-exit handoff receipt ring (partial 2.3):** the session-exit
+`SessionExitSnapshotHandoff` receipt is now a Loop-owned FIFO ring of
+`kSessionExitReceiptCapacity = 4` (external-memory-first, cold-prewarmed by
+`prewarmSessionExitSnapshotHandoff()`), replacing the single-slot unique pointer.
+`canHandoffSessionExitSnapshot()` is a **free-slot** gate; "one receipt per open
+session" moved inside `handoffSessionExitSnapshot()` behind `sessionExitHandedOff_`
+(set by the handoff, cleared by `openOverdubSession`). A successor session is no
+longer serialized behind an unconsumed publisher turn, while a repeat handoff for
+the same session is still refused. The idle publisher consumes the oldest receipt
+one per turn (retaining it when construction is disallowed), and playback's
+stale-root overlay folds every pending receipt rather than one. Tests: new
+`test_session_exit_receipt_ring_is_fifo_and_not_serialized`; the handoff-contract
+assertions in `test_playback_prewarm` and `test_loop_take_survival` were updated to
+the ring contract. `test_playback_prewarm` 165/165; full native 2,189 cases —
+2,184 passed, 1 skipped, the same three intentional public-reentry failures;
+capture-serial builds with 6,752 bytes RAM1 headroom. No new boot allocation, so the
+increment A/B device memory check (build `91e6b38c…`) still covers this slice. Still
+open in 2.3: causal predecessor/source identity per job, prepared-companion history
+qualification, then successor-capture unguarding in a separate change.
+
 **2026-09-16 deferred protected undo publication wired (increment B):** the normal
 deferred overdub stop now records an `OverdubPassAdded` entry. `TrackUndoPublication`
 is externally allocated and cold-prewarmed by `prewarmProtectedUndo()` together with

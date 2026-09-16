@@ -1394,7 +1394,7 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
 }
 
 LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
-  if ((sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) ||
+  if (hasPendingSessionExitReceipt() ||
       !pendingSnapshotPublishBox_ || pendingSnapshotPublishBox_->sessionExitQueued) {
     return;
   }
@@ -1408,7 +1408,7 @@ LOOP_COLD_MEM void Loop::discardUnpublishedSnapshotIfNotSessionExit() {
 }
 
 LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
-  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) return true;
+  if (hasPendingSessionExitReceipt()) return true;
   if (pendingSnapshotPublishBox_) {
     const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
     if (box.construction || !box.queuedPassIds.empty() || box.sessionExitQueued ||
@@ -1533,7 +1533,7 @@ LOOP_COLD_MEM uint32_t Loop::pendingSnapshotWrapParentRevision() const {
 }
 
 LOOP_COLD_MEM bool Loop::pendingSnapshotSessionExitQueued() const {
-  return (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) ||
+  return hasPendingSessionExitReceipt() ||
          (pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->sessionExitQueued);
 }
 
@@ -1801,26 +1801,47 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
 }
 
 LOOP_COLD_MEM bool Loop::prewarmSessionExitSnapshotHandoff() {
-  if (!sessionExitSnapshotHandoff_) {
-    sessionExitSnapshotHandoff_ = std::make_unique<SessionExitSnapshotHandoff>();
+  if (!sessionExitReceipts_) {
+    auto* storage = ExternalMemoryFirstAllocator<SessionExitSnapshotHandoff>{}.allocate(
+        kSessionExitReceiptCapacity);
+    if (!storage) return false;
+    for (size_t i = 0; i < kSessionExitReceiptCapacity; ++i) {
+      new (&storage[i]) SessionExitSnapshotHandoff{};
+    }
+    sessionExitReceipts_.reset(storage);
+    sessionExitReceiptHead_ = 0;
+    sessionExitReceiptCount_ = 0;
   }
   return canHandoffSessionExitSnapshot();
 }
 
 LOOP_COLD_MEM bool Loop::canHandoffSessionExitSnapshot() const {
-  return sessionExitSnapshotHandoff_ && !sessionExitSnapshotHandoff_->pending;
+  // A *free slot* is the gate, not an unconsumed singleton: a successor session
+  // must not wait behind the idle publisher. "One receipt per open session" is
+  // enforced inside the handoff, which consumes the session identities.
+  return sessionExitReceipts_ != nullptr &&
+      sessionExitReceiptCount_ < kSessionExitReceiptCapacity;
+}
+
+LOOP_COLD_MEM const SessionExitSnapshotHandoff* Loop::sessionExitReceiptAt(size_t index) const {
+  if (!sessionExitReceipts_ || index >= sessionExitReceiptCount_) return nullptr;
+  return &sessionExitReceipts_[(sessionExitReceiptHead_ + index) % kSessionExitReceiptCapacity];
 }
 
 LOOP_COLD_MEM bool Loop::handoffSessionExitSnapshot(CommitReason reason) {
-  if (!canHandoffSessionExitSnapshot() || !hasOverdubSession() ||
+  if (!canHandoffSessionExitSnapshot() || sessionExitHandedOff_ || !hasOverdubSession() ||
       !isOverdubSessionExit(reason) || loopLengthTicks == 0) return false;
-  auto& receipt = *sessionExitSnapshotHandoff_;
+  SessionExitSnapshotHandoff& receipt =
+      sessionExitReceipts_[(sessionExitReceiptHead_ + sessionExitReceiptCount_) %
+                           kSessionExitReceiptCapacity];
   receipt.reason = reason;
   receipt.lastPassId = lastCommittedPassId_;
   receipt.companionRowCount = std::min(overdubSessionCursor_, overdubSessionCompanionIds_.size());
   receipt.passIds.swap(overdubSessionPassIds_);
   receipt.companionIds.swap(overdubSessionCompanionIds_);
   receipt.pending = true;
+  ++sessionExitReceiptCount_;
+  sessionExitHandedOff_ = true;
   // Existing wrap construction must survive close until the idle owner merges
   // these identities into its queues. The receipt also supplies playback's
   // stale-root overlay before the first publisher turn.
@@ -1869,8 +1890,7 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
   }
 
   if (isOverdubSessionExit(reason)) {
-    const auto* receipt = sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending
-                              ? sessionExitSnapshotHandoff_.get() : nullptr;
+    const auto* receipt = oldestPendingSessionExitReceipt();
     const auto& sessionPassIds = receipt ? receipt->passIds : overdubSessionPassIds_;
     const auto& sessionCompanionIds = receipt ? receipt->companionIds : overdubSessionCompanionIds_;
     const size_t sessionCursor = receipt ? receipt->companionRowCount : overdubSessionCursor_;
@@ -1897,8 +1917,8 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
       }
     }
   }
-  const PassId finalPassId = sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending
-                                 ? sessionExitSnapshotHandoff_->lastPassId : lastCommittedPassId_;
+  const auto* pendingReceipt = oldestPendingSessionExitReceipt();
+  const PassId finalPassId = pendingReceipt ? pendingReceipt->lastPassId : lastCommittedPassId_;
   if (finalPassId != kInvalidPassId && !passAlreadyTracked(box, finalPassId)) {
     box.queuedPassIds.push_back(finalPassId);
   }
@@ -1932,13 +1952,19 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
   }
-  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) {
+  if (hasPendingSessionExitReceipt()) {
     if (!allowStartConstruction) return true;
-    auto& receipt = *sessionExitSnapshotHandoff_;
+    // Consume the oldest receipt only: the ring may hold successors still being
+    // finalised, and each publisher turn handles exactly one.
+    SessionExitSnapshotHandoff& receipt =
+        sessionExitReceipts_[sessionExitReceiptHead_ % kSessionExitReceiptCapacity];
     if (!queueSessionExitSnapshot(receipt.reason) && !publishedSnapshotIsCurrent()) return true;
     receipt.pending = false;
     receipt.passIds.clear();
     receipt.companionIds.clear();
+    ++sessionExitReceiptHead_;
+    if (sessionExitReceiptHead_ >= kSessionExitReceiptCapacity) sessionExitReceiptHead_ = 0;
+    --sessionExitReceiptCount_;
     // Queue assembly and construction must not share a turn. Full idle
     // publisher allocation/timing bounds remain a separate integration gate.
     return true;

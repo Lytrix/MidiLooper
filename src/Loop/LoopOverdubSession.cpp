@@ -47,6 +47,9 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
   overdubSessionCompanionIds_.clear();
   overdubSessionCursor_ = 0;
   overdubSessionLiveUndoEvents_.clear();
+  // A successor session may hand off even while an unconsumed receipt sits in
+  // the ring; the flag is per session, not per ring.
+  sessionExitHandedOff_ = false;
 }
 
 LOOP_COLD_MEM void Loop::closeOverdubSession() {

@@ -16,6 +16,18 @@ LOOP_COLD_MEM Loop::Loop() {}
 
 LOOP_COLD_MEM Loop::~Loop() {}
 
+/// Defined beside the destructor: every binary that instantiates ~Loop() must
+/// resolve the receipt-ring deleter, and this is the one TU that always carries
+/// both the destructor and the box definition.
+void Loop::SessionExitReceiptsDeleter::operator()(SessionExitSnapshotHandoff* receipts) const {
+  if (!receipts) return;
+  for (size_t i = 0; i < kSessionExitReceiptCapacity; ++i) {
+    receipts[i].~SessionExitSnapshotHandoff();
+  }
+  ExternalMemoryFirstAllocator<SessionExitSnapshotHandoff>{}.deallocate(
+      receipts, kSessionExitReceiptCapacity);
+}
+
 LOOP_COLD_MEM void Loop::setSessionExitPublishedUndoAttachFn(
     SessionExitPublishedUndoAttachFn fn) {
   s_sessionExitPublishedUndoAttachFn = fn;
@@ -51,7 +63,12 @@ LOOP_COLD_MEM uint32_t Loop::publishedSnapshotRevision() const {
 
 LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
   publishedSnapshotBox_.reset();
-  if (sessionExitSnapshotHandoff_) *sessionExitSnapshotHandoff_ = {};
+  for (size_t i = 0; i < sessionExitReceiptCount_; ++i) {
+    const size_t slot = (sessionExitReceiptHead_ + i) % kSessionExitReceiptCapacity;
+    if (sessionExitReceipts_) sessionExitReceipts_[slot] = {};
+  }
+  sessionExitReceiptHead_ = 0;
+  sessionExitReceiptCount_ = 0;
   clearPendingSnapshotPublish();
 }
 

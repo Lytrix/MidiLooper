@@ -1181,3 +1181,54 @@ left. Its `crash=1` is the retained report from the earlier faults.
 the track count must be sized against the *allocator's* heap tier, not against the
 policy maximum. Both this and the earlier 512-entry undo prewarm were caught only
 by the boot sample.
+
+### Session-exit handoff receipt ring — implemented (2026-09-16)
+
+Resolves "Finding 2" from the deferred-stop receipt audit: the session-exit receipt
+cannot be job-owned, so it is **Loop-owned and multi-slot**.
+
+- `SessionExitSnapshotHandoff` is now a Loop-owned FIFO ring of
+  `kSessionExitReceiptCapacity = 4`, `ExternalMemoryFirstAllocator`-backed and
+  cold-prewarmed by `Loop::prewarmSessionExitSnapshotHandoff()` (which replaced the
+  single-slot `sessionExitSnapshotHandoff_` unique pointer). Index 0 via
+  `sessionExitReceiptAt(0)` is the oldest pending receipt.
+- The gate is a **free slot**, not an unconsumed singleton:
+  `canHandoffSessionExitSnapshot()` is `sessionExitReceipts_ != nullptr &&
+  sessionExitReceiptCount_ < kSessionExitReceiptCapacity`. "One receipt per open
+  session" is enforced *inside* `handoffSessionExitSnapshot()` through
+  `sessionExitHandedOff_`, which the handoff sets after it consumes the session
+  identities and `openOverdubSession()` clears. So a successor session may hand off
+  while an older receipt is still unconsumed — the serialization the singleton
+  imposed is gone — and a repeat handoff for the *same* session is still refused
+  (it would otherwise queue an empty successor).
+- The idle publisher consumes exactly one receipt per turn: with
+  `allowStartConstruction == false` it retains the head and reports pending work;
+  otherwise it queues the oldest receipt, clears it, and advances the head/count.
+- Playback's stale-root overlay now folds **every** pending receipt (both `passIds`
+  and companion ids) instead of a single one, so a successor's stale-root
+  suppression does not depend on publisher progress.
+- The ring is released by `Loop::~Loop()` through a dedicated
+  `SessionExitReceiptsDeleter` defined beside the destructor in
+  `LoopSnapshotLifetime.cpp`.
+
+**Native:** new
+`test_session_exit_receipt_ring_is_fifo_and_not_serialized` (four handoffs across
+four sessions, capacity refusal on the fifth, FIFO receipt order, successor gate
+open while a receipt is pending). The handoff-contract assertions in
+`test_playback_prewarm` and
+`test_loop_take_survival::test_prepared_stop_handoff_preserves_restart_before_and_after_publication`
+were updated from "unconsumed receipt closes the gate" to the ring contract.
+`test_playback_prewarm` 165/165 and `test_loop_take_survival` pass; full native
+2,189 cases — 2,184 passed, 1 skipped, the same three intentional public-reentry
+failures. `teensy41-capture-serial` builds with **6,752 bytes** RAM1 headroom
+(13 banks, code 425,208).
+
+**Memory:** the ring adds no boot-footprint growth beyond the increment A/B
+prewarm already measured device-side (build `91e6b38c…`, PSRAM 5,141,952 →
+3,775,872 B, internal heap 352,256 → 290,816 B); this slice only changes gating and
+consumption. The staging admission that successor-capture unguarding depends on is
+still to be measured on the device in that separate change.
+
+**Still open in 2.3:** causal predecessor/source identity per job and
+prepared-companion history qualification, then unguarding successor capture (a
+separate change) to close the three public reentry cases.

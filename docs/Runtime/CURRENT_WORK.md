@@ -5,6 +5,28 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 session-exit handoff receipt ring.** The session-exit
+`SessionExitSnapshotHandoff` receipt is no longer a single-slot unique pointer: it is
+a Loop-owned FIFO ring of `kSessionExitReceiptCapacity = 4`, external-memory-first
+allocated and cold-prewarmed by `Loop::prewarmSessionExitSnapshotHandoff()`. This
+resolves the "Finding 2" blocker from the deferred-stop receipt audit — the receipt
+outlives the stop job, so it cannot be job-owned. `canHandoffSessionExitSnapshot()` is
+now a *free-slot* gate; "one receipt per open session" moved inside
+`handoffSessionExitSnapshot()` behind `sessionExitHandedOff_` (set by the handoff,
+cleared by `openOverdubSession()`), so a successor session is never serialized behind
+an unconsumed publisher turn while a repeat handoff for the same session is still
+refused. The idle publisher consumes exactly the oldest receipt per turn and retains
+it when construction is disallowed; playback's stale-root overlay folds every pending
+receipt (passes and companion ids) rather than one. New native
+`test_session_exit_receipt_ring_is_fifo_and_not_serialized`; the old
+"unconsumed receipt closes the gate" assertions in `test_playback_prewarm` and
+`test_loop_take_survival` were rewritten to the ring contract, not deleted. Native:
+`test_playback_prewarm` 165/165, `test_loop_take_survival` pass, full suite 2,189
+cases — 2,184 passed, 1 skipped, the same three intentional public-reentry failures.
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom (13 banks, code
+425,208). No new boot allocation, so the increment A/B device memory check (build
+`91e6b38c…`) still covers this slice.
+
 **2026-09-16 task 2.3 increments A/B boot abort — bisected, root-caused, fixed.**
 The memory check found the increment A/B firmware would not boot (`a7f10733…` emitted
 only `boot_reset,crash=1` before the USB port dropped; the 32-entry-prewarm variant
@@ -1166,7 +1188,10 @@ receipts — pending note changes, `capturePreview` and the undo baseline landed
 (the worker resolves against `job.pendingChanges`, seals `job.preview`, and records
 the undo entry against `job.beforePublished`; the live session keeps independent
 state and the Loop's readable accessors serve the job-identified borrows);
-remaining in that slice: the session-exit snapshot handoff receipt and the
+**the session-exit snapshot handoff receipt landed as a Loop-owned FIFO ring of 4**
+(`prewarmSessionExitSnapshotHandoff`, free-slot gate, one receipt per open session
+enforced inside the handoff, publisher consumes the oldest per turn, playback's
+stale-root overlay folds every pending receipt); remaining in that slice: the
 prepared-companion history. Then (4)
 causal predecessor and source identity per job; (5) only then remove the Button A,
 manager and Track reentry guards and turn the three public reentry cases green —
@@ -1174,7 +1199,9 @@ explicitly not in the same change as the ownership layer. Device PSRAM admission
 was measured for the staging change and **passes** (160,536 B/slot,
 3.86 MB of 8.38 MB free); the sealed-range build adds four destination directories
 per track (+4 pool chunks/slot, −32 KB internal heap) and its boot-prewarm admission
-was measured and **passes** (`captures/task23-sealed-range-prewarm/result.json`).
+was measured and **passes** (`captures/task23-sealed-range-prewarm/result.json`);
+the ring adds no new boot allocation, so the increment A/B device memory check
+(build `91e6b38c…`) still covers it.
 Task 2.3 and the task-5.3 HITL gates stay open.
 
 **2026-09-16 — canonical base SEVT observation (host/gate defect; firmware RCA closed).**

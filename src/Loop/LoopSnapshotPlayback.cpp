@@ -170,12 +170,17 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     }
   }
 
-  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) {
-    for (const PassId id : sessionExitSnapshotHandoff_->passIds) {
+  // Overlay EVERY queued (not-yet-published) session exit, not just one: a
+  // successor's committed passes must never be omitted from the stale-root view
+  // while an earlier session is still draining through the idle publisher.
+  for (size_t receiptIndex = 0; receiptIndex < sessionExitReceiptCount(); ++receiptIndex) {
+    const SessionExitSnapshotHandoff* receipt = sessionExitReceiptAt(receiptIndex);
+    if (receipt == nullptr) continue;
+    for (const PassId id : receipt->passIds) {
       if (!isRecordPassId(passes, id)) appendUniquePassId(unpublishedPassIds, id);
     }
-    if (!isRecordPassId(passes, sessionExitSnapshotHandoff_->lastPassId))
-      appendUniquePassId(unpublishedPassIds, sessionExitSnapshotHandoff_->lastPassId);
+    if (!isRecordPassId(passes, receipt->lastPassId))
+      appendUniquePassId(unpublishedPassIds, receipt->lastPassId);
   }
 
   std::vector<const CommittedChunkIdList*> unpublishedLists;
@@ -205,10 +210,12 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     }
   }
 
-  if (sessionExitSnapshotHandoff_ && sessionExitSnapshotHandoff_->pending) {
-    const auto& receipt = *sessionExitSnapshotHandoff_;
-    for (size_t i = 0; i < receipt.companionRowCount; ++i) {
-      for (const EditPassId id : receipt.companionIds[i])
+  for (size_t receiptIndex = 0; receiptIndex < sessionExitReceiptCount(); ++receiptIndex) {
+    const SessionExitSnapshotHandoff* receipt = sessionExitReceiptAt(receiptIndex);
+    if (receipt == nullptr) continue;
+    const size_t rows = std::min(receipt->companionRowCount, receipt->companionIds.size());
+    for (size_t i = 0; i < rows; ++i) {
+      for (const EditPassId id : receipt->companionIds[i])
         appendUniqueEditPassId(unpublishedCompanionIds, id);
     }
   }
