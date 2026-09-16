@@ -5,6 +5,29 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 job-owned capture preview.** The deferred cleanup seals the
+interval's preview, but it consumed the *live* `Loop::capturePreview`, which a
+successor's `beginCapture` clears — so a successor would have made the predecessor's
+deferred seal retain the wrong rows. `CaptureStopJob` now owns `CapturePreview
+preview`, transferred at admission by constant work (`CapturePreview::swapWith`,
+per-vector swap, no copy and no allocation) with a job-identified read borrow.
+`Loop::capturePreviewView()` is the single readable accessor — the borrowed job
+preview while bound, otherwise the live member — and is deliberately out of line in
+flash, because inlining the branch at 40+ display call sites cost a whole 32 KB RAM1
+bank. Writers keep the `capturePreview` member; 45 read-only display/Edit sites were
+migrated (no display/Edit code writes the preview). `TrackPreparedStopCommit::completeDeferredCleanup`
+now takes the job's owned preview, so the deferred seal retains this interval's rows.
+
+Evidence: new native `test_stop_job_owns_capture_preview` (production route) and
+`test_capture_preview_borrow_release_is_owner_identified`; `test_continuous_capture`
+28 pass with the same three intentional reentry failures; full native 2,186 cases —
+2,181 passed, one skipped, the same three; `teensy41-capture-serial` builds with
+6,752 bytes RAM1 headroom (13 ITCM banks). The per-descriptor capacity prewarms were
+dropped: the transfers are allocation-free regardless, and they only added ~640 bytes
+of new ITCM template code (14th bank). Still open in this slice: the overdub
+session/undo before-snapshot, the session-exit snapshot handoff receipt, and the
+prepared-companion history.
+
 **2026-09-16 task 2.3 job-owned pending note changes.** First piece of the
 session/preview/undo receipt slice. The worker previously read the *live* session's
 `Loop::pendingNoteChanges()` while resolving the canonical tail, so a successor
@@ -1029,10 +1052,10 @@ scratch-only, closure NoteId resolves from the finalizing extent, and
 `retireJobCaptureSourceGrain` retires the owned extent in grains and re-arms the
 descriptor. DisplayManager is unchanged and the successor-capture guard is
 deliberately still in place. Then (3) **job-owned session/preview/undo/snapshot
-receipts — pending note changes landed** (the worker resolves against
-`job.pendingChanges`, the live session keeps an independent prewarmed set, and the
-Loop's readable accessor serves the job-identified borrow); remaining in that
-slice: `capturePreview`, the overdub session/undo before-snapshot, the
+receipts — pending note changes and `capturePreview` landed** (the worker resolves
+against `job.pendingChanges` and seals `job.preview`, the live session keeps
+independent buffers, and the Loop's readable accessors serve the job-identified
+borrows); remaining in that slice: the overdub session/undo before-snapshot, the
 session-exit snapshot handoff receipt and the prepared-companion history. Then (4)
 causal predecessor and source identity per job; (5) only then remove the Button A,
 manager and Track reentry guards and turn the three public reentry cases green —

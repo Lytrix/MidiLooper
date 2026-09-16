@@ -10,6 +10,23 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 job-owned capture preview (partial 2.3):** `CaptureStopJob` now owns
+`CapturePreview preview`, transferred from the live session at admission by
+constant work (`CapturePreview::swapWith`, per-vector swap, no copy/allocation) with
+a job-identified read borrow. `Loop::capturePreviewView()` (out of line in flash, so
+40+ display call sites do not inline the branch into ITCM) is the single readable
+accessor; writers keep the `capturePreview` member. 45 read-only display/Edit sites
+migrated. `TrackPreparedStopCommit::completeDeferredCleanup` now takes the job's
+owned preview, so the deferred seal retains this interval's rows rather than a
+successor's. Per-descriptor `reserve`/`prewarm` capacity calls were dropped — the
+transfers are allocation-free regardless and they only added ~640 bytes of new ITCM
+template code (14th bank). New native `test_stop_job_owns_capture_preview` and
+`test_capture_preview_borrow_release_is_owner_identified`;
+`test_continuous_capture` 28 pass with the same three reentry failures; full native
+2,181 pass / 1 skipped / the same three; capture-serial builds with 6,752 bytes RAM1
+headroom. Still open in this slice: the overdub session/undo before-snapshot, the
+session-exit snapshot handoff receipt, and the prepared-companion history.
+
 **2026-09-16 job-owned pending note changes (partial 2.3):** first piece of the
 session/preview/undo receipt slice. `CaptureStopJob` now owns
 `PendingNoteChangeVec pendingChanges`; admission swaps the live Add/Shorten/Hide

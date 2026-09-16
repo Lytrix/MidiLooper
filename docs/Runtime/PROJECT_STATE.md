@@ -1,5 +1,21 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 job-owned capture preview (resumable-midi-boundary-playback-maintenance):**
+`CaptureStopJob` now owns `CapturePreview preview`, transferred from the live session
+at admission by constant work (`CapturePreview::swapWith`, per-vector swap, no
+copy/allocation) with a job-identified read borrow, so the deferred cleanup seals
+this interval's preview rather than a successor's. `Loop::capturePreviewView()` is
+the single readable accessor and is out of line in flash (inlining it at 40+ display
+call sites cost a RAM1 bank); 45 read-only display/Edit sites were migrated and
+writers keep the member. `TrackPreparedStopCommit::completeDeferredCleanup` takes the
+job's owned preview. New native `test_stop_job_owns_capture_preview` and
+`test_capture_preview_borrow_release_is_owner_identified`; `test_continuous_capture`
+28 pass with the same three intentional reentry failures; full native 2,186 cases —
+2,181 passed, one skipped, the same three; capture-serial builds with 6,752 bytes
+RAM1 headroom (13 ITCM banks). Still open in this slice: the overdub session/undo
+before-snapshot, the session-exit snapshot handoff receipt, and the
+prepared-companion history. Task 2.3 remains unchecked.
+
 **2026-09-16 task 2.3 job-owned pending note changes (resumable-midi-boundary-playback-maintenance):**
 `CaptureStopJob` now owns `PendingNoteChangeVec pendingChanges`; admission swaps the
 live Add/Shorten/Hide set into the job in constant work and leaves the live session a

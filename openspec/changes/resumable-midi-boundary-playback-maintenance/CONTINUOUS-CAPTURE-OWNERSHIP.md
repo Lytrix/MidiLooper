@@ -899,6 +899,40 @@ intentional public-reentry failures; full native 2,184 cases — 2,179 passed, o
 skipped, the same three; `teensy41-capture-serial` builds with 6,752 bytes RAM1
 headroom (unchanged).
 
-**Still open in this slice:** `capturePreview` ownership across the stop (the
-worker consumes it at DeferredCleanup), the overdub session/undo before-snapshot,
-the session-exit snapshot handoff receipt, and the prepared-companion history.
+**Still open in this slice:** the overdub session/undo before-snapshot, the
+session-exit snapshot handoff receipt, and the prepared-companion history.
+
+## Job-owned capture preview — checkpoint, 2026-09-16
+
+The deferred cleanup seals the interval's preview (`retainCapturePreviewAtSeal`),
+but it previously consumed the **live** `Loop::capturePreview`, which a successor's
+`beginCapture` clears. A successor would therefore have made the predecessor's
+deferred seal retain the wrong rows.
+
+- `CaptureStopJob` owns `CapturePreview preview`. Admission transfers the live
+  preview by constant work (`CapturePreview::swapWith`: per-vector swap, no row
+  copy, no allocation) and binds a job-identified read borrow.
+- `Loop::capturePreviewView()` is the single readable accessor: the borrowed job
+  preview while bound, otherwise the live member. It is **out of line in flash** —
+  inlining the branch at 40+ display call sites cost a whole 32 KB RAM1 bank.
+  Writers (capture ingress, wrap-held marking) keep using the `capturePreview`
+  member.
+- `TrackPreparedStopCommit::completeDeferredCleanup` now takes the job's owned
+  preview, so `loop.completePreparedCapturePassDeferredCleanup(job.preview)` seals
+  this interval's rows.
+- 45 read-only display/Edit call sites were migrated to `capturePreviewView()`
+  (verified: no display/Edit code writes the preview; `applyCapturePlayheadTails`
+  takes `const CapturePreview&`).
+- The earlier per-descriptor `reserve`/`prewarm` capacity calls were dropped. The
+  transfers are allocation-free either way, and preview/pending-change growth from
+  empty matches the baseline boot behaviour; the prewarms only added ~640 bytes of
+  new `vector::reserve` / struct-move ITCM code and pushed the build into a 14th
+  ITCM bank.
+
+**Verification:** new native `test_stop_job_owns_capture_preview` (production
+route: the job owns the rows, the view is the borrowed copy, and after cleanup the
+live preview is a different, empty buffer) and
+`test_capture_preview_borrow_release_is_owner_identified`.
+`test_continuous_capture` 28 pass with the same three intentional public-reentry
+failures; full native 2,186 cases — 2,181 passed, one skipped, the same three;
+`teensy41-capture-serial` builds with **6,752 bytes** RAM1 headroom (13 ITCM banks).
