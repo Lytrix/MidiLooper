@@ -1551,10 +1551,15 @@ LOOP_COLD_MEM void Loop::clearSealedCapturePreview() {
   sealedCapturePreviewRevision_ = 0;
 }
 
-void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
+LOOP_COLD_MEM void Loop::beginCapture(CapturePhase phase, uint32_t playheadPhaseTick) {
   discardPendingCapturePass();
   capture.phase = phase;
-  capture.store.clear();
+  // A producer that already owns the pre-reserved successor directory (the
+  // state left by a sealed capture range cut) must keep it: releasing it here
+  // would force a cold re-reservation from the capture-start path.
+  if (!capture.store.resetCaptureExtentPreservingReservedStorage()) {
+    capture.store.clear();
+  }
   capturePreview.clear();
   captureNextEventIndex = 0;
   captureEventsSortDirty = false;
@@ -1584,6 +1589,106 @@ LOOP_COLD_MEM bool Loop::retireCopiedCaptureSourceGrain(bool closeCapture) {
     captureLastAppendTick_ = 0;
   }
   return complete;
+}
+
+LOOP_COLD_MEM Loop::CaptureReadSource Loop::captureReadSource() const {
+  CaptureReadSource source;
+  source.producer = &capture.store;
+  if (borrowedSealedCapture_ != nullptr && borrowedSealedCapture_->ready()) {
+    source.finalizing = borrowedSealedCapture_;
+    source.finalizingGeneration = borrowedSealedCaptureGeneration_;
+  }
+  return source;
+}
+
+LOOP_COLD_MEM bool Loop::borrowSealedCaptureRange(const LoopEventStore::CaptureRange& range,
+                                                  const void* owner) {
+  if (owner == nullptr || !range.ready()) return false;
+  borrowedSealedCapture_ = &range;
+  borrowedSealedCaptureOwner_ = owner;
+  borrowedSealedCaptureGeneration_ = range.generation();
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::releaseSealedCaptureRangeBorrow(const void* owner) {
+  if (borrowedSealedCapture_ == nullptr || borrowedSealedCaptureOwner_ != owner) return false;
+  borrowedSealedCapture_ = nullptr;
+  borrowedSealedCaptureOwner_ = nullptr;
+  borrowedSealedCaptureGeneration_ = 0;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::copyCaptureIntervalEvents(SessionMidiEventVec& out) const {
+  out.clear();
+  const CaptureReadSource source = captureReadSource();
+  if (source.producerHasRows()) {
+    const_cast<Loop*>(this)->ensureCaptureEventsSorted();
+    capture.store.copyEventsTo(out);
+  }
+  if (source.finalizingReady()) {
+    SessionMidiEventVec sealedRows;
+    const auto* range = source.finalizing;
+    const size_t chunks = range->chunkCount();
+    for (size_t chunkIndex = 0; chunkIndex < chunks; ++chunkIndex) {
+      for (uint16_t eventIndex = 0;; ++eventIndex) {
+        MidiEvent event;
+        bool atEnd = false;
+        if (!range->read(source.finalizingGeneration, chunkIndex, eventIndex, event, atEnd)) break;
+        if (atEnd) break;
+        sealedRows.push_back(event);
+      }
+    }
+    if (!sealedRows.empty()) {
+      out.insert(out.end(), sealedRows.begin(), sealedRows.end());
+    }
+  }
+  if (out.empty()) return false;
+  // Ordering is scratch-only. A borrowed sealed range is immutable to Loop, so
+  // the sort can never reorder or rewrite the admitted job's owned extent.
+  sortSessionEventsByTick(out);
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::findLastCaptureNoteOnIdentity(uint8_t channel, uint8_t note,
+                                                      NoteId& out) const {
+  bool found = false;
+  const auto* range = borrowedSealedCapture_;
+  if (range != nullptr && range->ready()) {
+    const size_t chunks = range->chunkCount();
+    for (size_t chunkIndex = 0; chunkIndex < chunks; ++chunkIndex) {
+      for (uint16_t eventIndex = 0;; ++eventIndex) {
+        MidiEvent event;
+        bool atEnd = false;
+        if (!range->read(borrowedSealedCaptureGeneration_, chunkIndex, eventIndex, event, atEnd)) {
+          break;
+        }
+        if (atEnd) break;
+        if (event.isNoteOn() && event.channel == channel &&
+            event.data.noteData.note == note && event.noteId != kInvalidNoteId) {
+          out = event.noteId;
+          found = true;
+        }
+      }
+    }
+  }
+  if (found) return true;
+  for (size_t index = capture.store.size(); index > 0; --index) {
+    const MidiEvent& prior = capture.store.at(index - 1);
+    if (prior.isNoteOn() && prior.channel == channel &&
+        prior.data.noteData.note == note && prior.noteId != kInvalidNoteId) {
+      out = prior.noteId;
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM void Loop::closeProducerCapturePhase() {
+  capture.phase = CapturePhase::None;
+  captureNextEventIndex = 0;
+  captureEventsSortDirty = false;
+  captureHasLastAppendTick_ = false;
+  captureLastAppendTick_ = 0;
 }
 
 void Loop::discardCapture() {

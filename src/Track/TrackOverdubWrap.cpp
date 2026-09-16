@@ -102,7 +102,7 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   } else {
     runtime->discardFrozenCaptureOrder();
     runtime->discardFrozenCaptureCanonicalOrder();
-    CaptureAdmissionStaging& staging = viewSet->captureStaging;
+    CaptureAdmissionStaging& staging = viewSet->liveCaptureStaging();
     staging.reset();
     staging.captureGeneration = playbackGeneration;
     for (const MidiEvent& evt : heldOns) {

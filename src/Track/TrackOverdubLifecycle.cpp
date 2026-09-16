@@ -44,7 +44,52 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
     if (!storage) return false;
     captureStopJobs_.reset(new (storage) CaptureStopJobs{});
   }
+  // Cold admission of every descriptor's sealed-range destination directory.
+  // A descriptor that already owns a sealed extent keeps it; a released one is
+  // re-admitted here so the action edge never reserves storage.
+  for (size_t index = 0; index < CaptureStopJobs::kCapacity; ++index) {
+    CaptureStopJob& entry = captureStopJobs_->entries[index];
+    if (!entry.rawRange.ready() && !entry.rawRange.reserveTail()) return false;
+  }
   return true;
+}
+
+TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop,
+                                                       bool closeCapture) {  if (!job.ownsRawRange) {
+    // Legacy producer path: this job never took ownership of a sealed extent.
+    return loop.retireCopiedCaptureSourceGrain(closeCapture);
+  }
+  const bool complete = job.rawRange.releaseGrain(1);
+  if (!complete) return false;
+  // The owned extent is fully released. Drop the Loop's read borrow only while it
+  // still identifies this exact job, so a stale job can never unbind a successor.
+  (void)loop.releaseSealedCaptureRangeBorrow(&job.admission);
+  job.ownsRawRange = false;
+  // Re-arm this descriptor's reserved destination directory for a future
+  // admission. Bounded cold work in a deferred turn (one pool chunk plus the
+  // retained directory); if it fails, the next admission denies explicitly
+  // instead of reserving at the action edge.
+  (void)job.rawRange.reserveTail();
+  if (closeCapture) loop.closeProducerCapturePhase();
+  return true;
+}
+
+TRACK_COLD_MEM Track::CaptureStopJob* Track::captureStopJobHead() {
+  if (!captureStopJobs_ || captureStopJobs_->count == 0) return nullptr;
+  return &captureStopJobs_->entries[captureStopJobs_->head];
+}
+
+TRACK_COLD_MEM const Track::CaptureStopJob* Track::captureStopJobHead() const {
+  if (!captureStopJobs_ || captureStopJobs_->count == 0) return nullptr;
+  return &captureStopJobs_->entries[captureStopJobs_->head];
+}
+
+TRACK_COLD_MEM Track::CaptureStopJob* Track::captureStopJobTail() {
+  if (!captureStopJobs_) return nullptr;
+  if (captureStopJobs_->count >= CaptureStopJobs::kCapacity) return nullptr;
+  const size_t tail =
+      (captureStopJobs_->head + captureStopJobs_->count) % CaptureStopJobs::kCapacity;
+  return &captureStopJobs_->entries[tail];
 }
 
 TRACK_COLD_MEM Track::CaptureStopJob& Track::captureStopJob() {
@@ -99,7 +144,7 @@ TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
       trackManager.isSlotMuted(trackIndex, activeLoopIndex), transportStopOutputBarrier_,
       static_cast<unsigned long>(clockManager.getCurrentTick()),
       static_cast<unsigned long>(loopsAllocated() ? getActiveLoop().lastTickInLoop : UINT32_MAX));
-  Serial.printf("#STOP_STATUS,us=%lu,state=%s,pending=%u,phase=%u,dest=%u,order=%llu,ranked=%llu,canonical=%llu,prefix=%u,tail=%u,bridge=%u,wrap=%u\r\n",
+  Serial.printf("#STOP_STATUS,us=%lu,state=%s,pending=%u,phase=%u,dest=%u,order=%llu,ranked=%llu,canonical=%llu,prefix=%u,tail=%u,bridge=%u,wrap=%u,queue=%u/%u\r\n",
       static_cast<unsigned long>(micros()), getStateName(getState()), stop.pending,
       static_cast<unsigned>(stop.phase), static_cast<unsigned>(stop.destination),
       static_cast<unsigned long long>(stop.remainingOrderGrains),
@@ -108,7 +153,9 @@ TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
       runtime ? static_cast<unsigned>(runtime->canonicalPrefixPhase) : 255u,
       runtime ? static_cast<unsigned>(runtime->canonicalTailPhase) : 255u,
       runtime ? static_cast<unsigned>(runtime->captureBridgePhase) : 255u,
-      loopsAllocated() && getActiveLoop().hasDeferredVisualCacheWrapAppend());
+      loopsAllocated() && getActiveLoop().hasDeferredVisualCacheWrapAppend(),
+      static_cast<unsigned>(captureStopQueueDepth()),
+      static_cast<unsigned>(captureStopQueueCapacity()));
   if (loopsAllocated() && runtime) {
     const auto* set = runtime->viewSetIfPrewarmed();
     Serial.printf("#STOP_PREFIX,phase=%u,window=%u,attached=%u,inputs=%u,apply=%u,passes=%u,build_active=%u,index=%u,current=%u,ready=%u,build=%u,retained=%u\r\n",
@@ -141,10 +188,19 @@ TRACK_COLD_MEM bool Track::commitPreparedOverdubStopBridge(
 
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination destination,
                                                      uint32_t currentTick) {
-  if (!captureStopJobs_ || !isOverdubbing() || hasPendingDeferredOverdubStop() ||
-      !captureStopJob().pendingNotes.empty()) {
+  if (!captureStopJobs_ || !isOverdubbing() || hasPendingDeferredOverdubStop()) {
     return false;
   }
+  // The ring is the FIFO admission authority. A new stop interval always takes
+  // the tail descriptor; a full ring is an explicit exhaustion denial, never
+  // ordinary finalization latency.
+  CaptureStopJob* admission = captureStopJobTail();
+  if (admission == nullptr || !admission->pendingNotes.empty()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                       admission != nullptr, captureStopQueueDepth(), "queue_full");
+    return false;
+  }
+  CaptureStopJob& job = *admission;
   Loop& loop = getActiveLoop();
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   // A selected bridge is intentionally retained across PLAYING so it can
@@ -155,7 +211,8 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
       runtime->captureBridgePhase == LoopPlaybackRuntime::CaptureBridgePhase::Complete) {
     runtime->discardFrozenCaptureBridge();
   }
-  CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+  CaptureAdmissionStaging* views =
+      runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
   if (runtime == nullptr || views == nullptr || runtime->captureStopOwner != nullptr ||
       !loop.hasActiveOverdubTransferAdmission()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
@@ -207,54 +264,85 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
                        rankedCredits, canonicalCredits, "preparation_service_unavailable");
     return false;
   }
-  if (!captureStopJob().admission.begin(generation, currentTick, 0, openReservations,
+  // Prove the raw ownership transfer before any admission mutation. A denied
+  // admission must perform no seal and no transfer. An empty capture owns no
+  // extent and stays on the legacy producer path. The destination is a
+  // *reserved* range (not a sealed one), so this checks its receivability.
+  const bool hasRawExtent = !loop.capture.store.empty();
+  if (hasRawExtent && !loop.capture.store.canSealCaptureRange(job.rawRange)) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                       job.ownsRawRange, static_cast<uint32_t>(loop.capture.store.size()),
+                       "raw_range_unavailable");
+    return false;
+  }
+  // Pure predicate: resolve it before the seal so no fallible step follows the
+  // ownership transfer.
+  if (!isValidStateTransition(TRACK_OVERDUB_STOPPING)) {
+    return false;
+  }
+  if (!job.admission.begin(generation, currentTick, 0, openReservations,
                                    finalFrozenCount, kDeferredStopContract,
                                    rankedCredits, canonicalCredits, recycleCredits) ||
       !staging.freeze(generation)) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        finalFrozenCount, openReservations, "freeze_or_contract_denied");
-    captureStopJob().admission.reset();
+    job.admission.reset();
     return false;
   }
+  // The live role now holds the job's immutable frozen rows; the previous
+  // frozen role becomes clean ingress ownership for the next interval. This is
+  // a constant-work index exchange: neither staging is copied or shared with
+  // the other, and the job's reserved ranges stay intact.
+  runtime->exchangeCaptureStagingRoles();
   // There is no closure grain when every captured NoteOn already has its
   // matching NoteOff. Advance directly to canonical ordering; otherwise the
   // deferred owner would remain in ReservedClosure forever waiting for a
   // reservation that cannot exist (the clean normal-stop hang).
   if (openReservations == 0) {
-    captureStopJob().admission.setPhase(PendingStopPhase::CanonicalPrefix);
+    job.admission.setPhase(PendingStopPhase::CanonicalPrefix);
   }
-  captureStopJob().admission.destination = destination;
-  if (!isValidStateTransition(TRACK_OVERDUB_STOPPING)) {
-    captureStopJob().admission.reset();
-    return false;
-  }
-  captureStopJob().owner = &loop;
-  runtime->captureStopOwner = &captureStopJob().admission;
-  captureStopJob().loopId = loop.loopId;
-  captureStopJob().slot = activeLoopIndex;
-  captureStopJob().phaseTick = capturePhaseTick(currentTick);
-  captureStopJob().loopLengthTicks = loop.loopLengthTicks;
-  captureStopJob().interval = captureInterval_;
-  captureStopJob().pendingNotes.swap(pendingNotes);
+  job.admission.destination = destination;
+  job.owner = &loop;
+  runtime->captureStopOwner = &job.admission;
+  job.loopId = loop.loopId;
+  job.slot = activeLoopIndex;
+  job.phaseTick = capturePhaseTick(currentTick);
+  job.loopLengthTicks = loop.loopLengthTicks;
+  job.interval = captureInterval_;
+  job.pendingNotes.swap(pendingNotes);
   ++captureStopJobs_->count;
+  // Ownership transfer. The precheck proved this cut and nothing between it and
+  // here mutates the producer or the destination directory, so admission has no
+  // fallible step left. If the cut still fails, the job stays on the legacy
+  // producer path instead of publishing an interval without its owned input.
+  if (hasRawExtent && loop.capture.store.sealCaptureRange(job.rawRange)) {
+    job.ownsRawRange = true;
+    (void)loop.borrowSealedCaptureRange(job.rawRange, &job.admission);
+  } else {
+    job.ownsRawRange = false;
+    if (hasRawExtent) {
+      SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                         finalFrozenCount, openReservations, "raw_seal_unexpected");
+    }
+  }
   // Button A closes input at this boundary. The sealed frozen capture owns all
   // remaining canonical/companion work, while the existing prepared playback
   // window remains the active source. Publish PLAYING immediately so the
   // control surface never waits behind a resumable preparation pass.
-  // `captureStopJob().admission` remains the capture-admission and transport-stop
+  // `job.admission` remains the capture-admission and transport-stop
   // barrier until the joint commit and cleanup retire it.
   trackState = TRACK_OVERDUB_STOPPING;
 #if RUNTIME_TIMING_ENABLED
   RuntimeTimingTelemetry::recordStopStateTransition(
       resolveTrackIndexForPersistence(*this), activeLoopIndex,
-      TRACK_OVERDUBBING, TRACK_OVERDUB_STOPPING, captureStopJob().admission.stopTick, micros());
+      TRACK_OVERDUBBING, TRACK_OVERDUB_STOPPING, job.admission.stopTick, micros());
 #endif
   if (destination == PendingStopDestination::Playing) {
     trackState = TRACK_PLAYING;
 #if RUNTIME_TIMING_ENABLED
     RuntimeTimingTelemetry::recordStopStateTransition(
         resolveTrackIndexForPersistence(*this), activeLoopIndex,
-        TRACK_OVERDUB_STOPPING, TRACK_PLAYING, captureStopJob().admission.stopTick, micros());
+        TRACK_OVERDUB_STOPPING, TRACK_PLAYING, job.admission.stopTick, micros());
 #endif
     armPlayingMidiDrainAfterOverdubStop();
   }
@@ -270,25 +358,30 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
 }
 
 TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
-  if (!hasPendingDeferredOverdubStop()) return false;
-  auto& stop = captureStopJob().admission;
+  // Bind the FIFO head once for the whole grain. The head only advances at the
+  // end of this function, so a single stable reference is the contract: no
+  // intermediate step may re-resolve the ring and pick up a different job.
+  CaptureStopJob* head = captureStopJobHead();
+  if (head == nullptr) return false;
+  CaptureStopJob& job = *head;
+  auto& stop = job.admission;
   if (!stop.pending) {
     return false;
   }
   // Never reinterpret a saved job through the currently selected slot.
-  if (!captureStopJob().owner || !loopsAllocated() ||
-      loopIdForSlot(captureStopJob().slot) != captureStopJob().loopId ||
-      &getLoop(captureStopJob().slot) != captureStopJob().owner ||
-      captureStopJob().owner->loopLengthTicks != captureStopJob().loopLengthTicks) return false;
-  Loop& loop = *captureStopJob().owner;
-  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(captureStopJob().slot);
+  if (!job.owner || !loopsAllocated() ||
+      loopIdForSlot(job.slot) != job.loopId ||
+      &getLoop(job.slot) != job.owner ||
+      job.owner->loopLengthTicks != job.loopLengthTicks) return false;
+  Loop& loop = *job.owner;
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(job.slot);
   CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
   if (runtime == nullptr || views == nullptr ||
       views->frozenGeneration != stop.frozenGeneration) {
     return false;
   }
   CaptureAdmissionStaging& staging = *views;
-  const uint32_t phaseTick = captureStopJob().phaseTick;
+  const uint32_t phaseTick = job.phaseTick;
 
   // A clean stop commonly follows a completed wrap with no successor rows.
   // There is no canonical or audible ordering work in that candidate; advance
@@ -372,7 +465,7 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       const size_t count = runtime->frozenCaptureCanonicalOrder.orderedEventCount();
       // The prepared output owns different physical chunks. Retire only one
       // copied raw chunk per turn; never rewrite sealed persistence input.
-      if (!loop.retireCopiedCaptureSourceGrain()) return false;
+      if (!retireJobCaptureSourceGrain(job, loop, false)) return false;
       // An empty successor capture has no audible rows to project.  Skip the
       // zero-work audible-order builder and continue with the already-admitted
       // transfer tail; this keeps a clean stop from parking on an unnecessary
@@ -518,19 +611,23 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
 
   // One retired pending-note node per turn; never clear the live ingress map.
-  if (!captureStopJob().pendingNotes.empty()) {
-    captureStopJob().pendingNotes.erase(captureStopJob().pendingNotes.begin());
+  if (!job.pendingNotes.empty()) {
+    job.pendingNotes.erase(job.pendingNotes.begin());
     return false;
   }
   // Restore one consumed physical output credit per owner turn. If physical
   // storage is exhausted, finish this accepted job; the next admission must
   // explicitly deny until a later refill succeeds.
   if (runtime->replenishCanonicalCaptureChunk()) return false;
-  const bool ownsTrackState = captureStopJob().interval == captureInterval_ &&
-      captureStopJob().slot == activeLoopIndex;
+  const bool ownsTrackState = job.interval == captureInterval_ &&
+      job.slot == activeLoopIndex;
   const PendingStopDestination destination = stop.destination;
   if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop))
     return false;
+  // Retire this job's immutable frozen admission rows now that no consumer
+  // borrows them. The role then returns to clean ingress ownership on the next
+  // exchange; no live ingress state is touched here.
+  views->reset();
   // The deferred completion is the normal route for an overdub stop (both destinations).
   // The synchronous fallback `commitCaptureForStop(OverdubStopToStopped, ...)` requests the
   // stored-MIDI verification from `finalizeCommitSideEffects`; mirror it here so both commit
@@ -538,12 +635,12 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // this the transport-stop-during-overdub path never queues the dump at all (capture
   // `sevt-diag-stop` showed zero `stored_verify` markers despite a completed stop grain).
   queueDeferredStoredMidiVerification();
-  captureStopJob().owner = nullptr;
-  captureStopJob().loopId = kInvalidLoopId;
+  job.owner = nullptr;
+  job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
   --captureStopJobs_->count;
   if (!ownsTrackState) return true;
-  (void)loop.retireCopiedCaptureSourceGrain(true);
+  (void)retireJobCaptureSourceGrain(job, loop, true);
   if (destination == PendingStopDestination::Stopped) {
     silenceTrackMidiOutput();
     setState(TRACK_STOPPED);
@@ -648,7 +745,7 @@ void Track::startOverdubbing(uint32_t currentTick) {
   // transport command: setup/load/record-start prewarm owns that work.
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   CaptureAdmissionStaging* viewSet =
-      runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+      runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
   if (viewSet == nullptr || !captureStopJobs_) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "Overdub start rejected: capture staging or stop descriptors are not prewarmed");

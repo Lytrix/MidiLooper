@@ -1314,18 +1314,43 @@ bool LoopEventStore::reserveCaptureTail() {
   return true;
 }
 
-bool LoopEventStore::sealCaptureRange(CaptureRange& destination) {
-  auto& next = destination.storage_;
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::canSealCaptureRange(
+    const CaptureRange& destination) const {
+  const auto& next = destination.storage_;
+  // A producer that allocated lazily has no capture lifetime yet; it is still a
+  // current-pool store and may be cut. Only a *stale* non-zero lifetime denies.
   if (&next == this || destination.sealed_ || destination.releasing_ ||
-      capturePoolLifetime_ != poolLifetime_ || next.capturePoolLifetime_ != poolLifetime_ ||
+      (capturePoolLifetime_ && capturePoolLifetime_ != poolLifetime_) ||
+      next.capturePoolLifetime_ != poolLifetime_ ||
       chunkIds_.empty() || next.chunkIds_.size() != 1 || next.eventCount_ ||
-      chunkIds_.capacity() < LoopEventStoreConfig::POOL_CHUNK_COUNT ||
       next.chunkIds_.capacity() < LoopEventStoreConfig::POOL_CHUNK_COUNT) return false;
   const uint16_t spare = next.chunkIds_.front();
   if (!pool_ || !poolUsed_[spare] || poolChunkRefCount_[spare] != 1 ||
       poolLifecycle_[spare] != ChunkLifecycleState::Recording || pool_[spare].used) return false;
   const uint16_t tail = chunkIds_.back();
-  if (!poolUsed_[tail] || poolChunkRefCount_[tail] != 1) return false;
+  return poolUsed_[tail] && poolChunkRefCount_[tail] == 1;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::resetCaptureExtentPreservingReservedStorage() {
+  // After a range cut the producer already owns exactly the pre-reserved empty
+  // directory the successor interval must append into. Releasing it here would
+  // force a cold re-reservation from the begin-capture path.
+  if (eventCount_ != 0 || chunkIds_.size() != 1) return false;
+  const uint16_t id = chunkIds_.front();
+  if (capturePoolLifetime_ != poolLifetime_ || !pool_ || !poolUsed_[id] ||
+      poolChunkRefCount_[id] != 1 || poolLifecycle_[id] != ChunkLifecycleState::Recording ||
+      pool_[id].used != 0) {
+    return false;
+  }
+  barIndexDirty_ = true;
+  lastAppendedTick_ = 0;
+  return true;
+}
+
+bool LoopEventStore::sealCaptureRange(CaptureRange& destination) {
+  if (!canSealCaptureRange(destination)) return false;
+  auto& next = destination.storage_;
+  const uint16_t tail = chunkIds_.back();
   destination.tailEnd_ = pool_[tail].used;
   destination.eventCount_ = eventCount_;
   sealChunk(tail);
@@ -1335,6 +1360,10 @@ bool LoopEventStore::sealCaptureRange(CaptureRange& destination) {
   std::swap(eventCount_, next.eventCount_);
   std::swap(lastAppendedTick_, next.lastAppendedTick_);
   barIndexDirty_ = next.barIndexDirty_ = true;
+  // The producer now owns the destination's reserved empty directory, so it is
+  // again a capture-pool store. The destination keeps its own lifetime (set by
+  // reserveTail), which is what lets its releaseGrain free the transferred chunks.
+  capturePoolLifetime_ = poolLifetime_;
   ++destination.generation_;
   destination.sealed_ = true;
   return true;

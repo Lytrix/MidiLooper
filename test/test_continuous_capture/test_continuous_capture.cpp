@@ -113,7 +113,39 @@ struct TrackCaptureStopTestAccess {
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
   static auto generation(const Track& track) { return track.playbackGeneration; }
   static void invalidate(Track& track) { track.invalidatePlaybackMergedMidiEvents(true); }
+  static const void* headPtr(Track& track) { return track.captureStopJobHead(); }
+  static const void* tailPtr(Track& track) { return track.captureStopJobTail(); }
+  static const void* entryPtr(Track& track, size_t index) {
+    return &track.captureStopJobs_->entries[index];
+  }
+  static size_t headIndex(const Track& track) { return track.captureStopJobs_->head; }
+  static void setQueueCount(Track& track, size_t count) { track.captureStopJobs_->count = count; }
+  static bool admit(Track& track, PendingStopDestination destination, uint32_t tick) {
+    return track.beginDeferredOverdubStop(destination, tick);
+  }
+  static auto& rawRange(Track& track) { return track.captureStopJob().rawRange; }
+  static bool ownsRawRange(Track& track) { return track.captureStopJob().ownsRawRange; }
+  static bool appendNoteOffAtPhase(Track& track, uint8_t channel, uint8_t note, uint32_t phase) {
+    return track.appendCaptureNoteOffAtPhase(channel, note, phase);
+  }
 };
+
+/// Read a job-owned sealed extent's rows in stored order (bounded by its exact
+/// captured end, not a live producer extent).
+SessionMidiEventVec sealedRangeRows(const LoopEventStore::CaptureRange& range) {
+  SessionMidiEventVec rows;
+  const uint64_t generation = range.generation();
+  for (size_t chunkIndex = 0; chunkIndex < range.chunkCount(); ++chunkIndex) {
+    for (uint16_t eventIndex = 0;; ++eventIndex) {
+      MidiEvent event;
+      bool atEnd = false;
+      if (!range.read(generation, chunkIndex, eventIndex, event, atEnd)) break;
+      if (atEnd) break;
+      rows.push_back(event);
+    }
+  }
+  return rows;
+}
 
 void inputNote(uint8_t pitch, uint32_t onTick, uint32_t offTick) {
   clockManager.assignCurrentTickSilently(onTick);
@@ -222,9 +254,18 @@ void test_stop_job_owns_held_notes_and_closes_original_slot() {
   TrackCaptureStopTestAccess::selectSlot(track, 1);
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::step(track));
   TEST_ASSERT_EQUAL(0, job.admission.remainingClosureGrains);
-  TEST_ASSERT_EQUAL(2, original.capture.store.size());
-  TEST_ASSERT_EQUAL(144, original.capture.store.at(1).tick);
-  TEST_ASSERT_TRUE(original.capture.store.at(1).isNoteOff());
+  // The captured NoteOn belongs to the job-owned sealed extent. The reserved
+  // terminal Off is appended afterwards to the successor producer extent, which
+  // is why the readable capture interval exposes both sources.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  const SessionMidiEventVec sealedRows =
+      sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL(1, sealedRows.size());
+  TEST_ASSERT_TRUE(sealedRows[0].isNoteOn());
+  TEST_ASSERT_EQUAL(97, sealedRows[0].tick);
+  TEST_ASSERT_EQUAL(1, original.capture.store.size());
+  TEST_ASSERT_TRUE(original.capture.store.at(0).isNoteOff());
+  TEST_ASSERT_EQUAL(144, original.capture.store.at(0).tick);
   TEST_ASSERT_EQUAL(1, other.capture.store.size());
   TEST_ASSERT_EQUAL(11, other.capture.store.at(0).tick);
   TEST_ASSERT_EQUAL(193, TrackCaptureStopTestAccess::liveNotes(track).at({60, 1}).startNoteTick);
@@ -241,12 +282,14 @@ void test_stop_job_denies_changed_geometry_before_closure_mutation() {
   Loop& original = track.getLoop(0);
   original.loopLengthTicks = 384;
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::step(track));
-  TEST_ASSERT_EQUAL(1, original.capture.store.size());
+  // Denial mutates neither the job-owned sealed extent nor the producer.
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::rawRange(track).size());
+  TEST_ASSERT_EQUAL(0, original.capture.store.size());
   TEST_ASSERT_EQUAL(1, job.admission.remainingClosureGrains);
   TEST_ASSERT_EQUAL(1, job.pendingNotes.size());
   original.loopLengthTicks = 768;
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::step(track));
-  TEST_ASSERT_EQUAL(2, original.capture.store.size());
+  TEST_ASSERT_EQUAL(1, original.capture.store.size());
   TEST_ASSERT_EQUAL(0, job.admission.remainingClosureGrains);
 }
 
@@ -338,9 +381,21 @@ void test_stop_copies_canonical_rows_without_mutating_sealed_raw_input() {
   TrackCaptureStopTestAccess::step(track);
   TEST_ASSERT_EQUAL(32, runtime.canonicalCaptureOutput.store.size());
   TEST_ASSERT_EQUAL(1, runtime.canonicalCaptureOutput.store.at(0).tick);
-  TEST_ASSERT_EQUAL(300, loop.capture.store.size());
-  TEST_ASSERT_EQUAL(300, loop.capture.store.at(0).tick);
+  // Ownership transferred at punch-out: the job owns the sealed 300-row extent
+  // and the producer holds only the reserved successor directory.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  TEST_ASSERT_EQUAL(300, TrackCaptureStopTestAccess::rawRange(track).size());
+  const SessionMidiEventVec sealedRows =
+      sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL(300, sealedRows.size());
+  // The sealed extent preserves raw append order (descending ticks here); the
+  // canonical copy is what imposes ascending order.
+  TEST_ASSERT_EQUAL(300, sealedRows[0].tick);
+  TEST_ASSERT_EQUAL(1, sealedRows[299].tick);
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
   TEST_ASSERT_NOT_EQUAL(rawChunk, runtime.canonicalCaptureOutput.store.chunkIds().front());
+  // The sealed pool chunk is still byte-identical: the canonical copy wrote to
+  // different physical chunks and never rewrote the job-owned extent.
   MidiEvent raw; bool end = true;
   TEST_ASSERT_TRUE(LoopEventStore::readSealedChunkEvent(rawChunk, 0, raw, end));
   TEST_ASSERT_EQUAL(300, raw.tick);
@@ -554,6 +609,236 @@ void test_missing_stop_descriptors_rejects_before_opening_capture() {
   TEST_ASSERT_TRUE(track.getActiveLoop().capture.store.empty());
 }
 
+/// Task 2.3 FIFO binding: the ring is the admission authority. A new interval
+/// always takes the tail descriptor, the worker resolves one stable head for the
+/// whole grain, and a full ring is an explicit denial that consumes no accepted
+/// input or live state.
+void test_stop_ring_admits_at_tail_and_binds_worker_to_head() {
+  Track& track = preparePlayingTrack();
+  // Empty ring: no head, and the next admission target is the entry at head.
+  TEST_ASSERT_NULL(TrackCaptureStopTestAccess::headPtr(track));
+  TEST_ASSERT_EQUAL_PTR(TrackCaptureStopTestAccess::entryPtr(track, 0),
+                        TrackCaptureStopTestAccess::tailPtr(track));
+
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
+  // With one queued job the admitted tail descriptor is the head the worker
+  // binds, and it stays pending across grains.
+  TEST_ASSERT_EQUAL_PTR(TrackCaptureStopTestAccess::entryPtr(track, 0),
+                        TrackCaptureStopTestAccess::headPtr(track));
+  TEST_ASSERT_EQUAL_PTR(TrackCaptureStopTestAccess::headPtr(track),
+                        &TrackCaptureStopTestAccess::job(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::job(track).admission.pending);
+}
+
+/// Seal transfers the exact admitted extent, and a successor interval on the
+/// same loop may reuse the producer without altering the job's owned extent.
+void test_seal_transfers_extent_and_successor_capture_preserves_it() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  inputNote(62, 100, 130);
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_EQUAL(4, loop.capture.store.size());
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  const auto& range = TrackCaptureStopTestAccess::rawRange(track);
+  const SessionMidiEventVec before = sealedRangeRows(range);
+  TEST_ASSERT_EQUAL(4, before.size());
+  const uint64_t generation = range.generation();
+
+  // Successor interval begins on the same loop (the guarded public reentry
+  // route is deliberately bypassed). The predecessor extent must survive.
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(200, 1, 64, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(210, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(2, loop.capture.store.size());
+  TEST_ASSERT_EQUAL_UINT64(generation, range.generation());
+  const SessionMidiEventVec after = sealedRangeRows(range);
+  TEST_ASSERT_EQUAL(before.size(), after.size());
+  for (size_t i = 0; i < before.size(); ++i) {
+    TEST_ASSERT_EQUAL(before[i].tick, after[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(before[i].type), static_cast<int>(after[i].type));
+    TEST_ASSERT_EQUAL(before[i].data.noteData.note, after[i].data.noteData.note);
+  }
+}
+
+/// The readable capture interval yields the same effective rows before and after
+/// sealing, and ordering the merge is scratch-only: a borrowed sealed extent is
+/// never sorted or rewritten in place.
+void test_read_source_yields_same_rows_before_and_after_sealing() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  // Deliberately unsorted append order: the merge must impose scratch order.
+  inputNote(62, 130, 150);
+  inputNote(64, 100, 120);
+  Loop& loop = track.getActiveLoop();
+  SessionMidiEventVec before;
+  loop.copyEffectiveCommittedEventsWithCapture(before);
+  TEST_ASSERT_TRUE(before.size() >= 4);
+
+  clockManager.assignCurrentTickSilently(180);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  const SessionMidiEventVec rangeBefore =
+      sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+
+  SessionMidiEventVec after;
+  loop.copyEffectiveCommittedEventsWithCapture(after);
+  TEST_ASSERT_EQUAL(before.size(), after.size());
+  for (size_t i = 0; i < before.size(); ++i) {
+    TEST_ASSERT_EQUAL(before[i].tick, after[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(before[i].type), static_cast<int>(after[i].type));
+    TEST_ASSERT_EQUAL(before[i].data.noteData.note, after[i].data.noteData.note);
+  }
+  // The sealed extent is byte-identical after the merge: ordering used scratch.
+  const SessionMidiEventVec rangeAfter =
+      sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL(rangeBefore.size(), rangeAfter.size());
+  for (size_t i = 0; i < rangeBefore.size(); ++i) {
+    TEST_ASSERT_EQUAL(rangeBefore[i].tick, rangeAfter[i].tick);
+    TEST_ASSERT_EQUAL(static_cast<int>(rangeBefore[i].type), static_cast<int>(rangeAfter[i].type));
+    TEST_ASSERT_EQUAL(rangeBefore[i].data.noteData.note, rangeAfter[i].data.noteData.note);
+  }
+}
+
+/// A closure whose source NoteOn now lives only in the job-owned sealed extent
+/// still resolves the original NoteId.
+void test_sealed_extent_resolves_closure_note_id() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(65, 97, UINT32_MAX);
+  Loop& loop = track.getActiveLoop();
+  TEST_ASSERT_EQUAL(1, loop.capture.store.size());
+  const NoteId capturedId = loop.capture.store.at(0).noteId;
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, capturedId);
+
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  TEST_ASSERT_TRUE(loop.capture.store.empty());
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::rawRange(track).size());
+
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendNoteOffAtPhase(track, 1, 65, 150));
+  TEST_ASSERT_EQUAL(1, loop.capture.store.size());
+  TEST_ASSERT_TRUE(loop.capture.store.at(0).isNoteOff());
+  TEST_ASSERT_EQUAL(capturedId, loop.capture.store.at(0).noteId);
+  // The sealed extent stays immutable and still holds exactly the captured On.
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::rawRange(track).size());
+}
+
+/// A stale job may not drop a successor job's read borrow.
+void test_sealed_range_borrow_release_is_owner_identified() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopEventStore producer;
+  TEST_ASSERT_TRUE(producer.reserveCaptureTail());
+  LoopEventStore::CaptureRange rangeA;
+  LoopEventStore::CaptureRange rangeB;
+  TEST_ASSERT_TRUE(rangeA.reserveTail());
+  TEST_ASSERT_TRUE(rangeB.reserveTail());
+  TEST_ASSERT_TRUE(producer.append(MidiEvent::NoteOn(10, 1, 60, 100)));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(rangeA));
+  TEST_ASSERT_TRUE(producer.sealCaptureRange(rangeB));
+
+  const int ownerA = 1;
+  const int ownerB = 2;
+  TEST_ASSERT_TRUE(loop.borrowSealedCaptureRange(rangeA, &ownerA));
+  TEST_ASSERT_TRUE(loop.borrowSealedCaptureRange(rangeB, &ownerB));
+  TEST_ASSERT_FALSE(loop.releaseSealedCaptureRangeBorrow(&ownerA));
+  TEST_ASSERT_TRUE(loop.hasSealedCaptureBorrow());
+  TEST_ASSERT_EQUAL_PTR(&rangeB, loop.captureReadSource().finalizing);
+  TEST_ASSERT_TRUE(loop.releaseSealedCaptureRangeBorrow(&ownerB));
+  TEST_ASSERT_FALSE(loop.hasSealedCaptureBorrow());
+}
+
+/// A full ring is explicit exhaustion, not finalization latency: admission is
+/// denied, performs no seal/ownership transfer, and consumes no accepted input.
+void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  TEST_ASSERT_EQUAL(2, track.getActiveLoop().capture.store.size());
+  const size_t liveNotesBefore = TrackCaptureStopTestAccess::liveNotes(track).size();
+
+  // Saturate the ring outside the guarded public reentry route. The ring, not a
+  // staging-buffer side effect, is the admission authority.
+  TrackCaptureStopTestAccess::setQueueCount(track, TrackCaptureStopTestAccess::queueCapacity());
+  TEST_ASSERT_EQUAL(TrackCaptureStopTestAccess::queueCapacity(),
+                    TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_NULL(TrackCaptureStopTestAccess::tailPtr(track));
+  TEST_ASSERT_NOT_NULL(TrackCaptureStopTestAccess::headPtr(track));
+
+  TEST_ASSERT_FALSE(
+      TrackCaptureStopTestAccess::admit(track, PendingStopDestination::Playing, 144));
+  // A denied admission must not consume accepted input or live state, and it
+  // performs no seal and no ownership transfer.
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL(2, track.getActiveLoop().capture.store.size());
+  TEST_ASSERT_EQUAL(liveNotesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TEST_ASSERT_EQUAL(TrackCaptureStopTestAccess::queueCapacity(),
+                    TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::ownsRawRange(track));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::rawRange(track).ready());
+}
+
+/// Task 2.3 staging ownership: an admitted stop job borrows the frozen admission
+/// staging while live ingress owns a physically separate buffer. Punch-out
+/// exchanges the two roles in constant work, so old-job completion can never
+/// clear, reset or alias a successor interval's ingress rows.
+void test_stop_job_and_live_ingress_own_distinct_staging() {
+  Track& track = preparePlayingTrack();
+  auto& runtime = TrackCaptureStopTestAccess::runtime(track);
+  auto* liveRoleBefore = runtime.liveCaptureStagingIfPrewarmed();
+  auto* frozenRoleBefore = runtime.captureStagingIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(liveRoleBefore);
+  TEST_ASSERT_NOT_NULL(frozenRoleBefore);
+  TEST_ASSERT_TRUE(liveRoleBefore->storage.events != frozenRoleBefore->storage.events);
+
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+
+  // The punch-out exchanged the roles: the job owns the rows it captured, and
+  // the previous clean buffer is now live ingress ownership.
+  auto* frozen = runtime.captureStagingIfPrewarmed();
+  auto* live = runtime.liveCaptureStagingIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(frozen);
+  TEST_ASSERT_NOT_NULL(live);
+  TEST_ASSERT_EQUAL_PTR(liveRoleBefore, frozen);
+  TEST_ASSERT_EQUAL_PTR(frozenRoleBefore, live);
+  TEST_ASSERT_TRUE(frozen->frozen);
+  TEST_ASSERT_EQUAL(2, frozen->storage.eventCount);
+  TEST_ASSERT_FALSE(live->frozen);
+  TEST_ASSERT_EQUAL(0, live->storage.eventCount);
+
+  // A successor interval's accepted ingress rows must survive this job's
+  // canonical work, commit and cleanup unchanged.
+  TEST_ASSERT_TRUE(live->storage.append(MidiEvent::NoteOn(193, 1, 62, 100)));
+  for (unsigned i = 0; i < 10000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(track.isPlaying());
+  TEST_ASSERT_EQUAL(1, live->storage.eventCount);
+  TEST_ASSERT_EQUAL(193, live->storage.events[0].tick);
+}
+
 #include "off_path_deps.h"
 
 /// Regression for the reset-before-guard defect: a redundant or ineligible
@@ -622,6 +907,13 @@ int main() {
   RUN_TEST(test_first_interval_uses_production_routes_and_freezes_at_punch_out);
   RUN_TEST(test_stop_descriptor_rotation_preserves_worker_borrow_and_reuses_retired_slots);
   RUN_TEST(test_missing_stop_descriptors_rejects_before_opening_capture);
+  RUN_TEST(test_stop_ring_admits_at_tail_and_binds_worker_to_head);
+  RUN_TEST(test_full_stop_ring_denies_admission_and_preserves_accepted_capture);
+  RUN_TEST(test_seal_transfers_extent_and_successor_capture_preserves_it);
+  RUN_TEST(test_read_source_yields_same_rows_before_and_after_sealing);
+  RUN_TEST(test_sealed_extent_resolves_closure_note_id);
+  RUN_TEST(test_sealed_range_borrow_release_is_owner_identified);
+  RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);
   RUN_TEST(test_transport_stop_during_canonical_copy_preserves_accepted_rows);

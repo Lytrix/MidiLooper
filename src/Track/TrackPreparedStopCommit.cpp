@@ -32,7 +32,7 @@ TRACK_COLD_MEM bool commitPreparedStop(
   denied |= !stop.remainingHistoryRecycleGrains ? 8 : 0;
   denied |= !loop.canCommitPreparedCaptureAndCompanions() ? 16 : 0;
   denied |= !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ? 32 : 0;
-  denied |= !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->captureStaging) ? 64 : 0;
+  denied |= !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging()) ? 64 : 0;
   denied |= !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
       {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ? 128 : 0;
   if (denied) return denyAtomicTransfer(denied);
@@ -129,8 +129,8 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::retargetStoppedRecovery(
   const auto* views = runtime.viewSetIfPrewarmed();
   return stop.pending && stop.destination == PendingStopDestination::Stopped &&
       stop.phase != PendingStopPhase::DeferredCleanup && views &&
-      views->captureStaging.frozenGeneration == stop.frozenGeneration &&
-      runtime.canonicalPassInputs.retargetFrozenCommandEpoch(stop.transportCommandEpoch, views->captureStaging);
+      views->frozenCaptureStaging().frozenGeneration == stop.frozenGeneration &&
+      runtime.canonicalPassInputs.retargetFrozenCommandEpoch(stop.transportCommandEpoch, views->frozenCaptureStaging());
 }
 
 static TRACK_COLD_MEM bool commitPreparedStopped(
@@ -141,13 +141,13 @@ static TRACK_COLD_MEM bool commitPreparedStopped(
   if (!views || stop.phase != PendingStopPhase::AtomicTransfer ||
       !stop.canCommit(stop.transportCommandEpoch, PendingStopDestination::Stopped) ||
       !stop.canonicalPreparationQuantum || !stop.historyRecycleQuantum || !stop.remainingHistoryRecycleGrains ||
-      views->captureStaging.frozenGeneration != stop.frozenGeneration ||
+      views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration ||
       !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
       !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
           {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ||
       !loop.canCommitPreparedCaptureAndCompanions() ||
       !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ||
-      !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->captureStaging) ||
+      !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging()) ||
       (undo && (!stack || !undo->canPublish(*stack, loop.loopId, loop.pendingCapturePass().id)))) return false;
   const uint32_t revisionDelta = loop.preparedCompanionHistoryIds()->empty() ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta ||
@@ -217,9 +217,9 @@ TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepPrep
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop, size_t quantum) {
   const auto* views = runtime.viewSetIfPrewarmed();
   if (!views || !stop.pending || !quantum || quantum != stop.canonicalPreparationQuantum ||
-      stop.remainingClosureGrains || views->captureStaging.frozenGeneration != stop.frozenGeneration ||
+      stop.remainingClosureGrains || views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration ||
       !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
-      !loop.preparedCompanionHistoryCanStep(runtime.frozenCaptureCompanions, views->captureStaging,
+      !loop.preparedCompanionHistoryCanStep(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(),
                                             runtime.canonicalPassInputs))
     return RuntimePlaybackOrderBuildResult::Denied;
   if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs))

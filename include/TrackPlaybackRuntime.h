@@ -25,7 +25,7 @@
 class Loop;
 
 /// Fixed metadata for a deferred overdub stop. It owns no event memory: the
-/// frozen candidate remains in `RuntimePlaybackViewSet::captureStaging` while
+/// frozen candidate remains in the view set's frozen capture-staging role while
 /// task-2.3 grains consume its reserved capacity. The command epoch makes a
 /// transport Stop invalidate a previously selected PLAYING result.
 enum class PendingStopDestination : uint8_t { Playing, Stopped };
@@ -322,13 +322,32 @@ struct LoopPlaybackRuntime {
   /// Boot reserves only capture staging. Full views/bridges/workers are a
   /// separate cold admission; a staging-only runtime cannot select a bridge.
   bool prewarmCaptureStaging();
+  /// Frozen role: the stop worker's immutable admission staging. A job owns this
+  /// role from punch-out until its cleanup retires it.
   CaptureAdmissionStaging* captureStagingIfPrewarmed() {
-    return viewSet && viewSet->captureStaging.storage.isPrewarmed()
-        ? &viewSet->captureStaging : nullptr;
+    return viewSet && viewSet->frozenCaptureStaging().storage.isPrewarmed()
+        ? &viewSet->frozenCaptureStaging() : nullptr;
   }
   const CaptureAdmissionStaging* captureStagingIfPrewarmed() const {
-    return viewSet && viewSet->captureStaging.storage.isPrewarmed()
-        ? &viewSet->captureStaging : nullptr;
+    return viewSet && viewSet->frozenCaptureStaging().storage.isPrewarmed()
+        ? &viewSet->frozenCaptureStaging() : nullptr;
+  }
+  /// Live role: ingress reservations and appends for the open interval. Never
+  /// the worker's frozen source.
+  CaptureAdmissionStaging* liveCaptureStagingIfPrewarmed() {
+    return viewSet && viewSet->liveCaptureStaging().storage.isPrewarmed()
+        ? &viewSet->liveCaptureStaging() : nullptr;
+  }
+  const CaptureAdmissionStaging* liveCaptureStagingIfPrewarmed() const {
+    return viewSet && viewSet->liveCaptureStaging().storage.isPrewarmed()
+        ? &viewSet->liveCaptureStaging() : nullptr;
+  }
+  /// Exchange the live/frozen capture-staging roles after the live role has
+  /// been frozen. Constant work; the two stagings never share physical rows.
+  bool exchangeCaptureStagingRoles() {
+    if (viewSet == nullptr || !viewSet->captureStagingsPrewarmed()) return false;
+    viewSet->exchangeCaptureStagingRoles();
+    return true;
   }
   /// Non-allocating access for active playback/capture paths. A partially
   /// allocated bundle is not usable: callers must treat it as unavailable

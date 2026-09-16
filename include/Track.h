@@ -19,6 +19,7 @@
 #include "TrackState.h"
 #include "TrackDisplayState.h"
 #include "Loop.h"
+#include "LoopEventStore.h"
 #include "GlobalUndoStack.h"
 #include "TrackPlaybackRuntime.h"
 #include "Slot.h"
@@ -494,6 +495,10 @@ private:
     uint32_t phaseTick = 0;
     uint32_t loopLengthTicks = 0;
     uint64_t interval = 0;
+    /// Job-owned sealed raw capture extent. Ownership transfers from the Loop
+    /// producer at admission; the Loop keeps only a job-identified read borrow.
+    LoopEventStore::CaptureRange rawRange;
+    bool ownsRawRange = false;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
@@ -509,8 +514,22 @@ private:
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs();
+  /// FIFO head: the stable descriptor the one worker is servicing. Null when the
+  /// ring is empty. A grain must bind this once and use it throughout, so a later
+  /// head advance can never redirect work already in progress.
+  CaptureStopJob* captureStopJobHead();
+  const CaptureStopJob* captureStopJobHead() const;
+  /// FIFO tail: the descriptor a new stop interval is admitted into. Null when
+  /// the ring is full, which is the explicit exhaustion result.
+  CaptureStopJob* captureStopJobTail();
+  /// Head descriptor for callers that have already proven a pending job exists.
   CaptureStopJob& captureStopJob();
   const CaptureStopJob& captureStopJob() const;
+  size_t captureStopQueueDepth() const { return captureStopJobs_ ? captureStopJobs_->count : 0; }
+  static constexpr size_t captureStopQueueCapacity() { return CaptureStopJobs::kCapacity; }
+  /// Retire one grain of a job's raw capture input. Uses the job-owned sealed
+  /// range when the job owns one, else the legacy producer path.
+  bool retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop, bool closeCapture);
   uint64_t captureInterval_ = 0;
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};

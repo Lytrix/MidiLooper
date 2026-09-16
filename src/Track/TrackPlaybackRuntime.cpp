@@ -353,13 +353,18 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCaptureStaging(
   if (viewSet == nullptr) {
     viewSet = allocateRuntimePlaybackViewSet();
   }
-  return viewSet != nullptr && viewSet->captureStaging.prewarm();
+  return viewSet != nullptr && viewSet->liveCaptureStaging().prewarm() &&
+      viewSet->frozenCaptureStaging().prewarm();
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews() {
   if (!prewarmCaptureStaging()) return false;
-  if (!viewSet->prewarmed && (viewSet->captureStaging.frozen ||
-      viewSet->captureStaging.storage.eventCount || viewSet->captureStaging.openReservationCount()))
+  if (!viewSet->prewarmed && (viewSet->frozenCaptureStaging().frozen ||
+      viewSet->frozenCaptureStaging().storage.eventCount ||
+      viewSet->frozenCaptureStaging().openReservationCount() ||
+      viewSet->liveCaptureStaging().frozen ||
+      viewSet->liveCaptureStaging().storage.eventCount ||
+      viewSet->liveCaptureStaging().openReservationCount()))
     return false; // Upgrading must never reset accepted staging state.
   return viewSet->prewarm() &&
          frozenCaptureCompanions.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge) &&
@@ -615,13 +620,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCaptureBrid
   // A second selected source needs coalescing, not an insertion-only rebuild
   // over its older immutable base. Leave it intact until that owner is ready.
   if (companionCount > bridge.capacity ||
-      set->captureStaging.storage.eventCount > bridge.capacity - companionCount ||
+      set->frozenCaptureStaging().storage.eventCount > bridge.capacity - companionCount ||
       (companionCount != 0 && companions == nullptr)) return false;
   bridge.source = targetSource;
   bridge.coverage = base->coverage;
   bridge.cursorAnchor = anchor;
   bridge.ledgerBoundary.capture(ledger);
-  if (!frozenCaptureBridgeFill.begin(set->captureStaging, frozenGeneration, companions, companionCount, bridge))
+  if (!frozenCaptureBridgeFill.begin(set->frozenCaptureStaging(), frozenGeneration, companions, companionCount, bridge))
     return false;
   frozenCaptureSourceAdmission = {frozenGeneration, commandEpoch, baseSource, targetSource,
                                    set->bridgeLifecycle.candidate, false};
@@ -734,7 +739,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM uint64_t LoopPlaybackRuntime::requiredStopRanked
     size_t historyCount, size_t pendingChangeCount, size_t quantum) const {
   const auto* set = viewSetIfPrewarmed();
   if (!set) return UINT64_MAX;
-  const size_t capacity = set->captureStaging.storage.capacity;
+  const size_t capacity = set->frozenCaptureStaging().storage.capacity;
   const auto* base = preparedCanonicalWindow(source);
   return StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(
       capacity, maximumPassCount, base ? base->storage.eventCount : capacity,
@@ -882,7 +887,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCanonicalTa
     const RuntimeCanonicalPassInputs::FrozenSource& live, const PendingNoteChangeVec& changes,
     const PlaybackViewSourceIdentity& target) {
   const auto* set = viewSetIfPrewarmed();
-  if (!set || &live.capture != &set->captureStaging || canonicalTailPhase != CanonicalTailPhase::Idle ||
+  if (!set || &live.capture != &set->frozenCaptureStaging() || canonicalTailPhase != CanonicalTailPhase::Idle ||
       captureBridgePhase != CaptureBridgePhase::Idle || canonicalPrefixPhase != CanonicalPrefixPhase::Ready ||
       canonicalPassInputs.generation() != canonicalPrefixGeneration || !canonicalPassInputs.ready() ||
       canonicalPassInputs.captureAttached() || !frozenCaptureCompanions.idle() ||
@@ -948,8 +953,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult
 LoopPlaybackRuntime::stepReservedFrozenCanonicalTail(PendingStopAdmission& stop, size_t quantum) {
   const auto* set = viewSetIfPrewarmed();
   if (!set || !stop.pending || !quantum || quantum != stop.rankedPreparationQuantum ||
-      stop.remainingClosureGrains || stop.frozenGeneration != set->captureStaging.frozenGeneration ||
-      !canonicalPassInputs.frozenSourceCurrent(set->captureStaging, stop.transportCommandEpoch) ||
+      stop.remainingClosureGrains || stop.frozenGeneration != set->frozenCaptureStaging().frozenGeneration ||
+      !canonicalPassInputs.frozenSourceCurrent(set->frozenCaptureStaging(), stop.transportCommandEpoch) ||
       canonicalTailPhase == CanonicalTailPhase::Idle || canonicalTailPhase == CanonicalTailPhase::Denied ||
       canonicalPassInputs.generation() != canonicalTailInputGeneration ||
       frozenCaptureCompanions.preparationGeneration() != canonicalTailRowGeneration ||
@@ -1019,10 +1024,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCompanionBr
   failure |= !base ? 0x0004u : 0u;
   failure |= base && (base->coverage.loopLengthTicks != loopLengthTicks ||
                       !base->coverage.contains(anchor.phase)) ? 0x0008u : 0u;
-  failure |= !set || canonicalPassInputs.frozenCapture() != &set->captureStaging ? 0x0010u : 0u;
+  failure |= !set || canonicalPassInputs.frozenCapture() != &set->frozenCaptureStaging() ? 0x0010u : 0u;
   failure |= !canonicalPassInputs.includesFrozenOverdub() ? 0x0020u : 0u;
   failure |= !canonicalPassInputs.matchesFrozenCommand(commandEpoch) ? 0x0040u : 0u;
-  failure |= !set || set->captureStaging.frozenGeneration != frozenGeneration ? 0x0080u : 0u;
+  failure |= !set || set->frozenCaptureStaging().frozenGeneration != frozenGeneration ? 0x0080u : 0u;
   failure |= canonicalPassInputs.loopLength() != loopLengthTicks ? 0x0100u : 0u;
   failure |= !frozenCompanionPasses.matchesOwners(canonicalPassInputs, frozenCaptureCompanions) ? 0x0200u : 0u;
   failure |= !frozenCompanionPasses.ready(targetSource) ? 0x0400u : 0u;
@@ -1100,8 +1105,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::frozenBridgePreparatio
   const auto& admission = frozenCaptureSourceAdmission;
   if (!canonicalCaptureBridge) return frozenCaptureCandidateReady(admission.frozenGeneration);
   const auto* set = viewSetIfPrewarmed();
-  return set && canonicalPassInputs.frozenCapture() == &set->captureStaging &&
-      set->captureStaging.frozenGeneration == admission.frozenGeneration &&
+  return set && canonicalPassInputs.frozenCapture() == &set->frozenCaptureStaging() &&
+      set->frozenCaptureStaging().frozenGeneration == admission.frozenGeneration &&
       canonicalPassInputs.matchesFrozenCommand(admission.transportCommandEpoch) &&
       frozenCompanionPasses.generation() == captureBridgePreparationGeneration &&
       frozenCompanionBridgeMap.generation() == captureBridgeMapGeneration &&
