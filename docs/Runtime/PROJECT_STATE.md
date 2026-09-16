@@ -1,19 +1,22 @@
 # Project state (execution context)
 
-**2026-09-16 DEVICE BLOCKER — task 2.3 increments A/B do not boot.** The memory
-check found the increment A/B firmware never reaches a running sketch: build
-`a7f10733…` emitted only `#CAP,3534734,DIAG,boot_reset,crash=1` before the USB
-serial port dropped; the variant with the undo prewarm bounded to 32 entries
-(`8c03dcfc…`) behaved the same and the port disappeared entirely. Bounding the
-prewarm therefore does not fix it. The device was restored by rebuilding and
-flashing commit `82a42221`, which boots and streams with the reference prewarm
-samples (`captures/task23-recover-verify/result.json`; its `crash=1` is the
-retained report from the increment-B faults). **Do not flash the branch tip to
-hardware.** The cause lies between `82a42221` and `8bef8ae8` (pending-note-change
-ownership, capture-preview ownership, deferred undo collection/publication) and is
-not isolated; the next step is a one-commit-at-a-time hardware bisect, which needs
-device access and a PROGRAM press whenever USB drops. Increments A/B are
-device-unverified.
+**2026-09-16 task 2.3 increments A/B boot abort — ROOT-CAUSED, FIXED, device-verified.**
+The memory check found the increment A/B firmware never reached a running sketch
+(`a7f10733…` emitted only `boot_reset,crash=1` before the USB port dropped; the
+32-entry-prewarm variant `8c03dcfc…` behaved the same, so the undo-stack prewarm was
+not the cause). A hardware bisect isolated it to **`0f398715` (increment A)**:
+`7a275d1f` boots (21386 bytes, crash=0), `0f398715` and `162df28f` do not (0 bytes).
+Root cause: `prewarmCaptureStopJobs` reserved `kRecordsPerBridge` (2048) rows for each
+job's `undoPassIds`/`undoCompanionIds`, and both are
+`InternalHeapFirstAllocator` vectors — 4 ring entries × 8 tracks × 2 lists × 2048 × 4 B
+= **512 KB demanded from a ~340 KB internal heap at boot**. Fixed by bounding that
+reserve to `kUndoCollectionReserveRows = 64` (16 KB total); a session longer than that
+publishes no prepared undo entry and takes the plain commit. The fixed tip is flashed
+and verified: build `91e6b38c…`, 22091 bytes streamed, 0 warnings, prewarm samples
+`PSRAM 5,141,952 -> 3,775,872`, `heap 352,256 -> 290,816`, chunks `512 -> 416` — about
+79 KB PSRAM and 20 KB internal heap over the reference build
+(`captures/task23-undo-prewarm-fix/result.json`). Native: 2188 cases, 2183 passed, one
+skipped, the same three reentry failures; build 6752 bytes RAM1 headroom.
 
 **2026-09-16 task 2.3 deferred protected undo publication wired
 (resumable-midi-boundary-playback-maintenance):** the normal deferred overdub stop

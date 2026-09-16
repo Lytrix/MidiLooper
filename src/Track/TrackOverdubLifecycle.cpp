@@ -34,6 +34,14 @@ constexpr uint16_t kDeferredStopPreparationQuantum = 32;
 /// below Config::ABSOLUTE_MAX_UNDO_ENTRIES: the eager per-track 512-entry reserve
 /// broke device boot (see prewarmProtectedUndo).
 constexpr uint16_t kProtectedUndoPrewarmEntries = 32;
+/// Bounded cold reservation for one job's undo-collection output lists.
+/// `PassIdList` / `EditPassIdList` are InternalHeapFirstAllocator (EditPass.h), so
+/// reserving RuntimePlaybackViewConfig::kRecordsPerBridge (2048) for all four ring
+/// entries across eight tracks demands about 512 KB of the ~340 KB internal heap
+/// and aborted boot (captures/task23-recover-verify, 2026-09-16). A session longer
+/// than this bound simply publishes no prepared undo entry and takes the plain
+/// commit.
+constexpr size_t kUndoCollectionReserveRows = 64;
 
 }  // namespace
 
@@ -57,7 +65,8 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
     if (!entry.rawRange.ready() && !entry.rawRange.reserveTail()) return false;
     // The bounded undo collection requires caller-supplied, pre-reserved private
     // outputs; it never grows them itself (a growth would be a denied collection).
-    const size_t rows = RuntimePlaybackViewConfig::kRecordsPerBridge;
+    const size_t rows = std::min<size_t>(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                                         kUndoCollectionReserveRows);
     if (entry.undoPassIds.capacity() < rows) entry.undoPassIds.reserve(rows);
     if (entry.undoCompanionIds.capacity() < rows) entry.undoCompanionIds.reserve(rows);
   }

@@ -1137,26 +1137,47 @@ trim at least as much as the fully wired policy would. The STOPPED/empty routes
 still publish no protected entry because they skip companion preparation; the
 legacy fault-fallback path keeps its cold `pushOverdubSessionOnStop`.
 
-### DEVICE BLOCKER — increments A/B do not boot (2026-09-16)
+### Increments A/B boot abort — root-caused, fixed, device-verified (2026-09-16)
 
-**Do not flash the branch tip to hardware.** The memory check found that the
-increment A/B firmware does not boot, and the device had to be restored from
-commit `82a42221`.
+The memory check found the increment A/B firmware did not boot; a hardware bisect
+then isolated and fixed it. The branch tip is flashable again.
 
-- Build `a7f10733…` (increment B, eager 512-entry per-track undo-stack prewarm):
-  uploaded; the device emitted only `#CAP,3534734,DIAG,boot_reset,crash=1` before
-  the USB serial port dropped mid-boot.
-- Build `8c03dcfc…` (same code, prewarm bounded to 32 entries): uploaded; the
-  device again produced nothing, and the USB serial port then disappeared
-  entirely. So the prewarm **size** is not the cause on its own.
-- Recovery: commit `82a42221` rebuilt and flashed; the device boots and streams
-  28,108 bytes with the reference prewarm samples
-  (`captures/task23-recover-verify/result.json`). Its `crash=1` is the retained
-  report from the earlier increment-B faults.
+**Symptoms.** Build `a7f10733…` (increment B, 512-entry per-track undo-stack
+prewarm) emitted only `#CAP,3534734,DIAG,boot_reset,crash=1` before the USB serial
+port dropped mid-boot. Build `8c03dcfc…` (same code, prewarm bounded to 32 entries)
+behaved the same and the port disappeared entirely, so the undo-stack prewarm was
+not the cause. The device was restored from commit `82a42221`
+(`captures/task23-recover-verify/result.json`).
 
-The cause is therefore somewhere between `82a42221` and `8bef8ae8`
-(pending-note-change ownership, capture-preview ownership, deferred undo
-collection/publication) and is **not isolated**. The next step is a hardware
-bisect, one commit at a time, confirming boot and stream after each; it needs
-device access and a PROGRAM press whenever USB drops. Until then increments A/B
-are device-unverified and must be treated as not flashable.
+**Bisect (one commit per flash, boot + stream checked each time).**
+
+| commit | content | result |
+|---|---|---|
+| `7a275d1f` | undo-baseline ownership | boots, 21,386 B, `crash=0` |
+| `0f398715` | **increment A, job-owned undo collection** | **no boot, 0 B** |
+| `162df28f` | increment B, protected undo publication | no boot, 0 B |
+
+**Root cause.** `prewarmCaptureStopJobs` reserved
+`RuntimePlaybackViewConfig::kRecordsPerBridge` (2048) rows for each job's
+`undoPassIds` and `undoCompanionIds`. Both are
+`std::vector<..., InternalHeapFirstAllocator<...>>` (`include/EditPass.h`), and the
+stop ring holds four entries per track across eight tracks:
+`32 x 2 x 2048 x 4 B = 512 KB` demanded from an internal heap with only ~340 KB
+free at boot. The allocation aborted before the sketch could stream.
+
+**Fix.** `kUndoCollectionReserveRows = 64` bounds that reserve
+(`std::min` with `kRecordsPerBridge`), i.e. 16 KB total. A session with more than
+64 wraps simply publishes no prepared undo entry and takes the plain commit — the
+stop stays correct.
+
+**Device verification of the fixed tip.** Build `91e6b38c…`: 22,091 bytes streamed,
+zero warnings, prewarm samples `PSRAM 5,141,952 → 3,775,872`, `heap 352,256 →
+290,816`, chunks `512 → 416` (`captures/task23-undo-prewarm-fix/result.json`). That
+is roughly **+79 KB PSRAM and +20 KB internal heap** over the reference build — the
+increment A/B footprint, with PSRAM still 45 % free and ~284 KB of internal heap
+left. Its `crash=1` is the retained report from the earlier faults.
+
+**Lesson recorded:** a per-entry cold reserve multiplied by the ring capacity and
+the track count must be sized against the *allocator's* heap tier, not against the
+policy maximum. Both this and the earlier 512-entry undo prewarm were caught only
+by the boot sample.
