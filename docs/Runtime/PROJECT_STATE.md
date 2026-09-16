@@ -1,5 +1,30 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 prepared companion history interval qualification
+(resumable-midi-boundary-playback-maintenance).** The Loop-owned prepared companion
+history (`preparedCompanionHistory_`) is borrowed worker scratch that outlives one
+grain, so a successor interval could previously observe, advance, commit, recycle or
+discard a predecessor's in-flight preparation. Every consumer now requires the owning
+interval identity, `PendingStopAdmission::intervalToken()` (frozenGeneration +
+stopTick) — a value, not an object address, so a copy of an admission made for credit
+probing or retargeting still identifies the same interval while a reused ring
+descriptor gets a fresh token; zero means the live session path.
+`preparedCompanionHistoryOwnedBy()` keeps Cold/Prewarmed receipt-free and
+owner-agnostic; `beginPreparedCompanionHistory` records the token and recycle
+completion plus `discardPreparedCompanionHistory` clear it. The deferred stop worker,
+the stop-commit helpers and `beginCollectOverdubStopUndoPasses` pass
+`stop.intervalToken()`; default arguments keep the live path source-compatible. New
+native `test_prepared_companion_history_is_job_qualified` covers successor and
+live-session refusals, stale discard, receipt ownership and reuse after recycling;
+the two Track-level `test_playback_prewarm` fixtures now begin the preparation with
+the admission that consumes it, and their stale unqualified consumers were qualified
+(rather than deleted) because the qualification is what makes those calls correctly
+answer "not mine". This closes the session/preview/undo/snapshot receipt slice. Full
+native 2,190 cases — 2,185 passed, 1 skipped, the same three intentional
+public-reentry failures; `teensy41-capture-serial` builds with 6,752 bytes RAM1
+headroom. Remaining in 2.3: causal predecessor/source identity per job, then
+successor-capture unguarding in a separate change. Task 2.3 remains unchecked.
+
 **2026-09-16 task 2.3 session-exit handoff receipt ring
 (resumable-midi-boundary-playback-maintenance).** The session-exit
 `SessionExitSnapshotHandoff` receipt is now a Loop-owned FIFO ring of
