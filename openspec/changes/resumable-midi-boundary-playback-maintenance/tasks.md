@@ -10,6 +10,27 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 deferred-stop receipt wiring — audit (decision required):** the two
+remaining receipt items need a design decision before implementation. (1) The
+normal deferred overdub stop publishes **no** `OverdubPassAdded` entry:
+`pushOverdubPassAdded` is only reached via `Track::finalizeCommitSideEffects` from
+the fault fallback `commitCaptureForStop`, while the deferred path calls
+`TrackPreparedStopCommit::commit` with `undo = nullptr` (`commitWithUndo` /
+`commitStoppedWithUndo` have no callers). So the job-owned undo baseline landed
+above is correct preparation but currently unreachable in production. Wiring it
+means running the prewarmed-but-unused resumable collection
+(`begin/stepCollectOverdubSessionUndoPasses`, `requiredSessionUndoCollectionGrains`)
+plus `prepareOverdubSessionEntry` with the job's baseline/slot and
+`TrackUndoPublication::begin`/`stepPrepare`/`publishAtCommit` at the atomic commit —
+new bounded phases, admission counters and contract rows before `AtomicTransfer`.
+(2) The session-exit receipt **cannot** be job-owned: it is retained past the job
+and consumed later by the idle publisher while playback reads it for the stale-root
+overlay, so it must be a **Loop-owned multi-slot ring**; `canHandoffSessionExitSnapshot()`
+should test a free slot rather than an unconsumed singleton. Open questions: ring
+size, and what the stale-root overlay does with more than one pending receipt. See
+CONTINUOUS-CAPTURE-OWNERSHIP.md ("Deferred-stop receipt wiring — audit and decision
+required"). No code changed for these two items.
+
 **2026-09-16 job-owned overdub-session undo baseline (partial 2.3):**
 `CaptureStopJob` now owns `ImmutableLoopSnapshotRef beforePublished` /
 `hasBeforePublished`. Admission moves the live `Track::overdubSessionBeforePublished_`

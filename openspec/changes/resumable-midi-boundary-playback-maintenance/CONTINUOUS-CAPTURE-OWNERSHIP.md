@@ -966,3 +966,54 @@ failures; full native 2,187 cases — 2,182 passed, one skipped, the same three;
 
 **Still open in this slice:** the session-exit snapshot handoff receipt and the
 prepared-companion history.
+
+## Deferred-stop receipt wiring — audit and decision required, 2026-09-16
+
+Audit of the two remaining receipt items found that the *consumer* side is not
+wired, which changes what "job-owned" has to mean.
+
+**Finding 1 — the normal (deferred) overdub stop publishes no `OverdubPassAdded`
+undo entry.** `pushOverdubPassAdded` (the only reader of the overdub-session undo
+baseline) is reached only from `Track::finalizeCommitSideEffects`, which is called
+only from `Track::commitCaptureForStop` — the *fault fallback* taken when
+`beginDeferredOverdubStop` denies admission. `processDeferredOverdubStopGrain`
+uses `TrackPreparedStopCommit::commit`, which passes `undo = nullptr`
+(`commitWithUndo` / `commitStoppedWithUndo` have no callers). This matches the
+standing note that "the protected undo publication is not yet connected to the
+production stop pipeline".
+
+Consequence for the previous slice: the job-owned undo baseline is correct
+preparation but is currently **unreachable in production** — the job branch
+requires a pending job, while the fallback that pushes the entry only runs when no
+job was admitted. Wiring the deferred publication is what makes it load-bearing.
+
+**Finding 2 — the session-exit receipt cannot be job-owned.** The handoff receipt
+is deliberately *retained past* the job: `handoffSessionExitSnapshot` fills the
+Loop singleton at DeferredCleanup, and the **idle snapshot publisher** consumes it
+much later (`LoopSnapshotPublish.cpp` clears `receipt.pending` after
+`queueSessionExitSnapshot`), while `LoopSnapshotPlayback.cpp` reads it for the
+stale-root overlay in between. Job-scoped ownership would drop it too early.
+
+**Required design (decision needed).**
+
+1. Connect the protected undo publication to the deferred path per DEC-063 /
+   [`UNDO-PUBLICATION-REASSESSMENT.md`](UNDO-PUBLICATION-REASSESSMENT.md): the
+   worker must run the **already-prewarmed but unused** resumable machinery —
+   `beginCollectOverdubSessionUndoPasses` / `stepCollectOverdubSessionUndoPasses` /
+   `requiredSessionUndoCollectionGrains`, then
+   `TrackUndo::prepareOverdubSessionEntry` with the **job's** baseline and slot,
+   then `TrackUndoPublication::begin` + `stepPrepare` + `publishAtCommit` at the
+   atomic commit. This adds bounded phases, admission counters and contract rows
+   before `PendingStopPhase::AtomicTransfer`.
+2. Make the session-exit receipt **Loop-owned but multi-slot** (a small ring sized
+   like the job ring), not job-owned. Lifetime: written by the committing job,
+   read by playback's stale-root overlay, consumed by the idle publisher; a free
+   slot — not an unconsumed singleton — is what `canHandoffSessionExitSnapshot()`
+   should test, so a successor is not serialized behind the publisher.
+
+Open questions the decision must settle: the receipt ring size, and what playback's
+stale-root overlay should do with **more than one** pending receipt (today it reads
+exactly one). Both are behaviour-visible and belong in a recorded decision rather
+than an improvised implementation.
+
+**Status:** audited, not implemented. No code changed for these two items.
