@@ -894,6 +894,98 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-16 — canonical base SEVT observation (host/gate defect; firmware RCA closed).**
+Firmware RCA **CLOSED / fix verified** (`842166a7`); SEVT lifecycle fix **SHIPPED**. Transport
+pre-dispatch arming proposal **REJECTED** as unnecessary for this RCA; reset-before-guard
+retained as independent hardening. The remaining defect is host-side: the canonical `base`
+managed run cannot observe a legitimate firmware SEVT result.
+
+Goal: allow the managed capture to survive the overdub-stop operation through deferred
+completion and the SEVT drain.
+
+Acceptance criteria (pinned before editing the host):
+
+- `base` reaches a genuine overdub commit on a known non-empty loop.
+- The overdub-stop press does **not** terminate observation.
+- Capture stays alive through `queue_accepted` -> `drain_emit_start` -> `drain_complete`.
+- SEVT inventory is evaluated only after that completion or a bounded timeout.
+- Missing SEVT becomes a **required** failure again once this works deterministically.
+- `scripts/hitl_stop_interruption.py` stays an *additional* interruption-path test, never the
+  canonical SEVT authority.
+- No firmware behavior changes bundled.
+
+Two host failures, kept separate until diagnosed:
+
+1. **Seeded-slot abort at the overdub-stop press** — the primary blocker, because it prevents
+   observing a legitimate firmware result (`captures/sevt-fix-rerun10`).
+2. **Empty-slot `skipped_empty`** — likely a fixture/precondition defect: if SEVT verification
+   requires committed overdub content, canonical setup must establish that precondition rather
+   than accidentally entering record on the Loop-row select and then clearing it
+   (`captures/sevt-fix-verify4`).
+
+**Diagnosis (recorded before editing the shared fixture; evidence `captures/sevt-host-probe`).**
+The seeded-slot path cannot produce canonical SEVT with a host-only change, because the one-shot
+arm is consumed before any overdub content exists:
+
+- `Playback stopped` (the pre-clear transport stop) -> `armed,1` -> `queue_accepted` -> the dump
+  is queued against the *pre-existing* seed content.
+- `Track cleared` empties the loop -> the idle drain logs `drain_reset_loop` and discards the
+  pending dump.
+- The overdub stop's deferred completion then logs `queue_skip_unarmed` — the new owner fires,
+  but the arm is already spent. This is the designed one-shot contract, not a defect.
+- Separately, the run tears the capture down at the press because the canonical
+  `PLAYING_AFTER_OVERDUB_STOP` request has no terminal-state confirmation for that landing.
+
+The **empty-slot path is therefore the primary one to fix**, and it matches the fixture-defect
+reading: `captures/sevt-fix-verify4` (fresh boot, cleaned slot) has **zero** `stored_verify`
+markers, i.e. the arm is still intact — nothing consumed it. Its observed failure is the
+precondition, not SEVT: the Loop-row select starts a recording, the pre-clear transport stop
+ends it, and the clear long press then fails to confirm `EMPTY`
+(`[error] Preconditions failed on track 5: clear step did not confirm EMPTY state`), so the run
+aborts before any genuine record; the record seal reported `skipped_empty`.
+
+Consequence for the plan: fix the empty-slot precondition (establish "empty, stopped, ready to
+record" without a clear long press) and the observation window together. Do **not** try to make
+the seeded-slot path emit canonical SEVT — that needs the arm/drain semantics the user has
+closed. Record the seeded-slot limitation rather than working around it.
+
+**Precondition fix landed (uncommitted at time of writing).** `_selected_slot_provably_empty`
+accepts the newest of the ST/DISP evidence (a fresh `EMPTY` edge beats a lagging DISP row) and
+`_await_selected_slot_empty` polls it instead of reading DISP once; the clear request's
+`already_satisfied` now also accepts a provably-empty *selected* slot. Regression
+`test_provably_empty_accepts_state_edge_before_slot_disp_row` fails without the state-edge
+acceptance and passes with it (27/27 in `scripts/test_clear_before_record_precondition.py`).
+Device (`captures/sevt-host-emptyslot`, fresh boot + quarantined workspace): the clear is now
+`ACTION ALREADY_SATISFIED requested=EMPTY ... state=EMPTY`, no precondition abort, and the
+record is genuine (`Recording stopped @ tick 516 (recStart=381 length=2304)`) instead of
+`skipped_empty`. `queue_accepted` fires at the overdub-stop press, i.e. the deferred-completion
+owner works on the canonical path too.
+
+**Remaining blocker (host/scenario, not firmware): the canonical ends PLAYING, so the drain
+never runs.** `processDeferredStoredMidiVerification` is gated on
+`!isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()`, and `--preset base`
+finishes on an overdub stop that returns to PLAYING. The dump therefore stays pending; the run
+then tears down at the overdub-stop confirmation timeout. Measured on the working
+stop-interruption run (`sevt-fix-verify1`): `queue_accepted` 1.4 ms after the stop, but
+`drain_emit_start` -> `drain_complete` spans **~10.2 s** across five phases, which exceeds the
+8 s `state_sync_timeout_ms`. So even a STOPPED landing loses the dump unless the host keeps
+observing.
+
+Proposed host fix (needs one scenario decision): reach an idle transport at the end of the
+canonical take and wait a bounded drain window (~15-20 s) for `drain_complete` before the run
+can abort or tear down, then evaluate the stored span/inventory as the pass criterion. The open
+question is whether `base` should finish on a transport stop — that changes the baseline's
+ending state, so it is the user's call, not a quiet fixture edit.
+
+Guard: success is **not** `drain_complete` alone. The host must retain the stored-content
+contract (expected stored span/inventory), so the gate cannot silently degrade into "the
+diagnostic machinery ran".
+
+Closure (one commit, after repeated device passes): restore `sevt_gate_required = True`, remove
+temporary C / advisory wording, and decide the fate of `bf8fb6a4`'s markers — keep them as
+permanent `SESSION_CAPTURE` diagnostics if they stay cheap; they are gated out of production and
+have proven useful for exactly this class of HITL diagnosis.
+
 **2026-09-13 — `resumable-midi-boundary-playback-maintenance` (user-selected).**
 DEC-060 records user approval of canonical per-pass companion application for
 combined capture preparation. Preserve immutable pass membership and apply rows

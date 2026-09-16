@@ -104,6 +104,43 @@ class CaptureTransitionEvidenceTests(unittest.TestCase):
         ]
         self.assertTrue(_serial_has_overdubbing_stopped(completed))
 
+    def test_stored_verification_drain_wait_requires_terminal_marker(self) -> None:
+        """A partial SEVT dump must not be scored before the drain completes.
+
+        The drain spans ~10.2 s across five phases (`sevt-fix-verify1`), so the wait
+        accepts only its terminal marker and only from after the baseline.
+        """
+        from hitl.legacy_record_baseline import _await_stored_verification_drain
+
+        class _Collector:
+            def __init__(self, lines: list[str]) -> None:
+                self._lines = list(lines)
+
+            def snapshot(self) -> list[str]:
+                return list(self._lines)
+
+        class _Abort:
+            def check(self):
+                return None
+
+        def await_drain(lines: list[str], *, after_index: int = 0) -> bool:
+            return _await_stored_verification_drain(
+                _Collector(lines), after_index=after_index, timeout_s=0.05, abort=_Abort()
+            )
+
+        self.assertTrue(await_drain(["#CAP,DIAG,stored_verify,drain_complete"]))
+        self.assertTrue(await_drain(["#CAP,DIAG,stored_verify,drain_reset_loop"]))
+        self.assertFalse(await_drain(["#CAP,11,SEVT,N,0,1,60"]))
+        self.assertFalse(
+            await_drain(
+                [
+                    "#CAP,DIAG,stored_verify,drain_complete",
+                    "#CAP,11,SEVT,N,0,1,60",
+                ],
+                after_index=1,
+            )
+        )
+
     def test_merge_transition_counts_uses_human_logs_when_st_missing(self) -> None:
         lines = [
             "#CAP,1,ST,Track,OVERDUBBING,PLAYING",
