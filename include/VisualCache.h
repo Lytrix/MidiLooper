@@ -172,6 +172,19 @@ struct CapturePreview {
     dirtyBars.clear();
   }
 
+  /// Constant-work ownership transfer of this preview's owned buffers. Used to
+  /// move the live preview into an admitted stop job without copying rows or
+  /// allocating; per-vector swap keeps the code tiny (no struct move-assign).
+  void swapWith(CapturePreview& other) {
+    std::swap(revision, other.revision);
+    std::swap(replacementRevision, other.replacementRevision);
+    notes.swap(other.notes);
+    noteStates.swap(other.noteStates);
+    openNoteIndices.swap(other.openNoteIndices);
+    changedNoteIndices.swap(other.changedNoteIndices);
+    dirtyBars.swap(other.dirtyBars);
+  }
+
   void markBarDirty(uint32_t bar) {
     if (dirtyBars.size() <= bar) {
       dirtyBars.resize(bar + 1, 0);

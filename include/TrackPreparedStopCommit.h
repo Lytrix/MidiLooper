@@ -11,6 +11,7 @@ struct LoopPlaybackRuntime;
 struct PendingStopAdmission;
 struct EmissionCursor;
 struct PreparedCapturePassTransfer;
+struct CapturePreview;
 // Stateless implementation of Track's handoff, kept independent of Arduino
 // so native tests execute the same joint preflight and publication body.
 namespace TrackPreparedStopCommit {
@@ -24,8 +25,10 @@ bool advanceAtomicTransfer(Loop& loop, LoopPlaybackRuntime& runtime, PendingStop
     PreparedCapturePassTransfer& transferred);
 // Finish canonical session bookkeeping after recycling. Preserve the selected
 // audible source, its cursor and ledger; Track owns transport-Stop silence.
+// `preview` is the admitted job's owned capture preview, so the deferred seal
+// can never consume a successor interval's preview.
 bool completeDeferredCleanup(Loop& loop, LoopPlaybackRuntime& runtime,
-    PendingStopAdmission& stop);
+    PendingStopAdmission& stop, CapturePreview& preview);
 // One admitted canonical preparation grain; setup and unused credit retirement
 // remain separate turns. Complete readiness queries consume no additional credit.
 RuntimePlaybackOrderBuildResult stepPreparation(Loop& loop, LoopPlaybackRuntime& runtime,

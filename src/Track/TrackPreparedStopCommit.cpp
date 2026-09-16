@@ -99,12 +99,13 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransfer(
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
-    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop) {
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    CapturePreview& preview) {
   if (stop.phase != PendingStopPhase::DeferredCleanup || !stop.finalizationComplete() ||
       stop.historyRecycleOwner) return false;
   if (!loop.handoffSessionExitSnapshot(stop.destination == PendingStopDestination::Playing
           ? CommitReason::OverdubStop : CommitReason::OverdubStopToStopped)) return false;
-  loop.completePreparedCapturePassDeferredCleanup();
+  loop.completePreparedCapturePassDeferredCleanup(preview);
   // Retire preparation workers only. The published bridge and any held-note
   // closure remain owned by the continuously advancing playback cursor.
   runtime.discardFrozenCaptureBridge();

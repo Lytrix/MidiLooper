@@ -120,9 +120,9 @@ EDIT_MANAGER_IMPL_MEM void EditManager::ensureNoteEditDisplayProjectionCachesBui
     noteEditSelectableDisplayCacheCaptureRevision_ = captureRevision;
     const NoteUtils::DisplayNoteVec* paintSource = &noteEditCommittedDisplayCacheNotes_;
     NoteUtils::DisplayNoteVec captureOverlaySource;
-    if (loop.captureActive() && !loop.capturePreview.notes.empty()) {
+    if (loop.captureActive() && !loop.capturePreviewView().notes.empty()) {
         captureOverlaySource = noteEditCommittedDisplayCacheNotes_;
-        for (const NoteUtils::DisplayNote& preview : loop.capturePreview.notes) {
+        for (const NoteUtils::DisplayNote& preview : loop.capturePreviewView().notes) {
             if (preview.noteId == kInvalidNoteId) {
                 continue;
             }

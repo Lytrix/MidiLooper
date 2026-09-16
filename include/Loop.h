@@ -128,6 +128,8 @@ struct Loop {
   uint64_t borrowedSealedCaptureGeneration_ = 0;
   const PendingNoteChangeVec* borrowedPendingChanges_ = nullptr;
   const void* borrowedPendingChangesOwner_ = nullptr;
+  const CapturePreview* borrowedPreview_ = nullptr;
+  const void* borrowedPreviewOwner_ = nullptr;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   bool captureHasLastAppendTick_ = false;
@@ -521,6 +523,21 @@ struct Loop {
   /// session then owns the job's prewarmed empty vector for its successor.
   void swapPendingNoteChanges(PendingNoteChangeVec& other) {
     pendingNoteChanges_.swap(other);
+  }
+  /// Readable capture preview for display consumers: the live session's preview,
+  /// or the admitted stop job's owned preview while that job borrows it. Writers
+  /// (capture ingress, wrap) keep using the `capturePreview` member directly.
+  /// Out of line (flash) so 40+ display call sites do not inline the branch into
+  /// ITCM, which would cost a whole 32 KB RAM1 bank.
+  const CapturePreview& capturePreviewView() const;
+  /// Job-identified non-owning borrow of an admitted stop job's owned preview.
+  bool borrowCapturePreview(const CapturePreview& preview, const void* owner);
+  /// Clears the borrow only while it still identifies `owner`.
+  bool releaseCapturePreviewBorrow(const void* owner);
+  /// Move the live capture preview into job ownership. Constant work: owned
+  /// buffers are exchanged, never copied, and no allocation occurs.
+  void swapCapturePreview(CapturePreview& other) {
+    capturePreview.swapWith(other);
   }
   /// Resolve incoming note against hold-candidate ids, then geometry.
   /// Wrap-head off (`endTick < startTick`) occupies `[S, loopLength) ∪ [0, E)` as **one** hold.

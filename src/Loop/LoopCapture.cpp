@@ -1633,6 +1633,24 @@ LOOP_COLD_MEM bool Loop::releasePendingNoteChangesBorrow(const void* owner) {
   return true;
 }
 
+LOOP_COLD_MEM const CapturePreview& Loop::capturePreviewView() const {
+  return borrowedPreview_ != nullptr ? *borrowedPreview_ : capturePreview;
+}
+
+LOOP_COLD_MEM bool Loop::borrowCapturePreview(const CapturePreview& preview, const void* owner) {
+  if (owner == nullptr) return false;
+  borrowedPreview_ = &preview;
+  borrowedPreviewOwner_ = owner;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::releaseCapturePreviewBorrow(const void* owner) {
+  if (borrowedPreview_ == nullptr || borrowedPreviewOwner_ != owner) return false;
+  borrowedPreview_ = nullptr;
+  borrowedPreviewOwner_ = nullptr;
+  return true;
+}
+
 LOOP_COLD_MEM bool Loop::copyCaptureIntervalEvents(SessionMidiEventVec& out) const {
   out.clear();
   const CaptureReadSource source = captureReadSource();

@@ -354,7 +354,7 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
         }
     }
 
-    for (const DisplayNote& preview : loop.capturePreview.notes) {
+    for (const DisplayNote& preview : loop.capturePreviewView().notes) {
         if (comparisonBudget == 0) {
             comparisonBudgetSpent = true;
             break;
@@ -425,7 +425,7 @@ DISP_CAPTURE_MEM void DisplayManager::logDrawSourceComposeDifferential(
              "hidden,%u,missed_preview,%u,compose_miss,%u,trunc,%u",
              static_cast<unsigned long>(micros()),
              static_cast<unsigned>(loop.visualCache.notes.size()),
-             static_cast<unsigned>(loop.capturePreview.notes.size()),
+             static_cast<unsigned>(loop.capturePreviewView().notes.size()),
              static_cast<unsigned>(loop.sealedCapturePreviewNotes().size()),
              loop.publishedSnapshotIsCurrent() ? 1u : 0u,
              static_cast<unsigned>(drawnNotes.size()), static_cast<unsigned>(hiddenCount),

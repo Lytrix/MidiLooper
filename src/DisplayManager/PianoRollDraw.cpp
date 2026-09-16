@@ -460,15 +460,15 @@ const VisualBarVec* DisplayManager::updateOverviewCaptureDensity(const Track& tr
     const uint8_t trackIndex = resolveTrackIndex(track);
     const bool contextChanged = displaySlot != overviewCaptureSlot_ ||
                                 trackIndex != overviewCaptureTrack_ ||
-                                loop.capturePreview.replacementRevision !=
+                                loop.capturePreviewView().replacementRevision !=
                                     overviewCaptureReplacementRevision_ ||
-                                overviewCaptureProcessedNotes_ > loop.capturePreview.notes.size();
+                                overviewCaptureProcessedNotes_ > loop.capturePreviewView().notes.size();
     if (contextChanged) {
         overviewCaptureBandMask_.clear();
         overviewCaptureProcessedNotes_ = 0;
         overviewCaptureSlot_ = displaySlot;
         overviewCaptureTrack_ = trackIndex;
-        overviewCaptureReplacementRevision_ = loop.capturePreview.replacementRevision;
+        overviewCaptureReplacementRevision_ = loop.capturePreviewView().replacementRevision;
     }
 
     const uint32_t ticksPerBar = Config::TICKS_PER_BAR;
@@ -483,18 +483,18 @@ const VisualBarVec* DisplayManager::updateOverviewCaptureDensity(const Track& tr
     }
 
     for (size_t noteIndex = overviewCaptureProcessedNotes_;
-         noteIndex < loop.capturePreview.notes.size(); ++noteIndex) {
+         noteIndex < loop.capturePreviewView().notes.size(); ++noteIndex) {
         DisplayWindowUtils::accumulateOverviewBandMask(overviewCaptureBandMask_,
-                                                       loop.capturePreview.notes[noteIndex],
+                                                       loop.capturePreviewView().notes[noteIndex],
                                                        ticksPerBar);
     }
-    overviewCaptureProcessedNotes_ = loop.capturePreview.notes.size();
+    overviewCaptureProcessedNotes_ = loop.capturePreviewView().notes.size();
 
     // Open notes keep growing after they were first folded in; re-fold just those.
-    for (const uint32_t previewNoteIndex : loop.capturePreview.openNoteIndices) {
-        if (previewNoteIndex < loop.capturePreview.notes.size()) {
+    for (const uint32_t previewNoteIndex : loop.capturePreviewView().openNoteIndices) {
+        if (previewNoteIndex < loop.capturePreviewView().notes.size()) {
             DisplayWindowUtils::accumulateOverviewBandMask(
-                overviewCaptureBandMask_, loop.capturePreview.notes[previewNoteIndex], ticksPerBar);
+                overviewCaptureBandMask_, loop.capturePreviewView().notes[previewNoteIndex], ticksPerBar);
         }
     }
 

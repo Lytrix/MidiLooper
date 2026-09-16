@@ -502,6 +502,9 @@ private:
     /// Job-owned pending note changes (Add/Shorten/Hide intents). Swapped out of
     /// the live session at admission; the Loop keeps a read borrow for display.
     PendingNoteChangeVec pendingChanges;
+    /// Job-owned capture preview. Swapped out of the live session at admission so
+    /// the deferred cleanup seals this interval's preview, not a successor's.
+    CapturePreview preview;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not

@@ -117,14 +117,14 @@ NOTE_EDIT_MEM bool NoteGeometryResolver::resolve(
         const Loop& selectedLoop = trackManager.getSelectedLoop(track);
         if (selectedLoop.captureActive()) {
             OverlapNoteIdObservation::unionAnalyzeOverlapNoteIds(
-                selectedLoop.capturePreview.notes, holdPitch, causingSpan->startTick,
+                selectedLoop.capturePreviewView().notes, holdPitch, causingSpan->startTick,
                 causingSpan->endTick, loopLength, focus.movingNoteId, holdCandidates,
                 &holdStats);
         }
         if (holdCandidates.size() > 0) {
             currentState.ensureVisibleRowsForDisplayNotes(committedDisplayNotes, holdCandidates);
             if (selectedLoop.captureActive()) {
-                currentState.ensureVisibleRowsForDisplayNotes(selectedLoop.capturePreview.notes,
+                currentState.ensureVisibleRowsForDisplayNotes(selectedLoop.capturePreviewView().notes,
                                                               holdCandidates);
             }
         }
