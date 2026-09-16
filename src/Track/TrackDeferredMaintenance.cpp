@@ -815,20 +815,26 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 }
 
 TRACK_COLD_MEM bool Track::processDeferredCanonicalPrefix() {
-  if (!isOverdubbing() || !loopsAllocated()) return false;
+  if ((!isPlaying() && !isOverdubbing()) || hasPendingDeferredOverdubStop() || !loopsAllocated()) return false;
   Loop& loop = getActiveLoop();
-  if (loop.visualCacheDirty || loop.hasDeferredVisualCacheWrapAppend() ||
-      !loop.overdubSourceSpanCacheReady()) return false;
+  if (MidiServiceDrain::canonicalPreparationHasPriorityWork(
+      isOverdubbing(), loop.visualCacheDirty, loop.hasDeferredVisualCacheWrapAppend(),
+      loop.overdubSourceSpanCacheReady())) return false;
   auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   if (!runtime) return false;
   const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
                                          loop.publishedSnapshotIdentity()};
   if (!runtime->canonicalPrefixNeedsService(loop.passes, source, loop.loopLengthTicks,
-                                            loop.canonicalStorageGeneration)) return false;
+                                            loop.canonicalStorageGeneration) &&
+      (runtime->preparedCanonicalWindow(source) ||
+       runtime->canonicalWindowPhase == LoopPlaybackRuntime::CanonicalWindowPhase::Denied ||
+       runtime->canonicalPrefixPhase != LoopPlaybackRuntime::CanonicalPrefixPhase::Ready)) return false;
   RuntimeCanonicalPassInputs::CurrentSource live{loop.playbackRevision, playbackGeneration,
                                                 loop.loopLengthTicks, loop.canonicalStorageGeneration};
-  (void)runtime->stepCanonicalPrefix(loop.passes, source, live,
-                                    MidiServiceDrain::kCanonicalPrefixInputQuantum);
+  const auto anchor = runtime->currentCycleCursor(
+      loop.lastTickInLoop == UINT32_MAX ? 0 : loop.lastTickInLoop, source.sourceGeneration);
+  (void)runtime->stepCanonicalBase(loop.passes, source, live, anchor,
+                                  MidiServiceDrain::kCanonicalPrefixInputQuantum);
   return true; // Setup, cleanup, denied, or Q input work consumed this turn.
 }
 
@@ -840,11 +846,11 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
   // else may stack into this owner turn.
   if (hasPendingDeferredOverdubStop()) {
 #if defined(SESSION_CAPTURE)
-    const auto phase = pendingStopAdmission_.phase;
-    const auto generation = pendingStopAdmission_.frozenGeneration;
-    const auto epoch = pendingStopAdmission_.transportCommandEpoch;
-    const auto destination = pendingStopAdmission_.destination;
-    const uint8_t slot = activeLoopIndex;
+    const auto phase = captureStopJob().admission.phase;
+    const auto generation = captureStopJob().admission.frozenGeneration;
+    const auto epoch = captureStopJob().admission.transportCommandEpoch;
+    const auto destination = captureStopJob().admission.destination;
+    const uint8_t slot = captureStopJob().slot;
     const uint8_t track = resolveTrackIndexForPersistence(*this);
     uint32_t startUs = 0;
     const auto boundary = RuntimeTimingTelemetry::captureStopGrainBoundary(startUs);
@@ -858,9 +864,27 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     const uint32_t endUs = micros();
     RuntimeTimingTelemetry::recordStopGrain(track, slot, static_cast<uint8_t>(phase),
         generation, epoch, static_cast<uint8_t>(destination), startUs, endUs, slackUs,
-        !pendingStopAdmission_.pending || pendingStopAdmission_.phase != phase, &boundary);
+        !captureStopJob().admission.pending || captureStopJob().admission.phase != phase, &boundary);
 #endif
     return;
+  }
+  // One physical-credit refill is one VisualCache owner turn. A full pool
+  // leaves other maintenance eligible; it must not create a busy retry loop.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && loopsAllocated() &&
+      LoopEventStore::freeChunkCount() != 0) {
+    auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+    if (runtime && runtime->canonicalCaptureOutput.store.empty() &&
+        runtime->canonicalCaptureOutput.store.reservedAppendReady() &&
+        runtime->canonicalCaptureChunks.availableChunks() < PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS) {
+      (void)runtime->replenishCanonicalCaptureChunk();
+      return;
+    }
+  }
+  if (isPlaying()) {
+    auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+    const auto phase = getActiveLoop().lastTickInLoop;
+    if (runtime && phase != UINT32_MAX && runtime->serviceBridgeWindow(
+        phase, Config::TICKS_PER_BAR, MidiServiceDrain::kCanonicalPrefixInputQuantum)) return;
   }
   updateGrowingRecordLoopLength(clockManager.getCurrentTick());
   Loop& activeLoop = getActiveLoop();

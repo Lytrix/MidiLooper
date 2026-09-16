@@ -18,6 +18,9 @@ enum class ChunkPersistenceState : uint8_t {
 
 namespace PersistenceQueue {
 
+/// Cold admission for subsequent allocation-free seal/retire operations.
+bool prewarm();
+
 /// Sealed chunks waiting for or undergoing SD write, in seal order.
 uint16_t queueDepth();
 

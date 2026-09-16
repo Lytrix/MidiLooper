@@ -8,6 +8,11 @@
 
 # PlatformIO build output and downloaded library dependencies
 .pio/
+# Local build-cache overrides used when the default cache is unavailable
+.pio-build-local*/
+
+# DSH harness session state
+.dsh/
 
 # HITL capture/session logs and host automation artifacts (disposable)
 captures/

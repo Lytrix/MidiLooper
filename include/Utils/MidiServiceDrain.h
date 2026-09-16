@@ -18,14 +18,22 @@ enum class DeferredIdleOwner : uint8_t {
   LoadAndDisplay = 4,
 };
 
-// One pre-stop canonical normalization child in a VisualCache turn. Existing
+// Overdub paint dirtiness cannot prioritize reconstruction that is disabled
+// during capture. Wrap append and source-span work still precede prework.
+inline bool canonicalPreparationHasPriorityWork(bool overdubbing, bool visualDirty,
+                                                bool wrapAppend, bool sourceSpansReady) {
+  return (!overdubbing && visualDirty) || wrapAppend || (overdubbing && !sourceSpansReady);
+}
+
+// One continuous canonical child in VisualCache or an unused wrap-append turn. Existing
 // stop/visual work has priority across all tracks, not just the selected track.
 constexpr uint8_t kCanonicalPrefixInputQuantum = 32;
 template <typename HasPriorityWork, typename StepPrefix>
 bool serviceCanonicalPrefixTurn(DeferredIdleOwner owner, uint8_t trackCount,
                                 uint8_t& nextTrack, HasPriorityWork hasPriorityWork,
                                 StepPrefix stepPrefix) {
-  if (owner != DeferredIdleOwner::VisualCache || trackCount == 0) return false;
+  if ((owner != DeferredIdleOwner::VisualCache && owner != DeferredIdleOwner::VisualCacheWrapAppend) ||
+      trackCount == 0) return false;
   for (uint8_t i = 0; i < trackCount; ++i)
     if (hasPriorityWork(i)) return false;
   for (uint8_t offset = 0; offset < trackCount; ++offset) {

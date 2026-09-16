@@ -101,8 +101,8 @@ Seeded from Stage R1C (2026-08-21). Update **Class** and **Bound** here; keep me
 | 18 | `processHitlSerialCommands` | capture builds only | none | **Unbounded** |
 | 19 | `processDeferredIdleMaintenance` × 8 | `main.cpp` | per-track only | **Unbounded** in aggregate |
 | 20 | `MidiButtonProcessor::processPendingPresses` | inside `handleMidiInput` | none | **Unbounded** |
-| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One admitted step applies at most one persistent-cursor bar and copies at most 8 membership pages of 16 refs. It does not rebuild a snapshot, enumerate a pass, or publish. An incomplete step leaves the candidate unpublished and resumable. | **Structurally bounded** |
-| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap and session-exit queue at their commit/stop owners; idle publishes from `stepPendingSnapshotPublish` | Queue only journal-capped fragments with exact parent identity. One idle turn admits two units (`kSnapshotIdleConstructionUnitsPerTurn` = 2). Each unit is one fragment start or one row-21 step. `storePublishedSnapshot` runs only after every queued wrap fragment, session-exit pass, and companion change is complete. Failure keeps the previous published root and does not publish a prefix. | **Structurally bounded** |
+| 21 | `LoopSnapshotConstruction::step` | Record session-exit drain, NOTE_EDIT close, and Phase 3 wrap-journal idle construction | One admitted step applies at most one persistent-cursor bar and copies at most 8 membership pages of 16 refs. Per-bar membership is bounded by the explicit `kSnapshotMembershipMaxRefsPerBar` design envelope, applied equally to event-bar and note-bar membership; pages stay lazily allocated. It does not rebuild a snapshot, enumerate a pass, or publish. An incomplete step leaves the candidate unpublished and resumable. A failed incorporation discards the partial candidate and leaves authoritative pass-change progress unchanged, so the exact fragment retries. | **Structurally bounded** (page count per unit); bar capacity is the `kSnapshotMembershipMaxRefsPerBar` envelope |
+| 22 | `Loop::queueOverdubWrapSnapshotJournal` / `Loop::queueSessionExitSnapshot` / `Loop::stepPendingSnapshotPublish` / `Loop::tryPublishSessionExitSnapshot` / `Loop::tryPublishNoteEditSnapshot` | Wrap and session-exit queue at their commit/stop owners; idle publishes from `stepPendingSnapshotPublish` | Queue only journal-capped fragments with exact parent identity. One idle turn admits two units (`kSnapshotIdleConstructionUnitsPerTurn` = 2). Each unit is one fragment start or one row-21 step. Pass-change progress becomes authoritative only after successful fragment incorporation; a failed fragment retains its exact checkpoint and discards any partially constructed candidate before retry. `storePublishedSnapshot` runs only after every queued wrap fragment, session-exit pass, and companion change is complete. Failure keeps the previous published root, does not publish a prefix, and emits a diagnostic for a persistent representability failure instead of retrying silently. | **Structurally bounded** |
 | 23 | `EditManager::processKindBoundaryUndoWarm` | Remainder after a completed display admission (`finishAdmittedDisplayPaintTurn` / prefix NOTE_EDIT force-paint). Not `ControlSurfaceManager::update()`. Playing geometry may still call it from `processPendingPlayingEditGeometry`. | One coalesced warm. Starts only after `kDeferredNoteEditPlaybackRefreshIdleMs` (80 ms) with no newer select change. Seed bound **133200 µs** from [`201106`](../../../captures/session_20260908_201106.log) (137 rows, 91.7–133.2 ms). Builds into a local `SessionUndoEntry`. Overrun or incomplete: remain pending, re-arm settle, do not publish `kindBoundaryUndoCache_`. Relocating the warm after display is not itself a bound. | **Empirically bounded** |
 | 24 | `SelectNavigation::buildSelectNavigationSlots` | Select encoder (`stepSelectNavSlot`) and select fader (`resolveFader1SelectTarget`) on the MIDI interval path | At most `2 * kSelectNavigationNeighborhoodRadiusSteps + 1` 16ths (3). One pass over the already-built selectable list; does not rematerialize or walk every loop 16th. Overrun: emit the neighborhood only; do not expand to a full-loop onset list. | **Structurally bounded** (steps); note filter is one pass of the pre-built selectable inventory |
 | 25 | `EditManager::tryCollectPreparedOverlapHoldNoteIds` / `collectAnalyzeOverlapNoteIds` / `unionAnalyzeOverlapNoteIds` | `NoteGeometryResolver::resolve` on geometry fader (MIDI interval) | Hit: `noteMembership(pitch, bar)` for hold bars only (±1 for analyze abut). Capture-active hit unions one pass of the already-built Stage 1 composed DisplayNotes. Miss: one pass of that same composed list (not visual cache). Result capped at `kOverlapNoteIdSetCapacity` (128). Overflow keeps the inserted ids and does not expand to a full-lane `baselineMap` fill. Scoped current-state upsert is at most those 128 ids. | **Structurally bounded** (hit bars + set cap); miss/union is one pass of the pre-built composed cache |
@@ -519,6 +519,22 @@ increment overflow denies. Canonical transfer precedes no-fail bridge publicatio
 no owner validation is repeated after the canonical revision changes. Publication
 uses scalar lifecycle/index/anchor updates only. The turn must not interleave
 emission or owner mutation. DeferredCleanup is entered without doing its work.
+When the bridge base is the ready canonical window, that same turn now invokes
+the existing preflighted view lifecycle handoff. It updates fixed view indices
+and at most one retired view's metadata; it does not traverse event payloads.
+The handoff body resides in flash to preserve the ITCM bank budget. Its integrated
+atomic timing still requires device deadline correlation. Cleanup retires the
+canonical-window receipt while leaving the selected current base intact, so a
+later stop can prepare another window.
+The production AtomicTransfer dispatch now returns a populated PLAYING joint
+commit's failure without invoking another transfer. Empty completion and stopped
+canonical recovery are explicit branches in the same native-tested helper;
+neither can authorize a populated PLAYING canonical-only commit.
+Cycle anchors now read the existing runtime cycle in a constant-work helper;
+ordinary playback increments it once per serviced wrap if no bridge stream is
+selected. Transport projection reanchoring resides in the existing cold flash
+section to preserve the ITCM bank budget. This placement and cycle bookkeeping
+do not establish the current-phase or integrated emission-deadline bound.
 The production scheduler still must prove canonical capture was staged from the
 same frozen input and admit history preparation before calling this entry point;
 this helper alone does not activate ranked-stop routing or establish HITL timing.
@@ -781,7 +797,12 @@ post stages 1–3 (`DFRAME` resolve max 2.6 ms); pre-fix [`033502`](../../../cap
 unit and then return. The unit is one persistent-cursor bar and at most
 eight membership pages of sixteen references. The step may copy or sort
 that page and move the cursor. It must not walk the whole snapshot, rebuild
-a pass, or call `storePublishedSnapshot`.
+a pass, or call `storePublishedSnapshot`. Per-bar membership capacity is the
+explicit `kSnapshotMembershipMaxRefsPerBar` design envelope (derived page
+count), applied equally to event-bar and note-bar membership; pages are lazily
+allocated, so the envelope costs nothing until content uses it. A failed
+incorporation discards the partial candidate and leaves authoritative
+pass-change progress unchanged, so the exact fragment can be retried.
 
 **Row 22 goal:** Separate queue from publish. Wrap and session-exit only
 enqueue bounded work (journal fragments with exact parent identity, or a
@@ -794,7 +815,13 @@ changes). It does not copy or scan the historical store. Admission
 cardinality is two units per Snapshot idle turn. Publication is atomic and only when wrap journals,
 queued session-exit passes, construction, and companion changes are all
 complete. A failed or incomplete candidate is never selected; the previous
-published root stays authoritative.
+published root stays authoritative. Pass-change traversal progress is a
+transaction: it becomes authoritative only after successful incorporation of
+the fragment that produced it, and a failed fragment keeps its exact checkpoint
+while any partially constructed candidate is discarded before retry. A
+persistent representability failure keeps the previous root, blocks
+publication, and emits a diagnostic rather than retrying the same impossible
+fragment silently.
 
 Phase 2 publication is admitted at NOTE_EDIT close and idle
 `stepPendingSnapshotPublish`. Record and overdub session-exit **queue** at
@@ -817,7 +844,8 @@ Selected structural caps:
 | Cap | Value |
 |-----|-------|
 | Membership page capacity | `kSnapshotMembershipPageCapacity` = 16 |
-| Membership pages per bar | `kSnapshotMembershipMaxPages` = 8 |
+| Bar-membership design envelope | `kSnapshotMembershipMaxRefsPerBar` = 4096 refs/bar (event-bar and note-bar alike) |
+| Membership pages per bar | `kSnapshotMembershipMaxPages` = 256 (derived from the envelope) |
 | Journal changes | `kSnapshotWrapJournalMaxChanges` = 32 |
 | Journal affected bars | `kSnapshotWrapJournalMaxAffectedBars` = 32 |
 | Journal membership entries | `kSnapshotWrapJournalMaxMembershipEntries` = 64 |
@@ -827,9 +855,9 @@ Selected structural caps:
 |----------|---------------|----------------|
 | **Unit cap** | One persistent-cursor bar and at most 8 membership pages of 16 references | Queue: journal-capped fragments with exact parent identity. Idle: two units per turn; each unit is one fragment start or one row-21 step |
 | **Maximum indivisible step** | Select/update or copy/sort one membership page (≤ 16 refs) and advance the cursor. No full-span walk, pass reconstruction, or publish | Start at most one journal-capped fragment (32 changes). Live-record start consumes only unconsumed `capture.store` events from the persisted index. Session-exit length mismatch first clones one snapshot header when applied live-record ticks fit the sealed length. Non-fit discard remains a content-sized destructor |
-| **Progress** | Persistent bar / membership cursor, `complete()`, `failed()` | Ordered fragments and pass-change cursor; previous published root stays selected until `freeze()` succeeds |
+| **Progress** | Persistent bar / membership cursor, `complete()`, `failed()`. Authoritative pass-change progress advances only when the fragment is incorporated (DEC-047 transaction) | Ordered fragments and pass-change cursor; previous published root stays selected until `freeze()` succeeds |
 | **Completion** | All admitted changes applied and `failed()` is false | Idle stores a complete root only after wrap journals, session-exit passes, construction, and companions are done |
-| **Overrun / failure** | `failed_`; `freeze()` returns null; retain the fragment and resume | Keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay committed |
+| **Overrun / failure** | `failed_` plus `failureReason()`; `freeze()` returns null; the partial candidate is discarded and the exact fragment retries from unchanged authoritative progress | Keep the previous published snapshot; do not publish a prefix; compatibility `LoopPass` records stay committed; a persistent representability failure parks publication with a diagnostic |
 
 `T_RT_reserve` remains the 3.6 device gate for construction-attributable MIDI
 gap and deadline lateness ([DEC-053](../../DECISION_LOG.md#dec-053--t_rt_reserve-is-ceiling-plus-per-turn-midi-boundary)).
@@ -991,3 +1019,145 @@ still be included in full active MIDI-gap validation. Unknown cadence, absent
 phase summaries and overflow cannot establish a bound. The retained first-late
 sample is not an exhaustive event trace. See the active change's
 `FOCUSED-STOP-HITL.md` for the schema and still-open attribution requirements.
+
+
+### 2026-09-15 retained bridge bases and rolling emission views
+
+`LoopPlaybackRuntime` owns two immutable bridge source bases independently of its
+three rolling emission views. Both use `RuntimePlaybackView` storage and cold
+prewarm; native fixed-external accounting increases by 192,512 bytes per full
+runtime. Source bases survive preparation cleanup and cannot be reused while
+their bridge is selected. This extends the existing DEC-058 owner, not canonical
+pass ownership or the persistence format.
+
+`serviceBridgeWindow` occupies one existing deferred maintenance turn: setup,
+coverage fill at `kCanonicalPrefixInputQuantum`, order, or lifecycle promotion.
+The existing bridge stream supplies immutable ordered source rows. Indexed
+bridge emission covers an incomplete refill without a new MIDI-service site,
+full gather, sort, or delayed launch. `acknowledgeThroughPhase` and window seek
+perform bounded binary searches over prepared indexes; due-event emission keeps
+the existing cursor/ledger policy. No wall-clock deadline bound is claimed.
+
+Second-source closure inheritance reuses compiler Inherit/CarryOffs/mask work.
+`requiredRetainedClosureGrains` separately overbounds copied Off visits and the
+possible merge-sort width increase. This does not change the provisional 6,240
+baseline or create a runtime admission ceiling. A changed live ledger restarts
+only unpublished bridge compilation from an already complete canonical mapping;
+refresh turns need explicit device measurement before any real-time reservation.
+
+Boundary-only bridge reconciliation reuses stable records and both sorted
+permutations. For Q>0, a conservative entry-turn bound is
+ceil(L/Q) + ceil(R/Q) + 2*ceil((B+I)/Q) + 4, where L is the bounded ledger
+count, R existing records, B immutable base events and I prepared insertions.
+Each entry includes at most the fixed 128-entry ledger scan. No ordering or
+canonical-copy work recurs. Admission's affected-ledger comparison visits at
+most 128 current and 128 captured entries, with fixed pitch/identity lookups.
+An affected-ledger/deadline change can require another reconciliation; real-time
+reservations must still prove completion against actual MIDI service cadence.
+Two 128-bit summaries per bridge add 64 fixed bytes per two-bridge runtime.
+No new active allocation or source-capacity policy is introduced.
+
+2026-09-16 canonical prework clarification: the existing VisualCache canonical
+owner also advances the shared canonical-base merge/fill/order continuation at
+Q=32. Prefix completion yields before base work; completed bases yield the owner.
+Wrap append/source spans retain priority. No additional MIDI service call site,
+allocation or new quantum is introduced. Stop resumes the same continuation;
+prewarmed storage defines estimate capacity, independent of tail size. Device
+reservations and remaining stop latency require the open HITL checkpoint.
+
+2026-09-16 continuous canonical preparation: the existing Q=32 child also uses
+otherwise-unused wrap-append turns, with existing global priority checks and
+one child per turn. PLAYING and OVERDUBBING share the same continuation. Proven
+append/snapshot-identity reuse resets selection metadata while retaining owned
+completed passes. Final companion merge performs one additional scratch event
+write per consumed addition; per-pass descriptors are recorded at the existing
+pass transition. Successful cleanup swaps canonical scratch/output pointers
+and rebinds metadata in constant work, then reselects descriptors/history in
+later Q-sized turns. Scratch provenance is owner+generation matched. An extra
+2,048-entry Pass descriptor array is prewarmed externally (16 KiB on device),
+with no additional event buffer. These are implementation bounds, not measured
+real-time reservations; task 5.3 must remeasure the augmented merge grain.
+
+
+### Task 2.3 capture-range storage foundation (2026-09-16)
+
+`LoopEventStore::sealCaptureRange` exchanges pre-reserved ownership directories,
+seals at most one tail through the existing fixed-pool persistence owner, and
+updates scalar receipts. No event/chunk traversal, directory growth or pool
+allocation occurs at the cut. `CaptureRange::read` checks/copies one row;
+`releaseGrain(Q)` releases at most Q chunk references via the existing pool owner.
+Readers are invalidated before release; pool-lifetime mismatch cannot release a
+new occupant. Cold `reserveCaptureTail` retains the existing vector allocator's
+failure policy; cold destruction can release the full range and is excluded from
+active scheduling. This is a structural storage bound, not a measured Track
+punch deadline or full note-lifetime reservation. No production Track route is
+connected to it yet. Queue capacity, simultaneous memory, undo/snapshot ownership
+and task 2.3/5.3 acceptance remain open.
+
+
+### Stopped-interval Track receipt (task 2.3 integration)
+
+Stop admission saves fixed identity/geometry fields and swaps the pending-note
+map into the existing worker's job. It traverses no pending-note nodes. Reserved
+closure resolves the saved slot and phase. Following history recycling, each
+admitted cleanup turn erases at most one job-owned pending-note node and returns;
+Loop cleanup cannot stack on that turn. The number of these additional cleanup
+turns is the number of pending notes at punch-out, bounded by accepted reservation
+capacity. This adds post-commit cleanup turns; the provisional preparation-grain
+estimate is not an end-to-end stop deadline. Allocator node-release latency and
+device timing remain unverified. This does not classify the remaining Loop
+preview/session cleanup as bounded or prove concurrent live capture safety.
+
+
+### Reserved canonical copy (task 2.3 integration, 2026-09-16)
+
+The production CanonicalRewrite phase now writes at most Q=32 ordered retained
+rows into a separate prewarmed output store using physical chunk credits. After
+copy completion, that phase releases at most one raw source chunk per turn.
+These are separate turns. Canonical output admission reserves eight 256-event
+chunks cold. Post-commit credit replenishment reserves one physical chunk and
+returns; an eligible idle VisualCache turn likewise reserves one and returns.
+`ChunkReservation::reserveChunks(N)` is proportional to newly requested credits;
+only cold setup requests eight at once. A failed growth rolls back only newly
+acquired credits. Cold teardown can release all remaining credits and is excluded
+from active scheduling.
+
+Active pass transfer preflights source chunk count against the prewarmed row
+capacity; it cannot enter the allocation fallback. Already-owned output transfers
+at a full pool. Copy, raw release, credit refill and retained preview cleanup need
+separate device timing; these structural bounds do not close a deadline gate.
+The added per-runtime reservation directory uses 1,024 payload bytes, plus 1,024
+payload bytes of prewarmed output chunk IDs and eight reserved EventChunks. This
+is single-head output admission, not the still-missing live-plus-queued budget.
+
+
+### Pending capture and playback reset (2026-09-16)
+
+A runtime borrows the admitted job's PendingStopAdmission until cleanup releases
+it. Reset with that borrower returns false after scalar STOPPED retargeting and
+existing generation/owner epoch checks; it does not discard source, copy output
+or worker state. Track invalidation preserves playback generation and blocks
+emission until recovery. The existing terminal STOPPED path retries cache reset
+with no borrower. This is a lifetime bound, not a deadline proof or FIFO support.
+Prewarm capture telemetry emits one bounded record per prewarm call, using pool
+counters and the existing internal-heap sample, with no PSRAM header traversal.
+
+
+**2026-09-16 overlap capture diagnostic stack evidence:** observed stack-boundary
+fault at _svfprintf_r in the dense automated capture. Foreground-only observation
+scratch (two fixed NoteId sets and line buffer) now resides in RAM2 and is cleared
+on use. Compiled snapshotOverlapHoldCandidates local frame is 76 bytes vs 1,372
+previously; both exclude register saves and do not bound the full call chain or
+interrupt stack. RAM1 static headroom stays 5,600 bytes. Two post-change dense
+runs avoid reboot; focused Stop-window silence passes. No full deadline/stack
+safety guarantee follows. See active FOCUSED-STOP-HITL.md for exact evidence.
+
+
+**2026-09-16 descriptor ownership and dense evidence:** Track stop head now uses
+cold-prewarmed stable metadata slots (four entries, 616 ARM bytes per track,
+external-first). Advancing a retired head is constant-time after existing bounded
+cleanup; there is no per-job duplicate worker/staging graph. Concurrent admission
+is still blocked by the existing staging/session owners. Local code/ring admission
+tests do not close that gate. Dense timing review records a CanonicalOrder grain
+crossing a service deadline and zero correlated emission rows; no audible deadline
+PASS is established. See active FOCUSED-STOP-HITL.md.

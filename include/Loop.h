@@ -299,6 +299,8 @@ struct Loop {
 
   void beginCapture(CapturePhase phase, uint32_t playheadPhaseTick = 0);
   void discardCapture();
+  /// Stop worker only: retire one copied raw-input chunk, preserving preview/session.
+  bool retireCopiedCaptureSourceGrain(bool closeCapture = false);
   /// Overdub session start S (`beginCapture` playheadPhaseTick). UINT32_MAX = no session.
   uint32_t playheadPhaseTick = UINT32_MAX;
   void openOverdubSession(uint32_t sessionPlayheadPhaseTick);
@@ -623,6 +625,39 @@ struct Loop {
     storePublishedSnapshot(std::move(snapshot), revision);
   }
   const LoopSnapshotChangeSet* pendingWrapJournalChangesForTest() const;
+  /// Fingerprint of the authoritative (committed) pass-change fragment
+  /// progress. DEC-047 transaction fixture: it must be unchanged across a
+  /// failed fragment and advance only after successful incorporation.
+  struct SnapshotFragmentProgressForTest {
+    bool active = false;
+    size_t batchSize = 0;
+    size_t batchIndex = 0;
+    size_t nextStoreIndex = 0;
+    EventId nextEventId = kInvalidEventId;
+    uint32_t nextCanonicalOrder = 0;
+    uint8_t openNoteCount = 0;
+    bool cursorComplete = false;
+  };
+  SnapshotFragmentProgressForTest snapshotFragmentProgressForTest() const;
+  bool snapshotFragmentBlockedForTest() const;
+  uint16_t snapshotFragmentConsecutiveFailuresForTest() const;
+  /// Fault-inject the next pass-change fragment construction after `units`
+  /// applied construction units. Consumed by the publisher on first use.
+  void failNextSnapshotFragmentAfterUnitsForTest(
+      size_t units, LoopSnapshotFailureReason reason = LoopSnapshotFailureReason::Injected) {
+    snapshotFragmentFailAfterUnitsForTest_ = units;
+    snapshotFragmentFailReasonForTest_ = reason;
+  }
+  size_t snapshotFragmentFailureInjectionForTest() const {
+    return snapshotFragmentFailAfterUnitsForTest_;
+  }
+  LoopSnapshotFailureReason snapshotFragmentFailureReasonForTest() const {
+    return snapshotFragmentFailReasonForTest_;
+  }
+  void clearSnapshotFragmentFailureInjectionForTest() {
+    snapshotFragmentFailAfterUnitsForTest_ = static_cast<size_t>(-1);
+    snapshotFragmentFailReasonForTest_ = LoopSnapshotFailureReason::Injected;
+  }
 #endif
   ImmutableLoopSnapshotRef publishedSnapshot() const;
   /// True when the published root was stored at the current `playbackRevision`.
@@ -647,6 +682,7 @@ struct Loop {
   /// Retains uncovered sealed rows, then merges this pass's closed preview before
   /// `capturePreview.clear()`. Release stays `releaseSealedCapturePreviewIfCovered`.
   void retainCapturePreviewAtSeal();
+  void retainCapturePreviewAtSeal(const CapturePreview& source);
   /// True when `visualCache` has consumed the sealed revision and contains each
   /// sealed row. A current published snapshot is not membership proof (`012714`
   /// wrap 2: snap=1 dropped sealed=47). Revision without those rows is also not
@@ -872,6 +908,10 @@ struct Loop {
   /// instead of allocating when the declared horizon is exhausted.
   SealOutcome stagePreparedCapturePassFromActiveAdmission(uint32_t sealedAtTick,
                                                            CommitReason reason);
+  /// Stage a job-owned canonical capture. Its source is consumed on success;
+  /// later publication must not retire the Loop's independent live capture.
+  SealOutcome stagePreparedCapturePassFromActiveAdmission(
+      Capture& source, uint32_t sealedAtTick, CommitReason reason);
   /// Wrap-window synthetic note-offs on live capture.store (record/overdub stop policy).
   LoopStopFinalize::Result finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick);
   /// May grow canonical pass storage. Call only while non-real-time preparation is allowed.
@@ -892,10 +932,11 @@ struct Loop {
   /// mutable capture ownership and invalidate derived identities only. It
   /// deliberately does not retain display rows, build views, persist, or run
   /// any content-sized cleanup.
-  void completePreparedCapturePassAtomic();
+  void completePreparedCapturePassAtomic(bool retiresLiveCapture = true);
   /// Non-atomic display/source cleanup retained for legacy STOPPED callers.
   /// A deferred active-transport owner must schedule this separately.
   void completePreparedCapturePassDeferredCleanup();
+  void completePreparedCapturePassDeferredCleanup(CapturePreview& source);
   bool commitPendingCapturePass(CommitReason reason = CommitReason::RecordStop);
   void discardPendingCapturePass();
 
@@ -1010,7 +1051,7 @@ struct Loop {
   /// the active admission path and already has enough ownership-row capacity
   /// for the capture chunks it is allowed to detach.
   SealOutcome stagePreparedCapturePassWithChunkStorage(
-      uint32_t sealedAtTick, CommitReason reason, CommittedChunkIdList* prewarmedChunkIds);
+      Capture& source, uint32_t sealedAtTick, CommitReason reason, CommittedChunkIdList* prewarmedChunkIds);
   bool preparedCompanionRecycleSourceCurrent() const;
   void publishPreparedCompanionHistory(); // No-fail publication after joint preflight.
   void markPassDerivedStale();
@@ -1032,6 +1073,11 @@ struct Loop {
   std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
   std::unique_ptr<SessionExitSnapshotHandoff> sessionExitSnapshotHandoff_;
   uint64_t pendingSnapshotCompanionGeneration_ = 0; // Clear/swap ABA guard; appends use size.
+#if defined(PIO_UNIT_TEST_NATIVE)
+  size_t snapshotFragmentFailAfterUnitsForTest_ = static_cast<size_t>(-1);
+  LoopSnapshotFailureReason snapshotFragmentFailReasonForTest_ =
+      LoopSnapshotFailureReason::Injected;
+#endif
 
   void clearPublishedSnapshot();
   /// `revision` is the `playbackRevision` the snapshot content represents. Zero

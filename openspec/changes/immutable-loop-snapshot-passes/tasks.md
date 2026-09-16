@@ -186,6 +186,45 @@ cursors rather than treating that locality as an execution bound.
     native **83/83**. Device recapture remains open.
   - Keep the global overdub undo entry pass-based while construction is pending; snapshot-identity undo attachment remains a later task.
 
+- [x] 3.7 Fix dense-bar snapshot representability and fragment transaction (2026-09-16).
+      Device record/overdub pair `task23-dense-snapshot-cc-playback` has 734
+      committed effective rows; bar 2 alone needs 260 event references, above
+      the fixed 16-page (256-reference) per-bar ceiling. Construction failed at
+      `appendCurrentReference`, and because pass-change progress had already
+      advanced the fragment was discarded, so the truncated candidate was
+      published (regression
+      `test_dense_device_capture_snapshot_preserves_every_committed_row`
+      reported 710/734). DEC-047 amendment 2026-09-16 owns the contract.
+  - Express `kSnapshotMembershipMaxRefsPerBar` as an explicit design envelope
+    and derive the page-count limit from it; apply the same envelope to
+    event-bar and note-bar membership; keep pages lazily allocated; widen
+    page-count state to `uint16_t`.
+  - Make fragment incorporation transactional: authoritative pass-change
+    progress advances only after successful incorporation; a failed fragment
+    retains its exact checkpoint, discards any partially constructed candidate,
+    and the previous published root is never replaced by a prefix.
+  - Distinguish transient/budget failure (retry the exact fragment) from
+    persistent representability failure (keep the previous root, block
+    publication, emit a diagnostic, do not loop silently).
+  - Add a 257-reference boundary fixture, a partial-apply failure/retry
+    exactly-once fixture, and retain the 734-row dense device regression.
+  - **SHIPPED 2026-09-16.** `kSnapshotMembershipMaxRefsPerBar = 4096` (256 pages)
+    derived envelope; four `uint8_t` page counters widened to `uint16_t`;
+    event and note membership share the envelope; partial candidate discarded on
+    failure; representability failure parks publication after two consecutive
+    failures (`DIAG,snapshot_fragment,...` capture-gated). Focused native
+    `test_loop_take_survival` **132/132** (734-row device regression, 257-ref
+    boundary, partial-apply-exactly-once, parking). Full native **2166 passed,
+    1 skipped, 3 known task-2.3 reentry failures**; capture-serial build SUCCESS
+    with RAM1 free for locals **6752** (unchanged).
+  - **Hardware verification 2026-09-16** (build `5bb90b47bdae299d630be640…`,
+    `captures/task23-dense-snapshot-fix-record` + `...-fix-playback`): the dense
+    recipe stored 766 effective rows with bar 2 at **270 refs (> 256)**; four
+    restart cycles played 765 rows with **0 duplicates** and only the
+    pre-existing terminal loop-boundary Off (`NoteId = 0`, tick 3839) absent.
+    The 24-row representability omission is fixed on device. Ordering parity and
+    the terminal-Off ledger/pairing behavior remain separate pre-existing items.
+
 ## 4. Direct consumers
 
 - [x] 4.1 Make playback preparation read the active snapshot directly and use snapshot identity for freshness while retaining safe fallback; select the bounded playback span range before applying projection and keep `playbackEventPhase` scalar in the hot path.

@@ -84,6 +84,12 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   // previous pass has already become canonical; this fresh staging generation
   // represents only the successor capture tail.
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (wrapped && runtime) {
+    const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
+                                            loop.publishedSnapshotIdentity()};
+    (void)runtime->resumeCanonicalAfterAppend(loop.passes, priorPlaybackRevision, source,
+        {loop.playbackRevision, playbackGeneration, loop.loopLengthTicks, loop.canonicalStorageGeneration});
+  }
   RuntimePlaybackViewSet* viewSet =
       runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
   if (runtime == nullptr || viewSet == nullptr || !viewSet->prewarmed) {

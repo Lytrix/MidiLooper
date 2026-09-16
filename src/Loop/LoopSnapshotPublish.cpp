@@ -255,6 +255,12 @@ bool midiEventMatchesSnapshot(const MidiEvent& existing, const MidiEvent& incomi
       existing.channel != incoming.channel) {
     return false;
   }
+  // Snapshot membership must not collapse a new controller value (or another
+  // controller) merely because an older pass has a CC at the same tick.
+  if (incoming.type == midi::ControlChange) {
+    return existing.data.ccData.cc == incoming.data.ccData.cc &&
+           existing.data.ccData.value == incoming.data.ccData.value;
+  }
   if ((incoming.isNoteOn() || incoming.isNoteOff()) &&
       existing.data.noteData.note != incoming.data.noteData.note) {
     return false;
@@ -964,25 +970,36 @@ LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
 
 LOOP_COLD_MEM __attribute__((noinline)) bool startNextPassChangeFragmentImpl(
     Loop& loop, PendingSnapshotPublishBox& box, const ImmutableLoopSnapshotRef& parent) {
-  PendingPassChangeProgress& progress = box.passChangeProgress;
+  // Transaction (DEC-047 amendment 2026-09-16): build the fragment on a working
+  // copy. Authoritative `passChangeProgress` advances only after the fragment is
+  // successfully incorporated, so a failed fragment is rebuilt from the same
+  // source state instead of being skipped.
+  box.fragmentProgress = box.passChangeProgress;
+  box.fragmentProgressValid = true;
+  PendingPassChangeProgress& progress = box.fragmentProgress;
   LoopSnapshotChangeSet changes;
   uint32_t affectedBars = 0;
   uint32_t membershipEntries = 0;
   if (!appendNextPassChangeFragment(loop, *parent, progress, changes, affectedBars,
                                     membershipEntries, box.fromLoadedPasses)) {
-    box.persistLiveRecordCursor();
+    box.fragmentProgressValid = false;
     return false;
   }
-  box.persistLiveRecordCursor();
   if (changes.notes.empty() && changes.events.empty()) {
-    if (progress.complete()) {
-      if (progress.passId != kInvalidPassId) {
-        box.appliedPassIds.push_back(progress.passId);
+    // Nothing to construct, so the fragment is trivially incorporated.
+    box.passChangeProgress = progress;
+    box.fragmentProgressValid = false;
+    box.consecutiveFragmentFailures = 0;
+    box.fragmentBlocked = false;
+    box.persistLiveRecordCursor();
+    if (box.passChangeProgress.complete()) {
+      if (box.passChangeProgress.passId != kInvalidPassId) {
+        box.appliedPassIds.push_back(box.passChangeProgress.passId);
       }
       box.constructionPassId = kInvalidPassId;
-      progress.reset();
+      box.passChangeProgress.reset();
     }
-    return progress.active || !box.queuedPassIds.empty();
+    return box.passChangeProgress.active || !box.queuedPassIds.empty();
   }
   {
 #if defined(SESSION_CAPTURE)
@@ -990,6 +1007,11 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPassChangeFragmentImpl(
 #endif
     box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
   }
+#if defined(PIO_UNIT_TEST_NATIVE)
+  box.construction->failAfterUnitsForTest(loop.snapshotFragmentFailureInjectionForTest(),
+                                          loop.snapshotFragmentFailureReasonForTest());
+  loop.clearSnapshotFragmentFailureInjectionForTest();
+#endif
   box.constructionPassId = progress.passId;
   box.applyingCompanions = false;
   return true;
@@ -1156,13 +1178,76 @@ bool remainingWrapPublishWork(const PendingSnapshotPublishBox& box) {
          (box.sessionExitQueued && !box.companionsApplied);
 }
 
+/// A representability failure cannot be fixed by rebuilding the same fragment.
+/// After this many consecutive failures publication parks with the previous root
+/// selected instead of consuming an idle turn forever.
+constexpr uint16_t kSnapshotFragmentMaxConsecutiveFailures = 2;
+
+const char* snapshotFailureReasonName(LoopSnapshotFailureReason reason) {
+  switch (reason) {
+    case LoopSnapshotFailureReason::MembershipCapacity:
+      return "membership_capacity";
+    case LoopSnapshotFailureReason::Allocation:
+      return "allocation";
+    case LoopSnapshotFailureReason::Injected:
+      return "injected";
+    default:
+      return "none";
+  }
+}
+
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+LOOP_COLD_MEM void emitSnapshotFragmentFailure(const PendingSnapshotPublishBox& box,
+                                               LoopSnapshotFailureReason reason) {
+  char line[176];
+  snprintf(line, sizeof(line),
+           "#CAP,%lu,DIAG,snapshot_fragment,fail,reason=%s,n=%u,pass=%u,next=%u,blocked=%u",
+           static_cast<unsigned long>(micros()), snapshotFailureReasonName(reason),
+           static_cast<unsigned>(box.consecutiveFragmentFailures),
+           static_cast<unsigned>(box.constructionPassId),
+           static_cast<unsigned>(box.passChangeProgress.nextEventId),
+           box.fragmentBlocked ? 1u : 0u);
+  DebugSessionCapture::appendCaptureTextLine(line);
+}
+#endif
+
+void noteFragmentIncorporationFailure(LoopSnapshotFailureReason reason,
+                                      PendingSnapshotPublishBox& box) {
+  if (box.consecutiveFragmentFailures < UINT16_MAX) {
+    ++box.consecutiveFragmentFailures;
+  }
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  emitSnapshotFragmentFailure(box, reason);
+#else
+  (void)reason;
+#endif
+  // Transient (allocation) and injected failures retry the exact fragment. A
+  // persistent representability failure parks publication: the previous root
+  // stays selected and the same impossible fragment is not rebuilt every turn.
+  if (reason == LoopSnapshotFailureReason::MembershipCapacity &&
+      box.consecutiveFragmentFailures >= kSnapshotFragmentMaxConsecutiveFailures) {
+    box.fragmentBlocked = true;
+  }
+}
+
 LOOP_COLD_MEM __attribute__((noinline)) bool finishPendingConstruction(
     PendingSnapshotPublishBox& box) {
   ImmutableLoopSnapshotRef frozen = box.construction->freeze();
   if (!frozen) {
+    // Partial candidate is discarded; authoritative progress is untouched.
+    box.fragmentProgressValid = false;
     return false;
   }
   box.unpublishedCandidate = std::move(frozen);
+  if (box.fragmentProgressValid) {
+    // The fragment was incorporated, so its working progress becomes
+    // authoritative. This is the transaction commit point.
+    box.passChangeProgress = box.fragmentProgress;
+    box.fragmentProgressValid = false;
+    box.persistLiveRecordCursor();
+  }
+  box.consecutiveFragmentFailures = 0;
+  box.fragmentBlocked = false;
   if (box.wrapJournalInFlight && !box.queuedWrapJournals.empty()) {
     box.queuedWrapJournals.erase(box.queuedWrapJournals.begin());
   }
@@ -1371,6 +1456,31 @@ const LoopSnapshotChangeSet* Loop::pendingWrapJournalChangesForTest() const {
     return nullptr;
   }
   return &pendingSnapshotPublishBox_->queuedWrapJournals.front().changes;
+}
+
+Loop::SnapshotFragmentProgressForTest Loop::snapshotFragmentProgressForTest() const {
+  SnapshotFragmentProgressForTest out{};
+  if (!pendingSnapshotPublishBox_) {
+    return out;
+  }
+  const PendingPassChangeProgress& progress = pendingSnapshotPublishBox_->passChangeProgress;
+  out.active = progress.active;
+  out.batchSize = progress.batch.size();
+  out.batchIndex = progress.batchIndex;
+  out.nextStoreIndex = progress.nextStoreIndex;
+  out.nextEventId = progress.nextEventId;
+  out.nextCanonicalOrder = progress.nextCanonicalOrder;
+  out.openNoteCount = progress.openNoteCount;
+  out.cursorComplete = progress.cursor.complete;
+  return out;
+}
+
+bool Loop::snapshotFragmentBlockedForTest() const {
+  return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->fragmentBlocked;
+}
+
+uint16_t Loop::snapshotFragmentConsecutiveFailuresForTest() const {
+  return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->consecutiveFragmentFailures : 0;
 }
 #endif
 
@@ -1858,6 +1968,11 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   bool readyToFinish = false;
   while (remaining > 0) {
     if (!box.construction) {
+      // A persistent representability failure parked publication: the previous
+      // root stays selected and the same impossible fragment is not rebuilt.
+      if (box.fragmentBlocked) {
+        break;
+      }
       bool started = false;
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
       const uint32_t heapBefore = MemoryMonitor::getInternalHeapFreeBytes();
@@ -1901,7 +2016,12 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     emitSnapshotUnitStepCapture(*this, heapBefore);
 #endif
     if (box.construction->failed()) {
+      const LoopSnapshotFailureReason reason = box.construction->failureReason();
+      // Discard the partially constructed candidate; authoritative progress is
+      // untouched because the fragment was built on the working copy.
+      noteFragmentIncorporationFailure(reason, box);
       box.construction.reset();
+      box.fragmentProgressValid = false;
       if (!box.passChangeProgress.active) {
         box.constructionPassId = kInvalidPassId;
       }
@@ -1951,7 +2071,11 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     emitSnapshotUnitCapture(*this, "finish", heapBefore);
 #endif
     if (!finished) {
+      // Freeze/allocation failure. The partial candidate is discarded and
+      // authoritative progress is untouched (fragmentProgressValid cleared in
+      // finishPendingConstruction), so the exact fragment is retried.
       box.construction.reset();
+      box.fragmentProgressValid = false;
       if (!box.passChangeProgress.active) {
         box.constructionPassId = kInvalidPassId;
       }

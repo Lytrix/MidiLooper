@@ -111,6 +111,9 @@ SC_MEM_ATTR void recStopStage(const char* stage, uint32_t elapsedUs, uint32_t du
                               size_t chunkRefCount, const char* outcome);
 SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                                    uint32_t heapAfter, const char* outcome);
+SC_MEM_ATTR void capturePrewarm(uint8_t track, uint8_t slot, bool fullViews,
+                               bool ready, uint16_t credits, uint16_t freeChunks,
+                               uint32_t heapFree);
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);

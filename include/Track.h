@@ -135,6 +135,7 @@ public:
   void stopOverdubbingToStopped();  // Stop overdub, end in STOPPED (for MIDI Stop)
 #if defined(SESSION_CAPTURE)
   void printStoppedServiceStatusForHitl();
+  void printStoppedCaptureContentForHitl();
 #endif
   /// Arm gated PLAYING MIDI polls after overdub→PLAYING. Not all PLAYING.
   void armPlayingMidiDrainAfterOverdubStop();
@@ -405,6 +406,9 @@ public:
 
 private:
   friend class TrackUndo;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  friend struct TrackCaptureStopTestAccess;
+#endif
   friend class StorageManager;  // Allow StorageManager to access private members for loading
   bool ignorePlaybackMidiInput;  // Ignore playback-echo MIDI during overdub capture
   bool playbackEmitMidiOutput_ = false;
@@ -467,8 +471,35 @@ private:
   uint32_t queuedStartQueuedAtTick = UINT32_MAX;
   uint32_t queuedStartGridTicks = Config::TICKS_PER_16TH_STEP;
   TrackPlaybackRuntime playbackRuntime;
-  /// One active overdub admission per track; not duplicated for inactive slots.
-  PendingStopAdmission pendingStopAdmission_;
+  using PendingNoteMap = std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash>;
+  // The existing worker's stopped interval. Live input never owns this map.
+  // Staging/Loop session migration must finish before multiple jobs are admitted.
+  struct CaptureStopJob {
+    PendingStopAdmission admission;
+    Loop* owner = nullptr;
+    LoopId loopId = kInvalidLoopId;
+    uint8_t slot = 0;
+    uint32_t phaseTick = 0;
+    uint32_t loopLengthTicks = 0;
+    uint64_t interval = 0;
+    PendingNoteMap pendingNotes;
+  };
+  // Stable descriptors only: shared canonical/companion worker scratch is not
+  // duplicated. Additional admission stays guarded until session isolation.
+  struct CaptureStopJobs {
+    static constexpr size_t kCapacity = 4;
+    CaptureStopJob entries[kCapacity];
+    size_t head = 0;
+    size_t count = 0;
+  };
+  struct CaptureStopJobsDeleter {
+    void operator()(CaptureStopJobs* jobs) const;
+  };
+  std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
+  bool prewarmCaptureStopJobs();
+  CaptureStopJob& captureStopJob();
+  const CaptureStopJob& captureStopJob() const;
+  uint64_t captureInterval_ = 0;
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
   bool hasRecordCaptureBaselineGeometry_ = false;
@@ -495,6 +526,9 @@ private:
                                        uint16_t idleDirtyAfter);
 
   bool beginDeferredOverdubStop(PendingStopDestination destination, uint32_t currentTick);
+  static bool appendReservedCaptureNoteOffForOwner(
+      Loop& loop, CaptureAdmissionStaging& staging,
+      CaptureNoteReservation& reservation, uint32_t phaseTick);
   bool processDeferredOverdubStopGrain();
   void requestDeferredOverdubStopToStopped();
 
@@ -515,7 +549,7 @@ private:
   LoopPool loopPool_;
 
   // Event storage (pending notes during recording - target is active loop)
-  std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> pendingNotes;
+  PendingNoteMap pendingNotes;
   // Notes received while ARMED before external MIDI Start (downbeat pre-roll)
   std::unordered_map<std::pair<uint8_t, uint8_t>, PendingNote, PairHash> armedPreRollNotes;
   

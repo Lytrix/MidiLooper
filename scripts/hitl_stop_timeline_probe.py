@@ -126,6 +126,15 @@ def emission_deadlines_met(timeline: dict, track: int, slot: int) -> bool:
         if row.get("track") == track and row.get("slot") == slot)
 
 
+def normal_stop_cleanup_count(timeline: dict, track: int, slot: int) -> int:
+    # Visible PLAYING can precede canonical publication. Only a completed
+    # DeferredCleanup grain with the playing destination retires that owner.
+    return len({row["start_us"] for row in timeline.get("grains", [])
+                if row.get("valid") and row.get("track") == track
+                and row.get("slot") == slot and row.get("phase") == 10
+                and row.get("finished_phase") == 1 and row.get("destination") == 0})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, required=True)
@@ -149,6 +158,8 @@ def main() -> int:
                         help="Stop without new notes to exercise the empty frozen tail.")
     parser.add_argument("--overdub-duration-s", type=float, default=0.4,
                         help="Time in each overdub before stopping; use a full loop to exercise wrap.")
+    parser.add_argument("--late-overdub-note", action="store_true",
+                        help="Send the pass note near stop, after any earlier wraps, to retain a populated tail.")
     parser.add_argument("--dense-stop-probe", action="store_true",
                         help="Seed dense notes, align stop to playback marker, and require On/Off trace evidence")
     parser.add_argument("--stop-after-marker-ms", type=float, default=0.0,
@@ -175,6 +186,7 @@ def main() -> int:
         "overdub_passes_requested": args.overdub_passes,
         "empty_overdub": args.empty_overdub,
         "overdub_duration_s": args.overdub_duration_s,
+        "late_overdub_note": args.late_overdub_note,
         "events": events,
     }
     run_token = uuid.uuid4().hex
@@ -370,13 +382,15 @@ def main() -> int:
 
                     # A distinct note makes each active per-pass playback path observable.
                     note = 83 + pass_index
+                    note_delay_s = max(0.0, args.overdub_duration_s - 0.10) if args.late_overdub_note and not args.empty_overdub else 0.0
+                    time.sleep(note_delay_s)
                     if not args.empty_overdub:
                         out_port.send(mido.Message("note_on", channel=midi_channel, note=note, velocity=100))
                         time.sleep(0.10)
                         out_port.send(mido.Message("note_off", channel=midi_channel, note=note, velocity=0))
                         events.append({"event": "overdub_note", "pass": pass_index + 1,
                                        "channel": midi_channel, "note": note})
-                    time.sleep(max(0.0, args.overdub_duration_s - (0 if args.empty_overdub else 0.10)))
+                    time.sleep(max(0.0, args.overdub_duration_s - note_delay_s - (0 if args.empty_overdub else 0.10)))
 
                     if args.dense_stop_probe:
                         marker_seen.clear()
@@ -453,9 +467,11 @@ def main() -> int:
             and entry["slot"] == args.loop_slot - 1
             and entry["from_state"] == 7 and entry["to_state"] == 5
         )
+        cleanup_count = normal_stop_cleanup_count(timeline, args.track_number - 1, args.loop_slot - 1)
         result.update(stop_start_line=before_stop, stop_timeline=timeline,
                       timing_issues=midi_boundary_timing_issues(summary),
-                      normal_stop_verified=normal,
+                      normal_stop_verified=normal and cleanup_count >= args.overdub_passes,
+                      normal_stop_cleanups_observed=cleanup_count,
                       overdub_passes_observed=stop_to_playing_count)
         if any("#CAPTURE_RECONNECT" in line for line in _lines(capture_log)):
             result["error"] = "serial reconnected after run fence; attribution invalid"
@@ -466,12 +482,12 @@ def main() -> int:
             result["probe_scope"] = "stop correlation; full real-time reservation is not established"
             if not result["emission_evidence_complete"]:
                 result["error"] = "stop trace lacks correlated NoteOn and NoteOff evidence"
-        if (normal and stop_to_playing_count >= args.overdub_passes
+        if (result["normal_stop_verified"] and stop_to_playing_count >= args.overdub_passes
                 and timeline["correlation_complete"]
                 and not result["timing_issues"] and "error" not in result):
             exit_code = 0
         elif "error" not in result:
-            result["error"] = "flushed capture did not prove a correlated normal stop"
+            result["error"] = "flushed capture did not prove each normal stop through background cleanup"
 
     if args.record_only:
         result["probe_scope"] = "recording interval only; no overdub-stop acceptance"

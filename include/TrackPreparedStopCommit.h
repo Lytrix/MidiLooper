@@ -14,6 +14,18 @@ struct PreparedCapturePassTransfer;
 // Stateless implementation of Track's handoff, kept independent of Arduino
 // so native tests execute the same joint preflight and publication body.
 namespace TrackPreparedStopCommit {
+// Empty post-wrap stops retain the current audible source and need no bridge.
+bool requiresBridgeRefresh(const Loop& loop, const LoopPlaybackRuntime& runtime,
+    const PendingStopAdmission& stop, const EmissionCursor& cursor);
+// Production atomic dispatch. A populated PLAYING transfer must publish its
+// bridge jointly; a failed preflight never falls back to canonical-only commit.
+bool advanceAtomicTransfer(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, const EmissionCursor& cursor,
+    PreparedCapturePassTransfer& transferred);
+// Finish canonical session bookkeeping after recycling. Preserve the selected
+// audible source, its cursor and ledger; Track owns transport-Stop silence.
+bool completeDeferredCleanup(Loop& loop, LoopPlaybackRuntime& runtime,
+    PendingStopAdmission& stop);
 // One admitted canonical preparation grain; setup and unused credit retirement
 // remain separate turns. Complete readiness queries consume no additional credit.
 RuntimePlaybackOrderBuildResult stepPreparation(Loop& loop, LoopPlaybackRuntime& runtime,

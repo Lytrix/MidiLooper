@@ -131,7 +131,7 @@ bool Track::isOverdubStopping() const {
 }
 
 bool Track::hasPendingDeferredOverdubStop() const {
-  return pendingStopAdmission_.pending;
+  return captureStopJobs_ && captureStopJobs_->count != 0;
 }
 
 bool Track::isPlaying() const {

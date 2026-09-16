@@ -79,6 +79,100 @@ class ManagedCaptureTests(unittest.TestCase):
         self.assertIsNone(session.poll())
         self.assertIsNone(active_managed_capture())
 
+    def test_resolve_managed_run_timeout_default_and_env(self) -> None:
+        import os
+
+        from hitl.managed_capture import (
+            DEFAULT_MANAGED_RUN_TIMEOUT_S,
+            resolve_managed_run_timeout,
+        )
+
+        self.assertEqual(resolve_managed_run_timeout(12.0), 12.0)
+        self.assertEqual(resolve_managed_run_timeout(-5.0), 0.0)
+        self.assertEqual(DEFAULT_MANAGED_RUN_TIMEOUT_S, 360.0)
+        old = os.environ.get("HITL_MANAGED_RUN_TIMEOUT_S")
+        try:
+            os.environ["HITL_MANAGED_RUN_TIMEOUT_S"] = "42"
+            self.assertEqual(resolve_managed_run_timeout(), 42.0)
+            os.environ["HITL_MANAGED_RUN_TIMEOUT_S"] = "not-a-number"
+            self.assertEqual(resolve_managed_run_timeout(), DEFAULT_MANAGED_RUN_TIMEOUT_S)
+            del os.environ["HITL_MANAGED_RUN_TIMEOUT_S"]
+            self.assertEqual(resolve_managed_run_timeout(), DEFAULT_MANAGED_RUN_TIMEOUT_S)
+        finally:
+            if old is None:
+                os.environ.pop("HITL_MANAGED_RUN_TIMEOUT_S", None)
+            else:
+                os.environ["HITL_MANAGED_RUN_TIMEOUT_S"] = old
+
+    def test_watchdog_returns_run_code(self) -> None:
+        from hitl.managed_capture import _run_with_watchdog
+
+        self.assertEqual(_run_with_watchdog(lambda: 0, 5.0), 0)
+        self.assertEqual(_run_with_watchdog(lambda: 2, 5.0), 2)
+
+    def test_watchdog_aborts_stalled_run_and_returns(self) -> None:
+        import time as _time
+
+        from hitl.managed_capture import _run_with_watchdog
+
+        started = _time.monotonic()
+        code = _run_with_watchdog(lambda: _time.sleep(30) or 0, 0.25)
+        elapsed = _time.monotonic() - started
+        self.assertEqual(code, 3)
+        self.assertLess(elapsed, 5.0, "watchdog must return promptly on a stall")
+
+    def test_watchdog_disabled_when_nonpositive(self) -> None:
+        from hitl.managed_capture import _run_with_watchdog
+
+        self.assertEqual(_run_with_watchdog(lambda: 7, 0.0), 7)
+
+    def test_watchdog_propagates_worker_exception(self) -> None:
+        from hitl.managed_capture import _run_with_watchdog
+
+        def _boom() -> int:
+            raise RuntimeError("scenario failed")
+
+        with self.assertRaises(RuntimeError):
+            _run_with_watchdog(_boom, 5.0)
+
+    def test_owner_pipe_stops_capture_when_owner_exits(self) -> None:
+        import os as _os
+        import subprocess
+        import sys as _sys
+
+        root = _SCRIPT_DIR.parent
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            read_fd, write_fd = _os.pipe()
+            proc = subprocess.Popen(
+                [
+                    _sys.executable,
+                    str(root / "scripts" / "capture_session.py"),
+                    "--port", "/dev/null",
+                    "--boot-wait", "0",
+                    "--out-dir", str(out_dir),
+                    "--reconnect-delay", "0.05",
+                    "--owner-fd", str(read_fd),
+                ],
+                pass_fds=(read_fd,),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            _os.close(read_fd)
+            try:
+                proc.wait(timeout=3.0)
+                self.fail("capture_session must stay alive while the owner pipe is open")
+            except subprocess.TimeoutExpired:
+                pass
+            _os.close(write_fd)  # owner exits
+            try:
+                proc.wait(timeout=10.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5.0)
+                self.fail("orphaned capture_session must exit when the owner pipe closes")
+            self.assertEqual(proc.returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -82,6 +82,7 @@ ChunkLifecycleState LoopEventStore::poolLifecycle_[LoopEventStoreConfig::POOL_CH
 uint16_t LoopEventStore::poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 #endif
 bool LoopEventStore::poolReady_ = false;
+uint64_t LoopEventStore::poolLifetime_ = 1;
 uint8_t LoopEventStore::sdLoadStagingDepth_ = 0;
 uint8_t LoopEventStore::ephemeralSealDepth_ = 0;
 
@@ -135,6 +136,7 @@ void LoopEventStore::initPool() {
 }
 
 void LoopEventStore::resetPoolForTests() {
+  ++poolLifetime_;
   if (pool_) {
     poolFree(pool_);
   }
@@ -378,9 +380,14 @@ bool LoopEventStore::hasSealedChunks() const {
   return false;
 }
 
-bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut) {
+bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppendDeny* denyOut,
+                                      ChunkReservation* reservation) {
   if (denyOut != nullptr) {
     *denyOut = LoopEventStoreAppendDeny::None;
+  }
+  if (capturePoolLifetime_ && capturePoolLifetime_ != poolLifetime_) {
+    if (denyOut) *denyOut = LoopEventStoreAppendDeny::PoolUnavailable;
+    return false;
   }
   if (!poolReady_) {
     initPool();
@@ -404,7 +411,7 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppen
   }
 
   if (tailId == UINT16_MAX) {
-    tailId = allocChunk();
+    tailId = reservation ? reservation->take() : allocChunk();
     if (tailId == UINT16_MAX) {
       if (denyOut != nullptr) {
         *denyOut = LoopEventStoreAppendDeny::PoolExhausted;
@@ -416,7 +423,7 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppen
 #endif
       return false;
     }
-    retainChunkReference(tailId);
+    if (!reservation) retainChunkReference(tailId); // Reserved ownership moves without a ref walk.
     chunkIds_.push_back(tailId);
   }
 
@@ -477,22 +484,35 @@ const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   return kEmpty;
 }
 
-bool LoopEventStore::beginRewriteFromOrderedSource(LoopEventStoreRewriteCursor& cursor,
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ownsRewriteCursor(
+    const LoopEventStoreRewriteCursor& cursor) const {
+  return cursor.owner == this && cursor.ownershipGeneration == ownershipGeneration_ &&
+      cursor.poolLifetime == poolLifetime_;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginRewriteFromOrderedSource(LoopEventStoreRewriteCursor& cursor,
                                                     size_t sourceCount) const {
   cursor = LoopEventStoreRewriteCursor{};
   if (!pool_ || sourceCount > eventCount_) {
     return false;
   }
+  cursor.owner = this;
+  cursor.ownershipGeneration = ownershipGeneration_;
+  cursor.poolLifetime = poolLifetime_;
   cursor.targetCount = sourceCount;
   cursor.trimRemaining = sourceCount;
   cursor.active = true;
   return true;
 }
 
-LoopEventStoreRewriteResult LoopEventStore::stepRewriteFromOrderedSource(
+// Maintenance grain: keep the bounded rewrite worker in flash, preserving ITCM
+// for capture ingress and avoiding another 32 KiB RAM1 allocation bank.
+LoopEventStoreRewriteResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepRewriteFromOrderedSource(
     LoopEventStoreRewriteCursor& cursor, const MidiEvent* source,
     const uint16_t* orderedIndices, size_t sourceCount, size_t sourceCapacity,
     size_t eventQuantum) {
+  if (cursor.owner != this || cursor.ownershipGeneration != ownershipGeneration_ ||
+      cursor.poolLifetime != poolLifetime_) return LoopEventStoreRewriteResult::Denied;
   if (!cursor.active) {
     return cursor.sourceIndex == sourceCount && cursor.targetCount == sourceCount
                ? LoopEventStoreRewriteResult::Complete
@@ -611,9 +631,11 @@ size_t LoopEventStore::firstIndexForBar(uint32_t bar) const {
 }
 
 void LoopEventStore::clear() {
-  for (uint16_t id : chunkIds_) {
-    freeChunk(id);
+  ++ownershipGeneration_;
+  if (!capturePoolLifetime_ || capturePoolLifetime_ == poolLifetime_) {
+    for (uint16_t id : chunkIds_) freeChunk(id);
   }
+  capturePoolLifetime_ = 0;
   chunkIds_.clear();
   eventCount_ = 0;
   barFirstIndices_.clear();
@@ -1266,5 +1288,197 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseLastCommittedChunkRef(
   refs.pop_back();
   releaseChunkReference(id);
   tryFreeChunk(id);
+  return true;
+}
+
+// Capture range admission is cold. The action edge only exchanges two already
+// allocated ownership directories and seals the old tail (all earlier chunks
+// were sealed on append). No tail contents or chunk list are copied.
+bool LoopEventStore::reserveCaptureTail() {
+  if (eventCount_ || (!chunkIds_.empty() &&
+      (!capturePoolLifetime_ || capturePoolLifetime_ != poolLifetime_))) return false;
+  if (!chunkIds_.empty()) {
+    return chunkIds_.size() == 1 && chunk(chunkIds_.front()).used == 0 &&
+        chunkIds_.capacity() >= LoopEventStoreConfig::POOL_CHUNK_COUNT;
+  }
+  initPool();
+  if (!pool_) return false;
+  if (!PersistenceQueue::prewarm()) return false;
+  chunkIds_.reserve(LoopEventStoreConfig::POOL_CHUNK_COUNT);
+  const uint16_t id = allocChunk();
+  if (id == UINT16_MAX) return false;
+  retainChunkReference(id);
+  chunkIds_.push_back(id);
+  capturePoolLifetime_ = poolLifetime_;
+  barIndexDirty_ = true;
+  return true;
+}
+
+bool LoopEventStore::sealCaptureRange(CaptureRange& destination) {
+  auto& next = destination.storage_;
+  if (&next == this || destination.sealed_ || destination.releasing_ ||
+      capturePoolLifetime_ != poolLifetime_ || next.capturePoolLifetime_ != poolLifetime_ ||
+      chunkIds_.empty() || next.chunkIds_.size() != 1 || next.eventCount_ ||
+      chunkIds_.capacity() < LoopEventStoreConfig::POOL_CHUNK_COUNT ||
+      next.chunkIds_.capacity() < LoopEventStoreConfig::POOL_CHUNK_COUNT) return false;
+  const uint16_t spare = next.chunkIds_.front();
+  if (!pool_ || !poolUsed_[spare] || poolChunkRefCount_[spare] != 1 ||
+      poolLifecycle_[spare] != ChunkLifecycleState::Recording || pool_[spare].used) return false;
+  const uint16_t tail = chunkIds_.back();
+  if (!poolUsed_[tail] || poolChunkRefCount_[tail] != 1) return false;
+  destination.tailEnd_ = pool_[tail].used;
+  destination.eventCount_ = eventCount_;
+  sealChunk(tail);
+  ++ownershipGeneration_;
+  ++next.ownershipGeneration_;
+  chunkIds_.swap(next.chunkIds_);
+  std::swap(eventCount_, next.eventCount_);
+  std::swap(lastAppendedTick_, next.lastAppendedTick_);
+  barIndexDirty_ = next.barIndexDirty_ = true;
+  ++destination.generation_;
+  destination.sealed_ = true;
+  return true;
+}
+
+LoopEventStore::CaptureRange::~CaptureRange() {
+  // Object destruction is not an interval-path operation.
+  releaseGrain(LoopEventStoreConfig::POOL_CHUNK_COUNT);
+}
+
+bool LoopEventStore::CaptureRange::reserveTail() {
+  return !sealed_ && !releasing_ && storage_.reserveCaptureTail();
+}
+
+bool LoopEventStore::CaptureRange::ready() const {
+  return sealed_ && !releasing_ && pool_ && storage_.capturePoolLifetime_ == poolLifetime_;
+}
+
+bool LoopEventStore::CaptureRange::read(uint64_t generation, size_t chunkIndex,
+    uint16_t eventIndex, MidiEvent& out, bool& atEnd) const {
+  if (!ready() || generation != generation_ || chunkIndex >= storage_.chunkIds_.size()) return false;
+  const uint16_t id = storage_.chunkIds_[chunkIndex];
+  const uint16_t end = chunkIndex + 1 == storage_.chunkIds_.size()
+      ? tailEnd_ : LoopEventStoreConfig::CHUNK_CAPACITY;
+  if (!poolUsed_[id] || !poolChunkRefCount_[id] || !isChunkSealed(id) || pool_[id].used != end) return false;
+  atEnd = eventIndex >= end;
+  if (!atEnd) out = pool_[id].events[eventIndex];
+  return true;
+}
+
+bool LoopEventStore::CaptureRange::releaseGrain(size_t quantum) {
+  if (!quantum) return storage_.chunkIds_.empty();
+  if (!releasing_) {
+    ++generation_;
+    releasing_ = true;
+    sealed_ = false;
+  }
+  while (quantum-- && !storage_.chunkIds_.empty()) {
+    const uint16_t id = storage_.chunkIds_.back();
+    storage_.chunkIds_.pop_back();
+    if (storage_.capturePoolLifetime_ == poolLifetime_) storage_.freeChunk(id);
+  }
+  if (!storage_.chunkIds_.empty()) return false;
+  storage_.eventCount_ = eventCount_ = 0;
+  storage_.lastAppendedTick_ = 0;
+  storage_.capturePoolLifetime_ = 0;
+  storage_.barIndexDirty_ = true;
+  tailEnd_ = 0;
+  releasing_ = false;
+  return true;
+}
+
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::prewarmCaptureDirectory() {
+  if (capturePoolLifetime_ && capturePoolLifetime_ != poolLifetime_ && !chunkIds_.empty()) return false;
+  initPool();
+  if (!pool_ || !PersistenceQueue::prewarm()) return false;
+  chunkIds_.reserve(LoopEventStoreConfig::POOL_CHUNK_COUNT);
+  capturePoolLifetime_ = poolLifetime_;
+  barIndexDirty_ = true;
+  return true;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::reservedAppendReady() const {
+  return pool_ && capturePoolLifetime_ == poolLifetime_ &&
+      chunkIds_.capacity() >= LoopEventStoreConfig::POOL_CHUNK_COUNT;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendReserved(
+    const MidiEvent& event, ChunkReservation& reservation) {
+  if (!reservedAppendReady() || reservation.lifetime_ != poolLifetime_) return false;
+  // A prior read may have rebuilt the optional bar index. Invalidate it rather
+  // than growing it inside a reserved append.
+  barIndexDirty_ = true;
+  return appendToTailChunk(event, nullptr, &reservation);
+}
+
+LoopEventStore::ChunkReservation::~ChunkReservation() {
+  releaseGrain(LoopEventStoreConfig::POOL_CHUNK_COUNT);
+}
+
+size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::availableChunks() const {
+  return lifetime_ == poolLifetime_ ? count_ : 0;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::reserveChunks(size_t chunks) {
+  if (!pool_ || chunks > chunks_.size() ||
+      (lifetime_ && lifetime_ != poolLifetime_)) return false;
+  lifetime_ = poolLifetime_;
+  const size_t previous = count_;
+  LoopEventStore allocator;
+  while (count_ < chunks) {
+    const uint16_t id = allocator.allocChunk();
+    if (id == UINT16_MAX) {
+      while (count_ > previous) {
+        const uint16_t rollback = chunks_[--count_];
+        releaseChunkReference(rollback);
+        tryFreeChunk(rollback);
+      }
+      return false;
+    }
+    retainChunkReference(id);
+    chunks_[count_++] = id;
+  }
+  return true;
+}
+
+uint16_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::take() {
+  if (!pool_ || lifetime_ != poolLifetime_ || !count_) return UINT16_MAX;
+  const uint16_t id = chunks_[count_ - 1];
+  if (!poolUsed_[id] || poolChunkRefCount_[id] != 1 || pool_[id].used ||
+      poolLifecycle_[id] != ChunkLifecycleState::Recording) return UINT16_MAX;
+  --count_; // Transfer the existing reference to the output store.
+  return id;
+}
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::releaseGrain(size_t quantum) {
+  while (quantum-- && count_) {
+    const uint16_t id = chunks_[--count_];
+    if (lifetime_ == poolLifetime_) {
+      releaseChunkReference(id);
+      tryFreeChunk(id);
+    }
+  }
+  if (count_) return false;
+  lifetime_ = 0;
+  return true;
+}
+
+
+bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::releaseCaptureChunkGrain() {
+  ++ownershipGeneration_;
+  if (!chunkIds_.empty()) {
+    const uint16_t id = chunkIds_.back();
+    chunkIds_.pop_back();
+    if (!capturePoolLifetime_ || capturePoolLifetime_ == poolLifetime_) {
+      eventCount_ -= chunk(id).used;
+      freeChunk(id);
+    }
+  }
+  barIndexDirty_ = true;
+  if (!chunkIds_.empty()) return false;
+  eventCount_ = 0;
+  lastAppendedTick_ = 0;
+  capturePoolLifetime_ = 0;
   return true;
 }

@@ -109,6 +109,7 @@ inline bool isTierALine(const char* line) {
          strncmp(tag, "DIAG,snapshot_alloc,", 20) == 0 ||
          strncmp(tag, "DIAG,snapshot_unit,", 19) == 0 ||
          strncmp(tag, "DIAG,snapshot_slab_fail,", 24) == 0 ||
+         strncmp(tag, "DIAG,capture_prewarm,", 21) == 0 ||
          strncmp(tag, "DIAG,boot_reset,", 16) == 0
 #if SESSION_CAPTURE_SNAPSHOT_IDLE
          || strncmp(tag, "DIAG,snapshot_idle,", 19) == 0

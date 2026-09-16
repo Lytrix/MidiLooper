@@ -20,6 +20,7 @@ void test_tag_is_the_field_after_micros() {
 }
 
 void test_timing_telemetry_lines_are_tier_a() {
+  TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,123,DIAG,capture_prewarm,track=0,slot=0,full=1,ready=1,credits=8,free_chunks=400,heap_free=90000"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701437,DIAG,midi_gap,27834,1"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701449,DIAG,midi_input,9,0"));
   TEST_ASSERT_TRUE(CaptureLineTier::isTierALine("#CAP,6701437,DIAG,msi,27834,1"));

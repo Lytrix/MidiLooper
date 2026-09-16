@@ -45,6 +45,35 @@ namespace {
 char sHitlSerialLineBuffer[48];
 size_t sHitlSerialLineLength = 0;
 
+// Explicit stopped-only diagnostic retrieval; never modify the retained log.
+CAPTURE_HITL_MEM void printCrashLogTailForHitl() {
+    File log = SD.open("crashlog.txt", FILE_READ);
+    if (!log) {
+        Serial.println("CRASH_LOG,missing");
+        return;
+    }
+    constexpr uint32_t kMaxBytes = 4096;
+    const uint32_t size = log.size();
+    const uint32_t start = size > kMaxBytes ? size - kMaxBytes : 0;
+    if (!log.seek(start)) {
+        Serial.println("CRASH_LOG,seek_failed");
+        log.close();
+        return;
+    }
+    Serial.printf("CRASH_LOG,begin,size=%lu,offset=%lu\r\n",
+                  static_cast<unsigned long>(size), static_cast<unsigned long>(start));
+    uint8_t buffer[64];
+    uint32_t remaining = size - start;
+    while (remaining != 0) {
+        const int count = log.read(buffer, remaining < sizeof(buffer) ? remaining : sizeof(buffer));
+        if (count <= 0) break;
+        Serial.write(buffer, static_cast<size_t>(count));
+        remaining -= static_cast<uint32_t>(count);
+    }
+    log.close();
+    Serial.println("\r\nCRASH_LOG,end");
+}
+
 CAPTURE_HITL_MEM bool removeEmptyDirectoryIfPresent(const char* path) {
     if (path == nullptr || path[0] == '\0' || !SD.exists(path)) {
         return true;
@@ -445,6 +474,13 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 // so an old buffered run cannot impersonate this acknowledgement.
                 Serial.printf("#CAP,%lu,TRACE_FENCE,%s\r\n",
                               static_cast<unsigned long>(micros()), sHitlSerialLineBuffer + 13);
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!CRASH_LOG") == 0 &&
+                       !clockManager.isTransportRunning()) {
+                printCrashLogTailForHitl();
+            } else if (std::strcmp(sHitlSerialLineBuffer, "!CAPTURE_CONTENT") == 0 &&
+                       !clockManager.isTransportRunning()) {
+                trackManager.getTrack(trackManager.getSelectedTrackIndex())
+                    .printStoppedCaptureContentForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!STOP_STATUS") == 0 &&
                        !clockManager.isTransportRunning()) {
                 trackManager.getTrack(trackManager.getSelectedTrackIndex())

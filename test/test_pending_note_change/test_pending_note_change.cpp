@@ -1963,6 +1963,36 @@ void test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_reb
   TEST_ASSERT_EQUAL_UINT32(1u, wrapNoteCount);
 }
 
+void test_incremental_overdub_seal_preserves_coincident_control_changes() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedLongSourceNote(loop, 1, 48, 72, 72, Config::TICKS_PER_BAR);
+  PlaybackMergedMidiEvents merged;
+  copyFullPassReplayForTest(loop, merged.mergedEvents);
+  merged.mergedEvents.push_back(MidiEvent::ControlChange(120, 1, 74, 52));
+  merged.builtFromRevision = loop.playbackRevision;
+  merged.windowStartTick = 0;
+  merged.windowLengthTicks = loop.loopLengthTicks;
+  const auto before = merged.mergedEvents.size();
+  const uint32_t priorRevision = loop.playbackRevision;
+  loop.openOverdubSession(96);
+  loop.establishOverdubSourceView(96);
+  loop.beginCapture(CapturePhase::Overdub, 96);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(120, 1, 74, 68)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(120, 1, 75, 99)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 192));
+  const EditPassIdList companionIds = loop.sealPendingNoteChangesToEditPasses();
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), companionIds, priorRevision);
+  TEST_ASSERT_TRUE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_EQUAL_UINT32(before + 2, merged.mergedEvents.size());
+  TEST_ASSERT_EQUAL_UINT8(68, merged.mergedEvents[before].data.ccData.value);
+  TEST_ASSERT_EQUAL_UINT8(75, merged.mergedEvents[before + 1].data.ccData.cc);
+  TEST_ASSERT_FALSE(loop.tryAdmitLastOverdubSealIntoMergedEvents(merged));
+  TEST_ASSERT_EQUAL_UINT32(before + 2, merged.mergedEvents.size());
+}
+
 void test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -5339,6 +5369,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_wrap_committed_note_at_s_occupies_ledger_same_tick);
   RUN_TEST(test_wrap_pass_events_at_s_occupy_without_merged_rebuild);
   RUN_TEST(test_wrap_tick_occupy_without_full_rebuild_and_no_duplicate_after_later_rebuild);
+  RUN_TEST(test_incremental_overdub_seal_preserves_coincident_control_changes);
   RUN_TEST(test_incremental_overdub_seal_admits_wrap_pass_after_s_without_full_gather);
   RUN_TEST(test_incremental_overdub_seal_applies_companion_shorten);
   RUN_TEST(test_overdub_stop_reanchor_preserves_merged_then_admits_seal);

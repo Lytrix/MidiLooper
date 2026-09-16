@@ -71,7 +71,40 @@ class StopInterventionPort:
                     armed=self.armed, sent=self.sent, error=self.error)
 
 
-def verify_interruption(lines, actions, midi_rows, *, channel=4, observe_us=8_000_000):
+def pending_job_stop_matches(lines, *, track=4, slot=0):
+    """Prove Stop crossed a still-owned job, even after visible PLAYING."""
+    from hitl.serial.protocol import parse_cap_micros
+    from hitl.verify.midi_boundary_timing import extract_stop_timeline
+    timeline = extract_stop_timeline(lines)
+    if timeline['drops'] or timeline['malformed']:
+        return []
+    entries = sorted({r['at_us'] for r in timeline['states'] if r['valid']
+                      and (r['track'], r['slot'], r['from_state'], r['to_state'])
+                      == (track, slot, 6, 7)})
+    stops = [parse_cap_micros(line) for line in lines if ',MI,U,252,' in line]
+    grains = [r for r in timeline['grains'] if r['valid']
+              and (r['track'], r['slot']) == (track, slot)]
+    matches = []
+    for index, entry in enumerate(entries):
+        limit = entries[index + 1] if index + 1 < len(entries) else float('inf')
+        for stop in stops:
+            if stop is None or not entry < stop < limit:
+                continue
+            before = [r for r in grains if entry <= r['start_us'] < stop]
+            if any(r['phase'] == 10 and r['finished_phase'] for r in before):
+                continue
+            for end in grains:
+                if not (stop < end['start_us'] <= end['end_us'] < limit
+                        and end['phase'] == 10 and end['finished_phase']
+                        and end['destination'] == 1):
+                    continue
+                if any(r['generation'] == end['generation'] and r['destination'] == 0
+                       and r['epoch'] < end['epoch'] for r in before):
+                    matches.append((entry, stop, end['end_us']))
+    return matches
+
+
+def verify_interruption(lines, actions, midi_rows, *, channel=4, slot=0, observe_us=8_000_000):
     """Score only stop precedence/emission; excludes restart survival and layering."""
     from hitl.serial.protocol import parse_cap_micros, parse_track_transition
 
@@ -93,7 +126,10 @@ def verify_interruption(lines, actions, midi_rows, *, channel=4, observe_us=8_00
             destinations.append(ts)
         if ',MI,U,252,' in line:
             stops.append(ts)
-    matches = [(a, b, c) for a in entries for b in stops for c in destinations if a < b < c]
+    matches = pending_job_stop_matches(lines, track=channel, slot=slot)
+    # Legacy firmware retains the visible stopping state until completion.
+    if not any(',DIAG,stop_grain,' in line for line in lines):
+        matches = [(a, b, c) for a in entries for b in stops for c in destinations if a < b < c]
     if not matches:
         issues.append('no_device_stop_inside_stopping')
         return {'result': 'INCONCLUSIVE_CAPTURE', 'issues': issues}
@@ -142,7 +178,7 @@ def verify_interruption(lines, actions, midi_rows, *, channel=4, observe_us=8_00
             'restart_survival_verified': False, 'layered_playback_verified': False}
 
 
-def strict_stop_transition_options(options):
+def strict_stop_transition_options(options, *, track=4, slot=0):
     """The focused fixture must send its stop request, not accept stale PLAYING.
 
     The existing send callback already suppresses a press sent by the streamer.
@@ -155,7 +191,8 @@ def strict_stop_transition_options(options):
         result['max_retries'] = 0
         result['confirmed'] = lambda lines, baseline: any(
             parse_track_transition(line) == ('OVERDUB_STOPPING', 'STOPPED')
-            for line in lines[baseline:])
+            for line in lines[baseline:]) or bool(
+                pending_job_stop_matches(lines[baseline:], track=track, slot=slot))
     return result
 
 

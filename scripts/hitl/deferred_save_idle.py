@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 _PERS_REQUEST_RE = re.compile(r"#CAP,\d+,PERS,request,")
 _PERS_WORK_RE = re.compile(r"#CAP,\d+,PERS,work,")
+# The final work receipt follows PERS,result; it is completion, not new work.
+_PERS_FINALIZE_DONE_RE = re.compile(
+    r"#CAP,\d+,PERS,work,\d+,\d+,\d+,FinalizeWorkspace,singleton,done,ok\b"
+)
 _PERS_DRAIN_STUCK_CAP_RE = re.compile(r"#CAP,\d+,PERS,drain,stuck\b")
 _CLEAR_WAITING_SAVE_RE = re.compile(r"Clear waiting for deferred save", re.I)
 _PERSISTENCE_DRAIN_RE = re.compile(r"Persistence drain", re.I)
@@ -80,6 +84,7 @@ def deferred_save_active_in_suffix(lines: list[str], *, after_index: int = 0) ->
     last_draining_queue = _last_match_index(suffix, _DRAINING_PERSISTENCE_QUEUE_RE)
 
     settled = max(
+        _last_match_index(suffix, _PERS_FINALIZE_DONE_RE),
         last_completed,
         last_idle,
         last_pers_ok,
@@ -148,6 +153,7 @@ def deferred_save_idle_in_suffix(lines: list[str], *, after_index: int = 0) -> b
     last_draining_queue = _last_match_index(suffix, _DRAINING_PERSISTENCE_QUEUE_RE)
 
     settled = max(
+        _last_match_index(suffix, _PERS_FINALIZE_DONE_RE),
         last_completed,
         last_idle,
         last_pers_ok,

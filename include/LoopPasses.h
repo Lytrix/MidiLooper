@@ -71,6 +71,8 @@ struct OverdubPass {
 };
 
 struct PendingCapturePass {
+  // Runtime ownership receipt; never serialized into canonical passes.
+  bool retiresLiveCapture = true;
   PassId id = kInvalidPassId;
   CapturePassPhase phase = CapturePassPhase::Record;
   uint32_t mergeSequence = 0;
@@ -83,6 +85,8 @@ struct PendingCapturePass {
 /// into the canonical pass and are intentionally absent here, so collecting the receipt cannot
 /// release, copy, or allocate event storage.
 struct PreparedCapturePassTransfer {
+  // Runtime ownership receipt; never serialized into canonical passes.
+  bool retiresLiveCapture = true;
   PassId id = kInvalidPassId;
   CapturePassPhase phase = CapturePassPhase::Record;
   uint32_t mergeSequence = 0;

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import sys
@@ -17,6 +18,28 @@ from hitl.config import DEFAULT_CAPTURE_SERIAL_PORT, HitlConfig
 _CAPTURE_SCRIPT = Path(__file__).resolve().parent.parent / "capture_session.py"
 _ACTIVE_LOCK = threading.Lock()
 _ACTIVE_SESSION: Optional["ManagedCaptureSession"] = None
+
+# Hard ceiling on one managed HITL run. The scenario has its own
+# `--max-run-seconds` deadline, but a stalled phase or a serial-follow wait must
+# never keep the harness (and the USB serial port) occupied forever. Zero or
+# negative disables the ceiling; `HITL_MANAGED_RUN_TIMEOUT_S` overrides the
+# default. Six minutes covers the dense record/overdub recipes; raise it for
+# unusually long layered runs.
+DEFAULT_MANAGED_RUN_TIMEOUT_S = 360.0
+_RUN_TIMEOUT_ENV = "HITL_MANAGED_RUN_TIMEOUT_S"
+
+
+def resolve_managed_run_timeout(timeout_s: Optional[float] = None) -> float:
+    """Resolve the managed-run watchdog ceiling in seconds (<= 0 disables)."""
+    if timeout_s is not None:
+        return max(float(timeout_s), 0.0)
+    raw = os.environ.get(_RUN_TIMEOUT_ENV)
+    if raw:
+        try:
+            return max(float(raw), 0.0)
+        except ValueError:
+            pass
+    return DEFAULT_MANAGED_RUN_TIMEOUT_S
 
 
 def active_managed_capture() -> Optional["ManagedCaptureSession"]:
@@ -113,6 +136,7 @@ class ManagedCaptureSession:
         self._process: subprocess.Popen[str] | None = None
         self._output_thread: threading.Thread | None = None
         self._session_log: Path | None = None
+        self._owner_write_fd: int | None = None
 
     @property
     def session_log(self) -> Path | None:
@@ -142,6 +166,12 @@ class ManagedCaptureSession:
             command += ["--run-token", self._run_token]
         if self._arm_snapshot_yield:
             command.append("--arm-snapshot-yield")
+        # Parent-death pipe: the child exits when this process closes the write
+        # end, which happens even if the harness is SIGKILLed. That guarantees a
+        # leaked capture session can never keep the USB serial port open.
+        owner_read_fd, owner_write_fd = os.pipe()
+        self._owner_write_fd = owner_write_fd
+        command += ["--owner-fd", str(owner_read_fd)]
         if self._boot_wait_s > 0:
             print(
                 f"[hitl-capture] starting capture_session.py on {self._port} "
@@ -154,13 +184,17 @@ class ManagedCaptureSession:
                 flush=True,
             )
         started_at = time.monotonic()
-        self._process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
+        try:
+            self._process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                pass_fds=(owner_read_fd,),
+            )
+        finally:
+            os.close(owner_read_fd)
         self._output_thread = threading.Thread(target=self._drain_output, daemon=True)
         self._output_thread.start()
         self._session_log = wait_for_current_session_pointer(
@@ -201,9 +235,23 @@ class ManagedCaptureSession:
                     process.wait(timeout=8.0)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=2.0)
+                    try:
+                        process.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        print(
+                            "[hitl-capture] capture_session.py did not exit after SIGKILL",
+                            flush=True,
+                        )
+            if process.stdout is not None:
+                process.stdout.close()
             self._process = None
         finally:
+            if self._owner_write_fd is not None:
+                try:
+                    os.close(self._owner_write_fd)
+                except OSError:
+                    pass
+                self._owner_write_fd = None
             if active_managed_capture() is self:
                 _set_active_managed_capture(None)
 
@@ -237,12 +285,57 @@ def managed_capture_session(config: HitlConfig) -> Iterator[Path]:
         session.stop()
 
 
-def run_with_managed_capture(config: HitlConfig, run_fn: Callable[[HitlConfig], int]) -> int:
+def _run_with_watchdog(run_fn: Callable[[], int], timeout_s: float) -> int:
+    """Run `run_fn` on a worker thread behind a wall-clock ceiling.
+
+    Returns the run code, or 3 if the ceiling is exceeded. Exceptions from the
+    worker are re-raised here so callers keep normal failure semantics.
+    """
+    if timeout_s <= 0:
+        return run_fn()
+    outcome: dict[str, object] = {}
+
+    def _worker() -> None:
+        try:
+            outcome["code"] = run_fn()
+        except BaseException as exc:  # re-raised on the owner thread
+            outcome["exc"] = exc
+
+    worker = threading.Thread(target=_worker, name="hitl-managed-run", daemon=True)
+    worker.start()
+    worker.join(timeout_s)
+    if worker.is_alive():
+        print(
+            f"[hitl-capture] scenario exceeded {timeout_s:.1f}s watchdog; "
+            "aborting run and releasing capture",
+            flush=True,
+        )
+        return 3
+    if "exc" in outcome:
+        raise outcome["exc"]  # type: ignore[misc]
+    return int(outcome.get("code", 3))
+
+
+def run_with_managed_capture(
+    config: HitlConfig,
+    run_fn: Callable[[HitlConfig], int],
+    *,
+    timeout_s: Optional[float] = None,
+) -> int:
+    """Run the scenario with the managed capture child.
+
+    The scenario runs behind a wall-clock watchdog. If it stalls, the watchdog
+    returns and the `managed_capture_session` context stops the capture child, so
+    the harness always ends itself and releases the USB serial port.
+    `timeout_s <= 0` (or `HITL_MANAGED_RUN_TIMEOUT_S=0`) disables the watchdog
+    for intentionally long runs.
+    """
+    timeout = resolve_managed_run_timeout(timeout_s)
     with managed_capture_session(config) as log_path:
         active = replace(config, follow_current_session=False, follow_serial_log=log_path,
                          legacy_extra_args=tuple(legacy_args_with_managed_capture(
                              list(config.legacy_extra_args), config, log_path)))
-        return run_fn(active)
+        return _run_with_watchdog(lambda: run_fn(active), timeout)
 
 
 def legacy_args_with_managed_capture(

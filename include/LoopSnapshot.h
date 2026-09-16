@@ -21,7 +21,20 @@ constexpr EventId kInvalidEventId = 0;
 constexpr uint16_t kLoopSnapshotPitchCount = 128;
 constexpr uint16_t kLoopSnapshotBarsPerPage = 32;
 constexpr uint16_t kSnapshotMembershipPageCapacity = 16;
-constexpr uint16_t kSnapshotMembershipMaxPages = 16;
+/// Explicit bar-membership design envelope (DEC-047 amendment 2026-09-16).
+/// The maximum reference count representable in one bar, applied equally to the
+/// event bar index and to each note pitch/bar list. The page-count limit is
+/// derived from it rather than being an accidental side effect of the page
+/// constant. 4096 refs is 16x the prior 256-ref (16-page) ceiling and ~15.7x
+/// the observed dense device bar (260 refs); pages stay lazily allocated, so
+/// the envelope costs nothing until content uses it. A bar can never
+/// legitimately need the whole-store theoretical maximum.
+constexpr size_t kSnapshotMembershipMaxRefsPerBar = 4096;
+constexpr size_t kSnapshotMembershipMaxPages =
+    (kSnapshotMembershipMaxRefsPerBar + kSnapshotMembershipPageCapacity - 1) /
+    kSnapshotMembershipPageCapacity;
+static_assert(kSnapshotMembershipMaxPages <= UINT16_MAX,
+              "bar membership page count must fit the uint16_t page counters");
 constexpr uint32_t kSnapshotSlabBytes = 32 * 1024;
 
 void resetSnapshotAllocCounters();
@@ -244,6 +257,21 @@ class LoopSnapshot {
   mutable std::shared_ptr<const SnapshotEventRoot> eventRoot_;
 };
 
+/// Why a `LoopSnapshotConstruction` stopped without completing. The publisher
+/// uses this to distinguish a transient/allocation failure (retry the exact
+/// fragment) from a persistent representability failure (keep the previous
+/// root, block publication, emit a diagnostic). DEC-047 amendment 2026-09-16.
+enum class LoopSnapshotFailureReason : uint8_t {
+  None = 0,
+  /// A bar reached `kSnapshotMembershipMaxRefsPerBar`; the committed content
+  /// is not representable under the current envelope.
+  MembershipCapacity,
+  /// A snapshot page/object allocation failed.
+  Allocation,
+  /// Native-only fault injection (partial-apply retry fixture).
+  Injected,
+};
+
 /// Candidate construction with persistent bar-cursor progress. Publication is
 /// owned by `Loop` at session-exit, wrap-journal idle, and NOTE_EDIT close.
 class LoopSnapshotConstruction {
@@ -257,9 +285,27 @@ class LoopSnapshotConstruction {
     return nextChangeIndex_ == totalChangeCount() && !noteApply_ && !eventApply_;
   }
   bool failed() const { return failed_; }
+  LoopSnapshotFailureReason failureReason() const { return failureReason_; }
   size_t completedChangeCount() const { return nextChangeIndex_; }
   size_t completedUnitCount() const { return completedUnits_; }
   size_t totalChangeCount() const { return changes_.notes.size() + changes_.events.size(); }
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Native-only fault injection: fail once `units` construction units have
+  /// been applied, so a partial-apply-then-retry transaction is testable.
+  /// `kNoFailureInjection` disables it. The reason selects transient (retry) or
+  /// representability (park) failure behavior.
+  static constexpr size_t kNoFailureInjection = static_cast<size_t>(-1);
+  void failAfterUnitsForTest(
+      size_t units, LoopSnapshotFailureReason reason = LoopSnapshotFailureReason::Injected) {
+    failAfterUnits_ = units;
+    injectedReason_ = reason;
+  }
+  void clearFailureInjectionForTest() {
+    failAfterUnits_ = kNoFailureInjection;
+    injectedReason_ = LoopSnapshotFailureReason::Injected;
+  }
+#endif
 
   const LoopSnapshot& candidate() const { return candidate_; }
   const LoopSnapshotChangeSet& changes() const { return changes_; }
@@ -278,6 +324,11 @@ class LoopSnapshotConstruction {
   std::unique_ptr<LoopSnapshotEventBarApply> eventApply_;
   size_t nextChangeIndex_ = 0;
   size_t completedUnits_ = 0;
+  size_t failAfterUnits_ = static_cast<size_t>(-1);
   bool failed_ = false;
+  LoopSnapshotFailureReason failureReason_ = LoopSnapshotFailureReason::None;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  LoopSnapshotFailureReason injectedReason_ = LoopSnapshotFailureReason::Injected;
+#endif
   mutable std::shared_ptr<const LoopSnapshot> frozenCandidate_;
 };

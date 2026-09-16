@@ -7,6 +7,7 @@
 #include "ActiveNoteLedger.h"
 #include "Globals.h"
 #include "LoopEventStore.h"
+#include "LoopPasses.h"
 #include "PlaybackMergedMidiEvents.h"
 #include "RuntimePlaybackView.h"
 #include "RuntimePlaybackViewBuild.h"
@@ -197,12 +198,33 @@ struct LoopPlaybackRuntime {
   FrozenCaptureOrderBinding frozenCaptureOrderBinding;
   FrozenCaptureOrderBinding frozenCaptureCanonicalOrderBinding;
   uint64_t frozenCaptureOrderStorageGeneration = 0;
-  /// Persistent fixed-grain copy cursor for writing the canonical raw-tick
-  /// order back into the unpublished capture store.
+  /// Persistent fixed-grain cursor. Production copies canonical raw-tick order
+  /// into separately reserved output; the legacy rewrite helper shares it.
   LoopEventStoreRewriteCursor frozenCaptureRewrite;
   const LoopEventStore* frozenCaptureRewriteOwner = nullptr;
+  bool frozenCaptureRewriteIsCopy = false;
+  Capture canonicalCaptureOutput;
+  LoopEventStore::ChunkReservation canonicalCaptureChunks;
+  // Borrowed from the admitted Track job until its cleanup completes. A cache
+  // reset cannot reclaim that job's accepted source or partially copied output.
+  PendingStopAdmission* captureStopOwner = nullptr;
+  bool prewarmCanonicalCaptureOutput();
+  bool canonicalCaptureOutputAdmitted() const;
+  bool replenishCanonicalCaptureChunk();
   RuntimePlaybackBridgeStream bridgeStream;
+  RuntimePlaybackBridgeStream bridgeWindowSource;
+  RuntimePlaybackViewBuild bridgeWindowBuild;
+  uint8_t bridgeWindowBuildIndex = RuntimePlaybackViewLifecycle::kNoView;
+  uint64_t bridgeWindowContextGeneration = 0;
+  uint8_t bridgeWindowContextIndex = RuntimePlaybackBridgeLifecycle::kNoBridge;
+  bool serviceBridgeWindow(uint32_t currentPhase, uint32_t windowTicks, size_t quantum);
+  const RuntimePlaybackView* publishedBridgeWindow(const PlaybackViewSourceIdentity& source,
+                                                   uint32_t phase) const;
+
   uint32_t bridgeProjectionCycle = 0;
+  // Anchor new preparation in the running projection cycle, including wraps
+  // serviced through ordinary playback while no bridge stream is selected.
+  EmissionCursor currentCycleCursor(uint32_t phase, uint32_t sourceGeneration) const;
   RuntimeCaptureCompanions frozenCaptureCompanions;
   RuntimeNotePairLookup frozenCompanionPairLookup;
   RuntimeNoteDeleteLookup frozenCompanionDeleteLookup;
@@ -230,15 +252,27 @@ struct LoopPlaybackRuntime {
   RuntimePlaybackOrderBuildResult stepCanonicalPrefix(const LoopPasses& passes,
       const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
       size_t quantum);
+  bool retainCommittedCanonicalTail(Loop& loop, const PlaybackViewSourceIdentity& source);
+  bool resumeCanonicalAfterAppend(const LoopPasses& passes, uint32_t priorRevision,
+      const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
+      bool committedFrozenTail = false);
+  // One existing child per call; shared by live overdub prework and stop.
+  RuntimePlaybackOrderBuildResult stepCanonicalBase(const LoopPasses& passes,
+      const PlaybackViewSourceIdentity& source, const RuntimeCanonicalPassInputs::CurrentSource& live,
+      const EmissionCursor& anchor, size_t quantum);
+  uint64_t requiredStopRankedGrains(const PlaybackViewSourceIdentity& source,
+      size_t maximumPassCount, size_t historyCount, size_t pendingChangeCount, size_t quantum) const;
   // Uses the same pass merge and view fill/order workers as ordinary playback.
   // Completion publishes an immutable ready base, never changes audible current.
   enum class CanonicalWindowPhase : uint8_t { Idle, Merge, Fill, Order, Publish, Ready, Denied };
   CanonicalWindowPhase canonicalWindowPhase = CanonicalWindowPhase::Idle;
   uint8_t canonicalWindowIndex = RuntimePlaybackViewLifecycle::kNoView;
+  bool canonicalWindowIsBridgeBase = false;
   uint64_t canonicalWindowPassGeneration = 0;
   PlaybackCoverageInterval canonicalWindowCoverage;
   RuntimePlaybackOrderBuildResult stepCanonicalWindow(
-      const PlaybackCoverageInterval& coverage, const EmissionCursor& anchor, size_t quantum);
+      const PlaybackCoverageInterval& coverage, const EmissionCursor& anchor, size_t quantum,
+      bool bridgeBase = false);
   const RuntimePlaybackView* preparedCanonicalWindow(const PlaybackViewSourceIdentity& source) const;
   void discardCanonicalWindow();
   enum class CanonicalTailPhase : uint8_t { Idle, Normalize, Rows, StartCompanions, Companions, Complete, Denied };
@@ -253,6 +287,8 @@ struct LoopPlaybackRuntime {
                                const PendingNoteChangeVec& changes,
                                const PlaybackViewSourceIdentity& target);
   RuntimePlaybackOrderBuildResult stepFrozenCanonicalTail(size_t quantum);
+  // Stop service binds the target revision after rows finish: capture adds one
+  // revision and nonempty companions add another. Add-only changes add no edits.
   RuntimePlaybackOrderBuildResult stepReservedFrozenCanonicalTail(PendingStopAdmission& stop, size_t quantum);
   bool frozenCanonicalTailReady(const PlaybackViewSourceIdentity& target) const;
   void discardFrozenCanonicalTail();
@@ -265,6 +301,7 @@ struct LoopPlaybackRuntime {
   // Never re-resolve it through the changing audible-current index mid-build.
   const RuntimePlaybackView* captureBridgeBase = nullptr;
   const RuntimePlaybackView* frozenCaptureBridgeBase() const;
+  bool refreshFrozenCompanionBridge(const EmissionCursor& anchor);
   bool canonicalCaptureBridge = false;
   uint64_t captureBridgePreparationGeneration = 0;
   uint64_t captureBridgeMapGeneration = 0;
@@ -277,7 +314,8 @@ struct LoopPlaybackRuntime {
 
   void syncRevision(uint32_t loopRevision, uint32_t trackGeneration);
 
-  void reset(bool preserveLedger);
+  /// False while accepted capture owns scratch; retargets it to STOPPED recovery.
+  bool reset(bool preserveLedger);
 
   /// Cold/boot or STOPPED-only allocation. Never call from a MIDI tick.
   bool prewarmViews();
@@ -413,6 +451,8 @@ struct LoopPlaybackRuntime {
   /// view; callers mark the Loop sorted only after Complete.
   LoopEventStoreRewriteResult stepFrozenCaptureCanonicalRewrite(
       LoopEventStore& captureStore, uint32_t frozenGeneration, size_t eventQuantum);
+  LoopEventStoreRewriteResult stepFrozenCaptureCanonicalCopy(
+      uint32_t frozenGeneration, size_t eventQuantum);
   void discardFrozenCaptureCanonicalOrder();
   /// The only candidate state eligible for a later atomic capture transfer.
   /// It is generation-matched, has consumed every reserved terminal closure,

@@ -5,26 +5,56 @@
 #include "TrackUndoPublication.h"
 #include "TrackPlaybackRuntime.h"
 #include "Utils/TrackMem.h"
+#include "Utils/DebugSessionCapture.h"
 
 namespace {
+TRACK_COLD_MEM bool denyAtomicTransfer(uint16_t reason) {
+#if defined(SESSION_CAPTURE)
+  static uint16_t lastReason = 0;
+  if (reason != lastReason) {
+    SC_ODUB_STOP_STAGE("atomic_preflight", 0, 0, UINT32_MAX, UINT32_MAX, reason, 0, "denied");
+    lastReason = reason;
+  }
+#else
+  (void)reason;
+#endif
+  return false;
+}
+
 TRACK_COLD_MEM bool commitPreparedStop(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
     PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo) {
   const auto* views = runtime.viewSetIfPrewarmed();
-  if (!views || !stop.canonicalPreparationQuantum || !stop.historyRecycleQuantum ||
-      !stop.remainingHistoryRecycleGrains || !loop.canCommitPreparedCaptureAndCompanions() ||
-      !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ||
-      !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->captureStaging) ||
-      !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
-          {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration})) return false;
+  if (!views) return denyAtomicTransfer(1);
+  uint16_t denied = !stop.canonicalPreparationQuantum ? 2 : 0;
+  denied |= !stop.historyRecycleQuantum ? 4 : 0;
+  denied |= !stop.remainingHistoryRecycleGrains ? 8 : 0;
+  denied |= !loop.canCommitPreparedCaptureAndCompanions() ? 16 : 0;
+  denied |= !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ? 32 : 0;
+  denied |= !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->captureStaging) ? 64 : 0;
+  denied |= !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
+      {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ? 128 : 0;
+  if (denied) return denyAtomicTransfer(denied);
   const uint32_t revisionDelta = loop.preparedCompanionHistoryIds()->empty() ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta) return false;
   const PlaybackViewSourceIdentity base{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()};
   // A successful capture makes the published snapshot stale until session-exit
   // publication. Source identity must match what the next playback tick reads.
   const PlaybackViewSourceIdentity target{loop.playbackRevision + revisionDelta, generation, nullptr};
-  if (!runtime.canSelectReservedFrozenCaptureBridge(stop, base, target, loop.loopLengthTicks, cursor)) return false;
+  if (!runtime.canSelectReservedFrozenCaptureBridge(stop, base, target, loop.loopLengthTicks, cursor)) {
+    const auto& admission = runtime.frozenCaptureSourceAdmission;
+    uint16_t reason = 256;
+    reason |= !runtime.canonicalCaptureBridge ? 1 : 0;
+    reason |= !stop.rankedPreparationQuantum ? 2 : 0;
+    reason |= stop.phase != PendingStopPhase::AtomicTransfer ? 4 : 0;
+    reason |= !stop.canCommit(admission.transportCommandEpoch, PendingStopDestination::Playing) ? 8 : 0;
+    reason |= !(admission.baseSource == base) ? 16 : 0;
+    reason |= !(admission.targetSource == target) ? 32 : 0;
+    reason |= !runtime.canSelectFrozenCaptureBridge(stop.frozenGeneration,
+        stop.transportCommandEpoch, loop.loopLengthTicks, cursor) ? 64 : 0;
+    return denyAtomicTransfer(reason);
+  }
   // This turn cannot interleave MIDI emission or owner mutation. Canonical
   // transfer's fallible checks precede mutation; bridge publication below uses
   // only prepared storage and the lifecycle/source/ledger proof above.
@@ -39,6 +69,60 @@ TRACK_COLD_MEM bool commitPreparedStop(
 }
 
 }  // namespace
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::requiresBridgeRefresh(
+    const Loop& loop, const LoopPlaybackRuntime& runtime,
+    const PendingStopAdmission& stop, const EmissionCursor& cursor) {
+  return stop.destination == PendingStopDestination::Playing &&
+      loop.hasPendingCapturePass() &&
+      !runtime.canSelectFrozenCaptureBridge(stop.frozenGeneration,
+          stop.transportCommandEpoch, loop.loopLengthTicks, cursor);
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransfer(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
+    const uint32_t& generation, const EmissionCursor& cursor,
+    PreparedCapturePassTransfer& transferred) {
+  if (stop.phase != PendingStopPhase::AtomicTransfer ||
+      !stop.canCommit(stop.transportCommandEpoch, stop.destination)) return false;
+  if (loop.hasPendingCapturePass()) {
+    if (stop.destination == PendingStopDestination::Playing)
+      return commit(loop, runtime, stop, generation, cursor, transferred);
+    if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs))
+      return commitStopped(loop, runtime, stop, generation, transferred);
+    // Transport Stop can recover the frozen canonical pass before companion
+    // preparation. This route never authorizes an audible PLAYING successor.
+    if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+  }
+  stop.setPhase(PendingStopPhase::DeferredCleanup);
+  return true;
+}
+
+TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
+    Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop) {
+  if (stop.phase != PendingStopPhase::DeferredCleanup || !stop.finalizationComplete() ||
+      stop.historyRecycleOwner) return false;
+  if (!loop.handoffSessionExitSnapshot(stop.destination == PendingStopDestination::Playing
+          ? CommitReason::OverdubStop : CommitReason::OverdubStopToStopped)) return false;
+  loop.completePreparedCapturePassDeferredCleanup();
+  // Retire preparation workers only. The published bridge and any held-note
+  // closure remain owned by the continuously advancing playback cursor.
+  runtime.discardFrozenCaptureBridge();
+  runtime.discardCanonicalWindow();
+  // Keep the already-computed per-pass companion results across punch-out.
+  // This exchanges owned scratch buffers; it never replays history here.
+  if (runtime.canonicalPassInputs.captureAttached()) {
+    const auto generation = runtime.canonicalPrefixSource.sourceGeneration;
+    const PlaybackViewSourceIdentity source{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()};
+    // Bind the original live generation owner, not this local scalar.
+    runtime.retainCommittedCanonicalTail(loop, source);
+  }
+  runtime.discardFrozenCanonicalTail();
+  loop.closeOverdubSession();
+  if (runtime.captureStopOwner == &stop) runtime.captureStopOwner = nullptr;
+  stop.reset();
+  return true;
+}
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::retargetStoppedRecovery(
     LoopPlaybackRuntime& runtime, const PendingStopAdmission& stop) {

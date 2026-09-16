@@ -44,7 +44,7 @@ class RuntimeCanonicalPassInputs {
   RuntimeCanonicalPassInputs(const RuntimeCanonicalPassInputs&) = delete;
   RuntimeCanonicalPassInputs& operator=(const RuntimeCanonicalPassInputs&) = delete;
   bool prewarm(size_t capacity);
-  size_t fixedExternalBytes() const { return capacity_ * (2 * sizeof(MidiEvent) + sizeof(RuntimeCompanionPasses::Pass) + sizeof(SealedPass) + 2 * sizeof(uint16_t)) + (capacity_ ? RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*) : 0); }
+  size_t fixedExternalBytes() const { return capacity_ * (2 * sizeof(MidiEvent) + 2 * sizeof(RuntimeCompanionPasses::Pass) + sizeof(SealedPass) + 2 * sizeof(uint16_t)) + (capacity_ ? RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*) : 0); }
   static uint64_t requiredGrainsUpperBound(size_t capacity, size_t passCount, size_t rowCount, size_t quantum);
   static uint64_t requiredSelectedGrainsUpperBound(size_t capacity, size_t rawHistoryCount, size_t quantum);
   static uint64_t requiredFrozenOverdubGrainsUpperBound(size_t capacity, size_t rawHistoryCount, size_t quantum);
@@ -63,6 +63,28 @@ class RuntimeCanonicalPassInputs {
   bool beginCurrent(RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
                     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
                     const CurrentSource& live);
+  // Called only by a successful newest-pass append, or snapshot identity
+  // refresh at the same content revision, with unchanged history.
+  // Retains completed normalized passes; reselects descriptors and resumes the
+  // first incomplete/new pass. A frozen tail may be retained after its transfer.
+  bool resumeCurrentAfterAppend(const LoopPasses& passes, uint32_t priorRevision,
+      const PlaybackViewSourceIdentity& source, const CurrentSource& live,
+      bool committedFrozenTail);
+  size_t completedPassCount() const { return pass_; }
+  const CurrentSource* currentSourceOwner() const { return current_ ? &*current_ : nullptr; }
+  // Scratch has no semantic input while ready. The existing per-pass merge
+  // fills it in the same Q-sized turns, retaining order within each pass.
+  MidiEvent* normalizedScratch() const { return raw_; }
+  RuntimeCompanionPasses::Pass* normalizedDescriptors() const { return nextOutputs_; }
+  void claimNormalizedScratch(const RuntimeCompanionPasses& owner, uint64_t generation) const {
+    normalizedOwner_ = &owner; normalizedGeneration_ = generation;
+  }
+  bool normalizedScratchMatches(const RuntimeCompanionPasses& owner, uint64_t generation) const {
+    return normalizedOwner_ == &owner && normalizedGeneration_ == generation;
+  }
+  bool adoptCommittedNormalization(const LoopPasses& passes,
+      const PlaybackViewSourceIdentity& source, const CurrentSource& live,
+      const RuntimeCompanionPasses& resolved);
   bool idle() const { return phase_ == Phase::Idle; }
   bool captureAttached() const { return includeCapture_; }
   bool borrowsCaptureOrder() const { return preparedCaptureOrder_.has_value(); }
@@ -114,6 +136,9 @@ class RuntimeCanonicalPassInputs {
   MidiEvent* raw_ = nullptr;
   MidiEvent* effective_ = nullptr;
   RuntimeCompanionPasses::Pass* outputs_ = nullptr;
+  RuntimeCompanionPasses::Pass* nextOutputs_ = nullptr;
+  mutable const RuntimeCompanionPasses* normalizedOwner_ = nullptr;
+  mutable uint64_t normalizedGeneration_ = 0;
   SealedPass* selectedPasses_ = nullptr;
   const EditPass** selectedHistory_ = nullptr;
   uint16_t* captureOrder_ = nullptr;

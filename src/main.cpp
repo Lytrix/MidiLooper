@@ -574,8 +574,9 @@ FLASHMEM __attribute__((noinline)) static void runDeferredIdleMaintenance(
             if ((!track.isAudiblePlaybackActive() && !track.isStoppedRecording()) ||
                 !track.loopsAllocated()) return false;
             const Loop& loop = track.getActiveLoop();
-            return loop.visualCacheDirty || loop.hasDeferredVisualCacheWrapAppend() ||
-                   (track.isOverdubbing() && !loop.overdubSourceSpanCacheReady());
+            return MidiServiceDrain::canonicalPreparationHasPriorityWork(
+                track.isOverdubbing(), loop.visualCacheDirty, loop.hasDeferredVisualCacheWrapAppend(),
+                loop.overdubSourceSpanCacheReady());
           },
           [](uint8_t index) { return trackManager.getTrack(index).processDeferredCanonicalPrefix(); })) {
     return; // No other track, visual cleanup, or idle child stacks with this grain.
@@ -605,21 +606,37 @@ FLASHMEM void setup() {
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);
-  if (CrashReport) {
-    Serial.print(CrashReport);
-    Serial.println("--- CrashReport above ---");
-    // Also log to SD (Teensy 4.1 built-in) in case Serial output is missed
+  const bool hadCrashReport = static_cast<bool>(CrashReport);
+  if (hadCrashReport) {
+    // CrashReport::printTo clears the core's retained report. Render it once
+    // to both destinations so a missed USB reconnect still leaves an SD copy.
+    File crashLog;
     if (SD.begin(BUILTIN_SDCARD)) {
-      File f = SD.open("crashlog.txt", FILE_WRITE);
-      if (f) {
-        f.print(CrashReport);
-        f.close();
-      }
+      crashLog = SD.open("crashlog.txt", FILE_WRITE);
     }
+    class CrashReportOutput final : public Print {
+     public:
+      explicit CrashReportOutput(File& log) : log_(log) {}
+      FLASHMEM size_t write(uint8_t byte) override { return write(&byte, 1); }
+      FLASHMEM size_t write(const uint8_t* data, size_t size) override {
+        Serial.write(data, size);
+        if (log_) {
+          log_.write(data, size);
+        }
+        return size;
+      }
+     private:
+      File& log_;
+    } output(crashLog);
+    output.print(CrashReport);
+    if (crashLog) {
+      crashLog.close();
+    }
+    Serial.println("--- CrashReport above ---");
     delay(500);
   }
 #if defined(SESSION_CAPTURE)
-  emitBootResetCapture(static_cast<bool>(CrashReport));
+  emitBootResetCapture(hadCrashReport);
 #endif
 
   // Initialise the global MIDI event pool now that the Teensy core has completed

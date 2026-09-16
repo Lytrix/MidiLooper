@@ -930,3 +930,695 @@ The user confirmed that the additional DROID Button A and transport presses in
 the stopped-reentry capture were manual input. They are not evidence of duplicate
 controller delivery. This confirmation does not turn the mixed-input sequence
 into an isolated automated button-cycle test.
+
+## Normal-stop cleanup continuation (2026-09-15)
+
+The normal PLAYING completion path no longer silences output, clears playback
+ledgers or reanchors the cursor. Shared `TrackPreparedStopCommit` cleanup keeps
+the selected bridge while retiring completed bridge and canonical-tail workers.
+Native coverage exercises the actual cleanup body, held-note closure, snapshot
+receipt retry, and subsequent prefix preparation: 147 playback-prewarm tests pass.
+The stricter host gate and transition tests pass: 27 tests. Capture build and
+upload succeed; RAM1 local headroom stays at 6,176 bytes.
+
+Two populated overdubs were run on authorized scratch track 5 / slot 1:
+
+- `captures/normal-stop-cleanup-two-pass-20260915/result.json` and
+  `session_20260915_213424.log`: first normal cleanup completed in a 185 µs grain;
+  the second stop remained in prefix preparation until transport Stop recovery.
+  Its old `normal_stop_verified=true` result is superseded: that verdict checked
+  visible state transitions, not background completion.
+- `captures/normal-stop-cleanup-tail-two-pass-20260915/result.json` and
+  `session_20260915_213807.log`: after adding canonical-tail worker retirement,
+  the new gate correctly returns failure. Two visible PLAYING transitions are
+  observed, but only one normal cleanup completes (224 µs grain, destination 0).
+  The second stop remains in CanonicalPrefix during its one-second observation;
+  cleanup completes only under transport Stop (827 µs grain, destination 1).
+
+The second-pass owner/readiness blocker remains unresolved; canonical-tail
+retirement alone did not resolve it on-device. Both traces contain zero correlated
+service/emission rows. Cleanup-grain durations are neither total stop latency nor
+proof of audible continuity or emission deadlines. Transport ends STOPPED. Task
+2.3, task 4.1, full 5.3 and the provisional 6,240-grain reservation remain open.
+
+## Second-stop ready-window ownership (2026-09-15)
+
+This supersedes the second-pass failure immediately above. A native reproducer
+showed that the selected bridge's base stayed in the ready slot, and cleanup
+retained its old canonical-window receipt. A subsequent prefix completed, but
+window preparation denied against that stale receipt. Atomic bridge publication
+now promotes the base via the existing ready-to-current lifecycle, and cleanup
+retires the preparation receipt while keeping the audible current storage.
+The new native second-window regression fails before this correction and passes
+afterward, including continued readability of the selected bridge.
+
+Uploaded result: `captures/stop-window-handoff-two-pass-20260915/result.json`,
+log `session_20260915_214557.log`, track 5 / slot 1. The strengthened verdict is
+true: two populated overdubs, two PLAYING-destination cleanup completions, no
+probe errors, both completed before final transport Stop. Stop-entry to cleanup
+end intervals are 240,823 and 244,832 µs; the final cleanup grains themselves are
+287 and 299 µs. These are functional completion measurements, not emission
+lateness or a real-time reservation. Service/emission row counts are both zero.
+
+Native playback-prewarm: 147 passed. Native take-survival: 124 passed. Host
+probe/transition tests: 27 passed. Build/upload passed; moving the newly linked
+infrequent lifecycle handoff to flash restores 6,176 bytes RAM1 local headroom.
+Task 2.3 remains open for the full rolling/current-phase handoff, undo and bounded
+cleanup requirements. Task 4.1/5.3 and the 6,240-grain real-time reservation remain
+open. The device was left with transport stopped.
+
+## Joint publication and Add-only revision (2026-09-15)
+
+The production atomic caller could bypass joint-preflight denial and publish
+canonical data alone while PLAYING. Removing that fallthrough exposed a repeatable
+failure in `captures/stop-atomic-dispatch-two-pass-20260915/result.json`: pass two
+could not start because pass one remained at AtomicTransfer. Narrowed diagnostic
+runs `captures/stop-atomic-denial-20260915/` and
+`captures/stop-atomic-proof-20260915/` identified a target identity mismatch
+(reason 288 = reserved admission 256 + target mismatch 32; 352 also included
+transient bridge-selectability denial). Canonical preparation checks passed.
+
+Pending Add changes produced no companion edit rows, but the proposed target
+assumed any pending changes required a second revision. Canonical publication
+correctly advanced once. Reserved preparation now derives the target revision
+from the existing bounded companion worker's completed row count, before derived
+pass construction. The native Add-only fixture starts with the formerly incorrect
+provisional revision and verifies corrected joint publication through the same
+reserved-tail and atomic-dispatch bodies used by Track. All 147 prewarm tests pass.
+
+Uploaded checkpoint `captures/stop-joint-revision-two-pass-20260915/result.json`,
+log `session_20260915_220034.log`: two populated overdubs and two completed normal
+cleanups, no probe errors or atomic-preflight diagnostic denials. The device ends
+with transport stopped. Build/upload pass; RAM1 headroom remains 6,176 bytes.
+This supersedes reliance on earlier cleanup-only checkpoints where the fallback
+remained reachable. Service/emission row counts remain zero, so this is not a
+real-time deadline pass. Task 2.3 current-phase/rolling handoff, protected undo and
+bounded cleanup, plus 4.1/5.3 acceptance, remain open.
+
+## Running-cycle anchors (2026-09-15)
+
+Track had constructed every preparation/publication anchor with cycle zero,
+while the bridge consumer retained its running projection cycle. A later bridge
+could therefore select next/steady-cycle masks on its first use. The three Track
+anchors now use the runtime's current cycle; ordinary/overdub playback advances
+that same counter on serviced wraps without a selected bridge. The existing
+native held-note fixture now runs at cycles 0 and 3, proving a cross-wrap original
+Off is retained, emitted once and absent in subsequent cycles. All 147 prewarm
+tests and 27 host probe/transition tests pass.
+
+Uploaded checkpoint: `captures/stop-cycle-wrapped-late-two-pass-20260915/result.json`,
+log `session_20260915_222345.log`, authorized track 5 / slot 1. Command options:
+`--overdub-passes 2 --overdub-duration-s 8 --late-overdub-note --clear-before-seed`.
+Both normal cleanups complete before transport Stop, with no probe errors or
+atomic-preflight denials. Atomic grains are 155/155 µs; cleanup grains are
+125/123 µs. This is functional evidence for the longer late-note sequence;
+service/emission row counts are zero, so audible cycle/phase and deadline
+correlation remain unproven on-device.
+
+Firmware fits with 6,176 bytes RAM1 local headroom and 425,784 bytes ITCM code.
+Transport projection reanchoring uses the existing cold-code flash placement.
+The phase part of the anchor still uses the frozen stop phase. Task 2.3
+current-serviced-phase/rolling handoff, protected undo and bounded cleanup, along
+with 4.1/5.3 deadline acceptance, remain open. Transport was left stopped.
+
+## Production closure/window integration validation (2026-09-15)
+
+The production stop path now owns complete immutable closure source bases beyond
+worker cleanup, projects them through the shared rolling-window worker, refreshes
+bridge preparation against the current serviced phase/ledger, and retains original
+pending Off obligations across another source edit. Full native validation reports
+2,123 passed and one skipped. The capture firmware build passes, with 6,176 bytes
+RAM1 local headroom. These are host/build results, not a new device PASS.
+
+The next manual regression uses DROID Button A: record two bars, enter overdub,
+return through OVERDUB_STOPPING to PLAYING, then enter and exit a second overdub
+without stopping transport. Verify both layers remain audible and visible, clocks
+and display continue, and final cleanup completes. Preserve the existing manual
+loop. Deadline/reservation acceptance and task 2.3 remain open.
+
+Upload command completed successfully (`/tmp/finish-closure-upload.log`). The
+subsequent passive serial check enumerated no `usbmodem` port, so device reboot
+and runtime operation are not confirmed. No clear, note, or transport commands
+were sent during this upload/check. Confirm the interface has returned before
+performing the manual regression; restore serial access to retain its trace.
+
+## Empty post-wrap routing regression (2026-09-15)
+
+**2026-09-15 manual clean-stop routing regression:**
+`captures/session_20260915_235602.log` records wrap commit at 48.314 s, Stop
+Overdub at 48.428 s, and `bridge_begin` denial at device 48,438,934 us
+(mask 1652 / 0x0674). Later Button A presses reach the finalization-pending
+handler. The empty post-wrap candidate bypasses canonical/bridge preparation,
+but the AtomicTransfer refresh guard incorrectly required a bridge for every
+PLAYING destination and routed it back to CompanionBridge. The guard now
+requires an actual pending capture pass. Empty stops proceed to existing
+cleanup; populated PLAYING commits retain mandatory bridge preflight and
+transport Stop retains precedence. Shared native routing coverage exercises
+all three cases. The capture has ring overflow, so it cannot establish deadline
+acceptance. Manual device confirmation and task 2.3 remain open.
+
+Validation of the routing correction: 152 focused native tests pass; full native
+suite reports 2,123 passed and one skipped. OpenSpec strict validation and
+`git diff --check` pass. Logs: `/tmp/clean-stop-routing-native.log` and
+`/tmp/clean-stop-routing-all-native.log`. The added regression executes the
+same routing predicate used by Track before atomic dispatch, so it covers the
+guard omitted by the earlier direct atomic-transfer tests.
+
+Capture firmware build and upload both pass. RAM1 local headroom remains
+6,176 bytes. `/dev/cu.usbmodem154944801` re-enumerated after upload; no MIDI
+stimulus, clear or transport command was sent. Build/upload logs are
+`/tmp/clean-stop-routing-firmware.log` and `/tmp/clean-stop-routing-upload.log`.
+Device reentry still requires the manual two-overdub check; enumeration alone
+is not behavioral acceptance.
+
+## Future-window cleanup starvation (2026-09-16)
+
+**2026-09-16 post-finalization reentry starvation:**
+`captures/session_20260916_000034.log` shows the populated bridge ready at
+30.256907 s and phase-10 cleanup completed at 30.354501 s. Button A reaches
+Live Overdub at 31.709, 35.371 and 37.227 s, then the combined transfer/snapshot
+admission guard rejects it. Code inspection and a failing native reproducer
+identify `serviceBridgeWindow` discarding a completed but unpublished future
+window. It immediately rebuilds that window on subsequent turns, starving the
+existing snapshot receipt consumer and leaving its admission slot occupied.
+The Complete branch now releases the builder with `discard(&target)`, preserving
+the ready/build destination. No snapshot admission policy is relaxed. The native
+regression fails before this change and passes after, including repeated idle
+yields, immutable future windows and the existing multi-cycle MIDI continuity
+fixture (152 focused tests pass). Admission warnings now distinguish transfer
+capacity from an occupied snapshot receipt. Device reentry remains unverified;
+task 2.3 and HITL/deadline gates remain open.
+
+Validation: the new idle-yield assertion fails on the previous implementation
+(`/tmp/window-yield-before.log`) and passes after preservation of the destination
+(`/tmp/window-yield-after.log`, 152 tests). Full native validation reports
+2,123 passed and one skipped (`/tmp/window-yield-all-native.log`). Capture
+firmware builds with 6,176 bytes RAM1 local headroom
+(`/tmp/window-yield-firmware.log`). OpenSpec strict validation and diff checks pass.
+
+Upload succeeded (`/tmp/window-yield-upload.log`) and the serial port
+`/dev/cu.usbmodem154944801` returned. No clear, MIDI stimulus or transport
+command was sent. Manual DROID two-overdub reentry remains the next device gate.
+
+## Moving-ledger refresh loop (2026-09-16)
+
+**2026-09-16 repeated bridge refresh blocks the third overdub:**
+`captures/session_20260916_000904.log` confirms another overdub starts at
+61.028 s. Its stop at 69.606 s remains pending. The retained trace contains
+23 completed bridges immediately followed by refresh, from 72.194397 through
+75.511650 s, at intervals of 144,372–158,456 us. Compilation captures a live
+ledger/cycle/phase; admission checks exact ledger equality and the retained
+Off horizon. Normal emission advances these while compilation runs, and
+`refreshFrozenCompanionBridge` resets and recompiles the whole bridge. Repeated
+ready/refresh is therefore not bounded progress toward admission. The first
+stop finishes; the second stop does not, so later Button A presses correctly
+retain the pending transaction. Ring overflow prevents a complete timing verdict.
+
+Required correction: separate stable canonical mapping/ordering from bounded
+current-boundary closure reconciliation, preserving progress under continuous
+NoteOn/Off emission. Do not remove ledger validation, pause playback, wait for
+silence, or increase the quantum as a substitute for a progress proof. Add a
+moving-ledger regression with multiple consecutive source changes and verify
+original Offs exactly once before treating another upload as a fix. This is
+diagnosis and an implementation requirement, not implemented or device-verified.
+Task 2.3 remains open.
+
+## Closure-only rebind implementation (2026-09-16)
+
+**2026-09-16 bridge boundary reconciliation implementation:**
+`refreshFrozenCompanionBridge` now invokes the shared compiler's
+`rebindBoundary` rather than resetting bridge storage. Records, mapping, base
+ranks, sorted base order and complete insertion order survive. The existing
+merge scratch retains the complete insertion permutation after sorting; steady
+compaction no longer destroys the order needed by another boundary binding.
+Reconciliation runs only inheritance, affected-record checks, closure resolution
+and cycle-index output in the existing entry quantum. No allocation, copy of
+canonical events, or sort is introduced during this path. Original carried Offs
+are enabled only by a matching live closure and disappear after it closes.
+
+Admission checks the relevant subset of the ledger using fixed pitch/identity
+summaries built from all changed records and inherited closures. Identity hash
+collisions conservatively request reconciliation; they cannot bypass protection.
+Changes to unrelated notes no longer invalidate preparation. Changes to affected
+notes, cycle or original-Off deadline retain the closure-only reconciliation
+path; no note protection or command-epoch check is removed. These smaller steps
+still require device service/reservation validation; no unconditional deadline
+or maximum stop-latency claim is made.
+
+Native coverage compares repeated bindings against fresh compilation over six
+cycles, changes unrelated notes every preparation turn, verifies unchanged map
+and bridge storage generations, and preserves an inherited original Off during
+a second source change. Capture refresh telemetry now says `closure_only`.
+The provisional 6,240-grain baseline remains unchanged. Task 2.3 and hardware
+acceptance remain open.
+
+Validation of boundary reconciliation: full native suite reports 2,124 passed
+and one skipped (`/tmp/bridge-rebind-all-native.log`). The final focused suite
+passes all 153 tests (`/tmp/bridge-rebind-final-native.log`), including final
+mapping-generation guards, repeated bindings and copied-Off retirement.
+Next device checkpoint: at least four normal overdub start/stop passes without
+transport Stop, retaining overflow-free `closure_only` refresh and completion
+telemetry. Check actual reentry and original-Off continuity; host results do not
+establish a real-time pass or close task 2.3.
+
+Capture firmware build passed (`/tmp/bridge-rebind-firmware.log`) with 6,176
+bytes RAM1 local headroom. Initial upload returned loader Error -1; one retry
+succeeded (`/tmp/bridge-rebind-upload-retry.log`) and
+`/dev/cu.usbmodem154944801` returned. No clear, MIDI stimulus or transport
+command was sent. Consecutive-overdub behavior and deadlines are not yet
+verified on this firmware.
+
+## Consecutive overdub reentry latency (2026-09-16, 003056)
+
+`captures/session_20260916_003056.log` confirms six accepted overdub starts in
+the late test sequence. Deferred stops begun at 215.823160, 224.445991,
+231.486392 and 242.378785 s finish phase-10 cleanup at 216.806890, 226.116419,
+233.277526 and 243.835403 s: 0.984, 1.670, 1.791 and 1.457 seconds. Failed
+reentry presses at 225.696, 232.595 and 243.256 s occur before cleanup completes;
+the handler reports finalization continuing, not snapshot admission denial.
+Subsequent presses enter overdub. Closure-only reconciliation completes in
+roughly 17–36 ms in retained examples; initial canonical/tail preparation and
+bridge compilation account for most of the delay. These are elapsed phase
+spans, not continuous MIDI-blocking execution times.
+
+Two additional stops, at 237.040780 and 247.351353 s, report
+`preparation_service_unavailable` with an invalid ranked estimate and use the
+synchronous compatibility path. Inspection shows admission falls back to the
+small frozen-tail count when no full-loop current view exists, while the bound
+rejects maximumPassCount > capacity. This can incorrectly reject a short tail
+after several committed passes. Correct the estimator inputs using owned
+prewarmed horizons before treating the sequence as wholly resumable. Then
+overlap stable canonical/tail/bridge preparation with overdubbing to reduce
+post-stop work without enlarging grains or bypassing atomic admission.
+
+Ring overflow is present, so this capture is not a real-time deadline PASS.
+Task 2.3 remains open. This checkpoint changes documentation only.
+
+**2026-09-16 live canonical-base prework and stop estimate correction:**
+The `003056` manual capture exposed a small-tail estimate incorrectly used as
+candidate capacity. Stop now estimates from the prewarmed capture owner and the
+prepared canonical base (or its conservative full capacity when unavailable).
+The pass estimate includes record, existing overdubs and the incoming capture.
+It no longer infers capacity from a rolling emission window or final tail count.
+
+Live overdub and Stop share `stepCanonicalBase`: prefix normalization followed
+by the existing pass merge and view fill/order worker, one child per owner turn.
+The live VisualCache turn can prepare the immutable candidate bridge base while
+recording the overdub. Paint dirtiness alone does not block this work while
+visual reconstruction is disabled; wrap append and source-span work retain
+priority. Source/storage changes invalidate prework; current playback and the
+selected bridge remain untouched. Stop resumes partial work or reuses a ready
+base. Frozen-tail, companion and cleanup work still remains after Stop, so this
+is not proof of immediate reentry or a realtime deadline pass. Task 2.3 and the
+HITL gates remain open; the provisional 6,240-grain baseline is unchanged.
+
+Validation: full native suite 2,126 passed / one skipped; final focused suite
+189 passed after the prefix-owner validation adjustment. Strict OpenSpec and
+`git diff --check` pass. Capture-serial build and upload succeeded; serial
+`/dev/cu.usbmodem154944801` returned. RAM1 local headroom remains 6,176 bytes.
+The device upload finished at 00:44:27 local time on 2026-09-16. Manual reentry
+and deadline acceptance remain open.
+
+Manual capture `session_20260916_004305.log` ended at 00:44:02 local, before
+this upload completed, so it is not acceptance evidence for the latest binary.
+It contains four accepted overdub entries (21.003, 30.297, 33.451, 44.952 s).
+Three PLAYING-destination stop spans, measured from first retained stop grain
+to completed cleanup, are 744,987 / 649,353 / 1,730,182 us. Their canonical-base
+phase takes only 55 / 54 / 52 us. The third stop spends 889,051 us in canonical
+tail preparation, 113,740 us in companion history, 564,044 us in companion
+bridge work and 97,083 us in cleanup (wall spans, not uninterrupted CPU work).
+The 43.398 s reentry press occurs before cleanup ends at 44.009912 s; the
+44.952 s press succeeds. Transport Stop later reaches STOPPED. No literal
+`ring_overflow` record was found; this alone is not a deadline or completeness
+PASS. The log also contains unmatched-Off capture warnings requiring separate
+input/accepted-On correlation before attributing them to data loss.
+
+**2026-09-16 continuous preparation across punch-in/out:**
+Canonical preparation now runs during PLAYING as well as OVERDUBBING, using the
+existing VisualCache owner and otherwise-unused wrap-append turns. Existing
+record, stop, wrap-append and source-span priority remains. A confirmed newest
+pass append with unchanged companion history preserves completed normalized
+passes and resumes the first unfinished/new pass; snapshot identity publication
+at the same content revision also preserves completed normalization. Unproven
+source changes or changed history retain the existing safe invalidation path.
+
+The companion merge now retains final per-pass output, in its original order,
+in the canonical owner's existing raw scratch buffer. One extra prewarmed pass
+descriptor array is required (16 KiB at 2,048 entries on Teensy); no additional
+event buffer or active allocation is introduced. Each existing merge addition
+also writes its normalized scratch entry, within the same Q-entry grain.
+Successful stop cleanup adopts these results with pointer swaps after matching
+source/worker generations, including when the committed companions changed
+history. Reselecting current descriptors/history is resumable; completed pass
+normalization is not replayed. Selected bridge/base and audible cursor remain
+untouched. A scratch-owner receipt prevents another builder from being mistaken
+for the retained result. `prefix_reuse` / `prefix_restart` records describe the
+low-frequency ownership transitions rather than logging every prework grain.
+
+Task 2.3 and HITL acceptance stay open. This does not claim instant reentry:
+frozen-tail/bridge/finalization work remains, and new history during a wrap may
+invalidate normalization for all potentially affected passes. The provisional
+6,240-grain baseline remains unchanged; added bounded stores need device timing
+validation alongside rapid punch-in/out, wraps and original-Off preservation.
+
+Continuous-preparation validation: full native suite 2,130 passed / one skipped;
+final focused suite 194 passed, including superseded scratch-owner rejection.
+Post-commit adopted per-pass events match fresh canonical replay across the
+existing stop variants, including companion edits and the large-capture fixture.
+Strict OpenSpec and diff checks pass. Capture-serial build succeeds with RAM1
+local headroom 6,176 bytes, unchanged. Upload and one retry failed: the Teensy
+loader reported no boards on USB and requested the physical program button;
+no `cu.usbmodem` port was present. This firmware is built but NOT uploaded or
+HITL-validated. Reconnect/program-button action is needed before retrying.
+
+
+## Next intermediate checkpoint: reserved output and reset recovery (2026-09-16)
+
+The next local build adds physically reserved canonical-copy output and protects
+an admitted stop job against playback-cache reset. This checkpoint measures memory
+and single-job recovery before increasing simultaneous interval reservations.
+It does **not** accept task 2.3: the three service-paused reentry fixtures still
+fail and the FIFO/session-owner migration is unfinished.
+
+After explicit upload authorization and selection of an empty scratch track/slot:
+
+1. Capture boot through the existing saved-slot load. Check no allocation fatal,
+   reset loop or hang. Keep the startup heap/PSRAM samples and each Tier-A
+   `DIAG,capture_prewarm` record. Fields are zero-based track/slot; `full` is the
+   requested mode; `ready` is canonical-output admission only. Expected successful
+   output admission reports `ready=1,credits=8`; retain exact free pool and heap
+   values. Do not clear saved material to make a failing prewarm pass.
+2. In the authorized scratch slot, record a base and perform a paired-note overdub,
+   then a held-note overdub. Let each job drain. Check exactly one terminal Off,
+   correct committed notes/preview, and ability to begin the next drained session.
+3. Repeat with transport Stop immediately after punch-out while preparation is
+   pending. Confirm prompt output silence, preservation of accepted notes, no
+   return to PLAYING from late cleanup, and a working later explicit restart.
+4. Include enough events to cross a 256-row chunk boundary. Inspect existing grain
+   telemetry around canonical copy, raw-chunk retirement and post-commit refill;
+   correlate with MIDI deadlines. Require an overflow-free scored interval.
+
+Do not inject destructive slot clear/load merely to force reset; native fixtures
+cover explicit cache invalidation. Rapid reentry remains a known unimplemented
+requirement and must not be reported as a pass at this intermediate checkpoint.
+No firmware has been uploaded for this checkpoint yet. Final build identity and
+native results are recorded in CONTINUOUS-CAPTURE-OWNERSHIP.md.
+
+
+## 2026-09-16 authorized track 5 / slot 1 hardware checkpoint
+
+Firmware on device: hex SHA-256
+`d926209f15fd02f37a28371fb45fbf34e70e2a91fc86d523b34e30b50b017a35`.
+User authorized upload and named track 5, slot 1 as the scratch location. The
+normal probe did not clear it; subsequent interruption recipes cleared only that
+authorized scratch slot. No other slot was cleared or workspace quarantined.
+
+- `captures/task23-reset-normal/result.json`: two normal overdub stops verified
+  through DeferredCleanup, no scored timing issues or capture overflow. This run
+  had no correlated emission rows and is not a full audible-deadline proof.
+- `captures/task23-reset-interruption/interruption-reverified.json`: focused
+  single-track Stop precedence/silence **PASS**. Device Stop arrived 9,406 us after
+  job entry; all-notes-off followed in 3,031 us; stopped cleanup completed after
+  142,109 us. More than 15.9 seconds of post-cleanup device observation and actual
+  USB MIDI output show no late NoteOn or return to PLAYING.
+- The original interruption report was INCONCLUSIVE_CAPTURE because its verifier
+  expected the obsolete visible OVERDUB_STOPPING-to-STOPPED edge. The corrected
+  host verifier requires same track/slot/capture generation, a PLAYING-intent
+  pre-Stop grain, a newer command epoch, and STOPPED DeferredCleanup completion
+  before another job entry; earlier completion or another slot cannot qualify.
+  Original logs/results are preserved; reevaluation has a separate filename.
+  The broader baseline still reports incomplete expected musical/display markers;
+  only the explicitly focused interruption verdict passes.
+- `captures/task23-reset-restart/restart-result.json`: **PASS**, three complete
+  playback cycles contain every expected base/overdub/held note, without extra,
+  duplicated or unmatched notes. This is content survival, not deadline safety.
+- `captures/task23-reset-dense-interruption/interruption-result.json`:
+  **INCONCLUSIVE_CAPTURE**. The dense attempt lost USB, reconnected at
+  13:44:47.654881 and showed a new boot. The captured boot marker says crash=0;
+  no retained diagnostic identifies the reset cause. Stop/commit evidence was
+  lost, so the greater-than-one-chunk device check has NOT passed. User confirmed the reset was spontaneous, after an overdub note needed to
+  resolve a record-pass note. This identifies the observed trigger, not the
+  underlying cause; allocator exhaustion and stack exhaustion remain unproven.
+
+Full prewarm for the target slot reported output-ready=1 with eight credits;
+internal heap samples were 294,912 and 73,728 bytes in the normal/interruption
+runs respectively. This does not measure complete PSRAM headroom. The startup
+capture was partial; retain the earlier INCONCLUSIVE_CAPTURE label.
+
+Host regression tests: 24 pass across stop intervention, restart survival and
+timeline-probe suites. Firmware unchanged during these host verifier edits.
+Task 2.3 remains unfinished (FIFO/session owners and three reentry failures), and
+neither the dense gate nor full task 5.3 matrix is accepted by this checkpoint.
+
+
+**2026-09-16 overlap reboot investigation / human verification checkpoint:**
+User confirms the dense-run reboot was spontaneous after an overdub note resolved
+a record-pass note. A new production-route native test exercises Shorten of the
+record-pass note (Off at hold-start minus one) and stop completion; it passes.
+Focused native result: 12 pass, the same 3 unfinished reentry requirements fail
+(`/tmp/task23-overlap-final.log`). This does not reproduce or explain the device
+fault; the capture-only overlap diagnostics are absent from the native fixture.
+
+Found and fixed a crash-evidence defect: the installed Teensy core's
+`CrashReport::printTo` clears its retained report. Startup previously printed to
+Serial, then tried to print again to SD and sampled the now-cleared boolean.
+Consequently the dense-run `crash=0` cannot exclude a recorded core fault. Startup
+now snapshots the boolean before printing and renders once to a sink that writes
+both Serial and `crashlog.txt` when SD opens. No claim that this fixes the reboot.
+
+Capture-serial build and upload pass (`/tmp/task23-crash-report-build-final.log`,
+`/tmp/task23-crash-report-upload.log`). Uploaded hex SHA-256:
+`11bbc435befcd5dba617678bdd29ce4ecb5d9bbf65d04b792613a5190a460e73`.
+RAM1 local headroom remains 5,600 bytes; startup sink methods reside in flash.
+Post-reboot dense capture reported PSRAM 4,158 KB free / 4,024 KB used at startup;
+that is not the memory state at the failure.
+
+Next HITL: reproduce the observed record-pass/overdub overlap on authorized track
+5 / slot 1 with the serial reader in `captures/task23-overlap-crash-report`.
+No automated MIDI stimulus is running. Preserve the reconnect and startup output;
+if Serial misses it, the one-pass crash sink can retain the report on SD.
+Task 2.3, the dense gate, and full task 5.3 remain open.
+
+
+**Dense-test interpretation clarification:** the failed hardware run was explicitly
+intended to exercise more than one 256-event chunk. It did not complete, so native
+chunk tests cannot close that device gate. The user's observed overlap is a clue,
+not an established alternative cause. The retained log does not establish that
+the first-to-second chunk transition caused the reboot, nor that deferred
+canonical-copy processing was reached. Preserve both boundary and overlap paths
+in the next reproduction. Serial capture is now open in
+`captures/task23-overlap-crash-report/session_20260916_135500.log` (exec session
+28933); the prior 135431 attempt could not open the sandboxed serial device and
+was stopped. No automated MIDI stimulus is running.
+
+
+**2026-09-16 user correction / automated rerun:** the dense chunk test is an
+agent-operated HITL recipe, not a required manual reproduction. The standalone
+serial reader was stopped, and the exact earlier dense recipe was rerun against
+track 5 / slot 1 with the diagnostic firmware. Evidence directory:
+`captures/task23-dense-crash-report-rerun`; runner output:
+`/tmp/task23-dense-crash-report-rerun.log`. Do not require manual gestures to
+repeat an already automated test. Result pending.
+
+
+**Automated dense rerun result (2026-09-16 13:57):** identical recipe on track 5 /
+slot 1 rebooted again on diagnostic firmware
+`11bbc435befcd5dba617678bdd29ce4ecb5d9bbf65d04b792613a5190a460e73`.
+`captures/task23-dense-crash-report-rerun/session_20260916_135633.log` records
+Overdubbing start at 188.453 s, last pre-reboot output at 190.100 s, reconnect at
+13:57:21.424792, and `boot_reset,crash=1`. This confirms a retained core crash
+report, unlike the previous destructive boolean read. Serial reconnected after
+the early crash text, so the fault address/type are not in this capture; the
+new sink attempted to preserve them in SD `crashlog.txt` (file not yet read).
+The runner finished and its serial/MIDI owners closed. Focused verdict remains
+INCONCLUSIVE_CAPTURE with incomplete_capture/no_device_stop_inside_stopping;
+the dense hardware gate has not passed. Chunk-boundary causation remains unproven.
+No manual reproduction is required to repeat this automated recipe.
+
+
+**Crash diagnosis and targeted diagnostic-stack change (2026-09-16):**
+The stopped-only `!CRASH_LOG` command retrieves the last 4 KiB of `crashlog.txt`
+without modifying it, into the host capture. Retrieval succeeded:
+`captures/task23-dense-crash-report-rerun/crash-log-retrieval.log` contains a report
+at system time 13:57:08 matching the rerun: PC=0x6358C, CFSR=0x82 (DACCVIOL),
+MMFAR=0x20016A3F, identified by the core as the stack boundary. The saved matching
+ELF `/tmp/task23-crashed-11bbc435.elf` maps PC to `_svfprintf_r`, with a failing byte
+store during numeric formatting. This establishes a stack-boundary access fault;
+it does not identify chunk rollover as the cause or reconstruct the caller stack.
+
+The overlap observation path stacked two 128-ID sets and a 256-byte formatting
+buffer above noteOn's PendingNote. Moved only these diagnostic temporaries to
+foreground-only RAM2 scratch, cleared on every use. No note/session ownership or
+resolution semantics change. Compiled snapshotOverlapHoldCandidates local stack
+allocation falls from 1,372 to 76 bytes (register saves excluded in both figures).
+RAM1 headroom remains 5,600 bytes; RAM2 free becomes 472,928 bytes.
+
+Build/upload pass (`/tmp/task23-overlap-stack-build-final.log`,
+`/tmp/task23-overlap-stack-upload.log`). Firmware hex SHA-256:
+`e8a6b46d45576f7c96e4d6d3423beb267abdabde3c67b0cad4b3da0564417d86`.
+Identical dense recipe is running under `captures/task23-dense-stack-fix`.
+No acceptance claim pending its result.
+
+
+**Post-fix device results (2026-09-16):**
+- Exact original recipe, `captures/task23-dense-stack-fix`: no reboot; canonical
+  copy phase and terminal DeferredCleanup complete. Copy phase has 19 observed
+  turns, maximum 104 us, including raw-source retirement turns. The 578 grain
+  field is capture generation, NOT a measured row count. Do not derive chunk
+  count from it. Stop arrived 47,320 us before job entry, so the focused
+  interruption verifier correctly remains inconclusive for this run.
+- Same dense musical stimulus with only intervention delay changed from 305 to
+  380 ms, `captures/task23-dense-stack-fix-stop-window/interruption-result.json`:
+  focused single-track Stop precedence/silence PASS. Device Stop arrived
+  82,042 us after job entry, all-notes-off followed after 3,039 us, stopped cleanup
+  completed 168,895 us after Stop, and 18,976,636 us of subsequent observation
+  contain no late NoteOn. No reboot occurred.
+- Both broad baseline reports remain INCONCLUSIVE_CAPTURE for their reported
+  setup/content/display/persistence marker issues. These are not waived. Neither
+  run proves restart survival, layered playback, full deadline coverage, or the
+  remaining FIFO/reentry requirements. Both runner/capture owners have exited.
+
+The matching crash evidence plus two post-change no-reboot dense runs support
+keeping the reduced-stack diagnostic scratch. Task 2.3 remains open. Next
+integration work remains fixed FIFO and isolated session/preview/undo ownership;
+full dense content/count and timing acceptance still needs explicit evidence.
+
+
+**2026-09-16 dense content/timing verification and descriptor integration:**
+
+Read-only `!CAPTURE_CONTENT` prints selected stopped-loop raw passes and effective
+canonical events into the serial capture. It denies active capture, transport or
+pending stop; it does not edit the slot. The last successful upload for this
+readback has hex SHA-256
+`f8565f07728784bb114ee14370432916957d59b9a4a6c296658ef34aad18af8f`.
+
+`captures/task23-dense-content-retry/input-review.json` verifies 568 stored overdub
+events (three 256-event chunks): 188 NoteOns, 188 matching Offs, 192 CCs. Note
+coordinates/values match the original dense capture exactly; CC values match in
+order. Five input pairs (pitches 19, 101, 121, 52, 63) lasted 7, 6, 7, 7, 1 ticks
+and are excluded by the existing enabled eight-tick minimum. Held pitch 83 closes
+at the original stop phase 2835. No unexplained missing/extra retained note rows.
+The record pass has 192 events; effective content has 760. Source checks and
+capture acquisition scripts are retained beside the evidence. This does not
+prove CC tick equality or full effective companion semantic parity.
+
+`captures/task23-dense-stack-fix-stop-window/dense-timing-review.json` shows no
+capture loss/malformed stop rows but is NOT a timing PASS: one CanonicalOrder grain
+crossed its recorded service deadline, another began overdue; two captured clock
+samples were 3,899 and 1,885 us late during PLAYING. CanonicalCopy observed maximum
+102 us. There are zero correlated emission rows, so audible deadline safety is
+unproven regardless of the coarse verifier's empty issue list.
+
+Restored playback verification is incomplete: unclocked and explicitly clocked
+restart probes received no target-channel musical events, so no full cycles could
+be compared to effective canonical rows. See `captures/task23-dense-content-clocked`
+(content-review.json and service-status.log). Transport and output-policy/readiness
+cause are unresolved; do not call this content-playback PASS or infer data loss.
+Selecting an already selected slot toggles playback, so acquisition explicitly
+stops again before the content request. It never clears/records new data.
+
+The stop receipt now lives in a cold-prewarmed external-memory-first ring of four
+stable descriptors on Track. The existing worker borrows the head; cleanup clears
+its runtime pin before advancing to the next descriptor. Completed slots are
+reused without copying job-owned maps. The ARM allocation is 616 bytes/track
+(4,928 bytes for eight tracks), excluding map nodes and allocator overhead;
+RAM1 static headroom improves from 5,600 to 6,752 bytes. These four metadata slots
+are NOT a declaration that four simultaneous captures are supported. Admission
+still retains the singleton staging/session guard. Missing prewarm rejects before
+opening input. No full staging buffers or worker graphs were duplicated.
+
+Native sequential rotation test covers stable receipt address, pin lifetime,
+head wrap/reuse, and existing snapshot handoff service between sessions. Three
+public reentry requirements still fail. Raw-range/staging/preview/companion/undo
+and predecessor isolation remain required before allowing multiple queued jobs.
+
+Descriptor build passed (`/tmp/task23-fifo-descriptor-build.log`). Attempted upload
+failed: no Teensy found and serial port absent (`/tmp/task23-fifo-descriptor-upload.log`).
+The descriptor migration is NOT verified on device. User has been asked to
+reconnect/press PROGRAM. No serial/MIDI owner is active. Broader native validation
+and final build results follow below; task 2.3 and full hardware gates stay open.
+
+**2026-09-16 dense verification / FIFO descriptor slice:** stored dense overdub
+content matches input (568 events, three chunks, five expected short-pair removals).
+Timing is NOT passed: a stop ordering grain crossed a service deadline and two
+late clock samples are retained. Restored musical playback produced no target
+channel rows in the probes; output policy/readiness remains under investigation.
+Stable external Track descriptors replace the singleton stop receipt; sequential
+rotation passes, but staging/session/predecessor isolation and three reentry tests
+remain open. Full native: 2,159 pass, one skipped, three expected reentry failures;
+final focused admission/rotation: 14 pass and the same three failures. Build passes
+with 6,752 bytes RAM1 headroom. See active FOCUSED-STOP-HITL.md for evidence and
+latest upload status; no task checkbox closes.
+
+
+**2026-09-16 latest device state / verification blocker (14:29):**
+The serial port reappeared after the first upload failure. Final descriptor build
+and retry upload succeeded (`/tmp/task23-fifo-final-build.log`,
+`/tmp/task23-fifo-final-upload.log`), hex SHA-256:
+`a9a7217fc99a0eca5a1cbee199179211822046201707f9327f1018a043ca2066`.
+This is the last successfully flashed firmware; earlier f856 readback was on the
+previous firmware. It includes the final reject-before-capture descriptor guard.
+Full native run: 2,159 pass, one skipped, three existing reentry failures
+(`/tmp/task23-fifo-all-native.log`). Final focused run after the guard test:
+14 pass and the same three failures (`/tmp/task23-fifo-final-focused.log`).
+Strict OpenSpec validation and diff checks pass. No commit or archive performed.
+
+Read-only post-upload status shows track index 4/slot 0 unmuted, audible and
+enabled. The barrier=1 was sampled after transport Stop and is expected; it does
+not explain earlier no-output playback. Boot output reservation prewarm succeeds
+with eight credits, 440 free chunks and heap_free=339968; full-view readiness is
+not implied. Descriptor allocation is cold and source/session migration remains
+incomplete.
+
+A fresh dense hardware recipe on this build cleared only the authorized track 5 /
+slot 1. It then lost the serial device during INITIAL RECORDING, before overdub
+or intervention. Last retained device output is 98.445 seconds. No reconnect or
+new crash marker was captured. Evidence: `captures/task23-dense-fifo-descriptors/`
+and `/tmp/task23-dense-fifo-descriptors.log`, verdict INCONCLUSIVE_CAPTURE. Do not
+call this the same overlap crash, a proven FIFO regression, or a successful
+hardware validation. The runner and serial/MIDI owners have finished; no serial
+port is currently visible. User reconnection/program-button help was requested;
+no answer confirming manual disconnect has been received.
+
+Next: reconnect, retain startup/crash evidence for this disappearance, resolve
+restored playback output and the measured deadline failures, then finish sealed
+range/live reservation/session/predecessor isolation before multiple FIFO admission.
+No additional FIFO buffers/guards were loosened to bypass these verification gaps.
+Task 2.3 remains incomplete (12/20 overall).
+
+
+### 2026-09-16 resumed dense verification and CC preservation
+
+The device reconnected. `captures/task23-fifo-reconnect/reconnect.log` retained
+only the old 13:57 fault report, not a cause for the later USB loss.
+`task23-dense-fifo-retry` stopped at setup. Host save-idle classification wrongly
+treated `FinalizeWorkspace,singleton,done,ok` after `PERS,result,...ok` as new
+work. The classifier now recognizes terminal completion; 19 host tests pass,
+including later-request/work and intermediate-completion counterexamples.
+
+`task23-dense-fifo-idle-retry` completes on a9a7217f without reboot. Focused
+interruption PASS: Stop +85,102 us, cleanup +193,717 us, all-notes-off +3,039 us,
+silence 18,784,522 us. This remains a scoped result. Its timing review has one
+late NoteOn (1,216 us) and two copy-grain deadline crossings; no timing pass.
+`task23-dense-fifo-playback/input-review.json` matches 356 stored note rows to
+input coordinates after 15 configured minimum-length removals and held closure;
+192 CC values match in order. Overdub 548 rows/three chunks, effective 740.
+Four immediate restart cycles contain all notes by multiplicity, but omit three
+CCs at ticks shared with older CC74 rows. Exact ordering is not passed.
+
+The incremental seal merge treated all coincident non-note events as duplicates.
+Its new native regression fails before the fix and passes afterward (133 tests).
+That fix alone, firmware de1411f4c51e2ac2f48cdd9cfced7458c84ceda9c392ea5fdb458fc3ed3e1fa7,
+built/uploaded and was exercised by `task23-dense-cc-fix`. Stop again passes
+(+70,568 us intervention, +212,718 us cleanup, 19,062,193 us silence).
+`task23-dense-cc-fix-playback` matches all 350 overdub note rows and 192 CC values
+against input (18 expected short-pair removals); four restart cycles still omit
+two coincident CCs. One extra raw terminal Off is also suppressed; ledger semantics
+must be accounted for before comparing effective data to physical output.
+
+The remaining CC loss is reproduced in snapshot publication: its event-membership
+comparison also ignores CC controller/value. The snapshot fix compares both; a
+public journal/gather regression fails before and passes afterward (128 survival
+tests). The full native run before this second fix: 2,161 pass, one skipped,
+three known public-route reentry failures. Latest snapshot firmware verification
+is still in progress. No FIFO/reentry/content/timing/task checkbox is closed.

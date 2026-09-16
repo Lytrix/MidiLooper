@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import select
 import sys
 import time
 from datetime import datetime
@@ -60,6 +61,12 @@ def main() -> int:
     )
     parser.add_argument("--run-token", default=None,
                         help="Hex token echoed by capture firmware with its device timestamp")
+    parser.add_argument(
+        "--owner-fd",
+        type=int,
+        default=-1,
+        help="Read end of a parent-death pipe; exit when the owner closes it",
+    )
     args = parser.parse_args()
     if args.run_token is not None and (len(args.run_token) != 32 or
             any(c not in "0123456789abcdef" for c in args.run_token)):
@@ -84,6 +91,27 @@ def main() -> int:
     fsync_interval_s = 0.25
     yield_armed = False
     line_buffer = b""
+    # Orphan guard: when the owning harness exits (including SIGKILL, which gives
+    # it no chance to stop us), this process must exit promptly so the USB serial
+    # port is never held by a leaked capture session. The owner-death pipe is the
+    # primary signal (it fires even when the owner is an unreaped zombie); the
+    # reparent check is a fallback.
+    owner_pid = os.getppid()
+    owner_fd = args.owner_fd
+
+    def _owner_gone() -> bool:
+        if owner_fd >= 0:
+            try:
+                readable, _, _ = select.select([owner_fd], [], [], 0)
+            except (OSError, ValueError):
+                return True
+            if readable:
+                try:
+                    return os.read(owner_fd, 1) == b""
+                except OSError:
+                    return True
+        return os.getppid() != owner_pid
+
     timing_critical_names = (
         b",RECORDING",
         b",PLAYING",
@@ -112,6 +140,9 @@ def main() -> int:
     with out_path.open("ab") as log:
         try:
             while True:
+                if _owner_gone():
+                    print("[capture] owner process exited; stopping capture", flush=True)
+                    break
                 if ser is None or not ser.is_open:
                     if not Path(args.port).exists():
                         time.sleep(args.reconnect_delay)

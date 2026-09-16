@@ -1,8 +1,20 @@
 import unittest
-from hitl_stop_timeline_probe import fresh_capture_lines, emission_evidence_complete, emission_deadlines_met
+from hitl_stop_timeline_probe import fresh_capture_lines, emission_evidence_complete, emission_deadlines_met, normal_stop_cleanup_count
 
 
 class FreshRunEvidenceTests(unittest.TestCase):
+    def test_visible_playing_and_transport_recovery_do_not_count_as_normal_cleanup(self):
+        row = dict(valid=True, track=4, slot=0, phase=10, finished_phase=1,
+                   destination=0, start_us=100)
+        timeline = {"states": [{"from_state": 7, "to_state": 5}], "grains": []}
+        self.assertEqual(normal_stop_cleanup_count(timeline, 4, 0), 0)
+        timeline["grains"] = [row, dict(row), dict(row, start_us=200, destination=1),
+                              dict(row, start_us=300, finished_phase=0),
+                              dict(row, start_us=400, valid=False), dict(row, start_us=500, track=3)]
+        self.assertEqual(normal_stop_cleanup_count(timeline, 4, 0), 1)
+        timeline["grains"].append(dict(row, start_us=600))
+        self.assertEqual(normal_stop_cleanup_count(timeline, 4, 0), 2)
+
     def test_emission_gate_rejects_empty_one_sided_and_uncorrelated_traces(self):
         timeline = {"correlation_complete": True, "state_correlation_complete": True, "emissions": []}
         self.assertFalse(emission_evidence_complete(timeline, 4, 0))

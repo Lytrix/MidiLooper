@@ -718,6 +718,14 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
                 outcome);
 }
 
+SC_MEM_ATTR void capturePrewarm(uint8_t track, uint8_t slot, bool fullViews,
+                               bool ready, uint16_t credits, uint16_t freeChunks,
+                               uint32_t heapFree) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,capture_prewarm,track=%u,slot=%u,full=%u,ready=%u,credits=%u,free_chunks=%u,heap_free=%lu\r\n"),
+      (unsigned long)micros(), track, slot, fullViews, ready, credits, freeChunks,
+      (unsigned long)heapFree);
+}
+
 SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,
                                  uint32_t srcAppendUs, uint32_t commitUs, uint32_t sealPendUs,
                                  uint32_t beginUs) {

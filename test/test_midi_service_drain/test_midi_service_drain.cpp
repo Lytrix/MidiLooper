@@ -3,6 +3,15 @@
 
 #include "Utils/MidiServiceDrain.h"
 
+void test_canonical_prework_prioritizes_runnable_visual_work() {
+  using MidiServiceDrain::canonicalPreparationHasPriorityWork;
+  TEST_ASSERT_FALSE(canonicalPreparationHasPriorityWork(true, true, false, true));
+  TEST_ASSERT_TRUE(canonicalPreparationHasPriorityWork(false, true, false, true));
+  TEST_ASSERT_TRUE(canonicalPreparationHasPriorityWork(true, true, true, true));
+  TEST_ASSERT_TRUE(canonicalPreparationHasPriorityWork(true, false, false, false));
+  TEST_ASSERT_FALSE(canonicalPreparationHasPriorityWork(false, false, false, false));
+}
+
 void test_canonical_prefix_turn_has_global_priority_and_one_child() {
   using namespace MidiServiceDrain;
   for (uint8_t owner = 0; owner < 5; ++owner) {
@@ -12,7 +21,8 @@ void test_canonical_prefix_turn_has_global_priority_and_one_child() {
       const bool ran = serviceCanonicalPrefixTurn(static_cast<DeferredIdleOwner>(owner), 4, cursor,
         [&](uint8_t i) { return i == priority; },
         [&](uint8_t i) { TEST_ASSERT_EQUAL_UINT8(2, i); ++steps; return true; });
-      const bool expected = owner == static_cast<uint8_t>(DeferredIdleOwner::VisualCache) && priority == -1;
+      const bool expected = (owner == static_cast<uint8_t>(DeferredIdleOwner::VisualCache) ||
+          owner == static_cast<uint8_t>(DeferredIdleOwner::VisualCacheWrapAppend)) && priority == -1;
       TEST_ASSERT_EQUAL(expected, ran);
       TEST_ASSERT_EQUAL_UINT32(expected ? 1 : 0, steps);
       TEST_ASSERT_EQUAL_UINT8(expected ? 3 : 2, cursor);
@@ -468,6 +478,7 @@ void test_stopped_pending_snapshot_wins_over_first_paint() {
 
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(test_canonical_prework_prioritizes_runnable_visual_work);
   RUN_TEST(test_canonical_prefix_turn_has_global_priority_and_one_child);
   RUN_TEST(test_canonical_prefix_turn_rotates_and_retains_denied_work);
   RUN_TEST(test_stopping_retains_midi_polls_and_excludes_pending_save);
