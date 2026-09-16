@@ -30,6 +30,10 @@ constexpr StopAdmissionContract kDeferredStopContract{
 };
 
 constexpr uint16_t kDeferredStopPreparationQuantum = 32;
+/// Bounded cold reservation for the protected undo publication. Deliberately far
+/// below Config::ABSOLUTE_MAX_UNDO_ENTRIES: the eager per-track 512-entry reserve
+/// broke device boot (see prewarmProtectedUndo).
+constexpr uint16_t kProtectedUndoPrewarmEntries = 32;
 
 }  // namespace
 
@@ -389,13 +393,21 @@ TRACK_COLD_MEM bool Track::prewarmProtectedUndo() {
     if (!storage) return false;
     protectedUndo_.reset(new (storage) TrackUndoPublication{});
   }
-  if (!protectedUndo_->prewarm(Config::ABSOLUTE_MAX_UNDO_ENTRIES)) return false;
+  if (!protectedUndo_->prewarm(kProtectedUndoPrewarmEntries)) return false;
   // DEC-063: the stack's own entry capacity is part of the same cold admission.
   // The atomic publish must never grow it, and `begin` rejects a transaction whose
   // cursor has reached capacity, so this is a publication precondition.
+  //
+  // Bounded, NOT the 512-entry policy maximum: reserving
+  // Config::ABSOLUTE_MAX_UNDO_ENTRIES per track at boot (8 x ~512 UndoEntry rows,
+  // ~1 MB) made the device stop streaming after `boot_reset` and report
+  // `crash=1` on one boot (captures/task23-undo-crash, 2026-09-16). The policy
+  // maximum needs a pressure-aware or lazily admitted strategy before it can be
+  // reserved eagerly. Past this many retained entries a stop simply publishes no
+  // protected entry (plain commit), which keeps the stop correct.
   GlobalUndoStack& stack = getGlobalUndoStack();
-  if (stack.entries.capacity() < Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
-    stack.entries.reserve(Config::ABSOLUTE_MAX_UNDO_ENTRIES);
+  if (stack.entries.capacity() < kProtectedUndoPrewarmEntries) {
+    stack.entries.reserve(kProtectedUndoPrewarmEntries);
   }
   return true;
 }
