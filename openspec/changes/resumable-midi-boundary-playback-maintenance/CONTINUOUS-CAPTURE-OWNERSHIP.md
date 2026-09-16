@@ -936,3 +936,33 @@ live preview is a different, empty buffer) and
 `test_continuous_capture` 28 pass with the same three intentional public-reentry
 failures; full native 2,186 cases — 2,181 passed, one skipped, the same three;
 `teensy41-capture-serial` builds with **6,752 bytes** RAM1 headroom (13 ITCM banks).
+
+## Job-owned overdub-session undo baseline — checkpoint, 2026-09-16
+
+`TrackUndo::pushOverdubPassAdded` (reached from `pushOverdubSessionOnStop` on the
+stop-commit path) built the `OverdubPassAdded` entry's `beforePublishedSnapshot`
+from the live `Track::overdubSessionBeforePublished_`, which
+`TrackUndo::beginOverdubSession` sets at session open. A successor session would
+have overwritten it, so the predecessor's undo entry would have recorded the
+successor's baseline.
+
+- `CaptureStopJob` owns `ImmutableLoopSnapshotRef beforePublished` plus
+  `hasBeforePublished`. Admission **moves** the live baseline into the job and
+  clears the live member, so the successor session's `beginOverdubSession` records
+  its own baseline independently.
+- `TrackUndo::pushOverdubPassAdded` now prefers the head job's owned baseline
+  (TrackUndo is a friend of Track), falls back to the live session's, and only
+  then captures a fresh snapshot. An unconsumed baseline is retired with the job
+  at cleanup so it can never leak into a later interval.
+- Ownership stays inside the existing owners: no new module, no schema change,
+  no DisplayManager change.
+
+**Verification:** new native `test_stop_job_owns_overdub_session_undo_baseline`
+(production route: the job owns the baseline, the live member is clear, a later
+successor baseline leaves the job's intact, and the flag is gone after cleanup).
+`test_continuous_capture` 29 pass with the same three intentional public-reentry
+failures; full native 2,187 cases — 2,182 passed, one skipped, the same three;
+`teensy41-capture-serial` builds with **6,752 bytes** RAM1 headroom.
+
+**Still open in this slice:** the session-exit snapshot handoff receipt and the
+prepared-companion history.
