@@ -80,6 +80,20 @@ class RunMetadataTests(unittest.TestCase):
                 else:
                     os.environ["PLATFORMIO_BUILD_DIR"] = old
 
+    def test_firmware_hash_from_workspace_local_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build = root / ".pio-build-local-x" / "teensy41-capture-serial"
+            build.mkdir(parents=True)
+            (build / "firmware.hex").write_bytes(b":00000001FF\n")
+            old = os.environ.pop("PLATFORMIO_BUILD_DIR", None)
+            try:
+                found = firmware_hex_path(root, "teensy41-capture-serial")
+                self.assertEqual(found, build / "firmware.hex")
+            finally:
+                if old is not None:
+                    os.environ["PLATFORMIO_BUILD_DIR"] = old
+
     def test_missing_firmware_records_null(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "run"

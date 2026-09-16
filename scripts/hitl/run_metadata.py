@@ -67,6 +67,9 @@ def firmware_hex_path(repo_root: Path, build_env: str) -> Optional[Path]:
     configured = _platformio_build_dir(repo_root)
     if configured is not None:
         candidates.append(configured / build_env / "firmware.hex")
+    # Workspace-local build-cache overrides used when the default cache is not
+    # writable (see .gitignore: .pio-build-local*/).
+    candidates.extend(sorted(repo_root.glob(f".pio-build-local*/{build_env}/firmware.hex")))
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -120,7 +123,7 @@ def write_run_metadata(
         "overdub_bars": overdub_bars,
         "capture_serial_port": capture_serial_port,
         "session_log": str(session_log) if session_log is not None else None,
-        "out_dir": str(out),
+        "out_dir": str(out.resolve()),
     }
     if extra:
         metadata.update(extra)
