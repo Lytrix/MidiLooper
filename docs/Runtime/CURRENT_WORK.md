@@ -949,20 +949,30 @@ record" without a clear long press) and the observation window together. Do **no
 the seeded-slot path emit canonical SEVT — that needs the arm/drain semantics the user has
 closed. Record the seeded-slot limitation rather than working around it.
 
-**Precondition fix landed (uncommitted at time of writing).** `_selected_slot_provably_empty`
-accepts the newest of the ST/DISP evidence (a fresh `EMPTY` edge beats a lagging DISP row) and
-`_await_selected_slot_empty` polls it instead of reading DISP once; the clear request's
-`already_satisfied` now also accepts a provably-empty *selected* slot. Regression
-`test_provably_empty_accepts_state_edge_before_slot_disp_row` fails without the state-edge
-acceptance and passes with it (27/27 in `scripts/test_clear_before_record_precondition.py`).
-Device (`captures/sevt-host-emptyslot`, fresh boot + quarantined workspace): the clear is now
-`ACTION ALREADY_SATISFIED requested=EMPTY ... state=EMPTY`, no precondition abort, and the
-record is genuine (`Recording stopped @ tick 516 (recStart=381 length=2304)`) instead of
-`skipped_empty`. `queue_accepted` fires at the overdub-stop press, i.e. the deferred-completion
-owner works on the canonical path too.
+**Precondition + observation fix landed as `95680fbe` (host-only, no firmware behavior
+change).** `_selected_slot_provably_empty` accepts the newest of the ST/DISP evidence (a fresh
+`EMPTY` edge beats a lagging DISP row) and `_await_selected_slot_empty` polls it instead of
+reading DISP once; the clear request's `already_satisfied` now also accepts a provably-empty
+*selected* slot. A deferred overdub stop whose state stays unobservable past the state-sync
+timeout is now `EVIDENCE_UNAVAILABLE` and no longer aborts the run (only a genuine disproof
+does), and the canonical final transport stop is followed by a bounded
+(`STORED_VERIFICATION_DRAIN_TIMEOUT_S = 20 s`) wait for the drain's terminal marker before the
+take is scored. Regressions: `test_provably_empty_accepts_state_edge_before_slot_disp_row`,
+`test_stored_verification_drain_wait_requires_terminal_marker`.
 
-**Remaining blocker (host/scenario, not firmware): the canonical ends PLAYING, so the drain
-never runs.** `processDeferredStoredMidiVerification` is gated on
+**Device status:** `captures/sevt-host-verify2` is one full canonical pass — clear
+`ALREADY_SATISFIED requested=EMPTY state=EMPTY`, both overdub stops logged "continuing so the
+stored-MIDI verification drain stays observable" instead of aborting, the final transport stop
+ran, and the capture covers `queue_accepted` -> `drain_emit_start` -> `drain_complete` with
+**SEVT=112** and the stored-content contract satisfied (`count_ok/span_ok/bars_ok`,
+`count=16/15`, `bars=3/2`). Repeatability is **not** yet established:
+`captures/sevt-host-verify3` aborted at the clear precondition because the select-started ghost
+recording was still live when the clear ran (DISP `RECORDING` length still climbing), and the
+earlier deferred-save stall also recurs. So temporary C stays, `sevt_gate_required` stays
+`False`, and the next step is making the empty-slot ghost-capture stop deterministic (the
+bounded stop/await loop) before repeating the pass.
+
+**Remaining blocker after that (host/scenario, not firmware): the drain needs idle.** `processDeferredStoredMidiVerification` is gated on
 `!isAudiblePlaybackActive() && !isRecording() && !isStoppedRecording()`, and `--preset base`
 finishes on an overdub stop that returns to PLAYING. The dump therefore stays pending; the run
 then tears down at the overdub-stop confirmation timeout. Measured on the working
@@ -971,11 +981,11 @@ stop-interruption run (`sevt-fix-verify1`): `queue_accepted` 1.4 ms after the st
 8 s `state_sync_timeout_ms`. So even a STOPPED landing loses the dump unless the host keeps
 observing.
 
-Proposed host fix (needs one scenario decision): reach an idle transport at the end of the
-canonical take and wait a bounded drain window (~15-20 s) for `drain_complete` before the run
-can abort or tear down, then evaluate the stored span/inventory as the pass criterion. The open
-question is whether `base` should finish on a transport stop — that changes the baseline's
-ending state, so it is the user's call, not a quiet fixture edit.
+Resolved: the user approved finishing the canonical take on a transport stop. `base` already
+sets `--stop-after-overdub` by default, so no scenario flag changed — the run simply never
+reached that stop because the overdub-stop confirmation aborted it. Making that outcome
+non-fatal (above) is what lets the existing final stop run, which is why no new ending was
+added to `canonical_baseline_legacy_args()`.
 
 Guard: success is **not** `drain_complete` alone. The host must retain the stored-content
 contract (expected stored span/inventory), so the gate cannot silently degrade into "the
