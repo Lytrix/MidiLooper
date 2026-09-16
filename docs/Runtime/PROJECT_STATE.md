@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 job-owned overdub-session undo baseline (resumable-midi-boundary-playback-maintenance):**
+`CaptureStopJob` now owns the overdub-session undo baseline
+(`ImmutableLoopSnapshotRef beforePublished` / `hasBeforePublished`). Admission moves
+the live `Track::overdubSessionBeforePublished_` into the job and clears the live
+member, so a successor session's `beginOverdubSession` records its own baseline
+instead of overwriting the one this interval's `OverdubPassAdded` entry must record;
+`TrackUndo::pushOverdubPassAdded` prefers the head job's baseline and an unconsumed
+baseline is retired with the job. New native
+`test_stop_job_owns_overdub_session_undo_baseline`; `test_continuous_capture` 29 pass
+with the same three intentional reentry failures; full native 2,187 cases — 2,182
+passed, one skipped, the same three; capture-serial builds with 6,752 bytes RAM1
+headroom. Still open in this slice: the session-exit snapshot handoff receipt and the
+prepared-companion history. Task 2.3 remains unchecked.
+
 **2026-09-16 task 2.3 job-owned capture preview (resumable-midi-boundary-playback-maintenance):**
 `CaptureStopJob` now owns `CapturePreview preview`, transferred from the live session
 at admission by constant work (`CapturePreview::swapWith`, per-vector swap, no

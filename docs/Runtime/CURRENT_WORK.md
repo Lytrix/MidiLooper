@@ -5,6 +5,25 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 job-owned overdub-session undo baseline.** The stop-commit
+path (`TrackUndo::pushOverdubSessionOnStop` -> `pushOverdubPassAdded`) built the
+`OverdubPassAdded` entry's `beforePublishedSnapshot` from the live
+`Track::overdubSessionBeforePublished_`, which `TrackUndo::beginOverdubSession`
+sets at session open — so a successor session would have overwritten the
+predecessor's baseline. `CaptureStopJob` now owns
+`ImmutableLoopSnapshotRef beforePublished` / `hasBeforePublished`; admission moves
+the live baseline into the job and clears the live member, and the consumer prefers
+the head job's owned baseline (then the live session's, then a fresh capture). An
+unconsumed baseline is retired with the job.
+
+Evidence: new native `test_stop_job_owns_overdub_session_undo_baseline` (job owns
+the baseline, live member clear, a later successor baseline leaves the job's
+intact, flag gone after cleanup); `test_continuous_capture` 29 pass with the same
+three intentional reentry failures; full native 2,187 cases — 2,182 passed, one
+skipped, the same three; `teensy41-capture-serial` builds with 6,752 bytes RAM1
+headroom. Still open in this slice: the session-exit snapshot handoff receipt and
+the prepared-companion history.
+
 **2026-09-16 task 2.3 job-owned capture preview.** The deferred cleanup seals the
 interval's preview, but it consumed the *live* `Loop::capturePreview`, which a
 successor's `beginCapture` clears — so a successor would have made the predecessor's
@@ -1052,11 +1071,12 @@ scratch-only, closure NoteId resolves from the finalizing extent, and
 `retireJobCaptureSourceGrain` retires the owned extent in grains and re-arms the
 descriptor. DisplayManager is unchanged and the successor-capture guard is
 deliberately still in place. Then (3) **job-owned session/preview/undo/snapshot
-receipts — pending note changes and `capturePreview` landed** (the worker resolves
-against `job.pendingChanges` and seals `job.preview`, the live session keeps
-independent buffers, and the Loop's readable accessors serve the job-identified
-borrows); remaining in that slice: the overdub session/undo before-snapshot, the
-session-exit snapshot handoff receipt and the prepared-companion history. Then (4)
+receipts — pending note changes, `capturePreview` and the undo baseline landed**
+(the worker resolves against `job.pendingChanges`, seals `job.preview`, and records
+the undo entry against `job.beforePublished`; the live session keeps independent
+state and the Loop's readable accessors serve the job-identified borrows);
+remaining in that slice: the session-exit snapshot handoff receipt and the
+prepared-companion history. Then (4)
 causal predecessor and source identity per job; (5) only then remove the Button A,
 manager and Track reentry guards and turn the three public reentry cases green —
 explicitly not in the same change as the ownership layer. Device PSRAM admission

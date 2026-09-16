@@ -10,6 +10,20 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 job-owned overdub-session undo baseline (partial 2.3):**
+`CaptureStopJob` now owns `ImmutableLoopSnapshotRef beforePublished` /
+`hasBeforePublished`. Admission moves the live `Track::overdubSessionBeforePublished_`
+into the job and clears the live member, so a successor session's
+`beginOverdubSession` records its own baseline instead of overwriting the one this
+interval's `OverdubPassAdded` entry must record. `TrackUndo::pushOverdubPassAdded`
+prefers the head job's owned baseline, then the live session's, then a fresh
+capture; an unconsumed baseline is retired with the job. New native
+`test_stop_job_owns_overdub_session_undo_baseline`; `test_continuous_capture` 29 pass
+with the same three reentry failures; full native 2,187 cases — 2,182 passed, one
+skipped, the same three; capture-serial builds with 6,752 bytes RAM1 headroom. Still
+open in this slice: the session-exit snapshot handoff receipt and the
+prepared-companion history.
+
 **2026-09-16 job-owned capture preview (partial 2.3):** `CaptureStopJob` now owns
 `CapturePreview preview`, transferred from the live session at admission by
 constant work (`CapturePreview::swapWith`, per-vector swap, no copy/allocation) with
