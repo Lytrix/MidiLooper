@@ -10,6 +10,30 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 prepared companion history interval qualification (partial 2.3):** the
+Loop-owned prepared companion history is now qualified by the admitted interval that
+owns it. The identity is `PendingStopAdmission::intervalToken()` (frozenGeneration +
+stopTick), a value rather than an object address, so a copy of an admission made for
+credit probing or retargeting still identifies the same interval while a reused ring
+descriptor gets a fresh token; zero means the live session path.
+`preparedCompanionHistoryOwnedBy()` treats Cold/Prewarmed as receipt-free and
+owner-agnostic, and every in-flight consumer (`step`, `ready`, `ids`, `history`,
+`captureVerified`, `canStep`, `matches`, `commit*`,
+`begin/stepRecyclePreparedCompanionHistory`, `discard`,
+`beginCollectOverdubStopUndoPasses`) requires the token, which `begin` records and
+recycle completion/discard clear. The deferred stop worker, the stop-commit helpers
+and the undo-collection receipt pass `stop.intervalToken()`; defaults keep the live
+path source-compatible. New native
+`test_prepared_companion_history_is_job_qualified`; the two Track-level fixtures in
+`test_playback_prewarm` now begin the preparation with the admission that consumes
+it, and their stale unqualified consumers were qualified (the qualification is what
+makes those calls correctly answer "not mine"). Full native 2,190 cases — 2,185
+passed, 1 skipped, the same three intentional public-reentry failures;
+capture-serial builds with 6,752 bytes RAM1 headroom. Remaining in the
+session/preview/undo/snapshot receipt slice: nothing (closed); remaining in 2.3:
+causal predecessor/source identity per job, then successor-capture unguarding in a
+separate change.
+
 **2026-09-16 session-exit handoff receipt ring (partial 2.3):** the session-exit
 `SessionExitSnapshotHandoff` receipt is now a Loop-owned FIFO ring of
 `kSessionExitReceiptCapacity = 4` (external-memory-first, cold-prewarmed by

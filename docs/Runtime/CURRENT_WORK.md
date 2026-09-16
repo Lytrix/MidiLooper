@@ -5,6 +5,26 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 prepared companion history interval qualification.** The last
+item of the session/preview/undo/snapshot receipt slice: the Loop-owned
+`preparedCompanionHistory_` is borrowed worker scratch that outlives one grain, so a
+successor interval could observe, advance, commit, recycle or discard a
+predecessor's in-flight preparation. Every consumer now carries the owning interval
+identity, `PendingStopAdmission::intervalToken()` — a value (frozenGeneration +
+stopTick), not an object address, so a copy of an admission made for credit probing
+or retargeting still identifies the same interval while a reused ring descriptor
+gets a fresh token; zero means the live session path. `preparedCompanionHistoryOwnedBy`
+treats Cold/Prewarmed as receipt-free and owner-agnostic; `begin` records the token
+and recycle completion/discard clear it. The deferred stop worker, the stop-commit
+helpers and `beginCollectOverdubStopUndoPasses` pass `stop.intervalToken()`; default
+arguments keep the live path source-compatible. New native
+`test_prepared_companion_history_is_job_qualified`; the two Track-level fixtures in
+`test_playback_prewarm` now begin the preparation with the admission that consumes it
+and had their stale unqualified consumers qualified rather than deleted. Full native
+2,190 cases — 2,185 passed, 1 skipped, the same three intentional public-reentry
+failures; `teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom (the Loop
+member lives in the externally allocated pool, so the token adds no RAM1 variables).
+
 **2026-09-16 task 2.3 session-exit handoff receipt ring.** The session-exit
 `SessionExitSnapshotHandoff` receipt is no longer a single-slot unique pointer: it is
 a Loop-owned FIFO ring of `kSessionExitReceiptCapacity = 4`, external-memory-first
@@ -1191,8 +1211,10 @@ state and the Loop's readable accessors serve the job-identified borrows);
 **the session-exit snapshot handoff receipt landed as a Loop-owned FIFO ring of 4**
 (`prewarmSessionExitSnapshotHandoff`, free-slot gate, one receipt per open session
 enforced inside the handoff, publisher consumes the oldest per turn, playback's
-stale-root overlay folds every pending receipt); remaining in that slice: the
-prepared-companion history. Then (4)
+stale-root overlay folds every pending receipt) **and the prepared companion history
+is interval-qualified** (`PendingStopAdmission::intervalToken()` on every in-flight
+consumer, owner-agnostic Cold/Prewarmed), which closes the session/preview/undo/
+snapshot receipt slice. Then (4)
 causal predecessor and source identity per job; (5) only then remove the Button A,
 manager and Track reentry guards and turn the three public reentry cases green —
 explicitly not in the same change as the ownership layer. Device PSRAM admission
