@@ -31,25 +31,38 @@ input arrives and SHALL NOT be substituted with a later start.
 
 ### Requirement: Successor admission capacity is declared and explicit
 
-The system SHALL declare its successor admission capacity per track and SHALL deny,
-explicitly and observably, any interval that exceeds it. A denied interval SHALL
-leave all previously accepted intervals intact, and no press SHALL be queued
-silently, dropped after acceptance, or reported as ordinary latency.
+The system SHALL declare its successor admission capacity per track — one admitted
+deferred predecessor plus one live successor interval — and SHALL deny, explicitly
+and observably, any operation that exceeds it. A denied operation SHALL leave every
+previously accepted interval intact, and no press SHALL be queued silently, dropped
+after acceptance, or reported as ordinary latency.
 
-#### Scenario: Capacity is exhausted
+#### Scenario: A successor starts while the predecessor finalizes
 
-- **WHEN** a new interval would exceed the declared capacity because a predecessor
-  still owns the resources it needs
-- **THEN** the start is refused with an explicit exhaustion outcome
-- **AND** the pending predecessor and the live interval keep their accepted data,
-  staging and receipts
+- **WHEN** the predecessor's deferred stop is pending and the user starts a successor
+  interval on the same track
+- **THEN** the successor is admitted and captures on the live role
+
+#### Scenario: Successor stop is denied while the predecessor pends
+
+- **WHEN** the live successor is stopped while the deferred predecessor still owns
+  the frozen admission role
+- **THEN** the stop is refused with an explicit exhaustion outcome
+- **AND** the successor keeps recording, keeps its captured rows, reservations,
+  pending changes and preview, and is not frozen, cleared or truncated
+
+#### Scenario: A further interval cannot start while a successor records
+
+- **WHEN** a start is requested on a track whose live successor is still capturing
+- **THEN** it resolves as that live interval's own stop/start semantics rather than
+  silently producing a second live interval
 
 #### Scenario: Capacity frees after finalization
 
 - **WHEN** the predecessor's finalization retires and releases its frozen staging
   role
-- **THEN** a subsequent interval start is admitted again without requiring transport
-  stop or a slot reload
+- **THEN** the successor's stop is admitted again without requiring transport stop or
+  a slot reload
 
 ### Requirement: Interval ownership survives concurrent finalization
 
@@ -65,6 +78,17 @@ completion or cleanup SHALL NOT clear, retarget or consume a successor's live st
   unchanged
 - **AND** B's track state remains its own (a completion of A SHALL NOT force the
   track into playback or stopped on B's behalf)
+- **AND** A's cleanup mutates live capture state only if A's interval still
+  identifies the live interval; otherwise it releases its own resources, commits its
+  own result and clears its own receipts only
+
+#### Scenario: A retiring job's cleanup is job-local
+
+- **WHEN** the retiring job's interval identity no longer matches the live interval
+- **THEN** its cleanup performs no live state transition, pending-note, preview,
+  capture-extent or reservation mutation
+- **AND** the same rule holds on every terminal path (playback commit, STOPPED
+  recovery, superseded route, fault fallback)
 
 #### Scenario: Held same-pitch note crosses the boundary
 
@@ -86,8 +110,10 @@ stale playback window.
 
 - **WHEN** the published root advances past an interval's recorded causal
   predecessor before that interval publishes
-- **THEN** its accepted capture is still committed
+- **THEN** its accepted capture is committed exactly once
 - **AND** no bridge is selected or published for the stale base
+- **AND** the newer published root stays selected for playback
+- **AND** the retiring job cannot alter the live successor's state
 - **AND** the unpublished companion horizon returns to its prewarmed state
 
 #### Scenario: Transport Stop during finalization with a live successor
