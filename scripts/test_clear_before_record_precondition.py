@@ -28,6 +28,7 @@ from host_midi_automation_baseline import (
     _evaluate_clear_precondition,
     _recording_currently_active,
     _selected_slot_disp_empty,
+    _selected_slot_provably_empty,
     _serial_has_clear_completed,
     _track_cleared_for_record,
     _transport_running_before_record_arm,
@@ -154,6 +155,37 @@ class ClearBeforeRecordPreconditionTests(unittest.TestCase):
         )
         self.assertTrue(
             _selected_slot_disp_empty(after_stop, loop_slot=1, after_index=0)
+        )
+
+    def test_provably_empty_accepts_state_edge_before_slot_disp_row(self) -> None:
+        """ST EMPTY proves the selected slot empty before its DISP row catches up.
+
+        [`sevt-fix-verify4`]: ``ST,Track,STOPPED_RECORDING,EMPTY`` at 35506792us, the
+        slot DISP ``DISP,0,EMPTY,0`` only at 35730735us. Reading DISP alone saw the
+        stale RECORDING length (1201), pressed clear, failed to confirm EMPTY, and
+        aborted setup before any genuine record.
+        """
+        lines = [
+            "#CAP,32514859,ST,Track,STOPPED,RECORDING",
+            "#CAP,35457622,DISP,0,RECORDING,1201,0,0,0,0,0,0,2,0",
+            "#CAP,35506426,ST,Track,RECORDING,STOPPED_RECORDING",
+            "#CAP,35506792,ST,Track,STOPPED_RECORDING,EMPTY",
+        ]
+        self.assertFalse(_selected_slot_disp_empty(lines, loop_slot=1, after_index=0))
+        self.assertTrue(
+            _selected_slot_provably_empty(lines, loop_slot=1, after_index=0)
+        )
+        # A slot with committed content is never skipped.
+        content = [
+            "#CAP,1,ST,Track,STOPPED,PLAYING",
+            "#CAP,2,DISP,0,PLAYING,1536,0,0,0,0,0,0,2,0",
+        ]
+        self.assertFalse(
+            _selected_slot_provably_empty(content, loop_slot=1, after_index=0)
+        )
+        # No target slot selected: never skip.
+        self.assertFalse(
+            _selected_slot_provably_empty(lines, loop_slot=0, after_index=0)
         )
 
     def test_arm_already_satisfied_ignores_historical_recording_when_stopped(self) -> None:

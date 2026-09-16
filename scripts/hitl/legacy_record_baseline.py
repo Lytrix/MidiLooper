@@ -487,6 +487,12 @@ def _armed_transition_baseline(lines: list[str]) -> int:
 # openspec/changes/slot-performance-interaction/.
 LOOP_SELECT_NOTE_BASE = 50  # reserved for slot-performance revert
 
+# The stored-MIDI verification drain only runs while the track is idle, and its first
+# slice flattens the whole loop; the five phases measured ~10.2 s end to end
+# (`queue_accepted` -> `drain_complete` in `sevt-fix-verify1`). Keep observing past it
+# before the take is scored, with headroom for a slower/larger loop.
+STORED_VERIFICATION_DRAIN_TIMEOUT_S = 20.0
+
 
 def _user_track_number(track_index: int) -> int:
     """User-facing track row (1-based). Loop variables use 0-based track_index."""
@@ -646,6 +652,80 @@ def _selected_slot_disp_empty(
         lines, slot_index=loop_slot - 1, after_index=after_index
     )
     return disp_len is not None and disp_len == 0
+
+
+def _selected_slot_provably_empty(
+    lines: list[str],
+    *,
+    loop_slot: int,
+    after_index: int = 0,
+) -> bool:
+    """True when the selected target slot is provably empty.
+
+    The select-before-clear tap starts an empty-slot capture. When that capture is
+    stopped, the authoritative ``EMPTY`` state edge lands before the slot's ``DISP``
+    row catches up (``sevt-fix-verify4``: ``ST,Track,STOPPED_RECORDING,EMPTY`` at
+    35506792us, ``DISP,0,EMPTY,0`` only at 35730735us), so a DISP-only check reads a
+    stale ``RECORDING`` length and sends a clear long press that can never confirm.
+    Accept the newer state edge; a DISP ``RECORDING`` row that really is the newest
+    evidence still counts as live capture.
+    """
+    if loop_slot <= 0:
+        return False
+    # `_latest_track_state` already picks the newest of the ST and DISP evidence by
+    # timestamp, so a fresh `EMPTY` edge wins over a DISP row that has not caught up.
+    if _latest_track_state(lines, after_index=after_index) == "EMPTY":
+        return True
+    if _recording_currently_active(lines, after_index=after_index):
+        return False
+    return _track_cleared_for_record(lines, loop_slot=loop_slot, after_index=after_index)
+
+
+def _await_stored_verification_drain(
+    serial_collector: SerialCaptureCollector,
+    *,
+    after_index: int,
+    timeout_s: float,
+    abort: RunAbort,
+) -> bool:
+    """Bounded wait for the stored-MIDI (SEVT) verification drain to finish.
+
+    The drain runs only while the track is idle and its first slice flattens the whole
+    loop; the five phases then span idle slices, measuring ~10.2 s
+    (`queue_accepted` -> `drain_complete` on `sevt-fix-verify1`) — longer than the
+    default state-sync timeout. Reading the stored span before completion scores a
+    partial dump, so wait for the drain's own terminal marker or the bound.
+    """
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        suffix = serial_collector.snapshot()[after_index:]
+        if any("DIAG,stored_verify,drain_complete" in line for line in suffix):
+            return True
+        if any("DIAG,stored_verify,drain_reset_" in line for line in suffix):
+            return True
+        if abort.check() is not None or time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def _await_selected_slot_empty(
+    serial_collector: SerialCaptureCollector,
+    *,
+    loop_slot: int,
+    after_index: int,
+    timeout_s: float,
+    abort: RunAbort,
+) -> bool:
+    """Bounded wait for ``_selected_slot_provably_empty`` to hold."""
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        if _selected_slot_provably_empty(
+            serial_collector.snapshot(), loop_slot=loop_slot, after_index=after_index
+        ):
+            return True
+        if abort.check() is not None or time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
 
 
 def _stop_empty_slot_select_recording_before_clear(
@@ -1789,10 +1869,14 @@ def _run_clear_before_record(
             del stopped_select_recording  # stop attempt is enough; emptiness decides
             # Empty after select (± ghost stop): clear is redundant and aborts when
             # deferred save is stuck ([`session_20260911_093852.log`], [`095928`]).
-            if _selected_slot_disp_empty(
-                serial_collector.snapshot(),
+            # The EMPTY state edge can precede the slot DISP row, so wait briefly for
+            # either form of proof instead of reading a stale DISP length once.
+            if _await_selected_slot_empty(
+                serial_collector,
                 loop_slot=target_loop_slot,
                 after_index=select_baseline_len,
+                timeout_s=min(max(args.state_sync_timeout_ms / 1000.0, 0.0), 2.0),
+                abort=abort,
             ):
                 print(
                     "[info] Selected slot empty after select-before-clear; "
@@ -1905,8 +1989,16 @@ def _run_clear_before_record(
         clear_outcome = request_state_transition(
             snapshot=serial_collector.snapshot,
             requested="EMPTY",
-            already_satisfied=lambda lines, _baseline: _can_skip_clear_before_record(
-                lines, loop_slot=target_loop_slot, after_index=track_baseline_len
+            already_satisfied=lambda lines, _baseline: (
+                _can_skip_clear_before_record(
+                    lines, loop_slot=target_loop_slot, after_index=track_baseline_len
+                )
+                # A selected slot that is already provably empty needs no clear long
+                # press: the press cannot confirm on an already-empty slot and the run
+                # otherwise aborts before any genuine record (sevt-fix-verify4).
+                or _selected_slot_provably_empty(
+                    lines, loop_slot=target_loop_slot, after_index=select_baseline_len
+                )
             ),
             confirmed=_clear_confirmed,
             disproved=_clear_disproved,
@@ -3761,14 +3853,27 @@ def _run_overdub_pass(
     )
     log_action_outcome(od_stop)
     if not od_stop.ok:
-        return (
-            f"{pass_label} stop not confirmed",
-            od_notes,
-            od_cc,
-            od_clock_count,
-            od_timing,
-            od_fallback_seconds,
-        )
+        # The deferred overdub-stop completion can leave the track state unobservable
+        # while the stored-MIDI verification drain flattens the whole loop; a timeout
+        # without disproof is an observation gap, not a failed stop. Keep the capture
+        # alive so the final transport stop can reach idle and the drain can finish
+        # (the acceptance criterion is that the press does not end observation).
+        # Only a genuine disproof (device still OVERDUBBING) fails the phase.
+        if od_stop.kind is ActionResultKind.EVIDENCE_UNAVAILABLE:
+            print(
+                f"[warn] {pass_label} stop state not confirmed within "
+                f"{args.state_sync_timeout_ms / 1000.0:.1f}s; continuing so the "
+                "stored-MIDI verification drain stays observable"
+            )
+        else:
+            return (
+                f"{pass_label} stop not confirmed",
+                od_notes,
+                od_cc,
+                od_clock_count,
+                od_timing,
+                od_fallback_seconds,
+            )
     time.sleep(args.phase_wait_ms / 1000.0)
     return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
 
@@ -5010,6 +5115,11 @@ def run() -> int:
                         time.sleep(args.phase_wait_ms / 1000.0)
                     if args.stop_after_overdub:
                         print(f"[track {_user_track_number(idx)}] transport stop")
+                        drain_baseline = (
+                            len(serial_collector.snapshot())
+                            if serial_collector is not None
+                            else 0
+                        )
                         _send_short_press(
                             out_port,
                             note=GLOBAL_TRANSPORT_NOTE,
@@ -5017,6 +5127,20 @@ def run() -> int:
                             press_ms=args.press_ms,
                         )
                         time.sleep(args.phase_wait_ms / 1000.0)
+                        # The take now ends stopped, which is the idle state the
+                        # stored-MIDI verification drain requires. Keep observing
+                        # through the drain before anything can tear the capture down
+                        # or score the stored span.
+                        if serial_collector is not None and not _await_stored_verification_drain(
+                            serial_collector,
+                            after_index=drain_baseline,
+                            timeout_s=STORED_VERIFICATION_DRAIN_TIMEOUT_S,
+                            abort=abort,
+                        ):
+                            print(
+                                "[warn] stored-MIDI verification drain not observed "
+                                f"within {STORED_VERIFICATION_DRAIN_TIMEOUT_S:.0f}s"
+                            )
 
                 if (reason := abort.check()) is not None:
                     abort_reason = reason
