@@ -590,6 +590,15 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   CaptureAdmissionStaging& staging = *views;
   const uint32_t phaseTick = job.phaseTick;
+  // Approved superseded rule. The recorded predecessor is the *supersession
+  // reference*, not the resolver: the canonical pipeline binds its owner identity
+  // by address to the live Loop scalars and the ordering phases need one coherent
+  // live epoch, so preparation always resolves live. Only the published revision
+  // and root decide whether a successor window may still be published;
+  // `sourceGeneration` is a live cache epoch that advances during finalization.
+  const bool causalBaseCurrent = !job.causalBaseRecorded ||
+      (job.causalBase.playbackRevision == loop.playbackRevision &&
+       job.causalBase.snapshotIdentity == loop.publishedSnapshotIdentity());
 
   // A clean stop commonly follows a completed wrap with no successor rows.
   // There is no canonical or audible ordering work in that candidate; advance
@@ -783,6 +792,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       stop.setPhase(PendingStopPhase::AtomicTransfer);
       return false;
     }
+    if (!causalBaseCurrent) {
+      // Retire the ranked (bridge) estimate: no bridge will be built. The atomic
+      // transfer then commits the accepted capture without a successor window.
+      if (!stop.retireSupersededPreparation()) return false;
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
+      return false;
+    }
     const auto anchor = runtime->currentCycleCursor(
         loop.lastTickInLoop == UINT32_MAX ? phaseTick : loop.lastTickInLoop, targetSource.sourceGeneration);
     if (!runtime->canSelectFrozenCaptureBridge(
@@ -804,6 +820,27 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     return false;
   }
   if (stop.phase == PendingStopPhase::AtomicTransfer) {
+    if (!causalBaseCurrent) {
+      if (!stop.retireSupersededPreparation()) return false;
+      SC_ODUB_STOP_STAGE("atomic_transfer", 0, 0, UINT32_MAX, UINT32_MAX,
+                         stop.remainingHistoryRecycleGrains, job.causalBase.playbackRevision,
+                         "causal_base_superseded");
+      PreparedCapturePassTransfer supersededTransfer{};
+      TrackUndoPublication* supersededUndo = protectedUndo();
+      const bool supersededPublishable = job.undoPublicationReady && supersededUndo != nullptr &&
+          supersededUndo->canPublish(getGlobalUndoStack(), loop.loopId,
+                                     loop.pendingCapturePass().id);
+      if (!TrackPreparedStopCommit::commitSupersededCausalBase(
+              loop, stop, supersededTransfer,
+              supersededPublishable ? supersededUndo : nullptr))
+        return false;
+      // The unpublished companion preparation returns to its prewarmed horizon
+      // here, so the next interval never needs a STOPPED-only re-prewarm.
+      if (!loop.restoreSupersededPreparedCompanionHistory(job.admission.intervalToken())) {
+        loop.discardPreparedCompanionHistory(job.admission.intervalToken());
+      }
+      return false;
+    }
     const auto anchor = runtime->currentCycleCursor(
         loop.lastTickInLoop == UINT32_MAX ? phaseTick : loop.lastTickInLoop, targetSource.sourceGeneration);
     if (TrackPreparedStopCommit::requiresBridgeRefresh(

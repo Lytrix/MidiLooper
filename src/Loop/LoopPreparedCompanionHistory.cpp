@@ -214,6 +214,46 @@ LOOP_COLD_MEM bool Loop::preparedCompanionHistoryReady(uint64_t owner) const {
 LOOP_COLD_MEM const EditPassVec* Loop::preparedCompanionHistory(uint64_t owner) const {
   return preparedCompanionHistoryReady(owner) ? &preparedCompanionHistory_.rows : nullptr;
 }
+LOOP_COLD_MEM bool Loop::restoreSupersededPreparedCompanionHistory(uint64_t owner) {
+  auto& work = preparedCompanionHistory_;
+  using Phase = PreparedCompanionHistory::Phase;
+  if (!preparedCompanionHistoryOwnedBy(owner) || work.phase == Phase::Cold ||
+      work.phase == Phase::Prewarmed) return false;
+  // Allocation-free by construction: the horizon was reserved when this
+  // preparation began, so the only work is dropping copied rows and re-syncing
+  // the horizon to the current canonical history.
+  if (work.historyCount > work.rowLimit || work.rows.capacity() < work.rowLimit ||
+      work.snapshotIds.capacity() < work.snapshotLimit || !pendingSnapshotPublishBox_ ||
+      pendingSnapshotPublishBox_->companionIds.capacity() < work.snapshotLimit) return false;
+  const size_t historyCount = passes.editPasses.size();
+  if (historyCount > work.rowLimit) return false;
+  const size_t rowRemaining = work.rowLimit - historyCount;
+  const size_t liveSnapshotCount = pendingSnapshotPublishBox_->companionIds.size();
+  const size_t snapshotRemaining =
+      work.snapshotLimit > liveSnapshotCount ? work.snapshotLimit - liveSnapshotCount : 0;
+  work.companionIds.clear();
+  work.snapshotIds.clear();
+  for (auto& row : work.rows) row.addedEvents.clear();
+  work.historyCount = historyCount;
+  work.companionCapacity = rowRemaining < snapshotRemaining ? rowRemaining : snapshotRemaining;
+  work.rows.resize(historyCount + work.companionCapacity);
+  work.storageGeneration = canonicalStorageGeneration;
+  work.revision = playbackRevision;
+  work.firstId = nextPassId_;
+  work.snapshotGeneration = pendingSnapshotCompanionGeneration_;
+  work.snapshotCount = liveSnapshotCount;
+  work.source = nullptr; work.capture = nullptr; work.captureInputs = nullptr;
+  work.owner = 0;
+  work.phase = Phase::Prewarmed;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::preparedCompanionHistoryInFlight(uint64_t owner) const {
+  const auto& work = preparedCompanionHistory_;
+  return preparedCompanionHistoryOwnedBy(owner) && work.phase != PreparedCompanionHistory::Phase::Cold &&
+      work.phase != PreparedCompanionHistory::Phase::Prewarmed;
+}
+
 LOOP_COLD_MEM void Loop::discardPreparedCompanionHistory(uint64_t owner) {
   auto& work = preparedCompanionHistory_;
   if (!preparedCompanionHistoryOwnedBy(owner)) return;

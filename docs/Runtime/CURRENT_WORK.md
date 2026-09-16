@@ -5,6 +5,31 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 causal predecessor/source identity — increment B (approved
+superseded rule).** The user approved option (A): a deferred stop whose recorded
+causal predecessor is no longer the published root must retire without publishing a
+successor window. Implementing it falsified one premise of the audit sketch — the
+canonical pipeline compares its owner identity **by address** against the live Loop
+scalars and its ordering phases need one coherent live epoch, so resolution must stay
+live (a recorded base makes the phases never complete, stalling before staging; a
+measurement confirmed the live revision and root are unchanged during a normal
+finalization). The recorded `causalBase` is therefore the **supersession reference**:
+`causalBaseCurrent` is evaluated at the start of `CompanionBridge` (before any bridge
+is built) and at the start of `AtomicTransfer`, and when false the interval retires
+its ranked credit through `PendingStopAdmission::retireSupersededPreparation()` and
+commits via `TrackPreparedStopCommit::commitSupersededCausalBase` — the staged
+accepted capture pass is committed, no bridge is selected or published
+(`causal_base_superseded`), and a prepared protected undo entry is published in the
+same turn. The unpublished horizon returns to `Prewarmed` via the new allocation-free
+`Loop::restoreSupersededPreparedCompanionHistory(owner)` (the recycle receipt guard
+cannot admit it by design), with discard-and-reprewarm as fallback. Verified by the
+superseded assertions in
+`test_deferred_stop_records_and_pins_its_causal_predecessor_source`; full native 2,191
+cases — 2,186 passed, 1 skipped, the same three intentional public-reentry failures;
+`teensy41-capture-serial` builds with 6,752 bytes RAM1 headroom. Recorded deviation:
+the superseded route publishes the capture pass only, relying on the newer root to
+already carry the companion rows. Remaining in 2.3: successor-capture unguarding.
+
 **2026-09-16 task 2.3 causal predecessor/source identity — increment A.** An audit for
 requirement (f) found that a deferred stop re-derives its predecessor source **live** at
 every consumer turn: admission computes `baseSource` for credit sizing and discards it,

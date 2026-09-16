@@ -243,6 +243,22 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireCompletedPrepar
   return true;
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireSupersededPreparation() {
+  if (!pending || remainingClosureGrains || remainingOrderGrains) return false;
+  switch (phase) {
+    case PendingStopPhase::CompanionHistory:
+    case PendingStopPhase::UndoCollection:
+    case PendingStopPhase::CompanionBridge:
+    case PendingStopPhase::AtomicTransfer:
+      remainingRankedPreparationGrains = 0;
+      remainingCanonicalPreparationGrains = 0;
+      remainingUndoCollectionGrains = 0;
+      return true;
+    default:
+      return false;
+  }
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireSkippedCompanionPreparation(bool emptyCapture) {
   if (!pending || (!emptyCapture && destination != PendingStopDestination::Stopped) ||
       phase != PendingStopPhase::PrepareTransfer || remainingClosureGrains || remainingOrderGrains)

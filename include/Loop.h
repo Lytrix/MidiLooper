@@ -630,6 +630,17 @@ struct Loop {
   bool preparedCompanionHistoryPrewarmed(size_t requiredCompanions = 0) const;
   static uint64_t requiredPreparedCompanionRecycleGrains(size_t rowCapacity,
       size_t retiredPayloadEvents, size_t companionIds, size_t snapshotIds, size_t quantum);
+  /// True while this interval holds a preparation that is neither Cold nor back
+  /// at its prewarmed horizon: the states a superseded publication must return to
+  /// Prewarmed (by recycling) or discard.
+  bool preparedCompanionHistoryInFlight(uint64_t owner = 0) const;
+  /// Return an *unpublished* preparation to its prewarmed horizon after its
+  /// publication was superseded. Allocation-free: the horizon was reserved when
+  /// the preparation began, and every copied row/snapshot id is dropped and the
+  /// horizon re-synced to the current canonical history, so the next interval can
+  /// begin without a STOPPED-only prewarm. Refuses (leaving the preparation
+  /// untouched) when the reserved storage no longer satisfies the horizon.
+  bool restoreSupersededPreparedCompanionHistory(uint64_t owner = 0);
   void discardPreparedCompanionHistory(uint64_t owner = 0); // Logical discard only; retains storage.
   EditPassIdList sealPendingNoteChangesToEditPasses(
       bool updateOverdubSourceView = true);

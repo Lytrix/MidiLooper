@@ -36,6 +36,13 @@ bool advanceAtomicTransferWithUndo(Loop& loop, LoopPlaybackRuntime& runtime,
 // can never consume a successor interval's preview.
 bool completeDeferredCleanup(Loop& loop, LoopPlaybackRuntime& runtime,
     PendingStopAdmission& stop, CapturePreview& preview);
+/// Approved superseded rule: the recorded causal predecessor is no longer the
+/// published root. Commit the accepted capture pass through the plain route and
+/// publish no audible bridge, so a stale PLAYING successor can never be selected
+/// and content the newer root already carries is not duplicated. The caller has
+/// already retired the preparation credits.
+bool commitSupersededCausalBase(Loop& loop, PendingStopAdmission& stop,
+    PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo);
 // One admitted canonical preparation grain; setup and unused credit retirement
 // remain separate turns. Complete readiness queries consume no additional credit.
 RuntimePlaybackOrderBuildResult stepPreparation(Loop& loop, LoopPlaybackRuntime& runtime,

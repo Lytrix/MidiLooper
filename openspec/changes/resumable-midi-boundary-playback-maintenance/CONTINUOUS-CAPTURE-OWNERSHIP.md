@@ -1324,3 +1324,111 @@ Verification for increment A: full native 2,191 cases — 2,186 passed, 1 skippe
 same three intentional public-reentry failures; `teensy41-capture-serial` builds with
 **6,752 bytes** RAM1 headroom (the job descriptor lives in the externally allocated
 ring, so the pinned ref adds no RAM1 variables).
+
+## Causal predecessor/source identity — increment B audit and decision required, 2026-09-16
+
+Increment B is "make the recorded identity authoritative". The audit of the
+publication path found that this cannot be landed as a pure refactor, because the
+resolution side and the publication side currently use *different* sources and the
+drift case has no defined outcome.
+
+**What consumes what today.**
+
+| Step | Source used |
+|---|---|
+| `beginDeferredOverdubStop` credit sizing | live `baseSource` (now also recorded as `causalBase`) |
+| worker `CanonicalOrder`/`CanonicalPrefix` (`baseSource`, `targetSource`, `frozenSource`, `currentSource`) | live `loop.playbackRevision` / `publishedSnapshotIdentity()` **at the turn the grain runs** |
+| `beginFrozenCompanionBridge(baseSource, targetSource, …)` → `frozenCaptureSourceAdmission` | the same live-derived pair |
+| `commitPreparedStop` `base` / `target` | live again, then compared against `frozenCaptureSourceAdmission` (deny bits 16/32); `matchesCanonicalOwner` compares live revision to the canonical owner (bit 128) |
+| `requiresBridgeRefresh` / `canSelectFrozenCaptureBridge` | bridge **epoch** only (`frozenGeneration`, `transportCommandEpoch`, candidate, prepared target) — it does **not** compare the live playback revision |
+
+**Finding (latent hang).** If the live `playbackRevision` advances between bridge
+construction and the atomic transfer, the bridge epoch checks still pass, so
+`requiresBridgeRefresh` is false and nothing rebuilds; `commitPreparedStop` then
+denies on bits 16/32/128 on every grain, and the worker stays in `AtomicTransfer`
+retrying forever. A source drift in that window is therefore a stop hang, not a
+rebuild. This is unreachable today only because the session-exit publication is
+deliberately deferred until after the job retires and a successor interval cannot
+capture yet; it becomes reachable exactly when successor capture is unguarded
+(task 2.3's final slice).
+
+**Decision required — the supersession rule.** What must a deferred stop do when the
+published root is no longer the causal predecessor it recorded?
+
+- **(A) Retire without a successor window (recommended).** Keep the recorded base
+  authoritative for resolution, and at the atomic transfer require the live root to
+  still be the recorded predecessor. If it is not, commit the accepted capture pass
+  through the plain/STOPPED-recovery route, publish **no** audible bridge, and record
+  a distinct stage (`causal_base_superseded`). Rationale: the only writers that can
+  advance the live root inside this window are the interval's own wrap/session-exit
+  publication, which already contains its content — publishing a bridge against a
+  newer root would duplicate that content and publishing against the stale root is
+  the forbidden stale PLAYING publication. Accepted input is preserved either way.
+- **(B) Adapt to the live root.** Rebuild canonical inputs and the bridge against the
+  current published state and publish that (today's intent). Preserves an audible
+  bridge for the interval, but resolves it against a source it did not succeed and
+  can duplicate content the newer root already published.
+- **(C) Hold and retry** — rejected: that is the latent hang above.
+
+Both (A) and (B) need the epoch check moved/added: the atomic transfer must compare
+the live root with the recorded predecessor, and either outcome must be terminal for
+the grain. (A) also needs the superseded route named in the stop phases and the
+`StopAdmissionContract`, and it must be proven not to omit accepted input
+(acceptance case 7) or to publish a stale PLAYING successor (case 8).
+
+Per `ARCHITECTURE_RULES.md` this changes publication semantics and needs a recorded
+`DEC-###` entry and user approval before implementation. **Status: option (A)
+approved by the user (2026-09-16).**
+
+### Increment B implemented — the recorded identity is the supersession reference
+
+The implementation falsified one premise of option (A) as first written and the
+final shape is narrower, so it is recorded here rather than inferred from code:
+
+- **Resolution must stay live.** `RuntimeCanonicalPassInputs::CurrentSource`
+  compares its owner **by address** (`&current_->playbackRevision ==
+  &owner.playbackRevision`), so an owner built from a *copy* of the revision can
+  never match; and the canonical prefix/order/rewrite phases need one coherent live
+  epoch (with a recorded base they simply never complete, which stalls the stop
+  before staging). Measurement also showed the live revision and root do **not**
+  change during a normal finalization: after the first grain both equal the
+  recorded admission values. So the recorded `causalBase` is the **supersession
+  reference**, not the resolver — the canonical pipeline keeps resolving live, as
+  before this increment.
+- **The rule is applied where a successor window would be published.** Two checks,
+  one at the start of the `CompanionBridge` phase (after staging, before any bridge
+  is built) and one at the start of `AtomicTransfer` (for a publication that
+  happens later). When `causalBaseCurrent` is false the interval retires the ranked
+  preparation credit and commits through
+  `TrackPreparedStopCommit::commitSupersededCausalBase`: the accepted capture pass
+  is committed (staged in `PrepareTransfer`, so accepted input is preserved) and
+  **no bridge is selected or published**, with `SC_ODUB_STOP_STAGE(…,
+  "causal_base_superseded")` as the stage evidence. A prepared protected undo entry
+  for the committed pass is published in the same turn.
+- **The unpublished horizon is restored, not stranded.** `beginRecycle…` refuses
+  by design here (its receipt guard requires the recorded revision to equal the live
+  one, which is exactly what drifted), so the route calls the new
+  `Loop::restoreSupersededPreparedCompanionHistory(owner)`: allocation-free, it
+  drops the copied rows/snapshot ids and re-syncs the horizon to the current
+  canonical history, returning it to `Prewarmed`. If even that refuses (reserved
+  storage no longer fits) the horizon is discarded and the next capture's prewarm
+  rebuilds it.
+- `PendingStopAdmission::retireSupersededPreparation()` is the explicit "this
+  interval publishes no successor window" bookkeeping: it zeroes the ranked,
+  canonical and undo-collection credits so `finalizationComplete()` holds and
+  DeferredCleanup can retire the job instead of stalling.
+
+**Verification.** `test_deferred_stop_records_and_pins_its_causal_predecessor_source`
+now drives the whole approved rule: the record equals the admission-time source and
+survives a later publication; after the supersession the stop completes, the
+accepted capture pass is present, `bridgeSelected == kNoBridge`, the horizon is back
+at `Prewarmed`, and the retired descriptor carries no receipt. Full native 2,191
+cases — 2,186 passed, 1 skipped, the same three intentional public-reentry failures;
+`teensy41-capture-serial` builds with **6,752 bytes** RAM1 headroom.
+
+**Deviations recorded.** The superseded route publishes the capture pass only: the
+companion (pending-change) rows are not published by it, because the newer root that
+superseded this interval is expected to already carry them; if that assumption is
+ever violated the interval's edits would be dropped, so a future successor-capture
+change must re-verify it. The route is not reachable by any current public input
+(successor capture stays guarded), so this is forward-looking coverage.
