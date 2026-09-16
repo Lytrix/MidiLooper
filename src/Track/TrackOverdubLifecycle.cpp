@@ -334,6 +334,15 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   // even if a successor interval has already replaced the live one.
   loop.swapCapturePreview(job.preview);
   (void)loop.borrowCapturePreview(job.preview, &job.admission);
+  // Job-owned overdub-session undo baseline. The successor session's
+  // beginOverdubSession sets its own; without this move it would overwrite the
+  // baseline this interval's OverdubPassAdded entry must record.
+  if (hasOverdubSessionBeforePublished_) {
+    job.beforePublished = std::move(overdubSessionBeforePublished_);
+    job.hasBeforePublished = true;
+    overdubSessionBeforePublished_ = {};
+    hasOverdubSessionBeforePublished_ = false;
+  }
   // Button A closes input at this boundary. The sealed frozen capture owns all
   // remaining canonical/companion work, while the existing prepared playback
   // window remains the active source. Publish PLAYING immediately so the
@@ -646,6 +655,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   queueDeferredStoredMidiVerification();
   (void)loop.releasePendingNoteChangesBorrow(&job.admission);
   (void)loop.releaseCapturePreviewBorrow(&job.admission);
+  // A baseline left unconsumed by the commit must not leak into a later interval.
+  job.hasBeforePublished = false;
+  job.beforePublished = {};
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;

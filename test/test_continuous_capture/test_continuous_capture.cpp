@@ -128,6 +128,15 @@ struct TrackCaptureStopTestAccess {
   static bool appendNoteOffAtPhase(Track& track, uint8_t channel, uint8_t note, uint32_t phase) {
     return track.appendCaptureNoteOffAtPhase(channel, note, phase);
   }
+  static bool jobHasBeforePublished(Track& track) {
+    return track.captureStopJob().hasBeforePublished;
+  }
+  static bool liveHasBeforePublished(const Track& track) {
+    return track.hasOverdubSessionBeforePublished_;
+  }
+  static void setLiveBeforePublished(Track& track, bool value) {
+    track.hasOverdubSessionBeforePublished_ = value;
+  }
 };
 
 /// Read a job-owned sealed extent's rows in stored order (bounded by its exact
@@ -861,6 +870,34 @@ void test_capture_preview_borrow_release_is_owner_identified() {
   TEST_ASSERT_TRUE(live != &previewB);
 }
 
+/// The overdub-session undo baseline (published root at session open) moves into
+/// job ownership at punch-out, so a successor session's own baseline cannot
+/// rewrite the before-snapshot this interval's OverdubPassAdded entry records.
+void test_stop_job_owns_overdub_session_undo_baseline() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::liveHasBeforePublished(track));
+
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::jobHasBeforePublished(track));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::liveHasBeforePublished(track));
+
+  // A successor session records its own baseline; the job's stays intact.
+  TrackCaptureStopTestAccess::setLiveBeforePublished(track, true);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::liveHasBeforePublished(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::jobHasBeforePublished(track));
+
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  // Consumed by the undo entry or retired with the job; never carried forward.
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::jobHasBeforePublished(track));
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -1015,6 +1052,7 @@ int main() {
   RUN_TEST(test_pending_change_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_owns_capture_preview);
   RUN_TEST(test_capture_preview_borrow_release_is_owner_identified);
+  RUN_TEST(test_stop_job_owns_overdub_session_undo_baseline);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);
