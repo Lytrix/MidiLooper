@@ -1,5 +1,20 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 deferred-stop receipt audit — design decision required
+(resumable-midi-boundary-playback-maintenance):** the last two receipt items need a
+decision before implementation. The normal deferred overdub stop publishes **no**
+`OverdubPassAdded` entry — `pushOverdubPassAdded` runs only from the fault-fallback
+`commitCaptureForStop` via `finalizeCommitSideEffects`, while the deferred path calls
+`TrackPreparedStopCommit::commit` with `undo = nullptr` — so the job-owned undo
+baseline is correct preparation but currently unreachable in production; wiring the
+protected undo publication (the prewarmed-but-unused resumable
+`*CollectOverdubSessionUndoPasses` machinery plus `TrackUndoPublication`) is what
+makes it load-bearing. The session-exit receipt cannot be job-owned because it is
+retained past the job and consumed later by the idle publisher while playback reads
+it for the stale-root overlay; it needs a Loop-owned multi-slot ring with the gate
+testing a free slot. Ring size and multi-pending overlay behaviour are the open
+questions. No code changed for these two items. See CONTINUOUS-CAPTURE-OWNERSHIP.md.
+
 **2026-09-16 task 2.3 job-owned overdub-session undo baseline (resumable-midi-boundary-playback-maintenance):**
 `CaptureStopJob` now owns the overdub-session undo baseline
 (`ImmutableLoopSnapshotRef beforePublished` / `hasBeforePublished`). Admission moves

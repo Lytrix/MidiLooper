@@ -5,6 +5,25 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 deferred-stop receipt audit — design decision required.**
+Auditing the last two receipt items found the consumer side is not wired, which
+changes what "job-owned" must mean. (1) The normal deferred overdub stop publishes
+**no** `OverdubPassAdded` entry: `pushOverdubPassAdded` is reached only from
+`Track::finalizeCommitSideEffects` via the fault fallback `commitCaptureForStop`,
+while `processDeferredOverdubStopGrain` calls `TrackPreparedStopCommit::commit` with
+`undo = nullptr` (`commitWithUndo`/`commitStoppedWithUndo` have no callers) — the
+standing "protected undo publication not yet connected to the production stop
+pipeline" gap. So the job-owned undo baseline from the previous slice is correct
+preparation but currently unreachable in production, and wiring the deferred
+publication is what makes it load-bearing. (2) The session-exit receipt cannot be
+job-owned: it is deliberately retained past the job and consumed later by the idle
+snapshot publisher while playback reads it for the stale-root overlay, so it needs a
+Loop-owned multi-slot ring; `canHandoffSessionExitSnapshot()` should test a free slot
+rather than an unconsumed singleton. Open questions: receipt ring size and the
+overlay's behaviour with more than one pending receipt. See
+CONTINUOUS-CAPTURE-OWNERSHIP.md ("Deferred-stop receipt wiring — audit and decision
+required"). No code was changed for these two items.
+
 **2026-09-16 task 2.3 job-owned overdub-session undo baseline.** The stop-commit
 path (`TrackUndo::pushOverdubSessionOnStop` -> `pushOverdubPassAdded`) built the
 `OverdubPassAdded` entry's `beforePublishedSnapshot` from the live
