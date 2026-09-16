@@ -5,6 +5,33 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-16 task 2.3 deferred protected undo publication wired (increment B).**
+The normal deferred overdub stop now records its `OverdubPassAdded` entry, closing
+the long-standing "protected undo publication not connected to the production stop
+pipeline" gap for the prepared PLAYING route. `TrackUndoPublication` is externally
+allocated (same pattern as `captureStopJobs_`) and cold-prewarmed by
+`prewarmProtectedUndo()`, which also reserves the undo stack's own entry capacity
+(`Config::ABSOLUTE_MAX_UNDO_ENTRIES`, 512) — that is a publication precondition,
+because `begin` rejects a transaction whose cursor reached capacity; its device
+PSRAM admission must be measured. `stepDeferredUndoPublication` runs `begin` +
+bounded `stepPrepare` inside the existing `UndoCollection` phase (no new phase). The
+atomic transfer proves `canPublish(...)` first and only then calls
+`advanceAtomicTransferWithUndo`; otherwise it takes the plain commit and the
+transaction is restored rather than left half-open. `stepProtectedUndoDrain` runs one
+bounded quantum per DeferredCleanup turn (`stepReleaseRedo` → `beginTrimAfterReclaim`/
+`stepTrim` → `finish`, plus a `beginRestore`/`stepRestore` + `recoverPreparedEntry`
+path), so `protectedState()` is Idle again before the job retires.
+
+Evidence: `test_deferred_stop_prepares_job_owned_undo_entry` now also runs the stop to
+completion and asserts the transaction returned to Idle and exactly one
+`OverdubPassAdded` entry for the job's slot is published. `test_continuous_capture`
+30 pass with the same three intentional reentry failures; full native 2,188 cases —
+2,183 passed, one skipped, the same three; `teensy41-capture-serial` builds with
+6,752 bytes RAM1 headroom (code 425,208). Known deviations: the DEC-063 bounded
+disabled-pass reclaim continuation is still unwired (trim pressure is measured
+without it), and STOPPED/empty routes publish no protected entry because they skip
+companion preparation.
+
 **2026-09-16 task 2.3 deferred undo collection, job-owned prepared entry (increment A).**
 The deferred overdub stop now collects its session undo identities in bounded grains
 and builds the `OverdubPassAdded` entry from the job's own slot and baseline. New

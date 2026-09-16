@@ -1088,3 +1088,51 @@ with **6,752 bytes** RAM1 headroom (13 banks, code 425,592).
 `commitWithUndo` / `commitStoppedWithUndo`, and add the bounded
 `ReleaseRedo → AwaitReclaim → Trim → Complete` drain in DeferredCleanup so
 `protectedState()` cannot block the next interval's publication (blocker 2).
+
+### Increment B landed — the deferred stop publishes its protected undo entry
+
+The normal deferred overdub stop now records an `OverdubPassAdded` entry. This
+closes the long-standing "protected undo publication not connected to the
+production stop pipeline" gap for the prepared PLAYING route.
+
+- `TrackUndoPublication` is **externally allocated** (`ProtectedUndoDeleter`, same
+  pattern as `captureStopJobs_`) because it carries an `UndoEntry` plus retirement
+  storage and must outlive the job through its drain. Prewarmed cold by
+  `prewarmProtectedUndo()` from `prewarmCaptureStopJobs`.
+- **The undo stack's own entry capacity is part of the same cold admission**
+  (DEC-063): `prewarmProtectedUndo()` reserves `Config::ABSOLUTE_MAX_UNDO_ENTRIES`
+  (512) entries. This is a *publication precondition* — `TrackUndoPublication::begin`
+  rejects a transaction whose cursor has reached capacity, so without it the
+  publication silently fell back to the plain commit. **Device PSRAM admission for
+  this reservation must be measured** (external-first, up to 512 `UndoEntry` rows
+  per track).
+- `stepDeferredUndoPublication` runs `begin` + bounded `stepPrepare` inside the
+  existing `UndoCollection` phase (its own admitted turns), so no extra phase was
+  needed and no phase transition was rerouted.
+- The atomic transfer proves publishability first
+  (`canPublish(stack, loopId, pendingCapturePass().id)`) and only then calls
+  `advanceAtomicTransferWithUndo`; otherwise it takes the plain commit and the
+  transaction is restored, never left half-open.
+- `stepProtectedUndoDrain` runs one bounded quantum per DeferredCleanup turn:
+  `stepReleaseRedo` → `beginTrimAfterReclaim`/`stepTrim` → `finish`, plus a
+  `beginRestore`/`stepRestore` + `recoverPreparedEntry` path for a prepared but
+  unpublished transaction. `protectedState()` is Idle again before the job retires,
+  so the next interval can publish.
+- Three defects were found and fixed by the native regression while wiring this: an
+  early `return true` that skipped the prepare turns, a `begin`-failure path that
+  looped on `stepPrepare` forever, and a restore path that could never reach
+  `finish()` because the private entry was still held.
+
+**Verification:** `test_deferred_stop_prepares_job_owned_undo_entry` now also runs
+the stop to completion and asserts (a) the transaction returned to Idle and (b)
+exactly one `OverdubPassAdded` entry for the job's slot is on the global stack.
+`test_continuous_capture` 30 pass with the same three intentional public-reentry
+failures; full native 2,188 cases — 2,183 passed, one skipped, the same three;
+`teensy41-capture-serial` builds with **6,752 bytes** RAM1 headroom (13 banks, code
+425,208).
+
+**Known deviations recorded:** the bounded disabled-pass reclaim continuation is
+still unwired (DEC-063), so trim pressure is measured without it — that can only
+trim at least as much as the fully wired policy would. The STOPPED/empty routes
+still publish no protected entry because they skip companion preparation; the
+legacy fault-fallback path keeps its cold `pushOverdubSessionOnStop`.

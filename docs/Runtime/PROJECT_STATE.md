@@ -1,5 +1,23 @@
 # Project state (execution context)
 
+**2026-09-16 task 2.3 deferred protected undo publication wired
+(resumable-midi-boundary-playback-maintenance):** the normal deferred overdub stop
+now records its `OverdubPassAdded` entry. `TrackUndoPublication` is externally
+allocated and cold-prewarmed by `prewarmProtectedUndo()`, which also reserves the
+undo stack's entry capacity (`Config::ABSOLUTE_MAX_UNDO_ENTRIES`, 512) — a
+publication precondition whose device PSRAM admission must be measured.
+`stepDeferredUndoPublication` runs `begin` + bounded `stepPrepare` inside the
+existing `UndoCollection` phase; the atomic transfer proves `canPublish(...)` then
+calls `advanceAtomicTransferWithUndo`, else plain-commits with the transaction
+restored. `stepProtectedUndoDrain` drains one bounded quantum per DeferredCleanup
+turn (`ReleaseRedo`/`Trim`/`Complete`, plus restore + `recoverPreparedEntry` for an
+unpublished transaction), so `protectedState()` is Idle before the job retires.
+Tests assert one published `OverdubPassAdded` and an Idle transaction; full native
+2,188 cases — 2,183 passed, one skipped, the same three known reentry failures;
+capture-serial builds with 6,752 bytes RAM1 headroom. Known deviations: the DEC-063
+disabled-pass reclaim continuation is unwired, and STOPPED/empty routes publish no
+protected entry. Task 2.3 remains unchecked.
+
 **2026-09-16 task 2.3 deferred undo collection, job-owned prepared entry
 (resumable-midi-boundary-playback-maintenance):** a new
 `PendingStopPhase::UndoCollection` on the prepared PLAYING route collects the
