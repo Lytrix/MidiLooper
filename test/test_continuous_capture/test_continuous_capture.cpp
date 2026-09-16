@@ -898,6 +898,35 @@ void test_stop_job_owns_overdub_session_undo_baseline() {
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::jobHasBeforePublished(track));
 }
 
+/// The deferred stop collects the session's undo identities in bounded grains and
+/// builds the OverdubPassAdded entry from the job's own slot and baseline, on the
+/// prepared PLAYING route.
+void test_deferred_stop_prepares_job_owned_undo_entry() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  auto& job = TrackCaptureStopTestAccess::job(track);
+  TEST_ASSERT_FALSE(job.undoCollected);
+
+  for (unsigned i = 0; i < 20000 && !job.undoCollected; ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_TRUE(job.undoCollectionStarted);
+  TEST_ASSERT_TRUE_MESSAGE(job.undoCollected, "the deferred stop must build a prepared undo entry");
+  TEST_ASSERT_TRUE(job.undoCollectable);
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::OverdubPassAdded),
+                    static_cast<int>(job.undoEntry.kind));
+  TEST_ASSERT_EQUAL_UINT8(job.slot, job.undoEntry.slotIndex);
+  TEST_ASSERT_EQUAL_UINT32(job.loopId, job.undoEntry.loopId);
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, job.undoEntry.passId);
+  // The entry's baseline is the job's own captured one (null is legitimate when
+  // the session opened before any snapshot was published).
+  TEST_ASSERT_EQUAL_PTR(job.beforePublished.get(), job.undoEntry.beforePublishedSnapshot.get());
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -1053,6 +1082,7 @@ int main() {
   RUN_TEST(test_stop_job_owns_capture_preview);
   RUN_TEST(test_capture_preview_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_owns_overdub_session_undo_baseline);
+  RUN_TEST(test_deferred_stop_prepares_job_owned_undo_entry);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);

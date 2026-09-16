@@ -38,6 +38,10 @@ enum class PendingStopPhase : uint8_t {
   CanonicalTail,
   PrepareTransfer,
   CompanionHistory,
+  /// Bounded, resumable collection of this session's undo identities, then the
+  /// prepared OverdubPassAdded entry. Runs only on the prepared PLAYING route
+  /// (the STOPPED route skips companion preparation entirely).
+  UndoCollection,
   CompanionBridge,
   AtomicTransfer,
   DeferredCleanup,
@@ -101,6 +105,11 @@ struct PendingStopAdmission {
   uint16_t canonicalPreparationQuantum = 0;
   uint64_t remainingHistoryRecycleGrains = 0;
   uint16_t historyRecycleQuantum = 0;
+  /// Bounded undo-identity collection for this stop. Runs before the atomic
+  /// commit on the prepared PLAYING route; a distinct class so a saturated
+  /// estimate denies admission explicitly instead of stalling a phase.
+  uint64_t remainingUndoCollectionGrains = 0;
+  uint16_t undoCollectionQuantum = 0;
   const Loop* historyRecycleOwner = nullptr; // Borrowed from the successful joint commit.
   uint64_t historyRecycleGeneration = 0;
   bool historyRecycleStarted = false;
@@ -114,7 +123,8 @@ struct PendingStopAdmission {
   bool begin(uint32_t generation, uint32_t tick, uint32_t commandEpoch,
              size_t openReservationCount, size_t frozenEventCount,
              const StopAdmissionContract& contract, uint64_t rankedPreparationGrains = 0,
-             uint64_t canonicalPreparationGrains = 0, uint64_t historyRecycleGrains = 0);
+             uint64_t canonicalPreparationGrains = 0, uint64_t historyRecycleGrains = 0,
+             uint64_t undoCollectionGrains = 0);
   bool consumeClosureGrain();
   /// Ordering remains a separate bounded grain after every reserved closure
   /// has been made durable in frozen staging. The atomic commit is permitted
@@ -128,6 +138,9 @@ struct PendingStopAdmission {
   /// Post-commit storage recycling has a separate reservation and cannot delay
   /// the atomic commit. Receipt consumption precedes beginning the recycler.
   bool consumeHistoryRecycleGrain();
+  /// Separate bounded collection class. Closures must already be durable and the
+  /// estimate must have been admitted before the phase runs.
+  bool consumeUndoCollectionGrain();
   /// Owner calls only after this stage's worker readiness has been verified.
   /// Release unused estimates in one turn; they are upper bounds, not work.
   bool retireCompletedPreparation();
@@ -140,7 +153,8 @@ struct PendingStopAdmission {
   }
   bool finalizationComplete() const {
     return pending && remainingClosureGrains == 0 && remainingOrderGrains == 0 &&
-           remainingRankedPreparationGrains == 0 && remainingCanonicalPreparationGrains == 0;
+           remainingRankedPreparationGrains == 0 && remainingCanonicalPreparationGrains == 0 &&
+           remainingUndoCollectionGrains == 0;
   }
   void requestTransportStop();
   bool canCommit(uint32_t commandEpoch, PendingStopDestination requestedDestination) const;

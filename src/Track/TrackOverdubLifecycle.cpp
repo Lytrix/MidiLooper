@@ -50,6 +50,11 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
   for (size_t index = 0; index < CaptureStopJobs::kCapacity; ++index) {
     CaptureStopJob& entry = captureStopJobs_->entries[index];
     if (!entry.rawRange.ready() && !entry.rawRange.reserveTail()) return false;
+    // The bounded undo collection requires caller-supplied, pre-reserved private
+    // outputs; it never grows them itself (a growth would be a denied collection).
+    const size_t rows = RuntimePlaybackViewConfig::kRecordsPerBridge;
+    if (entry.undoPassIds.capacity() < rows) entry.undoPassIds.reserve(rows);
+    if (entry.undoCompanionIds.capacity() < rows) entry.undoCompanionIds.reserve(rows);
   }
   return true;
 }
@@ -258,8 +263,17 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
           kDeferredStopPreparationQuantum);
   const uint64_t recycleCredits = recycleRequired == UINT64_MAX ? UINT64_MAX :
       recycleRequired + 1;
+  // Bounded undo-identity collection for the prepared PLAYING route. The STOPPED
+  // and empty routes skip companion preparation, so they carry no such estimate.
+  const uint64_t undoCollectRequired = stoppedDestination || finalFrozenCount == 0 ? 0 :
+      Loop::requiredSessionStopUndoCollectionGrains(
+          std::min(loop.passes.overdubPasses.size() + 2,
+                   RuntimePlaybackViewConfig::kRecordsPerBridge),
+          pendingChangeCount, snapshotCount, kDeferredStopPreparationQuantum);
+  const uint64_t undoCollectionCredits =
+      undoCollectRequired == UINT64_MAX ? UINT64_MAX : undoCollectRequired;
   if (rankedCredits == UINT64_MAX || canonicalCredits == UINT64_MAX ||
-      recycleCredits == UINT64_MAX) {
+      recycleCredits == UINT64_MAX || undoCollectionCredits == UINT64_MAX) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        rankedCredits, canonicalCredits, "preparation_service_unavailable");
     return false;
@@ -282,7 +296,8 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   }
   if (!job.admission.begin(generation, currentTick, 0, openReservations,
                                    finalFrozenCount, kDeferredStopContract,
-                                   rankedCredits, canonicalCredits, recycleCredits) ||
+                                   rankedCredits, canonicalCredits, recycleCredits,
+                                   undoCollectionCredits) ||
       !staging.freeze(generation)) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        finalFrozenCount, openReservations, "freeze_or_contract_denied");
@@ -365,6 +380,38 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     armPlayingMidiDrainAfterOverdubStop();
   }
   return true;
+}
+
+TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop& loop,
+                                                      PendingStopAdmission& stop) {
+  if (!job.undoCollectionStarted) {
+    job.undoCollectionStarted = true;
+    job.undoCollectable = loop.beginCollectOverdubStopUndoPasses(
+        job.undoCollection, job.undoPassIds, job.undoCompanionIds,
+        loop.pendingCapturePass().id, true);
+    (void)stop.consumeUndoCollectionGrain();
+    if (!job.undoCollectable) {
+      // No prepared session identities to record for this interval.
+      job.undoCollected = true;
+      return true;
+    }
+    // Collection setup is its own admitted owner turn.
+    return false;
+  }
+  if (job.undoCollected) return true;
+  const Loop::SessionUndoCollection::Phase phase =
+      loop.stepCollectOverdubSessionUndoPasses(job.undoCollection,
+                                               kDeferredStopPreparationQuantum);
+  (void)stop.consumeUndoCollectionGrain();
+  if (phase == Loop::SessionUndoCollection::Phase::Denied) {
+    job.undoCollected = true;
+    return true;
+  }
+  if (phase != Loop::SessionUndoCollection::Phase::Complete) return false;
+  // Build the entry from the job's own slot and baseline, never the live session's.
+  job.undoCollected = TrackUndo::prepareOverdubSessionEntry(
+      loop, job.undoCollection, job.slot, job.beforePublished, job.undoEntry);
+  return job.undoCollected;
 }
 
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
@@ -573,6 +620,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
         publishedBase != nullptr, publishedBase && publishedBase->passOriginsReady,
         windowBase ? "prepared_window" : publishedBase ? "present" : "missing_canonical_base");
 #endif
+    stop.setPhase(PendingStopPhase::UndoCollection);
+    return false;
+  }
+  if (stop.phase == PendingStopPhase::UndoCollection) {
+    // Bounded, resumable collection of the session's undo identities, then the
+    // prepared OverdubPassAdded entry built from this job's slot and baseline.
+    if (!stepDeferredUndoCollection(job, loop, stop)) return false;
     stop.setPhase(PendingStopPhase::CompanionBridge);
     return false;
   }

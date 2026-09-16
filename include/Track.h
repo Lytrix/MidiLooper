@@ -510,6 +510,15 @@ private:
     /// beginOverdubSession cannot rewrite this interval's undo entry baseline.
     ImmutableLoopSnapshotRef beforePublished;
     bool hasBeforePublished = false;
+    /// Bounded, resumable collection of this session's undo identities plus the
+    /// prepared OverdubPassAdded entry built from the job's own slot/baseline.
+    Loop::SessionUndoCollection undoCollection;
+    PassIdList undoPassIds;
+    EditPassIdList undoCompanionIds;
+    UndoEntry undoEntry;
+    bool undoCollectionStarted = false;
+    bool undoCollectable = false;
+    bool undoCollected = false;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
@@ -541,6 +550,9 @@ private:
   /// Retire one grain of a job's raw capture input. Uses the job-owned sealed
   /// range when the job owns one, else the legacy producer path.
   bool retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop, bool closeCapture);
+  /// One bounded turn of the deferred undo-identity collection. Returns true when
+  /// the job's prepared entry is ready (or the session had nothing to record).
+  bool stepDeferredUndoCollection(CaptureStopJob& job, Loop& loop, PendingStopAdmission& stop);
   uint64_t captureInterval_ = 0;
   GlobalUndoStack undoStack;
   UndoLoopGeometry recordCaptureBaselineGeometry_{};
