@@ -511,6 +511,16 @@ private:
     /// beginOverdubSession cannot rewrite this interval's undo entry baseline.
     ImmutableLoopSnapshotRef beforePublished;
     bool hasBeforePublished = false;
+    /// Causal predecessor identity: the published source this interval succeeded,
+    /// resolved once at admission (punch-out) and pinned for the job's lifetime.
+    /// A later grain must resolve this interval's successor semantics against the
+    /// state it actually succeeded, never against whatever a successor has
+    /// published by then. `causalBaseSnapshot` keeps `causalBase.snapshotIdentity`
+    /// alive; a rejected pin denies admission instead of recording a dangling
+    /// predecessor.
+    PlaybackViewSourceIdentity causalBase;
+    ImmutableLoopSnapshotRef causalBaseSnapshot;
+    bool causalBaseRecorded = false;
     /// Bounded, resumable collection of this session's undo identities plus the
     /// prepared OverdubPassAdded entry built from the job's own slot/baseline.
     Loop::SessionUndoCollection undoCollection;

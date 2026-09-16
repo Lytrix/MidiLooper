@@ -140,6 +140,27 @@ struct TrackCaptureStopTestAccess {
   static void setLiveBeforePublished(Track& track, bool value) {
     track.hasOverdubSessionBeforePublished_ = value;
   }
+  static const PlaybackViewSourceIdentity& causalBase(Track& track) {
+    return track.captureStopJob().causalBase;
+  }
+  static bool causalBaseRecorded(Track& track) {
+    return track.captureStopJob().causalBaseRecorded;
+  }
+  static bool entryCausalBaseRecorded(Track& track, size_t index) {
+    return track.captureStopJobs_->entries[index].causalBaseRecorded;
+  }
+  static const void* causalBaseSnapshotIdentity(Track& track) {
+    return track.captureStopJob().causalBase.snapshotIdentity;
+  }
+  static void* pinnedCausalSnapshot(Track& track) {
+    return const_cast<void*>(static_cast<const void*>(track.captureStopJob().causalBaseSnapshot.get()));
+  }
+  static uint32_t playbackRevision(const Track& track) {
+    return track.getActiveLoop().playbackRevision;
+  }
+  static void setPlaybackRevision(Track& track, uint32_t revision) {
+    track.getActiveLoop().playbackRevision = revision;
+  }
 };
 
 /// Read a job-owned sealed extent's rows in stored order (bounded by its exact
@@ -242,6 +263,44 @@ void test_track_reentry_does_not_depend_on_manager_guard() {
   inputNote(62, 193, 216);
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
       "Track must own a distinct live interval before removing outer guards");
+}
+
+/// The deferred stop records the published source it succeeded, and pins that
+/// source's root, at admission. A later grain must never re-resolve it against a
+/// source a successor published in the meantime.
+void test_deferred_stop_records_and_pins_its_causal_predecessor_source() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  loop.storePublishedSnapshotForTest(
+      LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                loop.nextNoteId_, 1),
+      loop.playbackRevision);
+  const uint32_t admittedRevision = loop.playbackRevision;
+  const void* admittedSnapshot = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_NOT_NULL(admittedSnapshot);
+  const size_t admittedHead = TrackCaptureStopTestAccess::headIndex(track);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, UINT32_MAX);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::causalBaseRecorded(track));
+  const PlaybackViewSourceIdentity recorded = TrackCaptureStopTestAccess::causalBase(track);
+  TEST_ASSERT_EQUAL_UINT32(admittedRevision, recorded.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(TrackCaptureStopTestAccess::generation(track), recorded.sourceGeneration);
+  TEST_ASSERT_EQUAL_PTR(admittedSnapshot, recorded.snapshotIdentity);
+  TEST_ASSERT_EQUAL_PTR(recorded.snapshotIdentity, TrackCaptureStopTestAccess::pinnedCausalSnapshot(track));
+  // A successor's publication must not rewrite where this interval came from.
+  TrackCaptureStopTestAccess::setPlaybackRevision(track, admittedRevision + 7);
+  TEST_ASSERT_EQUAL_UINT32(admittedRevision, TrackCaptureStopTestAccess::causalBase(track).playbackRevision);
+  TEST_ASSERT_EQUAL_PTR(admittedSnapshot, TrackCaptureStopTestAccess::pinnedCausalSnapshot(track));
+  // Restoration lets the (still live-resolving) worker finish so the descriptor
+  // retires; retirement must clear the receipt for the next interval.
+  TrackCaptureStopTestAccess::setPlaybackRevision(track, admittedRevision);
+  for (unsigned grain = 0; grain < 4096 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::entryCausalBaseRecorded(track, admittedHead));
 }
 
 void test_stop_job_owns_held_notes_and_closes_original_slot() {
@@ -1112,6 +1171,7 @@ int main() {
   RUN_TEST(test_populated_stop_runs_existing_worker_to_completion);
   RUN_TEST(test_completed_job_cannot_transition_a_newer_track_interval);
   RUN_TEST(test_job_note_retirement_does_not_clear_live_notes);
+  RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
   RUN_TEST(test_stop_job_owns_held_notes_and_closes_original_slot);
   RUN_TEST(test_stop_job_denies_changed_geometry_before_closure_mutation);
   RUN_TEST(test_button_a_three_intervals_accept_notes_with_service_paused);
