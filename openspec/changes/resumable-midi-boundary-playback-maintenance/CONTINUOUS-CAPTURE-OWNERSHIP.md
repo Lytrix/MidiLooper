@@ -40,10 +40,15 @@ remains incomplete and the production admission guards remain necessary.
   currently singleton live state. They must stay with live ingress; stop-time
   closures must be job-owned before reentry. `pendingNotes.clear()` in deferred
   cleanup is still a concrete live-state hazard.
-- `RuntimePlaybackViewSet::captureStaging`: currently shared by live input and
-  the frozen stop. It cannot be reset for B while A borrows it. The FIFO head
-  needs a bounded adapter from its sealed range; input reservations must move
-  to independently prewarmed ingress ownership. This is not implemented.
+- `RuntimePlaybackViewSet::captureStaging`: **split 2026-09-16** into two
+  independently prewarmed roles in the same owner (`captureStagings[2]` with
+  `liveStagingIndex`/`frozenStagingIndex`). Live input always writes the *live*
+  role; the one admitted stop job borrows the *frozen* role. Punch-out freezes
+  the live role and exchanges the two indexes in constant work; job cleanup
+  resets only its own retired frozen role. A successor interval therefore owns a
+  physically separate ingress buffer. The FIFO head still needs a bounded
+  adapter from its sealed raw range — raw-range sealing is not wired yet — and
+  more than one simultaneous job still exceeds the two roles and stays guarded.
 - `Track::pendingStopAdmission_`: currently one stop tick, epoch, destination,
   continuation and recycle receipt. It must refer to the queue head's interval;
   completing it must not unconditionally transition newer live capture to PLAYING.
@@ -576,3 +581,280 @@ restored playback output and the measured deadline failures, then finish sealed
 range/live reservation/session/predecessor isolation before multiple FIFO admission.
 No additional FIFO buffers/guards were loosened to bypass these verification gaps.
 Task 2.3 remains incomplete (12/20 overall).
+
+
+## Dual capture-staging roles — ingress/staging isolation checkpoint, 2026-09-16
+
+Implements the "input reservations must move to independently prewarmed ingress
+ownership" step named above. The runtime's single `captureStaging` is now two
+independently prewarmed roles in the same owner.
+
+**Owner and lifetime statement**
+
+- Owner stays `LoopPlaybackRuntime` / `RuntimePlaybackViewSet`; no new module,
+  Manager, worker graph or scheduler. No canonical, persistence or SD ownership
+  moves.
+- `captureStagings[2]` with `liveStagingIndex` / `frozenStagingIndex`. The live
+  role is written only by live ingress (`Track::recordMidiEvents` admission,
+  `Track::noteOn` reservation, the cross-wrap continuation path, and the
+  `startOverdubbing` reset). The frozen role is read only by the existing stop
+  worker and its canonical/companion/bridge helpers.
+- `Track::beginDeferredOverdubStop` freezes the live role, then exchanges the two
+  indexes in constant work (`LoopPlaybackRuntime::exchangeCaptureStagingRoles`).
+  The admitted job therefore owns the rows it captured; the previous frozen role
+  becomes the successor interval's clean ingress buffer.
+- `Track::processDeferredOverdubStopGrain` resets only its own retired frozen
+  role after `TrackPreparedStopCommit::completeDeferredCleanup`. It never touches
+  the live role.
+- A physical NoteOff for an already-open note selects the frozen role while a job
+  is pending and the live role otherwise; it never crosses roles.
+- Weak references retired with the job: the frozen role's `captureGeneration`,
+  reservations and rows are cleared at cleanup; nothing retains a pointer to it
+  across the exchange.
+
+**Physical cost — measured on device**
+
+- One additional `CaptureAdmissionStaging` per `RuntimePlaybackViewSet`:
+  128 fixed note reservations plus one additional 2,048-event
+  `FixedPlaybackEventStorage`.
+- `RuntimePlaybackViewSet::fixedExternalBytes()` and its native assertion count
+  both stagings, so the accounting is explicit.
+- Device boot walk (build `fb4ab3a9…`, `captures/task23-staging-prewarm/result.json`):
+  PSRAM free 5,143,968 B before boot staging prewarm -> 3,859,680 B after, i.e.
+  **1,284,288 B for 8 slots (160,536 B/slot)**. That matches two 2,048-event
+  stagings per slot (~167,936 B) and is ~2x one staging, so both roles are
+  physically prewarmed on every boot slot. No internal-heap fallback occurred
+  (heap_free 352,256 -> 344,064 B), every slot reports `ready=1` with 8 credits,
+  and the pool is still **46.1 % free (3.86 MB of 8.38 MB)** after boot prewarm.
+- This is boot staging-only prewarm. The selected slot's full view/bridge prewarm
+  plus loaded dense content still needs its own measurement; the general
+  "re-measure before removing the reentry guards" requirement stays.
+
+**Verification**
+
+- New native `test_playback_prewarm::test_capture_staging_roles_exchange_without_sharing_physical_storage`
+  proves distinct physical buffers, constant-work role exchange, the frozen job
+  retaining its rows, and successor ingress rows surviving the job's retired
+  staging being reset.
+- New native `test_continuous_capture::test_stop_job_and_live_ingress_own_distinct_staging`
+  proves the same through the production Button A / Track punch-out route: role
+  exchange happens at punch-out and a successor ingress row survives the job's
+  full canonical work, commit and cleanup.
+- `test_playback_prewarm` 164/164; `test_continuous_capture` 18 pass with the same
+  three intentional public-reentry failures.
+- Full native: 2,176 cases — 2,171 passed, one skipped, the same three reentry
+  failures.
+- `teensy41-capture-serial` build **passes**: RAM1 variables 91,552, code 425,752,
+  padding 232, local-variable headroom **6,752 bytes**; RAM2 free 472,928;
+  EXTRAM variables 9,312.
+- Device boot prewarm admission **PASS** (`captures/task23-staging-prewarm/`,
+  `result.json`): uploaded instrumented build `fb4ab3a9…`, clean reset
+  (`boot_reset,crash=0`), all 8 slots prewarmed with `ready=1`/8 credits, no
+  `[WARN]`/`[ERROR]`, no staging-unavailable or low-heap line, and 3.86 MB PSRAM
+  still free. The instrumented build adds only one SESSION_CAPTURE-gated boot
+  sample (`DIAG,capture_prewarm,phase=before|after`) and keeps the 6,752-byte RAM1
+  headroom.
+
+**Still required (unchanged guards)**
+
+FIFO/queue-head descriptor binding, sealed raw-range wiring, causal predecessor
+and source identity, per-job session/preview/undo/snapshot receipts, the three
+public reentry cases, deadline/audibility evidence, and device PSRAM admission.
+Task 2.3 stays unchecked; no upload, commit or archive was performed in this
+checkpoint.
+
+
+## FIFO/queue-head binding checkpoint — 2026-09-16
+
+The ring is now the explicit admission authority rather than a decorative
+container.
+
+- `Track::captureStopJobTail()` is the admission target (head + count, null when
+  full); `Track::captureStopJobHead()` is the worker's stable descriptor (null
+  when empty). `beginDeferredOverdubStop` admits into the tail and reports a
+  distinct `queue_full` stop-stage outcome when the ring is full instead of
+  treating exhaustion as latency. `processDeferredOverdubStopGrain` binds the head
+  **once** for the whole grain and no longer re-resolves the ring mid-step; the
+  existing `captureStopJob()` accessor remains for callers that have already
+  proven a pending job (transport-Stop retarget, `!STOP_STATUS`).
+- `!STOP_STATUS` now reports `queue=<depth>/<capacity>` so ring depth is visible
+  on device without new tag families.
+- Behaviour is unchanged while only one job is admitted: with `count == 1` the
+  tail *is* the head. The binding is what makes a later multi-job admission
+  well-defined.
+- Native: new `test_stop_ring_admits_at_tail_and_binds_worker_to_head` and
+  `test_full_stop_ring_denies_admission_and_preserves_accepted_capture` (a full
+  ring denies and consumes no accepted event, pending note or descriptor).
+  `test_continuous_capture` 20 pass with the same three intentional public-reentry
+  failures.
+
+## Sealed raw-range wiring — audit and decision required
+
+`LoopEventStore::sealCaptureRange` is landed and tested (DEC-064) but still has no
+production caller. The audit for wiring it found a concrete blocker that makes
+this an ownership decision, not a mechanical follow-up.
+
+**Why the punch-out seal is not a drop-in**
+
+1. `Loop::capture.store` is not only the worker's input. During the deferred stop
+   it is still read by:
+   - `mergeCaptureStoreIntoWindowedEvents` / `mergeCaptureStoreIntoMaterializedEvents`
+     (Loop), which merge the producer into the display window whenever
+     `captureActive()` — and which call `ensureCaptureEventsSorted()`, i.e. they
+     **mutate the producer to sort it**;
+   - `Track::appendCaptureNoteOffAtPhase`, which scans the producer to recover the
+     `NoteId` of an open note so a physical NoteOff can close the pending job's
+     reservation.
+2. `sealCaptureRange` swaps the whole directory out, so the producer becomes
+   empty. Sealing at punch-out without a read fallback therefore empties the
+   live-capture overlay for the entire finalization window and breaks
+   physical-closure note identity.
+3. `Loop::beginCapture` calls `capture.store.clear()`, which frees a pre-reserved
+   successor tail; a sealed producer needs a "reset extent, keep the spare"
+   operation.
+4. The seal is only *needed* when the producer must be reused, i.e. when a
+   successor capture starts — and that route is still guarded.
+
+**APPROVED design — sealed capture ownership transfer (2026-09-16)**
+
+Ownership model:
+
+```text
+before punch-out                     after admitted stop
+────────────────                     ───────────────────
+Loop::capture.store                  Loop::capture.store        CaptureStopJob(head)
+      │                                    │                          │
+      └── owns active producer             │ successor producer       └── OWNS sealed rawRange
+          extent                           │
+                                           └── Loop holds a job-identified
+                                               non-owning borrow ─────────────┘
+                                               (overlay materialization + NoteOff identity)
+```
+
+- `Loop` owns the producer; the admitted head job owns the sealed interval as
+  `CaptureStopJob::rawRange`. `Loop` holds only a **job-identified** non-owning
+  borrow. DisplayManager is unchanged: the display asks `Loop` for effective
+  capture material and never learns whether it lives in the producer or an
+  admitted stop descriptor.
+- **Authority rule:** once an admitted stop job owns a sealed capture range, that
+  range is the authoritative source for the stopped interval until the job
+  releases it. `Loop` may borrow it for capture-overlay materialization and
+  NoteOff identity recovery but must not mutate, reorder, clear or release it.
+- **Immutability:** the borrowed range is never sorted in place. Ordering
+  operations copy into scratch and sort the scratch (`mergeCaptureStore…`
+  previously sorted the producer in place).
+- **One read source:** all consumers resolve capture material through a single
+  internal `Loop` accessor that exposes the producer source and the finalizing
+  (borrowed) source **separately**, so mutual exclusivity is not encoded as a
+  permanent architectural truth. Today the guarded lifecycle means at most one is
+  non-empty, and the merge helpers merge both when present.
+- **Borrow lifetime follows job identity:** a job may clear or release the borrow
+  only when the binding still identifies that exact job (`&job.admission`), so
+  job A's cleanup can never clear job B's binding.
+- **NoteOff closure:** a physical NoteOff belonging to a reservation created
+  before sealing resolves its `NoteId` against the reservation's owning interval
+  (the borrowed sealed range), even though the producer extent is empty.
+- **`beginCapture()` boundary:** `resetCaptureExtentPreservingReservedStorage()`
+  resets producer-visible capture state while preserving storage reserved for the
+  successor producer and never touching an extent transferred to an admitted job.
+  (Named for reserved *storage*, not the FIFO admission tail.)
+- **Prewarm:** one reserved producer directory at setup/load, plus each job
+  descriptor's `rawRange.reserveTail()` cold.
+- **Release:** the worker retires the job's `CaptureRange` in bounded grains when
+  the job owns it, else the legacy producer path.
+- **No transfer on denial:** queue-full or otherwise denied admission performs no
+  seal and no ownership transfer.
+- **Sequencing:** wire this slice *before* removing the successor-capture guard,
+  and do not unguard continuous successor capture in the same change. The
+  multi-interval HITL payoff follows once the ownership layer passes on its own.
+
+**Rejected alternative:** seal lazily at the successor start. It needs no display
+change, but it is unreachable until the reentry guard is removed, so it would be
+dead code that leaves the ownership invariant unproven.
+
+
+## Sealed raw-range ownership — implementation checkpoint, 2026-09-16
+
+Wired. Ownership now matches the approved model; DisplayManager is unchanged and
+the successor-capture guard is still in place.
+
+**Ownership and lifetime**
+
+- `CaptureStopJob` owns `LoopEventStore::CaptureRange rawRange` plus
+  `ownsRawRange`. `Task::beginDeferredOverdubStop` seals the producer into it and
+  binds the Loop's job-identified read borrow at punch-out.
+- `Loop` holds `borrowedSealedCapture_` + `borrowedSealedCaptureOwner_`.
+  `releaseSealedCaptureRangeBorrow(owner)` clears only when the binding still
+  identifies that exact owner, so a stale job cannot unbind a successor.
+- `Loop::captureReadSource()` exposes the **producer** and the **finalizing**
+  sources separately (mutual exclusivity is not encoded). `copyCaptureIntervalEvents`
+  merges both into a scratch copy and sorts **only the scratch**; a borrowed sealed
+  extent is never mutated, reordered, cleared or released.
+- `Loop::findLastCaptureNoteOnIdentity` resolves a closure's NoteId from the
+  finalizing extent first and the producer second, so a physical/synthetic closure
+  whose source NoteOn now lives only in the job-owned extent still resolves.
+- `Track::retireJobCaptureSourceGrain` releases the job-owned extent in bounded
+  grains when the job owns it, else the legacy producer path. On completion it
+  drops the borrow (identity-guarded) and re-arms that descriptor's reserved
+  destination directory for a future admission. If re-arm fails, the next
+  admission denies explicitly instead of reserving at the action edge.
+
+**LoopEventStore contract**
+
+- `canSealCaptureRange(destination)` is the non-mutating precondition check.
+  Admission proves it before any mutation, so a denied admission performs **no
+  seal and no ownership transfer**; the seal step after admission is
+  precheck-proven and has no fallible successor.
+- `resetCaptureExtentPreservingReservedStorage()` lets `beginCapture` reset the
+  producer without releasing the successor directory a cut left behind.
+  `beginCapture`/`discardCapture` fall back to `clear()` when no reserved
+  directory exists.
+- The seal preconditions were corrected for lazily-allocated producers: a
+  producer with no capture lifetime (allocated by ordinary append) is a valid cut
+  source; only a *stale* non-zero lifetime denies, and the producer is not
+  required to hold a 512-entry directory of its own (the destination supplies
+  it). At seal the producer re-adopts the pool lifetime, and the destination keeps
+  the lifetime that lets `releaseGrain` free the transferred chunks.
+- An **empty** capture owns no extent, so it skips the seal and stays on the
+  legacy producer path.
+
+**Design note the tests pin:** the stop-time *synthetic reserved closure* is
+appended after the seal, so it lands in the successor producer extent while the
+sealed extent keeps the captured rows. This is exactly why the read source must
+expose both sources rather than "sealed-or-producer".
+
+**ITCM/bank placement:** all new Loop/LoopEventStore/Track functions are
+`FLASHMEM` (`LOOP_COLD_MEM` / `LOOP_EVENT_STORE_COLD_MEM` / `TRACK_COLD_MEM`), and
+`Loop::beginCapture` / `Loop::discardCapture` moved to flash so the build stays in
+13 ITCM banks. `teensy41-capture-serial`: RAM1 variables 91,552, code 425,832,
+padding 152, local headroom **6,752**; RAM2 free 472,928.
+
+**Verification**
+
+- New native regressions: `test_seal_transfers_extent_and_successor_capture_preserves_it`,
+  `test_read_source_yields_same_rows_before_and_after_sealing` (row parity plus
+  byte-identical sealed extent after an ordering merge),
+  `test_sealed_extent_resolves_closure_note_id`,
+  `test_sealed_range_borrow_release_is_owner_identified`, and the extended
+  `test_full_stop_ring_denies_admission_and_preserves_accepted_capture` (denial
+  performs no seal/transfer). Three existing tests were migrated from producer
+  ownership to the job-owned extent.
+- `test_continuous_capture` 24 pass with the same three intentional public-reentry
+  failures; full native 2,182 cases — 2,177 passed, one skipped, the same three
+  failures.
+- Device: the four destination directories per track add cold pool reservations.
+  **Measured PASS** (build `41b30d18…`, `captures/task23-sealed-range-prewarm/result.json`,
+  clean reset): boot prewarm PSRAM free 5,142,912 -> 3,856,320 B (160,824 B/slot,
+  unchanged from the dual-staging build, i.e. the range directories are not PSRAM
+  smalloc), internal heap 352,256 -> 311,296 B (-32 KB = 32 x 1 KB directories),
+  and pool chunks 512 -> 416. The +4 chunks/slot over the previous build are
+  exactly the four `CaptureRange::reserveTail()` destinations per track. All eight
+  slots report `ready=1` with 8 credits, zero warnings, 416 free chunks and 46.0 %
+  of the 8.38 MB pool still free after prewarm. Reserving only the head descriptor
+  and re-arming per rotation would save 24 chunks and ~24 KB; not adopted because
+  the measured cost is small and the head-only scheme adds a rotation-dependent
+  admission window.
+
+**Still open:** per-job session/preview/undo/snapshot receipts, causal predecessor
+and source identity, the three public reentry cases, and unguarding successor
+capture (explicitly out of scope for this change). Task 2.3 stays unchecked.

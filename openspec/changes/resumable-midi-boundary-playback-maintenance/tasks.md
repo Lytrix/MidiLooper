@@ -10,6 +10,88 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 sealed raw-range ownership wired (partial 2.3):** the approved
+ownership transfer is implemented. `CaptureStopJob` owns
+`LoopEventStore::CaptureRange rawRange`; `beginDeferredOverdubStop` proves
+`canSealCaptureRange` **before any mutation**, seals the producer at punch-out and
+binds a job-identified read borrow on `Loop`. A denied admission performs no seal
+and no transfer; an empty capture owns no extent and skips the seal. `Loop`'s read
+source exposes producer and finalizing sources separately; ordering is scratch-only
+so the borrowed range is never mutated; closure NoteId resolves from the finalizing
+extent first. `Track::retireJobCaptureSourceGrain` retires the owned extent in
+grains, drops the borrow only while it still identifies that job, and re-arms the
+descriptor's reserved destination. `beginCapture` preserves a cut's successor
+directory via `resetCaptureExtentPreservingReservedStorage`. DisplayManager is
+unchanged; the successor-capture guard is still in place deliberately. Native:
+five new regressions (seal transfer + successor capture, read-source row parity and
+sealed-extent immutability, closure identity from the sealed extent, owner-identified
+borrow release, denial performs no transfer) plus three migrated ownership
+assertions; `test_continuous_capture` 24 pass with the same three reentry failures;
+full native 2,177 pass / 1 skipped / the same three; capture-serial builds with
+6,752 bytes RAM1 headroom (new Loop/LoopEventStore/Track functions are FLASHMEM and
+`Loop::beginCapture`/`discardCapture` moved to flash to hold 13 ITCM banks). Device
+boot-prewarm **PASS** on build `41b30d18…`
+(`captures/task23-sealed-range-prewarm/result.json`): PSRAM free 5,142,912 ->
+3,856,320 B (160,824 B/slot, unchanged from the dual-staging build), internal heap
+352,256 -> 311,296 B, pool chunks 512 -> 416 — the +4 chunks/slot are exactly the
+four `CaptureRange::reserveTail()` destinations per track; all slots `ready=1`,
+zero warnings, 416 free chunks. Remaining: per-job session/preview/undo/snapshot
+receipts, causal predecessor/source identity, causal successor capture, and
+unguarding the three public reentry cases.
+
+**2026-09-16 FIFO/queue-head binding (partial 2.3):** the stop-descriptor ring is
+now the explicit admission authority. `Track::captureStopJobTail()` is the
+admission target (null when the ring is full) and `captureStopJobHead()` is the
+worker's stable descriptor (null when empty); `beginDeferredOverdubStop` admits
+into the tail and reports a distinct `queue_full` stop-stage outcome instead of
+treating exhaustion as latency, and `processDeferredOverdubStopGrain` binds the
+head once for the whole grain instead of re-resolving it mid-step. `!STOP_STATUS`
+reports `queue=<depth>/<capacity>`. Behaviour is unchanged while one job is
+admitted (tail == head); the binding makes a later multi-job admission
+well-defined. New native `test_stop_ring_admits_at_tail_and_binds_worker_to_head`
+and `test_full_stop_ring_denies_admission_and_preserves_accepted_capture`; full
+native 2,173 pass / 1 skipped / the same three reentry failures;
+capture-serial builds with 6,752 bytes RAM1 headroom.
+
+**Sealed raw-range wiring — audit complete, ownership decision required.** The
+audit found that `Loop::capture.store` is still read during the deferred stop by
+the Loop display-window merge helpers (which also mutate it to sort it) and by
+`Track::appendCaptureNoteOffAtPhase` for physical-closure note identity. Sealing
+at punch-out without a Loop-internal read fallback therefore empties the
+live-capture overlay for the whole finalization window and breaks closure
+identity; `Loop::beginCapture` also frees a pre-reserved tail today. Recommendation
+and rejected alternative are recorded in CONTINUOUS-CAPTURE-OWNERSHIP.md
+("Sealed raw-range wiring — audit and decision required"). Because this moves
+capture-interval ownership between `Loop` and the admitted Track job, the
+`ARCHITECTURE_RULES.md` ownership-transfer protocol applies. **Status 2026-09-16:
+approved and implemented — see the sealed raw-range ownership checkpoint above.**
+
+**2026-09-16 dual capture-staging roles (partial 2.3):** the runtime's single
+`RuntimePlaybackViewSet::captureStaging` is split into two independently
+prewarmed roles in the same owner: a *live* ingress staging and a *frozen*
+stop-job staging. Live ingress (`recordMidiEvents` admission, `noteOn`
+reservation, the cross-wrap continuation, `startOverdubbing` reset) writes only
+the live role; the one admitted stop job borrows the frozen role. Punch-out
+freezes the live role and exchanges the two indexes in constant work
+(`LoopPlaybackRuntime::exchangeCaptureStagingRoles`); job cleanup resets only its
+own retired frozen role. Staging is no longer shared between live input and the
+frozen stop, so a successor interval owns a physically separate ingress buffer.
+No new owner/module, no canonical/persistence/SD change, no action-edge copy.
+Cost is one extra 2,048-event staging buffer per fully-prewarmed runtime slot
+(external-first), so device PSRAM admission still must be re-measured before the
+reentry guards are removed. Native: `test_playback_prewarm` 164/164 and
+`test_continuous_capture` 18 pass with the same three intentional public-reentry
+failures; full native 2,171 pass / 1 skipped / the same three failures;
+capture-serial builds with 6,752 bytes RAM1 local headroom. Device boot prewarm
+admission **PASS** (`captures/task23-staging-prewarm/result.json`, build
+`fb4ab3a9…`): PSRAM free 5,143,968 -> 3,859,680 B across the 8 boot slots
+(160,536 B/slot, matching two stagings/slot, no internal-heap fallback), all slots
+`ready=1` with 8 credits, no warnings, 46.1 % of the 8.38 MB pool still free. That
+device run used a capture-only extra boot line (`DIAG,capture_prewarm,phase=…`,
+SESSION_CAPTURE-gated, no behavior change). FIFO/queue-head binding, sealed
+raw-range wiring, causal predecessor/source, per-job session/preview/undo/snapshot
+receipts and the three reentry cases remain open. Task 2.3 stays unchecked.
+
 **2026-09-16 bridge boundary reconciliation implementation:**
 `refreshFrozenCompanionBridge` now invokes the shared compiler's
 `rebindBoundary` rather than resetting bridge storage. Records, mapping, base
