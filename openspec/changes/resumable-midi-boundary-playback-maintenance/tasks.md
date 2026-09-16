@@ -10,6 +10,26 @@ This is planned work; no task or HITL gate is closed by the handoff.
 
 ## 2. Resumable playback-order successor
 
+**2026-09-16 deferred protected undo publication wired (increment B):** the normal
+deferred overdub stop now records an `OverdubPassAdded` entry. `TrackUndoPublication`
+is externally allocated and cold-prewarmed by `prewarmProtectedUndo()` together with
+the undo stack's own entry capacity (`Config::ABSOLUTE_MAX_UNDO_ENTRIES`, 512) —
+that capacity is a publication precondition because `begin` rejects a transaction
+whose cursor reached capacity, and its device PSRAM admission must be measured.
+`stepDeferredUndoPublication` runs `begin` + bounded `stepPrepare` inside the
+existing `UndoCollection` phase (no new phase). The atomic transfer proves
+`canPublish(...)` and only then calls `advanceAtomicTransferWithUndo`, else the plain
+commit with the transaction restored. `stepProtectedUndoDrain` runs one bounded
+quantum per DeferredCleanup turn (`stepReleaseRedo` → `beginTrimAfterReclaim`/
+`stepTrim` → `finish`, plus a `beginRestore`/`stepRestore` + `recoverPreparedEntry`
+path), so `protectedState()` is Idle before the job retires. Known deviations: the
+DEC-063 disabled-pass reclaim continuation is still unwired (trim pressure measured
+without it), and STOPPED/empty routes publish no protected entry because they skip
+companion preparation. Tests now assert the transaction returns to Idle and exactly
+one `OverdubPassAdded` entry is published; `test_continuous_capture` 30 pass with the
+same three reentry failures; full native 2,188 cases — 2,183 passed, one skipped, the
+same three; capture-serial builds with 6,752 bytes RAM1 headroom.
+
 **2026-09-16 deferred undo collection with a job-owned prepared entry (increment A):**
 new `PendingStopPhase::UndoCollection` on the prepared PLAYING route (between
 `CompanionHistory` and `CompanionBridge`, because the collection needs the current
