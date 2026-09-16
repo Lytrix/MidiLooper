@@ -118,6 +118,14 @@ struct PendingStopAdmission {
   bool pending = false;
 
   void reset();
+  /// Value identity of this admitted interval. Copies of the admission (credit
+  /// probing, retargeting) keep the identity, unlike an object address, and a
+  /// reused ring descriptor gets a fresh one because `begin` refreshes both
+  /// fields. Qualifies Loop-owned worker scratch that outlives one grain.
+  /// Zero is reserved for "no admitted interval" (the live session path).
+  uint64_t intervalToken() const {
+    return (static_cast<uint64_t>(frozenGeneration) << 32) | stopTick;
+  }
   /// Declares the complete stop tail before the state changes. Each later
   /// grain may close at most `kClosureGrainsPerTurn` reserved notes.
   bool begin(uint32_t generation, uint32_t tick, uint32_t commandEpoch,

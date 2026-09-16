@@ -170,9 +170,18 @@ struct Loop {
     uint64_t captureInputsGeneration = 0;
     const uint16_t* captureChunks = nullptr;
     size_t captureChunkCount = 0, captureChunk = 0, captureEvent = 0, comparedEvents = 0;
+    /// Interval qualification of an in-flight preparation: the owning
+    /// `PendingStopAdmission::intervalToken()`, required by every consumer while
+    /// a receipt is live (`Cold`/`Prewarmed` are receipt-free and
+    /// owner-agnostic). A successor interval can therefore neither rebind nor
+    /// consume a predecessor's preparation, while a copy of the owning
+    /// admission (credit probing, retargeting) still identifies the same one.
+    /// Zero means the live session path.
+    uint64_t owner = 0;
     Phase phase = Phase::Cold;
   } preparedCompanionHistory_;
   bool preparedCompanionHistorySourceCurrent() const;
+  bool preparedCompanionHistoryOwnedBy(uint64_t owner) const;
 
   VisualCache visualCache;
   bool deferredVisualCacheWrapAppendPending_ = false;
@@ -395,7 +404,8 @@ struct Loop {
   /// Adds the final capture ID (unless already last) and the current prepared
   /// companion receipt. Output remains private; does not consume/recycle receipt.
   bool beginCollectOverdubStopUndoPasses(SessionUndoCollection& work, PassIdList& passIds,
-      EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass);
+      EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass,
+      uint64_t owner = 0);
   static uint64_t requiredSessionStopUndoCollectionGrains(size_t rows, size_t companions,
       size_t finalCompanions, size_t quantum);
   /// Last sealed session layer still on the cursor. False when the cursor is empty.
@@ -582,37 +592,45 @@ struct Loop {
   /// Optional captureInputs enables bounded verification of the staged sealed
   /// capture against its raw frozen order. Required for Track's joint handoff;
   /// the input owner must also remain alive and immutable until discard.
+  /// `owner` is the admitted stop job that will consume this preparation (the
+  /// live session path passes nullptr); it is the identity every accessor below
+  /// requires while the receipt is live.
   bool beginPreparedCompanionHistory(const RuntimeCaptureCompanions& rows,
                                      const CaptureAdmissionStaging& capture,
-                                     const RuntimeCanonicalPassInputs* captureInputs = nullptr);
+                                     const RuntimeCanonicalPassInputs* captureInputs = nullptr,
+                                     uint64_t owner = 0);
   /// One unit is row metadata, a payload/snapshot item, an unused tail row,
   /// or one staged-capture event/chunk-boundary comparison.
-  bool stepPreparedCompanionHistory(size_t quantum);
-  bool preparedCompanionHistoryReady() const;
-  bool preparedCompanionCaptureVerified(const RuntimeCanonicalPassInputs& inputs) const;
+  bool stepPreparedCompanionHistory(size_t quantum, uint64_t owner = 0);
+  bool preparedCompanionHistoryReady(uint64_t owner = 0) const;
+  bool preparedCompanionCaptureVerified(const RuntimeCanonicalPassInputs& inputs,
+                                        uint64_t owner = 0) const;
   bool preparedCompanionHistoryCanStep(const RuntimeCaptureCompanions& rows,
-      const CaptureAdmissionStaging& capture, const RuntimeCanonicalPassInputs& inputs) const;
+      const CaptureAdmissionStaging& capture, const RuntimeCanonicalPassInputs& inputs,
+      uint64_t owner = 0) const;
   bool preparedCompanionHistoryMatches(const RuntimeCaptureCompanions& rows,
-                                       const CaptureAdmissionStaging& capture) const;
-  const EditPassVec* preparedCompanionHistory() const;
+                                       const CaptureAdmissionStaging& capture,
+                                       uint64_t owner = 0) const;
+  const EditPassVec* preparedCompanionHistory(uint64_t owner = 0) const;
   /// Canonical history half only: caller must preflight capture/audible handoff too.
   /// Retains retired history and the undo receipt until acknowledged recycling
   /// or STOPPED prewarm/discard. Reuse consumes the initially reserved row horizon.
-  bool commitPreparedCompanionHistoryAtomic();
+  bool commitPreparedCompanionHistoryAtomic(uint64_t owner = 0);
   /// Joint canonical preflight. Audible source/epoch/ledger checks belong to Track.
-  bool canCommitPreparedCaptureAndCompanions() const;
-  bool commitPreparedCaptureAndCompanionsAtomic(PreparedCapturePassTransfer& transferred);
-  const EditPassIdList* preparedCompanionHistoryIds() const;
+  bool canCommitPreparedCaptureAndCompanions(uint64_t owner = 0) const;
+  bool commitPreparedCaptureAndCompanionsAtomic(PreparedCapturePassTransfer& transferred,
+                                               uint64_t owner = 0);
+  const EditPassIdList* preparedCompanionHistoryIds(uint64_t owner = 0) const;
   /// Caller has consumed the ID receipt. Recycling ends that receipt's lifetime.
   /// No active allocation/free; returns to Prewarmed within the remaining horizon.
-  bool beginRecyclePreparedCompanionHistory();
-  bool stepRecyclePreparedCompanionHistory(size_t quantum);
-  bool preparedCompanionHistoryRecycleComplete() const;
+  bool beginRecyclePreparedCompanionHistory(uint64_t owner = 0);
+  bool stepRecyclePreparedCompanionHistory(size_t quantum, uint64_t owner = 0);
+  bool preparedCompanionHistoryRecycleComplete(uint64_t owner = 0) const;
   uint64_t preparedCompanionHistoryGeneration() const { return preparedCompanionHistory_.preparationGeneration; }
   bool preparedCompanionHistoryPrewarmed(size_t requiredCompanions = 0) const;
   static uint64_t requiredPreparedCompanionRecycleGrains(size_t rowCapacity,
       size_t retiredPayloadEvents, size_t companionIds, size_t snapshotIds, size_t quantum);
-  void discardPreparedCompanionHistory(); // Logical discard only; retains storage.
+  void discardPreparedCompanionHistory(uint64_t owner = 0); // Logical discard only; retains storage.
   EditPassIdList sealPendingNoteChangesToEditPasses(
       bool updateOverdubSourceView = true);
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit

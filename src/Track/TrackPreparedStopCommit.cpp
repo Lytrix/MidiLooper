@@ -30,13 +30,13 @@ TRACK_COLD_MEM bool commitPreparedStop(
   uint16_t denied = !stop.canonicalPreparationQuantum ? 2 : 0;
   denied |= !stop.historyRecycleQuantum ? 4 : 0;
   denied |= !stop.remainingHistoryRecycleGrains ? 8 : 0;
-  denied |= !loop.canCommitPreparedCaptureAndCompanions() ? 16 : 0;
-  denied |= !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ? 32 : 0;
-  denied |= !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging()) ? 64 : 0;
+  denied |= !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken()) ? 16 : 0;
+  denied |= !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()) ? 32 : 0;
+  denied |= !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(), stop.intervalToken()) ? 64 : 0;
   denied |= !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
       {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ? 128 : 0;
   if (denied) return denyAtomicTransfer(denied);
-  const uint32_t revisionDelta = loop.preparedCompanionHistoryIds()->empty() ? 1 : 2;
+  const uint32_t revisionDelta = loop.preparedCompanionHistoryIds(stop.intervalToken())->empty() ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta) return false;
   const PlaybackViewSourceIdentity base{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()};
   // A successful capture makes the published snapshot stale until session-exit
@@ -58,7 +58,7 @@ TRACK_COLD_MEM bool commitPreparedStop(
   // This turn cannot interleave MIDI emission or owner mutation. Canonical
   // transfer's fallible checks precede mutation; bridge publication below uses
   // only prepared storage and the lifecycle/source/ledger proof above.
-  if (!loop.commitPreparedCaptureAndCompanionsAtomic(transferred)) return false;
+  if (!loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken())) return false;
   if (undo) undo->publishAtCommit();
   runtime.publishPreflightedFullLoopBridge(cursor);
   stop.historyRecycleOwner = &loop;
@@ -88,7 +88,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransfer(
   if (loop.hasPendingCapturePass()) {
     if (stop.destination == PendingStopDestination::Playing)
       return commit(loop, runtime, stop, generation, cursor, transferred);
-    if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs))
+    if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
       return commitStopped(loop, runtime, stop, generation, transferred);
     // Transport Stop can recover the frozen canonical pass before companion
     // preparation. This route never authorizes an audible PLAYING successor.
@@ -108,7 +108,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
   if (loop.hasPendingCapturePass()) {
     if (stop.destination == PendingStopDestination::Playing)
       return commitWithUndo(loop, runtime, stop, generation, cursor, transferred, stack, undo);
-    if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs))
+    if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
       return commitStoppedWithUndo(loop, runtime, stop, generation, transferred, stack, undo);
     // Transport Stop can recover the frozen canonical pass before companion
     // preparation. This route never authorizes an audible PLAYING successor, and
@@ -167,13 +167,13 @@ static TRACK_COLD_MEM bool commitPreparedStopped(
       !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
       !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
           {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ||
-      !loop.canCommitPreparedCaptureAndCompanions() ||
-      !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs) ||
-      !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging()) ||
+      !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken()) ||
+      !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()) ||
+      !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(), stop.intervalToken()) ||
       (undo && (!stack || !undo->canPublish(*stack, loop.loopId, loop.pendingCapturePass().id)))) return false;
-  const uint32_t revisionDelta = loop.preparedCompanionHistoryIds()->empty() ? 1 : 2;
+  const uint32_t revisionDelta = loop.preparedCompanionHistoryIds(stop.intervalToken())->empty() ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta ||
-      !loop.commitPreparedCaptureAndCompanionsAtomic(transferred)) return false;
+      !loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken())) return false;
   if (undo) undo->publishAtCommit();
   // STOPPED has no audible successor selection. The old PLAYING command and
   // bridge epoch stay invalid; transport silence is owned by Track's stop action.
@@ -217,7 +217,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::beginHistoryRecycle(
   if (stop.historyRecycleOwner != &loop || stop.historyRecycleStarted || !stop.historyRecycleQuantum ||
       stop.historyRecycleGeneration != loop.preparedCompanionHistoryGeneration() ||
       !stop.consumeHistoryRecycleGrain()) return false;
-  if (!loop.beginRecyclePreparedCompanionHistory()) return false;
+  if (!loop.beginRecyclePreparedCompanionHistory(stop.intervalToken())) return false;
   stop.historyRecycleStarted = true;
   return true;
 }
@@ -228,10 +228,10 @@ TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepHist
       stop.historyRecycleGeneration != loop.preparedCompanionHistoryGeneration() ||
       quantum != stop.historyRecycleQuantum || stop.phase != PendingStopPhase::DeferredCleanup ||
       !stop.finalizationComplete()) return RuntimePlaybackOrderBuildResult::Denied;
-  if (loop.preparedCompanionHistoryRecycleComplete()) return RuntimePlaybackOrderBuildResult::Complete;
-  if (!stop.consumeHistoryRecycleGrain() || !loop.stepRecyclePreparedCompanionHistory(quantum))
+  if (loop.preparedCompanionHistoryRecycleComplete(stop.intervalToken())) return RuntimePlaybackOrderBuildResult::Complete;
+  if (!stop.consumeHistoryRecycleGrain() || !loop.stepRecyclePreparedCompanionHistory(quantum, stop.intervalToken()))
     return RuntimePlaybackOrderBuildResult::Denied;
-  return loop.preparedCompanionHistoryRecycleComplete()
+  return loop.preparedCompanionHistoryRecycleComplete(stop.intervalToken())
       ? RuntimePlaybackOrderBuildResult::Complete : RuntimePlaybackOrderBuildResult::Pending;
 }
 
@@ -242,12 +242,12 @@ TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepPrep
       stop.remainingClosureGrains || views->frozenCaptureStaging().frozenGeneration != stop.frozenGeneration ||
       !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
       !loop.preparedCompanionHistoryCanStep(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(),
-                                            runtime.canonicalPassInputs))
+                                            runtime.canonicalPassInputs, stop.intervalToken()))
     return RuntimePlaybackOrderBuildResult::Denied;
-  if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs))
+  if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
     return RuntimePlaybackOrderBuildResult::Complete;
   if (!stop.consumeCanonicalPreparationGrain()) return RuntimePlaybackOrderBuildResult::Denied;
-  if (!loop.stepPreparedCompanionHistory(quantum)) return RuntimePlaybackOrderBuildResult::Denied;
-  return loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs)
+  if (!loop.stepPreparedCompanionHistory(quantum, stop.intervalToken())) return RuntimePlaybackOrderBuildResult::Denied;
+  return loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken())
       ? RuntimePlaybackOrderBuildResult::Complete : RuntimePlaybackOrderBuildResult::Pending;
 }

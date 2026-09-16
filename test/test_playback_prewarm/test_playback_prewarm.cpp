@@ -2317,6 +2317,62 @@ void test_companion_history_binds_wrap_publication_before_begin() {
   }
 }
 
+/// The prepared companion history is interval-qualified: while an admitted stop
+/// job owns an in-flight preparation, no other interval may observe, advance,
+/// commit, recycle or discard it. "Other interval" is the successor job (a
+/// different token) and the live session (no token at all). The horizon is
+/// receipt-free and owner-agnostic again once recycling ends, so the successor
+/// can begin its own preparation.
+void test_prepared_companion_history_is_job_qualified() {
+  Loop loop; loop.nextPassId_ = 100;
+  TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(4));
+  CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
+  auto& rows = f.runtime.frozenCaptureCompanions;
+  PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 2, 1, 62, 80, 20, 60}};
+  TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
+  while (rows.step(1) == RuntimePlaybackOrderBuildResult::Pending) {}
+  constexpr uint64_t kJobA = 1;
+  constexpr uint64_t kJobB = 2;
+  TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture, nullptr, kJobA));
+  // A successor interval and the live session cannot drive the preparation.
+  TEST_ASSERT_FALSE(loop.stepPreparedCompanionHistory(1, kJobB));
+  TEST_ASSERT_FALSE(loop.stepPreparedCompanionHistory(1));
+  // A stale discard must not clear the owner's in-flight work.
+  loop.discardPreparedCompanionHistory(kJobB);
+  loop.discardPreparedCompanionHistory();
+  size_t turns = 0;
+  while (!loop.preparedCompanionHistoryReady(kJobA) && turns < 32) {
+    TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1, kJobA)); ++turns;
+  }
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistoryReady(kJobA));
+  TEST_ASSERT_FALSE(loop.preparedCompanionHistoryReady(kJobB));
+  TEST_ASSERT_FALSE(loop.preparedCompanionHistoryReady());
+  TEST_ASSERT_NULL(loop.preparedCompanionHistory(kJobB));
+  TEST_ASSERT_NOT_NULL(loop.preparedCompanionHistory(kJobA));
+  TEST_ASSERT_NULL(loop.preparedCompanionHistoryIds(kJobB));
+  TEST_ASSERT_NOT_NULL(loop.preparedCompanionHistoryIds(kJobA));
+  // The receipt can only be consumed by the interval that produced it.
+  TEST_ASSERT_FALSE(loop.commitPreparedCompanionHistoryAtomic(kJobB));
+  TEST_ASSERT_TRUE(loop.commitPreparedCompanionHistoryAtomic(kJobA));
+  TEST_ASSERT_FALSE(loop.beginRecyclePreparedCompanionHistory(kJobB));
+  TEST_ASSERT_FALSE(loop.beginRecyclePreparedCompanionHistory());
+  TEST_ASSERT_TRUE(loop.beginRecyclePreparedCompanionHistory(kJobA));
+  for (unsigned turn = 0; turn < 32 && !loop.preparedCompanionHistoryPrewarmed(1); ++turn) {
+    TEST_ASSERT_FALSE(loop.stepRecyclePreparedCompanionHistory(1, kJobB));
+    TEST_ASSERT_TRUE(loop.stepRecyclePreparedCompanionHistory(1, kJobA));
+  }
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistoryRecycleComplete(kJobA));
+  // Receipt ended: the successor's own preparation is admitted again.
+  TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture, nullptr, kJobB));
+  for (unsigned turn = 0; turn < 32 && !loop.preparedCompanionHistoryReady(kJobB); ++turn)
+    TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1, kJobB));
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistoryReady(kJobB));
+  // ...and the previous owner no longer reaches it.
+  TEST_ASSERT_FALSE(loop.stepPreparedCompanionHistory(1, kJobA));
+  TEST_ASSERT_NULL(loop.preparedCompanionHistory(kJobA));
+}
+
 void test_companion_history_stages_metadata_payloads_and_ids_without_publication() {
   Loop loop; loop.nextPassId_ = 100;
   EditPass create; create.id = 7; create.actionType = EditActionType::Create;
@@ -2583,7 +2639,8 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     // Verify the sealed bytes/order rather than trusting capture event count.
     TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.stagePreparedCapturePassFromActiveAdmission(100, CommitReason::OverdubStop));
     TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(runtime.frozenCaptureCompanions, capture,
-                                                        variant == 6 ? nullptr : &runtime.canonicalPassInputs));
+                                                        variant == 6 ? nullptr : &runtime.canonicalPassInputs,
+                                                        stop.intervalToken()));
     const auto proofBound = Loop::requiredPreparedCompanionHistoryGrains(0, 0, 1, 1, 0, capture.storage.eventCount,
         loop.pendingCapturePass_.committedChunkIds.size());
     bool valid = true;
@@ -2597,26 +2654,29 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
           TrackPreparedStopCommit::stepPreparation(loop, runtime, exhausted, 32));
       TEST_ASSERT_EQUAL_UINT16(credits, stop.remainingCanonicalPreparationGrains);
     }
-    for (uint64_t grain = 0; grain < proofBound && !loop.preparedCompanionHistoryReady() && valid; ++grain) {
-      TEST_ASSERT_FALSE(loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs));
+    for (uint64_t grain = 0; grain < proofBound && !loop.preparedCompanionHistoryReady(stop.intervalToken()) && valid; ++grain) {
+      TEST_ASSERT_FALSE(loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs,
+                                                              stop.intervalToken()));
       if (variant < 2) {
         const auto credits = stop.remainingCanonicalPreparationGrains;
         const auto ranked = stop.remainingRankedPreparationGrains;
         valid = TrackPreparedStopCommit::stepPreparation(loop, runtime, stop, 32) != RuntimePlaybackOrderBuildResult::Denied;
         TEST_ASSERT_EQUAL_UINT16(credits ? credits - 1 : 0, stop.remainingCanonicalPreparationGrains);
         TEST_ASSERT_EQUAL_UINT16(ranked, stop.remainingRankedPreparationGrains);
-      } else valid = loop.stepPreparedCompanionHistory(1);
+      } else valid = loop.stepPreparedCompanionHistory(1, stop.intervalToken());
       TEST_ASSERT_TRUE(loop.passes.overdubPasses.empty());
       TEST_ASSERT_TRUE(loop.passes.editPasses.empty());
     }
     if (variant >= 2 && variant <= 5) {
       TEST_ASSERT_FALSE(valid);
-      TEST_ASSERT_FALSE(loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs));
+      TEST_ASSERT_FALSE(loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs,
+                                                              stop.intervalToken()));
       TEST_ASSERT_TRUE(loop.hasPendingCapturePass());
       TEST_ASSERT_EQUAL_UINT32(base.playbackRevision, loop.playbackRevision);
       continue;
     }
-    TEST_ASSERT_EQUAL(variant != 6, loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs));
+    TEST_ASSERT_EQUAL(variant != 6, loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs,
+                                                                        stop.intervalToken()));
     if (variant == 7) {
       TEST_ASSERT_TRUE(loop.pendingCapturePass_.committedChunkIds.size() > 1);
       TEST_ASSERT_EQUAL_UINT32(2046, loop.preparedCompanionHistory_.comparedEvents);
@@ -2698,7 +2758,7 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
       EditPassIdList companionIds; companionIds.reserve(1);
       Loop::SessionUndoCollection collection;
       TEST_ASSERT_TRUE(loop.beginCollectOverdubStopUndoPasses(collection, ids, companionIds,
-          loop.pendingCapturePass().id, true));
+          loop.pendingCapturePass().id, true, stop.intervalToken()));
       while (!loop.collectedOverdubSessionUndoPassesCurrent(collection))
         TEST_ASSERT_NOT_EQUAL(Loop::SessionUndoCollection::Phase::Denied,
             loop.stepCollectOverdubSessionUndoPasses(collection, 1));
@@ -2729,7 +2789,8 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
         --loop.canonicalStorageGeneration;
         TEST_ASSERT_TRUE(TrackPreparedStopCommit::retargetStoppedRecovery(runtime, stop));
         TEST_ASSERT_EQUAL(payloadGeneration, runtime.canonicalPassInputs.generation());
-        TEST_ASSERT_TRUE(loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs));
+        TEST_ASSERT_TRUE(loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs,
+                                                             stop.intervalToken()));
         TEST_ASSERT_FALSE(runtime.canSelectFrozenCaptureBridge(4, 0, 768, cursor));
         TEST_ASSERT_FALSE(TrackPreparedStopCommit::commitWithUndo(loop, runtime, stop,
             generation, cursor, transferred, undoStack, undoPublication));
@@ -2768,7 +2829,8 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     TEST_ASSERT_FALSE(TrackPreparedStopCommit::advanceAtomicTransfer(loop, runtime, stop, generation, cursor, transferred));
     TEST_ASSERT_TRUE(runtime.canonicalPassInputs.captureAttached());
     TEST_ASSERT_EQUAL_UINT16(recycleCredits, stop.remainingHistoryRecycleGrains);
-    TEST_ASSERT_EQUAL_UINT32(companions ? 1 : 0, loop.preparedCompanionHistoryIds()->size());
+    TEST_ASSERT_EQUAL_UINT32(companions ? 1 : 0,
+        loop.preparedCompanionHistoryIds(stop.intervalToken())->size());
     TEST_ASSERT_EQUAL_PTR(&loop, stop.historyRecycleOwner);
     TEST_ASSERT_FALSE(stop.historyRecycleStarted);
     Loop foreignLoop;
@@ -2778,9 +2840,9 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied,
         TrackPreparedStopCommit::stepHistoryRecycle(loop, stop, 32)); // Receipt still in use.
     TEST_ASSERT_EQUAL_UINT16(recycleCredits, stop.remainingHistoryRecycleGrains);
-    TEST_ASSERT_NOT_NULL(loop.preparedCompanionHistoryIds());
+    TEST_ASSERT_NOT_NULL(loop.preparedCompanionHistoryIds(stop.intervalToken()));
     TEST_ASSERT_TRUE(TrackPreparedStopCommit::beginHistoryRecycle(loop, stop));
-    TEST_ASSERT_NULL(loop.preparedCompanionHistoryIds());
+    TEST_ASSERT_NULL(loop.preparedCompanionHistoryIds(stop.intervalToken()));
     TEST_ASSERT_FALSE(TrackPreparedStopCommit::beginHistoryRecycle(loop, stop));
     const auto recycleRemaining = stop.remainingHistoryRecycleGrains;
     for (size_t wrongQ : {size_t(0), size_t(1), size_t(33)})
@@ -3168,12 +3230,13 @@ void test_companion_history_recycle_denies_source_changes_without_touching_canon
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
     TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
     while (rows.step(1) == RuntimePlaybackOrderBuildResult::Pending) {}
-    TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture));
-    while (!loop.preparedCompanionHistoryReady()) TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1));
-    TEST_ASSERT_TRUE(loop.commitPreparedCompanionHistoryAtomic());
-    auto* canonical = loop.passes.editPasses.data();
     PendingStopAdmission stop;
     TEST_ASSERT_TRUE(stop.begin(4, 100, 0, 0, 0, {1,3072,1,1}, 0, 0, 16));
+    TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture, nullptr, stop.intervalToken()));
+    while (!loop.preparedCompanionHistoryReady(stop.intervalToken()))
+      TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1, stop.intervalToken()));
+    TEST_ASSERT_TRUE(loop.commitPreparedCompanionHistoryAtomic(stop.intervalToken()));
+    auto* canonical = loop.passes.editPasses.data();
     while (stop.remainingOrderGrains) TEST_ASSERT_TRUE(stop.consumeOrderGrain());
     // Isolate the post-commit state; the joint fixture verifies this binding's publication.
     stop.historyRecycleOwner = &loop;
@@ -6170,5 +6233,6 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_continuous_prefix_preserves_completed_work_when_append_interrupts_read);
   RUN_TEST(test_maximum_frozen_capture_has_a_declared_stop_budget);
   RUN_TEST(test_session_exit_receipt_ring_is_fifo_and_not_serialized);
+  RUN_TEST(test_prepared_companion_history_is_job_qualified);
   return UNITY_END();
 }

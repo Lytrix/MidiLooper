@@ -60,13 +60,14 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacit
   work.historyCount = passes.editPasses.size(); work.companionCapacity = companionCapacity;
   work.storageGeneration = canonicalStorageGeneration;
   work.source = nullptr; work.capture = nullptr; work.captureInputs = nullptr;
+  work.owner = 0;
   work.phase = PreparedCompanionHistory::Phase::Prewarmed;
   return true;
 }
 
 LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
     const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
-    const RuntimeCanonicalPassInputs* captureInputs) {
+    const RuntimeCanonicalPassInputs* captureInputs, uint64_t owner) {
   auto& work = preparedCompanionHistory_;
   const size_t historyCount = passes.editPasses.size();
   // Prewarm reserves storage, not a borrowed canonical-history version. Wrap
@@ -75,6 +76,7 @@ LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
   // Once begun, preparedCompanionHistorySourceCurrent keeps the strict version
   // checks; never restart an in-flight worker by rebinding its inputs.
   if (work.phase != PreparedCompanionHistory::Phase::Prewarmed ||
+      !preparedCompanionHistoryOwnedBy(owner) ||
       historyCount > work.rows.size() || rows.size() > work.rows.size() - historyCount ||
       historyCount > work.rowLimit || rows.size() > work.rowLimit - historyCount ||
       rows.size() > work.companionCapacity || rows.size() > work.companionIds.capacity() ||
@@ -100,12 +102,22 @@ LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
   work.snapshotCount = snapshotCount; work.snapshotIndex = 0;
   work.snapshotGeneration = pendingSnapshotCompanionGeneration_;
   work.source = &rows; work.capture = &capture; work.rowGeneration = rows.preparationGeneration();
+  work.owner = owner;
   work.revision = playbackRevision; work.firstId = nextPassId_;
   work.capturePassId = hasPendingCapturePass_ ? pendingCapturePass_.id : kInvalidPassId;
   work.targetCount = work.historyCount + rows.size(); work.row = work.event = 0;
   work.phase = snapshotCount ? PreparedCompanionHistory::Phase::CopySnapshot :
       (work.historyCount ? PreparedCompanionHistory::Phase::CopyRow : PreparedCompanionHistory::Phase::Append);
   return true;
+}
+
+LOOP_COLD_MEM bool Loop::preparedCompanionHistoryOwnedBy(uint64_t owner) const {
+  const auto& work = preparedCompanionHistory_;
+  using Phase = PreparedCompanionHistory::Phase;
+  // Cold/Prewarmed hold no receipt, so no interval owns the horizon and any
+  // caller may begin (subject to the phase machine) or observe it.
+  if (work.phase == Phase::Cold || work.phase == Phase::Prewarmed) return true;
+  return work.owner == owner;
 }
 
 LOOP_COLD_MEM bool Loop::preparedCompanionHistorySourceCurrent() const {
@@ -122,12 +134,13 @@ LOOP_COLD_MEM bool Loop::preparedCompanionHistorySourceCurrent() const {
        work.captureInputs->includesFrozenOverdub() && work.captureInputs->frozenCapture() == work.capture));
 }
 
-LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum) {
+LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t owner) {
   auto& work = preparedCompanionHistory_;
   using Phase = PreparedCompanionHistory::Phase;
   if (!quantum || work.phase == Phase::Cold || work.phase == Phase::Prewarmed ||
       work.phase >= Phase::Committed)
     return false;
+  if (!preparedCompanionHistoryOwnedBy(owner)) return false;
   if (!preparedCompanionHistorySourceCurrent()) { work.phase = Phase::Denied; return false; }
   while (quantum-- && work.phase != Phase::Ready) {
     if (work.phase == Phase::CopySnapshot) {
@@ -194,27 +207,30 @@ LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum) {
   return true; // Valid pending or complete progress; readiness is queried separately.
 }
 
-LOOP_COLD_MEM bool Loop::preparedCompanionHistoryReady() const {
+LOOP_COLD_MEM bool Loop::preparedCompanionHistoryReady(uint64_t owner) const {
   return preparedCompanionHistory_.phase == PreparedCompanionHistory::Phase::Ready &&
-      preparedCompanionHistorySourceCurrent();
+      preparedCompanionHistoryOwnedBy(owner) && preparedCompanionHistorySourceCurrent();
 }
-LOOP_COLD_MEM const EditPassVec* Loop::preparedCompanionHistory() const {
-  return preparedCompanionHistoryReady() ? &preparedCompanionHistory_.rows : nullptr;
+LOOP_COLD_MEM const EditPassVec* Loop::preparedCompanionHistory(uint64_t owner) const {
+  return preparedCompanionHistoryReady(owner) ? &preparedCompanionHistory_.rows : nullptr;
 }
-LOOP_COLD_MEM void Loop::discardPreparedCompanionHistory() {
+LOOP_COLD_MEM void Loop::discardPreparedCompanionHistory(uint64_t owner) {
   auto& work = preparedCompanionHistory_;
+  if (!preparedCompanionHistoryOwnedBy(owner)) return;
   ++work.preparationGeneration;
   work.source = nullptr; work.capture = nullptr; work.captureInputs = nullptr;
+  work.owner = 0;
   work.phase = PreparedCompanionHistory::Phase::Cold;
 }
 
-LOOP_COLD_MEM const EditPassIdList* Loop::preparedCompanionHistoryIds() const {
-  return preparedCompanionHistory_.phase == PreparedCompanionHistory::Phase::Committed ||
-      preparedCompanionHistoryReady() ? &preparedCompanionHistory_.companionIds : nullptr;
+LOOP_COLD_MEM const EditPassIdList* Loop::preparedCompanionHistoryIds(uint64_t owner) const {
+  return preparedCompanionHistoryOwnedBy(owner) &&
+      (preparedCompanionHistory_.phase == PreparedCompanionHistory::Phase::Committed ||
+       preparedCompanionHistoryReady(owner)) ? &preparedCompanionHistory_.companionIds : nullptr;
 }
 
-LOOP_COLD_MEM bool Loop::commitPreparedCompanionHistoryAtomic() {
-  if (!preparedCompanionHistoryReady()) return false;
+LOOP_COLD_MEM bool Loop::commitPreparedCompanionHistoryAtomic(uint64_t owner) {
+  if (!preparedCompanionHistoryReady(owner)) return false;
   publishPreparedCompanionHistory();
   return true;
 }
@@ -244,8 +260,8 @@ LOOP_COLD_MEM void Loop::publishPreparedCompanionHistory() {
   work.phase = PreparedCompanionHistory::Phase::Committed;
 }
 
-LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanions() const {
-  return preparedCompanionHistoryReady() && canTransferPendingCapturePassWithoutAllocation() &&
+LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanions(uint64_t owner) const {
+  return preparedCompanionHistoryReady(owner) && canTransferPendingCapturePassWithoutAllocation() &&
       preparedCompanionHistory_.capturePassId != kInvalidPassId &&
       preparedCompanionHistory_.capturePassId == pendingCapturePass_.id &&
       pendingCapturePass_.phase == CapturePassPhase::Overdub &&
@@ -255,8 +271,8 @@ LOOP_COLD_MEM bool Loop::canCommitPreparedCaptureAndCompanions() const {
 }
 
 LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
-    PreparedCapturePassTransfer& transferred) {
-  if (!canCommitPreparedCaptureAndCompanions()) return false;
+    PreparedCapturePassTransfer& transferred, uint64_t owner) {
+  if (!canCommitPreparedCaptureAndCompanions(owner)) return false;
   // The transfer's only failure is its capacity preflight, before any mutation.
   // It advances revision, so history must publish using the proof above rather
   // than rechecking the now-obsolete source identity midway through the commit.
@@ -277,29 +293,34 @@ LOOP_COLD_MEM bool Loop::commitPreparedCaptureAndCompanionsAtomic(
 }
 
 LOOP_COLD_MEM bool Loop::preparedCompanionHistoryMatches(
-    const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture) const {
-  return preparedCompanionHistoryReady() && preparedCompanionHistory_.source == &rows &&
+    const RuntimeCaptureCompanions& rows, const CaptureAdmissionStaging& capture,
+    uint64_t owner) const {
+  return preparedCompanionHistoryReady(owner) && preparedCompanionHistory_.source == &rows &&
       preparedCompanionHistory_.capture == &capture;
 }
 
-LOOP_COLD_MEM bool Loop::preparedCompanionCaptureVerified(const RuntimeCanonicalPassInputs& inputs) const {
-  return preparedCompanionHistoryReady() && preparedCompanionHistory_.captureInputs == &inputs &&
+LOOP_COLD_MEM bool Loop::preparedCompanionCaptureVerified(
+    const RuntimeCanonicalPassInputs& inputs, uint64_t owner) const {
+  return preparedCompanionHistoryReady(owner) && preparedCompanionHistory_.captureInputs == &inputs &&
       preparedCompanionHistory_.captureChunk == preparedCompanionHistory_.captureChunkCount;
 }
 
 LOOP_COLD_MEM bool Loop::preparedCompanionHistoryCanStep(const RuntimeCaptureCompanions& rows,
-    const CaptureAdmissionStaging& capture, const RuntimeCanonicalPassInputs& inputs) const {
+    const CaptureAdmissionStaging& capture, const RuntimeCanonicalPassInputs& inputs,
+    uint64_t owner) const {
   const auto& work = preparedCompanionHistory_;
   using Phase = PreparedCompanionHistory::Phase;
   return work.phase != Phase::Cold && work.phase != Phase::Prewarmed &&
       work.phase < Phase::Committed &&
+      preparedCompanionHistoryOwnedBy(owner) &&
       work.source == &rows && work.capture == &capture && work.captureInputs == &inputs &&
       preparedCompanionHistorySourceCurrent();
 }
 
 LOOP_COLD_MEM bool Loop::beginCollectOverdubStopUndoPasses(SessionUndoCollection& work,
-    PassIdList& passIds, EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass) {
-  const auto* receipt = preparedCompanionHistoryIds();
+    PassIdList& passIds, EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass,
+    uint64_t owner) {
+  const auto* receipt = preparedCompanionHistoryIds(owner);
   if (!receipt || receipt->size() > 2048 || preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
       preparedCompanionHistory_.revision != playbackRevision || preparedCompanionHistory_.firstId != nextPassId_ ||
       !beginCollectOverdubSessionUndoPasses(work, passIds, companionIds)) return false;
@@ -333,9 +354,10 @@ LOOP_COLD_MEM bool Loop::preparedCompanionRecycleSourceCurrent() const {
       work.snapshotCount == pendingSnapshotPublishBox_->companionIds.size();
 }
 
-LOOP_COLD_MEM bool Loop::beginRecyclePreparedCompanionHistory() {
+LOOP_COLD_MEM bool Loop::beginRecyclePreparedCompanionHistory(uint64_t owner) {
   auto& work = preparedCompanionHistory_;
   if (work.phase != PreparedCompanionHistory::Phase::Committed ||
+      !preparedCompanionHistoryOwnedBy(owner) ||
       !preparedCompanionRecycleSourceCurrent() || work.historyCount > work.rowLimit ||
       work.snapshotCount > work.snapshotLimit || work.rows.capacity() < work.rowLimit ||
       work.snapshotIds.capacity() < work.snapshotLimit) return false;
@@ -347,10 +369,11 @@ LOOP_COLD_MEM bool Loop::beginRecyclePreparedCompanionHistory() {
   return true;
 }
 
-LOOP_COLD_MEM bool Loop::stepRecyclePreparedCompanionHistory(size_t quantum) {
+LOOP_COLD_MEM bool Loop::stepRecyclePreparedCompanionHistory(size_t quantum, uint64_t owner) {
   auto& work = preparedCompanionHistory_;
   using Phase = PreparedCompanionHistory::Phase;
   if (!quantum || work.phase < Phase::RecycleIds || work.phase > Phase::RecycleGrow) return false;
+  if (!preparedCompanionHistoryOwnedBy(owner)) return false;
   if (!preparedCompanionRecycleSourceCurrent()) { work.phase = Phase::Denied; return false; }
   while (quantum-- && work.phase != Phase::Prewarmed) {
     if (work.phase == Phase::RecycleIds) {
@@ -370,13 +393,20 @@ LOOP_COLD_MEM bool Loop::stepRecyclePreparedCompanionHistory(size_t quantum) {
       // add unreserved Trim units when snapshot slack is smaller than row slack.
       const auto targetRows = work.historyCount + work.companionCapacity;
       if (work.rows.size() < targetRows) work.rows.resize(work.rows.size() + 1);
-      if (work.rows.size() == targetRows) work.phase = Phase::Prewarmed;
+      if (work.rows.size() == targetRows) {
+        // Receipt lifetime ends here; the horizon is owner-agnostic again.
+        work.owner = 0;
+        work.phase = Phase::Prewarmed;
+      }
     }
   }
   return true;
 }
 
-LOOP_COLD_MEM bool Loop::preparedCompanionHistoryRecycleComplete() const {
+LOOP_COLD_MEM bool Loop::preparedCompanionHistoryRecycleComplete(uint64_t owner) const {
+  // Prewarmed holds no receipt, so completion is owner-agnostic by construction;
+  // `owner` is accepted for call-site symmetry with the qualified accessors.
+  (void)owner;
   return preparedCompanionHistory_.phase == PreparedCompanionHistory::Phase::Prewarmed &&
       preparedCompanionRecycleSourceCurrent();
 }
