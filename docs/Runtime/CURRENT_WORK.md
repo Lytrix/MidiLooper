@@ -32,6 +32,16 @@ row is the pre-existing terminal loop-boundary Off (`NoteId=0`, tick 3839), whic
 is ledger/pairing semantics rather than the capacity defect. Exact ordering still
 differs (pre-existing). So the 24-row omission class is fixed on hardware.
 
+**2026-09-16 dense re-stress (representability re-confirmed):** after a fresh
+upload/reset, `captures/task23-dense-fix-rerun3` stored 732 effective rows with
+bar 2 at **260 refs (> 256)** and the focused interruption checkpoint **PASS**
+(stop +10.1 ms, all-notes-off 3.0 ms, 19.0 s silence). Four restart cycles played
+730 rows with **0 duplicates**; the two absent rows are ledger/pairing semantics,
+not capacity — the loop-boundary Off (`NoteId=0`, tick 3839) and one of two
+coincident same-pitch Offs (`NoteId` 26/138, tick 1669). The base preset's own
+setup verdict stayed `SETUP_UNCONFIRMED` (`overdub_unmatched_open_notes`), which
+is the dense generator leaving notes held at stop, unrelated to the snapshot fix.
+
 **2026-09-16 HITL harness exit hardening:** the managed-capture runner could leave
 a `capture_session.py` child holding the USB serial port if the scenario stalled
 or the harness was killed (observed after the dense verification run). Fix:
