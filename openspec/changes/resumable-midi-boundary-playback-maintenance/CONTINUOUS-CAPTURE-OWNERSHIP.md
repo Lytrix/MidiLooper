@@ -1050,3 +1050,41 @@ path.
 
 Neither blocker is conceptual; both are shape decisions. No code was changed on the
 stop-commit path.
+
+### Increment A landed — bounded undo collection with a job-owned prepared entry
+
+Approved shape (dedicated phase + dedicated grain class + contract estimate).
+Implemented the collection half; the publication half is increment B.
+
+- `PendingStopPhase::UndoCollection` runs on the prepared PLAYING route only,
+  between `CompanionHistory` and `CompanionBridge`, because
+  `beginCollectOverdubStopUndoPasses` requires the prepared companion receipt to be
+  current. The STOPPED/empty routes skip companion preparation entirely, so
+  `retireSkippedCompanionPreparation` now also retires the collection estimate and
+  those routes never enter the phase.
+- New `PendingStopAdmission::remainingUndoCollectionGrains` /
+  `undoCollectionQuantum` with its own `consumeUndoCollectionGrain()`, included in
+  `finalizationComplete()`, and sized from
+  `Loop::requiredSessionStopUndoCollectionGrains(...)` — so a saturated estimate
+  denies admission instead of stalling a phase (blocker 1 resolved).
+- `Track::stepDeferredUndoCollection` runs the resumable collection in bounded
+  grains, then builds the entry with `TrackUndo::prepareOverdubSessionEntry` from
+  the **job's** `slot` and `beforePublished`. The collection's private outputs
+  (`undoPassIds` / `undoCompanionIds`) are pre-reserved in
+  `prewarmCaptureStopJobs`; the API never grows them, and an unreserved output is
+  reported as a denied collection rather than silent corruption.
+- `Loop::reclaimUnreferencedDisabledEditPasses` moved to flash so the new phase does
+  not push ITCM into a 14th bank.
+
+**Verification:** new native `test_deferred_stop_prepares_job_owned_undo_entry`
+(production route: the deferred stop collects, builds an `OverdubPassAdded` entry
+with the job's slot/loop and the job's own baseline pointer). `test_continuous_capture`
+30 pass with the same three intentional public-reentry failures; full native 2,188
+cases — 2,183 passed, one skipped, the same three; `teensy41-capture-serial` builds
+with **6,752 bytes** RAM1 headroom (13 banks, code 425,592).
+
+**Increment B (next):** allocate `TrackUndoPublication` externally,
+`begin` + `stepPrepare` it from the prepared entry, flip the atomic transfer to
+`commitWithUndo` / `commitStoppedWithUndo`, and add the bounded
+`ReleaseRedo → AwaitReclaim → Trim → Complete` drain in DeferredCleanup so
+`protectedState()` cannot block the next interval's publication (blocker 2).
