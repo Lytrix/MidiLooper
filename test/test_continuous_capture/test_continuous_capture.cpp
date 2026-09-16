@@ -39,6 +39,7 @@
 #include "../../src/Track/TrackPreparedUndo.cpp"
 #include "Loop.h"
 #include "TrackPlaybackRuntime.h"
+#include "TrackUndoPublication.h"
 #include "Utils/MidiServiceDrain.h"
 
 
@@ -125,6 +126,8 @@ struct TrackCaptureStopTestAccess {
   }
   static auto& rawRange(Track& track) { return track.captureStopJob().rawRange; }
   static bool ownsRawRange(Track& track) { return track.captureStopJob().ownsRawRange; }
+  static TrackUndoPublication* undoPublication(Track& track) { return track.protectedUndo(); }
+  static GlobalUndoStack& undoStack(Track& track) { return track.getGlobalUndoStack(); }
   static bool appendNoteOffAtPhase(Track& track, uint8_t channel, uint8_t note, uint32_t phase) {
     return track.appendCaptureNoteOffAtPhase(channel, note, phase);
   }
@@ -925,6 +928,22 @@ void test_deferred_stop_prepares_job_owned_undo_entry() {
   // The entry's baseline is the job's own captured one (null is legitimate when
   // the session opened before any snapshot was published).
   TEST_ASSERT_EQUAL_PTR(job.beforePublished.get(), job.undoEntry.beforePublishedSnapshot.get());
+
+  // Run the deferred stop to completion: the prepared entry must actually be
+  // published as one OverdubPassAdded on the atomic commit, and the protected
+  // transaction must return to Idle so a later interval can publish again.
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  auto* publication = TrackCaptureStopTestAccess::undoPublication(track);
+  TEST_ASSERT_NOT_NULL(publication);
+  TEST_ASSERT_FALSE(publication->protectedState());
+  const GlobalUndoStack& stack = TrackCaptureStopTestAccess::undoStack(track);
+  size_t overdubEntries = 0;
+  for (const UndoEntry& entry : stack.entries) {
+    if (entry.kind == UndoEntryKind::OverdubPassAdded && entry.slotIndex == job.slot) ++overdubEntries;
+  }
+  TEST_ASSERT_EQUAL(1, overdubEntries);
 }
 
 /// A full ring is explicit exhaustion, not finalization latency: admission is

@@ -13,6 +13,7 @@
 #include "StorageManager.h"
 #include "TickPhase.h"
 #include "TrackUndo.h"
+#include "TrackUndoPublication.h"
 #include "TrackPreparedStopCommit.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/HotPathTelemetry.h"
@@ -56,7 +57,7 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
     if (entry.undoPassIds.capacity() < rows) entry.undoPassIds.reserve(rows);
     if (entry.undoCompanionIds.capacity() < rows) entry.undoCompanionIds.reserve(rows);
   }
-  return true;
+  return prewarmProtectedUndo();
 }
 
 TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop,
@@ -382,6 +383,78 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   return true;
 }
 
+TRACK_COLD_MEM bool Track::prewarmProtectedUndo() {
+  if (!protectedUndo_) {
+    auto* storage = ExternalMemoryFirstAllocator<TrackUndoPublication>{}.allocate(1);
+    if (!storage) return false;
+    protectedUndo_.reset(new (storage) TrackUndoPublication{});
+  }
+  if (!protectedUndo_->prewarm(Config::ABSOLUTE_MAX_UNDO_ENTRIES)) return false;
+  // DEC-063: the stack's own entry capacity is part of the same cold admission.
+  // The atomic publish must never grow it, and `begin` rejects a transaction whose
+  // cursor has reached capacity, so this is a publication precondition.
+  GlobalUndoStack& stack = getGlobalUndoStack();
+  if (stack.entries.capacity() < Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
+    stack.entries.reserve(Config::ABSOLUTE_MAX_UNDO_ENTRIES);
+  }
+  return true;
+}
+
+TRACK_COLD_MEM TrackUndoPublication* Track::protectedUndo() { return protectedUndo_.get(); }
+
+TRACK_COLD_MEM void Track::ProtectedUndoDeleter::operator()(TrackUndoPublication* undo) const {
+  if (!undo) return;
+  undo->~TrackUndoPublication();
+  ExternalMemoryFirstAllocator<TrackUndoPublication>{}.deallocate(undo, 1);
+}
+
+TRACK_COLD_MEM bool Track::stepProtectedUndoDrain() {
+  TrackUndoPublication* undo = protectedUndo();
+  if (undo == nullptr || !undo->protectedState()) return true;
+  // Bounded: one release/reclaim/trim quantum per owner turn. The disabled-pass
+  // reclaim continuation remains a separate DEC-063 item; trim pressure is
+  // therefore measured without it, which can only trim at least as much as the
+  // fully wired policy would.
+  switch (undo->phase()) {
+    case TrackUndoPublication::Phase::DetachRedo:
+    case TrackUndoPublication::Phase::Ready:
+      // Prepared but never published (publishability was not proven): restore the
+      // detached redo so the stack is whole again, then finish.
+      if (!undo->beginRestore()) return true;
+      return false;
+    case TrackUndoPublication::Phase::Restore:
+      if (!undo->stepRestore(kDeferredStopPreparationQuantum)) return false;
+      // Hand the prepared entry back before finishing: finish() refuses while a
+      // private unpublished entry with a valid pass id is still held. The
+      // recovered entry is discarded here because the stop already committed
+      // without a protected publication.
+      {
+        UndoEntry recovered;
+        (void)undo->recoverPreparedEntry(recovered);
+      }
+      (void)undo->finish();
+      return true;
+    case TrackUndoPublication::Phase::Published:
+    case TrackUndoPublication::Phase::ReleaseRedo:
+      if (undo->stepReleaseRedo(kDeferredStopPreparationQuantum)) {
+        return undo->phase() == TrackUndoPublication::Phase::Complete
+                   ? (undo->finish(), true)
+                   : false;
+      }
+      return false;
+    case TrackUndoPublication::Phase::AwaitReclaim:
+      if (!undo->beginTrimAfterReclaim()) return true;
+      return false;
+    case TrackUndoPublication::Phase::Trim:
+      if (undo->stepTrim(kDeferredStopPreparationQuantum)) return (undo->finish(), true);
+      return false;
+    case TrackUndoPublication::Phase::Complete:
+      return (undo->finish(), true);
+    default:
+      return true;
+  }
+}
+
 TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop& loop,
                                                       PendingStopAdmission& stop) {
   if (!job.undoCollectionStarted) {
@@ -412,6 +485,36 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop&
   job.undoCollected = TrackUndo::prepareOverdubSessionEntry(
       loop, job.undoCollection, job.slot, job.beforePublished, job.undoEntry);
   return job.undoCollected;
+}
+
+TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
+                                                       PendingStopAdmission& stop) {
+  TrackUndoPublication* undo = protectedUndo();
+  if (undo == nullptr) {
+    job.undoPublicationReady = false;
+    return true;
+  }
+  if (!job.undoPublicationStarted) {
+    job.undoPublicationStarted = true;
+    // The transaction is exclusive: a predecessor must have finished draining.
+    job.undoPublicationReady = undo->begin(getGlobalUndoStack(), job.undoEntry);
+    (void)stop.consumeUndoCollectionGrain();
+    // A rejected begin leaves the entry intact and means "nothing to publish".
+    // A successful begin still owes its prepare turns before it can publish.
+    if (!job.undoPublicationReady) return true;
+    return false;
+  }
+  if (!undo->protectedState()) {
+    job.undoPublicationReady = false;
+    return true;
+  }
+  if (undo->phase() == TrackUndoPublication::Phase::Ready) {
+    job.undoPublicationReady = true;
+    return true;
+  }
+  if (!undo->stepPrepare(kDeferredStopPreparationQuantum)) return false;
+  job.undoPublicationReady = undo->phase() == TrackUndoPublication::Phase::Ready;
+  return job.undoPublicationReady;
 }
 
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
@@ -625,8 +728,10 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   if (stop.phase == PendingStopPhase::UndoCollection) {
     // Bounded, resumable collection of the session's undo identities, then the
-    // prepared OverdubPassAdded entry built from this job's slot and baseline.
+    // prepared OverdubPassAdded entry built from this job's slot and baseline,
+    // then the protected transaction's prepare (begin + detach redo).
     if (!stepDeferredUndoCollection(job, loop, stop)) return false;
+    if (!stepDeferredUndoPublication(job, stop)) return false;
     stop.setPhase(PendingStopPhase::CompanionBridge);
     return false;
   }
@@ -666,10 +771,30 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       return false;
     }
     PreparedCapturePassTransfer transferred{};
-    (void)TrackPreparedStopCommit::advanceAtomicTransfer(
-        loop, *runtime, stop, playbackGeneration, anchor, transferred);
+    TrackUndoPublication* undo = protectedUndo();
+    // The caller must prove publishability before entering the undo path; a
+    // Ready-but-unpublishable transaction is restored by the drain instead.
+    const bool publishable = job.undoPublicationReady && undo != nullptr &&
+        undo->canPublish(getGlobalUndoStack(), loop.loopId, loop.pendingCapturePass().id);
+    if (publishable) {
+      (void)TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
+          loop, *runtime, stop, playbackGeneration, anchor, transferred,
+          getGlobalUndoStack(), *undo);
+    } else {
+      if (job.undoPublicationReady) {
+        SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
+                           job.undoPublicationReady, undo != nullptr, "undo_not_publishable");
+      }
+      (void)TrackPreparedStopCommit::advanceAtomicTransfer(
+          loop, *runtime, stop, playbackGeneration, anchor, transferred);
+    }
     return false;
   }
+
+  // Drain the protected undo transaction before final cleanup retires the job.
+  // Bounded: one release/reclaim/trim quantum per owner turn, so protectedState()
+  // is Idle again before the next interval can admit.
+  if (!stepProtectedUndoDrain()) return false;
 
   if (stop.historyRecycleOwner == &loop) {
     if (!stop.historyRecycleStarted) {
