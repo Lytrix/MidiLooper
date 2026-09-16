@@ -120,6 +120,12 @@ struct Loop {
   Loop& operator=(const Loop&) = delete;
 
   Capture capture;
+  // Non-owning borrow of an admitted stop job's sealed raw capture extent. The
+  // owner identity makes release conditional, so a stale job can never drop a
+  // successor job's binding.
+  const LoopEventStore::CaptureRange* borrowedSealedCapture_ = nullptr;
+  const void* borrowedSealedCaptureOwner_ = nullptr;
+  uint64_t borrowedSealedCaptureGeneration_ = 0;
   uint16_t captureNextEventIndex = 0;
   bool captureEventsSortDirty = false;
   bool captureHasLastAppendTick_ = false;
@@ -301,6 +307,37 @@ struct Loop {
   void discardCapture();
   /// Stop worker only: retire one copied raw-input chunk, preserving preview/session.
   bool retireCopiedCaptureSourceGrain(bool closeCapture = false);
+
+  /// Readable capture material. The producer and the job-owned finalizing source
+  /// are exposed separately so consumers are not coupled to the currently
+  /// guaranteed mutual exclusion: a successor interval can only begin while the
+  /// admitted job still owns its sealed range.
+  struct CaptureReadSource {
+    const LoopEventStore* producer = nullptr;
+    const LoopEventStore::CaptureRange* finalizing = nullptr;
+    uint64_t finalizingGeneration = 0;
+    bool producerHasRows() const { return producer != nullptr && !producer->empty(); }
+    bool finalizingReady() const { return finalizing != nullptr && finalizing->ready(); }
+    bool any() const { return producerHasRows() || finalizingReady(); }
+  };
+  CaptureReadSource captureReadSource() const;
+  /// Job-identified non-owning borrow of an admitted stop job's sealed raw
+  /// capture extent. `owner` is that job's admission identity. Loop consumers may
+  /// read the borrowed range but must never mutate, reorder, clear or release it.
+  bool borrowSealedCaptureRange(const LoopEventStore::CaptureRange& range, const void* owner);
+  /// Clears the borrow only when it still belongs to `owner`, so a stale job can
+  /// never drop a successor job's binding.
+  bool releaseSealedCaptureRangeBorrow(const void* owner);
+  bool hasSealedCaptureBorrow() const { return borrowedSealedCapture_ != nullptr; }
+  /// Sorted scratch copy of the readable capture interval. Never mutates a
+  /// borrowed sealed range: ordering is applied to the output only.
+  bool copyCaptureIntervalEvents(SessionMidiEventVec& out) const;
+  /// Last captured NoteOn identity for a pitch. Resolves against the finalizing
+  /// (sealed) interval first and the producer second, so a physical NoteOff for a
+  /// reservation created before sealing still resolves its NoteId. No allocation.
+  bool findLastCaptureNoteOnIdentity(uint8_t channel, uint8_t note, NoteId& out) const;
+  /// Closes the producer phase after a job-owned range has been fully retired.
+  void closeProducerCapturePhase();
   /// Overdub session start S (`beginCapture` playheadPhaseTick). UINT32_MAX = no session.
   uint32_t playheadPhaseTick = UINT32_MAX;
   void openOverdubSession(uint32_t sessionPlayheadPhaseTick);

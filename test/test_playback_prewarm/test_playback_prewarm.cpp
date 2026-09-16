@@ -71,8 +71,43 @@ void test_boot_playback_prewarm_does_not_allocate_capture_workers_and_upgrades_i
   staging->reset();
   TEST_ASSERT_TRUE(runtime.prewarmViews());
   TEST_ASSERT_NOT_NULL(runtime.viewSetIfPrewarmed());
-  TEST_ASSERT_EQUAL_PTR(events, runtime.viewSetIfPrewarmed()->captureStaging.storage.events);
+  TEST_ASSERT_EQUAL_PTR(events, runtime.viewSetIfPrewarmed()->frozenCaptureStaging().storage.events);
   TEST_ASSERT_EQUAL(RuntimePlaybackViewConfig::kRecordsPerBridge, runtime.frozenCaptureCompanions.capacity());
+}
+
+void test_capture_staging_roles_exchange_without_sharing_physical_storage() {
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  auto* live = runtime.liveCaptureStagingIfPrewarmed();
+  auto* frozen = runtime.captureStagingIfPrewarmed();
+  TEST_ASSERT_NOT_NULL(live);
+  TEST_ASSERT_NOT_NULL(frozen);
+  // Distinct physical staging: a frozen job can never alias live ingress rows.
+  TEST_ASSERT_TRUE(live->storage.events != frozen->storage.events);
+  TEST_ASSERT_TRUE(live->storage.order != frozen->storage.order);
+
+  TEST_ASSERT_TRUE(live->storage.append(MidiEvent::NoteOn(10, 1, 60, 100)));
+  TEST_ASSERT_TRUE(live->storage.append(MidiEvent::NoteOff(40, 1, 60, 0)));
+  live->captureGeneration = 5;
+  TEST_ASSERT_TRUE(live->freeze(5));
+  runtime.exchangeCaptureStagingRoles();
+
+  // Constant-work exchange: the frozen job keeps its rows and the successor
+  // ingress role is the previous, still-clean buffer.
+  TEST_ASSERT_EQUAL_PTR(live, runtime.captureStagingIfPrewarmed());
+  TEST_ASSERT_EQUAL_PTR(frozen, runtime.liveCaptureStagingIfPrewarmed());
+  TEST_ASSERT_TRUE(runtime.captureStagingIfPrewarmed()->frozen);
+  TEST_ASSERT_EQUAL_UINT32(2, runtime.captureStagingIfPrewarmed()->storage.eventCount);
+  TEST_ASSERT_FALSE(runtime.liveCaptureStagingIfPrewarmed()->frozen);
+  TEST_ASSERT_EQUAL_UINT32(0, runtime.liveCaptureStagingIfPrewarmed()->storage.eventCount);
+
+  // Successor ingress rows land in the other buffer and survive the job's
+  // retired staging being reset.
+  TEST_ASSERT_TRUE(runtime.liveCaptureStagingIfPrewarmed()->storage.append(
+      MidiEvent::NoteOn(193, 1, 62, 100)));
+  runtime.captureStagingIfPrewarmed()->reset();
+  TEST_ASSERT_EQUAL_UINT32(1, runtime.liveCaptureStagingIfPrewarmed()->storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT32(193, runtime.liveCaptureStagingIfPrewarmed()->storage.events[0].tick);
 }
 
 void test_staging_only_runtime_finishes_capture_orders_without_admitting_a_bridge() {
@@ -117,7 +152,8 @@ void test_runtime_view_set_prewarm_has_fixed_capacity_and_no_growth() {
                3 * sizeof(uint32_t) + 2 * sizeof(uint8_t) + 3 * sizeof(uint16_t)) +
            RuntimePlaybackViewConfig::kEventsPerView * (6 * sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint8_t))) +
       RuntimePlaybackViewConfig::kCaptureStagingEvents *
-          (sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t));
+          (sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint8_t)) *
+          views.captureStagings.size();
   TEST_ASSERT_EQUAL_UINT64(expectedBytes, views.fixedExternalBytes());
 
   FixedPlaybackEventStorage& storage = views.views[0].storage;
@@ -225,7 +261,7 @@ void test_capture_reservation_can_precede_canonical_note_identity_consumption() 
   Loop loop;
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
-  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   const NoteId prospectiveId = loop.peekNextNoteId();
   TEST_ASSERT_NOT_NULL(staging.reserve(prospectiveId, 1, 60, 2, 2, 1));
   TEST_ASSERT_EQUAL_UINT32(prospectiveId, loop.peekNextNoteId());
@@ -344,12 +380,12 @@ void test_filtered_capture_rewrite_trims_rows_in_later_grains() {
   RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
   MidiEvent on = MidiEvent::NoteOn(100, 1, 60, 100);
   on.noteId = 92;
-  TEST_ASSERT_TRUE(set.captureStaging.appendContinuationNoteOn(on));
+  TEST_ASSERT_TRUE(set.frozenCaptureStaging().appendContinuationNoteOn(on));
   MidiEvent off = MidiEvent::NoteOff(104, 1, 60);
   off.noteId = 92;
-  TEST_ASSERT_TRUE(set.captureStaging.appendReservedNoteOff(off, false));
-  set.captureStaging.captureGeneration = 61;
-  TEST_ASSERT_TRUE(set.captureStaging.freeze(61));
+  TEST_ASSERT_TRUE(set.frozenCaptureStaging().appendReservedNoteOff(off, false));
+  set.frozenCaptureStaging().captureGeneration = 61;
+  TEST_ASSERT_TRUE(set.frozenCaptureStaging().freeze(61));
   TEST_ASSERT_TRUE(runtime.beginFrozenCaptureCanonicalOrder(61));
   while (!runtime.frozenCaptureCanonicalOrderComplete()) {
     (void)runtime.stepFrozenCaptureCanonicalOrder(1);
@@ -446,7 +482,7 @@ void test_canonical_copy_of_filtered_pair_consumes_no_chunks() {
 void test_frozen_capture_order_uses_only_fixed_staging_storage() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
-  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::NoteOn(20, 1, 60, 100)));
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::NoteOff(20, 1, 60)));
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(10, 1, 1, 3)));
@@ -476,7 +512,7 @@ void test_frozen_capture_order_uses_only_fixed_staging_storage() {
 void test_frozen_capture_order_waits_for_every_reserved_terminal_closure() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
-  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   CaptureNoteReservation* reservation = staging.reserve(33, 1, 60, 2, 2, 1);
   TEST_ASSERT_NOT_NULL(reservation);
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::NoteOn(4, 1, 60, 100)));
@@ -548,7 +584,7 @@ void test_frozen_capture_canonical_order_rewrites_store_in_fixed_grains() {
 void test_runtime_keeps_canonical_and_audible_frozen_orders_serial() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
-  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::NoteOn(30, 1, 60, 100)));
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::NoteOff(10, 1, 60)));
   staging.captureGeneration = 41;
@@ -585,7 +621,7 @@ void test_runtime_rewrites_frozen_canonical_capture_in_one_declared_quantum() {
 
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
-  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  CaptureAdmissionStaging& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(late));
   TEST_ASSERT_TRUE(staging.storage.append(early));
   staging.captureGeneration = 52;
@@ -1485,7 +1521,7 @@ void test_continuous_prefix_retains_transferred_tail() {
   CanonicalPrefixFixture f; f.finish();
   auto& inputs = f.runtime.canonicalPassInputs;
   const auto* record = inputs.data()[0].events;
-  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   capture.captureGeneration = 4;
   const auto cc = MidiEvent::ControlChange(123, 1, 7, 64);
   TEST_ASSERT_TRUE(capture.storage.append(cc)); TEST_ASSERT_TRUE(capture.freeze(4));
@@ -1574,7 +1610,7 @@ void test_live_canonical_base_prework_reuses_stop_worker_and_invalidates_source(
   const auto current = set.lifecycle.current;
   const auto selected = set.bridgeLifecycle.selected;
   // A tiny live tail must not shrink either the event or pass horizon.
-  TEST_ASSERT_TRUE(set.captureStaging.storage.append(MidiEvent::ControlChange(1, 1, 7, 64)));
+  TEST_ASSERT_TRUE(set.frozenCaptureStaging().storage.append(MidiEvent::ControlChange(1, 1, 7, 64)));
   TEST_ASSERT_EQUAL_UINT64(
       StopAdmissionContract::requiredPreparedRankedTailGrainsForPasses(2048, 12, 2048, 0, 0, 32),
       runtime.requiredStopRankedGrains(f.source(), 12, 0, 0, 32));
@@ -1615,7 +1651,7 @@ void test_live_canonical_base_prework_reuses_stop_worker_and_invalidates_source(
 }
 
 static void prepareUnsortedFrozenTailCapture(LoopPlaybackRuntime& runtime) {
-  auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   auto on = MidiEvent::NoteOn(96, 2, 64, 80); on.noteId = 2;
   TEST_ASSERT_TRUE(capture.storage.append(on));
   TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(0, 2, 7, 90)));
@@ -1647,7 +1683,7 @@ void test_runtime_canonical_bridge_base_survives_live_ledger_refresh() {
   TEST_ASSERT_EQUAL_PTR(initialCurrent, &set.views[set.lifecycle.current]);
   prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
   PendingNoteChangeVec changes{{PendingNoteChangeKind::Shorten,1,1,60,90,10,70}};
-  const RuntimeCanonicalPassInputs::FrozenSource live{f.revision,f.generation,f.epoch,f.length,set.captureStaging};
+  const RuntimeCanonicalPassInputs::FrozenSource live{f.revision,f.generation,f.epoch,f.length,set.frozenCaptureStaging()};
   const PlaybackViewSourceIdentity target{f.revision + 2, f.generation, nullptr};
   TEST_ASSERT_TRUE(runtime.beginFrozenCanonicalTail(live, changes, target));
   result = RuntimePlaybackOrderBuildResult::Pending;
@@ -1749,7 +1785,7 @@ void test_runtime_canonical_window_prepares_spare_coverage_and_releases_tail_wor
     prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
     PendingNoteChangeVec changes;
     const RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch,
-        f.length, set->captureStaging};
+        f.length, set->frozenCaptureStaging()};
     const PlaybackViewSourceIdentity target{2, 3, &f.passes};
     TEST_ASSERT_TRUE(runtime.beginFrozenCanonicalTail(live, changes, target));
     result = RuntimePlaybackOrderBuildResult::Pending;
@@ -1903,7 +1939,7 @@ void test_runtime_canonical_window_source_change_cancels_only_pending_work() {
 void test_frozen_tail_copies_prepared_canonical_indexes_before_audible_reuse() {
   CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
   prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
-  auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes;
   RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
   const PlaybackViewSourceIdentity target{2, 3, &f.passes};
@@ -1933,7 +1969,7 @@ void test_frozen_tail_denies_shared_order_reuse_during_index_copy() {
   for (unsigned action = 0; action < 2; ++action) {
     CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
     prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
-    auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     PendingNoteChangeVec changes;
     RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
     const PlaybackViewSourceIdentity target{2, 3, &f.passes};
@@ -1956,7 +1992,7 @@ void test_frozen_tail_uses_private_sort_when_shared_order_is_audible() {
   prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
   TEST_ASSERT_TRUE(runtime.beginFrozenCaptureOrder(f.length, 4));
   while (runtime.stepFrozenCaptureOrder(1) == RuntimePlaybackOrderBuildResult::Pending) {}
-  auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes;
   RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
   const PlaybackViewSourceIdentity target{2, 3, &f.passes};
@@ -1993,7 +2029,7 @@ void test_frozen_canonical_order_receipt_expires_after_audible_discard() {
       runtime.stepFrozenCaptureCanonicalRewrite(destination, 4, 1));
   TEST_ASSERT_FALSE(runtime.frozenCaptureRewrite.active);
   TEST_ASSERT_EQUAL_UINT32(1, destination.size());
-  auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes;
   RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
   const PlaybackViewSourceIdentity target{2, 3, &f.passes};
@@ -2039,7 +2075,7 @@ void test_frozen_audible_order_receipt_denies_shared_storage_invalidation() {
 void test_prepared_frozen_tail_capacity_and_all_filtered_bounds() {
   for (bool retain : {false, true}) {
     CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
-    auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     for (size_t i = 0; i < 2048; ++i) {
       TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(2048 - i, 2, 7, 80)));
       if (!retain || i >= 2046) capture.storage.discardEvent(i);
@@ -2075,7 +2111,7 @@ void test_frozen_canonical_tail_coordinates_children_and_reuses_owned_prefix() {
     CanonicalPrefixFixture f; f.finish();
     auto& runtime = f.runtime;
     const auto* prefix = runtime.canonicalPassInputs.data()[0].events;
-    auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     capture.captureGeneration = 4;
     TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(100, 2, 7, 80)));
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Shorten, 1, 1, 60, 90, 10, 50}};
@@ -2234,7 +2270,7 @@ void test_companion_history_binds_wrap_publication_before_begin() {
         lengthRow(1, 70), EditPassType::Note, true, true);
     TEST_ASSERT_NOT_EQUAL(kInvalidEditPassId, wrapId);
     CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     auto& rows = f.runtime.frozenCaptureCompanions;
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 2, 1, 62, 80, 20, 60}};
     TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -2288,7 +2324,7 @@ void test_companion_history_stages_metadata_payloads_and_ids_without_publication
   auto* canonicalPayload = loop.passes.editPasses[0].addedEvents.data();
   const auto revision = loop.playbackRevision; const auto storageGeneration = loop.canonicalStorageGeneration;
   CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes{{PendingNoteChangeKind::Shorten, 1, 1, 60, 90, 10, 50},
       {PendingNoteChangeKind::Hide, 2, 1, 62, 80, 20, 60}};
   auto& rows = f.runtime.frozenCaptureCompanions;
@@ -2331,7 +2367,7 @@ void test_companion_history_atomic_swap_preserves_snapshot_and_undo_ids() {
     TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::RecordStop, EditPassIdList{7}));
     TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(2));
     CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     PendingNoteChangeVec changes;
     if (!empty) changes.push_back({PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50});
     auto& rows = f.runtime.frozenCaptureCompanions;
@@ -2385,7 +2421,7 @@ void test_job_owned_capture_and_companions_commit_without_retiring_live_capture(
   TEST_ASSERT_EQUAL(SealOutcome::Ok,
       loop.stagePreparedCapturePassFromActiveAdmission(job, 100, CommitReason::OverdubStop));
   LoopPlaybackRuntime runtime; TEST_ASSERT_TRUE(runtime.prewarmViews());
-  auto& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(event));
   staging.captureGeneration = 1; TEST_ASSERT_TRUE(staging.freeze(1));
   PendingNoteChangeVec changes;
@@ -2420,7 +2456,7 @@ void test_capture_and_companion_history_commit_together_or_leave_both_pending() 
     auto* chunkStorage = loop.pendingCapturePass_.committedChunkIds.data();
     const auto chunkId = loop.pendingCapturePass_.committedChunkIds[0];
     LoopPlaybackRuntime runtime; TEST_ASSERT_TRUE(runtime.prewarmViews());
-    auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     TEST_ASSERT_TRUE(capture.storage.append(event));
     capture.captureGeneration = 1; TEST_ASSERT_TRUE(capture.freeze(1));
     PendingNoteChangeVec changes;
@@ -2508,7 +2544,7 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     if (variant != 4) TEST_ASSERT_TRUE(loop.appendCaptureEvent(variant == 3 ? event :
         (variant == 2 ? MidiEvent::ControlChange(120, 1, 8, 91) : second)));
     if (variant == 5) TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::ControlChange(140, 1, 9, 80)));
-    auto& views = *runtime.viewSetIfPrewarmed(); auto& capture = views.captureStaging;
+    auto& views = *runtime.viewSetIfPrewarmed(); auto& capture = views.frozenCaptureStaging();
     TEST_ASSERT_TRUE(capture.storage.append(event));
     TEST_ASSERT_TRUE(capture.storage.append(second));
     if (variant == 7) {
@@ -2826,7 +2862,7 @@ void test_bounded_stop_undo_collection_appends_final_receipt_with_legacy_semanti
       loop.pushOverdubSessionPass(1, {99,100}); loop.pushOverdubSessionPass(2, {100});
       TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(1));
       CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-      auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+      auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
       auto& rows = f.runtime.frozenCaptureCompanions;
       PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
       TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -2879,7 +2915,7 @@ void test_bounded_stop_undo_collection_denies_missing_recycled_and_undersized_re
     Loop::SessionUndoCollection work;
     TEST_ASSERT_FALSE(loop.beginCollectOverdubStopUndoPasses(work, passIds, companions, 7, true));
     CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     auto& rows = f.runtime.frozenCaptureCompanions;
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
     TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -3066,7 +3102,7 @@ void test_companion_history_recycles_both_buffers_without_growth_until_horizon_e
   TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed(2));
   TEST_ASSERT_FALSE(loop.preparedCompanionHistoryPrewarmed(3));
   CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   auto& rows = f.runtime.frozenCaptureCompanions;
   PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
   for (unsigned pass = 0; pass < 2; ++pass) {
@@ -3122,7 +3158,7 @@ void test_companion_history_recycle_denies_source_changes_without_touching_canon
     Loop loop; loop.loopLengthTicks = 768; loop.nextPassId_ = 100;
     TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(2));
     CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     auto& rows = f.runtime.frozenCaptureCompanions;
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
     TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -3163,7 +3199,7 @@ void test_companion_history_snapshot_changes_deny_publication() {
     TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::RecordStop, EditPassIdList{7}));
     TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(2));
     CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
     auto& rows = f.runtime.frozenCaptureCompanions;
     TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -3185,7 +3221,7 @@ void test_companion_history_max_payload_and_empty_companions_fit_grain_bound() {
   loop.passes.editPasses.push_back(row);
   TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(2));
   CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes; auto& rows = f.runtime.frozenCaptureCompanions;
   TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, rows.step(32));
@@ -3219,7 +3255,7 @@ void test_companion_history_denies_stale_sources_capacity_and_id_overflow() {
     Loop loop; loop.nextPassId_ = 10; loop.passes.editPasses.push_back(lengthRow(1, 70));
     TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(1));
     CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-    auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
     auto& rows = f.runtime.frozenCaptureCompanions;
     TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -3238,7 +3274,7 @@ void test_companion_history_denies_stale_sources_capacity_and_id_overflow() {
   TEST_ASSERT_FALSE(loop.prewarmPreparedCompanionHistory(2049));
   TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(0));
   CanonicalPrefixFixture f; prepareUnsortedFrozenTailCapture(f.runtime);
-  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 1, 1, 60, 90, 10, 50}};
   auto& rows = f.runtime.frozenCaptureCompanions;
   TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
@@ -3378,7 +3414,7 @@ void test_typed_stopped_oracle_owns_empty_and_capacity_provenance() {
 void test_reserved_tail_denies_invalid_identity_and_continues_past_estimate() {
   CanonicalPrefixFixture f; f.finish(); auto& runtime = f.runtime;
   prepareUnsortedFrozenTailCapture(runtime); finishRuntimeCanonicalCaptureOrder(runtime);
-  auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   PendingNoteChangeVec changes;
   RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
   TEST_ASSERT_TRUE(runtime.beginFrozenCanonicalTail(live, changes, {2, 3, &f.passes}));
@@ -3409,7 +3445,7 @@ void test_frozen_canonical_tail_denies_source_changes_and_preserves_reused_worke
   for (unsigned changed = 0; changed < 4; ++changed) {
     CanonicalPrefixFixture f; f.finish();
     auto& runtime = f.runtime;
-    auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     capture.captureGeneration = 4; TEST_ASSERT_TRUE(capture.freeze(4));
     PendingNoteChangeVec changes;
     RuntimeCanonicalPassInputs::FrozenSource live{f.revision, f.generation, f.epoch, f.length, capture};
@@ -3542,7 +3578,7 @@ void test_canonical_prefix_handoff_preserves_frozen_tail_owner() {
   CanonicalPrefixFixture f; f.finish();
   auto& inputs = f.runtime.canonicalPassInputs;
   const auto* prefix = inputs.data()[0].events;
-  auto& capture = f.runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   capture.captureGeneration = 4;
   TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::ControlChange(100, 1, 7, 80)));
   TEST_ASSERT_TRUE(capture.freeze(4));
@@ -3649,7 +3685,7 @@ void test_canonical_prefix_rejects_history_relocation_without_audible_revision_c
   finish();
   TEST_ASSERT_EQUAL_UINT32(60, runtime.canonicalPassInputs.data()[0].events[1].tick);
   // The same guard survives transfer from prefix work to frozen-tail work.
-  auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   capture.captureGeneration = 4; TEST_ASSERT_TRUE(capture.freeze(4));
   RuntimeCanonicalPassInputs::FrozenSource frozen{loop.playbackRevision, generation, epoch, loop.loopLengthTicks, capture};
   TEST_ASSERT_TRUE(runtime.canonicalPassInputs.appendFrozenOverdub(frozen));
@@ -3807,7 +3843,7 @@ void test_frozen_canonical_pipeline_bridge_matches_materialized_reference() {
       passes.editPasses.push_back(create);
     }
     LoopPlaybackRuntime runtime; TEST_ASSERT_TRUE(runtime.prewarmViews());
-    auto& capture = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& capture = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     auto captureOn = MidiEvent::NoteOn(openLedger ? 300 : 700, 2, 64, 95); captureOn.noteId = openLedger ? 2 : 1;
     TEST_ASSERT_TRUE(capture.storage.append(MidiEvent::NoteOff(openLedger ? 350 : 800, 2, 64)));
     TEST_ASSERT_TRUE(capture.storage.append(captureOn));
@@ -5190,7 +5226,7 @@ void test_deferred_stop_owner_resumes_canonical_rewrite_and_audible_turns() {
                                       PendingStopPhase::CanonicalRewrite, PendingStopPhase::AudibleOrder}) {
     LoopPlaybackRuntime runtime;
     TEST_ASSERT_TRUE(runtime.prewarmViews());
-    auto& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+    auto& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
     LoopEventStore capture;
     for (uint32_t tick : {900u, 4u, 800u, 30u}) {
       auto event = MidiEvent::ControlChange(tick, 1, 1, tick % 128);
@@ -5249,7 +5285,7 @@ void test_deferred_stop_owner_resumes_canonical_rewrite_and_audible_turns() {
 void test_frozen_order_binding_rejects_changed_generation_count_and_projection() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
-  auto& staging = runtime.viewSetIfPrewarmed()->captureStaging;
+  auto& staging = runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(800, 1, 1, 2)));
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(40, 1, 1, 3)));
   staging.captureGeneration = 81;
@@ -5400,7 +5436,7 @@ void test_runtime_frozen_bridge_preparation_binds_epoch_and_keeps_preflight_read
   auto& set = *runtime.viewSetIfPrewarmed();
   auto& base = set.views[set.lifecycle.current];
   prepareBridgeBase(base, {MidiEvent::ControlChange(10, 1, 1, 5)});
-  auto& staging = set.captureStaging;
+  auto& staging = set.frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(30, 1, 1, 7)));
   staging.captureGeneration = 101;
   TEST_ASSERT_TRUE(staging.freeze(101));
@@ -5453,7 +5489,7 @@ void test_runtime_frozen_bridge_discards_stale_preparation_without_losing_captur
   auto& set = *runtime.viewSetIfPrewarmed();
   auto& base = set.views[set.lifecycle.current];
   prepareBridgeBase(base, {MidiEvent::ControlChange(10, 1, 1, 5)});
-  auto& staging = set.captureStaging;
+  auto& staging = set.frozenCaptureStaging();
   TEST_ASSERT_TRUE(staging.storage.append(MidiEvent::ControlChange(30, 1, 1, 7)));
   staging.captureGeneration = 102;
   TEST_ASSERT_TRUE(staging.freeze(102));
@@ -6027,6 +6063,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_record_preparation_failure_does_not_change_existing_runtime);
   RUN_TEST(test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append);
   RUN_TEST(test_boot_playback_prewarm_does_not_allocate_capture_workers_and_upgrades_in_place);
+  RUN_TEST(test_capture_staging_roles_exchange_without_sharing_physical_storage);
   RUN_TEST(test_staging_only_runtime_finishes_capture_orders_without_admitting_a_bridge);
   RUN_TEST(test_runtime_view_set_prewarm_has_fixed_capacity_and_no_growth);
   RUN_TEST(test_active_runtime_access_does_not_create_an_unprewarmed_view_set);

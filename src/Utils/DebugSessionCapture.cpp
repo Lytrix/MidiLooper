@@ -12,7 +12,9 @@
 
 #include "Utils/CaptureLineTier.h"
 #include "Utils/DiagnosticsTypes.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/RuntimeTimingTelemetry.h"
+#include "LoopEventStore.h"
 #include "StorageManager.h"
 
 #if defined(__IMXRT1062__)
@@ -724,6 +726,15 @@ SC_MEM_ATTR void capturePrewarm(uint8_t track, uint8_t slot, bool fullViews,
   emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,capture_prewarm,track=%u,slot=%u,full=%u,ready=%u,credits=%u,free_chunks=%u,heap_free=%lu\r\n"),
       (unsigned long)micros(), track, slot, fullViews, ready, credits, freeChunks,
       (unsigned long)heapFree);
+}
+
+SC_MEM_ATTR void capturePrewarmMemory(const char* phase) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,capture_prewarm,phase=%s,psram_free=%lu,psram_pool=%lu,heap_free=%lu,free_chunks=%u\r\n"),
+      (unsigned long)micros(), phase,
+      (unsigned long)MemoryMonitor::getExternalMemoryPoolFreeBytes(),
+      (unsigned long)MemoryMonitor::getExternalMemoryPoolTotalBytes(),
+      (unsigned long)MemoryMonitor::getInternalHeapFreeBytes(),
+      (unsigned)LoopEventStore::freeChunkCount());
 }
 
 SC_MEM_ATTR void overdubWrapTick(uint32_t totalUs, uint32_t sealUs, uint32_t passApplyUs,

@@ -700,14 +700,15 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm() {
       return false;
     }
   }
-  if (!captureStaging.prewarm()) {
+  if (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm()) {
     for (RuntimePlaybackView& allocated : views) {
       allocated.storage.release();
     }
     for (FixedPlaybackBridgeStorage& allocated : bridges) {
       allocated.release();
     }
-    captureStaging.storage.release();
+    liveCaptureStaging().storage.release();
+    frozenCaptureStaging().storage.release();
     return false;
   }
   resetMetadata();
@@ -723,7 +724,10 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadata() {
   for (FixedPlaybackBridgeStorage& bridge : bridges) {
     bridge.resetMetadata();
   }
-  captureStaging.reset();
+  liveCaptureStaging().reset();
+  frozenCaptureStaging().reset();
+  liveStagingIndex = 0;
+  frozenStagingIndex = 1;
   lifecycle.reset();
   bridgeLifecycle.reset();
 }
@@ -774,5 +778,6 @@ size_t RuntimePlaybackViewSet::fixedExternalBytes() const {
              (RuntimePlaybackViewConfig::kRecordsPerBridge * (sizeof(PlaybackBridgeRecord) + eventBytes +
                                                             2 * sizeof(uint32_t) + 3 * sizeof(uint16_t) + sizeof(uint8_t)) +
               RuntimePlaybackViewConfig::kEventsPerView * (6 * sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint8_t))) +
-         RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes;
+         RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes *
+             captureStagings.size();
 }

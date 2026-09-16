@@ -356,7 +356,32 @@ struct RuntimePlaybackViewSet {
   // of the three rolling emission windows. Cleanup may release preparation
   // workers without invalidating a source still supplying future windows.
   std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kBridgeCount> bridgeBases;
-  CaptureAdmissionStaging captureStaging;
+  // Two independently prewarmed admission stagings. Live ingress owns the
+  // `live` role for the open interval; the one admitted stop job borrows the
+  // `frozen` role. Punch-out exchanges the two indexes in constant work, so the
+  // job keeps its immutable frozen rows while a successor interval can own a
+  // separate ingress buffer. One staging is never shared between the two roles.
+  std::array<CaptureAdmissionStaging, 2> captureStagings;
+  uint8_t liveStagingIndex = 0;
+  uint8_t frozenStagingIndex = 1;
+  CaptureAdmissionStaging& liveCaptureStaging() { return captureStagings[liveStagingIndex]; }
+  const CaptureAdmissionStaging& liveCaptureStaging() const {
+    return captureStagings[liveStagingIndex];
+  }
+  CaptureAdmissionStaging& frozenCaptureStaging() { return captureStagings[frozenStagingIndex]; }
+  const CaptureAdmissionStaging& frozenCaptureStaging() const {
+    return captureStagings[frozenStagingIndex];
+  }
+  /// Constant-work role exchange. The caller has frozen the live role first.
+  void exchangeCaptureStagingRoles() {
+    const uint8_t previousLive = liveStagingIndex;
+    liveStagingIndex = frozenStagingIndex;
+    frozenStagingIndex = previousLive;
+  }
+  bool captureStagingsPrewarmed() const {
+    return liveCaptureStaging().storage.isPrewarmed() &&
+           frozenCaptureStaging().storage.isPrewarmed();
+  }
   RuntimePlaybackViewLifecycle lifecycle;
   RuntimePlaybackBridgeLifecycle bridgeLifecycle;
   bool prewarmed = false;

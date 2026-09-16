@@ -114,6 +114,10 @@ SC_MEM_ATTR void overdubStartStage(const char* stage, uint32_t durationUs, uint3
 SC_MEM_ATTR void capturePrewarm(uint8_t track, uint8_t slot, bool fullViews,
                                bool ready, uint16_t credits, uint16_t freeChunks,
                                uint32_t heapFree);
+/** Boot-only external-pool admission sample: DIAG,capture_prewarm,phase=<before|after>,
+ *  psram_free, psram_pool, heap_free, free_chunks. Walks the smalloc pool, so it is
+ *  called only from the pre-transport boot prewarm. */
+SC_MEM_ATTR void capturePrewarmMemory(const char* phase);
 SC_MEM_ATTR void overdubStopStage(const char* stage, uint32_t elapsedUs, uint32_t durationUs,
                                   uint32_t heapBefore, uint32_t heapAfter, size_t eventCount,
                                   size_t chunkRefCount, const char* outcome);

@@ -485,21 +485,24 @@ TRACK_CAPTURE_ADMISSION_MEM bool Track::appendCaptureNoteOffAtPhase(
     tickRelative = loop.loopLengthTicks - 1;
   }
   MidiEvent newEvt = MidiEvent::NoteOff(tickRelative, channel, note, 0);
-  const LoopEventStore& capture = loop.capture.store;
-  for (size_t i = capture.size(); i > 0; --i) {
-    const MidiEvent& prior = capture.at(i - 1);
-    if (!prior.isNoteOn() || prior.channel != channel || prior.data.noteData.note != note) {
-      continue;
-    }
-    newEvt.noteId = prior.noteId;
-    break;
+  // Resolve the closure identity against the interval that owns the reservation:
+  // the admitted job's sealed extent when one is bound, otherwise the producer.
+  // A capture that has been sealed no longer has producer rows to scan.
+  NoteId closedNoteId = kInvalidNoteId;
+  if (loop.findLastCaptureNoteOnIdentity(channel, note, closedNoteId)) {
+    newEvt.noteId = closedNoteId;
   }
   CaptureAdmissionStaging* staging = nullptr;
   CaptureNoteReservation* reservation = nullptr;
   if ((isOverdubbing() || hasPendingDeferredOverdubStop()) && newEvt.noteId != kInvalidNoteId) {
     LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
-    CaptureAdmissionStaging* viewSet =
-        runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+    // A physical closure of an already-open note belongs to whichever role owns
+    // that reservation: the pending stop job's frozen staging while it is
+    // finishing, otherwise the live ingress staging of the open interval.
+    CaptureAdmissionStaging* viewSet = runtime != nullptr
+        ? (hasPendingDeferredOverdubStop() ? runtime->captureStagingIfPrewarmed()
+                                           : runtime->liveCaptureStagingIfPrewarmed())
+        : nullptr;
     if (viewSet != nullptr) {
       staging = viewSet;
       reservation = staging->matchingOpenReservation(newEvt.noteId, channel, note);
@@ -522,8 +525,10 @@ TRACK_CAPTURE_ADMISSION_MEM bool Track::appendReservedCaptureNoteOffAtPhase(
     return false;
   }
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
-  CaptureAdmissionStaging* viewSet =
-      runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+  CaptureAdmissionStaging* viewSet = runtime != nullptr
+      ? (hasPendingDeferredOverdubStop() ? runtime->captureStagingIfPrewarmed()
+                                         : runtime->liveCaptureStagingIfPrewarmed())
+      : nullptr;
   CaptureAdmissionStaging* staging =
       viewSet != nullptr ? viewSet : nullptr;
   return staging && appendReservedCaptureNoteOffForOwner(loop, *staging, reservation, phaseTick);
@@ -730,7 +735,7 @@ TRACK_CAPTURE_ADMISSION_MEM __attribute__((noinline)) bool Track::recordMidiEven
     if (isOverdubbing()) {
       LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
       CaptureAdmissionStaging* viewSet =
-          runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+          runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
       if (viewSet == nullptr) {
         logger.log(CAT_TRACK, LOG_WARNING,
                    "Capture admission rejected: runtime staging unavailable ch=%u note=%u",
@@ -900,7 +905,7 @@ void Track::noteOn(uint8_t channel, uint8_t note, uint8_t velocity, uint32_t tic
       Loop& loop = getActiveLoop();
       LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
       CaptureAdmissionStaging* viewSet =
-          runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
+          runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
       CaptureAdmissionStaging* staging =
           viewSet != nullptr ? viewSet : nullptr;
       if (staging == nullptr ||

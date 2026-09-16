@@ -42,7 +42,7 @@ static CommittedPitchQueryWork g_committedPitchQueryWork;
 namespace {
 
 template <typename MidiEventVector>
-void mergeSortedLoopCaptureLayers(MidiEventVector& base, MidiEventVector&& addition) {
+LOOP_COLD_MEM void mergeSortedLoopCaptureLayers(MidiEventVector& base, MidiEventVector&& addition) {
   if (addition.empty()) {
     return;
   }
@@ -82,14 +82,18 @@ void mergeActiveCapturePassesInto(const LoopPasses& passes, MidiEventVector& out
   }
 }
 
-void mergeCaptureStoreIntoWindowedEvents(const Loop& loop, SessionMidiEventVec& out,
-                                         uint32_t windowStart, uint32_t windowLength) {
-  if (!loop.captureActive() || loop.capture.store.empty()) {
+LOOP_COLD_MEM void mergeCaptureStoreIntoWindowedEvents(const Loop& loop, SessionMidiEventVec& out,
+                                                       uint32_t windowStart,
+                                                       uint32_t windowLength) {
+  if (!loop.captureActive() || !loop.captureReadSource().any()) {
     return;
   }
-  const_cast<Loop&>(loop).ensureCaptureEventsSorted();
+  // One read source for producer or admitted-job sealed interval. Ordering is
+  // applied to this scratch copy, never to the borrowed sealed range.
   SessionMidiEventVec captureFlat;
-  loop.capture.store.copyEventsTo(captureFlat);
+  if (!loop.copyCaptureIntervalEvents(captureFlat)) {
+    return;
+  }
   SessionMidiEventVec captureWindow;
   DisplayWindowUtils::filterMidiEventsToWindow(captureFlat, captureWindow, windowStart, windowLength,
                                                loop.loopLengthTicks);
@@ -100,14 +104,15 @@ void mergeCaptureStoreIntoWindowedEvents(const Loop& loop, SessionMidiEventVec& 
 }
 
 template <typename MidiEventVector>
-void mergeCaptureStoreIntoMaterializedEvents(const Loop& loop, MidiEventVector& out) {
-  if (!loop.captureActive() || loop.capture.store.empty()) {
+LOOP_COLD_MEM void mergeCaptureStoreIntoMaterializedEvents(const Loop& loop, MidiEventVector& out) {
+  if (!loop.captureActive() || !loop.captureReadSource().any()) {
     return;
   }
-  const_cast<Loop&>(loop).ensureCaptureEventsSorted();
-
-  MidiEventVector captureFlat;
-  loop.capture.store.copyEventsTo(captureFlat);
+  SessionMidiEventVec captureScratch;
+  if (!loop.copyCaptureIntervalEvents(captureScratch)) {
+    return;
+  }
+  MidiEventVector captureFlat(captureScratch.begin(), captureScratch.end());
   if (out.empty()) {
     out = std::move(captureFlat);
     return;

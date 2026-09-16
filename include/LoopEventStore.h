@@ -106,6 +106,15 @@ class LoopEventStore {
   /// The producer must be append-only: no outstanding mutable/rewrite borrowers.
   /// No copy, refcount walk, directory growth or pool allocation occurs here.
   bool sealCaptureRange(CaptureRange& destination);
+  /// Non-mutating precondition check for `sealCaptureRange`. The action edge
+  /// proves this before admitting a stop so the ownership transfer itself can
+  /// never fail midway through admission.
+  bool canSealCaptureRange(const CaptureRange& destination) const;
+  /// True when this store already holds exactly the pre-reserved empty capture
+  /// directory a successor producer must append into, so a begin-capture reset
+  /// must not release it (releasing would force a cold re-reservation at the
+  /// action edge). False means `clear()`/`reserveCaptureTail()` owns the reset.
+  bool resetCaptureExtentPreservingReservedStorage();
 
   static constexpr size_t NO_EVENT_INDEX = static_cast<size_t>(-1);
 

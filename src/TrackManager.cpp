@@ -11,6 +11,7 @@
 #include "EditManager.h"
 #include "DisplayManager.h"
 #include "TrackDisplayState.h"
+#include "Utils/DebugSessionCapture.h"
 
 TrackManager trackManager;
 
@@ -56,6 +57,11 @@ void TrackManager::allocateLoopsEarly() {
 }
 
 void TrackManager::prewarmPlaybackRuntime() {
+#if defined(SESSION_CAPTURE)
+  // One external-pool admission sample before and after boot staging prewarm.
+  // This is the only pre-transport window where the smalloc free walk is safe.
+  DebugSessionCapture::capturePrewarmMemory("before");
+#endif
   for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
     Track& track = tracks[t];
     track.ensureLoopsAllocated();
@@ -68,6 +74,9 @@ void TrackManager::prewarmPlaybackRuntime() {
       track.prewarmPlaybackForSlot(s, false);
     }
   }
+#if defined(SESSION_CAPTURE)
+  DebugSessionCapture::capturePrewarmMemory("after");
+#endif
 }
 
 void TrackManager::prewarmSelectedDisplayVisualCache() {
