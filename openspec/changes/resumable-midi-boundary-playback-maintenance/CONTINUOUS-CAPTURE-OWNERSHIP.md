@@ -1017,3 +1017,36 @@ exactly one). Both are behaviour-visible and belong in a recorded decision rathe
 than an improvised implementation.
 
 **Status:** audited, not implemented. No code changed for these two items.
+
+### Implementation blockers found while starting the undo wiring (2026-09-16)
+
+Decision taken for this slice: wire the deferred protected undo publication first;
+receipt-ring size 4; overlay every pending receipt. Starting the implementation
+surfaced two blockers that need an explicit shape before touching the stop-commit
+path.
+
+1. **The collection needs its own admission budget.** The bounded collection cannot
+   ride the existing canonical-preparation credits: `consumeCanonicalPreparationGrain()`
+   requires `canonicalPreparationQuantum != 0`, and `canonicalCredits` is 0 for a
+   STOPPED or empty destination — so a STOPPED overdub stop would stall forever.
+   The canonical budget also cannot absorb a larger estimate without shifting
+   `stepPreparation`/`retireCompletedPreparation` accounting. Recommended shape: a
+   dedicated `remainingUndoCollectionGrains` / `undoCollectionQuantum` pair with its
+   own `consume…` guard, sized from
+   `Loop::requiredSessionStopUndoCollectionGrains(rows, companions, finalCompanions,
+   quantum)`, and a `StopAdmissionContract` row so a saturated estimate denies
+   admission explicitly.
+2. **The protected transaction has a post-commit lifecycle that must be drained.**
+   `TrackUndoPublication::begin` leaves `protectedState()` true until the
+   `ReleaseRedo → AwaitReclaim → Trim → Complete` chain finishes, and other undo
+   writers are excluded while protected. Publishing from the deferred commit
+   without also running that drain would let the *first* overdub publish and block
+   every later one. So this slice must include bounded drain phases in the worker's
+   DeferredCleanup stage, not just `publishAtCommit()`. Placement also matters:
+   `TrackUndoPublication` carries an `UndoEntry` plus retirement storage, so a
+   per-Track member costs DTCM (only 6,752 bytes free) — it should be
+   externally allocated like `captureStopJobs_`, or job-ring resident if its
+   lifetime is proven to end with the job.
+
+Neither blocker is conceptual; both are shape decisions. No code was changed on the
+stop-commit path.
