@@ -7,6 +7,14 @@
 
 **2026-09-17 step E IMPLEMENTED: capture staging is now admission-provisioned, and the
 loaded-set 8-bar recipe completes with no denial, no refusal and no fault.** DEC-065.
+**Status: validated on device (user-accepted 2026-09-17)** - the timing invariant was
+preserved while steady-state memory moved from boot lifetime to admission lifetime
+(+1.19 MB boot headroom, both roles reserved before capture mutation, zero
+allocations inside the stop interval, the formerly failing record->overdub path
+completing with 0 fatal/denial/refusal, native coverage unchanged).
+Separate follow-up, deliberately not part of this change: the harness's
+`OVERDUBBING->PLAYING` edge expectation and its clock/`overdub_first_note`
+mismatches need repairing against the deferred state machine.
 Code: boot (`Track::prewarmPlaybackForSlot(s, false)`) no longer reserves either staging
 role; the record arm keeps reserving both through `prewarmViews`, and `Track::startOverdubbing`
 now reserves both on its own cold turn (tag-bracketed) **before** any mutation, replacing the
