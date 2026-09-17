@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — implementation authorized; device START/STOP proof open |
 | [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
 | [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — validated on device |
 | [DEC-063](#dec-063--protected-stop-undo-publication-and-bounded-reclamation) | 2026-09-14 | Protected stop transaction preserves feedback trimming; latest deferred Undo/Redo wins per Track | Accepted — implementation authorized; validation gates remain open |
@@ -79,7 +80,77 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-067 -->
+<!-- Append new entries below (newest first). Next ID: DEC-068 -->
+
+## DEC-067 — Finalization-resource admission is stop-directed
+
+**Date:** 2026-09-17
+**Status:** Accepted — implementation authorized by the user; device acceptance (the successor START/STOP proof) remains open.
+**Owner:** `Track::startOverdubbing` (start admission), `Track::beginDeferredOverdubStop` (stop admission), `LoopPlaybackRuntime` canonical output / transfer admission, `Loop` session-exit receipts
+
+**Context:** the successor-reentry device case could not be produced. With the probe's presses
+finally landing inside the predecessor's deferred window (`hitl.probe_press`, `90342d7c`;
+`captures/successor-reentry-19` / `-20`), the device refused every press with
+`Overdub start rejected: canonical copy chunks are not reserved` — press actions +500 ms and
++909 ms (`-19`), +1116 ms and +1515 ms (`-20`), against `bridge_ready` +1458 ms / +1681 ms —
+and the successor only opened once its action landed after the predecessor had fully finalized
+(`-13` +1738 vs +1424, `-14` +1906 vs +1444, `-17` +1530 vs +1008; the one early start, `-16`
++637 ms, is a stop that never deferred). The declared capacity —
+`successor-capture-reentry-unguarding` design task 1.2, *"START requires the live role to be
+free; STOP requires the deferred/frozen role to be free"* — was therefore unreachable, because
+`Track::startOverdubbing` also gated on three **finalization** resources.
+
+**Decision:** a resource blocks the transition that first requires ownership of that resource.
+Overdub START admission is governed only by the resources required to establish and sustain
+the live capture interval; the deferred-finalization resources — canonical capture output,
+active overdub transfer admission, and session-exit snapshot handoff capacity — are checked
+when that interval requests STOP. Call-site audit (each verdict is "what object would B
+actually use before B's stop edge?"):
+
+| start gate | resource, and who uses it | first required at | verdict |
+|---|---|---|---|
+| `liveCaptureStagingIfPrewarmed() == nullptr \|\| !captureStopJobs_` | B's live ingress for the whole interval (`viewSet->reset()`, append path); the descriptor ring is structural | START | **keep** |
+| `canonicalCaptureOutputAdmitted()` | written only by `stepFrozenCaptureCanonicalCopy` while B finalizes | STOP | **move** — added to `beginDeferredOverdubStop` |
+| `hasActiveOverdubTransferAdmission()` | consumed by `stagePreparedCapturePassFromActiveAdmission` at B's stop, and already checked by `beginDeferredOverdubStop` | STOP | **remove from START** (already at STOP) |
+| `canHandoffSessionExitSnapshot()` | `queueSessionExitSnapshot` at B's stop | STOP | **move** — added to `beginDeferredOverdubStop` |
+| `MemoryMonitor::admitOperationMemory(OverdubStart)` | the interval's own live working set | START | **keep** |
+| `runtime->captureStopOwner != nullptr` (already at STOP) | the single finalization working set | STOP | **keep** |
+
+The start path additionally discarded the *frozen* order builders
+(`discardFrozenCaptureOrder` / `discardFrozenCaptureCanonicalOrder`) unconditionally, which
+would clobber a pending predecessor's in-flight order/rewrite. Those discards are now
+conditional on no deferred stop being pending and no live stop owner.
+
+**Architectural property (pinned):** depth-2 *capture* concurrency does not imply depth-2
+*finalization* working sets. At most one interval may own the bounded canonical/transfer
+finalization resources; another interval may coexist only in the live capture role. That is
+why B START is legal while B STOP can be denied, and why this decision does **not** make the
+canonical working set concurrent (option B below).
+
+**Device acceptance this authorizes (task 6.2):** two deterministic capture edges replace
+timing guesses — `successor_start_window_open` (the predecessor has frozen its interval and
+relinquished the live role while its stop is still pending) and
+`canonical_finalization_capacity_released` (the finalization resources are free again).
+Required sequence: A OVERDUBBING → stop A → A deferred; B START succeeds **while A is still
+pending, asserted at the instant of B's start**; distinctive B input accepted at its exact
+ticks; B STOP denied non-destructively while A owns finalization capacity (B stays live; rows,
+pending notes, reservations and interval identity unchanged); A releases; B STOP admitted and
+B finalizes exactly once; A and B content exact; no stale A cleanup mutates B.
+
+**Consequences:** a successor interval can record while a predecessor finalizes, and its stop
+carries the explicit denial when finalization capacity is still owned — the outcome task 2.2
+already specifies. Design task 1.2 becomes the operative rule; tasks.md 2.1's start-side
+canonical/transfer/handoff requirements are superseded by the stop-side checks above.
+
+**Not in this decision:** giving each interval its own canonical output (option B — grows the
+arm-time envelope and makes two finalization working sets concurrent), narrowing the declared
+capacity to "reentry after finalization" (option A), and any change to the staging ceiling,
+the deferred-stop grain budget, or the event-horizon ceiling.
+
+**References:** `captures/successor-reentry-19` / `-20` (device denials),
+`captures/successor-reentry-13` / `-14` / `-17` (starts only after `bridge_ready`),
+[`successor-capture-reentry-unguarding`](../openspec/changes/successor-capture-reentry-unguarding/),
+[`CURRENT_WORK.md`](Runtime/CURRENT_WORK.md) § Now implementing item 2.
 
 ## DEC-066 — Per-owner capacity derivation for the stop working set, under the existing ceilings
 

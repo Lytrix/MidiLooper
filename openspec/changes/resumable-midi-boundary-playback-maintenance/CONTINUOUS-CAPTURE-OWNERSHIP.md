@@ -617,6 +617,35 @@ independently prewarmed roles in the same owner.
   reservations and rows are cleared at cleanup; nothing retains a pointer to it
   across the exchange.
 
+**Admission direction (DEC-067, 2026-09-17).**
+
+- **START requires the live role to be free; STOP requires the deferred/frozen role
+  to be free.** Supporting one finalizing predecessor plus one independently
+  recording successor (depth 2 in the capture lifecycle, not depth 2 in the
+  deferred-stop queue).
+- A resource blocks the transition that first requires ownership of it. Overdub
+  START is admitted on the live staging role, the stop-descriptor ring and the
+  interval's own memory admission. The finalization resources — canonical capture
+  output, active overdub transfer admission, and session-exit snapshot handoff
+  capacity — are checked by `Track::beginDeferredOverdubStop`, not by
+  `Track::startOverdubbing`; none of them is used before the successor's own stop
+  edge. The stop admission is additionally the single-owner check
+  (`captureStopOwner`).
+- **Depth-2 capture concurrency does not imply depth-2 finalization working sets.**
+  At most one interval may own the bounded canonical/transfer finalization
+  resources; another interval may coexist only in the live capture role. That is
+  why a successor START is legal while its STOP can be denied, and it is why the
+  canonical working set stays single (the alternative — one canonical output per
+  interval — would make two finalization working sets concurrent).
+- The successor-stop denial is atomic and non-destructive: no stop descriptor, no
+  consumed events/notes/reservations, and the interval stays the live recording
+  interval with its event count, pending notes, reservation/NoteId identity,
+  capture extent, preview state and interval identity unchanged.
+- Evidence for this direction: `captures/successor-reentry-19` / `-20` (the device
+  refused successor starts with `canonical copy chunks are not reserved` while the
+  predecessor finalized) and `captures/successor-reentry-13` / `-14` / `-17`
+  (successor starts only after `bridge_ready`); [DEC-067](../../../docs/DECISION_LOG.md#dec-067--finalization-resource-admission-is-stop-directed).
+
 **Physical cost — measured on device**
 
 - One additional `CaptureAdmissionStaging` per `RuntimePlaybackViewSet`:
