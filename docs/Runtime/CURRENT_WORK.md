@@ -2620,6 +2620,31 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — reentry session ownership: a retiring job consumes the live successor's
+session (NEW, needs a decision).** Tasks 5.1(d)/(e) landed (`test_successor_same_interval_transfers_exactly_once`,
+`test_start_request_while_successor_is_live_is_not_a_second_interval`; net full-native 2205,
+1 skipped) and the (d) case immediately exposed a job-locality defect in the same family as
+the two DEC-067 findings. With A's deferred job pending and B live,
+`TrackPreparedStopCommit::completeDeferredCleanup` (the phase every deferred stop ends in)
+unconditionally calls `loop.handoffSessionExitSnapshot(...)` and `loop.closeOverdubSession()`:
+
+1. the receipt is built from the **current shared session state**, which under reentry is the
+   successor's, so the retiring interval's session-exit publication carries the wrong pass ids;
+2. `closeOverdubSession()` closes **B's** session while B is still recording — the new case
+   pins it (`loop.hasOverdubSession()` false for a live interval, asserted as the diagnostic);
+3. B's own `DeferredCleanup` then cannot hand off (`!hasOverdubSession()`), so B's job reaches
+   phase 11 (`DeferredCleanup`) and never retires: its descriptor leaks and its session-exit
+   publication never queues. Reachable on device in exactly the DEC-067 sequence
+   (`captures/successor-reentry-25`: A released at 52.195 s while B had been live since 49.986 s).
+
+Root cause: `Loop::beginOverdubSession` early-returns when `hasOverdubSession()`, so a successor
+interval **joins the predecessor's session** instead of owning one, while `sessionExitHandedOff_`
+and the receipt ring are written as if a session belonged to one interval. Fix shape (needs a
+DEC, since it changes when a session-exit receipt is created): capture the interval's receipt at
+its own stop admission (before any successor state exists), consume only that receipt in the
+cleanup, close the session only when the job still owns the live interval (`ownsTrackState`),
+and let a successor open its own session/index while the predecessor's is still draining.
+
 **2026-09-17 — successor-capture reentry: finalization admission is stop-directed (DEC-067).**
 User decision after the device exposed the mismatch: *"I would fix the gates to match the
 architecture, rather than narrow the architecture to preserve an accidental reservation
