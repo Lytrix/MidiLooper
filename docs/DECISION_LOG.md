@@ -83,7 +83,62 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-071 -->
+<!-- Append new entries below (newest first). Next ID: DEC-072 -->
+
+## DEC-071 — The audible stale-root view must enumerate wrap-journaled passes, not only queued ones
+
+**Date:** 2026-09-17
+**Status:** Accepted — implemented; regression fails without it; device capture `captures/successor-wrap-46` shows the wrap commit and the retarget, audibility confirmation with the owner.
+**Owner:** `Loop::tryGatherPublishedSnapshotEventsInWindow` (`src/Loop/LoopSnapshotPlayback.cpp`), the unpublished-pass allow-list
+
+**Report (user, 2026-09-17).** Record 8 bars, then an 8-bar overdub that starts at bar 3. The
+overdub crosses loop end once, so the wrap commits **pass 1** (bars 3..8) and the stop commits
+**pass 2** (the wrap tail, bars 1..2). Afterwards pass 1 was never audible again -- every cycle
+played only the tail -- while pass 1 stayed on the display. The user's words: "I only hear the
+first 2 bars which are overdub pass 2".
+
+**Mechanism.** Playback and the display read different sources. The display resolves every Active
+overdub pass from `loop.passes` (`Loop::copyEffectiveCommittedEventsInRange` ->
+`collectActiveCommittedChunkLists`, and the LCR prepared index). The audible reader never
+enumerates passes: it reads the published snapshot root plus, while that root is stale, a curated
+overlay assembled by `Loop::tryGatherPublishedSnapshotEventsInWindow`. The overlay's
+unpublished-pass allow-list enumerated `overdubSessionPassIds_`, `lastCommittedPassId_`,
+`box.queuedPassIds`, `box.appliedPassIds`, `box.constructionPassId` and the session-exit receipts.
+
+A wrapped pass belongs to none of those. `Track::commitOverdubWrap` journals it
+(`Loop::queueOverdubWrapSnapshotJournal`), which records it in `box.journaledPassIds` and pushes its
+change fragments onto `box.queuedWrapJournals`; `Loop::queueSessionExitSnapshot` then refuses to
+queue it again because `passAlreadyTracked` sees `journaledPassIds`. So once the session closed --
+which clears `overdubSessionPassIds_` -- pass 1 was in neither the root (the root predates the wrap
+and the journal's own publish is deferred behind the session exit) nor the overlay. When it was the
+only unpublished candidate the chunk list was empty, the gather returned false, and the merged
+view held empty; otherwise the overlay answered with the stop's pass alone. Either way pass 1 was
+silent for as long as the root lagged, without limit when the wrap publication parks.
+
+**Fix.** The overlay also enumerates `box.journaledPassIds` and each `queuedWrapJournals` entry's
+`wrapPassId`, so every pass the root does not carry is audible whether it is tracked as a queued
+pass, a construction, or a wrap journal. `journaledPassIds` alone would leave the fragments of a
+journal that has not started construction invisible; the queued-journal scan alone would miss a
+journal whose fragments were already consumed. Both are needed and both are deduplicated by
+`appendUniquePassId`.
+
+**Evidence.** Regression
+`test_stale_root_overlay_keeps_a_journaled_wrap_pass_after_session_close` (`test_loop_take_survival`)
+fails without the fix (`Expected 1 Was 0` for the wrapped pass in the window gather) and passes with
+it; full native 2,215 cases / 1 skipped / 0 failures at the fix commit, RAM1 locals 6,400. Device
+`captures/successor-wrap-46`: `Overdub wrap committed @ tick 6611` at 59.640 s, successor start
+62.142 s, the transport-stop retarget at 75.384 s with the successor live, and the retarget's
+`companion path stalled; raw pass only` at 76.217 s -- the overlay fix is what keeps the wrap pass
+audible across that window; the companion stall itself is DEC-070 task 5.11.
+
+**Related open finding (this session).** The same class of conflict appears without a transport
+stop: pausing a deferred predecessor in `CompanionHistory` and starting a successor leaves
+`preparedCompanionHistoryCanStep == false` while the companion work phase cycles
+Prewarmed<->Committed (frozen binding and command epoch both still match), so
+`beginPreparedCompanionHistory` never re-admits it and the job never retires. Reproducer:
+`test_adversarial_reentry_at_a_companion_checkpoint` (OpenSpec 5.5). This is the successor-start
+versus companion-preparation conflict, and it is the resource wedge the device reports as
+`Overdub stop refused: stop_job_pending phase=7 dest=1`.
 
 ## DEC-070 — A transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label its destination
 

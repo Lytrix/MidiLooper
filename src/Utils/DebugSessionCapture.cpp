@@ -709,6 +709,14 @@ SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t
                 (unsigned long)loopLengthTicks, (unsigned long)retainedEvents);
 }
 
+SC_MEM_ATTR void reentryDecision(const char* decision, uint32_t actionTick, uint64_t interval,
+                                 uint8_t slot, size_t queueDepth) {
+  emitCapPrintf(SC_FMT("#CAP,%lu,DIAG,reentry,%s,%lu,%lu,%lu,%lu\r\n"), (unsigned long)micros(),
+                decision != nullptr ? decision : "?", (unsigned long)actionTick,
+                (unsigned long)interval, static_cast<unsigned>(slot),
+                (unsigned long)queueDepth);
+}
+
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus) {
   emitCapPrintf("#CAP,%lu,DIAG,loop_rem,%s,%lu,%u,%u,%u,%u\r\n", (unsigned long)micros(), span,
