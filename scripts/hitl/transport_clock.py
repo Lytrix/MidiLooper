@@ -179,8 +179,17 @@ def stream_pattern_for_bars(
     gate_clocks: Optional[int] = None,
     wall_clock_tempo_bpm: Optional[float] = None,
     stream_start_monotonic: Optional[float] = None,
+    device_bar_probe: Optional[Callable[[], Optional[int]]] = None,
 ) -> tuple[int, int, int, dict[str, float]]:
-    """Send note pattern until target bar count from MIDI clock or wall-clock proxy."""
+    """Send note pattern until target bar count from MIDI clock or wall-clock proxy.
+
+    ``device_bar_probe`` returns the device's own latest ``BAR,<tick>,<index>`` index, and
+    is the authoritative end condition when it is available: pacing by host clock messages
+    or by wall-clock seconds both over-ran on device (11-34 bars for an 8-bar request),
+    while the device's own bar counter is exactly what the loop length is quantized from.
+    The stream ends once the device index has advanced by ``target_bars`` from its value at
+    stream start.
+    """
     if high_note < low_note:
         raise ValueError("high_note must be >= low_note")
     if step_clocks <= 0:
@@ -233,6 +242,12 @@ def stream_pattern_for_bars(
     seconds_per_clock: Optional[float] = None
     if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
         seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
+
+    device_bar_start: Optional[int] = None
+    device_bar_latest: Optional[int] = None
+    device_bar_relative_bars = 0
+    if device_bar_probe is not None:
+        device_bar_start = device_bar_probe()
 
     while phase_clock_count < target_clocks:
         if abort is not None and abort.check() is not None:
@@ -311,6 +326,19 @@ def stream_pattern_for_bars(
             if fixed_note is None and (phase_clock_count % pitch_cycle_clocks) == 0:
                 note_index = 0
 
+        if device_bar_probe is not None and (phase_clock_count % MIDI_CLOCKS_PER_BEAT) == 0:
+            probe = device_bar_probe()
+            if probe is not None:
+                # The baseline is captured lazily: at stream start the capture tail may not
+                # hold a BAR row yet, and a None baseline would disable the end condition
+                # for the whole stream (the 8-bar request then ran 10 bars).
+                if device_bar_start is None:
+                    device_bar_start = probe
+                device_bar_latest = probe
+                device_bar_relative_bars = probe - device_bar_start
+                if device_bar_relative_bars >= target_bars:
+                    break
+
         if (
             stop_press_note is not None
             and stop_press_trigger_clock is not None
@@ -351,6 +379,10 @@ def stream_pattern_for_bars(
         "max_abs_grid_jitter_clocks": float(max_abs),
         "mean_abs_grid_jitter_clocks": float(mean_abs),
         "stop_press_sent_during_stream": 1.0 if stop_press_sent_during_stream else 0.0,
+        # Device-authoritative end condition evidence (see device_bar_probe).
+        "device_bar_start": -1.0 if device_bar_start is None else float(device_bar_start),
+        "device_bar_latest": -1.0 if device_bar_latest is None else float(device_bar_latest),
+        "device_bar_relative_bars": float(device_bar_relative_bars),
     }
     return note_on_count, cc_count, phase_clock_count, timing
 
