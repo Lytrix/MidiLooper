@@ -86,7 +86,9 @@ and a source to keep consuming while the replacement prepares. The agreed order 
                      no merged/order mismatch is ever visible to playback
 measure       DONE   8 held ticks (one MIDI clock) / 7-tick publish latency vs a 768-tick bar
                      and the next 16th-note (48-tick) audibility edge
+2.5a gather   DONE   published-snapshot-root helper + fixtures (4)-(7) through the real gather
 2.4 slice 3   NOT REQUIRED on that measurement -- no second ordering algorithm
+2.5 matrix    OPEN   the view/bridge-path scenarios; owned by 2.5, not by 2.4
 ```
 
 Target model for slice 2:
@@ -137,6 +139,18 @@ numbering cannot read as 2.5 leapfrogging 2.4. Fixture order agreed with the own
 admitted into merged events, (2) same-tick NoteOff/NoteOn ordering, (3) the reanchor case, (4) wrap
 and loop-edge note, (5) source change mid-window, (6) long-loop window, (7) record-stop gap. The
 negative control stays permanently.
+
+**Status 2026-09-17:** (1)–(7) are landed. (1)–(3) compare a pair built from a synthetic window;
+(4)–(7) drive the production gather from a published snapshot root (`buildFixtureRoot` builds both
+the note and the event membership the gather reads; `assertPairMatchesSynchronousPathFromAnchor`
+anchors both consumers at the pair's own `cursorSeed`). (6) also pins the documented boundary: a
+windowed long-loop gather is not a full-loop pair, so the windowed stream is compared against an
+independently phase-sorted full-gather window instead. What remains of 2.5 is the view/bridge-path
+matrix (record stop, phase-zero wrap admission, pre-seal invalidation, rejected-On/later-Off,
+accepted-On/matching-Off, wrap-held closure, append-and-stop, the explicit deferred-stop trace,
+promotion before wrap, maximum phase advance, denied refill, three-buffer rotation, source-change
+preemption near handoff, source prep midway through two windows, second-source bridge replacement,
+coverage fault, layered slots, slot switch, first/second revision changes).
 
 ### Verification for this phase
 

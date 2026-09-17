@@ -2793,9 +2793,27 @@ own pick-up order (best next there: 5.5). Where it stands:
   incremental order update, is not required for 2.4**. Evidence: `test_continuous_capture` 67/67,
   `REENTRY_RED=1` 68/68, `ONLY_COMPANION=1` 1/1, `test_playback_prewarm` 173/173, full native **2,232 / 1 skipped /
   0 failures**, RAM1 variables 91,904 / code 425,496 / padding 488 / **locals 6,400**. Remaining before ticking 2.4: the same counters on device (5.3); 5.4 stays blocked.
-- **2.5a has two more fixtures left (unchanged).** `wrap + loop-edge note`, `source change mid-window`,
-  `long-loop window`, `record-stop gap`, plus the published-snapshot-root fixture helper those gathering
-  cases need. 2.5 itself still completes after 2.4.
+- **2.5a real-gather fixtures LANDED 2026-09-17; the view/bridge matrix is what remains of 2.5.**
+  `buildFixtureRoot` in `test_continuous_capture` now builds a published snapshot root carrying both
+  independent snapshot roots (note membership *and* the MIDI-event membership the playback gather
+  reads, mirroring the publisher: an Off at/beyond the loop length clamps to `loopLength - 1`, a wrap
+  note splits into head+tail with the same `NoteId`), and `assertPairMatchesSynchronousPathFromAnchor`
+  anchors both consumers at the pair's own `cursorSeed` so the comparison is about the pair rather than
+  about where each cursor started. The four owner-priority gathering fixtures exist: wrap + loop-edge
+  note, source change mid-window (hold, 8-tick latency, added row audible), long-loop window (the
+  documented `pairApplicable == false` boundary plus the windowed stream against an independently
+  phase-sorted full-gather window), and the record-stop publication gap (an empty gather publishes no
+  pair, then the session-exit root lands and the pair matches the synchronous path). Harness note:
+  `consumePairOverRange` starts at `fromTick + 1`, so a phase-0 row is never emitted by either
+  consumer; fixtures keep their plain note after tick 0. **Still owed for 2.5:** the view/bridge
+  scenarios — record stop, phase-zero wrap admission, pre-seal invalidation, rejected-On/later-Off,
+  accepted-On/matching-Off, wrap-held closure, append-and-stop, the explicit deferred-stop trace,
+  promotion before wrap, max phase advance, denied refill, three-buffer rotation, source-change
+  preemption near handoff, source prep midway through two coverage windows, second-source bridge
+  replacement, coverage fault, layered slots, slot switch, first/second revision changes. Evidence:
+  `test_continuous_capture` 71/71, `REENTRY_RED=1` 72/72, `ONLY_COMPANION=1` 1/1,
+  `test_playback_prewarm` 173/173, full native **2,236 / 1 skipped / 0 failures**, RAM1 unchanged
+  (variables 91,904 / code 425,496 / padding 488 / **locals 6,400**; test-only increment).
 
 **2026-09-17 — OpenSpec 5.12 / D8 interval-owned staged pass LANDED (DEC-072), and the 5.5
 `CompanionHistory` blocker is cleared.** A deferred job now owns its staged capture pass from its own
