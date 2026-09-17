@@ -5,6 +5,18 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 BAR probe visible at last: the device is already 3 bars in, and no BAR rows arrive
+during the stream.** After making the parser prefix-tolerant and instrumenting every per-track
+stats block, `bar-anchor-07` reports `record_device_bar_start = 3`, `record_device_bar_latest =
+-1`, `relative_bars = 0`. Two facts follow: the device's bar counter is at **3** when the record
+begins (so the host's note stream starts ~3 bars into the device's count, and a stream-relative
+target of 8 lands 10-11 bars later), and the probe sees **no BAR rows at all** during the stream -
+the capture snapshot the harness polls does not advance while it is streaming, so the device-bar
+end condition never fires and the stream falls back to its duration. The next step is to find out
+why the collector's snapshot is frozen during streaming (managed-capture follow path buffering),
+or to read the BAR rows from the session log file directly; the assertion is already truthful, so
+the run correctly fails `record_loop_length_mismatch` until then.
+
 **2026-09-17 the record-length assertion was vacuous (fixed).** `_verify_record_loop_length`
 accepted `actual == bar_aligned`, but the firmware's `final_length` *is* the bar-aligned
 quantisation of `raw_length`, so that clause was true for any raw length and the requested bar
