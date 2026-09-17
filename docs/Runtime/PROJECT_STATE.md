@@ -1,5 +1,25 @@
 # Project state (execution context)
 
+**2026-09-17 successor change task 5.5 CLOSED: the adversarial mid-grain reentry checkpoint set is
+complete and in the default gate (OpenSpec `successor-capture-reentry-unguarding`).** 5.5 was the only
+remaining host-only item of that change, the one DEC-072 / D8 directly unblocked, and the one still
+hiding coverage behind `REENTRY_RED=1`. The missing "after the raw-range stage" checkpoint is added at
+`CanonicalRewrite` (raw range sealed, canonical order built, canonical copy being rewritten, no staged
+pass yet), and one further checkpoint is added beyond the named set because the phase enum is **not**
+execution order: `PrepareTransfer` dispatches before `CanonicalTail` and its grain also stages the pass
+and takes the receipt, so that state is expressed as *the turn the job first owns its staged pass*
+(`test_adversarial_reentry_at_the_staged_pass_ownership_checkpoint`) — exactly the state a successor's
+`beginCapture` used to destroy. The `CompanionHistory` case is promoted into the default suite, so
+`REENTRY_RED` is gone (`ONLY_COMPANION=1` remains the focused single-case runner). The checkpoints are
+tight: each phase checkpoint is asserted by **equality**, and the ownership checkpoint asserts it pauses
+on `CanonicalTail`. Five checkpoints in total — `CanonicalOrder`, `CanonicalRewrite`,
+`CompanionHistory`, staged-pass ownership, `AtomicTransfer`. Evidence: `test_continuous_capture` 74/74,
+`ONLY_COMPANION=1` 1/1, `test_playback_prewarm` 173/173, full native **2,239 / 1 skipped / 0 failures**,
+`teensy41-capture-serial` SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488 / **locals
+6,400** (test-only increment), both `openspec validate --strict` checks valid. Remaining in that change:
+5.9 (the `hitl-content-verification` audibility proof), 5.11 on that run, 6.2 (a device session), then
+the 6.1 re-run and 6.3 closeout.
+
 **2026-09-17 task 2.5's real-gather parity fixtures landed (OpenSpec
 `resumable-midi-boundary-playback-maintenance`).** The 2.5a harness could compare the immutable
 `PreparedPlaybackPair` against the synchronous merged/order path only over a synthetic window, so the
