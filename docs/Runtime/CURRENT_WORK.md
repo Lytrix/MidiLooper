@@ -5,6 +5,24 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 pacing FIXED and verified; the successor device case is blocked by a firmware
+guard, not the harness.** [`deadline-pacing-01`](../../captures/deadline-pacing-01/session_20260917_133833.log)
+after a fresh flash: `record loop length (final ticks): 6144/6144 (raw 6380)`, **Result: PASS** -
+an 8-bar request now records an 8-bar loop, with the assertion that caught the 10-bar records
+still strict. Item 2 is closed.
+
+Successor-reentry device case: the probe and its oracle are implemented and the presses now fire
+from the main flow (a background thread's mido sends never reached the device - no
+`MIDI Button A` line), but the device never re-enters OVERDUBBING after the probe press.
+The reason is a firmware gate, not the harness: `TrackManager::startOverdubbingTrack`
+(`src/TrackManager/TrackManagerCaptureQueue.cpp:212`) returns early while
+`track.hasPendingDeferredOverdubStop()`, logging "overdub admission deferred while finalization
+is pending". That manager/Button-A successor guard is the one task 2.3 deliberately left in
+place, so the *button* path cannot open a successor interval while the predecessor finalizes -
+even though the Track-level admission the native tests exercise does permit it. The probe will
+be the device gate for that case the moment the guard is removed (the next RC); nothing further
+is owed on the harness side.
+
 **2026-09-17 the over-run is per-step sleep drift, not a bar-grid problem - and the BAR signal
 is not available during a take.** Two measurements closed this out:
 
