@@ -5,6 +5,37 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 bridge tail profiled: it is cadence-bound, not work-bound.** Goal step 3, from
+[`c3-derived-reserve-01`](../../captures/c3-derived-reserve-01/session_20260917_124359.log) -
+the deferred Playing stop, `ODUB,stop,bridge_base` 54.929612 s to `ODUB,stop,bridge_ready`
+55.997826 s = **1,068 ms**, profiled from the firmware's own `DIAG,stop_grain` /
+`DIAG,stop_phase` telemetry (`stopGrainTiming` reports `startUs`/`endUs` per grain, so the
+grain duration is `endUs - startUs`):
+
+| phase (`PendingStopPhase`) | grains | grain work | max grain | phase span | crossed |
+|---|---|---|---|---|---|
+| 5 `CanonicalTail` | 11 | 1.1 ms | 115 us | 18 ms | 5 |
+| 7 `CompanionHistory` | 4 | 0.5 ms | 204 us | 8 ms | 0 |
+| 8 `UndoCollection` | 3 | 0.2 ms | 82 us | 2 ms | 0 |
+| **9 `CompanionBridge`** | **466** | **65.4 ms** | 314 us | **1,057 ms** | **29** |
+| 10 `AtomicTransfer` | 1 | 0.2 ms | 201 us | - | 0 |
+| 11 `DeferredCleanup` | 5 | 0.6 ms | 394 us | 6 ms | 1 |
+| total | 490 | **68.0 ms** | | 1,108 ms | 35 |
+
+So **94% of the tail is idle between grains**: the bridge phase issues 466 grains of ~140 us
+each at a **1.2-3.2 ms cadence** (roughly one grain per main-loop turn), i.e. ~300-800
+grains/s against a ~7,000 grains/s work capacity. `CompanionBridge` owns 466 of the 490
+grains and 65.4 ms of the 68.0 ms of work; the firmware's own deadline counter marks 29 of
+them as crossing slack (~6%). `CompanionHistory` is now **4 grains** - C3's work shaping is
+directly visible, since the same stop previously paid ~2,030 `Phase::Trim` units there.
+
+Conclusion for the DEC question: the remaining stop-to-final-output tail is **not** the
+bridge map/compile algorithm, so an optimization DEC would be about the deferred-stop
+**owner's turn cadence / per-turn grain budget**, and it must be argued against the
+MIDI-boundary budget (grains run after MIDI service, must not stack, and `overflow_free` is
+a standing gate). That is a scheduling decision with a deadline analysis, not a knob tweak;
+no DEC is proposed yet - this profile is the input to one.
+
 **2026-09-17 HITL oracle repaired: the deferred stop is now first-class in the assertions.**
 Host-side only; no firmware change. The firmware was ahead of its oracle: every deferred
 overdub stop looked like a firmware regression.
@@ -2400,10 +2431,14 @@ memory work. In this order:
   pending window) plus an observation that the predecessor is pending while the successor is
   live. The canonical second overdub is sequential, and forcing a zero delay makes the
   harness abort on its own precondition. Native covers both branches.
-- **3. Bridge map/compile profiling — NOT STARTED.** After the oracle is trustworthy,
-  measure the remaining stop -> `bridge_ready` tail (~1.07 s after `bridge_base`; the
-  companion preparation is no longer the dominant term) and decide whether it warrants its
-  own optimization DEC.
+- **3. Bridge map/compile profiling — DONE (profile below).** The 1.07 s tail is
+  **cadence-bound, not work-bound**: 466 of 490 deferred-stop grains are the
+  `CompanionBridge` phase, they cost only 65.4 ms of the 1,068 ms window, and they issue at a
+  1.2-3.2 ms cadence (~one grain per main-loop turn). `CompanionHistory` is down to 4 grains,
+  so C3's work shaping is visible in the profile. Any optimization would target the owner's
+  turn cadence/per-turn grain budget and must be argued against the MIDI-boundary budget -
+  that is the DEC question, and no DEC is proposed until the successor-reentry device case
+  lands.
 - **Explicitly not pursuing:** C4 (device-wide deferred-stop working set), event-horizon
   ceiling reduction, seal-phase reserve.
 
