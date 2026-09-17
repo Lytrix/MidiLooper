@@ -2620,6 +2620,22 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — transport-stop retarget re-route (DEC-070, implemented + device-verified; openspec
+5.3/5.7/5.8).** The user's stuck state machine after the HITL runs was a deferred job admitted for
+PLAYING, retargeted to Stopped by `stopOverdubbingToStopped` and left on the PLAYING phase path: its
+companion work is bound to the pre-stop transport command epoch, so every grain denied silently, the
+job parked in `CompanionHistory` (`Overdub stop refused: stop_job_pending phase=7 dest=1`) and it kept
+`captureStopOwner`, the frozen staging role and its session-exit receipt — every later stop refused
+until reboot. `requestDeferredOverdubStopToStopped` now re-routes that job on the same edge: retire the
+companion/undo estimates a STOPPED-admitted job never contracts, drop the half-prepared companion
+horizon, continue at `AtomicTransfer` and retire through deferred cleanup. Native
+`test_transport_stop_retarget_retires_a_midflight_playing_job` fails without it; full native 2,213 /
+1 skipped / 0 failures; RAM1 locals 6,400. Device `captures/successor-wrap-40`: `Transport stopped`
+74.873 s with the successor's job pending, `Reentry released` 77.053 s, then two admitted enter/stop
+cycles (97.1/99.2 s, 105.6/107.7 s) with no refusal. Diagnosis instrumentation (one-shot
+`Deferred stop stalled: <reason>`, `Overdub stop refused: <resource>` + parked phase) stays in place.
+
+
 **2026-09-17 — the wrap is the third owner of the slot's canonical preparation (DEC-069; hardening
 landed, revision gate awaiting the owner's choice).** The user's manual three-overdub session
 [`captures/session_20260917_172651.log`](../../captures/session_20260917_172651.log) fails on the

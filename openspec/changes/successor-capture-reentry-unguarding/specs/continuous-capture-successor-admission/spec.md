@@ -140,6 +140,18 @@ stale playback window.
   playback window
 - **AND** the successor keeps its accepted input and its own state
 
+#### Scenario: Transport Stop retargets a job that already entered the PLAYING-only preparation
+
+- **WHEN** transport Stop arrives after the pending job has passed the transfer
+  decision point and entered the PLAYING-only preparation (canonical tail,
+  companion history, undo collection or companion bridge)
+- **THEN** the job leaves that branch on the same edge, retires its unused
+  companion and undo estimates, commits its already-staged prepared pass on the
+  STOPPED route and reaches deferred cleanup
+- **AND** it releases the stop owner, the frozen staging role and its session-exit
+  receipt, so a later stop of the live interval is admitted again
+- **AND** it never parks in a phase whose inputs the stopped transport invalidated
+
 ### Requirement: Admission decisions are observable without a logging flood
 
 The system SHALL record compact transition and aggregate evidence for reentry —

@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-070](#dec-070--a-transport-stop-retarget-must-re-route-a-mid-flight-deferred-stop-job-not-only-re-label-its-destination) | 2026-09-17 | Transport-stop retarget parks a mid-flight deferred stop job in `CompanionHistory` and wedges the slot | Confirmed on device; fix to implement |
+| [DEC-070](#dec-070--a-transport-stop-retarget-must-re-route-a-mid-flight-deferred-stop-job-not-only-re-label-its-destination) | 2026-09-17 | Transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label it | Accepted — implemented; native case fails without it; device PASS [`successor-wrap-40`](../captures/successor-wrap-40/session_20260917_195608.log) |
 | [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented; native green; device PASS [`successor-wrap-36`](../captures/successor-wrap-36/session_20260917_193344.log) |
 | [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implemented; six native cases pass, device retirement proof PASS [`successor-reentry-27`](../captures/successor-reentry-27/session_20260917_163416.log) |
 | [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — device START/STOP proof PASS [`successor-reentry-26`](../captures/successor-reentry-26/session_20260917_161119.log) |
@@ -88,7 +88,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-070 — A transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label its destination
 
 **Date:** 2026-09-17
-**Status:** Confirmed on device; fix not yet implemented. Diagnostics landed.
+**Status:** Accepted — implemented and device-verified (`captures/successor-wrap-40`: the retargeted job retired 2.2 s after the transport stop; the slot stays usable across repeated enter/stop cycles).
 **Owner:** `Track::requestDeferredOverdubStopToStopped` / `Track::stopOverdubbingToStopped` (the retarget), `Track::processDeferredOverdubStopGrain` (the phase routing), `TrackPreparedStopCommit::stepPreparation` / `beginPreparedCompanionHistory` (the parked phase)
 
 **Report.** After the HITL runs the track never returns to STOPPED: the display shows PLAYING with the cursor stopped, a record/overdub press drops it to STOPPED, and starting playback enters OVERDUBBING that can no longer be exited. Reproduced on the device by pressing record/overdub (`Overdub stop refused: stop_job_pending phase=7 dest=1 closure=0 recycle_owner=0 recycle_started=0 undo_ready=0`), and by the pre-diagnostic build (`Overdub stop deferred: deferred/frozen admission role is occupied` on every press). The slot only recovers with a reboot.
@@ -108,7 +108,19 @@ Both stall sites used to return without telemetry, so neither the `#CAP` tiers n
 named anything; the capture tiers were also shed during the runs, which is why this survived several
 sessions.
 
-**Fix (to implement).** Make the retarget re-route as well as re-label: when a job that has already
+**Implemented (2026-09-17).** `Track::requestDeferredOverdubStopToStopped` now re-routes on the same
+edge: when a job retargeted to Stopped has passed the transfer decision point (phase
+`CanonicalTail`..`CompanionBridge`) it retires the companion/undo estimates a STOPPED-admitted job
+never contracts, drops the half-prepared companion horizon (so the atomic transfer takes the STOPPED
+commit path instead of consulting a verification that can no longer hold) and continues at
+`AtomicTransfer`, which commits the already-staged prepared pass and retires the job through deferred
+cleanup. Native: `test_transport_stop_retarget_retires_a_midflight_playing_job` (fails without the
+re-route, `Expected 10 Was 5`); full native 2,213 cases / 1 skipped / 0 failures; RAM1 locals 6,400.
+Device: `captures/successor-wrap-40` — `Transport stopped` 74.873 s with the successor's job pending,
+`Reentry released` 77.053 s (pre-fix builds parked it and needed a reboot), and repeated
+enter/stop cycles afterwards with no refusal.
+
+**Fix, as specified before implementation.** Make the retarget re-route as well as re-label: when a job that has already
 passed the `PrepareTransfer` decision point is retargeted to Stopped, it must skip the remaining
 PLAYING-only preparation (companion history, canonical tail, companion bridge) and continue on the
 Stopped route's own path (`retireSkippedCompanionPreparation` -> `AtomicTransfer` ->
