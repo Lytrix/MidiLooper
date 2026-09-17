@@ -261,6 +261,17 @@ class ReentryMarkerTests(unittest.TestCase):
                                           timeout_s=0.01, poll_s=0.0)
         self.assertIsNone(missing)
 
+    def test_await_marker_falls_back_to_a_snapshot_walk(self) -> None:
+        # The managed-capture follow collector had no `find_line` at first; a silent miss sent
+        # the probe down its degraded path (successor-reentry-21).
+        class SnapshotOnlyCollector:
+            def snapshot(self):
+                return ["[1.000] [INFO] [TRACK] Reentry window open slot=0"]
+
+        seen = _await_collector_marker(SnapshotOnlyCollector(), "Reentry window open",
+                                       baseline=0, timeout_s=0.2, poll_s=0.0)
+        self.assertIsNotNone(seen)
+
 
 class SuccessorProbePressScheduleTests(unittest.TestCase):
     """The probe's two presses are scheduled in their own process (hitl.probe_press).
