@@ -5,6 +5,52 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 pool accounting landed via linker wrappers; the hang is a record-start
+reservation with the pool already 84% full.** The `--wrap` route works: `-D
+EXTERNAL_POOL_WRAP=1` plus `-Wl,--wrap=extmem_malloc,--wrap=extmem_free` in
+`env:teensy41-capture-serial`, with `__wrap_extmem_malloc/__wrap_extmem_free` in
+`src/Utils/ExternalPoolAccounting.cpp`. It costs **no call-site code** — the ITCM grew
+528 bytes and padding absorbed all of it, so the FlexRAM bank count is unchanged
+(`free for local variables` 6720 → **6688**). `extmem_free` takes no size, so the
+wrapper shadows pointer → bytes in an 8192-entry table in RAM2 (64 KB; RAM2 variables
+51360 → 116896) and **counts** anything it cannot shadow rather than silently dropping
+it — a first cut at 512 entries saturated immediately (`untracked=2047 unknown=1909`),
+which is why the table is large and why both counters are on every line. Emitted every
+5 s straight to serial (`MemoryMonitor::logExternalPoolAccounting`), deliberately *not*
+gated on transport idle.
+
+**Timeline, 10-bar record plus overdub on scratch track 4 slot 1
+([`hang-8bar-memacct-01`](../../captures/hang-8bar-memacct-01/session_20260917_100202.log)):**
+
+| point | pool live | blocks | internal heap free |
+|---|---|---|---|
+| idle before the test | 6836 KB of 8182 (**84%**) | 522 | 172 KB |
+| record start (arm + clear) | **8095 KB (99%)** | 637 | **4 KB** |
+| through the 10-bar record | 8095 → 8137 KB (flat) | 669 | 4 KB |
+| overdub start → `FATAL` | — | — | — |
+
+So the record phase does **not** leak: `live` is flat while `alloc` climbs 8500 → 9987 KB
+and `freed` 404 → 1849 KB, i.e. heavy churn at the ceiling. The damage is done at
+**record start**, which reserves ~1.26 MB of pool and ~168 KB of heap on top of an
+already 84%-occupied pool. The **overdub start** is then the first allocation that
+cannot be served, `ExternalMemoryFirstAllocator` hits `abort()`, and the device goes
+silent with no crash record.
+
+Two independent defects fall out of this, in priority order:
+
+1. **`abort()` turns a transient allocation failure into an unrecoverable silent hang.**
+   Both pools exhausted is a recoverable condition for a looper — drop the operation,
+   log it, keep the transport alive. This is what makes the failure mode so bad, and it
+   is fixable without touching the footprint at all.
+2. **Idle occupancy leaves no headroom.** 84% of the pool is live at rest (prewarmed
+   staging, view sets, snapshot slabs per slot), so a long record cannot fit. Either the
+   steady-state footprint comes down or the record start needs less.
+
+Calibration caveat: absolute `live` over-reports against the core's own stats
+(`live=6836 KB` at a point where `[Memory]` reports `used=4661 KB`), while
+`untracked`/`unknown` are 0, so the accounting is internally consistent but the absolute
+figure is not yet trustworthy — read **deltas**. Native 2192 cases unchanged.
+
 **2026-09-17 external-pool pseudo-counting: design sound, blocked by zero ITCM headroom.**
 To see what grows during a long record plus overdub without probing the pool, the
 pseudo-counting route is the right one — the pool cannot be queried from the transport

@@ -12,6 +12,7 @@
 #include "LoopEventStore.h"
 #include "PersistenceQueue.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/ExternalPoolAccounting.h"
 #include "Utils/MemoryPressurePolicy.h"
 
 #include <smalloc.h>
@@ -144,6 +145,23 @@ void logStatus(bool includeExternalPoolUsage) {
   if (isLowMemory(20 * 1024)) {
     logger.log(CAT_GENERAL, LOG_WARNING, "[Memory] Low heap - consider reducing undo/loops");
   }
+}
+
+void logExternalPoolAccounting(const char* phase) {
+  const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
+  Serial.printf_P(
+      PSTR("[Memory] ext phase=%s live=%luKB high=%luKB blocks=%lu/%lu alloc=%luKB freed=%luKB "
+           "untracked=%lu unknown=%lu heap_free=%luKB heap_min=%luKB\n"),
+      phase != nullptr ? phase : "-", static_cast<unsigned long>(c.liveBytes / 1024),
+      static_cast<unsigned long>(c.highWaterLiveBytes / 1024),
+      static_cast<unsigned long>(c.liveBlocks),
+      static_cast<unsigned long>(c.highWaterLiveBlocks),
+      static_cast<unsigned long>(c.cumulativeAllocatedBytes / 1024),
+      static_cast<unsigned long>(c.cumulativeFreedBytes / 1024),
+      static_cast<unsigned long>(c.untrackedBlocks),
+      static_cast<unsigned long>(c.unknownFrees),
+      static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
+      static_cast<unsigned long>(getInternalHeapMinEverFreeBytes() / 1024));
 }
 
 void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,

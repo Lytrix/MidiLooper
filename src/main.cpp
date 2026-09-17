@@ -931,6 +931,20 @@ void loop() {
     }
   }
 
+#if defined(SESSION_CAPTURE)
+  // External-pool accounting every 5 s. Bookkeeping only — no pool walk — so unlike
+  // the block above it is safe while the transport runs, and it is deliberately not
+  // gated on !timingCriticalTrackActive: an 8-bar record plus overdub exhausted the
+  // pool with no trend visible at all (2026-09-17). `logStatus(true)` cannot be used
+  // here; that walk costs ~593 ms and loses external MIDI clock.
+  static uint32_t lastExternalAccountingLog = 0;
+  constexpr uint32_t EXTERNAL_ACCOUNTING_INTERVAL_MS = 5000;
+  if (now - lastExternalAccountingLog >= EXTERNAL_ACCOUNTING_INTERVAL_MS) {
+    lastExternalAccountingLog = now;
+    MemoryMonitor::logExternalPoolAccounting("tick");
+  }
+#endif
+
   // End performance monitoring for this loop iteration
   // PerformanceMonitor::globalPerformanceMonitor.endLoop();
   

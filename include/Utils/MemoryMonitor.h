@@ -69,6 +69,20 @@ void resetInternalHeapWatermark();
 void logStatus(bool includeExternalPoolUsage = false);
 
 /**
+ * @brief Log O(1) external-pool accounting plus the internal-heap counters.
+ *
+ * Reads bookkeeping only — it never touches the pool header chain, so unlike
+ * `logStatus(true)` it is safe to call from the transport thread while PLAYING or
+ * OVERDUBBING. The numbers come from `ExternalPoolAccounting`, fed by linker
+ * wrappers around `extmem_malloc`/`extmem_free`. Read the *change* between samples,
+ * not the absolute value, and check `untracked`/`unknown` are zero before trusting
+ * `live`.
+ *
+ * @param phase Short tag for the call site (for example "tick").
+ */
+void logExternalPoolAccounting(const char* phase);
+
+/**
  * @brief Log heap, PSRAM, pool, and active-loop storage stats at a record/overdub milestone.
  * @param addedNoteOns Total note-ons stored this record/overdub pass.
  * @param loopEventCount Events in the active loop vector (all types).
