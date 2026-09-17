@@ -14,7 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — user-directed; device gates open |
+| [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — user-directed; work shaping landed, reserve shaping partial |
+| [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — validated on device |
 | [DEC-063](#dec-063--protected-stop-undo-publication-and-bounded-reclamation) | 2026-09-14 | Protected stop transaction preserves feedback trimming; latest deferred Undo/Redo wins per Track | Accepted — implementation authorized; validation gates remain open |
 | [DEC-062](#dec-062--provisional-ranked-preparation-allowance) | 2026-09-14 | Allow 6240 ranked-preparation grains for integration; realtime reservations determined with HITL | Accepted — provisional; validation/HITL gates remain open |
 | [DEC-061](#dec-061--stable-raw-tick-ordering-after-create) | 2026-09-14 | Create appends then stably sorts raw ticks, including empty payloads | Accepted — explicit semantic correction; task 2.3 and validation/HITL gates remain open |
@@ -78,7 +79,73 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-066 -->
+<!-- Append new entries below (newest first). Next ID: DEC-067 -->
+
+## DEC-066 — Per-owner capacity derivation for the stop working set, under the existing ceilings
+
+**Date:** 2026-09-17
+**Status:** Accepted — user-directed ("take C3 as demand-shaped capacity per owner under the existing 2,048 maximum, never a smaller fixed cap"); work shaping landed, reserve shaping partially landed
+**Owner:** `LoopPlaybackRuntime` playback/capture working set; `Loop` prepared companion history and prepared companion rows
+
+**Context:** Six owners were reserving the *same* 2,048-row/event horizon although
+their worst-case demands have six different determinants. That both over-reserves
+(the arm's ~1.47 MB) and over-processes (`Phase::Trim` popped one unused row per
+quantum unit, ~2,030 units for a full horizon with a sparse overdub). The
+determinants were measured from the code before this decision (each citation below
+is the enforcing check, not a comment).
+
+**Decision:** each owner's capacity is derived from *its own* worst-case bound,
+clamped to the existing architectural ceiling; no owner gets a new fixed cap below
+its ceiling.
+
+| owner | ceiling | derived worst-case bound | enforced at | known |
+|---|---|---|---|---|
+| `RuntimeCaptureCompanions` rows | 2048 rows | eligible frozen transforms (Delete / Update-Length only) ≤ distinct occupied source note identities | `RuntimeCaptureCompanions.cpp` begin/step | punch-out |
+| `Loop::preparedCompanionHistory_` | cumulative `editPasses + published companions` ≤ 2048 rows | per interval: the same transform bound plus the canonical history rows; per interval the **size** is the actual demand | `LoopPreparedCompanionHistory.cpp` begin guards | history at arm, increment at punch-out |
+| `RuntimeCanonicalPassInputs` | 2048 events | `max(max_i raw_i, F, Σ effective_i + e_F)`, and `C >= P` for the descriptor arrays, `R <= 2048` for the history pointers | `RuntimeCanonicalPassInputs.cpp` step/append | Σ effective and P at arm; `F`/`e_F` only at punch-out |
+| `RuntimeCompanionPasses` | 2048 events | `Σ effective_i + e_F` (the frozen capture is appended as a final pass) | `RuntimeCompanionPasses.cpp` aggregate check | per pass during preparation; total at punch-out |
+| `RuntimeCompanionApply` | 2048 events | **per pass** `max_i (e_i + created_i)`, never the aggregate | `RuntimeCompanionApply.cpp` begin/canAppend | per pass during preparation |
+| `Reconstruction` / `SpanWalk` / `NotePairLookup` / `BridgeMap` | `2C` notes / `C` flags / `C` lane / 2048 records | per pass, driven by one apply candidate; spans/notes ≤ the pass's events, map records = applied rows | each owner's `count > capacity` check | per pass during preparation |
+| playback views / bridges / staging | 2048 events | loop content **plus one frozen interval inside the same horizon**, not additive; staging = one interval ≤2048 events and ≤128 open reservations | `RuntimePlaybackView.cpp`, `RuntimePlaybackBridge.cpp` | arm for content, punch-out for the interval |
+
+A single shared "interval horizon" constant is therefore wrong, and the
+event-horizon owners cannot shrink below their ceiling soundly, because their
+interval term *is* the staging admission bound and their reserve is taken at the
+arm - before the interval exists.
+
+**Pinned work rule (landed):** preparation must never spend units proportional to
+the *granted* horizon. `Loop::beginPreparedCompanionHistory` sizes the working row
+vector to this interval's actual demand (allocation-free, inside the grant) so
+`Phase::Trim` has nothing to pop, and `Phase::RecycleGrow` restores the horizon in
+one batched resize instead of one row per quantum unit. Fit is checked against
+**capacity**, never the current size, so a later larger interval is still
+admissible against the same reserve. Guarded by
+`test_companion_history_prep_units_scale_with_demand_not_reserve`, which prepares one
+companion row over a 512-row grant and requires Ready inside 32 quantum units (the
+old walk needed ~511).
+
+**Pinned reserve rule (partially landed):** the per-interval increment of the
+row-horizon owners may be sized from the *actual* sealed demand where it is known
+before the timing-sensitive work; the canonical/cumulative side keeps its ceiling.
+Two consequences the implementation must respect:
+1. `RuntimeCaptureCompanions`' admission check must bound the **eligible** rows it
+   will produce (Delete/Length transforms), not the whole frozen change vector -
+   the vector also carries the interval's `Add` entries, which become the capture
+   pass and never become companion rows. Until that check is fixed, a smaller
+   granted capacity could deny a stop whose captured engine is dense but whose
+   transform set is small.
+2. Sizing a *reserve* at the seal (punch-out) makes that reserve fallible at the
+   stop. A reserve failure must therefore degrade the companion path, never refuse
+   the audible stop; the audible state transition is already independent of the
+   deferred work.
+
+**Not in this decision:** reducing the staging admission bound itself (a
+user-visible interval ceiling), and C4's device-wide deferred-stop working set
+(explicitly not taken).
+
+**References:** [CURRENT_WORK C3 baseline and per-owner analysis](Runtime/CURRENT_WORK.md),
+[ExecutionBounds — record-arm reservation](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17),
+DEC-065 (admission-provisioned staging).
 
 ## DEC-065 — Capture staging is provisioned by capture admission, not by boot
 

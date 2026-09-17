@@ -5,6 +5,44 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 C3 increment 1 LANDED: per-episode work shaping in the prepared companion
+history (DEC-066).** The measured per-owner capacity analysis is in
+[DECISION_LOG DEC-066](../DECISION_LOG.md) - six distinct determinants, so one shared
+"interval horizon" constant is provably wrong, and the event-horizon owners cannot shrink
+below their ceiling soundly because their interval term *is* the staging admission bound
+and their reserve is taken at the arm. What landed is the work half, which needed no
+capacity change:
+
+- `Loop::beginPreparedCompanionHistory` now sizes the working row vector to this interval's
+  actual demand (`work.rows.resize(work.targetCount)`), inside the same grant, so
+  `Phase::Trim` has nothing to pop. Previously each stop paid
+  `grantedCompanionCapacity - actualCompanionRows` quantum units of pure trimming - about
+  **2,030 units**, i.e. ~64 prep turns at `kDeferredStopPreparationQuantum = 32`.
+- The row-fit check is now **capacity**-based (`work.rows.capacity() < historyCount +
+  rows.size()`) instead of size-based, so a later, larger interval is still admitted against
+  the same reserve after a small interval shrank the size.
+- `Phase::RecycleGrow` restores the usable horizon with one batched resize instead of one
+  row per quantum unit.
+
+Evidence. New fixture
+`test_companion_history_prep_units_scale_with_demand_not_reserve` (`test_playback_prewarm`)
+prepares one companion row over a **512-row grant** and requires `Ready` inside 32 quantum
+units, then asserts the grant is untouched for a later interval; the old walk needed ~511
+units, so the bound is a real regression guard. Full native suite:
+**2194 cases, 2 failed (pre-existing), 1 skipped, 2190 succeeded** - the case count moved by
+exactly the one fixture added. Device
+([`c3-trim-shaping-01`](../../captures/c3-trim-shaping-01/session_20260917_123329.log),
+rebuilt and flashed): **0 `FATAL`, 0 `#MEM_DENIED`, 0 `#MEM_EXT_REFUSED`**, overdub content
+verified (16/16 on/off, SEVT `count_ok/span_ok/bars_ok`), and both display checks pass
+(`overdub_ok=True`, `transport_ok=True`).
+
+**Honest gap in this increment:** that device run took the *transport-stop* path
+(`OVERDUBBING -> OVERDUB_STOPPING -> STOPPED`), so it did **not** exercise the deferred
+overdub-to-PLAYING preparation and therefore gives no before/after on the
+stop -> `bridge_base` (220 ms) / `bridge_ready` (1127 ms) baseline. The latency win is
+proven at the unit level (fixture) and still needs a run that takes the deferred Playing
+path; that measurement, plus the reserve-shaping half of DEC-066, is the remaining C3 work.
+
 **2026-09-17 C3 baseline pinned (before any capacity shaping).** Three facts the
 demand-shaped-capacity decision and its device comparison must build on, all verified from
 the step-E end-to-end log:
