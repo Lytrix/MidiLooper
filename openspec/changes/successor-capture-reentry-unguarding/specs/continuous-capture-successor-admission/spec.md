@@ -107,6 +107,31 @@ completion or cleanup SHALL NOT clear, retarget or consume a successor's live st
 - **AND** A's original audible NoteOff is retained exactly once and cannot terminate
   B's new note
 
+### Requirement: A staged capture pass is owned by the interval that staged it
+
+The producer's staged (pending) capture pass SHALL belong to exactly one interval, and
+opening another interval's capture on the same loop SHALL NOT discard it. A successor
+interval's capture start, stop or wrap SHALL leave a predecessor's staged pass intact
+until that predecessor's own terminal transfer consumes it, and each interval SHALL be
+able to stage its own pass when its terminal transfer needs it.
+
+#### Scenario: A successor opens its interval while the predecessor is finalizing
+
+- **WHEN** the predecessor's deferred job has staged its capture pass and the successor
+  starts capturing on the same loop
+- **THEN** the predecessor's staged pass still exists and the predecessor's companion
+  preparation can still be admitted
+- **AND** the predecessor's job reaches its own terminal transfer and retires
+- **AND** neither interval's accepted rows, pending notes, reservations or interval
+  identity are changed by the other's capture start
+
+#### Scenario: A successor moves its held note across loop end while the predecessor finalizes
+
+- **WHEN** the live successor commits a wrap pass while the predecessor's job is still
+  pending
+- **THEN** the predecessor's staged pass is not consumed or discarded by that wrap
+- **AND** the successor can still stage its own pass at its own terminal transfer
+
 ### Requirement: Superseded or diverged publication never selects a stale window
 
 When an interval's recorded causal predecessor is no longer the published root, the
