@@ -5,6 +5,69 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 HITL oracle repaired: the deferred stop is now first-class in the assertions.**
+Host-side only; no firmware change. The firmware was ahead of its oracle: every deferred
+overdub stop looked like a firmware regression.
+
+Four oracle defects, all in the host, all now fixed:
+
+1. `_effective_transition_actual` required the direct `OVERDUBBING -> PLAYING` edge, so the
+   legitimate deferred shape counted as zero stops. It now sums the direct edge with the
+   deferred completion hop (`OVERDUB_STOPPING -> PLAYING`); each completed stop produces
+   exactly one of the two shapes.
+2. `_pair_overdub_sessions` collected only `OVERDUBBING -> PLAYING/STOPPED` as an overdub
+   stop, so a deferred stop left the phase session open - and `missing_phase_boundaries`,
+   `overdub_first_note_missing` and a zero overdub note-on count all followed from that one
+   gap. It now also accepts `OVERDUBBING -> OVERDUB_STOPPING` (the interval's last admissible
+   input, and the earliest matching stop) and `OVERDUB_STOPPING -> PLAYING/STOPPED`.
+3. `_extract_overdub_memory_note_count` matched the direct-edge marker string only.
+4. The firmware reports one track state change from **two observers** (the Track state
+   facade and the logger hook), so every `ST,Track` edge appears twice within microseconds.
+   Counting both doubled every transition row (`PLAYING->OVERDUBBING: 4` for two real
+   entries) and, worse, let the phase pairing bind a successor interval's start to the
+   predecessor's stop - which manufactured a bogus second-overdub window and a false
+   `second_overdub_out_of_range_notes` firmware contradiction. `hitl.serial.protocol` now
+   exposes `track_transitions()`, collapsing an identical `(from, to)` edge that repeats
+   inside 5 ms, and both the counters and the phase pairing read from it.
+
+Wall-clock proxy: the proxy cannot predict the device's own bar grid, so a requested bar
+count is not an authoritative length there. The runner records `transport_timing_source`;
+when it is `wall_clock_proxy`, a longer bar-aligned length is reported
+(`record_loop_length_proxy_timed` timing warning) instead of raised as
+`record_loop_length_mismatch`. Without the proxy the strict check is unchanged, and a
+non-bar-aligned length is a mismatch in both modes.
+
+Evidence:
+- `scripts/test_capture_transitions.py` gains five regression tests (deferred hop counting,
+  deferred phase pairing, immediate pairing unchanged, proxy-timed length reported,
+  non-bar-aligned still rejected): **26/26 pass**; `test_hitl_serial_timing` 30/30 and
+  `test_hitl_transport_reset` 25/25 stay green.
+- Device [`oracle-fixed-01`](../../captures/oracle-fixed-01/session_20260917_125305.log):
+  **Result: PASS**. `OVERDUBBING->PLAYING: 1 (ST 0, min 1)` - the deferred hop counted; the
+  overdub phase now counts **16/16** notes (was 0/0); the 9,216-tick proxy-paced length is a
+  report, not a mismatch; the deferred stop, SEVT content, cleanup and both display checks
+  pass. The only remaining note is the advisory `overdub_first_note_too_late` warning
+  (19 clocks against 16 with the BAR bump) - a host stream/ST skew, not a failure.
+- Replayed on `successor-reentry-01`: `PLAYING->OVERDUBBING` 4 -> 2, effective
+  `OVERDUBBING->PLAYING` 2, and the second overdub pairs to its own window.
+
+**Successor-reentry device case: still not covered, and the reason is now precise.** The
+canonical second overdub is *sequential*: in [`successor-reentry-01`](../../captures/successor-reentry-01/session_20260917_125433.log)
+the predecessor stops at 683.06 s and the successor starts at 691.69 s (8.6 s later, with the
+canonical post-stop undo/redo in between), so it does **not** overlap the predecessor's
+~1.18 s deferred window. Forcing the overlap with `--second-overdub-start-delay-bars 0
+--second-overdub-start-delay-beats 0` made the harness abort on its own sequencing
+precondition ("second overdub transition not confirmed") before the device emitted the ST
+edges ([`successor-reentry-02`](../../captures/successor-reentry-02/session_20260917_125734.log),
+firmware clean: 0 FATAL / 0 denial / 0 refusal, device alive). The overlapping case
+therefore needs a purpose-built sequence - press the successor start ~200-400 ms after the
+predecessor's stop, then stop the successor inside its own pending window to reach the
+denied-stop branch - plus an observation that the predecessor is still pending while the
+successor is live (`ODUB,stop,*` stages overlapping a later `OVERDUBBING` interval, and the
+`!STOP_STATUS queue=depth/capacity` line). That is the next harness increment; the native
+tests already cover both branches (`test_button_a_successor_stop_denied_until_deferred_role_available`,
+`test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive`).
+
 **2026-09-17 C3 increment 2 LANDED and device-measured: the companion-row reserve is derived
 from the loop, and the deferred stop is twice as fast to its prepared window.** The reserve
 half of DEC-066, plus the measurement increment 1 could not get (that run took the
@@ -2323,6 +2386,26 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ---
 
 ## Now implementing
+
+**2026-09-17 — HITL oracle repair RC (user-directed), then the bridge tail.** C3/DEC-066 is
+closed as validated, so the next priority is trustworthy device evidence rather than more
+memory work. In this order:
+
+- **1. Oracle repair — LANDED.** Deferred stop (`OVERDUBBING -> OVERDUB_STOPPING -> PLAYING`)
+  is now first-class in the transition counts and the phase pairing; duplicate observer ST
+  edges are collapsed; a wall-clock-proxied stop reports its length instead of failing it.
+  Device `oracle-fixed-01` = **PASS**. See the oracle entry below.
+- **2. Successor-reentry device case — OPEN.** Needs a purpose-built harness sequence
+  (successor start ~200-400 ms after the predecessor's stop; successor stop inside its own
+  pending window) plus an observation that the predecessor is pending while the successor is
+  live. The canonical second overdub is sequential, and forcing a zero delay makes the
+  harness abort on its own precondition. Native covers both branches.
+- **3. Bridge map/compile profiling — NOT STARTED.** After the oracle is trustworthy,
+  measure the remaining stop -> `bridge_ready` tail (~1.07 s after `bridge_base`; the
+  companion preparation is no longer the dominant term) and decide whether it warrants its
+  own optimization DEC.
+- **Explicitly not pursuing:** C4 (device-wide deferred-stop working set), event-horizon
+  ceiling reduction, seal-phase reserve.
 
 **2026-09-17 — memory-exhaustion admission RC: close record-arm semantics, then footprint
 (user-directed, seven steps).** Both boundaries now deny explicitly at the point of the
