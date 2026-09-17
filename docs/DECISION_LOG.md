@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Proposed — wrap ownership hardening implemented and native-tested; revision gate awaiting owner choice (A recommended) |
 | [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implemented; six native cases pass, device retirement proof PASS [`successor-reentry-27`](../captures/successor-reentry-27/session_20260917_163416.log) |
 | [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — device START/STOP proof PASS [`successor-reentry-26`](../captures/successor-reentry-26/session_20260917_161119.log) |
 | [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
@@ -81,7 +82,82 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-069 -->
+<!-- Append new entries below (newest first). Next ID: DEC-070 -->
+
+## DEC-069 — The overdub wrap is a canonical-revision transition and must not advance the revision a pending stop job owns
+
+**Date:** 2026-09-17
+**Status:** Proposed — the ownership hardening below is implemented and native-tested; the revision gate is **awaiting the owner's choice** between Option A and Option B.
+**Owner:** `Track::commitOverdubWrap` (the live interval's loop-crossing transition), `LoopPlaybackRuntime::canonicalPassInputs` / `canonicalPrefix*` / `frozenCaptureOrder*` (the slot's single canonical preparation), `Track::beginDeferredOverdubStop` (the deferred stop job that owns that preparation)
+
+**Context.** DEC-067 fixed *which transition owns the finalization resources* and moved the
+canonical copy target, the transfer admission and the session-exit receipt to the STOP admission.
+It fixed the live interval's **start**. It did not cover the live interval's **wrap**, which is the
+third transition that reaches into the same slot-shared canonical preparation: `commitOverdubWrap`
+commits the live interval's next capture pass, and a pass commit advances `Loop::playbackRevision`.
+
+**Evidence.** `captures/session_20260917_172651.log` (manual 6-bar record, three sequential
+overdubs on the DEC-068 firmware):
+
+| time | event |
+|------|-------|
+| 570.855 | OD1 starts; wraps 581.454; `Reentry released` 587.875 (first interval, no job pending — healthy) |
+| 586.564 | OD2 starts while OD1's job is pending |
+| 590.687 | OD2 stop admitted → `Reentry window open` |
+| 591.518 | OD3 starts (DEC-067 start gate: admitted) |
+| 593.456 | OD3 `Overdub wrap committed` |
+| 594.434+ | `Capture admission rejected: unmatched NoteOff ch=4 note=72` (and 95) repeatedly |
+| 598.245 | OD3 stop refused: `Overdub stop deferred: deferred/frozen admission role is occupied` |
+| — | OD2's job never emits `Reentry released`; its publication never resolves, so the wrap pass OD3 committed at 593.456 never becomes visible |
+
+Native confirmation (`test_successor_wrap_keeps_the_predecessors_frozen_builders`, instrumented):
+with a pending job whose frozen source is bound, the successor's wrap gives
+`revBefore=1 revAfter=2`, the frozen binding is still present, but `canonicalPassInputs.ready()`
+is **false** and the job sits in `CanonicalTail` for 20,000 grains without retiring.
+
+**Mechanism.** `RuntimeCanonicalPassInputs::valid()` compares the live `playbackRevision` against
+the revision the binding was made at (`expected_`). The successor's pass commit moves the live
+scalar, so the pending job's frozen canonical source can never validate again:
+`stepReservedFrozenCanonicalTail` returns `Denied` forever, `CanonicalTail` never completes,
+`TrackPreparedStopCommit::completeDeferredCleanup` never runs, `runtime.captureStopOwner` and the
+canonical/transfer/session-exit resources stay owned, and every later stop of the live interval is
+refused. The queued wrap publication is also stuck behind the unresolved predecessor publication
+(the journal is FIFO), which is why the third overdub "does not show or record at loop wrap" and
+its notes sound lengthened into the previous overdub's content. Per DEC-067's own rule — *a
+resource blocks the transition that first requires ownership of that resource* — the wrap is that
+transition for the loop's canonical revision.
+
+**Already landed hardening (part of this entry).** `commitOverdubWrap` used to (a) call
+`resumeCanonicalAfterAppend`, whose `resumeCurrentAfterAppend` resets the frozen capture binding,
+and (b) discard the frozen order/rewrite builders unconditionally. Both are owned by a pending
+job (`beginDeferredOverdubStop` already refuses to touch them); the wrap now does neither while
+`hasPendingDeferredOverdubStop()`. That removes a second way the wrap clobbered its predecessor,
+but it does not remove the revision advance, which is the remaining cause.
+
+**Options.**
+
+- **Option A (recommended) — gate the wrap's pass commit on the job's retirement.** While a
+  deferred stop job is pending, the wrap performs only its row-level obligations (straddling held
+  notes, preview `wrapHeld`, wrap bookkeeping) and arms a deferred commit; the maintenance turn
+  performs that commit as soon as the stop ring is empty, or the interval's own stop does it. The
+  revision therefore advances only when no job pins it. Consistency: the live interval's *stop* is
+  already refused while a job is pending (DEC-067), so the wrap becoming pending is the same
+  capacity answer one boundary earlier. Cost: during an overlap the live interval's wrap pass
+  becomes audible one cycle later than today, and an interval that crosses twice while deferred
+  merges those rows into one pass (already legal — multi-wrap same-phase appends are supported).
+- **Option B — make the predecessor's tail restartable across the append** (a frozen analogue of
+  `resumeCurrentAfterAppend`) so the job re-normalizes against the advanced pass list instead of
+  being invalidated. Cost: the predecessor's prepared publication and the live interval's queued
+  wrap publication would then both describe the same advanced revision, so the snapshot journal's
+  revision deltas must absorb a re-target; that is a publication-ordering change, not a gate.
+
+**Decision.** Option A is preferred and is the smaller change; Option B is retained as the
+fallback if the one-cycle audibility delay of A is unacceptable. No further code is written for
+the revision gate until the owner picks one.
+
+**Not claimed.** No task-4.2/4.3/5.3–5.6 checkbox is closed by this entry, and the third-overdub
+device sequence is reproduced but not yet fixed. `#CAP` tier shedding still makes unrelated
+baseline assertions inconclusive.
 
 ## DEC-068 — An overdub session belongs to one capture interval
 

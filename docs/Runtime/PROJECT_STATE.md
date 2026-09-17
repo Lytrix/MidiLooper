@@ -1,5 +1,23 @@
 # Project state (execution context)
 
+**2026-09-17 the wrap owns the slot's canonical revision too (DEC-069; hardening landed, gate
+open).** A manual three-overdub device session
+([`captures/session_20260917_172651.log`](../../captures/session_20260917_172651.log)) shows the
+second interval's deferred job never retiring once the third interval's **wrap** commits a pass:
+the commit advances `Loop::playbackRevision`, which invalidates the pending job's
+`RuntimeCanonicalPassInputs` frozen source (pinned to its admission revision), so its
+`CanonicalTail` phase denies forever, its finalization resources are never released, and the third
+interval's own stop is refused as occupied for the rest of the session; the third interval's queued
+wrap publication stays behind the unresolved predecessor publication, so its notes neither show nor
+record at the wrap. DEC-067's rule — a resource blocks the transition that first requires it —
+therefore applies to the wrap as it already does to start and stop. Landed: the wrap no longer
+resets a pending predecessor's frozen canonical source or its frozen order/rewrite builders (two
+new native cases; full native 2211 / 1 skipped / 0 failures; RAM1 locals 6464; firmware builds).
+Open: DEC-069's revision gate, Option A (defer the wrap pass commit while a stop job is pending,
+recommended) versus Option B (restart the predecessor's tail across the append) — awaiting the
+owner's choice before the device acceptance run (task 7.2).
+
+
 **2026-09-17 reentry session ownership (DEC-068).** Tasks 5.1(d)/(e) landed and immediately
 exposed a job-locality defect: the retiring predecessor's cleanup built its session-exit receipt
 from the shared session state (the successor's), closed the live successor's session, and left the
