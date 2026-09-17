@@ -3,6 +3,8 @@
 
 #include "Utils/ExternalPoolAccounting.h"
 
+#include "Utils/MemoryMonitor.h"
+
 #if defined(__IMXRT1062__)
 
 #include <Arduino.h>
@@ -127,6 +129,35 @@ void recordPoolFree(void* pointer) {
   gCounters.unknownFrees += 1;
 }
 
+void recordPoolRefusal(size_t bytes) {
+  const uint32_t clamped = static_cast<uint32_t>(bytes);
+  gCounters.poolRefusedCount += 1;
+  if (clamped > gCounters.poolRefusedLargestBytes) {
+    gCounters.poolRefusedLargestBytes = clamped;
+  }
+  // Bounded so a refusal storm cannot flood the transport, but a blanket cap hid the
+  // *fatal* request behind a tolerated retry storm (the first run logged twelve 32 KB
+  // refusals from mid-record and never showed the one that aborted at overdub start).
+  // So: always report the first few, then only when the refused size changes, which
+  // keeps the distinct shapes visible for bounded output. Direct serial, not the
+  // `#CAP` ring, which does not flush while PLAYING/OVERDUBBING. No allocation, no
+  // pool walk.
+  constexpr uint32_t kRefusalReportLimit = 8;
+  static uint32_t lastLoggedRefusedBytes = 0;
+  const bool sizeChanged = clamped != lastLoggedRefusedBytes;
+  if (gCounters.poolRefusedCount > kRefusalReportLimit && !sizeChanged) {
+    return;
+  }
+  lastLoggedRefusedBytes = clamped;
+  Serial.printf_P(
+      PSTR("#MEM_EXT_REFUSED,%lu,bytes=%lu,count=%lu,live=%luKB,blocks=%lu,heap_free=%luKB\n"),
+      static_cast<unsigned long>(micros()), static_cast<unsigned long>(clamped),
+      static_cast<unsigned long>(gCounters.poolRefusedCount),
+      static_cast<unsigned long>(gCounters.liveBytes / 1024),
+      static_cast<unsigned long>(gCounters.liveBlocks),
+      static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024));
+}
+
 void reset() {
   gCounters = Counters{};
   std::memset(gShadow, 0, sizeof(gShadow));
@@ -147,8 +178,12 @@ FLASHMEM void* __wrap_extmem_malloc(size_t size) {
   void* pointer = __real_extmem_malloc(size);
   if (pointer != nullptr) {
     ExternalPoolAccounting::recordPoolAllocation(pointer, size);
+    return pointer;
   }
-  return pointer;
+  // The pool refused. The C++ allocator will now try the internal heap and only
+  // abort if that also fails, so this is the earliest honest exhaustion signal.
+  ExternalPoolAccounting::recordPoolRefusal(size);
+  return nullptr;
 }
 
 FLASHMEM void __wrap_extmem_free(void* pointer) {

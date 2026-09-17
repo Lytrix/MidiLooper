@@ -5,6 +5,39 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 failure-semantics audit: the pool was already denying allocations for most
+of the record; one 5 KB request with no denial handling is fatal.** Added
+`#MEM_EXT_REFUSED` to `__wrap_extmem_malloc` (distinct-size logging plus a
+`refused=count/largest` field on the 5 s accounting line). Evidence:
+[`hang-8bar-refusal-03`](../../captures/hang-8bar-refusal-03/session_20260917_101436.log).
+
+What the refusals show on the same 10-bar record plus overdub recipe:
+
+- A **32768-byte** request is refused **354 -> 834 times** while RECORDING, at pool
+  `live~8143KB` (99.5%) and heap `4KB` free, roughly 25 refusals/second. **That path is
+  already tolerant** — the record completes 7680 ticks and the transport keeps running,
+  so a refusal-tolerant consumer already exists in this codebase.
+- The **fatal** allocation is **5120 bytes**, refused once at `count=842`, and the
+  `FATAL` follows within ~60 ms of `Overdubbing started @ tick 433`.
+
+So exhaustion is not a surprise at the overdub: the device had been denying allocations
+for most of the record and coped. One specific admission path has no denial handling and
+reaches `ExternalMemoryFirstAllocator::abort()`. The failing request is small, which
+means a headroom check at the **overdub admission boundary** would deny it cleanly long
+before the retry storms.
+
+Reach audit (why the allocator cannot simply return nullptr): `ExternalMemoryFirstAllocator`
+backs `SessionMidiEventVec`, `DisplayNoteVec`, `PlaybackOrderVec`, `PresentNoteVec`,
+`NoteSpanVec`, `UndoEntryVec`/`SessionUndoEntry` vectors and the note-edit
+`ExternalMemoryUnorderedMapAllocator` maps, across ~29 files. Most callers assume
+infallible allocation, so a global null return would convert the abort into unchecked
+null dereferences. The semantics change must therefore stay on an audited path.
+
+Still open: name the 5120-byte consumer. Arithmetic narrows it to 320 x `DisplayNote`
+(16 B) or 256 x `NoteSpan` (20 B); `PresentNote` (12 B) and `MidiEvent` (28 B) do not
+divide it. Per-instantiation probing is unaffordable here (only ~104 bytes of ITCM
+headroom left), so pin it with a host-side sizeof check rather than firmware code.
+
 **2026-09-17 pool accounting landed via linker wrappers; the hang is a record-start
 reservation with the pool already 84% full.** The `--wrap` route works: `-D
 EXTERNAL_POOL_WRAP=1` plus `-Wl,--wrap=extmem_malloc,--wrap=extmem_free` in

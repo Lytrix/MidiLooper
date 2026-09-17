@@ -151,7 +151,7 @@ void logExternalPoolAccounting(const char* phase) {
   const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
   Serial.printf_P(
       PSTR("[Memory] ext phase=%s live=%luKB high=%luKB blocks=%lu/%lu alloc=%luKB freed=%luKB "
-           "untracked=%lu unknown=%lu heap_free=%luKB heap_min=%luKB\n"),
+           "untracked=%lu unknown=%lu refused=%lu/%luB heap_free=%luKB heap_min=%luKB\n"),
       phase != nullptr ? phase : "-", static_cast<unsigned long>(c.liveBytes / 1024),
       static_cast<unsigned long>(c.highWaterLiveBytes / 1024),
       static_cast<unsigned long>(c.liveBlocks),
@@ -160,6 +160,8 @@ void logExternalPoolAccounting(const char* phase) {
       static_cast<unsigned long>(c.cumulativeFreedBytes / 1024),
       static_cast<unsigned long>(c.untrackedBlocks),
       static_cast<unsigned long>(c.unknownFrees),
+      static_cast<unsigned long>(c.poolRefusedCount),
+      static_cast<unsigned long>(c.poolRefusedLargestBytes),
       static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
       static_cast<unsigned long>(getInternalHeapMinEverFreeBytes() / 1024));
 }

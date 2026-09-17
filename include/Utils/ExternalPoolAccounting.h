@@ -49,6 +49,11 @@ struct Counters {
   uint32_t untrackedBlocks = 0;
   /// Frees with no shadow entry (never counted as live).
   uint32_t unknownFrees = 0;
+  /// Pool requests the pool refused (the caller then fell back to the heap).
+  /// This is the exhaustion signal: it goes non-zero before `abort()` does.
+  uint32_t poolRefusedCount = 0;
+  /// Largest single pool request that was refused, in bytes.
+  uint32_t poolRefusedLargestBytes = 0;
 };
 
 /// Read-only view of the counters. O(1).
@@ -59,6 +64,10 @@ void recordPoolAllocation(void* pointer, size_t bytes);
 
 /// Retire one pool allocation, subtracting its shadowed size from the live totals.
 void recordPoolFree(void* pointer);
+
+/// Record that the pool refused a request of `bytes`. Emits a bounded diagnostic so
+/// the refused size and the denial context survive on serial; never allocates.
+void recordPoolRefusal(size_t bytes);
 
 /// Zero the counters and the shadow table. Cold path only.
 void reset();
