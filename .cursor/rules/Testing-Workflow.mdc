@@ -21,6 +21,19 @@ The `[env:native]` block in `platformio.ini` runs **host-only** suites (Unity, n
 
 If the native env is misconfigured, fix `platformio.ini` first.
 
+## Read the count, not only the failures
+
+The final line (`N test cases: 1 skipped, M succeeded`) and the per-suite lines carry different
+information than "0 failures":
+
+- **A suite that fails to compile reports `[ERRORED]` and silently contributes no cases.** The
+  summary still printed `2037 … 0 failures` while `test_playback_prewarm` (173 cases) had not
+  built at all after a signature change to `completePlaybackStop`-style APIs. Compare the total
+  with the previous run **and** grep for `[ERRORED]`/`[FAILED]`; a lower total with zero failures
+  is a build error, not a pass.
+- A signature change on a function the suites call directly must be swept across `test/**` in the
+  same commit; the suites include firmware `.cpp` files, so the compiler is the sweep gate.
+
 ## When the user asks you to push / merge / open a PR
 
 1. Run `pio test -e native` (or confirm it was run and passed).
