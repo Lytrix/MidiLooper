@@ -3366,8 +3366,14 @@ def _verify_successor_reentry(
     if len(overdub_starts) < 2 or not overdub_stop_entries:
         return result
 
-    predecessor_stop_ts = overdub_stop_entries[0]
-    successor_start_ts = overdub_starts[1]
+    # Pair the *last* stop before the *last* start: a stale stop entry from an earlier
+    # phase (clear ritual, a previous pass) made the first-entry pairing report a window
+    # 600 ms adrift and a false "not overlapping".
+    successor_start_ts = overdub_starts[-1]
+    earlier_stops = [ts for ts in overdub_stop_entries if ts < successor_start_ts]
+    if not earlier_stops:
+        return result
+    predecessor_stop_ts = earlier_stops[-1]
     ready_ts: Optional[int] = None
     for line in lines:
         if ",ODUB,stop,bridge_ready," not in line:
