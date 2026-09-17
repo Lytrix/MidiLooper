@@ -83,7 +83,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-065 — Capture staging is provisioned by capture admission, not by boot
 
 **Date:** 2026-09-17
-**Status:** Accepted — user-directed ("take E first"); implementation authorized, device gates open
+**Status:** Accepted — **validated on device 2026-09-17** (user-accepted; harness-gate repair deferred as separate work)
 **Owner:** `LoopPlaybackRuntime` capture-staging owner; `Track` capture admission (record arm and overdub start)
 
 **Context:** The two capture-admission staging roles per slot are reserved by
