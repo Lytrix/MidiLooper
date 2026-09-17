@@ -273,7 +273,14 @@ def stream_pattern_for_bars(
             break
 
         if seconds_per_clock is not None:
-            time.sleep(seconds_per_clock)
+            # Pace to an absolute deadline. `sleep(seconds_per_clock)` per step adds the
+            # per-iteration MIDI send and loop overhead on top of the interval, so a
+            # 16 s (8-bar) stream ran ~20 s and the device recorded 10 bars. Deadline
+            # pacing keeps the total at `target_clocks * seconds_per_clock`.
+            deadline = start + (clock_count_total + 1) * seconds_per_clock
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(remaining)
         else:
             msg = in_port.poll()
             if msg is None:
