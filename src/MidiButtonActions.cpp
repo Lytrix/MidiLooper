@@ -590,10 +590,10 @@ void MidiButtonActions::handleToggleRecord() {
         track.stopOverdubbing();
         return;
     }
-    if (track.hasPendingDeferredOverdubStop()) {
-        logger.info("MIDI Button A: Overdub finalization continues in playback");
-        return;
-    }
+    // Successor reentry (OpenSpec successor-capture-reentry-unguarding 4.1): a pending
+    // deferred stop no longer swallows the press. The successor start is admitted on the
+    // same terms as the manager and direct Track routes, and a stop that exceeds the
+    // deferred role surfaces its documented denial instead of vanishing here.
 
     const uint8_t slot = trackManager.getSelectedSlotIndex(idx);
     if (!track.hasCommittedPassesInSlot(slot)) {

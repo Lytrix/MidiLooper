@@ -209,12 +209,11 @@ void TrackManager::startOverdubbingTrack(uint8_t trackIndex) {
     return;
   }
   Track& track = tracks[trackIndex];
-  if (track.hasPendingDeferredOverdubStop()) {
-    logger.log(CAT_TRACK, LOG_INFO,
-               "Track %d: overdub admission deferred while finalization is pending",
-               trackIndex);
-    return;
-  }
+  // Successor reentry (OpenSpec successor-capture-reentry-unguarding 3.1): a pending
+  // deferred stop no longer refuses a new interval. START requires the live admission role
+  // to be free, which `Track::startOverdubbing` proves along with every storage/ownership
+  // precondition; a later STOP is what the deferred/frozen role bounds. Cross-track
+  // maintenance predicates keep consulting `hasPendingDeferredOverdubStop()` unchanged.
   const Loop& loop = track.getActiveLoop();
   if (track.isOverdubbing() && loop.capture.phase == CapturePhase::Overdub) {
     return;

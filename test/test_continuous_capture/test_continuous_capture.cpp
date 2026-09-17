@@ -118,6 +118,10 @@ struct TrackCaptureStopTestAccess {
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
   static auto generation(const Track& track) { return track.playbackGeneration; }
+  static size_t liveReservations(Track& track) {
+    auto* staging = runtime(track).liveCaptureStagingIfPrewarmed();
+    return staging != nullptr ? staging->openReservationCount() : 0;
+  }
   static void invalidate(Track& track) { track.invalidatePlaybackMergedMidiEvents(true); }
   static const void* headPtr(Track& track) { return track.captureStopJobHead(); }
   static const void* tailPtr(Track& track) { return track.captureStopJobTail(); }
@@ -333,9 +337,16 @@ void test_button_a_successor_stop_denied_until_deferred_role_available() {
   TEST_ASSERT_FALSE(track.isOverdubbing());
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
   TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
-  TEST_ASSERT_EQUAL(4, loop.capture.store.size());
-  TEST_ASSERT_EQUAL(241, loop.capture.store.at(2).tick);
-  TEST_ASSERT_EQUAL(264, loop.capture.store.at(3).tick);
+  // The admitted transfer moved B's accepted interval into the job's sealed range, so the
+  // live store is empty and the finalized output is read from the job - asserting the
+  // finalized B output equals the accepted B input, exactly once.
+  TEST_ASSERT_EQUAL(0, loop.capture.store.size());
+  const SessionMidiEventVec bSealed = sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL(4, bSealed.size());
+  TEST_ASSERT_EQUAL(193, bSealed.at(0).tick);
+  TEST_ASSERT_EQUAL(216, bSealed.at(1).tick);
+  TEST_ASSERT_EQUAL(241, bSealed.at(2).tick);
+  TEST_ASSERT_EQUAL(264, bSealed.at(3).tick);
   // C start is legal now that the live role is free.
   clockManager.assignCurrentTickSilently(336);
   midiButtonActions.handleToggleRecord();
@@ -410,6 +421,59 @@ void test_track_reentry_does_not_depend_on_manager_guard() {
   inputNote(62, 193, 216);
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
       "Track must own a distinct live interval before removing outer guards");
+  // Completion-during-capture (task 5.2): let A's deferred job retire while B is live and
+  // assert B's interval is untouched - D6 makes A's cleanup job-local because A's interval
+  // identity no longer matches the live one.
+  const uint8_t stateBeforeCompletion = track.getState();
+  const size_t rowsBeforeCompletion = track.getActiveLoop().capture.store.size();
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "A's completion must not transition B's live interval");
+  TEST_ASSERT_EQUAL(stateBeforeCompletion, track.getState());
+  TEST_ASSERT_EQUAL(rowsBeforeCompletion, track.getActiveLoop().capture.store.size());
+}
+
+/// Task 5.2 isolation: A's deferred completion during B's capture leaves B's rows, pending
+/// notes, reservations, preview and track state untouched, and forces no transition on B's
+/// behalf. This is the assertion breadth task 2.3 was waiting on.
+void test_deferred_predecessor_completion_leaves_successor_interval_untouched() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // A: deferred stop, owning the frozen role.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // B: successor interval with a distinctive held note, so a reservation and a pending
+  // note exist to be trampled if A's cleanup were not job-local.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(64, 193, UINT32_MAX);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  const uint8_t stateBefore = track.getState();
+  const size_t rowsBefore = loop.capture.store.size();
+  const size_t notesBefore = TrackCaptureStopTestAccess::liveNotes(track).size();
+  const size_t previewBefore = loop.capturePreview.notes.size();
+  const size_t reservationsBefore = TrackCaptureStopTestAccess::liveReservations(track);
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(rowsBefore));
+  TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(notesBefore));
+  TEST_ASSERT_TRUE(reservationsBefore > 0);
+  // A retires while B is live.
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "A's deferred completion must not force a transition on B");
+  TEST_ASSERT_EQUAL(stateBefore, track.getState());
+  TEST_ASSERT_EQUAL(rowsBefore, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(notesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TEST_ASSERT_EQUAL(previewBefore, loop.capturePreview.notes.size());
+  TEST_ASSERT_EQUAL(reservationsBefore, TrackCaptureStopTestAccess::liveReservations(track));
 }
 
 /// The deferred stop records the published source it succeeded, and pins that
@@ -1340,6 +1404,7 @@ int main() {
   RUN_TEST(test_record_admission_denied_when_required_prewarm_fails);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
+  RUN_TEST(test_deferred_predecessor_completion_leaves_successor_interval_untouched);
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);
   RUN_TEST(test_ineligible_stored_verification_queue_keeps_pending_dump);
   RUN_TEST(test_deferred_overdub_stop_completion_queues_stored_verification);
