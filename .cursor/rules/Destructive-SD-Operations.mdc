@@ -1,0 +1,52 @@
+---
+description: Never mutate the device SD (quarantine, delete, rename) without explicit user permission first
+alwaysApply: true
+---
+
+# Destructive device-SD operations require permission first
+
+The Teensy SD card holds state that is **not** reconstructible by the agent: the
+current workspace, recovery checkpoints, and saved loop slots. Ask the user for
+explicit permission **in the same session, naming the exact operation** before
+running any of these.
+
+## Never do this unprompted
+
+- `!QUARANTINE_WORKSPACE` (or `-D BOOT_QUARANTINE_WORKSPACE=1`) — moves
+  `/MidiLooper/current` to `/MidiLooper/current.bad.<millis>` and
+  `/MidiLooper/recovery/checkpoints` to `checkpoints.bad.<millis>`.
+- `!REV_NUKE_SETS`, `!REV_CLEANUP`, or any command that deletes sets/slots.
+- Any `SD.remove` / `SD.rename` / `rm` / `mv` reaching the card through a host
+  mount, a helper script, or new firmware.
+
+**Quarantine is reversible, but only through the stamp.** `!RESTORE_WORKSPACE`
+inverts it: `!RESTORE_WORKSPACE list` prints every quarantined tree without
+renaming anything, `!RESTORE_WORKSPACE <stamp>` restores that one, and a bare
+`!RESTORE_WORKSPACE` restores the newest. It renames only — the live tree is
+parked as `.bad.<now>`, never deleted. **Always run `list` first.** The stamp is
+device `millis()` at rename time, so it cannot be derived from the host, and the
+card accumulates trees across boots (observed: 20 `current` / 21 `checkpoints`
+trees after routine use of the quarantine script). Never assume the newest tree
+is the one you just created.
+
+## How to ask
+
+State the command, every path that will move, and what the user loses:
+
+> The Clear gate is stuck on `Persistence drain stuck after 256 iterations`.
+> I want to run `!QUARANTINE_WORKSPACE`, which renames
+> `/MidiLooper/current` → `/MidiLooper/current.bad.<stamp>` and
+> `/MidiLooper/recovery/checkpoints` → `checkpoints.bad.<stamp>`. Loop slots
+> under `/MidiLooper/sets/` are untouched. The firmware cannot rename them back;
+> restoring means mounting the card and renaming by hand. OK?
+
+Then wait for a yes. A stuck HITL precondition, a failed capture, or a fault is
+**not** permission.
+
+## When it is allowed
+
+Only after the user agrees, and say in the same turn exactly what moved so it can
+be restored. Record the resulting `.bad.<stamp>` paths in the session journal.
+
+Prefer a non-mutating route first: reboot, re-upload, an already-empty scratch
+slot, or a host-side fix. Quarantine is a last resort.

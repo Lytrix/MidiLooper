@@ -211,10 +211,61 @@ void DisplayManager::applyCoalescedPaintInvalidation() {
     }
 }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+// RAM2 staging diagnostics. `.bss.dma` has no guard slack, and
+// `DisplayManagerInternal::liveDisplayEventBuffer` is linked flush against this
+// object's tail, so an overrun past `displayManager` corrupts a snapshot-gather
+// destination. Report the first clobber together with the neighbour's vector
+// header instead of letting it surface later as a DACCVIOL inside the fill.
+// Kept out of line and flash-resident (`printf_P` + `PSTR`): `update()` runs on
+// a deep stack and DTCM `.rodata` is charged against the RAM1 stack budget.
+DISP_COLD_MEM __attribute__((noinline)) void DisplayManager::checkDmaStagingDiagnostics() {
+    static bool baselineLogged = false;
+    static uint32_t lastReportUs = 0;
+    const uint32_t nowUs = micros();
+    const long neighbourGapBytes =
+        reinterpret_cast<const char*>(&DisplayManagerInternal::liveDisplayEventBuffer) -
+        reinterpret_cast<const char*>(this);
+    if (!baselineLogged) {
+        baselineLogged = true;
+        Serial.printf_P(
+            PSTR("#DMA_STAGING_BASE,%lu,display_manager=0x%08lx,object_size=%lu,"
+                 "neighbour=0x%08lx,gap_bytes=%ld,canary=0x%08lx\r\n"),
+            static_cast<unsigned long>(nowUs), reinterpret_cast<unsigned long>(this),
+            static_cast<unsigned long>(sizeof(DisplayManager)),
+            reinterpret_cast<unsigned long>(&DisplayManagerInternal::liveDisplayEventBuffer),
+            neighbourGapBytes, static_cast<unsigned long>(dmaTailCanary_));
+    }
+    const bool canaryIntact = dmaTailCanary_ == kDmaTailCanary;
+    const bool neighbourIntact =
+        DisplayManagerInternal::liveDisplayEventBuffer.capacity() == 0 ||
+        DisplayManagerInternal::liveDisplayEventBuffer.data() != nullptr;
+    if ((!canaryIntact || !neighbourIntact) && (nowUs - lastReportUs) > 200000u) {
+        lastReportUs = nowUs;
+        Serial.printf_P(
+            PSTR("#DMA_STAGING_CORRUPT,%lu,canary_expected=0x%08lx,canary_actual=0x%08lx,"
+                 "display_manager=0x%08lx,object_size=%lu,neighbour=0x%08lx,gap_bytes=%ld,"
+                 "buffer_data=0x%08lx,buffer_size=%lu,buffer_capacity=%lu\r\n"),
+            static_cast<unsigned long>(nowUs), static_cast<unsigned long>(kDmaTailCanary),
+            static_cast<unsigned long>(dmaTailCanary_), reinterpret_cast<unsigned long>(this),
+            static_cast<unsigned long>(sizeof(DisplayManager)),
+            reinterpret_cast<unsigned long>(&DisplayManagerInternal::liveDisplayEventBuffer),
+            neighbourGapBytes,
+            reinterpret_cast<unsigned long>(DisplayManagerInternal::liveDisplayEventBuffer.data()),
+            static_cast<unsigned long>(DisplayManagerInternal::liveDisplayEventBuffer.size()),
+            static_cast<unsigned long>(
+                DisplayManagerInternal::liveDisplayEventBuffer.capacity()));
+    }
+}
+#endif
+
 void DisplayManager::update() {
 #ifdef __IMXRT1062__
     // Complete a DMA frame promptly even when the next paint has not yet been admitted.
     _display.api.pollDisplayTransfer();
+#endif
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    checkDmaStagingDiagnostics();
 #endif
 #if defined(SESSION_CAPTURE) || HOT_PATH_TELEMETRY_ENABLED
     const uint32_t telemetryStartUs = micros();

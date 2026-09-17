@@ -5,6 +5,92 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 `!RESTORE_WORKSPACE` — the missing inverse of quarantine (shipped to
+the device).** The workspace quarantine had no restore path, so it was one-way from
+the device's point of view: nothing in the firmware read a `.bad.` path back. Added a
+stopped-transport HITL command in `StorageManagerHitlSerial.cpp` with three forms —
+`!RESTORE_WORKSPACE list` (inventory only), `!RESTORE_WORKSPACE <stamp>`, and a bare
+`!RESTORE_WORKSPACE` (newest). It **renames only**: the live tree is parked as
+`.bad.<now>` rather than deleted, so the operation is reversible in both directions.
+Landing it re-exposed the same RAM1 trap as the instrumentation work — plain
+`Serial.print`/`printf` literals in that unit tip DTCM `.rodata` by a whole 4096-byte
+block (`free for local variables` 6720 → 2624 in one step, not gradually); every new
+string is now `printf_P` + `PSTR` and headroom stays **6720**.
+
+**Ground truth from the first inventory:** `/MidiLooper` carries **20 quarantined
+`current` trees and 21 `checkpoints` trees**, with stamps from 2314 ms to 1476949 ms —
+i.e. accumulated across many boots, most of them predating this session, several from
+the ~2-7 s boot window. Quarantine touches only `current` and the checkpoints;
+`/MidiLooper/sets/` (saved loops and revisions) is never in scope, so **no musical
+content was ever at risk**. The stamp is device `millis()` at rename time and cannot be
+derived from the host.
+
+**How the session's tree was found, and the trap:** the stamp the quarantine script
+printed (`121898`) did **not** exist on the card. That line was almost certainly stale
+buffered serial output from an earlier user-run quarantine, not this session's — the
+script prints whatever the port delivers, and 20 historical trees mean it has been run
+many times. This session's quarantine actually produced `1476949`; the first restore
+consumed it into the live tree, and the second attempt (chasing the phantom `121898`)
+parked it as `current.bad.35610`. Restoring `35610` reproduces the pre-quarantine
+boot signature — `Boot focus track=3` (display track 4, the track the musician was on)
+with `Queuing boot playback loop slot restore 4 pending` — against the unrelated
+`975846` tree that booted `focus track=4` with nothing pending. Identification must use
+the boot signature, never the name. Rule, ask template and the `list`-first procedure:
+[`Destructive-SD-Operations.mdc`](../../.cursor/rules/Destructive-SD-Operations.mdc).
+
+**2026-09-17 overdub-start fault attributed; snapshot-gather destination guarded
+(instrumentation only, not flashed for acceptance).** The 2026-09-17 00:39 manual
+session (`captures/session_20260917_003908.log`) that ended right after
+`[TRACK] Overdubbing started @ tick 624` is a **hard fault with auto-reboot**, not a
+hang: the SD crashlog for that boot reads `Code was executing from address
+0x6002C97C`, `CFSR: 82 (DACCVIOL)`, `Accessed Address: 0xE00`. Resolved against the
+flashed ELF that is `Loop::tryGatherPublishedSnapshotEventsInWindow`
+(`src/Loop/LoopSnapshotPlayback.cpp`); the faulting instruction is the 28-byte
+`MidiEvent` block store and `0xE00 == 128 * sizeof(MidiEvent)`, i.e. a fill writing
+element 128 through a **null destination base**. `ExternalMemoryFirstAllocator`
+cannot return null (extmem, then `malloc`, then `abort`), so this is a lost vector
+header, not exhaustion. USB stayed enumerated across the reboot and
+`capture_session.py` only reports a reconnect on a read error, so the fault was
+invisible; two independent blind spots (no `#CAP` flush while PLAYING/OVERDUBBING,
+and no CDC liveness check) hid it. Retrieved report and the RAM2 map are in
+`captures/crashlog_retrieval_20260917_0049.log`.
+
+Diagnostic landed (SESSION_CAPTURE-gated): a destination-storage guard at the gather
+entry that reports and returns a gather miss instead of faulting, plus a
+`displayManager` tail canary — `DisplayManagerInternal::liveDisplayEventBuffer` is
+linked flush against the end of `displayManager` in `.bss.dma`, a section that is
+NOLOAD and never zeroed, so any overrun there lands on that 12-byte vector header.
+Reported a real regression while landing it: the first cut used `Serial.printf`, which
+put the format strings in DTCM `.rodata` and cost **4128 bytes** of RAM1, dropping
+`free for local variables` from 6752 to 2624 — below the documented floor of 4000 —
+and the device then crash-looped at boot with `IACCVIOL` executing from `0x2001792C`
+(`Accessed Address: 0x200175C4 (Stack problem)`). Moved to `printf_P` + `PSTR`, out of
+line and FLASHMEM: headroom is now **6720** for a 32-byte cost. Device run
+`captures/dma-canary-reentry-04`: record plus four OVERDUBBING entries, `crash=0`, no
+canary clobber and no lost destination — the crash did **not** reproduce under the
+canonical `STIM-BASE-2-ONE-OD-01`-shaped fixture. HITL was blocked first by a
+reproducible `Persistence drain stuck after 256 iterations` in the Clear gate (the
+docs already classify the sync-drain stuck detector as a progress-accounting gap);
+cleared with the supported, non-destructive `!QUARANTINE_WORKSPACE`
+(`/MidiLooper/current` → `/MidiLooper/current.bad.121898`, checkpoints likewise; loop
+slots untouched). Full native **2192 cases — 2188 passed, 1 skipped, and exactly the
+two known unguarded manager/Button A reentry failures**, i.e. unchanged from the
+`640cc02d` baseline; `teensy41-capture-serial` builds with **6720** bytes RAM1
+headroom. The instrumentation is on the device and is protective: a recurrence logs
+`#GATHER_DEST_CORRUPT` (destination address, `data`/`size`/`capacity`) or
+`#DMA_STAGING_CORRUPT` (canary plus the neighbour's header) instead of faulting.
+Next: reproduce on the manual sequence that actually crashed — long loop, overdub
+started about one second after the record stop — since the canonical fixture did not.
+**User's repro conditions (2026-09-17, authoritative from the musician's side):** the
+fault shows up when **several tracks already hold playing loops** and you then record
+a loop of **8 bars or more with overdub**. That is a materially different shape from
+`STIM-BASE-2-ONE-OD-01` (2 bars, one track, 32 notes, no other track playing) and is
+the condition any next attempt must reproduce: seed loops on multiple tracks and keep
+them playing while recording an 8+ bar pass, then overdub immediately after the stop.
+Likely coupling: more simultaneously playing slots means more per-slot playback
+windows, so more concurrent gather targets and more resident snapshot/bridge state —
+the direction that matches `0xE00 == 128 * sizeof(MidiEvent)` needing a destination
+that already held at least 128 rows.
 **2026-09-16 task 2.3 causal predecessor/source identity — increment B (approved
 superseded rule).** The user approved option (A): a deferred stop whose recorded
 causal predecessor is no longer the published root must retire without publishing a
