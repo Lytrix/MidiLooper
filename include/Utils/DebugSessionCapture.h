@@ -203,6 +203,13 @@ SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t lo
  *  DIAG,first_record_adopt,<loopLengthTicks>,<retainedEvents> (Tier-A). One line
  *  per adoption; the retained count shows how much of bar 1 the window held. */
 SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t retainedEvents);
+/** Compact reentry admission/denial record (OpenSpec successor-capture-reentry-unguarding 5.6).
+ *  One shot per reentry decision, from the decision owner itself -- never a per-event line.
+ *  Wire form: DIAG,reentry,<decision>,<tick>,<interval>,<slot>,<depth>.
+ *  `decision` is a stable literal (`admit`, `deny`, `deny_resource`); `interval` is the track's
+ *  capture interval identity and `depth` the stop-descriptor queue depth at the decision. */
+SC_MEM_ATTR void reentryDecision(const char* decision, uint32_t actionTick, uint64_t interval,
+                                 uint8_t slot, size_t queueDepth);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);

@@ -32,6 +32,18 @@ constexpr StopAdmissionContract kDeferredStopContract{
 };
 
 constexpr uint16_t kDeferredStopPreparationQuantum = 32;
+
+/// OpenSpec 5.6: one compact resource-denial record from the admission owner. A macro keeps the
+/// decision label a literal at its branch (so each denial row names its own resource) and keeps
+/// the whole call compiled out of a non-capture build.
+#if defined(SESSION_CAPTURE)
+#define DENY_REENTRY_RESOURCE()                                                        \
+  DebugSessionCapture::reentryDecision("deny_resource", clockManager.getCurrentTick(),  \
+                                       captureInterval_, activeLoopIndex,               \
+                                       captureStopQueueDepth())
+#else
+#define DENY_REENTRY_RESOURCE() ((void)0)
+#endif
 /// Bounded cold reservation for the protected undo publication. Deliberately far
 /// below Config::ABSOLUTE_MAX_UNDO_ENTRIES: the eager per-track 512-entry reserve
 /// broke device boot (see prewarmProtectedUndo).
@@ -246,18 +258,22 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   if (runtime->captureStopOwner != nullptr) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1,
                        loop.hasActiveOverdubTransferAdmission(), "finalizer_busy");
+    DENY_REENTRY_RESOURCE();
     return false;
   }
   if (!loop.hasActiveOverdubTransferAdmission()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "transfer_denied");
+    DENY_REENTRY_RESOURCE();
     return false;
   }
   if (!runtime->canonicalCaptureOutputAdmitted()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "canonical_output_busy");
+    DENY_REENTRY_RESOURCE();
     return false;
   }
   if (!loop.canHandoffSessionExitSnapshot()) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full");
+    DENY_REENTRY_RESOURCE();
     return false;
   }
   // DEC-068: take this interval's own session-exit tail now, while the shared session state is
@@ -888,9 +904,10 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   if (stop.phase == PendingStopPhase::CompanionHistory) {
     if (!loop.preparedCompanionHistoryReady(job.admission.intervalToken())) {
-      if (!loop.preparedCompanionHistoryCanStep(runtime->frozenCaptureCompanions,
-                                                staging, runtime->canonicalPassInputs,
-                                                job.admission.intervalToken())) {
+      const bool canStep = loop.preparedCompanionHistoryCanStep(runtime->frozenCaptureCompanions,
+                                                                staging, runtime->canonicalPassInputs,
+                                                                job.admission.intervalToken());
+      if (!canStep) {
         if (!loop.beginPreparedCompanionHistory(runtime->frozenCaptureCompanions,
                                                  staging, &runtime->canonicalPassInputs, job.admission.intervalToken())) {
           return false;
@@ -1259,6 +1276,13 @@ void Track::startOverdubbing(uint32_t currentTick) {
     return;
   }
   ++captureInterval_;
+#if defined(SESSION_CAPTURE)
+  // OpenSpec 5.6: one compact admission record per reentry decision, emitted by the decision
+  // owner (`reentryDecision`), so a capture shows the admitted interval identity and the queue
+  // depth without per-event logging.
+  DebugSessionCapture::reentryDecision("admit", currentTick, captureInterval_, activeLoopIndex,
+                                       captureStopQueueDepth());
+#endif
   transportStopOutputBarrier_ = false;
   SC_ODUB_STAGE("set_state", micros() - stateAdvanceStartUs,
                 DebugSessionCapture::kUnsampledHeapBytes,
@@ -1343,6 +1367,10 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   if (hasPendingDeferredOverdubStop() || finalizationResourcesBusy) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        captureStopQueueDepth(), 0, "successor_stop_denied_capacity");
+#if defined(SESSION_CAPTURE)
+    DebugSessionCapture::reentryDecision("deny", currentTick, captureInterval_, activeLoopIndex,
+                                         captureStopQueueDepth());
+#endif
     // DEC-070 diagnostic: name the resource that is still owned. The generic message hid which of
     // five different leaks wedged the slot (`ring_count_without_job` in particular means the ring
     // bookkeeping, not a live job, is holding the refusal).

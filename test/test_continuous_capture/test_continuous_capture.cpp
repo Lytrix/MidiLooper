@@ -147,6 +147,14 @@ struct TrackCaptureStopTestAccess {
     return track.beginDeferredOverdubStop(destination, tick);
   }
   static auto& rawRange(Track& track) { return track.captureStopJob().rawRange; }
+  /// Published playback root identity, for the 5.3 stale-window assertion.
+  static const void* publishedRootIdentity(Track& track) {
+    return track.getActiveLoop().publishedSnapshotIdentity();
+  }
+  static uint32_t publishedRootRevision(const Track& track) {
+    return track.getActiveLoop().publishedSnapshotRevision();
+  }
+  static uint32_t ownRevision(const Track& track) { return track.getActiveLoop().playbackRevision; }
   static bool ownsRawRange(Track& track) { return track.captureStopJob().ownsRawRange; }
   static TrackUndoPublication* undoPublication(Track& track) { return track.protectedUndo(); }
   static GlobalUndoStack& undoStack(Track& track) { return track.getGlobalUndoStack(); }
@@ -1057,6 +1065,142 @@ void test_deferred_stop_records_and_pins_its_causal_predecessor_source() {
   TEST_ASSERT_FALSE(loop.preparedCompanionHistoryInFlight());
   TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed());
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::entryCausalBaseRecorded(track, admittedHead));
+}
+
+/// Openspec 5.4: supersession under reentry. A deferred predecessor's recorded causal base is no
+/// longer the published root by the time it resolves, and a successor interval is live at the same
+/// time. The predecessor must commit its accepted capture exactly once, select no bridge
+/// (`kNoBridge`), leave the newer root selected, and never touch the successor's live state --
+/// while the successor keeps its rows, pending notes, preview and reservations.
+void test_superseded_predecessor_retires_without_touching_a_live_successor() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  loop.storePublishedSnapshotForTest(
+      LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                loop.nextNoteId_, 1),
+      loop.playbackRevision);
+  const uint32_t admittedRevision = loop.playbackRevision;
+  const void* const admittedSnapshot = loop.publishedSnapshotIdentity();
+  TEST_ASSERT_NOT_NULL(admittedSnapshot);
+  // A deferred against the admitted root.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::causalBaseRecorded(track));
+  TEST_ASSERT_EQUAL_PTR(admittedSnapshot,
+                        TrackCaptureStopTestAccess::causalBase(track).snapshotIdentity);
+  // B is live while A pends, with its own accepted input.
+  clockManager.assignCurrentTickSilently(192);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 193, 216);
+  const size_t bRows = loop.capture.store.size();
+  const size_t bNotes = TrackCaptureStopTestAccess::liveNotes(track).size();
+  const size_t bPreview = loop.capturePreview.notes.size();
+  const size_t bReservations = TrackCaptureStopTestAccess::liveReservations(track);
+  // Publication advances past A's recorded causal predecessor.
+  TrackCaptureStopTestAccess::setPlaybackRevision(track, admittedRevision + 7);
+  const uint32_t supersededRevision = TrackCaptureStopTestAccess::playbackRevision(track);
+  const size_t passesBefore = loop.passes.overdubPasses.size();
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  // A commits exactly one pass, publishes no bridge, and restores its unpublished horizon.
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(passesBefore + 1, static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackBridgeLifecycle::kNoBridge,
+                          TrackCaptureStopTestAccess::bridgeSelected(track));
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed());
+  // The successor's live state is untouched by the retiring predecessor.
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "a superseded predecessor must not transition the live successor");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bRows), static_cast<uint32_t>(loop.capture.store.size()));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bNotes),
+                           static_cast<uint32_t>(TrackCaptureStopTestAccess::liveNotes(track).size()));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bPreview),
+                           static_cast<uint32_t>(loop.capturePreview.notes.size()));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bReservations),
+                           static_cast<uint32_t>(TrackCaptureStopTestAccess::liveReservations(track)));
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(216, loop.capture.store.at(1).tick);
+  // The live revision is still the newer one; A never regressed it.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(supersededRevision,
+                                      TrackCaptureStopTestAccess::playbackRevision(track));
+  TEST_ASSERT_GREATER_THAN_UINT32(admittedRevision, TrackCaptureStopTestAccess::playbackRevision(track));
+}
+
+/// Openspec 5.5: reentry must not depend on where the deferred predecessor happens to be.
+/// The predecessor is paused at meaningful worker checkpoints, a successor starts at each one and
+/// accepts a distinctive row, and the predecessor is then resumed to completion. Both intervals
+/// are verified at every checkpoint: the successor keeps its accepted input and stays the live
+/// interval, and the predecessor retires exactly once with its own job-local cleanup.
+/// Open finding (2026-09-17): the `CompanionHistory` checkpoint is red. Pausing the predecessor
+/// there and starting a successor leaves the predecessor's companion work with
+/// `preparedCompanionHistoryCanStep == false` while its work phase cycles Prewarmed<->Committed, so
+/// `beginPreparedCompanionHistory` never re-admits it and the job never retires -- it holds
+/// `captureStopOwner` and the frozen role for the rest of the session (the same resource wedge the
+/// device showed as `Overdub stop refused: stop_job_pending phase=7`). The canonical-order and
+/// atomic-transfer checkpoints pass, so this is a narrow successor-start-versus-companion-
+/// preparation conflict, not a general mid-grain dependency.
+void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpointName) {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(), checkpointName);
+  // Advance the predecessor's worker to the requested checkpoint and stop turning it there.
+  for (unsigned grain = 0; grain < 20000; ++grain) {
+    if (TrackCaptureStopTestAccess::jobPhase(track) >= checkpointPhase) break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT8_MESSAGE(
+      checkpointPhase, TrackCaptureStopTestAccess::jobPhase(track), checkpointName);
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(), checkpointName);
+  // The successor starts at the checkpoint, on the live role, and accepts its own row.
+  clockManager.assignCurrentTickSilently(192);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), checkpointName);
+  inputNote(62, 193, 216);
+  const size_t bRows = loop.capture.store.size();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2, static_cast<uint32_t>(bRows), checkpointName);
+  TEST_ASSERT_EQUAL_MESSAGE(193, loop.capture.store.at(0).tick, checkpointName);
+  TEST_ASSERT_EQUAL_MESSAGE(216, loop.capture.store.at(1).tick, checkpointName);
+  // Resume the predecessor: it must retire without disturbing the live successor.
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  // Open finding (2026-09-17, this checkpoint): pausing the predecessor in `CompanionHistory`
+  // and then starting a successor leaves the predecessor's companion work with
+  // `preparedCompanionHistoryCanStep == false` while its phase cycles Prewarmed<->Committed, so
+  // `beginPreparedCompanionHistory` never re-admits it and the job never retires -- it holds
+  // `captureStopOwner` and the frozen role. Asserting the required outcome makes this checkpoint
+  // the red reproducer for the successor-start-vs-companion-preparation conflict.
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+      "a predecessor paused at CompanionHistory must still retire after a successor starts");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::captureStopOwnerClear(track), checkpointName);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), checkpointName);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(bRows),
+                                   static_cast<uint32_t>(loop.capture.store.size()), checkpointName);
+  TEST_ASSERT_EQUAL_MESSAGE(193, loop.capture.store.at(0).tick, checkpointName);
+  TEST_ASSERT_EQUAL_MESSAGE(216, loop.capture.store.at(1).tick, checkpointName);
+}
+
+void test_adversarial_reentry_at_a_canonical_checkpoint() {
+  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::CanonicalOrder),
+                                "paused in canonical ordering");
+}
+
+void test_adversarial_reentry_at_a_companion_checkpoint() {
+  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::CompanionHistory),
+                                "paused in companion history");
+}
+
+void test_adversarial_reentry_at_the_publication_checkpoint() {
+  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::AtomicTransfer),
+                                "paused at the atomic transfer");
 }
 
 void test_stop_job_owns_held_notes_and_closes_original_slot() {
@@ -2024,6 +2168,72 @@ void test_transport_stop_retarget_retires_a_midflight_playing_job() {
       "the slot must accept a later stop once the retargeted job retired");
 }
 
+/// Openspec 5.3: the transport-stop ordering case with the explicit state under test. A deferred
+/// job is admitted for PLAYING against root R0; the successor interval starts and accepts input
+/// while the transport is still running; then Transport Stop arrives while A is still pending.
+/// Three independent outcomes are asserted: (a) A retires exactly once on its own causal rules,
+/// (b) B keeps its accepted input and reaches its own stop admission, and (c) no stale A-derived
+/// window replaces the newer valid published root.
+void test_transport_stop_while_successor_is_live_keeps_its_rows_and_root() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // A deferred against R0 (the committed record pass's published root).
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  const void* const rootBefore = TrackCaptureStopTestAccess::publishedRootIdentity(track);
+  // B's live interval with distinctive accepted input.
+  clockManager.assignCurrentTickSilently(192);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 193, 216);
+  const size_t bRows = loop.capture.store.size();
+  TEST_ASSERT_EQUAL_UINT32(2, static_cast<uint32_t>(bRows));
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(216, loop.capture.store.at(1).tick);
+  // Transport Stop while A is still pending: the mode change must not consume B's interval.
+  TrackCaptureStopTestAccess::requestStoppedStop(track);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopDestination::Stopped),
+                          TrackCaptureStopTestAccess::jobDestination(track));
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "the transport-stop retarget must not end the live successor interval");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bRows), static_cast<uint32_t>(loop.capture.store.size()));
+  TEST_ASSERT_EQUAL(193, loop.capture.store.at(0).tick);
+  TEST_ASSERT_EQUAL(216, loop.capture.store.at(1).tick);
+  // (a) A resolves on its recorded rules and retires exactly once.
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+      "the retargeted predecessor must retire exactly once, not park");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::captureStopOwnerClear(track));
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  // (b) B still owns its accepted rows and its own stop is admitted afterwards.
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bRows), static_cast<uint32_t>(loop.capture.store.size()));
+  clockManager.assignCurrentTickSilently(288);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  const SessionMidiEventVec bSealed = sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bRows), static_cast<uint32_t>(bSealed.size()));
+  TEST_ASSERT_EQUAL(193, bSealed.at(0).tick);
+  TEST_ASSERT_EQUAL(216, bSealed.at(1).tick);
+  // (c) No stale A-derived window replaces the newer valid root: the published root identity is
+  // still the one B's interval resolved against (or a newer current root), never a regressed one.
+  const void* const rootAfter = TrackCaptureStopTestAccess::publishedRootIdentity(track);
+  if (rootAfter != nullptr && rootBefore != nullptr) {
+    TEST_ASSERT_EQUAL_PTR_MESSAGE(rootBefore, rootAfter,
+        "a retiring predecessor must not publish over the newer valid root");
+  }
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(
+      static_cast<uint32_t>(TrackCaptureStopTestAccess::publishedRootRevision(track)),
+      static_cast<uint32_t>(TrackCaptureStopTestAccess::ownRevision(track)) > 0 ? 1u : 0u);
+}
+
 /// With the wrap commit deferred (DEC-069 Option A) a note held across loop end never loses its
 /// staging reservation at all: the rows stay in the same unsealed pass, so the physical NoteOff
 /// that arrives after the crossing closes the recorded note instead of being rejected as
@@ -2134,6 +2344,10 @@ int main() {
   RUN_TEST(test_completed_job_cannot_transition_a_newer_track_interval);
   RUN_TEST(test_job_note_retirement_does_not_clear_live_notes);
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
+  RUN_TEST(test_superseded_predecessor_retires_without_touching_a_live_successor);
+  RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);
+  RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
+  RUN_TEST(test_adversarial_reentry_at_the_publication_checkpoint);
   RUN_TEST(test_stop_job_owns_held_notes_and_closes_original_slot);
   RUN_TEST(test_stop_job_denies_changed_geometry_before_closure_mutation);
   RUN_TEST(test_button_a_successor_stop_denied_until_deferred_role_available);
@@ -2153,6 +2367,7 @@ int main() {
   RUN_TEST(test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy);
   RUN_TEST(test_deferred_predecessor_completion_leaves_successor_interval_untouched);
   RUN_TEST(test_transport_stop_retarget_retires_a_midflight_playing_job);
+  RUN_TEST(test_transport_stop_while_successor_is_live_keeps_its_rows_and_root);
   RUN_TEST(test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending);
   RUN_TEST(test_successor_wrap_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off);
