@@ -5,6 +5,72 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 step C design: the stop working set cannot be shared - the levers are
+capacity shaping and a single deferred-stop working set.** Design only; implementation
+needs a DEC because the interval horizon is a gated execution bound
+(`ARCHITECTURE_RULES.md` row referencing DEC-043). Grounding numbers are the measured
+device sizes in
+[ExecutionBounds](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17).
+
+**What the design must preserve.** Every reserve is taken on a cold user-action turn (the
+arm) so that the MIDI-tick deferred-stop grains and the atomic transfer allocate nothing
+and no vector in them can grow; the second aborting allocator (`InternalHeapFirstAllocator`)
+must never be reachable from a grain. Any proposal that reserves at punch-out makes the
+*stop* fallible, which is worse than denying the arm, so it is out.
+
+**C1 - one arena with typed views across the seven workers: rejected.** The seven are live
+simultaneously (`apply::begin` binds five children at once; `Reconstruct` borrows
+`spans`+`pair`; the overlap walk reads reconstruction's live `notes_`; the merge reads apply
+while writing `companionPasses` and `canonicalPassInputs.normalizedScratch`), and the same
+workers are driven by live canonical-prefix service while playing/overdubbing, so they are
+not stop-only either. Aliasing would not be phase-exclusive by construction.
+
+**C2 - alias `frozenCompanionBridgeMap.records_` (68 KB) onto the apply group: possible but
+marginal.** It is the one pair whose live windows do not obviously overlap (the map is
+built after the merge completes), but its `prepared_`/`baseOrigins_`/`base_` borrows must
+survive through bridge compile and it can be re-entered via `requiresBridgeRefresh`. Saving
+is at most 68 KB of 1.24 MB (~5%) for a proof that adds a new lifetime invariant, so it is
+not worth taking alone - only as part of C3.
+
+**C3 - shape the capacity from the admitted interval horizon instead of the global
+maximum.** Every 2048 comes from three admission constants: `kEventsPerView`,
+`kRecordsPerBridge` and `kCaptureStagingEvents` (all 2048). They are *limits*, not content:
+the arrays are sized so that the worst case a user can add in one interval never has to
+grow. The arm therefore reserves ~1.24 MB even for a loop holding a few hundred events.
+This is the only lever that moves the number materially. Two sub-shapes:
+- **(a) derive from the slot's committed shape.** `min(horizon, committedEvents + intervalHorizon)`
+  and `min(2048, committedRows + 1)`. On its own this saves nothing for a long take,
+  because `committedEvents + intervalHorizon` saturates at the horizon - which is exactly
+  the measurement D should capture per slot.
+- **(b) reduce the interval horizon itself.** Halving the three constants to 1024 nearly
+  halves the whole reservation (staging 116 -> 58 KB/slot, view set 727 -> ~370 KB, the
+  seven workers 450 -> ~225 KB, history pair 160 -> 80 KB). The cost is a product limit:
+  a single interval could then admit at most 1024 captured events and the history at most
+  1024 rows. For scale, a dense 8-bar 4/4 pass is a few hundred events, so 1024 is still
+  ~2x a dense 8-bar take, and 2048 is ~4x. **This is the decision to take.**
+
+**C4 - one deferred-stop working set per device instead of per slot.** The stop-only
+buffers are per slot runtime today: `frozenCaptureCompanions` 80 KB + `bridgeMap` 68 KB +
+the second 80 KB `EditPass` history vector + the frozen staging role 58 KB. Deferred-stop
+admission is per *track* (`beginDeferredOverdubStop` is gated by that runtime's
+`captureStopOwner`, `TrackOverdubLifecycle.cpp:209-241`), so two tracks can be stopping at
+once; a device-wide singleton would restrict that to one concurrent deferred stop (and the
+frozen staging role would need a device-wide owner). Benefit: ~228 KB per armed non-stopping
+slot and ~58 KB per slot at boot, i.e. it attacks step E's 1334 KB too. Cost: a real
+behaviour restriction and a new global owner, which needs its own DEC.
+
+**Recommendation.** Take **C3(b) first** (a capacity decision that is user-facing and
+reversible via the constants), with C3(a) as the derivation mechanism so a small loop
+reserves only what it can use; keep C2 as a follow-up only if the arena is being built
+anyway; treat C4 as the step-E answer rather than part of this stop-storage change. The
+727 KB view set is playback infrastructure, not stop scratch, so it is deliberately not
+redesigned here - it is E's question (slot-provisioned vs admission-provisioned).
+
+**What D must measure to settle the choice:** the arm's new delta and post-arm headroom on
+the loaded-set recipe, plus the per-slot `committedEvents`/`committedRows` at the moment of
+the arm, so C3(a)'s saturation claim ("a long take already needs the full horizon") is
+measured rather than assumed.
+
 **2026-09-17 step B audit: the arm reservation is byte-exactly accounted, and the seven
 workers are one concurrent working set - not phase-exclusive scratch.** Full table with
 write/read windows and lifetime classes:
