@@ -55,6 +55,14 @@ DMAMEM DisplayManager displayManager;  // was: DisplayManager displayManager;
 
 **Freeing ITCM (code) rarely helps:** `FLASHMEM` only recovers a DTCM bank if it drops `(C + P)` below the next lower 32768 multiple. If code is only a few KB into a bank, small `FLASHMEM` moves do nothing — chase DTCM instead.
 
+**A new capture format string can cost 4 KB of the local allowance.** Adding two
+`DebugSessionCapture` emitters with ~90-character format strings (`emitCapPrintf`) moved
+`variables` by +4,096 with *no* symbol size change: the extra bytes are `.data`/`.bss`
+alignment padding (a `.data` region grew ~180 bytes and the following `ALIGN(1024)`/`ALIGN(4096)`
+symbols snapped). Shortening the same tags to `DIAG,reentry_window_open` / `DIAG,canonical_release`
+restored the allowance exactly. So when a change adds capture tags, read `free for local
+variables` in the build output and try a shorter tag before moving any global.
+
 ## Verify
 
 ```bash

@@ -129,8 +129,12 @@ canonical working set concurrent (option B below).
 
 **Device acceptance this authorizes (task 6.2):** two deterministic capture edges replace
 timing guesses — `successor_start_window_open` (the predecessor has frozen its interval and
-relinquished the live role while its stop is still pending) and
-`canonical_finalization_capacity_released` (the finalization resources are free again).
+relinquished the live role while its stop is still pending), emitted as
+`DIAG,reentry_window_open,<slot>,<stopTick>,<loopLengthTicks>`, and
+`canonical_finalization_capacity_released` (the finalization resources are free again),
+emitted as `DIAG,canonical_release,<slot>,<loopLengthTicks>,<availableChunks>`. The wire tags
+are short on purpose: longer ones tipped a `.data`/`.bss` alignment snap that cost 4 KB of the
+RAM1 local allowance (`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`).
 Required sequence: A OVERDUBBING → stop A → A deferred; B START succeeds **while A is still
 pending, asserted at the instant of B's start**; distinctive B input accepted at its exact
 ticks; B STOP denied non-destructively while A owns finalization capacity (B stays live; rows,

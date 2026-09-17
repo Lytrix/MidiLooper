@@ -273,6 +273,9 @@ struct LoopPlaybackRuntime {
   uint64_t canonicalPrefixStorageGeneration = 0;
   uint64_t recordingWindowGeneration = 0;
   bool recordingWindowGenerationValid = false;
+  // DEC-067 acceptance edge: armed when a deferred stop retires, emitted once the
+  // finalization resources (canonical copy target + transfer chunks) are admitted again.
+  bool canonicalReleaseMarkerArmed = false;
   // Diagnostics only: why the last first-record bar-1 preparation was denied.
   const char* firstRecordingBarDenial_ = "none";
   enum class CanonicalPrefixPhase : uint8_t { Idle, Preparing, Ready, Denied };
