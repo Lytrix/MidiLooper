@@ -630,16 +630,35 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   // horizon (so the atomic transfer takes the STOPPED commit path rather than consulting a
   // verification that can no longer hold), and continue at `AtomicTransfer`, which commits the
   // already-staged prepared pass and retires the job through deferred cleanup.
+  LoopPlaybackRuntime* retargetRuntime = playbackRuntime.slotIfAllocated(job.slot);
   if (job.owner != nullptr && job.admission.destination == PendingStopDestination::Stopped &&
       job.admission.phase >= PendingStopPhase::CanonicalTail &&
       job.admission.phase <= PendingStopPhase::CompanionBridge) {
+    if (retargetRuntime != nullptr) {
+      (void)TrackPreparedStopCommit::retargetStoppedRecovery(*retargetRuntime, job.admission);
+    }
     job.admission.setPhase(PendingStopPhase::PrepareTransfer);
     (void)job.admission.retireSkippedCompanionPreparation(false);
-    job.owner->discardPreparedCompanionHistory(job.admission.intervalToken());
+    // Keep a *complete* companion horizon: it carries the recorded note-edit representation, which
+    // is what the display resolves the overdubbed notes from, and the STOPPED publication path can
+    // commit it (`commitStopped`). Dropping it here committed the raw pass alone, so the notes
+    // stayed audible but vanished from the display. Only an incomplete horizon -- one whose
+    // preparation the stopped transport interrupted -- is dropped, and then the raw pass is the
+    // only representation that exists.
+    const bool companionsVerified =
+        retargetRuntime != nullptr &&
+        job.owner->preparedCompanionCaptureVerified(retargetRuntime->canonicalPassInputs,
+                                                   job.admission.intervalToken());
+    if (!companionsVerified) {
+      job.owner->discardPreparedCompanionHistory(job.admission.intervalToken());
+    }
+    logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retarget: companions=%s phase=%u",
+               companionsVerified ? "published" : "raw_only",
+               static_cast<unsigned>(job.admission.phase));
     job.admission.setPhase(PendingStopPhase::AtomicTransfer);
   }
-  if (auto* runtime = playbackRuntime.slotIfAllocated(job.slot)) {
-    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*runtime, job.admission);
+  if (retargetRuntime != nullptr) {
+    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*retargetRuntime, job.admission);
   }
 }
 
