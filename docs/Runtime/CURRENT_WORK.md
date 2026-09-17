@@ -5,6 +5,35 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 step F: the transport-start 81920-byte owner is the deferred record arm, not
+a separate transport path.** Identification only - no firmware change, and no transport
+admission gate is added (the user kept this out of the RC). The chain is: a record request
+while the clock is stopped is *parked*, not started - `TrackManager::startRecordingTrack`
+sets `pendingRecord[i]` and `TRACK_ARMED` and returns
+(`src/TrackManager/TrackManagerCaptureQueue.cpp:53-77`) - and the transport start releases
+it through `ClockManager::toggleTransport` -> `TrackManager::updateAllTracks` ->
+`TrackManager::handlePendingRecordStart` -> the same `Track::startRecording` ->
+`Track::prewarmPlaybackForSlot(..., prepareCapture=true)` ->
+`Loop::prewarmPreparedCompanionHistory`. There, two same-size reserves are the only 81920
+requests on the path: `passes.editPasses.reserve(rowLimit)` (the canonical side) and
+`preparedCompanionHistory_.rows.resize(rowCount)` (the candidate side), both
+`2048 * sizeof(EditPass)` with `sizeof(EditPass) = 40` on device. There is no other
+81920-byte allocation reachable from a transport start: playback start
+(`Track::startPlaying`) and `prewarmPlaybackForSlot(..., prepareCapture=false)` never touch
+the `EditPass` row horizon, and boot prewarm deliberately uses `prepareCapture=false`, which
+is why the *first* record command is what pays it.
+
+Consequence worth recording: because it is the same arm, step A already gates it. The
+"transport start has no admission gate" concern is closed for this allocation - a pending
+record start on an exhausted device now emits `#MEM_DENIED op=record_start` and leaves the
+track armed instead of aborting. Boot prewarm (`src/TrackManager.cpp:59-80`) still
+establishes the transfer horizon without this row horizon, unchanged.
+
+Log-only evidence cannot separate the two same-size reserves (both are in the same
+admission-gated call and the fixed build prints two identical `need=81920B` lines), so the
+two are recorded as one owner: `Loop::prewarmPreparedCompanionHistory`. Distinguishing them
+would need a per-reserve tag, not a new gate.
+
 **2026-09-17 step A landed: a failed required prewarm now denies the record arm.**
 The correction below left the arm gated only at the companion-history reserve; every
 other arm-time prewarm was still advisory. `Track::prewarmPlaybackForSlot` returned
@@ -114,6 +143,9 @@ Residuals to be honest about:
   The prewarm exists so "stop grains never grow vectors or relocate canonical history", so
   on this path that invariant is not held and a later stop can still grow or abort. Denial
   at the point of use trades an immediate death for a deferred risk - better, not complete.
+  **SUPERSEDED 2026-09-17:** the arm no longer continues; `prewarmPlaybackForSlot` reports
+  its result and `Track::startRecording` denies before any mutation (see the step-A entry at
+  the top of this journal). The deferred risk is closed for this route.
 - The probe's own failed `extmem_malloc` goes through the `--wrap` accounting and therefore
   **registers as a pool refusal**, which is why the first denial already reads
   `pool_refused=1/81920B`. Harmless for the gate (it only reinforces `poolRefusing`) but it
