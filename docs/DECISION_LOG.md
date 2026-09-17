@@ -88,7 +88,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-071 — The audible stale-root view must enumerate wrap-journaled passes, not only queued ones
 
 **Date:** 2026-09-17
-**Status:** Accepted — implemented; regression fails without it; device capture `captures/successor-wrap-46` shows the wrap commit and the retarget, audibility confirmation with the owner.
+**Status:** Accepted — implemented; regression fails without it; **device-verified** with the content-verification pipeline on the reported multi-pass shape (`captures/content-verify-52-playback`: 8-bar record + 8-bar cross-wrap overdub, storage 541 == effective 541, and **all five playback cycles `inventory_equal: true`, `exact_order: true`, 0 missing, 0 extra**).
 **Owner:** `Loop::tryGatherPublishedSnapshotEventsInWindow` (`src/Loop/LoopSnapshotPlayback.cpp`), the unpublished-pass allow-list
 
 **Report (user, 2026-09-17).** Record 8 bars, then an 8-bar overdub that starts at bar 3. The
@@ -130,6 +130,22 @@ it; full native 2,215 cases / 1 skipped / 0 failures at the fix commit, RAM1 loc
 62.142 s, the transport-stop retarget at 75.384 s with the successor live, and the retarget's
 `companion path stalled; raw pass only` at 76.217 s -- the overlay fix is what keeps the wrap pass
 audible across that window; the companion stall itself is DEC-070 task 5.11.
+
+**Multi-pass device verification (2026-09-17, the reported shape).** Content-creation HITL
+(`captures/content-verify-52`) with `--record-bars 8 --overdub-bars 8 --overdub-start-delay-bars 2`:
+the overdub starts at bar 3 and runs past loop end, so the wrap commits one pass and the stop a
+second -- the shape where the pre-wrap pass was inaudible. `dump_and_capture.py` +
+`verify_playback_content.py` (`captures/content-verify-52-playback`):
+
+- storage `record 384 + overdub 157 == effective 541` (`storage_matches_effective: true`);
+- **every one of five playback cycles reports `inventory_equal: true`, `exact_order: true`,
+  `missing: 0`, `extra: 0`**;
+- per-bar effective counts carry the overdub across the whole loop, including the pre-wrap bars:
+  `{0:38, 1:48, 2:62, 3:72, 4:72, 5:72, 6:72, 7:72, 8:33}`.
+
+So the pre-wrap pass reaches the MIDI output row for row, not just the display. Note the record
+sealed at 6,912 ticks (9 bars) against the requested 6,144 -- the known one-to-two-bar stop-time
+quantisation slop, unrelated to this decision; the overdub still spanned the wrap.
 
 **Related open finding (this session).** The same class of conflict appears without a transport
 stop: pausing a deferred predecessor in `CompanionHistory` and starting a successor leaves
