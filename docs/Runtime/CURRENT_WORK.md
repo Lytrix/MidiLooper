@@ -83,6 +83,46 @@ in), then close the residual. Two earlier runs in this stretch were `SPARSE_CAPT
 degraded device; a re-flash restored healthy evidence, so the harness itself is not the cause
 there.
 
+**2026-09-17 successor reentry unguarded through all three routes; one ST line per transition.**
+OpenSpec `successor-capture-reentry-unguarding`, the change the parent task 2.3 split out. Its
+preflight (section 1) was already resolved; the predecessor work this round needed was 2.3's
+remaining assertion breadth, which 5.2 owns - so 5.2 landed first, then 3.1-3.3 and 4.1.
+
+- **5.2 isolation (closes 2.3):** new `test_continuous_capture` case
+  `test_deferred_predecessor_completion_leaves_successor_interval_untouched` asserts that a
+  predecessor's deferred completion during a successor's capture leaves the successor's rows,
+  pending notes, preview, live-role reservations and track state untouched and forces no
+  transition on it; `test_track_reentry_does_not_depend_on_manager_guard` gained the same
+  completion-during-capture phase.
+- **3.1:** `TrackManager::startOverdubbingTrack` no longer refuses a new interval because a
+  deferred stop is pending. START is bounded by the live admission role, which
+  `Track::startOverdubbing` proves with every storage/ownership precondition; the cross-track
+  maintenance predicates still consult `hasPendingDeferredOverdubStop()` unchanged.
+- **3.2 / 3.3:** `test_manager_reentry_with_a_held_same_pitch_note` passes (A's held same-pitch
+  closure retained, B's physical Off closes B's note only), and the step gate ran green.
+- **4.1:** `MidiButtonActions::handleToggleRecord` no longer swallows the press while a
+  finalization is pending, so Button A admits the successor on the same terms as the other
+  routes; the resolved reproducer
+  `test_button_a_successor_stop_denied_until_deferred_role_available` passes, reading its
+  finalized output from the job's sealed range (an admitted transfer empties the live store).
+- **Firmware telemetry:** `Track::setState` emitted the `ST,Track` capture line twice (once via
+  `logger.logStateTransition` -> `SC_STATE`, once directly). The duplicate is removed, so each
+  transition appears once and the host's dedupe is now only a compatibility guard.
+
+Evidence: full native **2196 cases, 1 skipped, 0 failures** - the Track, manager and Button A
+reentry cases are green for the first time; `test_continuous_capture` 37/37;
+`teensy41-capture-serial` RAM1 code 425560 / padding 424 / locals 6464. Device
+([`successor-reentry-13`](../../captures/successor-reentry-13/session_20260917_134731.log)): the
+successor interval **now opens on hardware** - `PLAYING->OVERDUBBING: 2`,
+`OVERDUBBING->PLAYING: 2`, `intervals={'OVERDUBBING': 2, 'OVERDUB_STOPPING': 2}` and the record
+still lands at 6,144 ticks. The probe's *overlap* verdict is not yet captured: its press landed
++1.7-1.9 s after the stop against a ~1.4 s predecessor window (the confirmation wait consumed
+the window; the press-then-probe reorder landed but that run came back sparse).
+
+Still open in that change: 4.2 (three-route agreement test), 5.1 and 5.3-5.6 (capacity,
+transport-stop ordering, supersession, adversarial mid-grain timing, reentry telemetry), 6.2
+(device acceptance) and 6.3 (closeout).
+
 **2026-09-17 deferred-stop confirmation fixed, and the record over-run root-caused to
 clock-count pacing.** Two more host-side oracle items, plus the real reason the record
 length keeps missing.
