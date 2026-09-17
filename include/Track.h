@@ -453,6 +453,9 @@ private:
   /// DEC-069: a wrap crossing happened while a deferred stop job owned the slot's canonical
   /// revision, so the pass commit is owed to the first turn after that job retires.
   bool overdubWrapCommitPending_ = false;
+  /// DEC-070 diagnostic: the head deferred stop job hit a predicate it can never satisfy, so it
+  /// keeps its finalization resources forever. Noted once per job.
+  bool deferredStopStallNoted_ = false;
   uint32_t overdubStopDebtProbeArmedUs_ = 0;
   bool overdubStopVisualDirtyBefore_ = false;
   bool overdubStopVisualDirtyAfter_ = false;
