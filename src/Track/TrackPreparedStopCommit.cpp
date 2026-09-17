@@ -142,6 +142,9 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   runtime.discardFrozenCanonicalTail();
   loop.closeOverdubSession();
   if (runtime.captureStopOwner == &stop) runtime.captureStopOwner = nullptr;
+  // DEC-067: the successor's stop may be admitted again once this job's
+  // finalization resources are back; the maintenance turn reports that edge.
+  runtime.canonicalReleaseMarkerArmed = true;
   stop.reset();
   return true;
 }

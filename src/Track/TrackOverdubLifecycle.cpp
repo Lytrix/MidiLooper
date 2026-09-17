@@ -234,10 +234,30 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   }
   CaptureAdmissionStaging* views =
       runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;
-  if (runtime == nullptr || views == nullptr || runtime->captureStopOwner != nullptr ||
-      !loop.hasActiveOverdubTransferAdmission()) {
+  if (runtime == nullptr || views == nullptr) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        views != nullptr, loop.hasActiveOverdubTransferAdmission(), "storage_denied");
+    return false;
+  }
+  // DEC-067: this is the admission boundary that owns the finalization resources.
+  // They are checked here, and not at the interval's START, because none of them is
+  // used before this edge. Each denial is explicit and non-destructive: no stop
+  // descriptor is taken, and the interval stays the live recording interval.
+  if (runtime->captureStopOwner != nullptr) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1,
+                       loop.hasActiveOverdubTransferAdmission(), "finalizer_busy");
+    return false;
+  }
+  if (!loop.hasActiveOverdubTransferAdmission()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "transfer_denied");
+    return false;
+  }
+  if (!runtime->canonicalCaptureOutputAdmitted()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "canonical_output_busy");
+    return false;
+  }
+  if (!loop.canHandoffSessionExitSnapshot()) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full");
     return false;
   }
   CaptureAdmissionStaging& staging = *views;
@@ -350,6 +370,12 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   job.admission.destination = destination;
   job.owner = &loop;
   runtime->captureStopOwner = &job.admission;
+#if defined(SESSION_CAPTURE)
+  // DEC-067: the predecessor now owns the frozen role and the live role is clean,
+  // so a successor interval may start even though this job is still pending.
+  DebugSessionCapture::successorStartWindowOpen(activeLoopIndex, currentTick,
+                                                loop.loopLengthTicks);
+#endif
   job.loopId = loop.loopId;
   job.slot = activeLoopIndex;
   job.phaseTick = capturePhaseTick(currentTick);
@@ -1064,21 +1090,11 @@ void Track::startOverdubbing(uint32_t currentTick) {
                "Overdub start rejected: capture staging or stop descriptors are not prewarmed");
     return;
   }
-  if (!runtime->canonicalCaptureOutputAdmitted()) {
-    logger.log(CAT_TRACK, LOG_WARNING,
-               "Overdub start rejected: canonical copy chunks are not reserved");
-    return;
-  }
-  if (!loopRef.hasActiveOverdubTransferAdmission()) {
-    logger.log(CAT_TRACK, LOG_WARNING,
-               "Overdub start rejected: canonical transfer capacity is not prewarmed");
-    return;
-  }
-  if (!loopRef.canHandoffSessionExitSnapshot()) {
-    logger.log(CAT_TRACK, LOG_WARNING,
-               "Overdub start deferred: previous session snapshot handoff is pending");
-    return;
-  }
+  // DEC-067: START owns the live interval only. The canonical copy target, the
+  // active transfer admission and the session-exit receipt slot are *finalization*
+  // resources -- none of them is used before this interval's own stop edge -- so
+  // `beginDeferredOverdubStop` answers them, with its own denial outcome. A pending
+  // predecessor may hold all three while this interval records.
   // Memory admission, and it sits before every mutation below on purpose: on
   // 2026-09-17 an admitted overdub reached `ExternalMemoryFirstAllocator::abort()`
   // about two seconds in and took the transport down with it. Exhaustion is an
@@ -1088,8 +1104,14 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!MemoryMonitor::admitOperationMemory(MemoryMonitor::OperationKind::OverdubStart, 0)) {
     return;
   }
-  runtime->discardFrozenCaptureOrder();
-  runtime->discardFrozenCaptureCanonicalOrder();
+  // These two builders are per slot, not per interval: a pending predecessor is
+  // mid order/rewrite on them. Only clear them when no job owns them.
+  const bool stopOwnerLive =
+      runtime->captureStopOwner != nullptr && runtime->captureStopOwner->pending;
+  if (!hasPendingDeferredOverdubStop() && !stopOwnerLive) {
+    runtime->discardFrozenCaptureOrder();
+    runtime->discardFrozenCaptureCanonicalOrder();
+  }
   viewSet->reset();
   viewSet->captureGeneration = playbackGeneration;
   playingMidiDrainAfterOverdubStop_ = false;

@@ -186,6 +186,19 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t currentPhase = 0, uint32_t eventCount = 0);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
+/** The deferred predecessor stop has frozen its interval and handed the live capture role
+ *  back, so a successor interval may start (DEC-067, the `successor_start_window_open`
+ *  edge). One shot per deferred stop.
+ *  Wire form: DIAG,reentry_window_open,<slot>,<stopTick>,<loopLengthTicks>.
+ *  The tag stays short on purpose: a longer capture format string tipped a `.data`/`.bss`
+ *  alignment snap that cost 4 KB of the RAM1 local allowance (see Teensy-RAM1-Bank-Overflow). */
+SC_MEM_ATTR void successorStartWindowOpen(uint8_t slot, uint32_t stopTick, uint32_t loopLengthTicks);
+/** The deferred stop's finalization resources are free again -- canonical copy target empty,
+ *  transfer chunks admitted, no stop owner -- so a successor's stop may be admitted
+ *  (DEC-067, the `canonical_finalization_capacity_released` edge). One shot per retired stop.
+ *  Wire form: DIAG,canonical_release,<slot>,<loopLengthTicks>,<availableChunks>. */
+SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t loopLengthTicks,
+                                                      size_t availableChunks);
 /** First-record return window selected as the audible source:
  *  DIAG,first_record_adopt,<loopLengthTicks>,<retainedEvents> (Tier-A). One line
  *  per adoption; the retained count shows how much of bar 1 the window held. */

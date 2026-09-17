@@ -692,6 +692,18 @@ SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
                 (unsigned long)durationUs, (unsigned long)eventCount);
 }
 
+SC_MEM_ATTR void successorStartWindowOpen(uint8_t slot, uint32_t stopTick, uint32_t loopLengthTicks) {
+  emitCapPrintf("#CAP,%lu,DIAG,reentry_window_open,%lu,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)slot, (unsigned long)stopTick, (unsigned long)loopLengthTicks);
+}
+
+SC_MEM_ATTR void canonicalFinalizationCapacityReleased(uint8_t slot, uint32_t loopLengthTicks,
+                                                      size_t availableChunks) {
+  emitCapPrintf("#CAP,%lu,DIAG,canonical_release,%lu,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)slot, (unsigned long)loopLengthTicks,
+                (unsigned long)availableChunks);
+}
+
 SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t retainedEvents) {
   emitCapPrintf("#CAP,%lu,DIAG,first_record_adopt,%lu,%lu\r\n", (unsigned long)micros(),
                 (unsigned long)loopLengthTicks, (unsigned long)retainedEvents);

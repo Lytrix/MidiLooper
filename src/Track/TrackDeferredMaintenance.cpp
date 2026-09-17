@@ -906,6 +906,22 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #endif
     return;
   }
+  // DEC-067 acceptance edge: once a retired deferred stop's finalization resources
+  // are admitted again (canonical copy target empty and the transfer chunks back),
+  // the successor's own stop may be admitted. Report it once per job so the HITL
+  // probe can drive the STOP retry from an edge instead of a delay.
+  if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
+    auto* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+    if (runtime != nullptr && runtime->canonicalReleaseMarkerArmed &&
+        runtime->captureStopOwner == nullptr && runtime->canonicalCaptureOutputAdmitted()) {
+      runtime->canonicalReleaseMarkerArmed = false;
+#if defined(SESSION_CAPTURE)
+      DebugSessionCapture::canonicalFinalizationCapacityReleased(
+          activeLoopIndex, getActiveLoop().loopLengthTicks,
+          runtime->canonicalCaptureChunks.availableChunks());
+#endif
+    }
+  }
   // One physical-credit refill is one VisualCache owner turn. A full pool
   // leaves other maintenance eligible; it must not create a busy retry loop.
   if (deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache && loopsAllocated() &&
