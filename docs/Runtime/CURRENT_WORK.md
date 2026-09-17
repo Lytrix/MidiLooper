@@ -2620,6 +2620,48 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — first-record audible launch from the prepared bar-1 window (user-directed;
+leads the successor-reentry device step).** User: *"we explicitly had a plan to build a
+prepared first bar to be ready to be used when record stop is executed to directly be used as
+playback. that should be leading and remove the decision for empty."* The authority is the
+approved contract in
+[`resumable-midi-boundary-playback-maintenance/design.md`](../../openspec/changes/resumable-midi-boundary-playback-maintenance/design.md)
+§ *First-record window preparation preserves the existing launch boundary* and the 2026-09-15
+user correction in its `tasks.md`: at record start the slot runtime establishes prewarmed bar-1
+playback coverage, accepted input keeps it current, the retained raw bar is bound to final loop
+geometry at the stop, and **the complete bar-1 source/order/cursor/ledger bundle is selected at
+the existing transport-clock boundary with no global rewind, no omitted notes and no delayed
+catch-up**. The measured defect this replaces: after a first-record stop playback is empty for
+`~620 ms` (the session-exit publication gap, 6.3.1 hold-empty) and then flushes the missed grid
+steps as a catch-up burst. Device evidence: `captures/deadline-pacing-01`
+(`STOPPED_RECORDING→PLAYING` at 39.8156 s, first `snapshot_unit,kind=publish` at 40.4297 s,
+`playback_build,snapshot,...,currentPhase=473` at 40.4304 s, first `MO` at 40.4355 s).
+
+- **S1. Preparation must be re-armable across takes — IN PROGRESS.** A take that ends without
+  the record-stop handoff (transport Stop during RECORDING, empty/skipped commit) leaves the
+  prepared raw bar-1 view retained, so the *next* take's `prepareFirstRecordingBar` fails and
+  the prepared-first-bar path never exists. Device evidence: `First-record bar-1 playback
+  preparation unavailable` in `deadline-pacing-01`, `successor-reentry-13`, `bar-anchor-02` and
+  `-06`, each immediately after a `RECS,stopToStopped,...` empty take. Slice: release the
+  unlaunched return window at the new take's preparation boundary (a launched/bound window is
+  never touched), and name the failing precondition in the warning.
+- **S2. Select the bound bar-1 bundle as the audible source — PLANNED.**
+  `playCommittedLoopMidi` currently has two fixed sources only (selected full-loop bridge /
+  published full-loop view) and both require `publishedSnapshotIdentity()`, so the bound raw
+  bar-1 view is never audible; the legacy merged path then holds empty (`GatherMissHoldEmpty`).
+  Slice: serve the launch from the bound bar-1 bundle while no fixed source exists, hand off to
+  the published snapshot view/bridge when it appears, and keep the emission cursor and ledger
+  boundary cycle-qualified across the switch (the bar-1 view's `LedgerBoundarySummary` is
+  currently empty — it must carry the open-note closure obligations of the launch, not just the
+  events).
+- **S3. Coverage continuation and device verdict — PLANNED.** Cover each following bar without
+  omission or delayed refill (bar-1→bar-2 handoff) and verify on device that the first `MO`
+  after a record stop lands within one grid step (~10-125 ms) instead of ~620 ms, for a 1-bar
+  and an 8-bar take, with no catch-up burst and no duplicated or omitted note.
+
+Explicitly not in scope for these slices: C1-a compat-gather restoration (6.3.1 stays retired),
+DEC-045 idle publication scheduling, and any new fixed user-visible capacity.
+
 **2026-09-17 — HITL oracle repair RC (user-directed), then the bridge tail.** C3/DEC-066 is
 closed as validated, so the next priority is trustworthy device evidence rather than more
 memory work. In this order:

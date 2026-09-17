@@ -6020,9 +6020,66 @@ void test_first_record_bar_prepares_before_capture_and_survives_cache_reset() {
 void test_first_record_preparation_failure_does_not_change_existing_runtime() {
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_FALSE(runtime.prepareFirstRecordingBar(768));
+  TEST_ASSERT_EQUAL_STRING("no_prewarmed_view_set", runtime.firstRecordingBarDenialLabel());
   TEST_ASSERT_TRUE(runtime.prewarmViews());
   TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
   TEST_ASSERT_FALSE(runtime.prepareFirstRecordingBar(768));
+  TEST_ASSERT_EQUAL_STRING("return_window_held", runtime.firstRecordingBarDenialLabel());
+}
+
+// A take that ends without the record-stop handoff (transport Stop during
+// RECORDING, empty/skipped commit) leaves the prepared raw bar-1 window held.
+// The next take's preparation boundary owns releasing it, otherwise the
+// prepared-first-bar path never exists for that take (`deadline-pacing-01`,
+// `successor-reentry-13`, `bar-anchor-02/-06` all logged the denial after a
+// `RECS,stopToStopped` empty take).
+void test_first_record_return_window_releases_for_the_next_take() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(32, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60)));
+
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  const PlaybackViewSourceIdentity source{loop.playbackRevision, 1, loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 16; ++i) runtime.serviceFirstRecordingBar(loop, source, 768, 1);
+  auto* set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(set->views[set->lifecycle.retained].rawCoveragePrepared);
+  TEST_ASSERT_EQUAL_UINT16(2, set->views[set->lifecycle.retained].storage.eventCount);
+
+  // The take ends here with no record-stop handoff. The cache reset keeps the
+  // retained window (design: the retained raw bar survives playback-cache reset).
+  runtime.reset(true);
+  TEST_ASSERT_FALSE(runtime.prepareFirstRecordingBar(768));
+  TEST_ASSERT_EQUAL_STRING("return_window_held", runtime.firstRecordingBarDenialLabel());
+
+  TEST_ASSERT_TRUE(runtime.releaseUnlaunchedFirstRecordingBar());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_EQUAL_UINT8(set->lifecycle.retained, set->lifecycle.current);
+  TEST_ASSERT_TRUE(set->views[set->lifecycle.current].rawCoveragePrepared);
+  TEST_ASSERT_EQUAL_UINT16(0, set->views[set->lifecycle.current].storage.eventCount);
+  TEST_ASSERT_EQUAL_STRING("none", runtime.firstRecordingBarDenialLabel());
+}
+
+void test_first_record_release_leaves_a_launched_window_alone() {
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(1536));
+  auto* set = runtime.viewSetIfPrewarmed();
+  const uint8_t current = set->lifecycle.current;
+  const uint32_t generation = set->views[current].storageGeneration;
+  // The handoff already cleared `retained`, and the launched view must never be
+  // released by the next take's preparation boundary.
+  TEST_ASSERT_FALSE(runtime.releaseUnlaunchedFirstRecordingBar());
+  TEST_ASSERT_EQUAL_UINT8(current, set->lifecycle.current);
+  TEST_ASSERT_EQUAL_UINT32(generation, set->views[current].storageGeneration);
+  TEST_ASSERT_EQUAL_UINT32(1536, set->views[current].coverage.loopLengthTicks);
+  TEST_ASSERT_FALSE(set->views[current].rawCoveragePrepared);
 }
 
 void test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append() {
@@ -6283,6 +6340,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_playback_order_alloc_is_stable_after_prewarm_touch);
   RUN_TEST(test_first_record_bar_prepares_before_capture_and_survives_cache_reset);
   RUN_TEST(test_first_record_preparation_failure_does_not_change_existing_runtime);
+  RUN_TEST(test_first_record_return_window_releases_for_the_next_take);
+  RUN_TEST(test_first_record_release_leaves_a_launched_window_alone);
   RUN_TEST(test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append);
   RUN_TEST(test_boot_playback_prewarm_does_not_allocate_capture_workers_and_upgrades_in_place);
   RUN_TEST(test_capture_staging_roles_exchange_without_sharing_physical_storage);

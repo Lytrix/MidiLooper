@@ -273,6 +273,8 @@ struct LoopPlaybackRuntime {
   uint64_t canonicalPrefixStorageGeneration = 0;
   uint64_t recordingWindowGeneration = 0;
   bool recordingWindowGenerationValid = false;
+  // Diagnostics only: why the last first-record bar-1 preparation was denied.
+  const char* firstRecordingBarDenial_ = "none";
   enum class CanonicalPrefixPhase : uint8_t { Idle, Preparing, Ready, Denied };
   CanonicalPrefixPhase canonicalPrefixPhase = CanonicalPrefixPhase::Idle;
   bool canonicalPrefixNeedsService(const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
@@ -475,6 +477,17 @@ struct LoopPlaybackRuntime {
   // Establish an empty raw bar-1 view before first-record input. This uses the
   // same fill/order/lifecycle buffers as ordinary playback.
   bool prepareFirstRecordingBar(uint32_t ticksPerBar);
+  /// Retire a prepared-but-never-launched first-record return window, so the next
+  /// take can establish its own bar 1. A take that ends without the record-stop
+  /// handoff (transport Stop during RECORDING, empty/skipped commit) leaves the
+  /// raw bar-1 view retained; the preparation boundary for the next take owns the
+  /// release. A bound (launched) window is never touched: only a view that still
+  /// carries `rawCoveragePrepared` is released.
+  bool releaseUnlaunchedFirstRecordingBar();
+  /// Diagnostic label for the last `prepareFirstRecordingBar` denial. Session
+  /// capture records it with the "first-record bar-1 preparation unavailable"
+  /// warning; it is not a policy input.
+  const char* firstRecordingBarDenialLabel() const;
   // Bind final record geometry and make the retained bar-1 view eligible for
   // the normal audible handoff. No source copy or order rebuild occurs here.
   bool bindFirstRecordingBar(uint32_t loopLengthTicks);

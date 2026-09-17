@@ -415,11 +415,17 @@ void Track::startRecording(uint32_t currentTick) {
     // Later capture updates are still admitted by the canonical capture store;
     // this preparation step must never become a new input rejection policy.
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPrepareFirstBar);
+    // A take that ended without the record-stop handoff (transport Stop during
+    // RECORDING, empty/skipped commit) still holds the prepared raw bar-1 window.
+    // The new take owns the preparation boundary, so retire that unlaunched
+    // window here; a bound/launched window is never released.
+    (void)runtime->releaseUnlaunchedFirstRecordingBar();
     const bool firstBarReady = runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR);
     ExternalPoolAccounting::endTag();
     if (!firstBarReady) {
       logger.log(CAT_TRACK, LOG_WARNING,
-                 "First-record bar-1 playback preparation unavailable; capture admission retained");
+                 "First-record bar-1 playback preparation unavailable (%s); capture admission retained",
+                 runtime->firstRecordingBarDenialLabel());
     }
   }
   if (!setState(TRACK_RECORDING)) {
