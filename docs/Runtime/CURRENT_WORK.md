@@ -5,6 +5,19 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 BAR-anchored stream stop landed; the record is still ~2 bars over.**
+`stream_pattern_for_bars` now ends on the device's own `BAR,<tick>,<index>` (advanced by
+`target_bars` from a lazily captured baseline) and both the record and overdub paths pass a
+probe over the capture tail; `_latest_device_bar_index` is unit-tested (parser cases) and the
+probe reports `device_bar_start/latest/relative_bars` in its timing dict. Device results:
+8,448-9,216 ticks (11-12 bars) on the clock-count path before, **7,680 ticks (10 bars) after**
+- better, but still 2 bars over the 6,144 (8-bar) target, and `record_loop_length_mismatch`
+remains. Next: surface the probe counters in the per-track report to see whether the baseline
+is captured a bar or two late (the stream starts mid-bar and the first probe call lands 0.5 s
+in), then close the residual. Two earlier runs in this stretch were `SPARSE_CAPTURE` on a
+degraded device; a re-flash restored healthy evidence, so the harness itself is not the cause
+there.
+
 **2026-09-17 deferred-stop confirmation fixed, and the record over-run root-caused to
 clock-count pacing.** Two more host-side oracle items, plus the real reason the record
 length keeps missing.
