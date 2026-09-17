@@ -1422,8 +1422,28 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingBar(
     uint32_t ticksPerBar) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
-  if (set == nullptr || ticksPerBar == 0 || set->lifecycle.ready == RuntimePlaybackViewLifecycle::kNoView ||
-      viewBuild.active() || set->lifecycle.retained != RuntimePlaybackViewLifecycle::kNoView) {
+  if (set == nullptr) {
+    firstRecordingBarDenial_ = "no_prewarmed_view_set";
+    return false;
+  }
+  if (ticksPerBar == 0) {
+    firstRecordingBarDenial_ = "zero_bar_length";
+    return false;
+  }
+  if (set->lifecycle.retained != RuntimePlaybackViewLifecycle::kNoView) {
+    // A previous take's return window is still held. `releaseUnlaunchedFirstRecordingBar`
+    // retires an unlaunched one; a bound window belongs to the audible handoff and is a
+    // programming error on the record-start path. This is reported before the role check
+    // because a held return window also leaves no free build role.
+    firstRecordingBarDenial_ = "return_window_held";
+    return false;
+  }
+  if (set->lifecycle.ready == RuntimePlaybackViewLifecycle::kNoView) {
+    firstRecordingBarDenial_ = "no_free_build_role";
+    return false;
+  }
+  if (viewBuild.active()) {
+    firstRecordingBarDenial_ = "shared_build_active";
     return false;
   }
   RuntimePlaybackView& destination = set->views[set->lifecycle.ready];
@@ -1431,14 +1451,57 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingB
   if (!viewBuild.begin(destination, nullptr, 0, PlaybackViewSourceIdentity{}, coverage,
                        EmissionCursor{}, LedgerBoundarySummary{},
                        RuntimePlaybackViewFillScope::RawCoverage)) {
+    firstRecordingBarDenial_ = "fill_admission_denied";
     return false;
   }
   if (viewBuild.stepFill(1) == RuntimePlaybackViewBuildGrain::Denied ||
       !destination.complete || !destination.rawCoveragePrepared) {
     viewBuild.discard();
+    firstRecordingBarDenial_ = "fill_grain_denied";
     return false;
   }
-  return set->lifecycle.installPreparedCurrent(set->views);
+  if (!set->lifecycle.installPreparedCurrent(set->views)) {
+    viewBuild.discard();
+    firstRecordingBarDenial_ = "lifecycle_install_denied";
+    return false;
+  }
+  firstRecordingBarDenial_ = "none";
+  return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const char*
+LoopPlaybackRuntime::firstRecordingBarDenialLabel() const {
+  return firstRecordingBarDenial_ != nullptr ? firstRecordingBarDenial_ : "unknown";
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseUnlaunchedFirstRecordingBar() {
+  // A stop job that is still retiring owns the record-session lifecycle; do not
+  // release a window under it.
+  if (captureStopOwner && captureStopOwner->pending) {
+    return false;
+  }
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr) {
+    return false;
+  }
+  const uint8_t retained = set->lifecycle.retained;
+  if (retained == RuntimePlaybackViewLifecycle::kNoView || retained >= set->views.size()) {
+    return false;
+  }
+  if (!set->views[retained].rawCoveragePrepared) {
+    // Bound to final geometry and handed off (or already part of an audible source):
+    // the record-stop handoff owns it.
+    return false;
+  }
+  viewBuild.discard();
+  set->views[retained].resetMetadata();
+  // Restore the prewarm role layout so the next preparation installs a current view
+  // exactly as it does at boot. `installPreparedCurrent` resets the retired current.
+  set->lifecycle.reset();
+  if (set->lifecycle.ready < set->views.size()) {
+    set->views[set->lifecycle.ready].resetMetadata();
+  }
+  return true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(
