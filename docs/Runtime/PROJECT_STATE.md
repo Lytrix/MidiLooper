@@ -15,11 +15,27 @@ transport_ok=True`, `persistence handoff result=ok`, undo=1 redo=1, `overflow_fr
 `(176,4,74,84)`) are in `passes` and in `effective` but never emitted. This is the same class as DEC-071 —
 a committed pass missing from the playback source — with a different pass; DEC-071's own pre-wrap pass is
 audible here. The same 24-row loss reproduced on `content-verify-53-playback`. **5.9 and 5.11 stay open**;
-the next step is a fix plus a re-verification, not a tick. Observability blocker recorded alongside: the
-8-bar recipe sheds the 1 MiB `#CAP` ring and the dominant consumer is `DIAG,droid_queue` (~5.6k rows/run)
-plus `PERS,work` (~3.5k), neither dropped by `teensy41-capture-serial-no-grain` (which only drops
-`DIAG,stop_grain`); four runs came back `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` after the harness failed
-to deliver the overdub-stop press.
+the next step is a fix plus a re-verification, not a tick.
+
+**Root cause localised 2026-09-18 (two independent device resets): the persisted representation can lag
+the persisted passes, and playback follows it.** `content-verify-59` (acceptance build, single-overdub
+DEC-071 shape) is a clean base PASS, yet playback emits only the record pass: `raw_counts` record 384 +
+overdub 157 + 35 = effective 576, `rows=384`, **192 missing every cycle**, reproduced identically by a
+second reset+dump (`content-verify-59b-playback`). `src/StorageLoopIo.cpp` `writeLoopPersisted` serializes
+the loop body's note/event snapshot from `loop.publishedSnapshot()` without requiring it to be current
+with the committed passes, and `applyLoadedLoopSlotBodyCommit` installs it as the published root
+(`storePublishedSnapshot(loadedLoopSnapshot, 0)`) with no reconcile against the restored passes; after a
+reboot there are no unpublished passes for the stale-root overlay to fold in, so the committed overdub
+stays silent while present in storage/effective. Fix options (owner decision — persistence/publication
+contract): gate the persist admission on the root being current (with a bounded re-admit), or serialize
+the body from the passes, or reconcile at load.
+
+**Observability fix landed alongside:** `SESSION_CAPTURE_DROID_QUEUE=0` folded into the acceptance env
+`teensy41-capture-serial-no-grain`. `DIAG,droid_queue` was ~5.6k rows/run and, with the per-slice
+`PERS,work` trace, overflowed the 1 MiB ring (four runs came back `INCONCLUSIVE_CAPTURE` after the
+harness failed to deliver the overdub-stop press). With it dropped, the DEC-071 run fell from 20,800 to
+**9,237** `#CAP` lines and became a clean PASS, so the base-run oracle is trustworthy again. RAM1 locals
+unchanged at 6,400 for both envs.
 
 **2026-09-17 successor change task 5.5 CLOSED: the adversarial mid-grain reentry checkpoint set is
 complete and in the default gate (OpenSpec `successor-capture-reentry-unguarding`).** 5.5 was the only
