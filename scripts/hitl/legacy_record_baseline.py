@@ -2271,9 +2271,12 @@ def _verify_record_loop_length(
     actual = int(last["final_length"])
     raw_length = int(last["raw_length"])
     bar_aligned = _bar_aligned_final_length(raw_length, ticks_per_bar=ticks_per_bar)
-    # Firmware quantizes loop length up to the next bar at stop; allow one bar of
-    # slop when transport was already running before the host note stream (serial proxy).
-    final_length_ok = actual == expected or actual == bar_aligned
+    # The firmware reports `final_length` as the loop length quantized up to the next bar
+    # from `raw_length`, so `actual == bar_aligned` is true for *any* raw length - it made
+    # this assertion vacuous and the requested bar count effectively unenforced. Compare
+    # against the request instead, allowing the one bar of stop-time quantization slop that
+    # the comment always intended.
+    final_length_ok = actual == expected
     if not final_length_ok and ticks_per_bar > 0:
         final_length_ok = (
             actual % ticks_per_bar == 0
