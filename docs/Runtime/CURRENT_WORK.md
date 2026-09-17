@@ -53,7 +53,8 @@ published root nor the stale-root overlay once its session closed -- the display
   and parked at `Prewarmed`, so the driver's `preparedCompanionHistoryCanStep` is false while
   `beginPreparedCompanionHistory` is re-entered every turn. Ruled out: a
   `prewarmPreparedCompanionHistory` reset of an in-flight preparation (a guard for it never fires)
-  and a transport command-epoch mismatch (the epoch still matches). Located on the third turn: the successor's own `Track::startOverdubbing` -> `Loop::beginCapture`
+  and a transport command-epoch mismatch (the epoch still matches).
+- Root cause, located on the third turn: the successor's own `Track::startOverdubbing` -> `Loop::beginCapture`
   discards the predecessor's staged pass with an unconditional `discardPendingCapturePass()`.
   `pendingCapturePass_` is one Loop scalar shared by both intervals, so the predecessor's companion
   admission (`!hasPendingCapturePass_`) is then refused forever, the work stays at `Prewarmed`, and
@@ -62,7 +63,7 @@ published root nor the stale-root overlay once its session closed -- the display
   staging at `PrepareTransfer` (`AlreadyPending`), so the real fix must give the staged pass an owner:
   take it into the job and restage it at the job's `PrepareTransfer`. That is an ownership change to
   the allocation-free stop contract, so it needs its own coverage and device verification. Iterate with
-  `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture`.  frozen staging or the capture-inputs binding that the phase's `sourceCurrent()` reads.
+  `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture`.
 - Ignored per the owner: one deterministic coalesced note-off on the 5-bar shape
   (`content-verify-51-playback`, tick 128 / ch 4 / note 78 / velocity 0).
 
