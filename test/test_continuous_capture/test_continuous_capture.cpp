@@ -1423,6 +1423,27 @@ void consumePairOverRange(Loop& loop, LoopPlaybackRuntime& runtime, uint32_t fro
   }
 }
 
+/// OpenSpec 2.4 slice 2: consume the *published* immutable pair over (fromTick, toTick]
+/// through the same production stream adapter the clock path uses. The pair supplies both
+/// members and its own cursor seed, so nothing is rebuilt and nothing is reanchored.
+void consumePublishedPairOverRange(Loop& loop, LoopPlaybackRuntime& runtime, uint32_t fromTick,
+                                   uint32_t toTick, DifferentialTrace& out) {
+  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
+  TEST_ASSERT_TRUE(runtime.preparedPair.storage != nullptr);
+  FixedPlaybackStreamCtx pairCtx{runtime.preparedPair.storage};
+  const PlaybackEventStream stream = makeFixedPlaybackStream(pairCtx);
+  loop.nextEventIndex = runtime.preparedPair.cursorSeed;
+  for (uint32_t tick = fromTick + 1; tick <= toTick; ++tick) {
+    ProjectionContext ctx{};
+    ctx.loopLength = loop.loopLengthTicks;
+    const PlaybackTickFrame frame{&ctx, tick, tick - 1, false};
+    // Immutable source: no playbackOrderDirty invalidation pointer.
+    PlaybackCursorAdvanceState advance{&loop.nextEventIndex, nullptr};
+    (void)advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                differentialRecordSend, &out, 0, nullptr, nullptr, 1);
+  }
+}
+
 bool differentialTracesEqual(const DifferentialTrace& a, const DifferentialTrace& b) {
   if (a.rows.size() != b.rows.size()) return false;
   for (size_t i = 0; i < a.rows.size(); ++i) {
@@ -1600,6 +1621,236 @@ void test_prepared_pair_anchor_is_part_of_its_identity() {
   consumePairOverRange(loop, runtime, 0, 448, fromStart);
   TEST_ASSERT_TRUE_MESSAGE(fromStart.rows.size() > anchored.rows.size(),
       "an unanchored pair emits from the loop start; the anchor seed is part of the pair");
+}
+
+// ---------------------------------------------------- 2.4 slice 2: prepared pair
+// The pinned invariant: playback never observes `mergedEvents` and `playbackOrder` from
+// different generations; a pair becomes consumable only when both members and their
+// cursor/reanchor state are complete for the same source generation.
+
+/// The off-clock owner publishes one coherent pair from the working window, and the clock
+/// path's consume decision reads it without building anything. Coherence is structural:
+/// the descriptor's order indexes its own event buffer, which is not the working window.
+void test_prepared_pair_publishes_off_clock_and_the_consume_decision_never_builds() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
+  seedPreparedPair(loop, runtime, committed);
+  TEST_ASSERT_FALSE(runtime.preparedPair.ready);
+
+  Track::resetPlaybackOrderHotRebuildCount();
+  track.ensurePlaybackMergedEventsForSlot(0);
+  const Track::PreparedPairMetrics published = track.preparedPairMetrics(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, published.publishCount,
+      "the off-clock owner publishes exactly one pair");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(4u, static_cast<uint32_t>(published.publishedEventCount),
+      "the published pair carries the whole coherent window");
+  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "off-clock publication is not a clock-path content-sized build");
+  // Structural coherence: the pair owns its event buffer, and its order indexes only that
+  // buffer, so no consumer can pair these events with another generation's order.
+  const FixedPlaybackEventStorage& pairStorage = *runtime.preparedPair.storage;
+  TEST_ASSERT_TRUE(pairStorage.events != runtime.mergedMidiEvents.mergedEvents.data());
+  TEST_ASSERT_TRUE(pairStorage.order != nullptr);
+  for (size_t index = 0; index < runtime.preparedPair.eventCount; ++index) {
+    TEST_ASSERT_TRUE(pairStorage.order[index] < runtime.preparedPair.eventCount);
+  }
+
+  const PreparedPairConsumeDecision decision = resolvePreparedPairConsume(
+      runtime, loop, loop.playbackRevision, TrackCaptureStopTestAccess::generation(track),
+      loop.publishedSnapshotIdentity(), false, 96);
+  TEST_ASSERT_TRUE(decision.pair == &runtime.preparedPair);
+  TEST_ASSERT_FALSE(decision.requested);
+  TEST_ASSERT_FALSE(decision.held);
+  const Track::PreparedPairMetrics afterConsume = track.preparedPairMetrics(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, afterConsume.requestCount,
+      "a current pair is consumed; no request is raised");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "consuming a current pair is a read, never a build");
+}
+
+/// A source change requests a replacement and the clock path keeps consuming the previous
+/// coherent pair (P0) until the off-clock owner publishes P1. Nothing builds on the clock
+/// path, and the measured hold/latency is compared against the audibility edge.
+void test_source_change_requests_a_replacement_and_holds_the_last_coherent_pair() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
+  seedPreparedPair(loop, runtime, committed);
+  loop.lastTickInLoop = 0;
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32(1u, track.preparedPairMetrics(0).publishCount);
+  const uint32_t p0Generation = runtime.preparedPair.generation;
+  const size_t p0EventCount = runtime.preparedPair.eventCount;
+
+  // Source change: a new canonical revision plus the sealed row the replacement must carry.
+  // The working window is what the off-clock gather would leave behind; its order is stale
+  // until the satisfier rebuilds it.
+  TrackCaptureStopTestAccess::setPlaybackRevision(
+      track, TrackCaptureStopTestAccess::playbackRevision(track) + 1);
+  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOn(240, 1, 60, 80));
+  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOff(288, 1, 60, 0));
+  runtime.mergedMidiEvents.builtFromRevision = loop.playbackRevision;
+  runtime.mergedMidiEvents.builtFromSnapshotIdentity = loop.publishedSnapshotIdentity();
+  loop.playbackOrderDirty = true;
+
+  const uint32_t gen = TrackCaptureStopTestAccess::generation(track);
+  const uint32_t requestTick = 96;
+  Track::resetPlaybackOrderHotRebuildCount();
+  for (uint32_t tick = requestTick + 1; tick <= requestTick + 8; ++tick) {
+    const PreparedPairConsumeDecision decision = resolvePreparedPairConsume(
+        runtime, loop, loop.playbackRevision, gen, loop.publishedSnapshotIdentity(), false, tick);
+    TEST_ASSERT_TRUE_MESSAGE(decision.requested, "the source change raises a replacement request");
+    TEST_ASSERT_TRUE_MESSAGE(decision.held, "the tick keeps consuming the previous coherent pair");
+    TEST_ASSERT_TRUE(decision.pair == &runtime.preparedPair);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(p0Generation, decision.pair->generation,
+        "the held pair is still P0 until the replacement is published");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(p0EventCount),
+        static_cast<uint32_t>(decision.pair->eventCount),
+        "holding P0 never exposes the partially prepared replacement window");
+    runtime.notePreparedPairHoldTick();
+  }
+  const Track::PreparedPairMetrics held = track.preparedPairMetrics(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, held.requestCount,
+      "one request per source generation, not one per tick");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(8u, held.holdTicks, "every waiting tick is a held tick");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "request-and-hold must not build on the clock path");
+
+  // The off-clock owner satisfies the request, rebuilding the order and publishing P1.
+  const uint32_t publishTick = requestTick + 8;
+  clockManager.assignCurrentTickSilently(publishTick);
+  TEST_ASSERT_TRUE(track.servicePendingPreparedPlaybackPair());
+  const Track::PreparedPairMetrics satisfied = track.preparedPairMetrics(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, satisfied.publishCount, "the replacement is published");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(publishTick - (requestTick + 1), satisfied.maxLatencyTicks,
+      "measured request tick -> publish tick latency, in clock ticks");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(p0EventCount + 2),
+      satisfied.rebuildUnits - static_cast<uint32_t>(p0EventCount),
+      "rebuild units are the replacement window's rows, reported for the slice-3 decision");
+  TEST_ASSERT_TRUE(runtime.preparedPair.generation > p0Generation);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(p0EventCount + 2),
+      static_cast<uint32_t>(runtime.preparedPair.eventCount),
+      "the replacement pair carries the admitted row");
+  // The detector counts *operations*, not owners: the tick contributed zero (asserted
+  // above), and the one counted build is the off-clock owner's order rebuild. That single
+  // per-source-change build, not a per-tick one, is the quantity slice 3 (b) would make
+  // incremental -- and `prepared_pair_rebuild_units` records the rows it costs.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, Track::playbackOrderHotRebuildCount(),
+      "exactly one content-sized build: the off-clock owner's replacement order");
+
+  // Audibility edge: the hold is a fraction of the one-bar maintenance budget, so the
+  // replacement lands long before the next quantized edge that must make the sealed row
+  // audible. This is the measurement that decides against slice 3 (b).
+  TEST_ASSERT_TRUE_MESSAGE(satisfied.holdTicks < static_cast<uint32_t>(Config::TICKS_PER_BAR / 8),
+      "the hold must be a small fraction of one bar, not the one-bar maintenance budget");
+  TEST_ASSERT_TRUE_MESSAGE(satisfied.maxLatencyTicks < static_cast<uint32_t>(Config::TICKS_PER_BAR),
+      "the replacement must publish strictly inside the one-bar maintenance budget");
+
+  // Consuming P1 is again a pure read, and its cursor seed is part of the pair.
+  const uint32_t buildsBeforeP1Consume = Track::playbackOrderHotRebuildCount();
+  const PreparedPairConsumeDecision after = resolvePreparedPairConsume(
+      runtime, loop, loop.playbackRevision, gen, loop.publishedSnapshotIdentity(), false,
+      requestTick + 9);
+  TEST_ASSERT_TRUE(after.pair == &runtime.preparedPair);
+  TEST_ASSERT_FALSE(after.requested);
+  TEST_ASSERT_FALSE(after.held);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, after.pair->cursorSeed,
+      "the seed is the first row after the publication phase, resolved inside publication");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(buildsBeforeP1Consume, Track::playbackOrderHotRebuildCount(),
+      "consuming the replacement built nothing");
+}
+
+/// The published pair emits byte-identical rows to the synchronous oracle over the same
+/// admitted window, so atomic publication does not lose, duplicate or reorder audio.
+void test_published_pair_emits_the_synchronous_oracle_trace_after_a_source_change() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(192, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(192, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(336, 1, 55, 0));
+  seedPreparedPair(loop, runtime, committed);
+  loop.lastTickInLoop = 0;
+  track.ensurePlaybackMergedEventsForSlot(0);
+
+  // Source change that admits one more row (the seal-admission shape), then satisfy it
+  // off-clock exactly as the production owner does.
+  TrackCaptureStopTestAccess::setPlaybackRevision(
+      track, TrackCaptureStopTestAccess::playbackRevision(track) + 1);
+  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOn(96, 1, 60, 77));
+  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOff(144, 1, 60, 0));
+  runtime.mergedMidiEvents.builtFromRevision = loop.playbackRevision;
+  runtime.mergedMidiEvents.builtFromSnapshotIdentity = loop.publishedSnapshotIdentity();
+  loop.playbackOrderDirty = true;
+  clockManager.assignCurrentTickSilently(480);
+  // The clock path raises the request; the off-clock owner is what satisfies it.
+  const PreparedPairConsumeDecision requested = resolvePreparedPairConsume(
+      runtime, loop, loop.playbackRevision, TrackCaptureStopTestAccess::generation(track),
+      loop.publishedSnapshotIdentity(), false, 480);
+  TEST_ASSERT_TRUE(requested.requested);
+  TEST_ASSERT_TRUE(track.servicePendingPreparedPlaybackPair());
+
+  // ORACLE: the synchronous merged window + order, consumed from the loop start.
+  Track::resetPlaybackOrderHotRebuildCount();
+  loop.nextEventIndex = 0;
+  DifferentialTrace oracle;
+  consumePairOverRange(loop, runtime, 0, 768, oracle);
+  // CANDIDATE: the published immutable pair through its own production stream adapter.
+  DifferentialTrace candidate;
+  consumePublishedPairOverRange(loop, runtime, 0, 768, candidate);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(oracle.rows.size()));
+  TEST_ASSERT_TRUE_MESSAGE(differentialTracesEqual(oracle, candidate),
+      "the published pair must emit the same ordered stream as the synchronous oracle");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "consuming the published pair never rebuilds an order");
+  bool candidate_has_admitted = false;
+  for (const DifferentialRow& row : candidate.rows) {
+    if (row.note == 60) candidate_has_admitted = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(candidate_has_admitted,
+      "the replacement pair must make the admitted row audible (no accepted audio lost)");
+}
+
+/// The one-shot overdub-seal admit receipt is itself a source-change signal: it forces the
+/// request/hold decision even before the gather makes the revision visible to the cache.
+void test_seal_admission_signal_requests_the_pair_replacement() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  seedPreparedPair(loop, runtime, committed);
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_FALSE(loop.hasPendingOverdubSealAdmission());
+
+  loop.recordLastOverdubSeal(loop.lastCommittedPassId(), EditPassIdList{},
+                             loop.playbackRevision);
+  TEST_ASSERT_TRUE(loop.hasPendingOverdubSealAdmission());
+  Track::resetPlaybackOrderHotRebuildCount();
+  const PreparedPairConsumeDecision decision = resolvePreparedPairConsume(
+      runtime, loop, loop.playbackRevision, TrackCaptureStopTestAccess::generation(track),
+      loop.publishedSnapshotIdentity(), loop.hasPendingOverdubSealAdmission(), 100);
+  TEST_ASSERT_TRUE_MESSAGE(decision.requested,
+      "a pending seal admit receipt is a source change even at the same revision");
+  TEST_ASSERT_TRUE(decision.held);
+  TEST_ASSERT_TRUE(decision.pair == &runtime.preparedPair);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "the seal signal must request, never rebuild in place");
 }
 
 /// OpenSpec 2.4 (parent `resumable-midi-boundary-playback-maintenance`): the content-sized
@@ -2810,6 +3061,10 @@ int main() {
   RUN_TEST(test_seal_admitted_into_pair_requires_atomic_replacement);
   RUN_TEST(test_prepared_pair_preserves_same_tick_off_before_on_order);
   RUN_TEST(test_prepared_pair_anchor_is_part_of_its_identity);
+  RUN_TEST(test_prepared_pair_publishes_off_clock_and_the_consume_decision_never_builds);
+  RUN_TEST(test_source_change_requests_a_replacement_and_holds_the_last_coherent_pair);
+  RUN_TEST(test_published_pair_emits_the_synchronous_oracle_trace_after_a_source_change);
+  RUN_TEST(test_seal_admission_signal_requests_the_pair_replacement);
   RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
   RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);

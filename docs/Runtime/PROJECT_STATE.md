@@ -1,5 +1,32 @@
 # Project state (execution context)
 
+**2026-09-17 task 2.4 slice 2 landed: an immutable `PreparedPlaybackPair` with atomic publication, and
+the measurement decides against slice 3 (OpenSpec `resumable-midi-boundary-playback-maintenance`).**
+The pinned invariant — *playback never observes `mergedEvents` and `playbackOrder` from different
+generations; a pair becomes consumable only when both members and their cursor/reanchor state are
+complete for the same source generation* — is now structural: `PreparedPlaybackPair`
+(`include/TrackPlaybackRuntime.h`) carries the generation, the live source identity, the full-loop
+coverage, a pointer to a dedicated prewarmed `FixedPlaybackEventStorage`, the event count and the
+`cursorSeed` resolved against the publication phase, and `LoopPlaybackRuntime::publishPreparedPlaybackPair`
+replaces the whole descriptor in one assignment inside a non-yielding turn. The off-clock owner
+(`Track::publishPreparedPlaybackPairFromWorkingWindow` / `Track::servicePendingPreparedPlaybackPair`,
+serviced one preparation per turn from `runDeferredLoadAndDisplayFrame`) is the only publisher;
+`resolvePreparedPairConsume` is the clock path's entire decision, so `playCommittedLoopMidi` no longer
+runs `::rebuildPlaybackOrder` / `reanchorPlaybackIndex` for the full-loop merged path. A source change
+(new `playbackRevision`, new snapshot identity, or the one-shot overdub-seal receipt exposed through
+`Loop::hasPendingOverdubSealAdmission()`) records exactly one request and the tick keeps consuming the
+published P0. Measurement (native): `prepared_pair_hold_ticks` **8** and
+`prepared_pair_max_latency_ticks` **7** — one MIDI clock interval, ~1% of the 768-tick one-bar budget
+and far inside the next 16th-note (48-tick) audibility edge — with `playbackOrderHotRebuildCount` 0
+across the decision loop and 1 for the off-clock owner's replacement order. **Slice 3 (b), a bounded
+incremental order update, is therefore not required for 2.4**; `prepared_pair_rebuild_units` records the
+one per-source-change build as its own follow-up. Evidence: `test_continuous_capture` 67/67 (four new
+slice-2 fixtures), `REENTRY_RED=1` 68/68, `ONLY_COMPANION=1` 1/1, `test_playback_prewarm` 173/173, full native
+**2,232 / 1 skipped / 0 failures**, RAM1 variables 91,904 / code 425,496
+/ padding 488 / **locals 6,400** (the new off-clock helpers are FLASH-resident; ITCM is one 32 KB
+FlexRAM bank from the edge). 2.4 ticks on the 5.3 device measurement of the same counters; 5.4 stays
+blocked on 2.5/5.3.
+
 **2026-09-17 interval-owned staged capture pass (DEC-072; OpenSpec 5.12 / D8 landed and
 device-verified).** The 5.5 `CompanionHistory` blocker was one `Loop` scalar
 (`pendingCapturePass_`) serving two capture intervals: a deferred predecessor staged its pass at

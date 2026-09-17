@@ -261,6 +261,13 @@ FLASHMEM __attribute__((noinline)) static void runDeferredLoadAndDisplayFrame(
     }
     return;
   }
+  // Task 2.4 slice 2: the active clock path only *requests* a prepared pair; the
+  // gather/order build and the atomic pair publication happen on this off-MIDI
+  // owner turn. One content-sized preparation per turn, so a request cannot stack
+  // behind the display or load children.
+  if (trackManager.hasPendingPreparedPlaybackPairRequest()) {
+    (void)trackManager.servicePendingPreparedPlaybackPair();
+  }
   const uint8_t focusTrack = trackManager.getSelectedTrackIndex();
   const uint8_t focusSlot = trackManager.getSelectedSlotIndex(focusTrack);
   const bool focusHadCommittedPasses =

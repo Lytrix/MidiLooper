@@ -170,6 +170,32 @@ derived playback view from `Loop` to `LoopPlaybackRuntime`.
 
 ## Decisions
 
+### Merged-path pair receipt (task 2.4 slice 2, 2026-09-17)
+
+The fixed-view half above is the target for ordinary active playback. The merged/order
+fallback (`playCommittedLoopMidi` when no fixed view/bridge matches the expected identity)
+was the remaining incoherent pair: `ensurePlaybackMergedMidiEventsBuilt` can replace
+`mergedEvents` in place while `loop.playbackOrder` still indexes the previous generation,
+and the tick then rebuilt the order under its own cursor. Slice 2 gives that half the same
+discipline at the granularity the existing owner already has: a `PreparedPlaybackPair`
+(generation, live source identity, full-loop coverage, a pointer to a dedicated prewarmed
+`FixedPlaybackEventStorage`, event count, and the cursor/reanchor seed resolved inside the
+publication turn) owned by `LoopPlaybackRuntime`. Publication is one descriptor assignment
+in a non-yielding turn; a source change raises exactly one request and the tick keeps
+consuming the last coherent pair.
+
+Measured on native fixtures (`test_continuous_capture`): the hold is one MIDI clock
+interval (8 ticks) against a 768-tick bar and a 48-tick 16th-note edge, so a bounded
+incremental order update (the earlier "slice 3 (b)") is **not** required for 2.4;
+`prepared_pair_rebuild_units` records the one per-source-change build as its own possible
+follow-up. The long-loop windowed gather and the cold first audible turn of a slot with no
+published pair keep the in-place builder, which the slice-1 detector counts. The off-clock
+owner (`Track::servicePendingPreparedPlaybackPair`, one preparation per deferred-frame
+turn) is the only publisher; the request itself never allocates and never builds. The pair
+is a consume authority inside the existing runtime, not an ownership transfer: `Loop` stays
+canonical authority, `LoopPlaybackRuntime` keeps the derived views, and no execution bound
+changes.
+
 ### Playback view binds event stream, order, identity, and cursor anchor
 
 The current shape cannot satisfy the proposed contract: `Loop` owns a mutable

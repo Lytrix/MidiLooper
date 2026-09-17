@@ -753,6 +753,10 @@ struct Loop {
   /// `clearLastOverdubSeal()`. Snapshot-current does not release a Hide that
   /// is still present at the same pitch+start.
   void clearLastOverdubSealAdmitReceipt();
+  /// True while the one-shot seal admit receipt is pending. Task 2.4 slice 2 reads
+  /// this on the clock path as a non-allocating "the merged window's source changed"
+  /// signal, so a pair request is raised instead of a synchronous order rebuild.
+  bool hasPendingOverdubSealAdmission() const { return hasLastOverdubSeal_; }
   /// Admit `recordLastOverdubSeal` into an existing full-loop merged stream. Returns
   /// true only when the receipt, pass, companions, and geometry are all proven.
   /// Consumes or discards the receipt. Does not gather committed passes.
