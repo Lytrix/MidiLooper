@@ -2647,10 +2647,15 @@ the start and stop paths already follow. Two new native cases
 (`test_successor_wrap_keeps_the_predecessors_frozen_builders`,
 `test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off`) fail without the
 guard; full native 2211 cases / 1 skipped / 0 failures; `pio run -e teensy41-capture-serial`
-SUCCESS with RAM1 locals 6,464. The revision gate itself (DEC-069 Option A: defer the wrap's pass
-commit while a job is pending; Option B: restart the predecessor's tail across the append) is not
-implemented — it is awaiting the owner's choice, because it changes when an overdub pass first
-becomes audible during an overlap.
+SUCCESS with RAM1 locals 6,464. **DEC-069 Option A is implemented** (owner's choice): `maybeCommitOverdubWrap` records the owed
+commit in `Track::overdubWrapCommitPending_` and seals nothing while a job is pending; the per-tick
+playback turn retries it once the ring is empty, and the interval's own start/stop consume the flag.
+The straddling rows stay in the producer, so the held note's reservation is never reset and the
+live interval's `unmatched NoteOff` rejections disappear with it. Three native cases cover the gate
+(two fail without it); full native 2,212 / 1 skipped / 0 failures; RAM1 locals 6,464; no new
+human-log literal (one added string in that translation unit costs 4,096 bytes of DTCM, so the
+deferral is observed through marker ordering). Outstanding: DEC-069's device acceptance (openspec
+task 7.2) — the wrap interaction has not yet been re-run on hardware.
 
 
 **2026-09-17 — reentry session ownership — LANDED (DEC-068, device PASS

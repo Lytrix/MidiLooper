@@ -22,10 +22,33 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
     return false;
   }
   loop.armOverdubWrapAfterLeavingStart(currentPhase);
-  if (!loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
-    return false;
+  if (loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
+    // DEC-069: a pass commit advances the loop's playback revision, which is the resource a
+    // pending deferred stop job's canonical frozen source is pinned to. While that job owns it the
+    // wrap performs no seal at all: the straddling rows stay in the live capture store (wrapped
+    // ticks are already legal there) and the whole commit is owed to the first turn after the job
+    // retires. Sealing here instead invalidated the predecessor permanently, so it never retired
+    // and this interval's own stop was refused for the rest of the session.
+    if (hasPendingDeferredOverdubStop()) {
+      if (!overdubWrapCommitPending_) {
+        // No new human-log literal here on purpose: on this platform `.rodata` is RAM1-resident, and
+        // one added string in this translation unit snaps 4,096 bytes of DTCM away with no symbol
+        // size change (`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`). The deferral is observable
+        // from the existing markers: `Reentry released` for the predecessor now precedes this
+        // interval's `Overdub wrap committed`, which the owed commit emits later.
+        overdubWrapCommitPending_ = true;
+      }
+      return false;
+    }
+    return commitOverdubWrap();
   }
-  return commitOverdubWrap();
+  // The owed commit is retried on the normal playback turn, never from the stop edge: the caller
+  // applies the committed pass to playback and to the interval's source view exactly as it does
+  // for an immediate wrap.
+  if (overdubWrapCommitPending_ && !hasPendingDeferredOverdubStop()) {
+    return commitOverdubWrap();
+  }
+  return false;
 }
 
 TRACK_COLD_MEM bool Track::commitOverdubWrap() {
@@ -33,6 +56,9 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   if (!loop.hasOverdubSession() || loop.capture.phase != CapturePhase::Overdub) {
     return false;
   }
+  // Consumed on every path: the interval's rows have left the producer whether the pass
+  // committed, was empty, or moved to the interval's own stop.
+  overdubWrapCommitPending_ = false;
   SessionMidiEventVec heldOns;
   loop.extractOpenCaptureNoteOns(heldOns);
   if (loop.capture.store.empty()) {

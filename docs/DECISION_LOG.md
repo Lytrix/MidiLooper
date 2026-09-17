@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Proposed — wrap ownership hardening implemented and native-tested; revision gate awaiting owner choice (A recommended) |
+| [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented (deferred wrap commit); native green, device acceptance outstanding |
 | [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implemented; six native cases pass, device retirement proof PASS [`successor-reentry-27`](../captures/successor-reentry-27/session_20260917_163416.log) |
 | [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — device START/STOP proof PASS [`successor-reentry-26`](../captures/successor-reentry-26/session_20260917_161119.log) |
 | [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
@@ -87,7 +87,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-069 — The overdub wrap is a canonical-revision transition and must not advance the revision a pending stop job owns
 
 **Date:** 2026-09-17
-**Status:** Proposed — the ownership hardening below is implemented and native-tested; the revision gate is **awaiting the owner's choice** between Option A and Option B.
+**Status:** Accepted — Option A (defer the wrap's pass commit while a job is pending) implemented and native-tested; device acceptance (openspec task 7.2) outstanding.
 **Owner:** `Track::commitOverdubWrap` (the live interval's loop-crossing transition), `LoopPlaybackRuntime::canonicalPassInputs` / `canonicalPrefix*` / `frozenCaptureOrder*` (the slot's single canonical preparation), `Track::beginDeferredOverdubStop` (the deferred stop job that owns that preparation)
 
 **Context.** DEC-067 fixed *which transition owns the finalization resources* and moved the
@@ -155,8 +155,23 @@ but it does not remove the revision advance, which is the remaining cause.
 fallback if the one-cycle audibility delay of A is unacceptable. No further code is written for
 the revision gate until the owner picks one.
 
-**Not claimed.** No task-4.2/4.3/5.3–5.6 checkbox is closed by this entry, and the third-overdub
-device sequence is reproduced but not yet fixed. `#CAP` tier shedding still makes unrelated
+**Implemented (2026-09-17, owner chose Option A).** `Track::maybeCommitOverdubWrap` detects the
+crossing, records the owed commit in `Track::overdubWrapCommitPending_`, and returns without
+sealing; the normal per-tick playback turn retries the commit as soon as the stop ring is empty, and
+`beginDeferredOverdubStop`/`startOverdubbing` consume the flag at the interval's own boundaries. The
+straddling rows stay in the live producer (wrapped ticks are already legal there), so the held
+note's reservation is never reset -- which is also what removed the live interval's
+`unmatched NoteOff` rejections. Three native cases in `test_continuous_capture`
+(`test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending`,
+`test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off`,
+`test_successor_wrap_keeps_the_predecessors_frozen_builders`); the first two fail without the gate.
+Full native 2,212 cases / 1 skipped / 0 failures; `pio run -e teensy41-capture-serial` succeeds with
+RAM1 locals 6,464. No new human-log literal was added: on this platform one added string in that
+translation unit snaps 4,096 bytes of DTCM with no symbol size change, so the deferral is observed
+through marker *ordering* (`Reentry released` before the successor's `Overdub wrap committed`).
+
+**Not claimed.** No task-4.2/4.3/5.3–5.6 checkbox is closed by this entry, and the wrap interaction
+has not yet been re-run on device (openspec task 7.2). `#CAP` tier shedding still makes unrelated
 baseline assertions inconclusive.
 
 ## DEC-068 — An overdub session belongs to one capture interval
