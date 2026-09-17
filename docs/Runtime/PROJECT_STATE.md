@@ -1,5 +1,27 @@
 # Project state (execution context)
 
+**2026-09-17 first-record prepared bar-1 launch + successor-reentry finalization admission
+(DEC-067).** Two user-directed RCs landed. (1) The record stop now *uses* the prepared bar-1
+window: a take that ended without the handoff no longer blocks the next take's preparation
+(`b6dd67bf`), the bound window is preserved across the launch's playback-cache resets and
+adopted as the audible source while the first root publishes (`a49bb01a`), and the adoption
+selects the launch cursor so the already-played prefix is not replayed as a catch-up burst
+(`a20eba50`). Device `captures/first-record-launch-04` (canonical `base`, PASS): first note
+93 ms after the stop/PLAYING edge and the following note-ons on the 16th grid
+(125.0/125.0/125.0/122.4 ms) where `deadline-pacing-01` measured 620 ms and a burst. Still open
+there: S2b (the window's retained extent can lag the last accepted input, and the bar-1
+closure obligations are not carried yet) and S3 (continuation past bar 1). (2) The
+successor-reentry device case exposed that `Track::startOverdubbing` gated on three
+*finalization* resources; per the user's decision the gates were moved to the transition that
+first needs them — STOP — under DEC-067 (`758c89b0`), the successor stop was kept out of the
+legacy fallback when those resources are busy (`d9d641da`), and two deterministic edges
+(`Reentry window open slot=<n>`, `Reentry released`) now drive the HITL probe (`8dc92a5e`,
+`7c3e1c20`, `96752f86`). Device `captures/successor-reentry-25`: B START 583 ms after A's stop
+and 2,209 ms before A's finalization released, B's stop refused while A owned those resources,
+then admitted after the release — the first time the declared depth-2 capacity is observable on
+hardware. Gates: full native 2203 cases, 1 skipped, 0 failures; RAM1 code 425576 / padding 408
+/ locals 6464.
+
 **2026-09-16 task 2.3 causal predecessor/source identity — increment B, approved
 superseded rule (resumable-midi-boundary-playback-maintenance).** Option (A) is
 implemented and verified. A deferred stop whose recorded `causalBase` is no longer the
