@@ -1155,6 +1155,27 @@ def _latest_device_bar_index(lines: list[str]) -> Optional[int]:
     return latest
 
 
+
+def _device_bar_index_at_record_start(
+    lines: list[str], *, after_index: int = 0
+) -> Optional[int]:
+    """Device bar index at this phase's RECORDING entry, or None.
+
+    The device begins counting at the record boundary, which is earlier than the host's
+    first streamed note: a baseline read just before streaming made an 8-bar request
+    record 10 bars. Anchor on the device's own RECORDING state row instead.
+    """
+    record_start_index: Optional[int] = None
+    for index in range(max(after_index, 0), len(lines)):
+        line = lines[index]
+        if ",ST,Track," in line and line.rstrip().endswith(",RECORDING"):
+            record_start_index = index
+            continue
+        if record_start_index is not None and ",BAR," in line:
+            return _latest_device_bar_index([line])
+    return None
+
+
 def _device_bar_probe(serial_collector: Any):
     """Probe over the capture tail: returns the newest device bar index."""
 
@@ -5125,7 +5146,10 @@ def run() -> int:
                                 else None
                             ),
                             device_bar_baseline=(
-                                _latest_device_bar_index(serial_collector.snapshot()[-400:])
+                                _device_bar_index_at_record_start(
+                                    serial_collector.snapshot(),
+                                    after_index=track_baseline_len,
+                                )
                                 if serial_collector is not None
                                 else None
                             ),
