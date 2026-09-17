@@ -129,6 +129,12 @@ enum class OperationKind : uint8_t {
  * full right now" signal, which matters because the accounting's live-byte figure
  * over-reports and cannot be used for headroom.
  *
+ * The point-of-use reserve (`CompanionHistoryReserve`) is the exception: its caller
+ * probes for the exact block immediately before handing it to an allocator that
+ * falls back from malloc to extmem, so the probe is the authority and the heap-floor
+ * proxy must not veto a request the pool can serve. Denying such a request would make
+ * an available operation fail. See DEC-065.
+ *
  * On denial it emits `#MEM_DENIED` with the operation, the reason, the requested
  * margin, heap free, and the pool refusal count/size/age.
  *

@@ -440,17 +440,20 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
       ok = runtime->prewarmViews() && ok;
       ExternalPoolAccounting::endTag();
-    } else {
-      ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
-      ok = runtime->prewarmCaptureStaging() && ok;
-      ExternalPoolAccounting::endTag();
     }
+    // Boot reserves no capture staging (DEC-065). Staging is provisioned by capture
+    // admission - the record arm's `prewarmViews` above, or `Track::startOverdubbing`
+    // for a loaded slot - so a slot that never records does not carry two
+    // 2,048-event roles resident from boot. Boot still establishes the runtime slot,
+    // the stop-descriptor ring, the transfer horizon and the canonical copy
+    // directory, which is what makes admission deterministic.
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCanonicalOutput);
     ok = runtime->prewarmCanonicalCaptureOutput() && ok;
     ExternalPoolAccounting::endTag();
   } else if (prepareCapture) {
     // Without a runtime slot there is no staging and no canonical output, so the take
-    // cannot be admitted on the terms this reserve exists to guarantee.
+    // cannot be admitted on the terms this reserve exists to guarantee. `trySlot`
+    // only returns null when the pool and the heap both refused the runtime itself.
     ok = false;
   }
 #if defined(SESSION_CAPTURE)
