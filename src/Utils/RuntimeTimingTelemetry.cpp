@@ -912,10 +912,23 @@ RT_FLASHMEM_FN void recordStopGrain(uint8_t track, uint8_t slot, uint8_t phase,
   const StopBoundaryTiming boundary = admittedBoundary != nullptr
       ? *admittedBoundary : peekStopBoundary();
 #if defined(SESSION_CAPTURE)
-  DebugSessionCapture::stopGrainTiming(track, slot, phase, generation, epoch, destination,
-      boundary.sequence, startUs, endUs, boundary.actualUs, boundary.dueUs,
-      boundary.deadlineUs, boundary.periodUs, slackUs,
-      finishedPhase ? 1u : 0u);
+  // Per-grain rows are the capture ring's dominant source: the canonical two-overdub HITL
+  // fixture logged 4,062 `stop_grain` rows for one run (~444 KB, 71% of all `#CAP` bytes)
+  // against a 512 KiB ring, and the resulting `RING,overflow` shed the `snapshot_unit`
+  // publication rows this harness needs to explain an audible regression. The per-phase
+  // aggregate (`stop_phase`, emitted below) already carries calls/crossed/max and the span,
+  // so only a bounded sample of grains is needed: the first grain of each phase (its arrival),
+  // one in `kStopGrainEmitStride`, and the phase's terminal grain. `sample.calls` is the
+  // per-phase grain counter, so a phase change resets the stride by construction.
+  constexpr uint32_t kStopGrainEmitStride = 16;
+  const bool firstGrainOfPhase = sample.calls == 1;
+  const bool sampled = firstGrainOfPhase || (sample.calls % kStopGrainEmitStride) == 0;
+  if (sampled || finishedPhase) {
+    DebugSessionCapture::stopGrainTiming(track, slot, phase, generation, epoch, destination,
+        boundary.sequence, startUs, endUs, boundary.actualUs, boundary.dueUs,
+        boundary.deadlineUs, boundary.periodUs, slackUs,
+        finishedPhase ? 1u : 0u);
+  }
 #else
   (void)boundary;
 #endif

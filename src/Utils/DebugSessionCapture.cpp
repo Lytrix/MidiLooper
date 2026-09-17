@@ -53,7 +53,11 @@ struct CaptureRecordHeader {
 // active-transport evidence burst until STOPPED.  The canonical two-overdub
 // HITL fixture kept just over the former 96 KiB ring before its stop drain;
 // reserve this fixed PSRAM budget rather than weakening Tier-A evidence.
-constexpr size_t kCaptureRingBytes = 512 * 1024;
+// Raised 512 KiB -> 1 MiB (2026-09-17) after `captures/successor-wrap-46`/`-47` both aborted on
+// `RING,overflow`: at 512 KiB the eviction shed the `snapshot_unit` publication rows a playback
+// regression needs, so the run could not be explained from serial at all. The ring lives in
+// PSRAM (see `ensureCaptureRingAllocated`), so the extra budget costs no RAM1/RAM2.
+constexpr size_t kCaptureRingBytes = 1024 * 1024;
 constexpr size_t kCaptureRingPressureBytes = (kCaptureRingBytes * 3) / 4;
 constexpr size_t kMaxCaptureTextBytes = 192;
 
