@@ -4696,6 +4696,15 @@ def run() -> int:
         help="Long-press duration for clear command (milliseconds)",
     )
     parser.add_argument(
+        "--post-save-play-wait-ms",
+        type=int,
+        default=0,
+        help=(
+            "TEMPORARY VARIANT (display regression): after the transport-stop save drain, press "
+            "global transport again (play from STOPPED) and observe for this many ms. 0 disables."
+        ),
+    )
+    parser.add_argument(
         "--deferred-save-wait-ms",
         type=int,
         default=120000,
@@ -5781,6 +5790,21 @@ def run() -> int:
                                 "[warn] stored-MIDI verification drain not observed "
                                 f"within {STORED_VERIFICATION_DRAIN_TIMEOUT_S:.0f}s"
                             )
+                        # TEMPORARY VARIANT (display regression): replay the saved loop from
+                        # STOPPED so the display's committed content can be read after the stop.
+                        post_play_ms = int(getattr(args, "post_save_play_wait_ms", 0) or 0)
+                        if post_play_ms > 0:
+                            print(
+                                f"[track {_user_track_number(idx)}] play again from stopped "
+                                f"(observe {post_play_ms} ms)"
+                            )
+                            _send_short_press(
+                                out_port,
+                                note=GLOBAL_TRANSPORT_NOTE,
+                                channel_1based=CONTROL_CHANNEL_1BASED,
+                                press_ms=args.press_ms,
+                            )
+                            time.sleep(post_play_ms / 1000.0)
 
                 if (reason := abort.check()) is not None:
                     abort_reason = reason

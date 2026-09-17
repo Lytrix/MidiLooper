@@ -120,6 +120,26 @@ Device: `captures/successor-wrap-40` — `Transport stopped` 74.873 s with the s
 `Reentry released` 77.053 s (pre-fix builds parked it and needed a reboot), and repeated
 enter/stop cycles afterwards with no refusal.
 
+**Display regression reproduced and attributed (2026-09-17, `captures/successor-wrap-41`).** Run with
+the same acceptance recipe plus a play-from-stopped step (`--post-save-play-wait-ms`, temporary
+harness variant). The display verifier reports `overdub_ok=False` with
+`DISP after transport stop: frame=178 epoch=178 visual=124 buffer=178` -- the committed frame and the
+audible buffer keep 178 notes while the resolved visual window keeps 124 -- and the retarget line reads
+`Overdub stop retarget: companions=raw_only phase=6`. So the reported case is the sub-case the guard
+cannot keep: the job was still at `PrepareTransfer` when the transport stopped, its companion
+(note-edit) horizon had not been prepared yet, and the re-route's raw-only commit published the capture
+rows without the transforms the display resolves the overdubbed notes from. Audible content is intact
+because the raw rows and the bridge window carry it.
+
+**Fix direction (not implemented).** The retarget must *complete and publish* the interrupted companion
+preparation on the STOPPED route instead of dropping it: extend `retargetStoppedRecovery` beyond
+`canonicalPassInputs`'s command epoch to the companion-side bindings (`canonicalTailInputGeneration`,
+`frozenCaptureCompanions`, `frozenCompanionPasses`), let the job continue `CanonicalTail` ->
+`CompanionHistory` with the Stopped destination, and publish through `commitStopped` once
+`preparedCompanionCaptureVerified` holds; the raw-only fallback stays only for a horizon that truly
+cannot be prepared. Note the diagnostic logs the phase after it is overwritten (`phase=6` is this
+entry's own `setPhase`), so it should log the original phase.
+
 **Display regression follow-up (2026-09-17).** The user reports that after the re-route the *first*
 overdubbed notes disappear from the display when playback resumes from STOPPED while they stay
 audible, and only the wrapped notes remain visible. The discarded horizon is the recorded note-edit
