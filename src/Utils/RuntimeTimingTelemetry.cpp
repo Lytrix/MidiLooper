@@ -913,13 +913,15 @@ RT_FLASHMEM_FN void recordStopGrain(uint8_t track, uint8_t slot, uint8_t phase,
       ? *admittedBoundary : peekStopBoundary();
 #if defined(SESSION_CAPTURE)
   // Per-grain rows are the capture ring's dominant source: the canonical two-overdub HITL
-  // fixture logged 4,062 `stop_grain` rows for one run (~444 KB, 71% of all `#CAP` bytes)
-  // against a 512 KiB ring, and the resulting `RING,overflow` shed the `snapshot_unit`
-  // publication rows this harness needs to explain an audible regression. The per-phase
-  // aggregate (`stop_phase`, emitted below) already carries calls/crossed/max and the span,
-  // so only a bounded sample of grains is needed: the first grain of each phase (its arrival),
-  // one in `kStopGrainEmitStride`, and the phase's terminal grain. `sample.calls` is the
-  // per-phase grain counter, so a phase change resets the stride by construction.
+  // fixture logged 4,062 `stop_grain` rows for one run (~444 KB, 71% of all `#CAP` bytes) and
+  // overflowed the ring, which evicted the `snapshot_unit` publication rows the run is read for.
+  // The per-phase aggregate (`stop_phase`, emitted below) already carries calls/crossed/max and
+  // the span, so only a bounded sample of grains is needed: the first grain of each phase (its
+  // arrival), one in `kStopGrainEmitStride`, and the phase's terminal grain. `sample.calls` is
+  // the per-phase grain counter, so a phase change resets the stride by construction.
+  // The `teensy41-capture-serial-no-grain` build sets `SESSION_CAPTURE_GRAIN=0` and drops the
+  // family entirely for acceptance runs whose evidence is the snapshot/publication rows.
+#if SESSION_CAPTURE_GRAIN
   constexpr uint32_t kStopGrainEmitStride = 16;
   const bool firstGrainOfPhase = sample.calls == 1;
   const bool sampled = firstGrainOfPhase || (sample.calls % kStopGrainEmitStride) == 0;
@@ -929,6 +931,7 @@ RT_FLASHMEM_FN void recordStopGrain(uint8_t track, uint8_t slot, uint8_t phase,
         boundary.deadlineUs, boundary.periodUs, slackUs,
         finishedPhase ? 1u : 0u);
   }
+#endif
 #else
   (void)boundary;
 #endif
