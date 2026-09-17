@@ -1457,6 +1457,148 @@ bool differentialTracesEqual(const DifferentialTrace& a, const DifferentialTrace
   return true;
 }
 
+// ------------------------------------------- 2.5a gathering fixtures (real snapshot root)
+//
+// The 2.5a harness could compare a pair built from a *synthetic* (events, order) window. These
+// helpers drive the production gather instead: a published snapshot root supplies the window,
+// `ensurePlaybackMergedEventsForSlot` / `servicePendingPreparedPlaybackPair` run the synchronous
+// builder and publish the pair, and the two consumers must emit byte-identical ordered rows.
+
+struct FixtureSnapshotNote {
+  uint8_t pitch = 60;
+  uint32_t startTick = 0;
+  /// Exclusive end. `endTick < startTick` is the snapshot's wrap representation; an end at or
+  /// beyond the loop length is the loop-edge case whose Off the window gather drops.
+  uint32_t endTick = 0;
+};
+
+/// Build a snapshot root whose content becomes the gather source for playback, and publish it at
+/// the loop's current revision so `publishedSnapshotIsCurrent()` holds and the gather takes the
+/// plain `Snapshot` path.
+///
+/// Note membership and MIDI-event membership are independent snapshot roots (see
+/// `appendCompanionEventChanges`), and the playback gather reads the *event* root, so the helper
+/// adds both. The event rows mirror the publisher: an Off at or beyond the loop length is clamped to
+/// `loopLength - 1`, and a wrap note (`endTick < startTick`) becomes a head plus a tail with the same
+/// NoteId.
+ImmutableLoopSnapshotRef buildFixtureRoot(Loop& loop,
+                                          const std::vector<FixtureSnapshotNote>& notes) {
+  const uint32_t loopLength = loop.loopLengthTicks;
+  NoteId noteId = loop.nextNoteId_;
+  EventId eventId = 1;
+  uint32_t canonicalOrder = 1;
+  ImmutableLoopSnapshotRef parent = LoopSnapshot::createEmpty(
+      loop.loopId, loop.loopLengthTicks, loop.loopStartTick, loop.nextNoteId_, 1);
+  LoopSnapshotChangeSet changes;
+  auto addEvent = [&](uint32_t tick, uint8_t pitch, NoteId id, bool noteOn) {
+    SnapshotEventChange change{};
+    change.kind = SnapshotChangeKind::Add;
+    change.next.loopId = loop.loopId;
+    change.next.eventId = eventId++;
+    change.next.canonicalOrder = canonicalOrder++;
+    change.next.value = noteOn ? MidiEvent::NoteOn(tick, 1, pitch, 100)
+                              : MidiEvent::NoteOff(tick, 1, pitch, 0);
+    change.next.value.noteId = id;
+    changes.events.push_back(change);
+  };
+  for (const FixtureSnapshotNote& note : notes) {
+    const NoteId id = noteId++;
+    SnapshotNoteChange add{};
+    add.kind = SnapshotChangeKind::Add;
+    add.next.loopId = loop.loopId;
+    add.next.noteId = id;
+    add.next.pitch = note.pitch;
+    add.next.velocity = 100;
+    add.next.startTick = note.startTick;
+    add.next.endTick = note.endTick;
+    changes.notes.push_back(add);
+    if (note.endTick < note.startTick) {
+      addEvent(note.startTick, note.pitch, id, true);
+      addEvent(loopLength - 1, note.pitch, id, false);
+      addEvent(0, note.pitch, id, true);
+      addEvent(note.endTick, note.pitch, id, false);
+    } else {
+      addEvent(note.startTick, note.pitch, id, true);
+      addEvent(note.endTick < loopLength ? note.endTick : loopLength - 1, note.pitch, id, false);
+    }
+  }
+  LoopSnapshotConstruction construction(std::move(parent), changes);
+  while (!construction.complete()) {
+    if (!construction.step(128)) break;
+  }
+  TEST_ASSERT_FALSE_MESSAGE(construction.failed(), "fixture snapshot construction must succeed");
+  ImmutableLoopSnapshotRef root = construction.freeze();
+  TEST_ASSERT_NOT_NULL(root.get());
+  loop.storePublishedSnapshotForTest(root, loop.playbackRevision);
+  TEST_ASSERT_TRUE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+                           "the fixture root must be current for the plain gather path");
+  return root;
+}
+
+/// Compare the published pair against the synchronous merged/order path from the pair's own
+/// anchor. The pair is stored in emission order with an identity `order`, so its `cursorSeed`
+/// indexes the same emission position in the synchronous order; anchoring both consumers is what
+/// makes the comparison about the pair, not about where each cursor happened to start.
+void assertPairMatchesSynchronousPathFromAnchor(Loop& loop, LoopPlaybackRuntime& runtime,
+                                                uint32_t toTick, DifferentialTrace& oracleOut,
+                                                DifferentialTrace& candidateOut) {
+  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
+  loop.nextEventIndex = runtime.preparedPair.cursorSeed;
+  consumePairOverRange(loop, runtime, 0, toTick, oracleOut);
+  consumePublishedPairOverRange(loop, runtime, 0, toTick, candidateOut);
+  TEST_ASSERT_TRUE_MESSAGE(differentialTracesEqual(oracleOut, candidateOut),
+      "the published pair must emit the synchronous path's rows in the same order");
+}
+
+/// Independent reference order for the long-loop window fixture: phase, then tick, then the
+/// canonical equal-phase NoteOff-before-NoteOn key. Built here in the test so the reference is
+/// not the production builder it is checking.
+struct DifferentialRefStream {
+  const SessionMidiEventVec* events = nullptr;
+  const std::vector<uint16_t>* order = nullptr;
+};
+
+size_t differentialRefStreamSize(const void* ctx) {
+  return static_cast<const DifferentialRefStream*>(ctx)->order->size();
+}
+
+const MidiEvent& differentialRefStreamEventAt(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const DifferentialRefStream*>(ctx);
+  return (*stream->events)[(*stream->order)[cursor]];
+}
+
+void buildReferenceEmissionOrder(const SessionMidiEventVec& events, uint32_t loopLength,
+                                 std::vector<uint16_t>& orderOut) {
+  orderOut.resize(events.size());
+  for (size_t i = 0; i < events.size(); ++i) orderOut[i] = static_cast<uint16_t>(i);
+  std::stable_sort(orderOut.begin(), orderOut.end(), [&](uint16_t a, uint16_t b) {
+    const uint32_t phaseA = IntervalProjection::playbackEventPhase(events[a].tick, loopLength);
+    const uint32_t phaseB = IntervalProjection::playbackEventPhase(events[b].tick, loopLength);
+    if (phaseA != phaseB) return phaseA < phaseB;
+    if (events[a].tick != events[b].tick) return events[a].tick < events[b].tick;
+    const int keyA = events[a].isNoteOff() ? 0 : (events[a].isNoteOn() ? 1 : 2);
+    const int keyB = events[b].isNoteOff() ? 0 : (events[b].isNoteOn() ? 1 : 2);
+    return keyA < keyB;
+  });
+}
+
+void consumeReferenceOverRange(Loop& loop, const SessionMidiEventVec& events,
+                               const std::vector<uint16_t>& order, uint32_t fromTick, uint32_t toTick,
+                               DifferentialTrace& out) {
+  DifferentialRefStream refStream{&events, &order};
+  const PlaybackEventStream stream{&refStream, differentialRefStreamSize, nullptr,
+                                   differentialRefStreamEventAt, differentialStreamPhase};
+  loop.nextEventIndex = 0;
+  for (uint32_t tick = fromTick + 1; tick <= toTick; ++tick) {
+    ProjectionContext ctx{};
+    ctx.loopLength = loop.loopLengthTicks;
+    const PlaybackTickFrame frame{&ctx, tick, tick - 1, false};
+    PlaybackCursorAdvanceState advance{&loop.nextEventIndex, nullptr};
+    (void)advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                differentialRecordSend, &out, 0, nullptr, nullptr, 1);
+  }
+}
+
 }  // namespace
 
 /// Fixture 1 -- plain immutable loop playback. The prepared pair and the independently
@@ -1851,6 +1993,210 @@ void test_seal_admission_signal_requests_the_pair_replacement() {
   TEST_ASSERT_TRUE(decision.pair == &runtime.preparedPair);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
       "the seal signal must request, never rebuild in place");
+}
+
+/// 2.5a gathering fixture (owner priority #4) -- wrap boundary and a note at the loop edge, gathered
+/// from a real published snapshot root. The pipeline clamps the edge note's Off to `loopLength - 1`
+/// (so it stays inside the window), and a wrap note becomes a head plus a tail with the same NoteId;
+/// the pair must emit exactly what the synchronous path emits for both.
+void test_gathered_pair_matches_the_synchronous_path_across_a_wrap_and_a_loop_edge_note() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  const uint32_t loopLength = loop.loopLengthTicks;
+  const std::vector<FixtureSnapshotNote> notes{
+      {48, 24, 72},           // plain note (after phase 0: the harness starts at tick 1)
+      {55, 700, loopLength},  // loop-edge note: its Off is clamped to the last tick
+      {60, 700, 20},          // wrap note: snapshot `endTick < startTick` form
+  };
+  buildFixtureRoot(loop, notes);
+  loop.lastTickInLoop = 0;
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, track.preparedPairMetrics(0).publishCount,
+      "the real published-snapshot gather must publish a pair");
+  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
+  TEST_ASSERT_TRUE_MESSAGE(runtime.preparedPair.storage != nullptr &&
+                               runtime.preparedPair.eventCount > 0,
+      "the gathered window must carry the root's rows");
+
+  Track::resetPlaybackOrderHotRebuildCount();
+  DifferentialTrace oracle;
+  DifferentialTrace candidate;
+  assertPairMatchesSynchronousPathFromAnchor(loop, runtime, loopLength, oracle, candidate);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(oracle.rows.size()));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "consuming the gathered pair never rebuilds an order");
+  bool plainOn = false;
+  bool edgeOn = false;
+  bool edgeOffAtLastTick = false;
+  bool wrapHeadOn = false;
+  for (const DifferentialRow& row : candidate.rows) {
+    if (row.type == static_cast<uint8_t>(midi::NoteOn) && row.note == 48) plainOn = true;
+    if (row.type == static_cast<uint8_t>(midi::NoteOn) && row.note == 55) edgeOn = true;
+    if (row.type == static_cast<uint8_t>(midi::NoteOff) && row.note == 55 &&
+        row.tick == loopLength - 1) {
+      edgeOffAtLastTick = true;
+    }
+    if (row.type == static_cast<uint8_t>(midi::NoteOn) && row.note == 60) wrapHeadOn = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(plainOn, "the plain note must be audible through the pair");
+  TEST_ASSERT_TRUE_MESSAGE(edgeOn, "the loop-edge note's On must be audible");
+  TEST_ASSERT_TRUE_MESSAGE(edgeOffAtLastTick,
+      "the loop-edge note's Off must be clamped to the last tick and stay audible");
+  TEST_ASSERT_TRUE_MESSAGE(wrapHeadOn, "the wrap note's head must be audible through the pair");
+}
+
+/// 2.5a gathering fixture (owner priority #5) -- a source change mid-window. A new root published at
+/// the next revision raises a request; the tick keeps consuming the previous coherent pair, the
+/// off-clock owner gathers the new root, and the replacement pair's rows equal the synchronous path's.
+void test_gathered_pair_holds_then_replaces_atomically_when_the_root_changes_mid_window() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  buildFixtureRoot(loop, {{48, 0, 200}, {55, 300, 500}});
+  loop.lastTickInLoop = 0;
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32(1u, track.preparedPairMetrics(0).publishCount);
+  const uint64_t p0Generation = runtime.preparedPair.generation;
+  const size_t p0EventCount = runtime.preparedPair.eventCount;
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(p0EventCount));
+
+  // The publication pipeline lands a new root at the next revision (a canonical commit).
+  TrackCaptureStopTestAccess::setPlaybackRevision(
+      track, TrackCaptureStopTestAccess::playbackRevision(track) + 1);
+  buildFixtureRoot(loop, {{48, 0, 200}, {55, 300, 500}, {60, 100, 150}});
+  const uint32_t gen = TrackCaptureStopTestAccess::generation(track);
+
+  Track::resetPlaybackOrderHotRebuildCount();
+  const PreparedPairConsumeDecision held = resolvePreparedPairConsume(
+      runtime, loop, loop.playbackRevision, gen, loop.publishedSnapshotIdentity(), false, 96);
+  TEST_ASSERT_TRUE_MESSAGE(held.requested, "the new root raises a replacement request");
+  TEST_ASSERT_TRUE_MESSAGE(held.held, "the tick keeps consuming the previous coherent pair");
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(p0Generation, held.pair->generation,
+      "the held pair is still the pre-change pair");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(p0EventCount),
+      static_cast<uint32_t>(held.pair->eventCount),
+      "holding never exposes the partially prepared replacement");
+  runtime.notePreparedPairHoldTick();
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "the hold builds nothing on the clock path");
+
+  clockManager.assignCurrentTickSilently(104);
+  TEST_ASSERT_TRUE(track.servicePendingPreparedPlaybackPair());
+  const Track::PreparedPairMetrics satisfied = track.preparedPairMetrics(0);
+  TEST_ASSERT_EQUAL_UINT32(2u, satisfied.publishCount);
+  TEST_ASSERT_TRUE(runtime.preparedPair.generation > p0Generation);
+
+  DifferentialTrace oracle;
+  DifferentialTrace candidate;
+  assertPairMatchesSynchronousPathFromAnchor(loop, runtime, loop.loopLengthTicks, oracle, candidate);
+  bool addedRowAudible = false;
+  for (const DifferentialRow& row : candidate.rows) {
+    if (row.note == 60) addedRowAudible = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(addedRowAudible,
+      "the replacement root's added row must become audible (no accepted audio lost)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, satisfied.holdTicks,
+      "one waiting tick consumed the previous pair");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(8u, satisfied.maxLatencyTicks,
+      "the replacement published one owner turn (8 ticks) after the request");
+}
+
+/// 2.5a gathering fixture (owner priority #6) -- the long-loop window boundary. A windowed long-loop
+/// gather is deliberately not a full-loop pair (recorded as its own slice), so no pair is published;
+/// the windowed production stream must still match an independent phase-sorted reference built from
+/// the public full-loop gather restricted to the same window.
+void test_long_loop_window_is_not_a_pair_and_matches_an_independent_window_reference() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  const uint32_t longLength = 17u * Config::TICKS_PER_BAR;
+  loop.loopLengthTicks = longLength;
+  TEST_ASSERT_TRUE_MESSAGE(loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks),
+      "the fixture loop must take the windowed gather path");
+  const uint32_t fifthBar = 5u * Config::TICKS_PER_BAR;
+  buildFixtureRoot(loop, {{48, 0, 48},
+                          {55, fifthBar, fifthBar + 48},
+                          {60, longLength - 96, longLength - 48}});
+  const uint32_t playhead = fifthBar + 24;
+  loop.lastTickInLoop = playhead;
+  clockManager.assignCurrentTickSilently(playhead);
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, track.preparedPairMetrics(0).publishCount,
+      "a windowed long-loop gather is not a full-loop pair (documented boundary)");
+  TEST_ASSERT_FALSE(runtime.preparedPair.ready);
+
+  const uint32_t winStart = runtime.mergedMidiEvents.windowStartTick;
+  const uint32_t winLength = runtime.mergedMidiEvents.windowLengthTicks;
+  TEST_ASSERT_TRUE(winLength > 0);
+  TEST_ASSERT_TRUE_MESSAGE(winStart <= playhead && playhead < winStart + winLength,
+      "the windowed gather must cover the playhead");
+  TEST_ASSERT_GREATER_THAN_UINT32(0u,
+      static_cast<uint32_t>(runtime.mergedMidiEvents.mergedEvents.size()));
+
+  // Independent reference: the public full-loop gather, restricted by the consumption range and
+  // ordered by the test's own phase/tick/Off-before-On key.
+  SessionMidiEventVec fullGather;
+  Loop::SnapshotWindowGatherPath gatherPath = Loop::SnapshotWindowGatherPath::None;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(fullGather, 0, longLength,
+                                                                 &gatherPath));
+  TEST_ASSERT_EQUAL(Loop::SnapshotWindowGatherPath::Snapshot, gatherPath);
+  std::vector<uint16_t> referenceOrder;
+  buildReferenceEmissionOrder(fullGather, longLength, referenceOrder);
+
+  DifferentialTrace windowed;
+  loop.nextEventIndex = 0;
+  consumePairOverRange(loop, runtime, winStart, winStart + winLength, windowed);
+  DifferentialTrace reference;
+  consumeReferenceOverRange(loop, fullGather, referenceOrder, winStart, winStart + winLength,
+                            reference);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(windowed.rows.size()));
+  TEST_ASSERT_TRUE_MESSAGE(differentialTracesEqual(windowed, reference),
+      "the windowed stream must equal the independently ordered full-gather window");
+  bool windowNoteAudible = false;
+  for (const DifferentialRow& row : windowed.rows) {
+    if (row.note == 55) windowNoteAudible = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(windowNoteAudible, "the playhead's bar must be inside the window");
+}
+
+/// 2.5a gathering fixture (owner priority #7) -- the record-stop publication gap. With no published
+/// root the gather misses and no pair may be published (a pair would be an empty authority); once the
+/// session-exit root lands, the owner turn publishes the pair and it matches the synchronous path.
+void test_gathered_pair_waits_for_the_record_stop_root_then_publishes() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  TEST_ASSERT_NULL_MESSAGE(loop.publishedSnapshotIdentity(),
+      "the fixture must start inside the record-stop publication gap");
+  loop.lastTickInLoop = 0;
+  clockManager.assignCurrentTickSilently(0);
+  track.ensurePlaybackMergedEventsForSlot(0);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, track.preparedPairMetrics(0).publishCount,
+      "an empty gather must not publish a pair");
+  TEST_ASSERT_FALSE(runtime.preparedPair.ready);
+  TEST_ASSERT_TRUE(runtime.mergedMidiEvents.mergedEvents.empty());
+  TEST_ASSERT_FALSE(track.hasPendingPreparedPlaybackPairRequest());
+
+  // The record-stop handoff publishes the root; the clock path requests and the owner turn publishes.
+  buildFixtureRoot(loop, {{48, 0, 200}, {55, 300, 500}});
+  const uint32_t gen = TrackCaptureStopTestAccess::generation(track);
+  const PreparedPairConsumeDecision requested = resolvePreparedPairConsume(
+      runtime, loop, loop.playbackRevision, gen, loop.publishedSnapshotIdentity(), false, 96);
+  TEST_ASSERT_TRUE(requested.requested);
+  TEST_ASSERT_NULL_MESSAGE(requested.pair,
+      "with no published pair yet the tick takes the cold merged fallback");
+  TEST_ASSERT_TRUE(track.hasPendingPreparedPlaybackPairRequest());
+
+  clockManager.assignCurrentTickSilently(104);
+  TEST_ASSERT_TRUE(track.servicePendingPreparedPlaybackPair());
+  TEST_ASSERT_EQUAL_UINT32(1u, track.preparedPairMetrics(0).publishCount);
+  TEST_ASSERT_TRUE(runtime.preparedPair.ready);
+
+  DifferentialTrace oracle;
+  DifferentialTrace candidate;
+  assertPairMatchesSynchronousPathFromAnchor(loop, runtime, loop.loopLengthTicks, oracle, candidate);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(candidate.rows.size()));
 }
 
 /// OpenSpec 2.4 (parent `resumable-midi-boundary-playback-maintenance`): the content-sized
@@ -3065,6 +3411,10 @@ int main() {
   RUN_TEST(test_source_change_requests_a_replacement_and_holds_the_last_coherent_pair);
   RUN_TEST(test_published_pair_emits_the_synchronous_oracle_trace_after_a_source_change);
   RUN_TEST(test_seal_admission_signal_requests_the_pair_replacement);
+  RUN_TEST(test_gathered_pair_matches_the_synchronous_path_across_a_wrap_and_a_loop_edge_note);
+  RUN_TEST(test_gathered_pair_holds_then_replaces_atomically_when_the_root_changes_mid_window);
+  RUN_TEST(test_long_loop_window_is_not_a_pair_and_matches_an_independent_window_reference);
+  RUN_TEST(test_gathered_pair_waits_for_the_record_stop_root_then_publishes);
   RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
   RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);

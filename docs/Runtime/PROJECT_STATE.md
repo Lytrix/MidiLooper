@@ -1,5 +1,29 @@
 # Project state (execution context)
 
+**2026-09-17 task 2.5's real-gather parity fixtures landed (OpenSpec
+`resumable-midi-boundary-playback-maintenance`).** The 2.5a harness could compare the immutable
+`PreparedPlaybackPair` against the synchronous merged/order path only over a synthetic window, so the
+2.4 slice-2 conversion was not yet validated through the production publication pipeline. It is now:
+`buildFixtureRoot` in `test_continuous_capture` builds a published snapshot root carrying both
+independent snapshot roots — note membership and the MIDI-event membership the playback gather reads —
+mirroring the publisher (an Off at or beyond the loop length clamps to `loopLength - 1`; a wrap note
+splits into head+tail with the same `NoteId`), and `assertPairMatchesSynchronousPathFromAnchor` anchors
+both consumers at the pair's own `cursorSeed`, so the comparison is about the pair rather than about
+where each cursor started. Four owner-priority fixtures landed: wrap + loop-edge note, source change
+mid-window (hold, 8-tick publish latency, the added row audible), the long-loop window (the documented
+`pairApplicable == false` boundary, plus the windowed stream against an independently phase-sorted
+full-gather window), and the record-stop publication gap (an empty gather publishes no pair; once the
+session-exit root lands the pair matches the synchronous path). Evidence: `test_continuous_capture`
+71/71, `REENTRY_RED=1` 72/72, `ONLY_COMPANION=1` 1/1, `test_playback_prewarm` 173/173, full native
+**2,236 / 1 skipped / 0 failures**, `teensy41-capture-serial` SUCCESS with RAM1 variables 91,904 /
+code 425,496 / padding 488 / **locals 6,400** (test-only increment; no firmware change). What remains of
+2.5 is the view/bridge-path matrix (record stop, phase-zero wrap admission, pre-seal invalidation,
+rejected-On/later-Off, accepted-On/matching-Off, wrap-held closure, append-and-stop, the explicit
+deferred-stop trace, promotion before wrap, max phase advance, denied refill, three-buffer rotation,
+source-change preemption near handoff, source prep midway through two windows, second-source bridge
+replacement, coverage fault, layered slots, slot switch, first/second revision changes). 2.4 is
+code-complete and open only for the 5.3 device read of the pair counters.
+
 **2026-09-17 task 2.4 slice 2 landed: an immutable `PreparedPlaybackPair` with atomic publication, and
 the measurement decides against slice 3 (OpenSpec `resumable-midi-boundary-playback-maintenance`).**
 The pinned invariant — *playback never observes `mergedEvents` and `playbackOrder` from different
