@@ -2764,6 +2764,16 @@ that *carries rows* plus a boot-prewarm headroom read), then re-run **6.1** and 
 includes ticking the parent change's task 2.3, already annotated with the deferred three-deep capacity
 case).
 
+**Also reviewed 2026-09-17: the parent change `resumable-midi-boundary-playback-maintenance` re-checked, task 2.3
+closed.** Its own recorded acceptance list (two public reentry cases + device evidence + the deferred three-deep
+capacity case named) is satisfied, so 2.3 is ticked with that evidence. Seven of its items stay open and now carry
+inline status: **2.4 is genuinely open** -- `playCommittedLoopMidi` still runs `ensurePlaybackMergedMidiEventsBuilt` +
+`rebuildPlaybackOrder` + `reanchorPlaybackIndex` synchronously when `fixedView == nullptr` on the active path, and no
+instrumented test fails on it -- and it blocks 5.4; 2.5 still needs the differential trace harness; 3.3 is one clause
+short (the complete atomic Commit-body measurement); 3.4/4.1 have landed behaviour but unevidenced verify clauses; 5.3
+is a device matrix; 5.4 cannot land before 2.4. The recommended order for that change is recorded at the top of its
+`tasks.md`.
+
 **2026-09-17 — transport-stop retarget re-route (DEC-070, implemented + device-verified; openspec
 5.3/5.7/5.8).** The user's stuck state machine after the HITL runs was a deferred job admitted for
 PLAYING, retargeted to Stopped by `stopOverdubbingToStopped` and left on the PLAYING phase path: its
