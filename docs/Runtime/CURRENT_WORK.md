@@ -5,6 +5,41 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 C3 baseline pinned (before any capacity shaping).** Three facts the
+demand-shaped-capacity decision and its device comparison must build on, all verified from
+the step-E end-to-end log:
+
+1. **The deferred-stop latency baseline**, from
+   [`stepE-e2e-01`](../../captures/stepE-e2e-01/session_20260917_121721.log): stop press
+   50.666 s -> `OVERDUBBING`/`OVERDUB_STOPPING`/`PLAYING` state transition at 50.667 s
+   (+19 us, so audibility is not gated on the deferred work) -> `ODUB,stop,bridge_base`
+   50.887 s (**+220 ms**) -> `bridge_begin` 50.894 s -> `bridge_ready ... context_retained`
+   51.795 s (**+1127 ms**). The comparison must separate the companion preparation (before
+   `bridge_base`) from the bridge map plus compile (the ~900 ms after `bridge_begin`).
+2. **The real horizon cost is `Phase::Trim`, not a slice emitter.**
+   `Loop::prewarmPreparedCompanionHistory` resizes `work.rows` to
+   `passes.editPasses.size() + companionCapacity` (`src/Loop/LoopPreparedCompanionHistory.cpp`),
+   and `Loop::stepPreparedCompanionHistory`'s `Phase::Trim` pops **one unused row per
+   quantum unit** until `rows.size() == targetCount`. `kDeferredStopPreparationQuantum` is
+   32 (`src/Track/TrackOverdubLifecycle.cpp:34`), so a 2048-row horizon with ~16 frozen
+   companion rows pays ~2030 units, i.e. **~64 prep turns of pure trimming** per stop. That
+   is derivable and removable without any capacity change: `beginPreparedCompanionHistory`
+   already knows `targetCount`, so the working vector can be sized to it (allocation-free,
+   capacity unchanged) and `Trim` becomes a no-op safety net.
+3. **The ~65 `DIAG,prepare,slice,prep` lines are not this owner.**
+   `LoopContentResolution`'s `Phase::RebuildPrepare` emits them, with `resume` =
+   `prepMerged.size()` and a bounded per-slice event budget
+   (`src/LoopContentResolution.cpp:2258-2331`); that cost is content-driven and belongs to
+   the canonical/visual rebuild after the stop, not to the horizon.
+
+Open question the per-owner measurement must still answer before the DEC: which owners'
+worst-case demand is `canonicalContent + intervalBound` (and therefore saturates at 2048
+unless the interval admission bound itself is reduced - a policy ceiling the user has
+explicitly ruled out) versus which are genuinely canonical-only and can therefore shrink
+soundly. The event-horizon workers look like the former; the playback view/bridge group
+(~710 KB of the ~1.47 MB arm) is the case that decides whether C3 can deliver a material
+arm-time memory win or only the latency win.
+
 **2026-09-17 step E IMPLEMENTED: capture staging is now admission-provisioned, and the
 loaded-set 8-bar recipe completes with no denial, no refusal and no fault.** DEC-065.
 **Status: validated on device (user-accepted 2026-09-17)** - the timing invariant was
