@@ -2269,6 +2269,70 @@ void test_companion_history_reservation_survives_snapshot_cleanup() {
 /// 512-row reserve must not spend ~511 trim units walking unused tail rows; it must reach
 /// Ready inside a small constant envelope, and the materialized size must equal the
 /// demand (canonical rows plus produced companion rows), not the reserve.
+
+/// The companion reserve is a *row* reserve. A frozen change vector also carries the
+/// interval's `Add` entries, which become the capture pass and never become companion
+/// rows, so admission must bound the rows the set will produce - not the vector size.
+/// Before this, a dense interval with a small transform set was denied its companion
+/// path (and with a derived reserve, could have denied the stop) for rows it never
+/// produced.
+void test_capture_companions_reserve_bounds_eligible_rows() {
+  CanonicalPrefixFixture f;
+  prepareUnsortedFrozenTailCapture(f.runtime);
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
+
+  RuntimeCaptureCompanions rows;
+  TEST_ASSERT_TRUE(rows.prewarm(4));
+  PendingNoteChangeVec dense;
+  for (unsigned i = 0; i < 8; ++i) {
+    dense.push_back(PendingNoteChange{PendingNoteChangeKind::Add, static_cast<NoteId>(i + 1), 1, 60,
+                                      100, static_cast<uint32_t>(i * 10), static_cast<uint32_t>(i * 10 + 5)});
+  }
+  dense.push_back(PendingNoteChange{PendingNoteChangeKind::Hide, 2, 1, 62, 80, 20, 60});
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(RuntimeCaptureCompanions::eligibleRowCount(dense)));
+  TEST_ASSERT_TRUE(rows.begin(capture, 4, dense));
+  while (rows.step(1) == RuntimePlaybackOrderBuildResult::Pending) {
+  }
+  TEST_ASSERT_TRUE(rows.ready(capture));
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(rows.size()));
+
+  // Five producible rows over a four-row reserve is a real denial, not a silent prefix.
+  RuntimeCaptureCompanions small;
+  TEST_ASSERT_TRUE(small.prewarm(4));
+  PendingNoteChangeVec transforms;
+  for (unsigned i = 0; i < 5; ++i) {
+    transforms.push_back(PendingNoteChange{PendingNoteChangeKind::Hide, static_cast<NoteId>(i + 10), 1,
+                                           62, 80, 20, 60});
+  }
+  TEST_ASSERT_EQUAL_UINT32(5, static_cast<uint32_t>(RuntimeCaptureCompanions::eligibleRowCount(transforms)));
+  TEST_ASSERT_FALSE(small.begin(capture, 4, transforms));
+  TEST_ASSERT_TRUE(small.idle());
+}
+
+/// The derived companion-row bound scales with the loop's canonical payloads and still
+/// reaches the architectural ceiling, so a dense loop keeps the full envelope.
+void test_companion_row_horizon_scales_with_content_up_to_the_ceiling() {
+  Loop loop;
+  const size_t emptyBound = loop.companionRowHorizonBound();
+  TEST_ASSERT_TRUE(emptyBound >= RuntimePlaybackViewConfig::kMaxCaptureNoteReservations);
+  TEST_ASSERT_TRUE(emptyBound <= RuntimePlaybackViewConfig::kRecordsPerBridge);
+
+  loop.passes.editPasses.resize(1);
+  for (unsigned i = 0; i < 300; ++i) {
+    loop.passes.editPasses[0].addedEvents.push_back(MidiEvent::NoteOn(i, 1, 60, 100));
+  }
+  TEST_ASSERT_EQUAL_UINT32(300 + RuntimePlaybackViewConfig::kMaxCaptureNoteReservations,
+                           static_cast<uint32_t>(loop.companionRowHorizonBound()));
+  TEST_ASSERT_TRUE(loop.companionRowHorizonBound() < RuntimePlaybackViewConfig::kRecordsPerBridge);
+
+  for (unsigned i = 300; i < RuntimePlaybackViewConfig::kRecordsPerBridge; ++i) {
+    loop.passes.editPasses[0].addedEvents.push_back(MidiEvent::NoteOn(i, 1, 60, 100));
+  }
+  // Maximum envelope: a dense loop is still granted the full row ceiling.
+  TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                           static_cast<uint32_t>(loop.companionRowHorizonBound()));
+}
+
 void test_companion_history_prep_units_scale_with_demand_not_reserve() {
   Loop loop;
   loop.nextPassId_ = 100;
@@ -5662,6 +5726,13 @@ void test_frozen_companion_preparation_counts_add_rows_and_preserves_source() {
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, prepared.step(1));
   TEST_ASSERT_EQUAL_UINT32(4, changes.size());
   prepared.discard();
+  // The reserve is a *row* reserve: the three producible transforms fit the three-row
+  // grant, and the interval's `Add` entry never consumes a row. (`Add` still consumes
+  // input quantum in `step`, which the pending/size assertions above cover.)
+  TEST_ASSERT_TRUE(prepared.begin(capture, 111, changes));
+  prepared.discard();
+  changes.push_back({PendingNoteChangeKind::Hide, 5, 1, 67, 91, 11, 21});
+  // A fourth producible row over a three-row grant is the real denial.
   TEST_ASSERT_FALSE(prepared.begin(capture, 111, changes));
 }
 
@@ -6129,6 +6200,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_frozen_tail_uses_private_sort_when_shared_order_is_audible);
   RUN_TEST(test_companion_history_stages_metadata_payloads_and_ids_without_publication);
   RUN_TEST(test_companion_history_reservation_survives_snapshot_cleanup);
+  RUN_TEST(test_capture_companions_reserve_bounds_eligible_rows);
+  RUN_TEST(test_companion_row_horizon_scales_with_content_up_to_the_ceiling);
   RUN_TEST(test_companion_history_prep_units_scale_with_demand_not_reserve);
   RUN_TEST(test_companion_history_binds_wrap_publication_before_begin);
   RUN_TEST(test_companion_history_atomic_swap_preserves_snapshot_and_undo_ids);

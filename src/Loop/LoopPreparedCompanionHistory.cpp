@@ -30,6 +30,23 @@ LOOP_COLD_MEM uint64_t Loop::requiredPreparedCompanionHistoryGrains(
   return 1 + (units - 1) / quantum;
 }
 
+LOOP_COLD_MEM size_t Loop::companionRowHorizonBound() const {
+  // `upsertSourceTransform` keeps at most one Shorten/Hide (sealed as Delete/Length) row
+  // per source note identity, and one row is produced per eligible change, so the
+  // producible count is bounded by the number of distinct source note identities the
+  // interval can occupy. Every canonical source note contributes at least one payload
+  // event, so payload event count is a sound (generous) proxy; the reservation capacity
+  // covers identities whose payloads were synthesized rather than stored.
+  size_t payloadEvents = 0;
+  for (const EditPass& row : passes.editPasses) {
+    payloadEvents += row.addedEvents.size();
+  }
+  const size_t bounded = payloadEvents + RuntimePlaybackViewConfig::kMaxCaptureNoteReservations;
+  return bounded > RuntimePlaybackViewConfig::kRecordsPerBridge
+             ? RuntimePlaybackViewConfig::kRecordsPerBridge
+             : bounded;
+}
+
 LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacity) {
   constexpr size_t limit = RuntimePlaybackViewConfig::kRecordsPerBridge;
   if (passes.editPasses.size() > limit || companionCapacity > limit - passes.editPasses.size()) return false;

@@ -33,11 +33,37 @@ CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::prewarm(size_t capacity) {
   return true;
 }
 
+CAPTURE_COMPANION_MEM size_t RuntimeCaptureCompanions::eligibleRowCount(
+    const PendingNoteChangeVec& frozenChanges) {
+  size_t eligible = 0;
+  for (const PendingNoteChange& change : frozenChanges) {
+    if (change.kind == PendingNoteChangeKind::Add) continue;
+    if (change.noteId == kInvalidNoteId) continue;
+    ++eligible;
+  }
+  return eligible;
+}
+
+CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::ensureCapacity(size_t needed) {
+  if (needed <= capacity_) return true;
+  if (needed > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
+  if (rows_ != nullptr) {
+    for (size_t i = 0; i < capacity_; ++i) rows_[i].~EditPass();
+    if (isInExternalMemoryPool(rows_)) extmem_free(rows_);
+    else std::free(rows_);
+    rows_ = nullptr;
+    capacity_ = 0;
+  }
+  return prewarm(needed);
+}
+
 CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::begin(
     const CaptureAdmissionStaging& capture, uint32_t generation, const PendingNoteChangeVec& frozenChanges) {
   if (capture_ != nullptr || rows_ == nullptr || !capture.frozen || capture.captureGeneration != generation ||
       capture.frozenGeneration != generation || capture.openReservationCount() != 0 ||
-      frozenChanges.size() > capacity_) return false;
+      // The reserve is a row reserve: bound the rows this set will produce, not the whole
+      // vector (its Add entries become the capture pass, never companion rows).
+      eligibleRowCount(frozenChanges) > capacity_) return false;
   ++preparationGeneration_;
   capture_ = &capture;
   changes_ = &frozenChanges;

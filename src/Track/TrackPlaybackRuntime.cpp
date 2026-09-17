@@ -386,7 +386,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCaptureStaging(
       viewSet->frozenCaptureStaging().prewarm();
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews() {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
+    size_t companionRowCapacity) {
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
   const bool stagingReady = prewarmCaptureStaging();
   ExternalPoolAccounting::endTag();
@@ -399,7 +400,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews() {
       viewSet->liveCaptureStaging().openReservationCount()))
     return false; // Upgrading must never reset accepted staging state.
   if (!viewSet->prewarm()) return false;
-  if (!frozenCaptureCompanions.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge)) return false;
+  // Derived row reserve (DEC-066): a sparse slot does not take the full row horizon.
+  // `ensureCapacity` only grows, so a later denser interval still fits.
+  if (!frozenCaptureCompanions.ensureCapacity(companionRowCapacity)) return false;
 #define RUNTIME_PREWARM_TAGGED(resultName, tag, expr) \
   ExternalPoolAccounting::beginTag(tag);              \
   const bool resultName = (expr);                     \

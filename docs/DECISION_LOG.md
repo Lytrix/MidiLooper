@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — user-directed; work shaping landed, reserve shaping partial |
+| [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
 | [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — validated on device |
 | [DEC-063](#dec-063--protected-stop-undo-publication-and-bounded-reclamation) | 2026-09-14 | Protected stop transaction preserves feedback trimming; latest deferred Undo/Redo wins per Track | Accepted — implementation authorized; validation gates remain open |
 | [DEC-062](#dec-062--provisional-ranked-preparation-allowance) | 2026-09-14 | Allow 6240 ranked-preparation grains for integration; realtime reservations determined with HITL | Accepted — provisional; validation/HITL gates remain open |
@@ -84,7 +84,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-066 — Per-owner capacity derivation for the stop working set, under the existing ceilings
 
 **Date:** 2026-09-17
-**Status:** Accepted — user-directed ("take C3 as demand-shaped capacity per owner under the existing 2,048 maximum, never a smaller fixed cap"); work shaping landed, reserve shaping partially landed
+**Status:** Accepted — implemented and device-verified (work shaping + companion-row reserve shaping). The event-horizon owners remain ceiling-bound by design; see the derivation table.
 **Owner:** `LoopPlaybackRuntime` playback/capture working set; `Loop` prepared companion history and prepared companion rows
 
 **Context:** Six owners were reserving the *same* 2,048-row/event horizon although
@@ -124,7 +124,7 @@ admissible against the same reserve. Guarded by
 companion row over a 512-row grant and requires Ready inside 32 quantum units (the
 old walk needed ~511).
 
-**Pinned reserve rule (partially landed):** the per-interval increment of the
+**Pinned reserve rule (landed):** the per-interval increment of the
 row-horizon owners may be sized from the *actual* sealed demand where it is known
 before the timing-sensitive work; the canonical/cumulative side keeps its ceiling.
 Two consequences the implementation must respect:

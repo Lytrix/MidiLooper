@@ -346,7 +346,10 @@ struct LoopPlaybackRuntime {
   bool reset(bool preserveLedger);
 
   /// Cold/boot or STOPPED-only allocation. Never call from a MIDI tick.
-  bool prewarmViews();
+  /// `companionRowCapacity` is the derived companion-row reserve for this slot
+  /// (DEC-066); it is clamped to the architectural row ceiling by the owner.
+  bool prewarmViews(
+      size_t companionRowCapacity = RuntimePlaybackViewConfig::kRecordsPerBridge);
   /// Boot reserves only capture staging. Full views/bridges/workers are a
   /// separate cold admission; a staging-only runtime cannot select a bridge.
   bool prewarmCaptureStaging();

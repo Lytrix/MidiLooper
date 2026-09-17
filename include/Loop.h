@@ -585,6 +585,14 @@ struct Loop {
   /// must fit the fixed preparation horizons. Both vector sides are reserved;
   /// canonical history relocation advances its generation before moving rows.
   bool prewarmPreparedCompanionHistory(size_t companionCapacity);
+  /// Upper bound on the companion rows one stop interval on this loop can produce, clamped
+  /// to the architectural row ceiling. Every companion row is a Delete/Length transform
+  /// keyed by a *source* note identity, so the count is bounded by the source notes the
+  /// interval can occupy; canonical payload event count is a sound, generous proxy, with
+  /// the open-note reservation capacity as slack for identities whose payloads were
+  /// synthesized rather than stored. Cheap: one walk over the canonical rows, no
+  /// allocation, safe at a cold admission point.
+  size_t companionRowHorizonBound() const;
   static uint64_t requiredPreparedCompanionHistoryGrains(size_t historyRows, size_t historyPayloadEvents,
                                                         size_t companionCapacity, size_t quantum, size_t snapshotIds = 0,
                                                         size_t captureEvents = 0, size_t captureChunks = 0);

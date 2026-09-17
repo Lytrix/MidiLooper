@@ -5,6 +5,64 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 C3 increment 2 LANDED and device-measured: the companion-row reserve is derived
+from the loop, and the deferred stop is twice as fast to its prepared window.** The reserve
+half of DEC-066, plus the measurement increment 1 could not get (that run took the
+transport-stop path; this one took the deferred Playing path).
+
+What changed:
+- `Loop::companionRowHorizonBound()` derives the row bound from the loop's canonical payload
+  event count plus the open-note reservation capacity as slack, clamped to
+  `kRecordsPerBridge`. Rationale, from the per-owner measurement: a companion row exists only
+  for a Delete/Length transform, `upsertSourceTransform` keeps one such transform per
+  **source** note identity, and every source note contributes at least one payload event - so
+  payload count is a sound, generous bound that still reaches the ceiling for a dense loop.
+- `RuntimeCaptureCompanions::begin` now admits against the **eligible rows** the frozen change
+  set will produce, not the whole change vector: the vector also carries the interval's `Add`
+  entries, which become the capture pass and never become rows. Without this, a derived
+  reserve could deny a stop whose captured engine is dense but whose transform set is small.
+- `RuntimeCaptureCompanions::ensureCapacity` grows the row reserve at a cold point only, and
+  never shrinks it, so a later denser interval still fits a smaller earlier grant.
+  `Track::prewarmPlaybackForSlot` grants the derived bound to both companion owners;
+  `Track::startOverdubbing` re-grants it after a commit could have grown the canonical
+  content. Both grants are tag-bracketed; a failed grant reports
+  `#MEM_DENIED op=overdub_start,reason=prewarm_failed`.
+
+Measured against the step-E baseline on the same loaded-set 8-bar recipe
+([`c3-derived-reserve-01`](../../captures/c3-derived-reserve-01/session_20260917_124359.log)):
+
+| metric | step-E baseline | C3 increment 1+2 |
+|---|---|---|
+| arm delta (1 s accounting line) | 1,469 KB | **1,315 KB (-154 KB, -10.5%)** |
+| `tag 2` (views/bridges + frozen companions) | 790 KB | **715 KB (-75 KB)** |
+| companion-row grants (tag 6 / row reserve) | 80 KB | derived; ~0-5 KB on this loop |
+| stop press -> `ODUB,stop,bridge_base` | 220 ms | **112 ms (-49%)** |
+| stop press -> `ODUB,stop,bridge_ready` | 1,127 ms | 1,180 ms (unchanged; the bridge map/compile dominates, exactly as the per-owner analysis predicted) |
+| allocations inside the stop window | 0 blocks | **0 blocks** (dLive/dBlocks = 0 through `bridge_ready`) |
+| SEVT / canonical | ok | **ok** (overdub 16/15, count/span/bars ok; record 128/128) |
+| `FATAL` / `#MEM_DENIED` / `#MEM_EXT_REFUSED` | 0/0/0 | **0/0/0** |
+
+The companion path completed (`bridge_ready ... context_retained`), so the derived grant was
+sufficient on this content - it did not silently fall back. Minimum internal heap over the
+run was 60 KB and 140 KB in the stop window, against the 48-65 KB of the step-E runs.
+
+Fixtures for the three classes (native, `test_playback_prewarm`):
+`test_capture_companions_reserve_bounds_eligible_rows` (a 4-row reserve admits a change vector
+of 8 Adds + 1 transform and produces exactly one row; five transforms over four rows is a real
+denial), `test_companion_row_horizon_scales_with_content_up_to_the_ceiling` (300 payload
+events -> bound 428; payloads at the ceiling -> bound 2048, so the full envelope is retained),
+and `test_companion_history_prep_units_scale_with_demand_not_reserve` (one produced row over a
+512-row grant reaches Ready inside 32 quantum units). `pio test -e native`: **2196 cases,
+2 pre-existing failures, 1 skipped, 2192 succeeded**.
+
+Remaining, recorded rather than fixed: the event-horizon owners
+(`canonicalPassInputs`, `companionPasses`, `apply`, `reconstruction`, views/bridges) are
+ceiling-bound because their interval term *is* the staging admission bound and their reserve is
+taken at the arm; shrinking them would either cap the interval (rejected) or move the reserve to
+the seal and make it fallible (a stop-contract change). The maximum-envelope case is
+fixture-covered on a dense loop, not device-covered: this device's loaded content derives a
+small bound, so the ceiling path was exercised in the fixture rather than on hardware.
+
 **2026-09-17 C3 increment 1 LANDED: per-episode work shaping in the prepared companion
 history (DEC-066).** The measured per-owner capacity analysis is in
 [DECISION_LOG DEC-066](../DECISION_LOG.md) - six distinct determinants, so one shared
