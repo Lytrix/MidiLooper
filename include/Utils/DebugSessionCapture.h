@@ -34,6 +34,13 @@
 #ifndef SESSION_CAPTURE_DIAG
 #define SESSION_CAPTURE_DIAG 1
 #endif
+// Per-grain stop diagnostics (`DIAG,stop_grain`). Default on and sampled one-in-sixteen. A build
+// that sets this to 0 drops the family at compile time and keeps the per-phase aggregate
+// (`DIAG,stop_phase`), so an acceptance run's ring budget goes to the snapshot-publication rows
+// instead of the stop-job flood. See env `teensy41-capture-serial-no-grain`.
+#ifndef SESSION_CAPTURE_GRAIN
+#define SESSION_CAPTURE_GRAIN 1
+#endif
 // Investigation-only high-volume DIAG families (cer_* / lcr,vch,gather_* / seal_companion).
 // Keep off by default for responsive capture sessions; enable in dedicated targets when needed.
 #ifndef SESSION_CAPTURE_INVESTIGATION_DIAG
