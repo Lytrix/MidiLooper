@@ -5,6 +5,37 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 external-pool pseudo-counting: design sound, blocked by zero ITCM headroom.**
+To see what grows during a long record plus overdub without probing the pool, the
+pseudo-counting route is the right one — the pool cannot be queried from the transport
+thread, and the repo already does exactly this for snapshots
+(`snapshotAllocByteCount()` → `#CAP,DIAG,snapshot_alloc`). Built the same shape for the
+external pool: O(1) counters (`liveBytes` / `highWaterBytes` / `liveBlocks` /
+`cumulativeAllocated` / `cumulativeFreed`, plus a fallback-bytes counter for requests
+that ask for PSRAM and get the internal heap), fed from the external-first allocators
+that know the byte count on **both** allocate and deallocate, emitted as a short
+direct-serial line every 5 s so it stays visible while PLAYING/OVERDUBBING where the
+`#CAP` ring never flushes.
+
+**It does not fit, and the reason is structural.** The committed tree sits exactly on
+the FlexRAM bank boundary: `code:425224 + padding:760 = 425984 = 13 * 32768`. Padding
+absorbs any growth up to roughly 760 bytes and then the next byte of ITCM code costs a
+**whole 32768-byte DTCM bank**, so the accounting's ~4 KB of call sites (one call per
+allocator instantiation, and there are hundreds) produced
+`code:429304, padding:29448, free for local variables:-26080` and a hard
+`Error program exceeds memory space`. Making the record functions out of line halved
+the growth and still overflowed. **Remaining ITCM budget on this tree: ~700 bytes.**
+Reverted; `teensy41-capture-serial` builds again at **6720**.
+
+Options, in preference order: (1) link-time `-Wl,--wrap=extmem_malloc,--wrap=extmem_free`
+so the counters cost **no** call-site code at all — one small FLASHMEM wrapper covers all
+57 raw sites, and `extmem_free` needs no size because live *block* count plus cumulative
+allocated bytes is enough for a trend; (2) free ITCM first by moving ~4 KB of cold code
+to flash (the diagnostic/emitter units are the honest donors, since the accounting would
+be paid for out of diagnostic code); (3) sample only counters that already exist
+(chunk usage, snapshot bytes/nodes/slabs, heap free/min-ever) from one small emitter,
+which fits the ~700-byte budget but misses the container-vector consumers.
+
 **2026-09-17 8-bar record + overdub reproduces the hang: allocator exhaustion, not
 a spin.** Temporary variant of `STIM-BASE-2-ONE-OD-01` (`--record-bars 8
 --overdub-bars 2 --second-overdub-bars 0`) on scratch track 4 / slot 1, which was
