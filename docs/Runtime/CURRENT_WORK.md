@@ -2741,6 +2741,41 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — successor 5.9 RUN ON DEVICE and it FAILS: a committed overdub pass never reaches the MIDI
+output.** The DEC-071 multi-pass shape was created on the flashed tree (`content-verify-58`: record 8 bars /
+overdub 8 bars from bar 3, track 4 slot 1, `teensy41-capture-serial`), and the base run is a clean **PASS**:
+`record loop length 6912/6144` (the known 9-bar seal for an 8-bar request), `ST PLAYING->OVERDUBBING: 2`,
+`OVERDUBBING->PLAYING: 2`, `stored overdub span count=64/63 count_ok=True`, display `overdub_ok=True
+transport_ok=True`, `persistence handoff result=ok`, undo=1 redo=1, `overflow_free=True`, firmware
+`d298f9ea…` (git `4fde5c03`, clean). So four of 5.9's five checks hold in one clean run. The fifth does not:
+`verify_playback_content.py` on `captures/content-verify-58-playback` reports
+`storage_matches_effective: true` (record 384 + overdub 157 + 35 + 24 = effective 600) but **every one of
+five cycles has `inventory_equal: false`, `rows=572`, `missing_count=28` (27 unexplained + 1 residual)**.
+The loss is deterministic and device-side (the identical multiset in all five cycles):
+
+- the **whole second-overdub pass `overdub,2`** is inaudible — 24 rows (NoteOn/NoteOff notes 12–19 at ticks
+  4975–6503 plus CC74 0,9,…,63), present in `passes` and in `effective`, absent from the output;
+- **3 rows of the first overdub's wrap continuation** are also lost: one copy each of the wrap-crossing pair
+  `(144,4,28,98)`@6911 / `(128,4,28,0)`@95 and `(176,4,74,84)`.
+
+DEC-071's own claim still holds here (the pre-wrap `overdub,0` pass and its continuation are otherwise
+audible), so this is the same **class** as DEC-071 — a committed pass missing from the playback source —
+with a different pass. The same 24-row loss reproduced on `content-verify-53-playback`. **5.9 stays open;
+5.11 stays open with it** (its own clauses — no `companion path stalled`, save completes, four checks in one
+run — do hold on run 58). Next step: a fix plus a re-verification, not a tick.
+
+**Observability blocker found in the same session (base-run oracle, not content).** The 8-bar recipe sheds
+the 1 MiB `#CAP` ring, and the dominant consumer is `DIAG,droid_queue` (~5.6k rows/run, `MidiHandler.cpp`
+`SC_DROID_FEEDBACK_QUEUE`) plus `PERS,work` (~3.5k) — **neither is dropped by
+`teensy41-capture-serial-no-grain`**, which only drops `DIAG,stop_grain`. Four runs
+(`content-verify-54..57`) came back `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` because the harness never
+delivered the overdub-stop press (the device log has no `Overdubbing stopped`; the only Record/Overdub
+presses were the double-undo and triple-redo), so the live pass was never committed and the take collapsed
+to a single overdub pass. The two clean runs both sealed at 6912 ticks with ~12.5k `#CAP` lines; the
+degraded ones sealed at 6144 with ~20.8k. A volume mitigation for `droid_queue` (sampling as
+`DIAG,stop_grain` now is, or an acceptance env) is needed before the base report can carry the four checks
+in a clean run again.
+
 **2026-09-17 — successor change task 5.5 CLOSED: the adversarial mid-grain checkpoint set is complete
 and runs in the default gate.** 5.5 was the only remaining host-only item of
 `successor-capture-reentry-unguarding`, the one D8 (DEC-072) directly unblocked, and the one still

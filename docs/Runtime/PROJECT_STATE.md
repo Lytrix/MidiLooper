@@ -1,5 +1,26 @@
 # Project state (execution context)
 
+**2026-09-18 successor 5.9 device run FAILS: a committed overdub pass never reaches the MIDI output
+(OpenSpec `successor-capture-reentry-unguarding`).** The DEC-071 multi-pass shape was created on the
+flashed tree (`captures/content-verify-58`, git `4fde5c03` clean, firmware `d298f9ea…`, `teensy41-capture-serial`): the base run
+is a clean **PASS** — 9-bar seal for the 8-bar request, `ST PLAYING->OVERDUBBING: 2`,
+`OVERDUBBING->PLAYING: 2`, `stored overdub span count=64/63 count_ok=True`, display `overdub_ok=True
+transport_ok=True`, `persistence handoff result=ok`, undo=1 redo=1, `overflow_free=True` — so four of
+5.9's five checks hold in one clean run. The fifth fails:
+`captures/content-verify-58-playback/content-review.json` reports `storage_matches_effective: true`
+(record 384 + overdub 157 + 35 + 24 = effective 600) with **every cycle `inventory_equal: false`,
+`rows=572`, 28 missing (27 unexplained + 1 residual)**. The loss is deterministic and device-side: the
+**whole second-overdub pass `overdub,2`** (24 rows: NoteOn/NoteOff notes 12–19 at ticks 4975–6503, CC74
+0–63) and **3 rows of the first overdub's wrap continuation** (`(144,4,28,98)`@6911, `(128,4,28,0)`@95,
+`(176,4,74,84)`) are in `passes` and in `effective` but never emitted. This is the same class as DEC-071 —
+a committed pass missing from the playback source — with a different pass; DEC-071's own pre-wrap pass is
+audible here. The same 24-row loss reproduced on `content-verify-53-playback`. **5.9 and 5.11 stay open**;
+the next step is a fix plus a re-verification, not a tick. Observability blocker recorded alongside: the
+8-bar recipe sheds the 1 MiB `#CAP` ring and the dominant consumer is `DIAG,droid_queue` (~5.6k rows/run)
+plus `PERS,work` (~3.5k), neither dropped by `teensy41-capture-serial-no-grain` (which only drops
+`DIAG,stop_grain`); four runs came back `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` after the harness failed
+to deliver the overdub-stop press.
+
 **2026-09-17 successor change task 5.5 CLOSED: the adversarial mid-grain reentry checkpoint set is
 complete and in the default gate (OpenSpec `successor-capture-reentry-unguarding`).** 5.5 was the only
 remaining host-only item of that change, the one DEC-072 / D8 directly unblocked, and the one still
