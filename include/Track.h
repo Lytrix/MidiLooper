@@ -456,10 +456,6 @@ private:
   /// DEC-070 diagnostic: the head deferred stop job hit a predicate it can never satisfy, so it
   /// keeps its finalization resources forever. Noted once per job.
   bool deferredStopStallNoted_ = false;
-  /// DEC-070 bounded fallback: grains spent in one phase of a retargeted job's companion
-  /// preparation, so a path that cannot complete falls back to the raw pass instead of parking.
-  uint16_t retargetStallGrains_ = 0;
-  uint8_t retargetStallPhase_ = 0;
   uint32_t overdubStopDebtProbeArmedUs_ = 0;
   bool overdubStopVisualDirtyBefore_ = false;
   bool overdubStopVisualDirtyAfter_ = false;

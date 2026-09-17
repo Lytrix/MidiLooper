@@ -140,7 +140,6 @@ void PendingStopAdmission::reset() {
   historyRecycleStarted = false;
   phase = PendingStopPhase::ReservedClosure;
   destination = PendingStopDestination::Playing;
-  retargetedFromPlaying = false;
   pending = false;
   sessionExitReceiptRing = static_cast<size_t>(-1);
 }
@@ -234,7 +233,6 @@ void PendingStopAdmission::requestTransportStop() {
   }
   ++transportCommandEpoch;
   destination = PendingStopDestination::Stopped;
-  retargetedFromPlaying = true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::retireCompletedPreparation() {
