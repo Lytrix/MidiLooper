@@ -888,8 +888,27 @@ def _prepare_deferred_save_before_clear(
         time.sleep(0.35)
         if _serial_sequencer_running(serial_collector, max_silence_s=1.0,
                                      after_index=post_stop_anchor):
-            print("[warn] transport still active after stop; clear blocked")
-            return False
+            # Transport is a toggle, and the device may already be stopped by the time this
+            # runs (an empty-slot select can start and stop a capture on its own). A blind
+            # stop press then *starts* it, and blocking clear here aborts the whole fixture
+            # before any note is streamed (`captures/successor-wrap-50`:
+            # `transport still active after stop; clear blocked`). Press again, exactly as
+            # `_ensure_transport_stopped_before_record_arm` already does, and only block if
+            # the transport is genuinely still running after the retry.
+            print("[info] transport still active after stop; pressing transport again")
+            _send_short_press(
+                out_port,
+                note=GLOBAL_TRANSPORT_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=press_ms,
+            )
+            time.sleep(max(phase_wait_ms, TRANSPORT_SHORT_DEBOUNCE_MS) / 1000.0)
+            retry_stop_anchor = len(serial_collector.snapshot())
+            time.sleep(0.35)
+            if _serial_sequencer_running(serial_collector, max_silence_s=1.0,
+                                         after_index=retry_stop_anchor):
+                print("[warn] transport still active after stop; clear blocked")
+                return False
         # Retain the pre-existing pending marker as well as activity/completion
         # emitted during the stop wait.
         save_wait_anchor = recent_save_anchor
