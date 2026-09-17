@@ -239,6 +239,20 @@ owner/geometry and frozen-generation predicates, the cleanup and history-recycle
 head job's phase/destination/closure/recycle/undo state. No behavior change; RAM1 locals 6,400.
 
 
+**Retention guard implemented; premise corrected (2026-09-17, `captures/successor-wrap-46`).**
+`TrackPreparedStopCommit::completeDeferredCleanup` now retains the committed canonical tail only while the
+retiring job is still the live interval (`ownsLiveSession`), so a retiring predecessor no longer leaves an
+attachment a live successor would trip over. Native capture suite 50/50 and the full gate stay green, and the
+device save now completes (`persistence handoff: result=ok`, 77 ms). It does **not** unblock the retarget:
+`-46` still logs `Overdub stop retarget: phase=7 dest=1 companions=kept` then
+`companion path stalled; raw pass only` 0.69 s later, with `overdub_ok=False`. So the `captureAttached()` the
+probe saw is **not** the predecessor's retained tail -- it is already present on the live interval's own
+canonical inputs at the retarget, which is why a retention-time guard cannot help. Next discriminating step:
+instrument where that attachment is set for the live interval (the `beginFrozenOverdub` /
+`appendFrozenOverdub` callers on the wrap/normalization path) and whether the retarget may clear it together
+with a prefix rebuild. Until then the retarget keeps falling back to the raw pass: audio, save and undo behave
+normally, the note-edit display representation is still lost in this edge case, and 5.9 stays open.
+
 ## DEC-069 — The overdub wrap is a canonical-revision transition and must not advance the revision a pending stop job owns
 
 **Date:** 2026-09-17
