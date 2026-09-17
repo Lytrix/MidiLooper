@@ -109,11 +109,17 @@ completion or cleanup SHALL NOT clear, retarget or consume a successor's live st
 
 ### Requirement: A staged capture pass is owned by the interval that staged it
 
-The producer's staged (pending) capture pass SHALL belong to exactly one interval, and
-opening another interval's capture on the same loop SHALL NOT discard it. A successor
-interval's capture start, stop or wrap SHALL leave a predecessor's staged pass intact
-until that predecessor's own terminal transfer consumes it, and each interval SHALL be
-able to stage its own pass when its terminal transfer needs it.
+The producer's staged (pending) capture pass SHALL be detached from loop-shared
+producer state and owned by exactly one interval. Opening, stopping or wrapping another
+interval's capture on the same loop SHALL NOT discard, consume or mutate the pass of an
+interval that does not own it, and SHALL NOT find another interval's pass occupying its
+own staging slot. At most one owner may hold a given staged pass, while multiple
+intervals may each hold their own staged pass concurrently.
+
+All capacity the destination owner requires SHALL be admitted before ownership
+transfers. Once the transfer begins it SHALL be non-fallible and SHALL leave no shared
+alias of the pass in the producer, so no failure can leave the pass owned by neither
+the producer nor the destination.
 
 #### Scenario: A successor opens its interval while the predecessor is finalizing
 
