@@ -348,20 +348,33 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::reset(bool preserveLed
   bridgeStream.reset();
   bridgeProjectionCycle = 0;
   mergedMidiEvents.clear();
-  const RuntimePlaybackView* retainedView = nullptr;
-  if (preserveLedger && viewSet != nullptr &&
-      viewSet->lifecycle.retained != RuntimePlaybackViewLifecycle::kNoView &&
-      viewSet->lifecycle.retained < viewSet->views.size()) {
-    retainedView = &viewSet->views[viewSet->lifecycle.retained];
+  // Preserve one view across the reset: the non-audible first-record return view
+  // (the retained raw bar) takes priority, then the bound record-session return
+  // window. The bound window has no other source once the take is sealed, so the
+  // launch's own cache reset must not clear it before the first root publishes.
+  uint8_t preservedIndex = RuntimePlaybackViewLifecycle::kNoView;
+  if (preserveLedger && viewSet != nullptr) {
+    if (viewSet->lifecycle.retained != RuntimePlaybackViewLifecycle::kNoView &&
+        viewSet->lifecycle.retained < viewSet->views.size()) {
+      preservedIndex = viewSet->lifecycle.retained;
+    } else {
+      const uint8_t window = viewSet->firstRecordReturnWindowIndex();
+      if (window != RuntimePlaybackViewLifecycle::kNoView && viewSet->views[window].complete) {
+        preservedIndex = window;
+      }
+    }
   }
-  viewBuild.discard(retainedView);
+  const RuntimePlaybackView* preservedView =
+      (viewSet != nullptr && preservedIndex < viewSet->views.size())
+          ? &viewSet->views[preservedIndex] : nullptr;
+  viewBuild.discard(preservedView);
   recordingWindowGeneration = 0;
   recordingWindowGenerationValid = false;
   discardFrozenCaptureOrder();
   discardFrozenCaptureCanonicalOrder();
   if (viewSet != nullptr) {
-    if (preserveLedger && viewSet->lifecycle.retained != RuntimePlaybackViewLifecycle::kNoView)
-      viewSet->resetMetadataPreserveRetained();
+    if (preservedIndex != RuntimePlaybackViewLifecycle::kNoView)
+      viewSet->resetMetadataPreserveView(preservedIndex);
     else
       viewSet->resetMetadata();
   }
@@ -1474,7 +1487,7 @@ LoopPlaybackRuntime::firstRecordingBarDenialLabel() const {
   return firstRecordingBarDenial_ != nullptr ? firstRecordingBarDenial_ : "unknown";
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseUnlaunchedFirstRecordingBar() {
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseFirstRecordingBarReturnWindow() {
   // A stop job that is still retiring owns the record-session lifecycle; do not
   // release a window under it.
   if (captureStopOwner && captureStopOwner->pending) {
@@ -1484,17 +1497,17 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseUnlaunchedFirst
   if (set == nullptr) {
     return false;
   }
-  const uint8_t retained = set->lifecycle.retained;
-  if (retained == RuntimePlaybackViewLifecycle::kNoView || retained >= set->views.size()) {
-    return false;
+  // A take that handed off keeps the window as `current`; one that did not keeps
+  // it as `retained`. Either way the record session is over for this slot.
+  uint8_t window = set->firstRecordReturnWindowIndex();
+  if (window == RuntimePlaybackViewLifecycle::kNoView) {
+    window = set->lifecycle.retained;
   }
-  if (!set->views[retained].rawCoveragePrepared) {
-    // Bound to final geometry and handed off (or already part of an audible source):
-    // the record-stop handoff owns it.
+  if (window == RuntimePlaybackViewLifecycle::kNoView || window >= set->views.size()) {
     return false;
   }
   viewBuild.discard();
-  set->views[retained].resetMetadata();
+  set->views[window].resetMetadata();
   // Restore the prewarm role layout so the next preparation installs a current view
   // exactly as it does at boot. `installPreparedCurrent` resets the retired current.
   set->lifecycle.reset();
@@ -1502,6 +1515,40 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseUnlaunchedFirst
     set->views[set->lifecycle.ready].resetMetadata();
   }
   return true;
+}
+
+TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView*
+LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow(
+    const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks) {
+  RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
+  if (set == nullptr || loopLengthTicks == 0) {
+    return nullptr;
+  }
+  const uint8_t index = set->firstRecordReturnWindowIndex();
+  if (index >= set->views.size()) {
+    return nullptr;
+  }
+  RuntimePlaybackView& window = set->views[index];
+  // A bound return window: raw coverage already replaced by final loop geometry.
+  // A window whose bar ends with a held note is refused because its closure is
+  // not inside the window (a later bar or the loop end carries it); that take
+  // keeps the publication-gap behaviour until the bundle carries its ledger
+  // boundary.
+  if (window.rawCoveragePrepared || !window.complete || window.firstRecordReturnWindowHasHeldNote ||
+      window.coverage.startPhase != 0 || window.coverage.lengthTicks != loopLengthTicks ||
+      window.coverage.loopLengthTicks != loopLengthTicks) {
+    return nullptr;
+  }
+  if (!(window.source == sourceIdentity)) {
+    window.source = sourceIdentity;
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+    DebugSessionCapture::firstRecordReturnWindowAdopted(loopLengthTicks);
+#endif
+  }
+  // A preserve-reset clears the published flag across the launch; the window is
+  // immutable now, so re-publish it for the audible fixed-view path.
+  window.published = true;
+  return &window;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::bindFirstRecordingBar(

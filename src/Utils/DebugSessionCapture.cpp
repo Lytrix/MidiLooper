@@ -692,6 +692,11 @@ SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
                 (unsigned long)durationUs, (unsigned long)eventCount);
 }
 
+SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks) {
+  emitCapPrintf("#CAP,%lu,DIAG,first_record_adopt,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)loopLengthTicks);
+}
+
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus) {
   emitCapPrintf("#CAP,%lu,DIAG,loop_rem,%s,%lu,%u,%u,%u,%u\r\n", (unsigned long)micros(), span,

@@ -6011,7 +6011,11 @@ void test_first_record_bar_prepares_before_capture_and_survives_cache_reset() {
   TEST_ASSERT_TRUE(set->views[set->lifecycle.retained].rawCoveragePrepared);
   TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(1536));
   TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.current);
+  // The handoff releases `retained` (the rolling rotation needs that buffer back)
+  // and marks the bound window instead; `reset` preserves it by that flag so the
+  // launch's playback-cache resets cannot clear the first take's only source.
   TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.retained);
+  TEST_ASSERT_TRUE(set->views[set->lifecycle.current].firstRecordReturnWindow);
   TEST_ASSERT_FALSE(set->views[set->lifecycle.current].rawCoveragePrepared);
   TEST_ASSERT_EQUAL_UINT32(1536, set->views[set->lifecycle.current].coverage.loopLengthTicks);
   TEST_ASSERT_FALSE(runtime.bindFirstRecordingBar(768));
@@ -6056,7 +6060,7 @@ void test_first_record_return_window_releases_for_the_next_take() {
   TEST_ASSERT_FALSE(runtime.prepareFirstRecordingBar(768));
   TEST_ASSERT_EQUAL_STRING("return_window_held", runtime.firstRecordingBarDenialLabel());
 
-  TEST_ASSERT_TRUE(runtime.releaseUnlaunchedFirstRecordingBar());
+  TEST_ASSERT_TRUE(runtime.releaseFirstRecordingBarReturnWindow());
   TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
   set = runtime.viewSetIfPrewarmed();
   TEST_ASSERT_EQUAL_UINT8(set->lifecycle.retained, set->lifecycle.current);
@@ -6065,21 +6069,94 @@ void test_first_record_return_window_releases_for_the_next_take() {
   TEST_ASSERT_EQUAL_STRING("none", runtime.firstRecordingBarDenialLabel());
 }
 
-void test_first_record_release_leaves_a_launched_window_alone() {
+// The record-stop handoff binds the prepared bar-1 window to the final loop
+// geometry, and playback must select that bound window instead of holding empty
+// until the first root publishes. The window is the only source the first take
+// has: the live capture store it was filled from is gone once the take is sealed.
+void test_first_record_bound_window_is_adopted_as_the_audible_source() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(32, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60)));
+
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
   TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
-  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(1536));
+  const PlaybackViewSourceIdentity recordingSource{loop.playbackRevision, 1,
+                                                   loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 16; ++i) runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(768));
+
+  // The launch identity is the post-stop one. It must not match the identity the
+  // window was filled under, so no snapshot-backed source can be returned first.
+  runtime.reset(true);
+  const PlaybackViewSourceIdentity launchSource{loop.playbackRevision + 1, 2, nullptr};
+  TEST_ASSERT_NULL(runtime.publishedFullLoopView(launchSource, 768));
+
+  const RuntimePlaybackView* adopted =
+      runtime.adoptFirstRecordingBarReturnWindow(launchSource, 768);
+  TEST_ASSERT_NOT_NULL(adopted);
+  TEST_ASSERT_TRUE(adopted->published);
+  TEST_ASSERT_TRUE(adopted->complete);
+  TEST_ASSERT_FALSE(adopted->rawCoveragePrepared);
+  TEST_ASSERT_EQUAL_UINT16(2, adopted->storage.eventCount);
+  TEST_ASSERT_EQUAL_UINT32(0, adopted->coverage.startPhase);
+  TEST_ASSERT_EQUAL_UINT32(768, adopted->coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(768, adopted->coverage.loopLengthTicks);
+  // Adoption is a one-time stamp: the ordinary published-view query serves it after.
+  TEST_ASSERT_EQUAL_PTR(adopted, runtime.publishedFullLoopView(launchSource, 768));
+  // A later root (new revision/generation) is not shadowed by the raw window, and
+  // the window cannot serve a longer loop than the one it was bound to.
+  TEST_ASSERT_NULL(runtime.publishedFullLoopView({loop.playbackRevision + 2, 3, loop.publishedSnapshotIdentity()}, 768));
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(launchSource, 1536));
+}
+
+void test_first_record_bound_window_with_a_held_note_is_not_adopted() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.beginCapture(CapturePhase::Record);
+  // The note's closing Off is not inside bar 1 (it is held across the return
+  // boundary), so only the published root can carry the closure.
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(32, 1, 60, 90)));
+
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  const PlaybackViewSourceIdentity recordingSource{loop.playbackRevision, 1,
+                                                   loop.publishedSnapshotIdentity()};
+  for (size_t i = 0; i < 16; ++i) runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
+  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(768));
   auto* set = runtime.viewSetIfPrewarmed();
-  const uint8_t current = set->lifecycle.current;
-  const uint32_t generation = set->views[current].storageGeneration;
-  // The handoff already cleared `retained`, and the launched view must never be
-  // released by the next take's preparation boundary.
-  TEST_ASSERT_FALSE(runtime.releaseUnlaunchedFirstRecordingBar());
-  TEST_ASSERT_EQUAL_UINT8(current, set->lifecycle.current);
-  TEST_ASSERT_EQUAL_UINT32(generation, set->views[current].storageGeneration);
-  TEST_ASSERT_EQUAL_UINT32(1536, set->views[current].coverage.loopLengthTicks);
-  TEST_ASSERT_FALSE(set->views[current].rawCoveragePrepared);
+  const uint8_t window = set->firstRecordReturnWindowIndex();
+  TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, window);
+  TEST_ASSERT_TRUE(set->views[window].firstRecordReturnWindowHasHeldNote);
+
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow({loop.playbackRevision + 1, 2, nullptr}, 768));
+}
+
+void test_first_record_return_window_release_covers_a_bound_window() {
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(768));
+  auto* set = runtime.viewSetIfPrewarmed();
+  // The record-stop handoff releases `retained`; the bound window is identified by
+  // its own flag and stays the current view.
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackViewLifecycle::kNoView, set->lifecycle.retained);
+  const uint8_t boundWindow = set->firstRecordReturnWindowIndex();
+  TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, boundWindow);
+  TEST_ASSERT_EQUAL_UINT8(set->lifecycle.current, boundWindow);
+
+  // A new take on this slot is not audible yet, so its preparation boundary owns
+  // releasing the previous take's bound window and establishing its own bar 1.
+  TEST_ASSERT_TRUE(runtime.releaseFirstRecordingBarReturnWindow());
+  TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
+  set = runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(set->views[set->lifecycle.current].rawCoveragePrepared);
+  TEST_ASSERT_EQUAL_UINT16(0, set->views[set->lifecycle.current].storage.eventCount);
 }
 
 void test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append() {
@@ -6341,7 +6418,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_record_bar_prepares_before_capture_and_survives_cache_reset);
   RUN_TEST(test_first_record_preparation_failure_does_not_change_existing_runtime);
   RUN_TEST(test_first_record_return_window_releases_for_the_next_take);
-  RUN_TEST(test_first_record_release_leaves_a_launched_window_alone);
+  RUN_TEST(test_first_record_bound_window_is_adopted_as_the_audible_source);
+  RUN_TEST(test_first_record_bound_window_with_a_held_note_is_not_adopted);
+  RUN_TEST(test_first_record_return_window_release_covers_a_bound_window);
   RUN_TEST(test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append);
   RUN_TEST(test_boot_playback_prewarm_does_not_allocate_capture_workers_and_upgrades_in_place);
   RUN_TEST(test_capture_staging_roles_exchange_without_sharing_physical_storage);
