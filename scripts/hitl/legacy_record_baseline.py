@@ -1143,9 +1143,14 @@ def _latest_device_bar_index(lines: list[str]) -> Optional[int]:
     """
     latest: Optional[int] = None
     for line in lines:
-        if not line.startswith("#CAP,") or ",BAR," not in line:
+        if ",BAR," not in line:
             continue
-        parts = line.split(",")
+        # Lines may carry a human `[ts] ` prefix before `#CAP,`; normalize first, or the
+        # probe silently finds nothing and the stream falls back to its duration.
+        cap_index = line.find("#CAP,")
+        if cap_index < 0:
+            continue
+        parts = line[cap_index:].split(",")
         if len(parts) < 5:
             continue
         try:
@@ -1196,9 +1201,12 @@ def _device_bar_probe(serial_collector: Any):
             cursor = 0  # ring wrapped
         latest: Optional[int] = None
         for line in lines[cursor:]:
-            if not line.startswith("#CAP,") or ",BAR," not in line:
+            if ",BAR," not in line:
                 continue
-            parts = line.split(",")
+            cap_index = line.find("#CAP,")
+            if cap_index < 0:
+                continue
+            parts = line[cap_index:].split(",")
             if len(parts) < 5:
                 continue
             try:
@@ -5291,6 +5299,11 @@ def run() -> int:
                             "record_clock_pulses_seen": rec_clock_count,
                             "record_used_seconds_fallback": rec_fallback_seconds,
                             "record_grid_steps_emitted": int(rec_timing["grid_steps_emitted"]),
+                        "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
+                        "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
+                        "record_device_bar_relative_bars": int(
+                            rec_timing.get("device_bar_relative_bars", 0)
+                        ),
                             "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
                             "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
                             "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
@@ -5459,6 +5472,11 @@ def run() -> int:
                         "record_clock_pulses_seen": rec_clock_count,
                         "record_used_seconds_fallback": rec_fallback_seconds,
                         "record_grid_steps_emitted": int(rec_timing["grid_steps_emitted"]),
+                        "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
+                        "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
+                        "record_device_bar_relative_bars": int(
+                            rec_timing.get("device_bar_relative_bars", 0)
+                        ),
                         "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
                         "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
                         "overdub_notes_sent": od_notes,
