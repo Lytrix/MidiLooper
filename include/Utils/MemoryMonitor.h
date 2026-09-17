@@ -109,6 +109,11 @@ enum class OperationKind : uint8_t {
   /// Diagnostic only: report the decision whether it admits or denies, so a healthy
   /// boot shows the gate admitting rather than staying silent. Never gates anything.
   BootProbe = 4,
+  /// A reserve made at its point of use, where a probe taken immediately beforehand is
+  /// predictive: nothing allocates between the probe and the real reserve. This is the
+  /// kind `Loop::prewarmPreparedCompanionHistory` uses, so an exhausted device returns
+  /// the `false` its contract already allows instead of reaching `abort()`.
+  CompanionHistoryReserve = 5,
 };
 
 /**

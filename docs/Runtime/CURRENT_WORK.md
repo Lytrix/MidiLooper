@@ -42,6 +42,44 @@ and lookup prewarms in the same function (`frozenCompanionPairLookup`,
 `kEventsPerView`/`kRecordsPerBridge`). The first part is measured; the second is inference
 from the prewarm list plus the class shape, not yet individually tagged.
 
+**2026-09-17 point-of-use reserve denial WORKS - the record arm no longer kills the
+device, and the overdub gate is re-verified on the current build.** The failed arm probes
+above were taken *far* from the allocation they were predicting. The fix is to check at the
+**point of use** instead: `Loop::prewarmPreparedCompanionHistory` now pre-checks the two
+`EditPassVec` reserves (the `passes.editPasses` row horizon and the `work.rows` horizon)
+immediately before each allocation, through
+`MemoryMonitor::admitOperationMemory(OperationKind::CompanionHistoryReserve, bytes)`, and
+returns the `false` its contract already allows instead of reaching
+`InternalHeapFirstAllocator::abort()`. Nothing allocates between the probe and the real
+reserve, so there the probe *is* predictive.
+
+Verified ([`point-of-use-reserve-01`](../../captures/point-of-use-reserve-01/session_20260917_112246.log)):
+
+```
+#MEM_DENIED,...,op=companion_history_reserve,reason=reserve_failed,need=81920B,heap_free=76KB
+#MEM_DENIED,...,op=companion_history_reserve,reason=reserve_failed,need=81920B,heap_free=64KB
+#MEM_DENIED,...,op=overdub_start,reason=heap_low,need=16384B,heap_free=28KB
+#MEM_DENIED,...,op=overdub_start,reason=heap_low,need=16384B,heap_free=28KB
+```
+
+**No `FATAL`, device alive (290 KB of serial in a 6 s probe), and because the arm survived,
+the run reached the overdub where the round-1 gate denied again** - so the original
+acceptance criterion now holds on the current build, not just on the build that first
+proved it. The only refusals in the run are 6 x 32768 (the tolerated chunk retry storm) and
+2 x 81920 (the two reserve probes).
+
+Residuals to be honest about:
+
+- The arm **continues** after the denied reserve, because the callers ignore
+  `prewarmPreparedCompanionHistory`'s result; `Recording started` appears twice in that log.
+  The prewarm exists so "stop grains never grow vectors or relocate canonical history", so
+  on this path that invariant is not held and a later stop can still grow or abort. Denial
+  at the point of use trades an immediate death for a deferred risk - better, not complete.
+- The probe's own failed `extmem_malloc` goes through the `--wrap` accounting and therefore
+  **registers as a pool refusal**, which is why the first denial already reads
+  `pool_refused=1/81920B`. Harmless for the gate (it only reinforces `poolRefusing`) but it
+  means the refusal counter counts probe attempts as well as real ones.
+
 **2026-09-17 NEGATIVE RESULT: a boundary probe cannot make the record arm safe; reverted.**
 Tried the "reserve required memory, and if reservation fails the operation does not start"
 pattern from the user's plan, at the record-arm boundary, using a direct allocate-then-release

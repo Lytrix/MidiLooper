@@ -183,6 +183,33 @@ FLASHMEM uint32_t defaultMarginFor(OperationKind operation) {
   return 8u * 1024u;
 }
 
+namespace {
+extern "C" {
+void* extmem_malloc(size_t size);
+void extmem_free(void* pointer);
+}
+
+/// Take the exact block and give it straight back. Called immediately before the real
+/// reserve, so its verdict is predictive; uses the raw entry points, never the aborting
+/// C++ allocators, so a failed probe is a nullptr rather than process death.
+FLASHMEM bool probeBlockAvailable(size_t bytes) {
+  if (bytes == 0) {
+    return true;
+  }
+  void* block = std::malloc(bytes);
+  if (block != nullptr) {
+    std::free(block);
+    return true;
+  }
+  block = extmem_malloc(bytes);
+  if (block != nullptr) {
+    extmem_free(block);
+    return true;
+  }
+  return false;
+}
+}  // namespace
+
 FLASHMEM const char* operationName(OperationKind operation) {
   switch (operation) {
     case OperationKind::RecordStart:
@@ -193,6 +220,8 @@ FLASHMEM const char* operationName(OperationKind operation) {
       return PSTR("snapshot_reserve");
     case OperationKind::BootProbe:
       return PSTR("boot_probe");
+    case OperationKind::CompanionHistoryReserve:
+      return PSTR("companion_history_reserve");
   }
   return PSTR("unknown");
 }
@@ -209,7 +238,12 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   const bool heapLow = heapFree < (kOperationHeapFloorBytes + requiredBytes);
   const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
   const bool reportAdmitted = operation == OperationKind::BootProbe;
-  if (!heapLow && !poolRefusing) {
+  // Point-of-use reserves are the one case where a probe is predictive, so they are the
+  // only kind that uses one. Everything else keeps the heap-floor / pool-refusal checks
+  // that were verified on the overdub boundary.
+  const bool reserveFailed = operation == OperationKind::CompanionHistoryReserve &&
+                             requiredBytes != 0 && !probeBlockAvailable(requiredBytes);
+  if (!heapLow && !poolRefusing && !reserveFailed) {
     if (reportAdmitted) {
       Serial.printf_P(
           PSTR("#MEM_ADMIT,%lu,op=%s,need=%luB,heap_free=%luKB,pool_refused=%lu/%luB,"
@@ -226,7 +260,8 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
       PSTR("#MEM_DENIED,%lu,op=%s,reason=%s,need=%luB,heap_free=%luKB,"
            "pool_refused=%lu/%luB,since_refusal=%lums\n"),
       static_cast<unsigned long>(micros()), operationName(operation),
-      heapLow ? PSTR("heap_low") : PSTR("pool_refusing"),
+      reserveFailed ? PSTR("reserve_failed")
+                    : (heapLow ? PSTR("heap_low") : PSTR("pool_refusing")),
       static_cast<unsigned long>(requiredBytes), static_cast<unsigned long>(heapFree / 1024),
       static_cast<unsigned long>(pool.poolRefusedCount),
       static_cast<unsigned long>(pool.poolRefusedLargestBytes),

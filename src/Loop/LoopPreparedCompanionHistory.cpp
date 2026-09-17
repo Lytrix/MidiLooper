@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
+#include "Utils/MemoryMonitor.h"
 #include "Loop.h"
 #include "RuntimeCaptureCompanions.h"
 #include "RuntimeCanonicalPassInputs.h"
@@ -46,7 +47,16 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacit
   work.snapshotLimit = snapshotCount + companionCapacity;
   // Both vectors will exchange roles. Reserve the canonical side while STOPPED
   // as well, and invalidate borrowed history before a possible relocation.
+  // Point-of-use reserves: the probe is taken immediately before the allocation, so its
+  // verdict is predictive, and a denied reserve returns the `false` this function's
+  // contract already allows instead of reaching `InternalHeapFirstAllocator::abort()`.
+  // The callers ignore the result, so the only behaviour change is not dying.
   if (passes.editPasses.capacity() < work.rowLimit) {
+    if (!MemoryMonitor::admitOperationMemory(
+            MemoryMonitor::OperationKind::CompanionHistoryReserve,
+            static_cast<uint32_t>(work.rowLimit * sizeof(EditPass)))) {
+      return false;
+    }
     ++canonicalStorageGeneration;
     passes.editPasses.reserve(work.rowLimit);
   }
@@ -54,7 +64,14 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacit
   work.companionIds.clear(); work.companionIds.reserve(companionCapacity);
   work.snapshotIds.clear(); work.snapshotIds.reserve(snapshotCount + companionCapacity);
   // Caller is STOPPED; resizing/releasing old payload storage belongs here.
-  work.rows.clear(); work.rows.resize(passes.editPasses.size() + companionCapacity);
+  const size_t rowCount = passes.editPasses.size() + companionCapacity;
+  if (work.rows.capacity() < rowCount &&
+      !MemoryMonitor::admitOperationMemory(
+          MemoryMonitor::OperationKind::CompanionHistoryReserve,
+          static_cast<uint32_t>(rowCount * sizeof(EditPass)))) {
+    return false;
+  }
+  work.rows.clear(); work.rows.resize(rowCount);
   for (size_t i = 0; i < passes.editPasses.size(); ++i)
     work.rows[i].addedEvents.reserve(passes.editPasses[i].addedEvents.size());
   work.historyCount = passes.editPasses.size(); work.companionCapacity = companionCapacity;
