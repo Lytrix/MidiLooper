@@ -186,6 +186,9 @@ SC_MEM_ATTR void playbackRebuild(uint32_t durationUs, uint32_t windowStartTick,
                                  uint32_t currentPhase = 0, uint32_t eventCount = 0);
 /** Playback-order rebuild on the same tick as gather: DIAG,playback_order,<durationUs>,<eventCount> (Tier-A). */
 SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount);
+/** First-record return window selected as the audible source:
+ *  DIAG,first_record_adopt,<loopLengthTicks> (Tier-A). One line per adoption. */
+SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks);
 /** Post-BAR remainder one-shot: DIAG,loop_rem,<span>,<us>,<track>,<slot>,<phase>,<focus> (Tier-A). */
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,
                                uint8_t phase, uint8_t isFocus);

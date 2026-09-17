@@ -37,8 +37,45 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void releaseExternalMemoryFirst(void* memory) {
   }
 }
 
-bool ledgerEntryEquals(const ActiveNoteLedger::Entry& a, const ActiveNoteLedger::Entry& b) {
-  return a.channel == b.channel && a.note == b.note && a.noteId == b.noteId &&
+/// Does the window end with a NoteOn whose closing NoteOff is not inside it? Such
+/// a note's closure lives in a later bar or at the loop end, and only the
+/// published root carries it, so the raw window cannot serve that take's launch
+/// on its own. Bounded single pass over the retained rows in raw capture order.
+bool coverageEndsWithHeldNote(const FixedPlaybackEventStorage& storage) {
+  // One open row per (channel, pitch). Per-tick polyphony is bounded by the
+  // capture admission reservations; an overflow refuses the window rather than
+  // guessing that it is closed.
+  constexpr size_t kMaxTrackedOpenNotes = 64;
+  std::array<uint16_t, kMaxTrackedOpenNotes> open{};
+  size_t openCount = 0;
+  for (size_t i = 0; i < storage.eventCount; ++i) {
+    if (!storage.eventRetained(i)) {
+      continue;
+    }
+    const MidiEvent& event = storage.events[i];
+    if (!event.isNoteOn() && !event.isNoteOff()) {
+      continue;
+    }
+    const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(event.channel) << 8) |
+                                               event.data.noteData.note);
+    if (event.isNoteOn()) {
+      if (openCount >= open.size()) {
+        return true;
+      }
+      open[openCount++] = key;
+      continue;
+    }
+    for (size_t slot = 0; slot < openCount; ++slot) {
+      if (open[slot] == key) {
+        open[slot] = open[--openCount];
+        break;
+      }
+    }
+  }
+  return openCount != 0;
+}
+
+bool ledgerEntryEquals(const ActiveNoteLedger::Entry& a, const ActiveNoteLedger::Entry& b) {  return a.channel == b.channel && a.note == b.note && a.noteId == b.noteId &&
          a.startTick == b.startTick && a.velocity == b.velocity;
 }
 
@@ -192,18 +229,29 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::prewarm(size_t eventCap
   return canonicalRanks != nullptr;
 }
 
-bool RuntimePlaybackView::bindRawCoverage(uint32_t loopLengthTicks) {
+// FLASHMEM: record-stop binding plus its bounded held-note scan. Cold (once per
+// take) and RAM1/ITCM is at its bank boundary (see Teensy-RAM1-Bank-Overflow).
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::bindRawCoverage(uint32_t loopLengthTicks) {
   if (!rawCoveragePrepared || !complete || !loopLengthTicks ||
       coverage.startPhase >= loopLengthTicks || !coverage.lengthTicks ||
       coverage.lengthTicks > loopLengthTicks - coverage.startPhase) return false;
   coverage.loopLengthTicks = loopLengthTicks;
   rawCoveragePrepared = false;
+  // This is now the record-session return window: bound to final geometry, and
+  // the only audible source the first take has until the first root publishes
+  // (its fill source, the live capture store, is sealed). It must survive the
+  // launch's playback-cache resets, so `LoopPlaybackRuntime::reset` preserves it
+  // explicitly. A later take releases it.
+  firstRecordReturnWindow = true;
+  firstRecordReturnWindowHasHeldNote = coverageEndsWithHeldNote(storage);
   return true;
 }
 
-void RuntimePlaybackView::resetMetadata() {
+RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackView::resetMetadata() {
   ++storageGeneration;
   rawCoveragePrepared = false;
+  firstRecordReturnWindow = false;
+  firstRecordReturnWindowHasHeldNote = false;
   passOriginsReady = canonicalRanksReady = false; passOriginSource = {};
   storage.clear();
   source = PlaybackViewSourceIdentity{};
@@ -300,7 +348,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::release() {
   resetMetadata();
 }
 
-void FixedPlaybackBridgeStorage::resetMetadata() {
+RUNTIME_PLAYBACK_VIEW_COLD_MEM void FixedPlaybackBridgeStorage::resetMetadata() {
   ++storageGeneration;
   recordCount = 0;
   baseEventCount = 0;
@@ -733,7 +781,20 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadata() {
 }
 
 RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadataPreserveRetained() {
-  const uint8_t keep = lifecycle.retained;
+  resetMetadataPreserveView(lifecycle.retained);
+}
+
+RUNTIME_PLAYBACK_VIEW_COLD_MEM uint8_t RuntimePlaybackViewSet::firstRecordReturnWindowIndex() const {
+  if (lifecycle.current < views.size() && views[lifecycle.current].firstRecordReturnWindow) {
+    return lifecycle.current;
+  }
+  if (lifecycle.retained < views.size() && views[lifecycle.retained].firstRecordReturnWindow) {
+    return lifecycle.retained;
+  }
+  return RuntimePlaybackViewLifecycle::kNoView;
+}
+
+RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadataPreserveView(uint8_t keep) {
   if (keep >= views.size()) {
     resetMetadata();
     return;

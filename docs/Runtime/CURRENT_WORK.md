@@ -2637,27 +2637,33 @@ steps as a catch-up burst. Device evidence: `captures/deadline-pacing-01`
 (`STOPPED_RECORDING→PLAYING` at 39.8156 s, first `snapshot_unit,kind=publish` at 40.4297 s,
 `playback_build,snapshot,...,currentPhase=473` at 40.4304 s, first `MO` at 40.4355 s).
 
-- **S1. Preparation must be re-armable across takes — IN PROGRESS.** A take that ends without
-  the record-stop handoff (transport Stop during RECORDING, empty/skipped commit) leaves the
-  prepared raw bar-1 view retained, so the *next* take's `prepareFirstRecordingBar` fails and
-  the prepared-first-bar path never exists. Device evidence: `First-record bar-1 playback
-  preparation unavailable` in `deadline-pacing-01`, `successor-reentry-13`, `bar-anchor-02` and
-  `-06`, each immediately after a `RECS,stopToStopped,...` empty take. Slice: release the
-  unlaunched return window at the new take's preparation boundary (a launched/bound window is
-  never touched), and name the failing precondition in the warning.
-- **S2. Select the bound bar-1 bundle as the audible source — PLANNED.**
-  `playCommittedLoopMidi` currently has two fixed sources only (selected full-loop bridge /
-  published full-loop view) and both require `publishedSnapshotIdentity()`, so the bound raw
-  bar-1 view is never audible; the legacy merged path then holds empty (`GatherMissHoldEmpty`).
-  Slice: serve the launch from the bound bar-1 bundle while no fixed source exists, hand off to
-  the published snapshot view/bridge when it appears, and keep the emission cursor and ledger
-  boundary cycle-qualified across the switch (the bar-1 view's `LedgerBoundarySummary` is
-  currently empty — it must carry the open-note closure obligations of the launch, not just the
-  events).
+- **S1. Preparation must be re-armable across takes — LANDED (`b6dd67bf`).** A take that ends
+  without the record-stop handoff (transport Stop during RECORDING, empty/skipped commit) left
+  the prepared raw bar-1 view retained, so the *next* take's `prepareFirstRecordingBar` was
+  denied and the prepared-first-bar path never existed. Device evidence: `First-record bar-1
+  playback preparation unavailable` in `deadline-pacing-01`, `successor-reentry-13`,
+  `bar-anchor-02` and `-06`, each immediately after a `RECS,stopToStopped,...` empty take. The
+  new take's preparation boundary releases the stale window
+  (`releaseFirstRecordingBarReturnWindow`) and the denial warning names the failing
+  precondition.
+- **S2. Select the bound bar-1 bundle as the audible source — PARTIAL (one-bar take).**
+  `playCommittedLoopMidi` has two fixed sources and both require `publishedSnapshotIdentity()`,
+  so the bound raw bar-1 view was never audible and the legacy merged path held empty
+  (`GatherMissHoldEmpty`). Landed: the bound window is flagged
+  (`firstRecordReturnWindow`) so `LoopPlaybackRuntime::reset` preserves it across the launch's
+  playback-cache resets, and the hot path adopts it as the audible source while
+  `isPlaybackSessionExitPublicationGap()` holds
+  (`adoptFirstRecordingBarReturnWindow`, DIAG `first_record_adopt`); the published root then
+  replaces it by identity. Scope of this landing: a window whose coverage **is** the whole loop
+  (one-bar take). A window that ends with a held note is refused
+  (`firstRecordReturnWindowHasHeldNote`), because its closure is in a later bar or at the loop
+  end and only the published root carries it. Remaining for S2: carry the bar-1
+  `LedgerBoundarySummary`/closure obligations in the bundle so held-note takes are adopted too,
+  instead of keeping the publication-gap behaviour.
 - **S3. Coverage continuation and device verdict — PLANNED.** Cover each following bar without
-  omission or delayed refill (bar-1→bar-2 handoff) and verify on device that the first `MO`
-  after a record stop lands within one grid step (~10-125 ms) instead of ~620 ms, for a 1-bar
-  and an 8-bar take, with no catch-up burst and no duplicated or omitted note.
+  omission or delayed refill (bar-1→bar-2 handoff, multi-bar takes) and verify on device that the
+  first `MO` after a record stop lands within one grid step (~10-125 ms) instead of ~620 ms, for a
+  1-bar and an 8-bar take, with no catch-up burst and no duplicated or omitted note.
 
 Explicitly not in scope for these slices: C1-a compat-gather restoration (6.3.1 stays retired),
 DEC-045 idle publication scheduling, and any new fixed user-visible capacity.

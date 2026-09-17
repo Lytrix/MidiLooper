@@ -241,6 +241,16 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     runtime.syncRevision(loop.playbackRevision, playbackGeneration);
   }
 
+  if (fixedView == nullptr && fixedBridge == nullptr && fixedViewEligible &&
+      loop.isPlaybackSessionExitPublicationGap()) {
+    // First take: the session-exit root is still publishing, so neither
+    // snapshot-backed fixed source above exists and the merged window would
+    // hold empty until that publish lands (the audible ~0.6 s gap). The
+    // record-stop handoff already bound the prepared bar-1 window to the final
+    // geometry; serve the launch from it and let the published root replace it.
+    fixedView = runtime.adoptFirstRecordingBarReturnWindow(expectedFixedSource, loop.loopLengthTicks);
+  }
+
 #if RUNTIME_TIMING_ENABLED
   const uint32_t rebuildStartUs = micros();
 #endif

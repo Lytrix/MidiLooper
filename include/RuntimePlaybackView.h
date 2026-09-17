@@ -130,6 +130,16 @@ struct RuntimePlaybackView {
   bool rawCoveragePrepared = false;
   // Bind already ordered raw coverage once final geometry is known. No scan.
   bool bindRawCoverage(uint32_t loopLengthTicks);
+  // Set by `bindRawCoverage`: this view is the record-session return window, the
+  // first take's only audible source until its first root publishes. It is
+  // preserved across playback-cache metadata resets and released by the next
+  // take's preparation boundary.
+  bool firstRecordReturnWindow = false;
+  // Set by `bindRawCoverage` when a NoteOn inside the window has no closing
+  // NoteOff inside it. The closure lives in a later bar or at the loop end and
+  // only the published root carries it, so the window must not serve that
+  // take's launch on its own.
+  bool firstRecordReturnWindowHasHeldNote = false;
   bool sourceFilled = false;
   bool complete = false;
   bool published = false;
@@ -391,6 +401,13 @@ struct RuntimePlaybackViewSet {
   // Invalidate ordinary candidates while retaining the non-audible first-record
   // return view and its source identity. Used by cache refresh during capture.
   void resetMetadataPreserveRetained();
+  /// Preserve exactly one view across a metadata reset and make it the current
+  /// view, leaving the other two as build/idle. `keep` must be a valid view index.
+  void resetMetadataPreserveView(uint8_t keep);
+  /// Index of the bound record-session return window, or `kNoView`. It is either
+  /// the retained view (unlaunched) or the current view (after the record-stop
+  /// handoff, which releases `retained`).
+  uint8_t firstRecordReturnWindowIndex() const;
   bool handoffReadyCoverage(PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
   bool publishCompletedBuildAsReady(PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
   bool beginCandidateBridge();

@@ -477,13 +477,21 @@ struct LoopPlaybackRuntime {
   // Establish an empty raw bar-1 view before first-record input. This uses the
   // same fill/order/lifecycle buffers as ordinary playback.
   bool prepareFirstRecordingBar(uint32_t ticksPerBar);
-  /// Retire a prepared-but-never-launched first-record return window, so the next
-  /// take can establish its own bar 1. A take that ends without the record-stop
-  /// handoff (transport Stop during RECORDING, empty/skipped commit) leaves the
-  /// raw bar-1 view retained; the preparation boundary for the next take owns the
-  /// release. A bound (launched) window is never touched: only a view that still
-  /// carries `rawCoveragePrepared` is released.
-  bool releaseUnlaunchedFirstRecordingBar();
+  /// Retire the record-session return window so the next take can establish its
+  /// own bar 1. A take that ends without the record-stop handoff (transport Stop
+  /// during RECORDING, empty/skipped commit) leaves a raw window held, and a take
+  /// that did hand off leaves the bound window held until a root replaces it.
+  /// The preparation boundary for the next take owns both releases. A window
+  /// whose stop job is still retiring is never released.
+  bool releaseFirstRecordingBarReturnWindow();
+  /// Select the bound record-stop return window as the audible source while the
+  /// first root is still publishing. Stamps the launch source identity (the
+  /// window was filled during RECORDING under the pre-stop identity) and marks it
+  /// published, then returns it for the caller to consume exactly like a
+  /// published full-loop view. Returns null unless the window's coverage is the
+  /// whole loop, which is the one-bar first-take case the raw window can serve.
+  const RuntimePlaybackView* adoptFirstRecordingBarReturnWindow(
+      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks);
   /// Diagnostic label for the last `prepareFirstRecordingBar` denial. Session
   /// capture records it with the "first-record bar-1 preparation unavailable"
   /// warning; it is not a policy input.

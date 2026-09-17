@@ -415,11 +415,15 @@ void Track::startRecording(uint32_t currentTick) {
     // Later capture updates are still admitted by the canonical capture store;
     // this preparation step must never become a new input rejection policy.
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPrepareFirstBar);
-    // A take that ended without the record-stop handoff (transport Stop during
-    // RECORDING, empty/skipped commit) still holds the prepared raw bar-1 window.
-    // The new take owns the preparation boundary, so retire that unlaunched
-    // window here; a bound/launched window is never released.
-    (void)runtime->releaseUnlaunchedFirstRecordingBar();
+    // The slot is empty for a first-record take, so any return window still held
+    // from a previous take on this slot is stale: a take that ended without the
+    // record-stop handoff holds a raw window, and one that did hand off holds the
+    // bound window until a root replaced it. The new take's preparation boundary
+    // owns releasing it. Not while this track is audible: only the preparation
+    // path may retire a window that could still be the sounding source.
+    if (!isPlaying()) {
+      (void)runtime->releaseFirstRecordingBarReturnWindow();
+    }
     const bool firstBarReady = runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR);
     ExternalPoolAccounting::endTag();
     if (!firstBarReady) {
