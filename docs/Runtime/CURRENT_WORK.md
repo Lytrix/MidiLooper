@@ -2620,6 +2620,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — successor-capture reentry: finalization admission is stop-directed (DEC-067).**
+User decision after the device exposed the mismatch: *"I would fix the gates to match the
+architecture, rather than narrow the architecture to preserve an accidental reservation
+lifetime ... a resource should block the transition that first requires ownership of that
+resource."* Landed and device-verified — see item 2 below for the audit table, the markers,
+the native cases and the `successor-reentry-25` sequence. Next in this scope: the three-route
+agreement case (4.2), the remaining 5.1 breadth (interval transfer exactly once, the
+"start while B is still live" denial), 5.3–5.6, then 6.1/6.3 closeout once the shed-capture
+observability gap is named. Explicitly not taken: option B (a canonical output per interval —
+it would make two finalization working sets concurrent) and option A (narrowing the declared
+capacity).
+
 **2026-09-17 — first-record audible launch from the prepared bar-1 window (user-directed;
 leads the successor-reentry device step).** User: *"we explicitly had a plan to build a
 prepared first bar to be ready to be used when record stop is executed to directly be used as
@@ -2692,29 +2704,35 @@ memory work. In this order:
   is now first-class in the transition counts and the phase pairing; duplicate observer ST
   edges are collapsed; a wall-clock-proxied stop reports its length instead of failing it.
   Device `oracle-fixed-01` = **PASS**. See the oracle entry below.
-- **2. Successor-reentry device case — HARNESS FIXED, BLOCKED BY A FIRMWARE GATE (needs a
-  decision).** The probe's presses are now scheduled in their own process
-  (`hitl.probe_press`, `90342d7c`): the deferred stop floods the serial stream the harness
-  collector parses, and that parsing starved the harness main thread (measured
-  `successor-reentry-18`: +400 ms requested, +1535 ms measured, stop edge not observable
-  inside a 1 s anchor). Device presses now arrive as scheduled (`successor-reentry-19`:
-  stop press 49.970 → successor press 50.471 = +501 ms). What that exposes is firmware-side:
-  a successor interval is **rejected** for as long as the predecessor's deferred stop holds
-  the slot's canonical resources — `Overdub start rejected: canonical copy chunks are not
-  reserved` at press actions +500 ms and +909 ms (`-19`) and +1116 ms and +1515 ms (`-20`)
-  against `bridge_ready` at +1458 ms / +1681 ms. The successor only opens once its action
-  lands after `bridge_ready` (`-13` +1738 vs +1424; `-14` +1906 vs +1444; `-17` +1530 vs
-  +1008). The one case that starts early (`-16`, +637 ms) is a stop that never deferred.
-  So the declared depth-2 capacity in
-  `openspec/changes/successor-capture-reentry-unguarding/design.md` task 1.2 ("START requires
-  the live role to be free") is unreachable: `Track::startOverdubbing` also gates on
-  `canonicalCaptureOutputAdmitted()`, `hasActiveOverdubTransferAdmission()` and
-  `canHandoffSessionExitSnapshot()` (tasks.md 2.1). Gate 2 is the one the device reported;
-  gates 3-4 sit behind it and have not been reached yet, so their holding is inferred from the
-  predecessor owning those per-slot reservations, not measured. Options: (A) narrow the declaration to the implementation; (B) give the
-  successor its own canonical output (grows the envelope); (C) keep START on the live role
-  and move the canonical/transfer/handoff questions to the successor's *stop* admission,
-  which task 2.2 already answers. All three change a declared capacity, so they need a DEC.
+- **2. Successor-reentry device case — LANDED, DEVICE-VERIFIED (DEC-067; `successor-reentry-25`).**
+  Path: the probe could not hit the predecessor's deferred window because the deferred stop
+  floods the serial stream the harness parses (`-18`: +400 ms requested, +1535 ms measured),
+  which exposed a firmware contract mismatch: `Track::startOverdubbing` gated on three
+  *finalization* resources (canonical copy target, active transfer admission, session-exit
+  receipt) that the interval does not use before its own stop edge, so the declared depth-2
+  capacity was unreachable (`-19`/`-20`: `Overdub start rejected: canonical copy chunks are
+  not reserved` at +500/+909/+1116/+1515 ms against `bridge_ready` +1458/+1681 ms).
+  User decision: **C** — fix the gates to match the architecture (DEC-067). Landed:
+  START keeps only the live staging role, the stop-descriptor ring and the interval's own
+  memory admission; `beginDeferredOverdubStop` owns the finalization checks (each with its own
+  denial reason); the start path no longer discards a live job's frozen order/rewrite builders;
+  a stop denied for those reasons is now refused atomically instead of falling into the legacy
+  synchronous stop. Two edges are emitted for the harness (`Reentry window open slot=<n>` and
+  `Reentry released` on the prompt human channel, plus `DIAG,reentry_window_open` and
+  `DIAG,canonical_release` on the evidence tier), and the probe/oracle drive and verify the
+  sequence from them.
+  Device `captures/successor-reentry-25` (managed HITL, `base`, 8-bar record / 2-bar overdub,
+  build identity in its `metadata.json`): 44.253 s A `Overdubbing started`; 49.403 s
+  `Reentry window open`; 49.986 s **B START, 583 ms after A's stop and 2,209 ms before A's
+  finalization released**; 50.500 s **B's stop refused** (`Overdub stop deferred: deferred/frozen
+  admission role is occupied`) with B still recording; 52.195 s `Reentry released`; 52.778 s
+  **B's stop admitted**. Oracle: `overlap_ok=True`, `denied_stop_ok=True`,
+  `evidence_source=human_markers`, no successor issue in the report.
+  Caveat: because the 8-bar deferred run sheds `#CAP` tiers (`RING,shed`), the *baseline*
+  verifier's unrelated record/persistence checks report `INCONCLUSIVE_CAPTURE` in the same run;
+  the reentry gate itself is proven from the prompt channel. Closing 6.2 fully needs that
+  observability gap addressed (a separate item: the shed loses the `ST`/`REVT` rows the
+  baseline checks need).
 - **2b. Device-state hazard (new, needs a decision).** An aborted run can wedge the deferred
   workspace save (`Persistence drain stuck after 256 iterations`, 158 KB pending); the clear
   ritual then aborts and **every** later run fails its preconditions until the device is
