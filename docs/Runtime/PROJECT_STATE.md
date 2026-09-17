@@ -26,9 +26,16 @@ the loop body's note/event snapshot from `loop.publishedSnapshot()` without requ
 with the committed passes, and `applyLoadedLoopSlotBodyCommit` installs it as the published root
 (`storePublishedSnapshot(loadedLoopSnapshot, 0)`) with no reconcile against the restored passes; after a
 reboot there are no unpublished passes for the stale-root overlay to fold in, so the committed overdub
-stays silent while present in storage/effective. Fix options (owner decision — persistence/publication
-contract): gate the persist admission on the root being current (with a bounded re-admit), or serialize
-the body from the passes, or reconcile at load.
+stays silent while present in storage/effective. **Correction from the healthy-ring telemetry
+(`content-verify-59`):** `PERS,request` at 78.6 s is ~10 s after the last publish (68.6 s), so the save did
+not overtake the publication; and a stale root would have written a legacy body (no root on load ⇒
+silence), not record-only playback. The persisted body was LSV1 with a root that was current at save but
+already missing the overdub, so the prime suspect moved to the **publisher's candidate completeness**; all
+guards in that area (`f139b2a7`, `e87272a8`, `4fcfbcb3`, `2b948d2a`) are still present, and nothing in the
+save/snapshot/playback path changed since the last known-good device run except 2.4 slices 1–2. Fix
+options (owner decision — persistence/publication contract): gate the persist admission on the root being
+current (with a bounded re-admit), serialize the body from the passes, reconcile at load, or harden the
+publication candidate's coverage.
 
 **Observability fix landed alongside:** `SESSION_CAPTURE_DROID_QUEUE=0` folded into the acceptance env
 `teensy41-capture-serial-no-grain`. `DIAG,droid_queue` was ~5.6k rows/run and, with the per-slice
