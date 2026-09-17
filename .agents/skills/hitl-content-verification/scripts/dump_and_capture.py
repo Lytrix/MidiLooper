@@ -23,6 +23,17 @@ import mido
 import serial
 
 
+def _resolve_port(requested: str, names: list[str], kind: str) -> str:
+    """Exact match first, then substring: ALSA/CoreMIDI may suffix the port name."""
+    if requested in names:
+        return requested
+    lowered = requested.lower()
+    for name in names:
+        if lowered in name.lower():
+            return name
+    raise SystemExit(f"No MIDI {kind} port matching {requested!r}; available: {names}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=pathlib.Path, required=True)
@@ -31,6 +42,12 @@ def main() -> int:
     parser.add_argument("--midi-out", default="Teensy")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--dump-wait-s", type=float, default=8.0)
+    parser.add_argument(
+        "--boot-settle-s",
+        type=float,
+        default=10.0,
+        help="Seconds to settle after opening serial (opening it resets the board)",
+    )
     parser.add_argument("--capture-seconds", type=float, default=52.0)
     parser.add_argument("--send-clocks", action="store_true", default=True)
     parser.add_argument("--no-send-clocks", dest="send_clocks", action="store_false")
@@ -41,39 +58,47 @@ def main() -> int:
     actions: list[dict] = []
 
     with (out / "serial.log").open("wb", buffering=0) as log, \
-            (out / "midi-output.jsonl").open("w", buffering=1) as midilog, \
-            serial.Serial(args.port, args.baud, timeout=0.001) as dev, \
-            mido.open_output(args.midi_out) as port:
-
+            (out / "midi-output.jsonl").open("w", buffering=1) as midilog:
+        # MIDI ports first, serial last: opening this board's serial port resets it, and the
+        # reset briefly removes the USB MIDI ports, so `mido.open_output` after the serial open
+        # fails with `OSError: unknown port 'Teensy'`. `boot_settle_s` then lets the device
+        # finish booting before the capture starts.
         def recv(message) -> None:
             midilog.write(json.dumps({"host_ns": time.monotonic_ns(), "message": message.dict()}) + "\n")
 
-        def observe(seconds: float, clocks: bool = False) -> None:
-            end = time.monotonic() + seconds
-            next_clock = time.monotonic()
-            while time.monotonic() < end:
-                if clocks and time.monotonic() >= next_clock:
-                    port.send(mido.Message("clock"))
-                    next_clock += 1 / 48
-                chunk = dev.read(dev.in_waiting or 1)
-                if chunk:
-                    log.write(chunk)
+        with mido.open_output(
+                _resolve_port(args.midi_out, mido.get_output_names(), "output")) as port, \
+                mido.open_input(
+                    _resolve_port(args.midi_in, mido.get_input_names(), "input"),
+                    callback=recv):
+            with serial.Serial(args.port, args.baud, timeout=0.001) as dev:
+                time.sleep(max(args.boot_settle_s, 0.0))
 
-        with mido.open_input(args.midi_in, callback=recv):
-            port.send(mido.Message("stop")); observe(1.0)
-            port.send(mido.Message("stop")); observe(1.0)
-            dev.write(b"!CAPTURE_CONTENT\n")
-            observe(args.dump_wait_s)
-            if "CAPTURE_CONTENT,end" not in (out / "serial.log").read_text(errors="replace"):
-                raise SystemExit("No complete canonical dump (device stopped? capture build?)")
-            actions.append({"event": "start", "host_ns": time.monotonic_ns()})
-            port.send(mido.Message("start"))
-            try:
-                observe(args.capture_seconds, clocks=args.send_clocks)
-            finally:
-                port.send(mido.Message("stop"))
-                actions.append({"event": "stop", "host_ns": time.monotonic_ns()})
-                observe(3.0)
+                def observe(seconds: float, clocks: bool = False) -> None:
+                    end = time.monotonic() + seconds
+                    next_clock = time.monotonic()
+                    while time.monotonic() < end:
+                        if clocks and time.monotonic() >= next_clock:
+                            port.send(mido.Message("clock"))
+                            next_clock += 1 / 48
+                        chunk = dev.read(dev.in_waiting or 1)
+                        if chunk:
+                            log.write(chunk)
+
+                port.send(mido.Message("stop")); observe(1.0)
+                port.send(mido.Message("stop")); observe(1.0)
+                dev.write(b"!CAPTURE_CONTENT\n")
+                observe(args.dump_wait_s)
+                if "CAPTURE_CONTENT,end" not in (out / "serial.log").read_text(errors="replace"):
+                    raise SystemExit("No complete canonical dump (device stopped? capture build?)")
+                actions.append({"event": "start", "host_ns": time.monotonic_ns()})
+                port.send(mido.Message("start"))
+                try:
+                    observe(args.capture_seconds, clocks=args.send_clocks)
+                finally:
+                    port.send(mido.Message("stop"))
+                    actions.append({"event": "stop", "host_ns": time.monotonic_ns()})
+                    observe(3.0)
 
     (out / "actions.jsonl").write_text("".join(json.dumps(a) + "\n" for a in actions))
     print(f"Dumped content and captured playback -> {out}")
