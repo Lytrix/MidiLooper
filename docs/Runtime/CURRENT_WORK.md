@@ -2692,12 +2692,28 @@ memory work. In this order:
   is now first-class in the transition counts and the phase pairing; duplicate observer ST
   edges are collapsed; a wall-clock-proxied stop reports its length instead of failing it.
   Device `oracle-fixed-01` = **PASS**. See the oracle entry below.
-- **2. Successor-reentry device case — OPEN.** The probe and its oracle are implemented and
-  unit-tested (`--successor-reentry-delay-ms` / `--successor-reentry-stop-delay-ms`, four host
-  tests), but two device attempts did not produce evidence: the first fired ~8.6 s late
-  (sequenced after the blocking state-sync wait), the timer-based second raced the harness's
-  own blocking confirmation and desynced the run. Next: give the probe its own observation
-  path, or bound `--state-sync-timeout-ms` for probe runs. Native still covers both branches.
+- **2. Successor-reentry device case — HARNESS FIXED, BLOCKED BY A FIRMWARE GATE (needs a
+  decision).** The probe's presses are now scheduled in their own process
+  (`hitl.probe_press`, `90342d7c`): the deferred stop floods the serial stream the harness
+  collector parses, and that parsing starved the harness main thread (measured
+  `successor-reentry-18`: +400 ms requested, +1535 ms measured, stop edge not observable
+  inside a 1 s anchor). Device presses now arrive as scheduled (`successor-reentry-19`:
+  stop press 49.970 → successor press 50.471 = +501 ms). What that exposes is firmware-side:
+  a successor interval is **rejected** for as long as the predecessor's deferred stop holds
+  the slot's canonical resources — `Overdub start rejected: canonical copy chunks are not
+  reserved` at press actions +500 ms and +909 ms (`-19`) and +1116 ms and +1515 ms (`-20`)
+  against `bridge_ready` at +1458 ms / +1681 ms. The successor only opens once its action
+  lands after `bridge_ready` (`-13` +1738 vs +1424; `-14` +1906 vs +1444; `-17` +1530 vs
+  +1008). The one case that starts early (`-16`, +637 ms) is a stop that never deferred.
+  So the declared depth-2 capacity in
+  `openspec/changes/successor-capture-reentry-unguarding/design.md` task 1.2 ("START requires
+  the live role to be free") is unreachable: `Track::startOverdubbing` also gates on
+  `canonicalCaptureOutputAdmitted()`, `hasActiveOverdubTransferAdmission()` and
+  `canHandoffSessionExitSnapshot()` (tasks.md 2.1), all held by the predecessor's
+  finalization. Options: (A) narrow the declaration to the implementation; (B) give the
+  successor its own canonical output (grows the envelope); (C) keep START on the live role
+  and move the canonical/transfer/handoff questions to the successor's *stop* admission,
+  which task 2.2 already answers. All three change a declared capacity, so they need a DEC.
 - **2b. Device-state hazard (new, needs a decision).** An aborted run can wedge the deferred
   workspace save (`Persistence drain stuck after 256 iterations`, 158 KB pending); the clear
   ritual then aborts and **every** later run fails its preconditions until the device is
