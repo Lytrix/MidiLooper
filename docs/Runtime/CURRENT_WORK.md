@@ -1,9 +1,52 @@
 # Current work (implementation scope)
 
+> **From now on, prove audible content with the `hitl-content-verification` pipeline, not the
+> base-run verifier.** `host_midi_hitl.py run --preset base` is still the content-creator, but its
+> own playback verdict is not the check: the managed harness aborted four consecutive runs on
+> setup-state races (`successor-wrap-48/49/50`: `transport still active after stop; clear blocked`
+> then `Record stop did not reach PLAYING`, each with `loop length 0` and no host note ever reaching
+> the device) while the device was fine. What actually proves playback is
+> `.agents/skills/hitl-content-verification/scripts/dump_and_capture.py` +
+> `verify_playback_content.py`, which records the device's MIDI output and compares it to the
+> committed inventory row for row. DEC-071 is device-verified that way; the "Result:
+> INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)" that the base report still prints is a setup-oracle
+> verdict and is not evidence against the content.
+
 > **Implementation scope:** the authoritative scope is
 > [§ Now implementing](#now-implementing). Everything above that section is a
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
+
+**2026-09-17 multi-pass overdub playback is device-verified (DEC-071), and the base-run harness
+was the thing that was broken.** The user's report was "only the wrapped part of the overdub plays";
+the shape is a *multi-pass* overdub (8-bar record, 8-bar overdub starting at bar 3, so the wrap
+commits one pass and the stop commits a second). `Loop::tryGatherPublishedSnapshotEventsInWindow`
+enumerated queued passes but not **wrap-journaled** ones, so the wrap pass was in neither the
+published root nor the stale-root overlay once its session closed -- the display resolved it from
+`passes`, playback never emitted it. Fixed in `2b948d2a`.
+
+- Native: `test_stale_root_overlay_keeps_a_journaled_wrap_pass_after_session_close` fails without
+  the fix (`Expected 1 Was 0`); full native 2,215 / 1 skipped / 0 failures, RAM1 locals 6,400.
+- Device, the reported shape (`captures/content-verify-52` + `captures/content-verify-52-playback`):
+  storage `384 + 157 == 541`; **all five playback cycles `inventory_equal: true`,
+  `exact_order: true`, 0 missing, 0 extra**; per-bar effective
+  `{0:38, 1:48, 2:62, 3:72, 4:72, 5:72, 6:72, 7:72, 8:33}` -- the pre-wrap bars are in the audible
+  output. (That record sealed at 6,912 ticks = 9 bars for an 8-bar request: the known stop-time
+  quantisation slop, unrelated.)
+- The base-run verifier also had two real defects, both fixed: `_prepare_deferred_save_before_clear`
+  toggled the transport blind and blocked clear before the note stream (`c1456fa9`), and
+  `dump_and_capture.py` opened MIDI after the serial open, which resets the board and removes the
+  ports (`7e9810ee`).
+- Capture observability: `DIAG,stop_grain` was 71% of a run's `#CAP` bytes and overflowed the ring,
+  evicting the `snapshot_unit` rows the run is read for. It is now sampled 1-in-16 and the ring is
+  1 MiB; `[env:teensy41-capture-serial-no-grain]` (`SESSION_CAPTURE_GRAIN=0`) drops the family for
+  acceptance runs. A runtime serial flag was tried and reverted: it cost 4 KB of the RAM1 local
+  allowance (2,304 left) even factored out as a FLASHMEM helper, so the switch is a build flag.
+- Still open: one deterministic residual missing row on the 5-bar shape (`content-verify-51-playback`:
+  note-off tick 128, ch 4, note 78) that does not match the documented loop-boundary residual; and
+  the OpenSpec 5.5 `CompanionHistory` checkpoint (a predecessor paused there never re-admits its
+  companion work once a successor starts -- `captureStopOwner` stays held; red reproducer in
+  `test_continuous_capture`).
 
 **2026-09-17 pacing FIXED and verified; the successor device case is blocked by a firmware
 guard, not the harness.** [`deadline-pacing-01`](../../captures/deadline-pacing-01/session_20260917_133833.log)
