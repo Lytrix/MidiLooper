@@ -16,11 +16,11 @@ both already-existing O(1) counters. Evidence:
 The whole reservation lands in **one 1 s interval** and reads:
 
 ```
-t=15.08  dLive=+1240KB  dBlocks=+104   dHeap=0
+t=15.08  dLive=+1240KB  dBlocks=+104   dHeap=-168KB
          class <=8KB:   +82 blocks = +390KB   (~4.8 KB each)
          class <=32KB:   +4 blocks =  +58KB   (~14.5 KB each)
          class <=128KB: +17 blocks = +792KB   (~47 KB each)
-         chunks_free unchanged (384)          snap: 172KB -> 4KB
+         chunks_free unchanged (384)   snap=1819KB unchanged
 ```
 
 Correlating with the control-event log, that interval contains `Loop 1: Start
