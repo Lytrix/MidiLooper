@@ -2655,7 +2655,13 @@ live interval's `unmatched NoteOff` rejections disappear with it. Three native c
 (two fail without it); full native 2,212 / 1 skipped / 0 failures; RAM1 locals 6,464; no new
 human-log literal (one added string in that translation unit costs 4,096 bytes of DTCM, so the
 deferral is observed through marker ordering). Outstanding: DEC-069's device acceptance (openspec
-task 7.2) — the wrap interaction has not yet been re-run on hardware.
+task 7.2) — the wrap interaction has not yet been re-run on hardware. Attempt 1
+(`captures/successor-wrap-30`, 2026-09-19) is inconclusive, not negative: `--record-bars 1` never
+established a loop (`record loop length (final ticks): 0/768 (raw 2171)`), so the successor had no
+loop boundary to cross and the harness aborted on its serial heartbeat. The reproducer needs a
+successor press placed inside the predecessor's deferred window; bar-granular harness scheduling
+cannot do that on an 8-bar record (A's stop phase is `(delay_bars + overdub_bars) mod record_bars`,
+and the allowed bar counts reach only 10 s of a 16 s loop).
 
 
 **2026-09-17 — reentry session ownership — LANDED (DEC-068, device PASS

@@ -30,14 +30,12 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
     // retires. Sealing here instead invalidated the predecessor permanently, so it never retired
     // and this interval's own stop was refused for the rest of the session.
     if (hasPendingDeferredOverdubStop()) {
-      if (!overdubWrapCommitPending_) {
-        // No new human-log literal here on purpose: on this platform `.rodata` is RAM1-resident, and
-        // one added string in this translation unit snaps 4,096 bytes of DTCM away with no symbol
-        // size change (`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`). The deferral is observable
-        // from the existing markers: `Reentry released` for the predecessor now precedes this
-        // interval's `Overdub wrap committed`, which the owed commit emits later.
-        overdubWrapCommitPending_ = true;
-      }
+      // No new human-log literal here on purpose: on this platform `.rodata` is RAM1-resident, and
+      // one added string in this translation unit snaps 4,096 bytes of DTCM away with no symbol
+      // size change (`.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`). The deferral is observable
+      // from the existing markers: `Reentry released` for the predecessor now precedes this
+      // interval's `Overdub wrap committed`, which the owed commit emits later.
+      overdubWrapCommitPending_ = true;
       return false;
     }
     return commitOverdubWrap();
