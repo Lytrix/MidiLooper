@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented (deferred wrap commit); native green, device acceptance outstanding |
+| [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented; native green; device PASS [`successor-wrap-36`](../captures/successor-wrap-36/session_20260917_193344.log) |
 | [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implemented; six native cases pass, device retirement proof PASS [`successor-reentry-27`](../captures/successor-reentry-27/session_20260917_163416.log) |
 | [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — device START/STOP proof PASS [`successor-reentry-26`](../captures/successor-reentry-26/session_20260917_161119.log) |
 | [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
@@ -87,7 +87,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-069 — The overdub wrap is a canonical-revision transition and must not advance the revision a pending stop job owns
 
 **Date:** 2026-09-17
-**Status:** Accepted — Option A (defer the wrap's pass commit while a job is pending) implemented and native-tested; device acceptance (openspec task 7.2) outstanding.
+**Status:** Accepted — Option A implemented, native-tested and **device-verified** (`captures/successor-wrap-36`: the successor's crossing was deferred, the predecessor retired, the deferred commit then sealed the pass; `captures/successor-wrap-33` is the matching DEC-068 regression PASS).
 **Owner:** `Track::commitOverdubWrap` (the live interval's loop-crossing transition), `LoopPlaybackRuntime::canonicalPassInputs` / `canonicalPrefix*` / `frozenCaptureOrder*` (the slot's single canonical preparation), `Track::beginDeferredOverdubStop` (the deferred stop job that owns that preparation)
 
 **Context.** DEC-067 fixed *which transition owns the finalization resources* and moved the
@@ -170,9 +170,28 @@ RAM1 locals 6,464. No new human-log literal was added: on this platform one adde
 translation unit snaps 4,096 bytes of DTCM with no symbol size change, so the deferral is observed
 through marker *ordering* (`Reentry released` before the successor's `Overdub wrap committed`).
 
-**Not claimed.** No task-4.2/4.3/5.3–5.6 checkbox is closed by this entry, and the wrap interaction
-has not yet been re-run on device (openspec task 7.2). `#CAP` tier shedding still makes unrelated
-baseline assertions inconclusive.
+**Device acceptance (2026-09-17, `captures/successor-wrap-36`).** The successor has to own rows
+*before* its loop crossing or the deferred commit has nothing to seal, and the canonical preset
+stops streaming when the predecessor's pass ends — so the registered entry point was run with a
+temporary variant flag (`--successor-reentry-stream-bars`, default 0, canonical behavior unchanged)
+that streams bars into the live successor interval, plus a stop phase placed 0.5 bar before loop
+end (`A_stop_phase ~= (A_start_phase + delay_bars + overdub_bars) mod record_bars`; A starts ~1 bar
+after the record stop, so an 8-bar record needs ~7.5 bars). Recorded sequence: A stop 57.987 s
+(`Reentry window open`), B start 58.605 s at tick 6075, B's crossing of tick 6144 **deferred**,
+`Overdub wrap committed @ tick 6460` at 59.615 s -- reachable only through the deferred retry, since
+an immediate commit would have logged the crossing tick and the next crossing is a full loop away --
+then `Reentry released` at 60.534 s (the predecessor retired: the outcome the old path made
+impossible), B's own `Reentry window open` at 62.736 s, and no `unmatched NoteOff` or
+`Capture admission rejected` row anywhere in the run. The harness's own verdict for that capture is
+INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED) only because the `#CAP` tiers its record-phase verifiers
+read were shed; the device human channel shows the 6144/6144 record and the complete sequence. The
+matching regression run `captures/successor-wrap-33` (DEC-068 flags, same firmware) is a clean
+harness PASS: `overlap=True`, `denied_stop=True`, A retired, B's stop refused then admitted, B
+retired, `bars=8/4 count_ok span_ok`.
+
+**Not claimed.** No task-4.2/4.3/5.3–5.6 checkbox is closed by this entry. `#CAP` tier shedding
+still makes unrelated baseline assertions inconclusive, and the temporary successor-stream flag is
+not yet promoted to a registered stimulus variant (that promotion is the owner's call).
 
 ## DEC-068 — An overdub session belongs to one capture interval
 
