@@ -3389,6 +3389,25 @@ def _await_collector_marker(collector: Any, marker: str, *, baseline: int, timeo
         time.sleep(max(poll_s, 0.0))
 
 
+REENTRY_DENIAL_MARKER = "Overdub stop deferred: deferred/frozen admission role is occupied"
+
+
+def _marker_micros_list(lines: list[str], marker: str, *, after_ts: int = 0) -> list[int]:
+    """Every device time at or after `after_ts` on a line containing `marker`."""
+    from hitl.serial.protocol import parse_cap_micros
+
+    stamps: list[int] = []
+    for line in lines:
+        if marker not in line:
+            continue
+        ts = parse_cap_micros(line)
+        if ts is None:
+            ts = _human_log_micros(line)
+        if ts is not None and ts >= after_ts:
+            stamps.append(ts)
+    return stamps
+
+
 def _verify_successor_reentry(
     lines: list[str],
     *,
@@ -3397,18 +3416,21 @@ def _verify_successor_reentry(
 ) -> dict[str, object]:
     """Evidence that the successor reentry overlapped its predecessor's deferred job.
 
-    Two prompt human-log markers carry the edges (DEC-067; the `#CAP` tiers queue behind the
-    deferred stop's flood and arrive seconds late):
-      * ``Reentry window open``  - the predecessor owns the frozen role and the live capture
-        role is free, so a successor START is admitted while the predecessor is pending.
-      * ``Reentry released``     - the predecessor's finalization resources (canonical copy
-        target + transfer credits) are admitted again, so a successor STOP is admitted.
+    DEC-067 contract, read from the prompt human channel first because the `#CAP` tiers can
+    be shed during the deferred stop's flood (`successor-reentry-22` carried neither an
+    `ST,Track,PLAYING,OVERDUBBING` row nor any `OVERDUBBING` row at all, while every human
+    marker was present):
 
-    The verdict is therefore: the successor's ``PLAYING -> OVERDUBBING`` edge lands *before*
-    ``Reentry released`` (overlap), and the optional quick stop press produced no stop edge
-    before that release (the denial) while a later stop press did (the admitted stop).
+      * A stop -> ``Reentry window open`` (predecessor owns the frozen role, live role free)
+      * B start -> ``Overdubbing started``, before ``Reentry released``  => overlap
+      * B quick stop -> ``Overdub stop deferred: ... role is occupied`` => the denial, with B
+        still recording and no stop edge
+      * ``Reentry released`` -> B's stop admitted afterwards (its own deferred admission, or
+        an ``Overdubbing stopped`` line) => the admitted stop
+
+    ``#CAP`` transitions are used when present, but nothing in the verdict depends on them.
     """
-    from hitl.serial.protocol import parse_cap_micros, track_transitions
+    from hitl.serial.protocol import track_transitions
 
     result: dict[str, object] = {
         "probe_requested": requested_delay_ms > 0,
@@ -3419,9 +3441,12 @@ def _verify_successor_reentry(
         "predecessor_ready_ts": None,
         "finalization_released_ts": None,
         "successor_start_ts": None,
+        "denied_stop_ts": None,
+        "admitted_stop_ts": None,
         "stop_after_successor_ts": None,
         "overlap_ok": None,
         "denied_stop_ok": None,
+        "evidence_source": None,
     }
     if requested_delay_ms <= 0:
         return result
@@ -3431,36 +3456,56 @@ def _verify_successor_reentry(
     overdub_stop_entries = [
         ts for ts, edge in transitions if edge == ("OVERDUBBING", "OVERDUB_STOPPING")
     ]
-    if len(overdub_starts) < 2 or not overdub_stop_entries:
+    human_starts = _marker_micros_list(lines, "Overdubbing started @ tick")
+    evidence_source = "human_markers"
+    if len(overdub_starts) >= 2 and overdub_stop_entries:
+        starts = overdub_starts
+        evidence_source = "cap_transitions"
+    else:
+        starts = human_starts
+    if len(starts) < 2:
         return result
 
-    # Pair the *last* stop before the *last* start: a stale stop entry from an earlier
-    # phase (clear ritual, a previous pass) made the first-entry pairing report a window
-    # 600 ms adrift and a false "not overlapping".
-    successor_start_ts = overdub_starts[-1]
+    successor_start_ts = starts[-1]
+    predecessor_start_ts = starts[-2]
+    window_ts = _marker_micros(lines, REENTRY_WINDOW_MARKER, after_ts=predecessor_start_ts)
+    ready_ts = _marker_micros(lines, "ODUB,stop,bridge_ready,", after_ts=predecessor_start_ts)
+    released_ts = _marker_micros(lines, REENTRY_RELEASE_MARKER, after_ts=predecessor_start_ts)
+    denied_ts = _marker_micros(lines, REENTRY_DENIAL_MARKER, after_ts=successor_start_ts)
+    # The predecessor's stop edge: the CAP entry when present, else the window marker (the
+    # same admission, logged on the prompt channel).
     earlier_stops = [ts for ts in overdub_stop_entries if ts < successor_start_ts]
-    if not earlier_stops:
-        return result
-    predecessor_stop_ts = earlier_stops[-1]
-    window_ts = _marker_micros(lines, REENTRY_WINDOW_MARKER, after_ts=predecessor_stop_ts)
-    ready_ts = _marker_micros(lines, "ODUB,stop,bridge_ready,", after_ts=predecessor_stop_ts)
-    released_ts = _marker_micros(lines, REENTRY_RELEASE_MARKER, after_ts=predecessor_stop_ts)
-    # The released marker is the authoritative finalization edge; `bridge_ready` is the
-    # evidence-tier row for the same phase and can arrive later in the stream.
+    predecessor_stop_ts = earlier_stops[-1] if earlier_stops else window_ts
     finalization_end_ts = released_ts if released_ts is not None else ready_ts
+    # B's admitted stop: its own `Reentry window open` admission after the release, an
+    # `Overdubbing stopped` line, or the first CAP stop entry after the successor start.
+    admitted_stop_ts = next(
+        (ts for ts in _marker_micros_list(lines, REENTRY_WINDOW_MARKER,
+                                          after_ts=successor_start_ts)
+         if finalization_end_ts is None or ts > finalization_end_ts),
+        None,
+    )
+    if admitted_stop_ts is None:
+        admitted_stop_ts = _marker_micros(lines, "Overdubbing stopped", after_ts=successor_start_ts)
     stop_after_successor = next(
         (ts for ts in overdub_stop_entries if ts > successor_start_ts), None
     )
+    if admitted_stop_ts is None:
+        admitted_stop_ts = stop_after_successor
+
     overlap_ok: Optional[bool] = None
-    denied_stop_ok: Optional[bool] = None
     if finalization_end_ts is not None:
         overlap_ok = successor_start_ts < finalization_end_ts
     elif window_ts is not None:
-        # No completion edge in the capture (supersession can retire the predecessor
-        # without a bridge): the start is only proof of overlap through the window marker.
+        # Supersession can retire the predecessor without a bridge/release row.
         overlap_ok = successor_start_ts >= window_ts
-    if requested_stop_delay_ms > 0 and finalization_end_ts is not None:
-        denied_stop_ok = stop_after_successor is None or stop_after_successor > finalization_end_ts
+    denied_stop_ok: Optional[bool] = None
+    if requested_stop_delay_ms > 0:
+        admitted_after_release = (
+            admitted_stop_ts is None or finalization_end_ts is None
+            or admitted_stop_ts > finalization_end_ts
+        )
+        denied_stop_ok = bool(denied_ts is not None) and admitted_after_release
     result.update(
         {
             "predecessor_stop_ts": predecessor_stop_ts,
@@ -3468,8 +3513,10 @@ def _verify_successor_reentry(
             "predecessor_ready_ts": ready_ts,
             "finalization_released_ts": released_ts,
             "successor_start_ts": successor_start_ts,
+            "denied_stop_ts": denied_ts,
+            "admitted_stop_ts": admitted_stop_ts,
             "successor_start_delay_ms": (
-                None if finalization_end_ts is None
+                None if predecessor_stop_ts is None
                 else (successor_start_ts - predecessor_stop_ts) / 1000.0
             ),
             "successor_start_before_release_ms": (
@@ -3479,6 +3526,7 @@ def _verify_successor_reentry(
             "stop_after_successor_ts": stop_after_successor,
             "overlap_ok": overlap_ok,
             "denied_stop_ok": denied_stop_ok,
+            "evidence_source": evidence_source,
         }
     )
     return result
@@ -4272,7 +4320,16 @@ def _run_overdub_pass(
                 press_ms=press_ms,
             )
             if denial_delay_ms > 0:
-                time.sleep(denial_delay_ms / 1000.0)
+                # Anchor the denial press on B going live rather than on a fixed delay: the
+                # predecessor's remaining window scales with the loop (8 bars ~2.1 s, 4 bars
+                # ~0.2 s), so a fixed delay can land after the release and test nothing
+                # (`successor-reentry-24`).
+                started_at = _await_collector_marker(
+                    serial_collector, "Overdubbing started @ tick", baseline=baseline,
+                    timeout_s=min(1.5, max(stop_confirm_timeout_s, 1.0)),
+                )
+                if started_at is None:
+                    time.sleep(denial_delay_ms / 1000.0)
                 print(
                     f"[track {_user_track_number(idx)}] successor reentry stop attempt "
                     "(predecessor still pending; must be refused)"
