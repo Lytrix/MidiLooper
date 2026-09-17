@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -3407,6 +3409,69 @@ def _verify_successor_reentry(
     return result
 
 
+def _probe_press_delays(
+    *,
+    probe_delay_ms: int,
+    press_ms: int,
+    stop_delay_ms: int,
+) -> tuple[int, int]:
+    """Delay of the successor press from the go-ahead line, and the denial delay after it.
+
+    The device reads the two probe presses as separate short presses only when the second
+    lands after its gesture window, which closes ``press_ms + 300`` ms after the stop press
+    starts; a press inside it is a double press. The requested delay therefore has a floor.
+    """
+    successor_delay_ms = max(int(probe_delay_ms), int(press_ms) + 380)
+    denial_delay_ms = max(int(stop_delay_ms), 0)
+    return successor_delay_ms, denial_delay_ms
+
+
+def _spawn_probe_press(
+    *,
+    midi_out: str,
+    note: int,
+    channel_1based: int,
+    press_ms: int,
+    successor_delay_ms: int,
+    denial_delay_ms: int,
+) -> Optional[subprocess.Popen]:
+    """Start the press helper (stdin-triggered), or return None.
+
+    Returns ``None`` when the helper cannot start (or no port name is known); the caller then
+    falls back to pressing from this process, which is late under the deferred stop's serial
+    flood but still exercises the interaction.
+    """
+    if not midi_out:
+        return None
+    helper_path = Path(__file__).resolve().parents[1] / "hitl" / "probe_press.py"
+    command = [
+        sys.executable,
+        str(helper_path),
+        "--midi-out",
+        midi_out,
+        "--note",
+        str(int(note)),
+        "--channel",
+        str(int(channel_1based)),
+        "--press-ms",
+        str(int(press_ms)),
+        "--successor-delay-ms",
+        str(int(successor_delay_ms)),
+    ]
+    if denial_delay_ms > 0:
+        command += ["--denial-delay-ms", str(int(denial_delay_ms))]
+    try:
+        return subprocess.Popen(
+            command,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdin=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:  # noqa: BLE001 - a helper failure must degrade, not abort
+        print(f"[warn] successor reentry press helper did not start: {exc}")
+        return None
+
+
 def _build_serial_verification(
     lines: list[str],
     args: argparse.Namespace,
@@ -4080,33 +4145,63 @@ def _run_overdub_pass(
     probe_stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0) or 0), 0)
     probe_enabled = pass_label == "overdub" and probe_delay_ms > 0
     if probe_enabled:
-        # Press the stop, then open the successor from this same flow *before* waiting for
-        # the stop confirmation: that wait takes ~1.4 s on device (the whole deferred
-        # window), which pushed a confirmation-relative press past the predecessor's
-        # completion (measured +1.7 to +1.9 s against a ~1.4 s window).
-        _send_overdub_stop()
-        time.sleep(probe_delay_ms / 1000.0)
-        print(
-            f"[track {_user_track_number(idx)}] successor reentry start "
-            f"(+{probe_delay_ms} ms after {pass_label} stop press)"
+        # The successor must be pressed inside the predecessor's deferred window (the
+        # canonical copy chunks are only re-admissible after the predecessor's prepared
+        # capture transfer, which is a fraction of that window). Neither the confirmation
+        # wait nor this process can hit it: the deferred stop floods the same serial stream
+        # the collector parses, and the collector's parsing starves this process for more
+        # than a second (`successor-reentry-18`: +400 ms requested, +1535 ms measured, and
+        # the stop edge was never observable inside a 1 s anchor). The presses are therefore
+        # scheduled in a process of their own (`hitl.probe_press`), whose time origin is a
+        # go-ahead line written immediately after the stop press goes out.
+        press_ms = max(int(getattr(args, "press_ms", 120) or 120), 1)
+        successor_delay_ms, denial_delay_ms = _probe_press_delays(
+            probe_delay_ms=probe_delay_ms, press_ms=press_ms, stop_delay_ms=probe_stop_delay_ms
         )
-        _send_short_press(
-            out_port,
+        probe_press_helper = _spawn_probe_press(
+            midi_out=getattr(out_port, "name", None) or getattr(args, "midi_out", ""),
             note=RECORD_BUTTON_NOTE,
             channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=args.press_ms,
+            press_ms=press_ms,
+            successor_delay_ms=successor_delay_ms,
+            denial_delay_ms=denial_delay_ms,
         )
-        if probe_stop_delay_ms > 0:
-            time.sleep(probe_stop_delay_ms / 1000.0)
+        if probe_press_helper is None:
+            # Degraded path: no helper process, so pace from this process and accept that the
+            # presses can land after the window.
             print(
-                f"[track {_user_track_number(idx)}] successor reentry stop press "
-                f"(+{probe_delay_ms + probe_stop_delay_ms} ms; predecessor may still be pending)"
+                f"[track {_user_track_number(idx)}] successor reentry: press helper "
+                f"unavailable; pressing from this process (+{successor_delay_ms} ms)"
             )
+            _send_overdub_stop()
+            time.sleep(successor_delay_ms / 1000.0)
             _send_short_press(
                 out_port,
                 note=RECORD_BUTTON_NOTE,
                 channel_1based=CONTROL_CHANNEL_1BASED,
-                press_ms=args.press_ms,
+                press_ms=press_ms,
+            )
+            if denial_delay_ms > 0:
+                time.sleep(denial_delay_ms / 1000.0)
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=press_ms,
+                )
+        else:
+            _send_overdub_stop()
+            if probe_press_helper.stdin is not None:
+                try:
+                    probe_press_helper.stdin.write("go\n")
+                    probe_press_helper.stdin.flush()
+                except OSError as exc:  # noqa: BLE001
+                    print(f"[warn] successor reentry press helper lost its stdin: {exc}")
+            print(
+                f"[track {_user_track_number(idx)}] successor reentry scheduled "
+                f"(+{successor_delay_ms} ms successor"
+                + (f", +{denial_delay_ms} ms later denial" if denial_delay_ms > 0 else "")
+                + f"; pid {probe_press_helper.pid})"
             )
     od_stop = request_state_transition(
         snapshot=serial_collector.snapshot,
