@@ -5,6 +5,56 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 step E IMPLEMENTED: capture staging is now admission-provisioned, and the
+loaded-set 8-bar recipe completes with no denial, no refusal and no fault.** DEC-065.
+Code: boot (`Track::prewarmPlaybackForSlot(s, false)`) no longer reserves either staging
+role; the record arm keeps reserving both through `prewarmViews`, and `Track::startOverdubbing`
+now reserves both on its own cold turn (tag-bracketed) **before** any mutation, replacing the
+"staging must already exist" rejection with the same reserve-then-require order the arm uses.
+On failure it reports `#MEM_DENIED op=overdub_start,reason=prewarm_failed`.
+
+Measured on the loaded device
+([`stepE-staging-admission-01`](../../captures/stepE-staging-admission-01/session_20260917_121455.log),
+[`stepE-e2e-01`](../../captures/stepE-e2e-01/session_20260917_121721.log), both rebuilt and
+flashed from this tree):
+
+- **Boot headroom: PSRAM free after prewarm 3,772,224 -> 4,989,312 B (+1,189 KB)**, and
+  `tag 3` reads **0 KB at boot** (was 1334 KB). The ninth slot's phase went from 156 KB to
+  7.9 KB (horizon plus canonical copy directory only).
+- **Arm delta is now 1,469 KB** (was 1,240 KB before staging moved in; the difference is the
+  two stagings plus the runtime struct, `tag 3 = 148 KB`), and the tag vector at the arm is
+  `80/790/148/0/7/80` - stop jobs, views/bridges, staging, horizon, and the history reserve
+  that previously failed, all resident. Pool headroom at the arm is ~1.19 MB.
+- **The arm no longer needs the heap.** The remaining blocker after the boot change was the
+  point-of-use gate, not capacity: the companion-history reserve was denied `reason=heap_low,
+  need=81920B, heap_free=76KB` with `pool_refused=0/0B` and ~1.27 MB of pool free. The 80 KB
+  vector is `InternalHeapFirstAllocator` (malloc, then extmem), so the fallback would have
+  served it - the heap-floor proxy was refusing an available operation. `admitOperationMemory`
+  now treats the probe as the **authority** for `CompanionHistoryReserve` (the probe tests
+  exactly the malloc-then-extmem pair the allocator will use), so the heap floor no longer
+  vetoes a request the pool can serve. Denial is still explicit when the probe fails or the
+  pool refused within its window.
+- **End-to-end on the same recipe: 0 `FATAL`, 0 `#MEM_DENIED`, 0 `#MEM_EXT_REFUSED`.**
+  Record: 128 note-ons captured, loop stopped and published. Overdub: opened, 16 events
+  captured, `SEVT` verification drained (count/bars ok), and the deferred stop completed
+  `OVERDUBBING -> OVERDUB_STOPPING -> PLAYING` at 50.667 s with no allocation failure
+  (`#CAP,50667213,ST,Track,OVERDUB_STOPPING,PLAYING`, `ODUB,stop,bridge_ready,...,context_retained`).
+  Heap floor over the run 48 KB, pool live peak 7,489 KB of 8,182 KB.
+- **Host-side gates, not firmware failures:** the harness reports
+  `ST OVERDUBBING->PLAYING: 0` because the deferred design routes through
+  `OVERDUB_STOPPING`, and it flags `overdub_first_note_missing` plus a 7,680-tick (10-bar)
+  loop against the requested 8 bars - the run's own config line says it fell back to a
+  wall-clock tempo proxy because the Teensy clock was not on USB MIDI in. These are the
+  known host/gate-defect class and are not part of this change.
+
+Residuals: the companion-history preparation still walks the full 2,048-row horizon (65
+bounded prep slices, `resume` 0 -> 120 units in the first ~3 s of the canonical rebuild),
+which is the latency reason to revisit the horizon size under C3 - capacity shaping now has
+a latency argument as well as a memory one. The seven companion/lookup workers and the
+history rows remain owned by the record arm (DEC-065 scope boundary), so a loaded-slot
+overdub still uses the degraded canonical-prefix/companion path until a record arm upgrades
+the slot.
+
 **2026-09-17 step E: the 1334 KB is slot-provisioned boot staging, and it is the headroom
 the arm needs.** `TrackManager::prewarmPlaybackRuntime` (`src/TrackManager.cpp:59-80`) calls
 `prewarmPlaybackForSlot(s, false)` at boot for every slot that is enabled or has committed
@@ -2128,6 +2178,13 @@ itself smaller and better attributed, in this order:
 - **A. Record-arm admission closure — LANDED.** `prewarmPlaybackForSlot` returns its
   result and `Track::startRecording` denies before any mutation. Do not regress to
   "advisory prewarm".
+- **RC CLOSED (2026-09-17, user-accepted):** the exhaustion RC's acceptance criterion -
+  *before: fatal/silent device; after: explicit operation denial with playback continuing* -
+  is met by [`stepD-arm-delta-01`](../../captures/stepD-arm-delta-01/session_20260917_115207.log).
+  A successful record+overdub in the constrained state was explicitly **not** a prerequisite;
+  it became E's device gate instead, and E now passes it
+  ([`stepE-e2e-01`](../../captures/stepE-e2e-01/session_20260917_121721.log): 0 denial, 0
+  refusal, 0 FATAL, record + overdub + deferred stop to PLAYING).
 - **B. View/history lifetime audit — DONE.** All buffers byte-accounted against the measured
   tags; the seven prewarms are one concurrently-live working set, not phase-exclusive, and
   live canonical-prefix service needs them during RECORDING. Table and citations:
@@ -2143,10 +2200,12 @@ itself smaller and better attributed, in this order:
   `Recording started`, device alive, playback continuing, one explicit
   `op=companion_history_reserve` + one `op=record_start` denial, arm delta measured at
   1,240 KB, headroom 64-76 KB heap at the refusal. Boot probe `#MEM_ADMIT` in the same run.
-- **E. The 1334 KB steady staging — INVESTIGATED.** It is slot-provisioned boot staging
-  (~157 KB per content slot + ~10 KB per track of stop-jobs ring), prewarmed for slots that
-  may never record. Recommendation: make staging admission-provisioned at the arm and keep
-  the frozen role reserved there too; ~1.33 MB returns at boot. Needs the same DEC as C.
+- **E. The 1334 KB steady staging — IMPLEMENTED (DEC-065).** Boot no longer reserves
+  staging; the record arm and `Track::startOverdubbing` do, reserve-then-require, before any
+  mutation. Boot PSRAM headroom +1,189 KB; arm delta 1,469 KB; the loaded-set 8-bar recipe
+  now runs end to end with zero denials, refusals and faults. Also fixed the point-of-use
+  gate that was denying the 80 KB `InternalHeapFirstAllocator` reserve while ~1.27 MB of pool
+  was free. Remaining follow-up: C3 capacity/latency shaping (the 2,048-row horizon walk).
 - **F. Transport-start 81920-byte owner — DONE (identification only, no gate).** It is the
   deferred record arm released by `handlePendingRecordStart`; step A already gates it.
 

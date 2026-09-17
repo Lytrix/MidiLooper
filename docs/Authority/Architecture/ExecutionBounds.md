@@ -1001,15 +1001,25 @@ Validation: full native suite **2,075 passed, 1 skipped**; capture-serial firmwa
 build passed (RAM1 code 425,864 bytes, variables 91,808, locals 6,496; flash code
 945,392 bytes). These are functional/size results, not hardware grain timings.
 
-Boot memory regression (2026-09-14 device): boot now allocates capture staging
+Boot memory regression (2026-09-14 device): boot allocates capture staging
 without full per-slot views/bridges/companion workspaces. Capture-only ordering
 uses staging readiness; full view selection retains the full-bundle guard.
 An upgrade with accepted/frozen/open staging state is rejected before reset.
 Eight eager full bundles exhausted the device before SD load. The staging-only
-boot leaves 4,401 KB PSRAM free and completes selected-loop load. Full concurrent
+boot left 4,401 KB PSRAM free and completed selected-loop load. Full concurrent
 bundle admission remains open; this is not a change to the 6,240 ranked budget.
 Allocation-only runtime construction and slot prewarm are flash-resident;
 final RAM1 code is 425,784 bytes with 6,496 bytes local-variable headroom.
+
+**Superseded 2026-09-17 by DEC-065:** boot no longer reserves either staging role.
+`TrackManager::prewarmPlaybackRuntime` now establishes only the runtime slot, the
+per-track stop-descriptor ring, the transfer horizon and the canonical copy
+directory; staging is reserved by capture admission - the record arm through
+`prewarmViews`, or `Track::startOverdubbing` on its own cold turn. "Capture-only
+ordering uses staging readiness" therefore reads as "capture ordering uses
+*admission* readiness": `captureStagingIfPrewarmed()` is null until an operation
+admits itself, and every capture-ingress site already fails closed on that null
+rather than assuming a boot reservation.
 
 ### 2026-09-14 stop-phase correlation telemetry
 
@@ -1204,7 +1214,7 @@ its inner prewarms each open their own accounting tag, so no single tag is
 | `preparedCompanionHistory_.rows` | `EditPass` x 2048 = 80 KB (`LoopPreparedCompanionHistory.cpp:68-74`) | companion preparation at punch-out | `publishPreparedCompanionHistory` swaps it into `passes.editPasses` (`:295-301`) | becomes canonical history, so capacity is permanent |
 | `passes.editPasses` canonical reserve | `EditPass` x 2048 = 80 KB (`LoopPreparedCompanionHistory.cpp:54-62`) | canonical history over time | all canonical consumers | permanent; the two vectors form a rotating pair |
 | `captureStopJobs_` ring | 4 descriptors per track (`include/Track.h:544-549`), ~80 KB over 8 tracks boot aggregate | punch-out admission, retired in grains | deferred stop worker | whole take; an admission limit, not a grain allocation |
-| `captureStagings[2]` | `FixedPlaybackEventStorage(2048)` 59,392 + 128 reservations = 61,952 each (`RuntimePlaybackView.cpp:369-371`) | live ingress during RECORDING; the frozen role from punch-out | transfer/commit and the stop worker | boot-provisioned per enabled slot, both roles |
+| `captureStagings[2]` | `FixedPlaybackEventStorage(2048)` 59,392 + 128 reservations = 61,952 each (`RuntimePlaybackView.cpp:369-371`) | live ingress during RECORDING; the frozen role from punch-out | transfer/commit and the stop worker | admission-provisioned, both roles (record arm or overdub start, DEC-065) |
 | transfer horizon | `overdubPasses` + chunk-id pool + session-exit receipts ~1.1 KB/track (`LoopCapture.cpp:2205-2229`) | live overdub ingress grows `overdubPasses`; pool consumed at seal | pass seal, atomic transfer | **needed during RECORDING** |
 
 Reconciling the measured tag vector (tag order 1,2,3,5,6,10-16):
