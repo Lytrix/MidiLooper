@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-17 reentry session ownership (DEC-068).** Tasks 5.1(d)/(e) landed and immediately
+exposed a job-locality defect: the retiring predecessor's cleanup built its session-exit receipt
+from the shared session state (the successor's), closed the live successor's session, and left the
+successor's own job stuck in `DeferredCleanup` with its publication unqueued. Each interval now
+owns its session-exit tail — captured at its own stop admission (swap, not copy), released with its
+own pass id at its own commit, consumed ready-FIFO by the publisher — a successor opens a fresh
+session instead of joining the draining one, and the cleanup ends the live session only when the
+retiring job still owns it. Device `captures/successor-reentry-27` is the first clean reentry run:
+B START 1,915 ms before A's release, B's stop refused, `Reentry released`, B's stop admitted, **B's
+own retirement** at 52.992 s, run result **PASS** (`overlap_ok`/`denied_stop_ok`/`retirement_ok`).
+Six native cases cover the gates; full native 2209, 1 skipped, 0 failures; RAM1 locals 6464.
+Next in the change: 4.2/4.3 three-route agreement, then 5.3-5.6, then the shed-capture
+observability item before final 6.2 closeout.
+
 **2026-09-17 first-record prepared bar-1 launch + successor-reentry finalization admission
 (DEC-067).** Two user-directed RCs landed. (1) The record stop now *uses* the prepared bar-1
 window: a take that ended without the handoff no longer blocks the next take's preparation

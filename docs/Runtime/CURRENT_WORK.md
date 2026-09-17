@@ -2620,8 +2620,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**2026-09-17 — reentry session ownership: a retiring job consumes the live successor's
-session (NEW, needs a decision).** Tasks 5.1(d)/(e) landed (`test_successor_same_interval_transfers_exactly_once`,
+**2026-09-17 — reentry session ownership — LANDED (DEC-068, device PASS
+`captures/successor-reentry-27`).** Each interval now owns its session-exit tail: A's is captured
+at its stop admission (swap, not copy), released with its own pass id at its own commit, and the
+publisher consumes only ready tails FIFO; a successor opens a fresh session instead of joining the
+draining one, so a retiring job cannot end the successor's session or hand off its identities.
+Device: A's release 51.620 s, B's admitted stop 52.098 s, **B's own retirement 52.992 s**
+(`retirement_ok`), with `overlap_ok`/`denied_stop_ok` true and the run's own result **PASS** — the
+first clean reentry run. Six native cases in `test_continuous_capture` cover the decision's gates;
+full native 2209, 1 skipped, 0 failures. The defect this replaced, for the record:
+
+**2026-09-17 — reentry session ownership: a retiring job consumed the live successor's
+session (RESOLVED by DEC-068).** Tasks 5.1(d)/(e) landed (`test_successor_same_interval_transfers_exactly_once`,
 `test_start_request_while_successor_is_live_is_not_a_second_interval`; net full-native 2205,
 1 skipped) and the (d) case immediately exposed a job-locality defect in the same family as
 the two DEC-067 findings. With A's deferred job pending and B live,
