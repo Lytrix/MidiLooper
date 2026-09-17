@@ -203,12 +203,15 @@ FLASHMEM void recordPoolRefusal(size_t bytes) {
   }
   lastLoggedRefusedBytes = clamped;
   Serial.printf_P(
-      PSTR("#MEM_EXT_REFUSED,%lu,bytes=%lu,count=%lu,live=%luKB,blocks=%lu,heap_free=%luKB\n"),
+      PSTR("#MEM_EXT_REFUSED,%lu,bytes=%lu,count=%lu,live=%luKB,blocks=%lu,heap_free=%luKB,"
+           "tag=%u,tag_live=%luKB\n"),
       static_cast<unsigned long>(micros()), static_cast<unsigned long>(clamped),
       static_cast<unsigned long>(gCounters.poolRefusedCount),
       static_cast<unsigned long>(gCounters.liveBytes / 1024),
       static_cast<unsigned long>(gCounters.liveBlocks),
-      static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024));
+      static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024),
+      static_cast<unsigned>(gCurrentTag),
+      static_cast<unsigned long>(gCounters.tagBytes[gCurrentTag] / 1024));
 }
 
 FLASHMEM void reset() {

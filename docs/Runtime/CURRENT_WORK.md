@@ -42,6 +42,41 @@ and lookup prewarms in the same function (`frozenCompanionPairLookup`,
 `kEventsPerView`/`kRecordsPerBridge`). The first part is measured; the second is inference
 from the prewarm list plus the class shape, not yet individually tagged.
 
+**2026-09-17 the 80 KB fatal request is NAMED and measured: the companion-history row
+horizon.** The `#MEM_EXT_REFUSED` line now carries the active bracket tag, so a request
+that kills the process still identifies the step that made it. On the record arm
+([`attrib-arm-tag-01`](../../captures/attrib-arm-tag-01/session_20260917_110509.log)):
+
+```
+[16.961] Loop 1: Start Recording
+#MEM_EXT_REFUSED,17217439,bytes=81920,count=1,live=8095KB,blocks=637,heap_free=56KB,tag=6,tag_live=0KB
+[InternalHeapFirstAllocator] FATAL: both internal heap and external memory are exhausted!
+```
+
+`tag=6` is `TagCompanionHistory` and `tag_live=0KB` says the failing allocation was that
+call's **first**. So the arm completed `prewarmCaptureStopJobs`, `prewarmViews` (with its
+staging), `prewarmCanonicalCaptureOutput` and `prewarmActiveOverdubTransferHorizon`, and
+died in **`Loop::prewarmPreparedCompanionHistory()`**.
+
+That resolves the size exactly: `PreparedCompanionHistory::rows` is an `EditPassVec`
+(`std::vector<EditPass, InternalHeapFirstAllocator<EditPass>>`, matching the aborting
+allocator), all four of `EditPass`'s enums are `: uint8_t`, so `sizeof(EditPass) = 40`, and
+the reserve is `passes.editPasses.size() + companionCapacity == kRecordsPerBridge = 2048`
+rows: **2048 x 40 = 81920 bytes, exactly the request**.
+
+So it is the **designed row horizon, not an overflow and not a doubling** — the round-4
+hypothesis that `81920 = 4096 x 20` was a doubled 2048 horizon is **withdrawn**. Nothing
+overran `kRecordsPerBridge`; the arm simply asks for one more 80 KB block when the pool is
+at 8095/8182 KB and the heap at 56 KB, and neither can supply it.
+
+**Record-arm reservation, now attributed step by step** (order is
+`prewarmPlaybackForSlot`): capture stop jobs, then `prewarmViews` (staging measured at
+1334 KB by the boot tag, plus the seven companion/lookup prewarms), then canonical capture
+output, then the overdub-transfer horizon, then the 80 KB companion-history rows, then the
+playback order. That is roughly 1.8 MB of reservation to arm one record on a slot whose
+staging is not yet prewarmed, against the ~1.3 MB a loaded device has free at boot — which
+is the whole reason a device with several slots loaded cannot start a record.
+
 **2026-09-17 narrowing the 80 KB `InternalHeapFirstAllocator` request (offline).** The
 fatal transport-start request is 81920 bytes. Element sizes were computed on the host:
 `CausingTargetPair` 8, `ConstrainedNoteGeometry` 20, `PendingNoteChange` 20, `NoteId` /
