@@ -5,6 +5,19 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 the record-length assertion was vacuous (fixed).** `_verify_record_loop_length`
+accepted `actual == bar_aligned`, but the firmware's `final_length` *is* the bar-aligned
+quantisation of `raw_length`, so that clause was true for any raw length and the requested bar
+count was effectively unenforced - which is why an 8-bar request recording 10 bars passed
+`bar-anchor-04` while earlier runs failed (it depended only on whether the raw length landed
+inside the final bar). The check now compares against the request, keeping the intended one
+bar of stop-time quantisation slop; the proxy-timed tolerance is unchanged. Verified on the
+observed values (6,144 passes; 6,912 slop passes; 7,680 is a mismatch; proxy-timed 7,680 is
+reported). With a truthful assertion, the remaining pacing fix is to anchor the device-BAR
+baseline at the **record-arm** boundary: the device begins counting at the arm/transport,
+about two bars before the host's first streamed note, so an 8-bar note stream still yields a
+10-bar loop.
+
 **2026-09-17 BAR-anchored stream stop landed; the record is still ~2 bars over.**
 `stream_pattern_for_bars` now ends on the device's own `BAR,<tick>,<index>` (advanced by
 `target_bars` from a lazily captured baseline) and both the record and overdub paths pass a
