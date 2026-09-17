@@ -79,15 +79,14 @@ and a source to keep consuming while the replacement prepares. The agreed order 
 
 ```text
 2.4 slice 1   DONE   active-path rebuild detector + reachable-path audit
-2.5a          NEXT   byte-identical differential harness (oracle = today's synchronous path)
-2.4 slice 2          immutable PreparedPlaybackPair / last-prepared receipt;
+2.5a          DONE   byte-identical differential harness (oracle = today's synchronous path)
+2.4 slice 2   DONE   immutable PreparedPlaybackPair / last-prepared receipt;
                      active path consumes only a coherent published pair;
                      a source change requests replacement preparation;
                      no merged/order mismatch is ever visible to playback
-measure replacement-preparation latency against the playback horizon
-IF it fits:          2.4 complete (no second ordering algorithm)
-ELSE:                2.4 slice 3 -- bounded incremental order update for the proven
-                     expensive delta (likely the admitted sealed pass)
+measure       DONE   8 held ticks (one MIDI clock) / 7-tick publish latency vs a 768-tick bar
+                     and the next 16th-note (48-tick) audibility edge
+2.4 slice 3   NOT REQUIRED on that measurement -- no second ordering algorithm
 ```
 
 Target model for slice 2:

@@ -42,6 +42,10 @@ public:
   void allocateLoopsEarly();  // Call at start of setup() before other subsystems consume heap  // Initialize track manager state
   /// Preallocate per-slot playback runtime and playback order for enabled/data slots.
   void prewarmPlaybackRuntime();
+  /// Task 2.4 slice 2: satisfy one pending prepared-pair request across all tracks on
+  /// this off-MIDI owner turn. Returns true when one request was serviced.
+  bool servicePendingPreparedPlaybackPair();
+  bool hasPendingPreparedPlaybackPairRequest() const;
   /// Build visual cache for the selected display slot (cold path; defer from setup).
   void prewarmSelectedDisplayVisualCache();
 

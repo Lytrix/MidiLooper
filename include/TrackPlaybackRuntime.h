@@ -209,11 +209,84 @@ struct PlaybackSourceAdmission {
   bool ready = false;
 };
 
+/// Task 2.4 slice 2 -- the merged-path consume authority.
+///
+/// One coherent playback source: the event rows and the order that indexes them were
+/// produced by one preparation for one source generation, and the cursor/reanchor seed
+/// was resolved inside the same publication turn, so a consumer can never combine
+/// `mergedEvents` and `playbackOrder` from different generations.
+///
+/// The complete descriptor -- storage, identity, coverage, seed, event count and
+/// `generation` -- is replaced by a single assignment. A consumer reads it only while
+/// `ready`; the off-clock preparation owner builds into the working window, so the
+/// published pair's own buffer stays intact while the replacement is prepared.
+struct PreparedPlaybackPair {
+  bool ready = false;
+  /// Bumped by every publication. A consumer adopts the new seed when this changes.
+  uint64_t generation = 0;
+  PlaybackViewSourceIdentity source;
+  PlaybackCoverageInterval coverage;
+  /// The immutable fixed rows. Events are stored in emission order and `order` is the
+  /// identity permutation, so the pair is consumed through the same fixed-stream
+  /// adapter as a published view.
+  const FixedPlaybackEventStorage* storage = nullptr;
+  size_t eventCount = 0;
+  /// Index into `order` of the first event whose phase is strictly after the
+  /// publication phase. Part of the pair; the consumer never recomputes it.
+  uint16_t cursorSeed = 0;
+};
+
 struct LoopPlaybackRuntime {
   uint32_t cachedLoopRevision = 0;
   uint32_t cachedTrackGeneration = 0;
   ActiveNoteLedger ledger;
   PlaybackMergedMidiEvents mergedMidiEvents;
+  // --- Task 2.4 slice 2: immutable prepared pair -------------------------------
+  /// The only merged/order authority the active clock path may consume.
+  PreparedPlaybackPair preparedPair;
+  /// Fixed, prewarmed storage for the published pair. A separate buffer from
+  /// `mergedMidiEvents`, which stays the off-clock preparation's working window so
+  /// the published pair survives the replacement build.
+  FixedPlaybackEventStorage preparedPairStorage;
+  /// Set by a consume miss on the clock path; cleared by the off-clock owner. Never
+  /// allocates and never builds.
+  bool preparedPairRequestPending = false;
+  PlaybackViewSourceIdentity preparedPairRequestedSource;
+  uint32_t preparedPairRequestTick = 0;
+  /// Generation the clock path has already adopted. A publication changes it, so the
+  /// next tick copies the new pair's cursor seed once.
+  uint64_t preparedPairConsumedGeneration = 0;
+  // Measurement (ARCHITECTURE-REVIEW § phase gate for 2.4). Plain runtime fields,
+  // not Diagnostics counters: a new DTCM counter entry measured 4 KB of lost RAM1
+  // local allowance.
+  uint32_t preparedPairRequestCount = 0;
+  uint32_t preparedPairPublishCount = 0;
+  uint32_t preparedPairHoldTicks = 0;
+  uint32_t preparedPairMaxLatencyTicks = 0;
+  uint32_t preparedPairRebuildUnits = 0;
+  /// Cold admission only: the fixed pair buffer must exist before a tick consumes it.
+  bool prewarmPreparedPlaybackPair();
+  /// True only when the published pair is the current coherent source for this
+  /// exact revision/generation/snapshot/length. Never builds, never requests.
+  bool preparedPairIsCurrent(uint32_t playbackRevision, uint32_t sourceGeneration,
+                             const void* snapshotIdentity, uint32_t loopLengthTicks) const;
+  /// Record a consume miss. Idempotent per source; does not build or allocate.
+  void requestPreparedPlaybackPair(uint32_t playbackRevision, uint32_t sourceGeneration,
+                                   const void* snapshotIdentity, uint32_t loopLengthTicks,
+                                   uint32_t tick);
+  /// Publish a prepared working window + order as the coherent pair. Copies both
+  /// members, resolves the cursor seed against `publicationPhase`, then replaces the
+  /// whole descriptor in one assignment.
+  bool publishPreparedPlaybackPair(const MidiEvent* events, size_t eventCount,
+                                   const uint16_t* order, size_t orderCount,
+                                   const PlaybackViewSourceIdentity& source,
+                                   const PlaybackCoverageInterval& coverage,
+                                   uint32_t publicationPhase);
+  /// Drop the published pair and any pending request (cache reset / new generation).
+  void clearPreparedPlaybackPair();
+  /// The clock path consumed a pair that was not current (P0 held while P1 prepares).
+  void notePreparedPairHoldTick();
+  void resetPreparedPairCounters();
   /// Fixed successor/bridge/capture buffers. A complete, identity-matched
   /// full-loop current view is consumed by ordinary active PLAYING; the legacy
   /// merged vector remains the compatibility fallback for other states until

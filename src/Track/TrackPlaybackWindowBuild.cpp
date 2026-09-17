@@ -63,6 +63,9 @@ const MidiEvent& fixedPlaybackStreamEventAt(const void* ctx, uint16_t cursor) {
   return stream->storage->events[stream->storage->order[cursor]];
 }
 
+/// Task 2.4 slice 2: the prepared pair is stored in emission order with an identity
+/// `order`, so it is consumed through the fixed-stream adapter below. No new stream code,
+/// and no member is derived at consume time.
 size_t capturePlaybackStreamSize(const void* ctx) {
   return static_cast<const Loop*>(ctx)->capture.store.size();
 }
@@ -386,11 +389,44 @@ PlaybackEventStream makeFixedPlaybackStream(FixedPlaybackStreamCtx& ctx) {
                              fixedPlaybackStreamEventAt, mergedPlaybackStreamPhase};
 }
 
+const SessionMidiEventVec* buildMergedPlaybackFallbackCold(
+    Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint32_t currentTick) {
+  const bool rebuilt =
+      ensurePlaybackMergedMidiEventsBuilt(track, loop, runtime, false, currentTick);
+  if (rebuilt) {
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime);
+  }
+  return &runtime.mergedMidiEvents.mergedEvents;
+}
+
+PreparedPairConsumeDecision resolvePreparedPairConsume(
+    LoopPlaybackRuntime& runtime, const Loop& loop, uint32_t playbackRevision,
+    uint32_t sourceGeneration, const void* snapshotIdentity, bool sealAdmissionPending,
+    uint32_t tick) {
+  PreparedPairConsumeDecision decision{};
+  if (runtime.preparedPairIsCurrent(playbackRevision, sourceGeneration, snapshotIdentity,
+                                    loop.loopLengthTicks) &&
+      !sealAdmissionPending) {
+    decision.pair = &runtime.preparedPair;
+    return decision;
+  }
+  // The source changed under the running cursor. Request the replacement; never fold
+  // accepted capture into the window this tick is emitting and never rebuild the order.
+  runtime.requestPreparedPlaybackPair(playbackRevision, sourceGeneration, snapshotIdentity,
+                                      loop.loopLengthTicks, tick);
+  decision.requested = true;
+  if (runtime.preparedPair.ready) {
+    decision.pair = &runtime.preparedPair;
+    decision.held = true;
+  }
+  return decision;
+}
+
 PlaybackEventStream makeCapturePlaybackStream(Loop& loop) {
   return PlaybackEventStream{&loop, capturePlaybackStreamSize, nullptr,
                              capturePlaybackStreamEventAt, capturePlaybackStreamPhase};
 }
-void Track::reanchorPlaybackCycle(uint32_t currentTick) {
+TRACK_COLD_MEM void Track::reanchorPlaybackCycle(uint32_t currentTick) {
   Loop& loop = getActiveLoop();
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
     runtime->bridgeStream.reset();
@@ -526,7 +562,7 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   return ok;
 }
 
-void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
+TRACK_COLD_MEM void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
@@ -549,6 +585,10 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
       const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
       ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);
     }
+    // Task 2.4 slice 2: the working window just became coherent, so publish the
+    // immutable pair the clock path consumes. Publication is the atomic authority
+    // change; the clock path itself never builds or reanchors.
+    (void)publishPreparedPlaybackPairFromWorkingWindow(slotIndex);
     // The full vector/order build is the STOPPED oracle until task 2.4 moves
     // the active clock path to the fixed view. Publish its completed window
     // only while every track is stopped; active transport must never turn the
@@ -572,6 +612,151 @@ void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {
   }
 }
 
+TRACK_COLD_MEM bool Track::publishPreparedPlaybackPairFromWorkingWindow(uint8_t slotIndex) {
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
+    return false;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    return false;
+  }
+  PlaybackMergedMidiEvents& window = runtime->mergedMidiEvents;
+  if (window.mergedEvents.empty() ||
+      !isFullLoopMergedPlaybackWindow(window, loop.loopLengthTicks)) {
+    // A long-loop windowed gather or an empty gather is not a full-loop pair; those
+    // active paths keep their own handoff and are recorded as their own slice.
+    return false;
+  }
+  const PlaybackOrderVec& order = loop.getPlaybackOrder();
+  if (order.size() != window.mergedEvents.size()) {
+    return false;
+  }
+  // The pair's identity is the live canonical source it represents. The seal-admit
+  // path deliberately leaves the working window's `builtFromSnapshotIdentity` null
+  // while still representing the current root plus the admitted pass, so the pair
+  // records the live root identity that the clock path compares against.
+  const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
+                                           loop.publishedSnapshotIdentity()};
+  const PlaybackCoverageInterval coverage{0, loop.loopLengthTicks, loop.loopLengthTicks};
+  const uint32_t publicationPhase =
+      loop.lastTickInLoop == UINT32_MAX ? 0 : loop.lastTickInLoop;
+  // The working order is a `size_t` permutation; the pair stores fixed uint16 rows.
+  // Convert into a scratch view without allocating: the pair publisher copies the
+  // events it needs, so a bounded stack conversion is not possible for 2048 rows
+  // in ITCM. Reuse the pair buffer's merge scratch as the uint16 order source.
+  uint16_t* converted = runtime->preparedPairStorage.mergeScratch;
+  if (converted == nullptr || order.size() > runtime->preparedPairStorage.capacity) {
+    return false;
+  }
+  for (size_t index = 0; index < order.size(); ++index) {
+    if (order[index] > UINT16_MAX) {
+      return false;
+    }
+    converted[index] = static_cast<uint16_t>(order[index]);
+  }
+  return runtime->publishPreparedPlaybackPair(
+      window.mergedEvents.data(), window.mergedEvents.size(), converted, order.size(), source,
+      coverage, publicationPhase);
+}
+
+TRACK_COLD_MEM bool Track::servicePendingPreparedPlaybackPair() {
+  if (!loopsAllocated()) {
+    return false;
+  }
+  for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+    const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    if (runtime != nullptr && runtime->preparedPairRequestPending) {
+      return servicePendingPreparedPlaybackPairSlot(slotIndex);
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM bool Track::servicePendingPreparedPlaybackPairSlot(uint8_t slotIndex) {
+  ensureLoopsAllocated();
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+    return false;
+  }
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->preparedPairRequestPending) {
+    return false;
+  }
+  Loop& loop = loopForSlot(slotIndex);
+  if (!loop.hasCommittedPasses() || loop.loopLengthTicks == 0) {
+    // Nothing to prepare: retire the request rather than retrying it every turn.
+    runtime->preparedPairRequestPending = false;
+    return false;
+  }
+  const uint32_t currentTick = clockManager.getCurrentTick();
+  // Capture the request tick before publication clears it, so the measured latency is
+  // request -> publish rather than publish -> publish.
+  const uint32_t requestTick = runtime->preparedPairRequestTick;
+  const bool rebuilt =
+      ensurePlaybackMergedMidiEventsBuilt(*this, loop, *runtime, true, currentTick);
+  if (rebuilt) {
+    reconcilePlaybackLedgerAfterFullLoopRebuild(loop, *runtime);
+  }
+  if (loop.playbackOrderDirty || loop.getPlaybackOrder().size() !=
+                                     runtime->mergedMidiEvents.mergedEvents.size()) {
+    const ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
+    ::rebuildPlaybackOrder(loop, runtime->mergedMidiEvents.mergedEvents, playbackContext);
+  }
+  const bool published = publishPreparedPlaybackPairFromWorkingWindow(slotIndex);
+  if (published) {
+    const uint32_t latency = currentTick >= requestTick ? currentTick - requestTick : 0;
+    if (latency > runtime->preparedPairMaxLatencyTicks) {
+      runtime->preparedPairMaxLatencyTicks = latency;
+    }
+  } else {
+    // The request is retired even on denial: an unrepresentable window (long loop,
+    // empty gather) is not a pending pair, and retrying it would spin the owner.
+    runtime->preparedPairRequestPending = false;
+  }
+  return published;
+}
+
+TRACK_COLD_MEM bool Track::hasPendingPreparedPlaybackPairRequest() const {
+  if (!loopsAllocated()) {
+    return false;
+  }
+  for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+    const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    if (runtime != nullptr && runtime->preparedPairRequestPending) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TRACK_COLD_MEM Track::PreparedPairMetrics Track::preparedPairMetrics(uint8_t slotIndex) const {
+  PreparedPairMetrics metrics{};
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr) {
+    return metrics;
+  }
+  metrics.requestCount = runtime->preparedPairRequestCount;
+  metrics.publishCount = runtime->preparedPairPublishCount;
+  metrics.holdTicks = runtime->preparedPairHoldTicks;
+  metrics.maxLatencyTicks = runtime->preparedPairMaxLatencyTicks;
+  metrics.rebuildUnits = runtime->preparedPairRebuildUnits;
+  metrics.publishedGeneration = runtime->preparedPair.generation;
+  metrics.publishedEventCount = runtime->preparedPair.eventCount;
+  return metrics;
+}
+
+TRACK_COLD_MEM void Track::resetPreparedPairMetrics() {
+  if (!loopsAllocated()) {
+    return;
+  }
+  for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+    LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+    if (runtime != nullptr) {
+      runtime->resetPreparedPairCounters();
+    }
+  }
+}
+
 bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || !loopsAllocated()) {
     return false;
@@ -588,7 +773,7 @@ bool Track::isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const {
          !runtime->mergedMidiEvents.mergedEvents.empty();
 }
 
-void Track::releasePlaybackMergedMidiEventsMemory() {
+TRACK_COLD_MEM void Track::releasePlaybackMergedMidiEventsMemory() {
   playbackRuntime.resetAll(false);
 }
 
@@ -630,6 +815,10 @@ TRACK_COLD_MEM bool Track::tryReleasePlaybackMergedMidiEventsMemory() {
     }
 
     runtime->mergedMidiEvents.clear();
+    // The published pair cannot outlive the working window it was copied from:
+    // reclaiming the window retires the pair so the tick cannot consume a pair whose
+    // ledger/window cache has been dropped.
+    runtime->clearPreparedPlaybackPair();
     reclaimed = true;
   }
   return reclaimed;

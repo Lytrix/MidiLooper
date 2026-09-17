@@ -135,9 +135,9 @@ TRACK_COLD_MEM __attribute__((noinline)) void applyCommittedOverdubPassPlaybackI
 
 TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
     Track& track, Loop& loop, LoopPlaybackRuntime& runtime, uint8_t slotIndex, uint32_t currentTick,
-    PlaybackTickFrame& frame, ProjectionContext& playbackContext, MergedPlaybackStreamCtx& mergedCtx,
-    PlaybackCursorAdvanceState& mergedAdvance, PlaybackEmitPolicy mergedPolicy,
-    PlaybackJamFilterCtx& jamCtx, uint8_t midiChannel) {
+    PlaybackTickFrame& frame, ProjectionContext& playbackContext,
+    const PlaybackEventStream& committedStream, PlaybackCursorAdvanceState& mergedAdvance,
+    PlaybackEmitPolicy mergedPolicy, PlaybackJamFilterCtx& jamCtx, uint8_t midiChannel) {
   (void)runtime;
   (void)currentTick;
   (void)playbackContext;
@@ -145,7 +145,7 @@ TRACK_COLD_MEM __attribute__((noinline)) bool catchUpOverdubWrapPlaybackLedger(
   bool mergedIntervalApplied = false;
   if (loop.shouldCommitOverdubWrap(frame.prevTickInLoop, frame.tickInLoop)) {
     (void)advancePlaybackCursorAcrossOverdubWrap(
-        mergedAdvance, frame, mergedPolicy, makeMergedPlaybackStream(mergedCtx),
+        mergedAdvance, frame, mergedPolicy, committedStream,
         playbackCursorAdvanceSend, &track, slotIndex, playbackCursorAdvanceJamFilter, &jamCtx,
         midiChannel, playbackCursorAdvanceApplyLedger);
     mergedIntervalApplied = true;
@@ -258,21 +258,46 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
 #if RUNTIME_TIMING_ENABLED
   const uint32_t rebuildStartUs = micros();
 #endif
-  bool rebuilt = false;
-  if (fixedView == nullptr) {
-    rebuilt = ensurePlaybackMergedMidiEventsBuilt(*this, loop, runtime, false, currentTick);
-    if (rebuilt) {
-      reconcilePlaybackLedgerAfterFullLoopRebuild(loop, runtime);
-    }
+  // Task 2.4 slice 2 -- request/consume.
+  //
+  // The merged fallback consumes only an immutable `PreparedPlaybackPair`: one
+  // coherent (events, order, cursor seed) triple published atomically by the
+  // off-clock owner. A source change therefore *requests* a replacement and keeps
+  // consuming the last coherent pair, instead of folding accepted capture into the
+  // window this tick is emitting and rebuilding the order underneath the cursor.
+  //
+  // The pair path covers the full-loop window, which is where the reachable active
+  // rebuild (seal admission) is concentrated. A long-loop windowed gather keeps its
+  // own coverage handoff; that path is recorded as its own slice rather than
+  // absorbed here.
+  const bool pairApplicable =
+      fixedView == nullptr && !loop.shouldAvoidFullVisualRebuild(loop.loopLengthTicks);
+  const PreparedPlaybackPair* livePair = nullptr;
+  bool pairHeld = false;
+  if (pairApplicable) {
+    const PreparedPairConsumeDecision decision = resolvePreparedPairConsume(
+        runtime, loop, loop.playbackRevision, playbackGeneration, loop.publishedSnapshotIdentity(),
+        loop.hasPendingOverdubSealAdmission(), currentTick);
+    livePair = decision.pair;
+    pairHeld = decision.held;
+  }
+  // The legacy in-place builder is now reachable only as (a) the STOPPED/off-clock
+  // oracle, (b) the long-loop windowed path, and (c) the cold first audible turn of a
+  // slot with no pair yet. The detector counts it, so case (c) cannot grow silently.
+  const bool useMergedFallback = fixedView == nullptr && livePair == nullptr;
+  const SessionMidiEventVec* mergedEvents = nullptr;
+  if (useMergedFallback) {
+    mergedEvents = buildMergedPlaybackFallbackCold(*this, loop, runtime, currentTick);
   }
 #if RUNTIME_TIMING_ENABLED
   RUNTIME_TIMING_ADD_TRACK_PATH_REBUILD(micros() - rebuildStartUs);
 #endif
-  const SessionMidiEventVec* mergedEvents =
-      fixedView == nullptr ? &runtime.mergedMidiEvents.mergedEvents : nullptr;
-  const size_t eventCount = fixedBridge != nullptr
-                               ? fixedBridge->baseEventCount + fixedBridge->insertions.eventCount
-                               : (fixedView != nullptr ? fixedView->storage.eventCount : mergedEvents->size());
+  const size_t eventCount =
+      fixedBridge != nullptr
+          ? fixedBridge->baseEventCount + fixedBridge->insertions.eventCount
+          : (fixedView != nullptr
+                 ? fixedView->storage.eventCount
+                 : (livePair != nullptr ? livePair->eventCount : mergedEvents->size()));
   if (eventCount == 0 && fixedBridge == nullptr) {
     return;
   }
@@ -282,7 +307,7 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
   const uint32_t orderStartUs = micros();
 #endif
   ProjectionContext playbackContext = makePlaybackContext(*this, loop, currentTick);
-  if (fixedView == nullptr && loop.playbackOrderDirty) {
+  if (useMergedFallback && loop.playbackOrderDirty) {
 #if defined(SESSION_CAPTURE)
     const uint32_t playbackOrderStartUs = micros();
 #endif
@@ -306,8 +331,9 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
       : nullptr;
   if (fixedBridge != nullptr && bridgeStream == nullptr) return;
 
-  if (IntervalProjection::didDisplayPlayheadWrapBackward(tickInLoop, loop.lastTickInLoop,
-                                                       loop.loopStartTick, loop.loopLengthTicks)) {
+  const bool wrappedBackward = IntervalProjection::didDisplayPlayheadWrapBackward(
+      tickInLoop, loop.lastTickInLoop, loop.loopStartTick, loop.loopLengthTicks);
+  if (wrappedBackward) {
     if (bridgeStream != nullptr) {
       // Consume the old cycle's remaining due events before rewinding either
       // physical cursor. This also handles a clock step that skips over wrap.
@@ -349,9 +375,25 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     return;
   }
 
+  if (livePair != nullptr) {
+    // Adopt the pair's cursor seed on the first tick after a publication. The seed is
+    // part of the pair (resolved inside the publication turn), so this is a copy, not
+    // a content-sized reanchor. A wrap already rewound the cursor; the new cycle must
+    // start at 0 rather than at a pre-wrap phase.
+    if (runtime.preparedPairConsumedGeneration != livePair->generation) {
+      if (!wrappedBackward) {
+        loop.nextEventIndex = livePair->cursorSeed;
+      }
+      runtime.preparedPairConsumedGeneration = livePair->generation;
+    }
+    if (pairHeld) {
+      runtime.notePreparedPairHoldTick();
+    }
+  }
+
   PlaybackTickFrame frame{&playbackContext, tickInLoop, prevTickInLoop, atLoopStart};
   MergedPlaybackStreamCtx mergedCtx{};
-  if (fixedView == nullptr) {
+  if (useMergedFallback) {
     mergedCtx = MergedPlaybackStreamCtx{&loop.getPlaybackOrder(), mergedEvents};
   }
   const auto* emissionWindow = fixedBridge != nullptr
@@ -371,22 +413,25 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     loop.nextEventIndex = first;
   }
   FixedPlaybackStreamCtx fixedCtx{emissionWindow ? &emissionWindow->storage
-      : fixedView != nullptr ? &fixedView->storage : nullptr};
+      : fixedView != nullptr ? &fixedView->storage
+      : livePair != nullptr ? livePair->storage
+                            : nullptr};
   const PlaybackEventStream committedStream =
       emissionWindow ? makeFixedPlaybackStream(fixedCtx)
       : bridgeStream != nullptr ? bridgeStream->stream()
-                              : (fixedView != nullptr ? makeFixedPlaybackStream(fixedCtx)
-                                                      : makeMergedPlaybackStream(mergedCtx));
+                              : (fixedView != nullptr || livePair != nullptr
+                                     ? makeFixedPlaybackStream(fixedCtx)
+                                     : makeMergedPlaybackStream(mergedCtx));
   PlaybackCursorAdvanceState mergedAdvance{
       !emissionWindow && bridgeStream != nullptr ? &bridgeStream->playbackIndex : &loop.nextEventIndex,
-      fixedView != nullptr ? nullptr : &loop.playbackOrderDirty};
+      (fixedView != nullptr || livePair != nullptr) ? nullptr : &loop.playbackOrderDirty};
 
   // Wrap-tick ledger catch-up lives in FLASHMEM. Occupy reads Entry.noteId;
   // this is not a special occupy path.
   bool mergedIntervalApplied = false;
   if (isActive && trackState == TRACK_OVERDUBBING) {
     mergedIntervalApplied = catchUpOverdubWrapPlaybackLedger(
-        *this, loop, runtime, slotIndex, currentTick, frame, playbackContext, mergedCtx,
+        *this, loop, runtime, slotIndex, currentTick, frame, playbackContext, committedStream,
         mergedAdvance, mergedPolicy, jamCtx, midiChannel);
   }
   loop.lastTickInLoop = tickInLoop;

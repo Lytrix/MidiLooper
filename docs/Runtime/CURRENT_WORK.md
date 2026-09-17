@@ -2741,10 +2741,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**2026-09-17 — parent change task 2.4 (active clock path consumes prepared views): slice 1 + the 2.5a
-parity oracle are landed; the next step is 2.4 slice 2.** This is now the active code work on
-`resumable-midi-boundary-playback-maintenance`, alongside the successor change's own pick-up order
-(best next there: 5.5). Where it stands, all committed:
+**2026-09-17 — parent change task 2.4 (active clock path consumes prepared views): slices 1 and 2 are
+landed and the slice-3 decision is made (not required); 2.4 ticks on the 5.3 device measurement.** This is
+the active code work on `resumable-midi-boundary-playback-maintenance`, alongside the successor change's
+own pick-up order (best next there: 5.5). Where it stands:
 
 - **2.4 slice 1 (`4bd368ca`).** `openspec/changes/resumable-midi-boundary-playback-maintenance/ARCHITECTURE-REVIEW.md`
   is new (the change had no phase-gate artifact) and carries the per-phase gate for 2.4 -- ownership / state
@@ -2766,16 +2766,36 @@ parity oracle are landed; the next step is 2.4 slice 2.** This is now the active
 - **Finding that narrowed 2.4.** `Loop::tryGatherPublishedSnapshotEventsInWindow` returns false when there
   is no published root and the merged consumer then holds empty, so the post-commit publish gap is not a
   second active rebuild case; the reachable active rebuild is concentrated in seal admission.
-- **2.4 slice 2 (next).** Pinned invariant: *playback never observes `mergedEvents` and `playbackOrder`
+- **2.4 slice 2 — LANDED 2026-09-17 (immutable pair + atomic publication); the measurement decides
+  against slice 3.** Pinned invariant: *playback never observes `mergedEvents` and `playbackOrder`
   from different generations; a pair becomes consumable only when both members and their cursor/reanchor
-  state are complete for the same source generation.* Implement
-  `PreparedPlaybackPair { generation, mergedEvents, playbackOrder, anchor/cursor seed, source identity, ready }`
-  with one atomic authority change (`P0 playing` -> source change -> request P1, keep consuming P0 ->
-  P1 complete -> atomic `P0 -> P1`), then measure `prepared_pair_hold_ticks` / `max_latency_ticks` against
-  the **latest legal publication/audibility edge** (not only the one-bar maintenance budget) before
-  deciding whether slice 3 (b), a bounded incremental order update, is needed. Remaining 2.5a fixtures
-  before/alongside that: wrap + loop-edge note, source change mid-window, long-loop window, record-stop
-  gap, plus the published-snapshot-root fixture helper those gathering cases need.
+  state are complete for the same source generation.* `PreparedPlaybackPair`
+  (`include/TrackPlaybackRuntime.h`) carries `generation`, the live source identity, the full-loop
+  `coverage`, a pointer to a dedicated prewarmed `FixedPlaybackEventStorage`, `eventCount` and the
+  `cursorSeed` resolved against the publication phase. `LoopPlaybackRuntime::publishPreparedPlaybackPair`
+  fills that buffer and replaces the whole descriptor in one assignment inside a non-yielding turn; the
+  off-clock owner is `Track::publishPreparedPlaybackPairFromWorkingWindow` /
+  `Track::servicePendingPreparedPlaybackPair`, serviced one preparation per turn from
+  `runDeferredLoadAndDisplayFrame` (`main.cpp`). `resolvePreparedPairConsume`
+  (`src/Track/TrackPlaybackWindowBuild.cpp`, shared with the fixtures) is the clock path's entire
+  decision: consume a current pair, otherwise record exactly one request and keep consuming the
+  published P0. `playCommittedLoopMidi` no longer calls `::rebuildPlaybackOrder` /
+  `reanchorPlaybackIndex` for the full-loop merged path; the pair's identity `order` feeds the existing
+  fixed-stream adapter and the new seed is copied on the first tick after publication (a wrap rewinds to
+  0). `Loop::hasPendingOverdubSealAdmission()` is the non-allocating source-change signal for the seal
+  receipt. The long-loop windowed gather and the cold first audible turn keep the in-place builder,
+  which the slice-1 detector still counts. Measurement (native, one bar = 768 ticks = 24 MIDI clocks):
+  `prepared_pair_request_count` 1, `prepared_pair_publish_count` 2, **`prepared_pair_hold_ticks` 8**,
+  **`prepared_pair_max_latency_ticks` 7**, `prepared_pair_rebuild_units` = the replacement window's rows
+  (4 -> 6 in the fixture), `playbackOrderHotRebuildCount` 0 across the decision loop and 1 for the
+  off-clock order rebuild. Against the audibility edge: 8 ticks is ~1% of the one-bar budget (768) and
+  exactly one MIDI clock, i.e. far inside the next 16th-note step (48) — **slice 3 (b), a bounded
+  incremental order update, is not required for 2.4**. Evidence: `test_continuous_capture` 67/67,
+  `REENTRY_RED=1` 68/68, `ONLY_COMPANION=1` 1/1, `test_playback_prewarm` 173/173, full native **2,232 / 1 skipped /
+  0 failures**, RAM1 variables 91,904 / code 425,496 / padding 488 / **locals 6,400**. Remaining before ticking 2.4: the same counters on device (5.3); 5.4 stays blocked.
+- **2.5a has two more fixtures left (unchanged).** `wrap + loop-edge note`, `source change mid-window`,
+  `long-loop window`, `record-stop gap`, plus the published-snapshot-root fixture helper those gathering
+  cases need. 2.5 itself still completes after 2.4.
 
 **2026-09-17 — OpenSpec 5.12 / D8 interval-owned staged pass LANDED (DEC-072), and the 5.5
 `CompanionHistory` blocker is cleared.** A deferred job now owns its staged capture pass from its own
