@@ -84,7 +84,18 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   // previous pass has already become canonical; this fresh staging generation
   // represents only the successor capture tail.
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
-  if (wrapped && runtime) {
+  // DEC-069: the slot's canonical pass inputs, its frozen order/rewrite builders and its frozen
+  // source binding are one shared resource, and a pending predecessor stop job owns them for its
+  // own interval. This wrap is the live interval's *third* transition (after the start and before
+  // the stop) that would re-bind them, and it must respect that ownership exactly as the other
+  // two do: re-binding here reset `canonicalPassInputs.live_`, so the predecessor's canonical tail
+  // phase denied forever, its job never retired, and this interval's own stop could never be
+  // admitted (`captures/session_20260917_172651.log`: OD2's job stayed pending from 590.687 s to
+  // the end of the session and OD3's 598.245 s stop was refused as occupied). A skipped resume is
+  // a supported outcome -- the source invalidation path owns the bounded restart -- and the
+  // committed wrap pass still reaches playback through the caller's appended source view.
+  const bool predecessorOwnsSlotCanonicalWork = hasPendingDeferredOverdubStop();
+  if (wrapped && runtime && !predecessorOwnsSlotCanonicalWork) {
     const PlaybackViewSourceIdentity source{loop.playbackRevision, playbackGeneration,
                                             loop.publishedSnapshotIdentity()};
     (void)runtime->resumeCanonicalAfterAppend(loop.passes, priorPlaybackRevision, source,
@@ -100,8 +111,13 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
       (void)loop.appendCaptureEvent(evt);
     }
   } else {
-    runtime->discardFrozenCaptureOrder();
-    runtime->discardFrozenCaptureCanonicalOrder();
+    // Discarding the frozen order/rewrite builders is the same ownership question: with no job
+    // owning them the clear is wanted (a completed build must not keep describing a pre-wrap
+    // tail), but doing it to a pending predecessor stranded it in its order phase.
+    if (!predecessorOwnsSlotCanonicalWork) {
+      runtime->discardFrozenCaptureOrder();
+      runtime->discardFrozenCaptureCanonicalOrder();
+    }
     CaptureAdmissionStaging& staging = viewSet->liveCaptureStaging();
     staging.reset();
     staging.captureGeneration = playbackGeneration;

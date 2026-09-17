@@ -2620,6 +2620,39 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — the wrap is the third owner of the slot's canonical preparation (DEC-069; hardening
+landed, revision gate awaiting the owner's choice).** The user's manual three-overdub session
+[`captures/session_20260917_172651.log`](../../captures/session_20260917_172651.log) fails on the
+DEC-068 firmware: OD1 (570.855 s) wraps and retires normally, OD2 (586.564 s) stops at 590.687 s
+and **never emits `Reentry released`**, OD3 (591.518 s) wraps at 593.456 s and then every NoteOff
+for the notes held across that wrap is rejected (`Capture admission rejected: unmatched NoteOff
+ch=4 note=72`, nine times), and OD3's own stop at 598.245 s is refused as
+`deferred/frozen admission role is occupied` for the rest of the session.
+
+Root cause, proven natively: `Track::commitOverdubWrap` commits the live interval's next capture
+pass, and a pass commit advances `Loop::playbackRevision`. The pending job's
+`RuntimeCanonicalPassInputs` frozen binding is pinned to the revision it was admitted against
+(`valid()` compares the live `playbackRevision`), so the advance makes `ready()` false forever,
+`CanonicalTail` denies, `completeDeferredCleanup` never runs, `runtime.captureStopOwner` stays
+owned, and no later stop of the live interval can be admitted. The live interval's queued wrap
+publication also stays behind the unresolved predecessor publication (FIFO), which is why the
+third overdub never shows at the wrap and its notes sound lengthened into the previous overdub.
+Instrumented native probe of the failing interaction: `revBefore=1 revAfter=2`, frozen binding
+intact, `ready()` false, job in `CanonicalTail` for 20,000 grains.
+
+Landed here (independent of the gate): the wrap no longer calls `resumeCanonicalAfterAppend`
+(whose `resumeCurrentAfterAppend` resets the frozen capture binding) nor discards the frozen
+order/rewrite builders while `hasPendingDeferredOverdubStop()` — the same DEC-067 ownership rule
+the start and stop paths already follow. Two new native cases
+(`test_successor_wrap_keeps_the_predecessors_frozen_builders`,
+`test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off`) fail without the
+guard; full native 2211 cases / 1 skipped / 0 failures; `pio run -e teensy41-capture-serial`
+SUCCESS with RAM1 locals 6,464. The revision gate itself (DEC-069 Option A: defer the wrap's pass
+commit while a job is pending; Option B: restart the predecessor's tail across the append) is not
+implemented — it is awaiting the owner's choice, because it changes when an overdub pass first
+becomes audible during an overlap.
+
+
 **2026-09-17 — reentry session ownership — LANDED (DEC-068, device PASS
 `captures/successor-reentry-27`).** Each interval now owns its session-exit tail: A's is captured
 at its stop admission (swap, not copy), released with its own pass id at its own commit, and the

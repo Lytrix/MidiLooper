@@ -105,6 +105,8 @@ class RuntimeCanonicalPassInputs {
   RuntimePlaybackOrderBuildResult step(size_t quantum);
   bool ready() const;
   const CaptureAdmissionStaging* frozenCapture() const;
+  /// Test/diagnostic probe: is a frozen (job-owned) capture source still bound?
+  bool hasFrozenBinding() const { return live_.has_value(); }
   bool frozenSourceCurrent(const CaptureAdmissionStaging& capture, uint32_t epoch) const {
     return live_ && &live_->capture == &capture && commandEpoch_ == epoch && valid();
   }
