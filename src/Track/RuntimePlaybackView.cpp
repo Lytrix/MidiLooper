@@ -37,44 +37,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void releaseExternalMemoryFirst(void* memory) {
   }
 }
 
-/// Does the window end with a NoteOn whose closing NoteOff is not inside it? Such
-/// a note's closure lives in a later bar or at the loop end, and only the
-/// published root carries it, so the raw window cannot serve that take's launch
-/// on its own. Bounded single pass over the retained rows in raw capture order.
-bool coverageEndsWithHeldNote(const FixedPlaybackEventStorage& storage) {
-  // One open row per (channel, pitch). Per-tick polyphony is bounded by the
-  // capture admission reservations; an overflow refuses the window rather than
-  // guessing that it is closed.
-  constexpr size_t kMaxTrackedOpenNotes = 64;
-  std::array<uint16_t, kMaxTrackedOpenNotes> open{};
-  size_t openCount = 0;
-  for (size_t i = 0; i < storage.eventCount; ++i) {
-    if (!storage.eventRetained(i)) {
-      continue;
-    }
-    const MidiEvent& event = storage.events[i];
-    if (!event.isNoteOn() && !event.isNoteOff()) {
-      continue;
-    }
-    const uint16_t key = static_cast<uint16_t>((static_cast<uint16_t>(event.channel) << 8) |
-                                               event.data.noteData.note);
-    if (event.isNoteOn()) {
-      if (openCount >= open.size()) {
-        return true;
-      }
-      open[openCount++] = key;
-      continue;
-    }
-    for (size_t slot = 0; slot < openCount; ++slot) {
-      if (open[slot] == key) {
-        open[slot] = open[--openCount];
-        break;
-      }
-    }
-  }
-  return openCount != 0;
-}
-
 bool ledgerEntryEquals(const ActiveNoteLedger::Entry& a, const ActiveNoteLedger::Entry& b) {  return a.channel == b.channel && a.note == b.note && a.noteId == b.noteId &&
          a.startTick == b.startTick && a.velocity == b.velocity;
 }
@@ -243,7 +205,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackView::bindRawCoverage(uint32_
   // launch's playback-cache resets, so `LoopPlaybackRuntime::reset` preserves it
   // explicitly. A later take releases it.
   firstRecordReturnWindow = true;
-  firstRecordReturnWindowHasHeldNote = coverageEndsWithHeldNote(storage);
   return true;
 }
 
@@ -251,7 +212,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackView::resetMetadata() {
   ++storageGeneration;
   rawCoveragePrepared = false;
   firstRecordReturnWindow = false;
-  firstRecordReturnWindowHasHeldNote = false;
   passOriginsReady = canonicalRanksReady = false; passOriginSource = {};
   storage.clear();
   source = PlaybackViewSourceIdentity{};

@@ -488,10 +488,13 @@ struct LoopPlaybackRuntime {
   /// first root is still publishing. Stamps the launch source identity (the
   /// window was filled during RECORDING under the pre-stop identity) and marks it
   /// published, then returns it for the caller to consume exactly like a
-  /// published full-loop view. Returns null unless the window's coverage is the
-  /// whole loop, which is the one-bar first-take case the raw window can serve.
+  /// published full-loop view. Returns null unless the window is bound to this
+  /// loop, carries no note whose closure is outside it, and `phase` is inside its
+  /// coverage: the window only ever holds the first bar, so the caller asks again
+  /// on the next tick and falls back once the playhead leaves it.
   const RuntimePlaybackView* adoptFirstRecordingBarReturnWindow(
-      const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks);
+      Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks,
+      uint32_t phase);
   /// Diagnostic label for the last `prepareFirstRecordingBar` denial. Session
   /// capture records it with the "first-record bar-1 preparation unavailable"
   /// warning; it is not a policy input.

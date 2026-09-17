@@ -2646,24 +2646,35 @@ steps as a catch-up burst. Device evidence: `captures/deadline-pacing-01`
   new take's preparation boundary releases the stale window
   (`releaseFirstRecordingBarReturnWindow`) and the denial warning names the failing
   precondition.
-- **S2. Select the bound bar-1 bundle as the audible source — PARTIAL (one-bar take).**
-  `playCommittedLoopMidi` has two fixed sources and both require `publishedSnapshotIdentity()`,
-  so the bound raw bar-1 view was never audible and the legacy merged path held empty
-  (`GatherMissHoldEmpty`). Landed: the bound window is flagged
-  (`firstRecordReturnWindow`) so `LoopPlaybackRuntime::reset` preserves it across the launch's
-  playback-cache resets, and the hot path adopts it as the audible source while
-  `isPlaybackSessionExitPublicationGap()` holds
-  (`adoptFirstRecordingBarReturnWindow`, DIAG `first_record_adopt`); the published root then
-  replaces it by identity. Scope of this landing: a window whose coverage **is** the whole loop
-  (one-bar take). A window that ends with a held note is refused
-  (`firstRecordReturnWindowHasHeldNote`), because its closure is in a later bar or at the loop
-  end and only the published root carries it. Remaining for S2: carry the bar-1
-  `LedgerBoundarySummary`/closure obligations in the bundle so held-note takes are adopted too,
-  instead of keeping the publication-gap behaviour.
-- **S3. Coverage continuation and device verdict — PLANNED.** Cover each following bar without
-  omission or delayed refill (bar-1→bar-2 handoff, multi-bar takes) and verify on device that the
-  first `MO` after a record stop lands within one grid step (~10-125 ms) instead of ~620 ms, for a
-  1-bar and an 8-bar take, with no catch-up burst and no duplicated or omitted note.
+- **S2. Select the bound bar-1 bundle as the audible source — LANDED, device-verified
+  (`first-record-launch-04`).** `playCommittedLoopMidi` had two fixed sources and both require
+  `publishedSnapshotIdentity()`, so the bound raw bar-1 view was never audible and the legacy
+  merged path held empty (`GatherMissHoldEmpty`) until the root published. Now: the bound window
+  is flagged (`RuntimePlaybackView::firstRecordReturnWindow`) so `LoopPlaybackRuntime::reset`
+  preserves it across the launch's playback-cache resets; the hot path adopts it while
+  `isPlaybackSessionExitPublicationGap()` holds and the playhead is inside its coverage
+  (`adoptFirstRecordingBarReturnWindow`, DIAG `first_record_adopt,<loopLength>,<retainedEvents>`);
+  the published root replaces it through the source identity. **The bundle includes its cursor**:
+  adoption selects the first event after the launch phase, because the emission otherwise treated
+  the launch turn (`prevTickInLoop == tickInLoop`) as a loop-start catch-up and dumped the
+  already-played bar-1 prefix in bursts (seen in `first-record-launch-02`: notes 48–52 within
+  400 µs). Device verdict, canonical 2-bar `base` PASS: stop 31.0072 s → PLAYING 31.0186 s →
+  `BAR,346` → `first_record_adopt,1536` 31.0216 s → first `MO` 31.0994 s (**93 ms** after PLAYING),
+  then note-ons at **125.0/125.0/125.0/122.4 ms** = the 16th grid, no burst and no omission
+  (pre-fix `deadline-pacing-01`: first note 620 ms after the stop, then a catch-up burst).
+- **S2b. The window's retained extent must cover the launch phase — OPEN.** The service refresh is
+  incremental (`serviceFirstRecordingBar`, one fill/order grain per VisualCache owner turn), so at
+  the stop the window can hold only a *prefix* of bar 1 (`first-record-launch-02` held 5 of 16
+  notes). The cursor reanchor makes that prefix skip instead of burst, but notes between the
+  prefix end and the root's arrival are then **omitted** rather than delayed — the same audibility
+  as the old hold-empty for that take, not a regression, and not yet the design's "no omitted
+  notes". Close it by keeping the prepared window current through the last accepted input (owner
+  turn budget) or by a bounded drain at the stop, and carry the bar-1 closure obligations
+  (`LedgerBoundarySummary`) so a note whose Off lies in a later bar is closed by the window itself.
+- **S3. Coverage continuation — PLANNED.** Cover each following bar without omission or delayed
+  refill (bar-1→bar-2 handoff for multi-bar takes) and verify an 8-bar take on device. The 2-bar
+  canonical take is already covered: the root publishes ~0.4-0.6 s into bar 1 (2 s), well before
+  the window's coverage ends.
 
 Explicitly not in scope for these slices: C1-a compat-gather restoration (6.3.1 stays retired),
 DEC-045 idle publication scheduling, and any new fixed user-visible capacity.
