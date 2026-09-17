@@ -257,6 +257,22 @@ class SerialCaptureCollector:
                 self._clock.mark_incomplete(f"serial read error: {exc}")
             self._stop.set()
 
+    def find_line(self, needle: str, *, after_index: int = 0) -> Optional[int]:
+        """Index of the first line at or after `after_index` containing `needle`, else None.
+
+        Deliberately cheap: it scans the retained list under the lock without copying it, so
+        a probe can wait on one marker while a deferred stop floods the stream (a
+        `snapshot()` copy per poll was the reason the successor press arrived seconds late).
+        """
+        if not needle:
+            return None
+        with self._lock:
+            lines = self._lines
+            for index in range(max(after_index, 0), len(lines)):
+                if needle in lines[index]:
+                    return index
+        return None
+
     def snapshot(self) -> list[str]:
         with self._lock:
             return list(self._lines)

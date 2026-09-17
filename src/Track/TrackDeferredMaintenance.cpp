@@ -915,6 +915,9 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
     if (runtime != nullptr && runtime->canonicalReleaseMarkerArmed &&
         runtime->captureStopOwner == nullptr && runtime->canonicalCaptureOutputAdmitted()) {
       runtime->canonicalReleaseMarkerArmed = false;
+      // Human log line first: the HITL probe paces B's admitted stop from this edge; the
+      // `#CAP` tiers queue behind the deferred stop's flood and arrive seconds late.
+      logger.info("Reentry released");
 #if defined(SESSION_CAPTURE)
       DebugSessionCapture::canonicalFinalizationCapacityReleased(
           activeLoopIndex, getActiveLoop().loopLengthTicks,

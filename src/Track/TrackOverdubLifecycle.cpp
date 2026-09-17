@@ -370,9 +370,13 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   job.admission.destination = destination;
   job.owner = &loop;
   runtime->captureStopOwner = &job.admission;
+  // DEC-067: the predecessor now owns the frozen role and the live role is clean, so a
+  // successor interval may start even though this job is still pending. The human log line
+  // is the *timely* edge for the HITL probe (`#CAP` DIAG rows queue behind the deferred
+  // stop's flood and arrive seconds late); the DIAG row is the evidence-tier record.
+  logger.log(CAT_TRACK, LOG_INFO, "Reentry window open slot=%u",
+             static_cast<unsigned>(activeLoopIndex));
 #if defined(SESSION_CAPTURE)
-  // DEC-067: the predecessor now owns the frozen role and the live role is clean,
-  // so a successor interval may start even though this job is still pending.
   DebugSessionCapture::successorStartWindowOpen(activeLoopIndex, currentTick,
                                                 loop.loopLengthTicks);
 #endif

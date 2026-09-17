@@ -3330,19 +3330,71 @@ def _runtime_stats_pass_baseline(
 
 
 
+REENTRY_WINDOW_MARKER = "Reentry window open"
+REENTRY_RELEASE_MARKER = "Reentry released"
+
+
+def _human_log_micros(line: str) -> Optional[int]:
+    """Device micros from a human log line's `[<seconds>.<ms>]` prefix (millis-based)."""
+    match = re.match(r"^\[(\d+)\.(\d{3})\]", line)
+    if match is None:
+        return None
+    return (int(match.group(1)) * 1000 + int(match.group(2))) * 1000
+
+
+def _marker_micros(lines: list[str], marker: str, *, after_ts: int = 0) -> Optional[int]:
+    """First device time at or after `after_ts` on a line containing `marker`, else None."""
+    from hitl.serial.protocol import parse_cap_micros
+
+    for line in lines:
+        if marker not in line:
+            continue
+        ts = parse_cap_micros(line)
+        if ts is None:
+            ts = _human_log_micros(line)
+        if ts is not None and ts >= after_ts:
+            return ts
+    return None
+
+
+def _await_collector_marker(collector: Any, marker: str, *, baseline: int, timeout_s: float,
+                            poll_s: float = 0.002) -> Optional[float]:
+    """Host monotonic time when the collector first showed `marker` at or after `baseline`.
+
+    Uses the collector's cheap single-marker scan: the deferred stop floods the stream, so a
+    full `snapshot()` per poll starved the probe (measured `successor-reentry-18`).
+    """
+    deadline = time.monotonic() + max(timeout_s, 0.0)
+    while True:
+        try:
+            found = collector.find_line(marker, after_index=baseline)
+        except Exception:  # noqa: BLE001 - a collector read must never abort the probe
+            found = None
+        if found is not None:
+            return time.monotonic()
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(max(poll_s, 0.0))
+
+
 def _verify_successor_reentry(
     lines: list[str],
     *,
     requested_delay_ms: int,
     requested_stop_delay_ms: int,
 ) -> dict[str, object]:
-    """Evidence that the successor-reentry probe overlapped its predecessor's deferred job.
+    """Evidence that the successor reentry overlapped its predecessor's deferred job.
 
-    The probe is only meaningful if the successor's ``PLAYING -> OVERDUBBING`` edge lands
-    before the predecessor's ``ODUB,stop,bridge_ready``, i.e. while the predecessor still
-    owns the frozen role. The optional quick stop is a denial probe: if the predecessor is
-    still pending, that press must not produce an ``OVERDUBBING -> OVERDUB_STOPPING`` edge
-    before the predecessor completes.
+    Two prompt human-log markers carry the edges (DEC-067; the `#CAP` tiers queue behind the
+    deferred stop's flood and arrive seconds late):
+      * ``Reentry window open``  - the predecessor owns the frozen role and the live capture
+        role is free, so a successor START is admitted while the predecessor is pending.
+      * ``Reentry released``     - the predecessor's finalization resources (canonical copy
+        target + transfer credits) are admitted again, so a successor STOP is admitted.
+
+    The verdict is therefore: the successor's ``PLAYING -> OVERDUBBING`` edge lands *before*
+    ``Reentry released`` (overlap), and the optional quick stop press produced no stop edge
+    before that release (the denial) while a later stop press did (the admitted stop).
     """
     from hitl.serial.protocol import parse_cap_micros, track_transitions
 
@@ -3351,7 +3403,9 @@ def _verify_successor_reentry(
         "delay_ms": requested_delay_ms,
         "stop_delay_ms": requested_stop_delay_ms,
         "predecessor_stop_ts": None,
+        "reentry_window_ts": None,
         "predecessor_ready_ts": None,
+        "finalization_released_ts": None,
         "successor_start_ts": None,
         "stop_after_successor_ts": None,
         "overlap_ok": None,
@@ -3376,30 +3430,39 @@ def _verify_successor_reentry(
     if not earlier_stops:
         return result
     predecessor_stop_ts = earlier_stops[-1]
-    ready_ts: Optional[int] = None
-    for line in lines:
-        if ",ODUB,stop,bridge_ready," not in line:
-            continue
-        ts = parse_cap_micros(line)
-        if ts is not None and ts > predecessor_stop_ts:
-            ready_ts = ts
-            break
+    window_ts = _marker_micros(lines, REENTRY_WINDOW_MARKER, after_ts=predecessor_stop_ts)
+    ready_ts = _marker_micros(lines, "ODUB,stop,bridge_ready,", after_ts=predecessor_stop_ts)
+    released_ts = _marker_micros(lines, REENTRY_RELEASE_MARKER, after_ts=predecessor_stop_ts)
+    # The released marker is the authoritative finalization edge; `bridge_ready` is the
+    # evidence-tier row for the same phase and can arrive later in the stream.
+    finalization_end_ts = released_ts if released_ts is not None else ready_ts
     stop_after_successor = next(
         (ts for ts in overdub_stop_entries if ts > successor_start_ts), None
     )
-    overlap_ok = ready_ts is not None and successor_start_ts < ready_ts
+    overlap_ok: Optional[bool] = None
     denied_stop_ok: Optional[bool] = None
-    if requested_stop_delay_ms > 0:
-        denied_stop_ok = stop_after_successor is None or (
-            ready_ts is not None and stop_after_successor > ready_ts
-        )
+    if finalization_end_ts is not None:
+        overlap_ok = successor_start_ts < finalization_end_ts
+    elif window_ts is not None:
+        # No completion edge in the capture (supersession can retire the predecessor
+        # without a bridge): the start is only proof of overlap through the window marker.
+        overlap_ok = successor_start_ts >= window_ts
+    if requested_stop_delay_ms > 0 and finalization_end_ts is not None:
+        denied_stop_ok = stop_after_successor is None or stop_after_successor > finalization_end_ts
     result.update(
         {
             "predecessor_stop_ts": predecessor_stop_ts,
+            "reentry_window_ts": window_ts,
             "predecessor_ready_ts": ready_ts,
+            "finalization_released_ts": released_ts,
             "successor_start_ts": successor_start_ts,
             "successor_start_delay_ms": (
-                None if ready_ts is None else (successor_start_ts - predecessor_stop_ts) / 1000.0
+                None if finalization_end_ts is None
+                else (successor_start_ts - predecessor_stop_ts) / 1000.0
+            ),
+            "successor_start_before_release_ms": (
+                None if finalization_end_ts is None
+                else (finalization_end_ts - successor_start_ts) / 1000.0
             ),
             "stop_after_successor_ts": stop_after_successor,
             "overlap_ok": overlap_ok,
@@ -4145,36 +4208,51 @@ def _run_overdub_pass(
     probe_stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0) or 0), 0)
     probe_enabled = pass_label == "overdub" and probe_delay_ms > 0
     if probe_enabled:
-        # The successor must be pressed inside the predecessor's deferred window (the
-        # canonical copy chunks are only re-admissible after the predecessor's prepared
-        # capture transfer, which is a fraction of that window). Neither the confirmation
-        # wait nor this process can hit it: the deferred stop floods the same serial stream
-        # the collector parses, and the collector's parsing starves this process for more
-        # than a second (`successor-reentry-18`: +400 ms requested, +1535 ms measured, and
-        # the stop edge was never observable inside a 1 s anchor). The presses are therefore
-        # scheduled in a process of their own (`hitl.probe_press`), whose time origin is a
-        # go-ahead line written immediately after the stop press goes out.
+        # DEC-067 sequencing, driven by the firmware's prompt human-log markers:
+        #   1. stop A -> A's deferred job owns the frozen role and frees the live role
+        #      ("Reentry window open"), so B START is admitted while A is still pending;
+        #   2. B records; a quick stop press must be refused (A still owns the
+        #      finalization resources) and B keeps recording;
+        #   3. "Reentry released" says those resources are admitted again, so B's stop
+        #      is admitted and finalizes exactly once.
+        # Markers are human log lines on purpose: the `#CAP` tiers queue behind the
+        # deferred stop's flood and arrive seconds late (successor-reentry-18/-19).
         press_ms = max(int(getattr(args, "press_ms", 120) or 120), 1)
         successor_delay_ms, denial_delay_ms = _probe_press_delays(
             probe_delay_ms=probe_delay_ms, press_ms=press_ms, stop_delay_ms=probe_stop_delay_ms
         )
-        probe_press_helper = _spawn_probe_press(
-            midi_out=getattr(out_port, "name", None) or getattr(args, "midi_out", ""),
-            note=RECORD_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=press_ms,
-            successor_delay_ms=successor_delay_ms,
-            denial_delay_ms=denial_delay_ms,
+        baseline = serial_collector.line_count()
+        _send_overdub_stop()
+        window_at = _await_collector_marker(
+            serial_collector, REENTRY_WINDOW_MARKER, baseline=baseline,
+            timeout_s=min(2.0, max(stop_confirm_timeout_s, 1.0)),
         )
-        if probe_press_helper is None:
-            # Degraded path: no helper process, so pace from this process and accept that the
-            # presses can land after the window.
+        if window_at is None:
+            # Degraded path (older firmware or a marker lost to pressure): schedule the
+            # presses in their own process against fixed delays, as before.
             print(
-                f"[track {_user_track_number(idx)}] successor reentry: press helper "
-                f"unavailable; pressing from this process (+{successor_delay_ms} ms)"
+                f"[track {_user_track_number(idx)}] successor reentry: window marker not "
+                f"seen; scheduling +{successor_delay_ms} ms successor press"
             )
-            _send_overdub_stop()
-            time.sleep(successor_delay_ms / 1000.0)
+            probe_press_helper = _spawn_probe_press(
+                midi_out=getattr(out_port, "name", None) or getattr(args, "midi_out", ""),
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=press_ms,
+                successor_delay_ms=successor_delay_ms,
+                denial_delay_ms=denial_delay_ms,
+            )
+            if probe_press_helper is not None and probe_press_helper.stdin is not None:
+                try:
+                    probe_press_helper.stdin.write("go\n")
+                    probe_press_helper.stdin.flush()
+                except OSError as exc:  # noqa: BLE001
+                    print(f"[warn] successor reentry press helper lost its stdin: {exc}")
+        else:
+            print(
+                f"[track {_user_track_number(idx)}] successor reentry start "
+                f"(+{(time.monotonic() - window_at) * 1000:.0f} ms after the window marker)"
+            )
             _send_short_press(
                 out_port,
                 note=RECORD_BUTTON_NOTE,
@@ -4183,26 +4261,35 @@ def _run_overdub_pass(
             )
             if denial_delay_ms > 0:
                 time.sleep(denial_delay_ms / 1000.0)
+                print(
+                    f"[track {_user_track_number(idx)}] successor reentry stop attempt "
+                    "(predecessor still pending; must be refused)"
+                )
                 _send_short_press(
                     out_port,
                     note=RECORD_BUTTON_NOTE,
                     channel_1based=CONTROL_CHANNEL_1BASED,
                     press_ms=press_ms,
                 )
-        else:
-            _send_overdub_stop()
-            if probe_press_helper.stdin is not None:
-                try:
-                    probe_press_helper.stdin.write("go\n")
-                    probe_press_helper.stdin.flush()
-                except OSError as exc:  # noqa: BLE001
-                    print(f"[warn] successor reentry press helper lost its stdin: {exc}")
-            print(
-                f"[track {_user_track_number(idx)}] successor reentry scheduled "
-                f"(+{successor_delay_ms} ms successor"
-                + (f", +{denial_delay_ms} ms later denial" if denial_delay_ms > 0 else "")
-                + f"; pid {probe_press_helper.pid})"
+            released_at = _await_collector_marker(
+                serial_collector, REENTRY_RELEASE_MARKER, baseline=baseline, timeout_s=3.0
             )
+            if released_at is None:
+                print(
+                    f"[track {_user_track_number(idx)}] successor reentry: release marker "
+                    "not seen; leaving the stop to the state-sync wait"
+                )
+            else:
+                print(
+                    f"[track {_user_track_number(idx)}] successor reentry admitted stop "
+                    f"(+{(time.monotonic() - released_at) * 1000:.0f} ms after the release marker)"
+                )
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=press_ms,
+                )
     od_stop = request_state_transition(
         snapshot=serial_collector.snapshot,
         requested="PLAYING_AFTER_OVERDUB_STOP",
