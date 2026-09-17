@@ -55,13 +55,29 @@ flashed from this tree):
   wall-clock tempo proxy because the Teensy clock was not on USB MIDI in. These are the
   known host/gate-defect class and are not part of this change.
 
-Residuals: the companion-history preparation still walks the full 2,048-row horizon (65
-bounded prep slices, `resume` 0 -> 120 units in the first ~3 s of the canonical rebuild),
-which is the latency reason to revisit the horizon size under C3 - capacity shaping now has
-a latency argument as well as a memory one. The seven companion/lookup workers and the
-history rows remain owned by the record arm (DEC-065 scope boundary), so a loaded-slot
-overdub still uses the degraded canonical-prefix/companion path until a record arm upgrades
-the slot.
+Residuals, and one attribution this entry originally got wrong. **CORRECTED 2026-09-17:**
+the ~65 `DIAG,prepare,slice,prep` lines in the e2e log are **not** the companion-history
+horizon. They are `LoopContentResolution`'s `Phase::RebuildPrepare` canonical
+materialize/merge (`src/LoopContentResolution.cpp:2258-2331`), where `resume` is
+`prepMerged.size()` and each slice spends `kDeviceGateEventsPerSlice` events - so that
+cost is **content-driven** (the 7,680-tick loop's passes), not horizon-driven, and it
+starts after the stop while the canonical/visual rebuild runs.
+
+The companion-history prep does still walk unused tail rows, but by a different mechanism
+that is derivable rather than log-labelled: prewarm resizes `work.rows` to
+`historyCount + companionCapacity` (`src/Loop/LoopPreparedCompanionHistory.cpp:74`) and
+`Phase::Trim` pops **one row per quantum unit** until `rows.size() == targetCount`
+(`:195-198`), where `targetCount = historyCount + rows.size()` of the actual frozen
+companion rows (`:123`). So each stop pays `companionCapacity - actualCompanionRows` units -
+around 2,030 for a 2048 horizon with an 8-note overdub - inside the deferred preparation.
+Its share of the measured 1.13 s stop-to-bridge-ready (50.666 s stop -> 51.795 s
+`bridge_ready`) is **not yet measured**, so C3's latency argument is currently analytical,
+not measured; the device comparison must separate the prep from the bridge map/compile
+before claiming it. What is already certain is the memory side.
+
+The seven companion/lookup workers and the history rows remain owned by the record arm
+(DEC-065 scope boundary), so a loaded-slot overdub still uses the degraded
+canonical-prefix/companion path until a record arm upgrades the slot.
 
 **2026-09-17 step E: the 1334 KB is slot-provisioned boot staging, and it is the headroom
 the arm needs.** `TrackManager::prewarmPlaybackRuntime` (`src/TrackManager.cpp:59-80`) calls
@@ -2213,7 +2229,12 @@ itself smaller and better attributed, in this order:
   mutation. Boot PSRAM headroom +1,189 KB; arm delta 1,469 KB; the loaded-set 8-bar recipe
   now runs end to end with zero denials, refusals and faults. Also fixed the point-of-use
   gate that was denying the 80 KB `InternalHeapFirstAllocator` reserve while ~1.27 MB of pool
-  was free. Remaining follow-up: C3 capacity/latency shaping (the 2,048-row horizon walk).
+  was free. **C3 is now the user-directed next lever**: demand-shaped capacity per owner
+  under the existing 2,048 maximum (never a smaller fixed cap), whose certain benefit is the
+  arm-time working set. Its latency side is the `Phase::Trim` walk in
+  `Loop::stepPreparedCompanionHistory` (one unused row per quantum unit), not the ~65
+  `prepare,slice,prep` lines - those are `LoopContentResolution`'s content-driven canonical
+  rebuild. C4 is explicitly **not** being taken.
 - **F. Transport-start 81920-byte owner — DONE (identification only, no gate).** It is the
   deferred record arm released by `handlePendingRecordStart`; step A already gates it.
 
