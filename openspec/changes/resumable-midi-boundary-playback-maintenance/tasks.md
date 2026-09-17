@@ -14,7 +14,32 @@ inline at each item:
 | 5.3 | open | device matrix; needs an explicit upload/device-gate instruction, and should run after 2.4/2.5/3.3 |
 | 5.4 | blocked | its precondition ("only after the previous gates pass") is unmet while 2.4 keeps the active-transport full rebuild |
 
-Recommended order here: **2.4 (instrumentation + request/consume) -> 2.5 (differential trace harness) -> 3.3 (Commit-body measurement) -> 3.4/4.1 evidence -> 5.3 device matrix -> 5.4 removal + closeout.** The successor
+Recommended order here: **2.4 (instrumentation + request/consume) -> 2.5 (differential trace harness) -> 3.3 (Commit-body measurement) -> 3.4/4.1 evidence -> 5.3 device matrix -> 5.4 removal + closeout.**
+
+**Plan reconciliation 2026-09-17 (documentation only; no change to the goal or to the order above).** The end goal
+still holds: active-transport work is bounded/resumable or excluded, playback consumes immutable/prepared runtime
+views, accepted capture is never lost, overdub stop stays a resumable active service, and the active MIDI path must
+eventually have no content-sized rebuild. What needed consolidating was the **capacity envelope and queue wording**,
+which several older passages still described as N simultaneously sealed jobs:
+
+- `proposal.md` now states "explicitly bounded capture roles and job descriptors" with the depth-2 directional
+  capacity and names N-job queueing as needing its own decision (the old "fixed, prewarmed capture-interval queue"
+  wording is gone).
+- `design.md`'s capacity paragraph and class diagram now state the directional rule, and the old A/B/C/D walkthrough,
+  "third rapid punch / fourth" and "queue-full" prose are explicitly marked **superseded** and owned by the N-job
+  follow-up; the falsification list is restated in the approved envelope.
+- `CONTINUOUS-CAPTURE-IMPLEMENTATION-PLAN.md` carries a reconciliation banner, the A/B/C/D walkthrough is marked
+  superseded with the depth-2 sequence beside it, and the finite-capacity counterexample and decisive reproducer are
+  restated directionally.
+- `CONTINUOUS-CAPTURE-OWNERSHIP.md` gained **§ Permanent continuous-capture invariants**, which folds the newer
+  session-exit (DEC-068), interval-owned staged-pass (DEC-072), recorded-causal-predecessor, revision/epoch
+  (DEC-069/DEC-070), atomic-publication and accepted-input invariants in beside the directional capacity rule; the
+  2026-09-16 service-paused A/B/C audit line is marked historical/re-scoped.
+- The normative spec delta `midi-boundary-runtime-maintenance` states the directional capacity, the successor-start
+  admission and the non-destructive deferred-role stop denial as scenarios, and N-job queueing is explicitly outside
+  the requirement.
+
+Decision order is unchanged: **2.4 next.** The successor
 change `successor-capture-reentry-unguarding` is independent of this list and its own pick-up order is recorded in its
 `tasks.md` (5.5 first).
 

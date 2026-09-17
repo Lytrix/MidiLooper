@@ -666,15 +666,27 @@ scored as evidence of audible handoff or real-time deadline completion.
 - **AND** history or source changes without a reuse proof SHALL invalidate affected preparation before reading borrowed storage
 - **AND** preparation SHALL preserve the selected audible source, original-Off protection and canonical per-pass ordering
 
-### Requirement: Live capture is independent from queued stop jobs
+### Requirement: Live capture is independent from deferred stop jobs
 
 The system SHALL maintain one explicitly owned live capture interval and a
-fixed-capacity FIFO of immutable sealed capture jobs. Punch-out SHALL seal the
-current interval and enqueue its job without requiring prior jobs to finish.
-Punch-in SHALL claim a distinct prewarmed live interval immediately when capacity
-and NoteOn lifetime reservations permit it. The deferred worker SHALL process
-only the FIFO head using shared scratch; it SHALL NOT read or reset live capture
-storage, live pending-note state, preview state, or a newer job's receipts.
+fixed-capacity ring of capture-job descriptors. Punch-out SHALL seal the current
+interval and admit its deferred job when the deferred/frozen role is free, without
+requiring it to finish. Punch-in SHALL claim a distinct prewarmed live interval
+immediately when the live role and its NoteOn lifetime reservations permit it.
+The deferred worker SHALL process only the descriptor at the ring head using
+shared scratch; it SHALL NOT read or reset live capture storage, live pending-note
+state, preview state, or a newer job's receipts.
+
+Capacity is directional and explicitly bounded (DEC-067): **START requires the free
+live role; STOP requires the free deferred/frozen role.** At least one finalizing
+predecessor and one independently recording successor SHALL coexist -- depth 2 in
+capture lifecycle. A **second simultaneously frozen deferred interval is outside
+this capacity**: a stop that would need an occupied deferred/frozen role SHALL be
+refused with its own explicit, non-destructive outcome and SHALL create no stop
+descriptor, leaving the interval live and unchanged. N-job deferred queueing (three
+or more sealed intervals with service paused) requires additional admission roles
+and a separate capacity decision; it is a documented follow-up, not an implied
+capability of this requirement.
 
 #### Scenario: Old cleanup completes while a newer overdub is live
 
@@ -687,24 +699,34 @@ storage, live pending-note state, preview state, or a newer job's receipts.
 - **AND** the Track remains in its live overdub state
 - **AND** A releases only A-owned storage and receipts
 
-#### Scenario: Three rapid punch cycles remain distinct
+#### Scenario: A successor start is admitted while the predecessor finalizes
 
-- **WHEN** service is paused and A, B and C are punched in and out before any
-  queued job is serviced
-- **THEN** the three sealed jobs retain distinct interval identities, ranges,
-  stop ticks and reservation owners
-- **AND** notes immediately following each punch-in belong to that interval
-- **AND** no job reuses another job's staging or mutable capture store
+- **WHEN** interval A has been sealed as a deferred job that still owns the
+  deferred/frozen role
+- **AND** interval B starts and accepts its own input
+- **THEN** B is admitted into the live role and its accepted input belongs to B
+- **AND** A's interval identity, sealed range, stop tick and reservation owners
+  remain A's, and no interval reuses the other's staging or mutable capture store
 
-#### Scenario: Capture interval capacity is exhausted
+#### Scenario: The deferred role is occupied when the successor stops
 
-- **WHEN** the declared live-plus-queued interval capacity is full
+- **WHEN** A still owns the deferred/frozen role and B requests its own stop
+- **THEN** B's stop is refused with an explicit capacity outcome and no stop
+  descriptor is created
+- **AND** B remains the live recording interval with its events, pending notes,
+  reservations, capture extent, preview and interval identity unchanged
+- **AND** after A retires, B's subsequent stop is admitted and B's interval
+  transfers exactly once
+
+#### Scenario: Live-role capacity is exhausted
+
+- **WHEN** the live role is already owned by an interval that is recording
 - **AND** another NoteOn or punch-in is requested
 - **THEN** that new request is rejected before capture, pending-note, preview or
   ledger mutation
 - **AND** all previously accepted intervals remain intact and recoverable
-- **AND** telemetry reports explicit interval-capacity exhaustion rather than
-  ordinary finalization pending
+- **AND** telemetry reports explicit capacity exhaustion rather than ordinary
+  finalization pending
 
 #### Scenario: A boundary cuts a partial event chunk
 
