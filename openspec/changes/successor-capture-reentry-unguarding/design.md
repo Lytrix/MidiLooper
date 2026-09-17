@@ -214,29 +214,53 @@ The invariant this establishes:
 > **At most one owner holds a given staged pass, and multiple intervals may each hold
 > their own staged pass concurrently.**
 
+**The pass is a `PrepareTransfer`-time object, not an admission-time one.** A stop
+admission transfers the frozen/raw/canonical inputs; no staged `PendingCapturePass`
+exists yet. The pass first exists when the job stages its already-admitted canonical
+output, and that is where ownership moves. The correct sequence:
+
+```text
+A stop admitted                     -> job A owns frozen/raw/canonical inputs;
+                                       no staged pass exists yet
+B may start                         -> the Loop pending slot belongs to the live
+                                       producer only
+A reaches PrepareTransfer           -> A stages the pass into the Loop producer slot
+                                    -> immediately take/move that exact pass into job A
+                                    -> the Loop slot is empty again
+                                    -> job A owns the pass across CanonicalTail ->
+                                       AtomicTransfer
+B start / wrap / staging            -> may use the Loop pending slot independently
+A AtomicTransfer                    -> consumes job A's pass directly; never restages
+```
+
+The take happens in the same turn as the stage, with no yield, no unrelated callback
+and no fallible operation between the two calls. If staging fails, that happens *before*
+ownership exists and the job stays in its pre-transfer state; once staging succeeds the
+take is non-fallible. Pinned invariant:
+
+> **A deferred job may use the Loop pending-pass slot only as a transient construction
+> point inside its own `PrepareTransfer` turn. Ownership is moved into the job before
+> control leaves that staging step, and deferred work never relies on the Loop slot
+> afterward.**
+
+A stop-admission placeholder (the alternative) is rejected: it would imply ownership of
+an object that does not exist yet, and it splits the transfer into admit-placeholder /
+later-create-shared-pass / later-move-into-placeholder, re-introducing exactly the
+shared-slot step D8 removes. The staged-pass lifecycle deliberately does *not* mirror
+`pendingNotes`/`preview`/`beforePublished`; those have different creation points and so
+have different transfer points.
+
 **The terminal transfer reads the job-owned pass, never the Loop slot.** A deferred
 predecessor SHALL NOT reacquire `Loop::pendingCapturePass_` to finish. Restaging would
 recreate exactly the serialization D8 removes: with B legitimately owning the Loop slot,
 A already owns every byte of the pass it needs yet would be denied for lack of a slot
-neither interval should have to share:
-
-```text
-A STOP         -> takePendingCapturePass() -> job A owns pass A
-B START        -> the Loop pending slot now belongs exclusively to B
-A PrepareTransfer -> transferFrom(jobA.pendingPass); no restage; consume A
-B wrap / B STOP   -> the Loop stages pass B independently
-```
-
-The atomic transfer therefore takes the pass from its owning interval/job as an
-argument; it SHALL NOT discover the pass through Loop-global producer state. The Loop
-slot is *producer-local* scratch, and its invariant is:
-
-> **A deferred job never depends on `Loop::pendingCapturePass_` after its stop
-> admission.** Anything in that slot belongs to the current producer/live interval, so
-> `beginCapture` may clear it unconditionally.
-
-`restagePendingCapturePass()` may exist for rollback or test lifecycles, but not on the
-normal deferred-completion path.
+neither interval should have to share. The atomic transfer therefore takes the pass from
+its owning interval/job as an argument; it SHALL NOT discover the pass through
+Loop-global producer state. After a job has passed `PrepareTransfer`, the deferred
+readers SHALL resolve the pass through the job with **no fallback** to
+`Loop::pendingCapturePass_`; a fallback can hide a missed ownership transition by
+silently reading B's receipt. `restagePendingCapturePass()` may exist for rollback or
+test lifecycles, but not on the normal deferred-completion path.
 
 **Transfer rule (destination-first, non-fallible).** All capacity the destination owner
 needs SHALL be admitted *before* the ownership transfer. Once the transfer begins it is
