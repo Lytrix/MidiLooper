@@ -116,6 +116,10 @@ struct PendingStopAdmission {
   PendingStopPhase phase = PendingStopPhase::ReservedClosure;
   PendingStopDestination destination = PendingStopDestination::Playing;
   bool pending = false;
+  /// DEC-068: ring index of this interval's session-exit tail, captured at stop admission, or
+  /// `Loop::kInvalidSessionExitReceipt`. The retiring job fills its final pass id and releases
+  /// it; it never builds one from live session state, which under reentry belongs to a successor.
+  size_t sessionExitReceiptRing = static_cast<size_t>(-1);
 
   void reset();
   /// Value identity of this admitted interval. Copies of the admission (credit

@@ -116,6 +116,10 @@ struct PendingSnapshotPublishBox {
 // no vector growth, traversal, or snapshot graph release at the stop boundary.
 struct SessionExitSnapshotHandoff {
   bool pending = false;
+  /// DEC-068: a receipt captured at its interval's stop admission is not consumable until that
+  /// interval's final pass has committed and `lastPassId` is filled. The publisher skips a
+  /// not-ready receipt in place, so FIFO order is preserved. Legacy handoffs set it on capture.
+  bool ready = false;
   CommitReason reason = CommitReason::OverdubStop;
   PassId lastPassId = kInvalidPassId;
   size_t companionRowCount = 0;

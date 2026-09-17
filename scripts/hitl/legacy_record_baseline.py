@@ -3443,6 +3443,8 @@ def _verify_successor_reentry(
         "successor_start_ts": None,
         "denied_stop_ts": None,
         "admitted_stop_ts": None,
+        "successor_retirement_ts": None,
+        "retirement_ok": None,
         "stop_after_successor_ts": None,
         "overlap_ok": None,
         "denied_stop_ok": None,
@@ -3479,12 +3481,22 @@ def _verify_successor_reentry(
     finalization_end_ts = released_ts if released_ts is not None else ready_ts
     # B's admitted stop: its own `Reentry window open` admission after the release, an
     # `Overdubbing stopped` line, or the first CAP stop entry after the successor start.
-    admitted_stop_ts = next(
-        (ts for ts in _marker_micros_list(lines, REENTRY_WINDOW_MARKER,
-                                          after_ts=successor_start_ts)
-         if finalization_end_ts is None or ts > finalization_end_ts),
-        None,
-    )
+    later_window_markers = [ts for ts in _marker_micros_list(
+        lines, REENTRY_WINDOW_MARKER, after_ts=successor_start_ts)
+        if finalization_end_ts is None or ts > finalization_end_ts]
+    admitted_stop_ts = later_window_markers[0] if later_window_markers else None
+    # DEC-068: when the successor's own stop deferred, it must retire on its own edge too --
+    # one release marker per retired job, so a second one after that stop proves B's job left
+    # the ring (a leaked descriptor never emits it).
+    successor_retirement_ts: Optional[int] = None
+    retirement_ok: Optional[bool] = None
+    if admitted_stop_ts is not None and later_window_markers:
+        successor_retirement_ts = next(
+            (ts for ts in _marker_micros_list(lines, REENTRY_RELEASE_MARKER,
+                                              after_ts=admitted_stop_ts)),
+            None,
+        )
+        retirement_ok = successor_retirement_ts is not None
     if admitted_stop_ts is None:
         admitted_stop_ts = _marker_micros(lines, "Overdubbing stopped", after_ts=successor_start_ts)
     stop_after_successor = next(
@@ -3515,6 +3527,8 @@ def _verify_successor_reentry(
             "successor_start_ts": successor_start_ts,
             "denied_stop_ts": denied_ts,
             "admitted_stop_ts": admitted_stop_ts,
+            "successor_retirement_ts": successor_retirement_ts,
+            "retirement_ok": retirement_ok,
             "successor_start_delay_ms": (
                 None if predecessor_stop_ts is None
                 else (successor_start_ts - predecessor_stop_ts) / 1000.0
@@ -4353,11 +4367,24 @@ def _run_overdub_pass(
                     f"[track {_user_track_number(idx)}] successor reentry admitted stop "
                     f"(+{(time.monotonic() - released_at) * 1000:.0f} ms after the release marker)"
                 )
+                # DEC-068: the successor's own deferred stop retires on its own edge; one
+                # release marker per retired job, so a marker after this press proves its
+                # descriptor left the ring (a leaked descriptor never emits it).
+                retirement_baseline = serial_collector.line_count()
                 _send_short_press(
                     out_port,
                     note=RECORD_BUTTON_NOTE,
                     channel_1based=CONTROL_CHANNEL_1BASED,
                     press_ms=press_ms,
+                )
+                successor_retired_at = _await_collector_marker(
+                    serial_collector, REENTRY_RELEASE_MARKER, baseline=retirement_baseline,
+                    timeout_s=4.0,
+                )
+                print(
+                    f"[track {_user_track_number(idx)}] successor reentry: successor job "
+                    + ("retired (release marker observed)" if successor_retired_at is not None
+                       else "release marker NOT seen (retirement unproven)")
                 )
     od_stop = request_state_transition(
         snapshot=serial_collector.snapshot,

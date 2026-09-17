@@ -34,8 +34,11 @@ bool advanceAtomicTransferWithUndo(Loop& loop, LoopPlaybackRuntime& runtime,
 // audible source, its cursor and ledger; Track owns transport-Stop silence.
 // `preview` is the admitted job's owned capture preview, so the deferred seal
 // can never consume a successor interval's preview.
+// `ownsLiveSession` (DEC-068) says the retiring job still owns the live session; only then may
+// it end that session. Its session-exit receipt was captured at its own stop admission and is
+// released here; this never builds one from live state, which under reentry is a successor's.
 bool completeDeferredCleanup(Loop& loop, LoopPlaybackRuntime& runtime,
-    PendingStopAdmission& stop, CapturePreview& preview);
+    PendingStopAdmission& stop, CapturePreview& preview, bool ownsLiveSession);
 /// Approved superseded rule: the recorded causal predecessor is no longer the
 /// published root. Commit the accepted capture pass through the plain route and
 /// publish no audible bridge, so a stale PLAYING successor can never be selected

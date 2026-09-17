@@ -353,7 +353,10 @@ struct Loop {
   void closeProducerCapturePhase();
   /// Overdub session start S (`beginCapture` playheadPhaseTick). UINT32_MAX = no session.
   uint32_t playheadPhaseTick = UINT32_MAX;
-  void openOverdubSession(uint32_t sessionPlayheadPhaseTick);
+  /// Open this interval's session. `forceNew` (DEC-068) starts a fresh session even while a
+  /// predecessor's tail is still draining, so a successor never joins the predecessor's
+  /// session state; the predecessor's identities live in its captured receipt.
+  void openOverdubSession(uint32_t sessionPlayheadPhaseTick, bool forceNew = false);
   void closeOverdubSession();
   /// Post-publication cleanup under exclusive protected-stop ownership. Snapshot
   /// exit work must already be retained; this never discards an owned graph.
@@ -863,6 +866,20 @@ struct Loop {
   /// handoff itself, which consumes the session identities.
   static constexpr size_t kSessionExitReceiptCapacity = 4;
   size_t sessionExitReceiptCount() const { return sessionExitReceiptCount_; }
+  /// DEC-068: no interval-level session-exit tail (ring full, no session, or not a session exit).
+  static constexpr size_t kInvalidSessionExitReceipt = static_cast<size_t>(-1);
+  /// Capture this interval's own session-exit tail at its stop admission, before any successor
+  /// can touch the shared session state. Swaps the identities into a reserved receipt slot
+  /// (never copies: the stop boundary must not allocate) and leaves it not ready until
+  /// `markSessionExitTailReady`. Returns the receipt's ring index, or
+  /// `kInvalidSessionExitReceipt`.
+  size_t captureSessionExitTail(CommitReason reason);
+  /// Fill the captured tail's final pass id and make it consumable by the publisher.
+  bool markSessionExitTailReady(size_t ringIndex, PassId lastPassId);
+  /// The captured receipt behind a ring index. Jobs hold ring indexes: offsets shift as
+  /// earlier receipts drain, ring slots do not.
+  SessionExitSnapshotHandoff* sessionExitReceiptByRingIndex(size_t ringIndex);
+  const SessionExitSnapshotHandoff* sessionExitReceiptByRingIndex(size_t ringIndex) const;
   const SessionExitSnapshotHandoff* sessionExitReceiptAt(size_t index) const;
   const SessionExitSnapshotHandoff* oldestPendingSessionExitReceipt() const {
     return sessionExitReceiptAt(0);

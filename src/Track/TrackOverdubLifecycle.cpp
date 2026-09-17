@@ -260,6 +260,18 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full");
     return false;
   }
+  // DEC-068: take this interval's own session-exit tail now, while the shared session state is
+  // still this interval's. A successor may start before this job retires, and it opens a
+  // session of its own; this receipt is the only record of *our* session identities. The ring
+  // was checked above (`canHandoffSessionExitSnapshot`), so this is a require, not a probe.
+  const CommitReason sessionExitReason =
+      destination == PendingStopDestination::Playing ? CommitReason::OverdubStop
+                                                     : CommitReason::OverdubStopToStopped;
+  const size_t sessionExitReceiptRing = loop.captureSessionExitTail(sessionExitReason);
+  if (sessionExitReceiptRing == Loop::kInvalidSessionExitReceipt) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_tail_denied");
+    return false;
+  }
   // This admission just proved that no job owns the slot's finalization resources, so the
   // frozen order/rewrite builders still carry the *retired* interval's binding. Clear it
   // here: this interval's CanonicalOrder phase binds them for its own frozen rows, and
@@ -392,6 +404,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   job.phaseTick = capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
   job.interval = captureInterval_;
+  job.admission.sessionExitReceiptRing = sessionExitReceiptRing;
   job.causalBase = baseSource;
   job.causalBaseSnapshot = std::move(causalBaseSnapshot);
   if (!job.causalBase.snapshotIdentity) job.causalBaseSnapshot = {};
@@ -936,7 +949,8 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   const bool ownsTrackState = job.interval == captureInterval_ &&
       job.slot == activeLoopIndex;
   const PendingStopDestination destination = stop.destination;
-  if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop, job.preview))
+  if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop, job.preview,
+                                                         ownsTrackState))
     return false;
   // Retire this job's immutable frozen admission rows now that no consumer
   // borrows them. The role then returns to clean ingress ownership on the next
@@ -1153,7 +1167,9 @@ void Track::startOverdubbing(uint32_t currentTick) {
         tickPhaseInLoop(currentTick, loop.startLoopTick, loop.loopLengthTicks);
   }
   const uint32_t captureStartUs = micros();
-  loop.openOverdubSession(playheadPhase);
+  // DEC-068: a pending predecessor's session tail is captured in its own receipt, so this
+  // interval must not join the draining session state.
+  loop.openOverdubSession(playheadPhase, hasPendingDeferredOverdubStop());
   loop.beginCapture(CapturePhase::Overdub, playheadPhase);
   SC_ODUB_STAGE("begin_capture", micros() - captureStartUs,
                 DebugSessionCapture::kUnsampledHeapBytes,
