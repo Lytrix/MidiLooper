@@ -2318,6 +2318,12 @@ void test_deferred_overdub_stop_completion_queues_stored_verification() {
 
 int main() {
   UNITY_BEGIN();
+  // `ONLY_COMPANION=1` runs just the OpenSpec 5.5 red reproducer, so an investigation trace is not
+  // diluted by every other fixture in this suite.
+  if (getenv("ONLY_COMPANION") != nullptr) {
+    RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
+    return UNITY_END();
+  }
   RUN_TEST(test_first_interval_uses_production_routes_and_freezes_at_punch_out);
   RUN_TEST(test_stop_descriptor_rotation_preserves_worker_borrow_and_reuses_retired_slots);
   RUN_TEST(test_missing_stop_descriptors_rejects_before_opening_capture);
