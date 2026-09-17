@@ -30,11 +30,19 @@ record at 22.91 adds **nothing** (`dLive` stays within +1-2 KB per interval). So
 ~1.24 MB is a **one-time first-record-arm / slot-prewarm cost, not a per-record
 cost**.
 
-Two candidates are **eliminated**: it is not LoopEventStore chunk storage
-(`chunks_free` never moves) and not snapshot slabs — `snap` *falls* from 172 KB to
-4 KB at the same instant, i.e. the published snapshot is released while the 1.24 MB is
-taken. Naming the individual buffers needs per-site tagging; the profile above
-(17 x ~47 KB, 82 x ~4.8 KB) is the input to that.
+The **-168 KB heap drop lands in the same 1 s interval** as the pool jump, so the
+objective's "+1.26 MB pool / +168 KB heap" pair is a **single event: the first record
+arm**, and the coarse 5 s sampling in
+[`hang-8bar-memacct-01`](../../captures/hang-8bar-memacct-01/session_20260917_100202.log)
+could not separate them. Two candidates are **eliminated**: it is not LoopEventStore
+chunk storage (`chunks_free` never moves), and not snapshot slabs (`snap` holds at
+1819 KB and does not rise across the jump). Naming the individual buffers needs per-site
+tagging; the profile above (17 x ~47 KB, 82 x ~4.8 KB) is the input to that.
+
+Reading note, so nobody re-derives the wrong thing: a first pass mis-mapped the
+adjacent `snap=` and `heap_free=` fields in the log analyser and briefly recorded the
+snapshot as *released* at the jump. The corrected reading is the one above; verify the
+field mapping before trusting any delta from that line.
 
 Also landed: the accounting functions (`recordPoolAllocation` / `recordPoolFree` /
 `recordPoolRefusal` / `reset` / `logExternalPoolAccounting`) are now **`FLASHMEM`**.
