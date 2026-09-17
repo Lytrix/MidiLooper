@@ -11,6 +11,7 @@
 #include "Utils/ExternalPoolAccounting.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/IntervalProjection.h"
 
 #if defined(__IMXRT1062__)
 #include <Arduino.h>
@@ -1519,7 +1520,8 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseFirstRecordingB
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM const RuntimePlaybackView*
 LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow(
-    const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks) {
+    Loop& loop, const PlaybackViewSourceIdentity& sourceIdentity, uint32_t loopLengthTicks,
+    uint32_t phase) {
   RuntimePlaybackViewSet* set = viewSetIfPrewarmed();
   if (set == nullptr || loopLengthTicks == 0) {
     return nullptr;
@@ -1530,19 +1532,38 @@ LoopPlaybackRuntime::adoptFirstRecordingBarReturnWindow(
   }
   RuntimePlaybackView& window = set->views[index];
   // A bound return window: raw coverage already replaced by final loop geometry.
-  // A window whose bar ends with a held note is refused because its closure is
-  // not inside the window (a later bar or the loop end carries it); that take
-  // keeps the publication-gap behaviour until the bundle carries its ledger
-  // boundary.
-  if (window.rawCoveragePrepared || !window.complete || window.firstRecordReturnWindowHasHeldNote ||
-      window.coverage.startPhase != 0 || window.coverage.lengthTicks != loopLengthTicks ||
+  // It holds only the first bar, so it serves the launch while `phase` is inside
+  // that coverage; past it the caller falls back (the root has normally published
+  // by then). A note whose closing Off lies beyond the window is closed by the
+  // published root when the playhead reaches it; if the root is late, the loop
+  // wrap releases it at the latest. Carrying that closure in the window itself is
+  // the remaining bundle work (CURRENT_WORK S2).
+  const bool phaseInsideCoverage =
+      phase >= window.coverage.startPhase &&
+      phase - window.coverage.startPhase < window.coverage.lengthTicks;
+  if (window.rawCoveragePrepared || !window.complete || !phaseInsideCoverage ||
       window.coverage.loopLengthTicks != loopLengthTicks) {
     return nullptr;
   }
   if (!(window.source == sourceIdentity)) {
     window.source = sourceIdentity;
+    // The bundle includes its cursor. The launch phase is where the live take
+    // stopped, so the notes below it were already heard: select the first event
+    // after it instead of letting the emission replay the window as a loop-start
+    // catch-up (which dumped the already-played prefix in bursts). This mirrors
+    // `reanchorPlaybackIndex` for the merged path at the same boundary.
+    size_t cursor = 0;
+    while (cursor < window.storage.eventCount) {
+      const MidiEvent& event = window.storage.events[window.storage.order[cursor]];
+      if (IntervalProjection::playbackEventPhase(event.tick, loopLengthTicks) > phase) {
+        break;
+      }
+      ++cursor;
+    }
+    loop.nextEventIndex = static_cast<uint16_t>(cursor);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-    DebugSessionCapture::firstRecordReturnWindowAdopted(loopLengthTicks);
+    DebugSessionCapture::firstRecordReturnWindowAdopted(loopLengthTicks,
+                                                        window.storage.eventCount);
 #endif
   }
   // A preserve-reset clears the published flag across the launch; the window is

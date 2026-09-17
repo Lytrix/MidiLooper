@@ -692,9 +692,9 @@ SC_MEM_ATTR void playbackOrder(uint32_t durationUs, uint32_t eventCount) {
                 (unsigned long)durationUs, (unsigned long)eventCount);
 }
 
-SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks) {
-  emitCapPrintf("#CAP,%lu,DIAG,first_record_adopt,%lu\r\n", (unsigned long)micros(),
-                (unsigned long)loopLengthTicks);
+SC_MEM_ATTR void firstRecordReturnWindowAdopted(uint32_t loopLengthTicks, size_t retainedEvents) {
+  emitCapPrintf("#CAP,%lu,DIAG,first_record_adopt,%lu,%lu\r\n", (unsigned long)micros(),
+                (unsigned long)loopLengthTicks, (unsigned long)retainedEvents);
 }
 
 SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t track, uint8_t slot,

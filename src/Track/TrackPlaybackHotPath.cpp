@@ -247,8 +247,12 @@ void Track::playCommittedLoopMidi(uint8_t slotIndex, uint32_t currentTick,
     // snapshot-backed fixed source above exists and the merged window would
     // hold empty until that publish lands (the audible ~0.6 s gap). The
     // record-stop handoff already bound the prepared bar-1 window to the final
-    // geometry; serve the launch from it and let the published root replace it.
-    fixedView = runtime.adoptFirstRecordingBarReturnWindow(expectedFixedSource, loop.loopLengthTicks);
+    // geometry; serve the launch from it while the playhead is inside that
+    // coverage and let the published root replace it.
+    const uint32_t launchPhase = IntervalProjection::tickPhaseInProjectionCycle(
+        currentTick, projectionCycleStartTick, loop.loopLengthTicks);
+    fixedView = runtime.adoptFirstRecordingBarReturnWindow(loop, expectedFixedSource,
+                                                           loop.loopLengthTicks, launchPhase);
   }
 
 #if RUNTIME_TIMING_ENABLED

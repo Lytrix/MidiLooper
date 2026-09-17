@@ -135,11 +135,6 @@ struct RuntimePlaybackView {
   // preserved across playback-cache metadata resets and released by the next
   // take's preparation boundary.
   bool firstRecordReturnWindow = false;
-  // Set by `bindRawCoverage` when a NoteOn inside the window has no closing
-  // NoteOff inside it. The closure lives in a later bar or at the loop end and
-  // only the published root carries it, so the window must not serve that
-  // take's launch on its own.
-  bool firstRecordReturnWindowHasHeldNote = false;
   bool sourceFilled = false;
   bool complete = false;
   bool published = false;

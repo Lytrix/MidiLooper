@@ -6096,7 +6096,7 @@ void test_first_record_bound_window_is_adopted_as_the_audible_source() {
   TEST_ASSERT_NULL(runtime.publishedFullLoopView(launchSource, 768));
 
   const RuntimePlaybackView* adopted =
-      runtime.adoptFirstRecordingBarReturnWindow(launchSource, 768);
+      runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 768, 236);
   TEST_ASSERT_NOT_NULL(adopted);
   TEST_ASSERT_TRUE(adopted->published);
   TEST_ASSERT_TRUE(adopted->complete);
@@ -6107,20 +6107,26 @@ void test_first_record_bound_window_is_adopted_as_the_audible_source() {
   TEST_ASSERT_EQUAL_UINT32(768, adopted->coverage.loopLengthTicks);
   // Adoption is a one-time stamp: the ordinary published-view query serves it after.
   TEST_ASSERT_EQUAL_PTR(adopted, runtime.publishedFullLoopView(launchSource, 768));
-  // A later root (new revision/generation) is not shadowed by the raw window, and
-  // the window cannot serve a longer loop than the one it was bound to.
+  // A later root (new revision/generation) is not shadowed by the raw window; the
+  // window cannot serve a longer loop than the one it was bound to; and it only
+  // serves the launch while the playhead is inside its own coverage.
   TEST_ASSERT_NULL(runtime.publishedFullLoopView({loop.playbackRevision + 2, 3, loop.publishedSnapshotIdentity()}, 768));
-  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(launchSource, 1536));
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 1536, 236));
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 768, 768));
 }
 
-void test_first_record_bound_window_with_a_held_note_is_not_adopted() {
+// A multi-bar take binds the same first-bar window. It serves the launch from the
+// stop phase until the playhead leaves bar 1; the published root takes over inside
+// that window (measured 0.45-0.94 s against a 2 s bar).
+void test_first_record_first_bar_window_serves_a_multi_bar_launch() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
   Loop loop;
   loop.beginCapture(CapturePhase::Record);
-  // The note's closing Off is not inside bar 1 (it is held across the return
-  // boundary), so only the published root can carry the closure.
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(32, 1, 60, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(96, 1, 60)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 62, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(500, 1, 62)));
 
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews());
@@ -6128,13 +6134,26 @@ void test_first_record_bound_window_with_a_held_note_is_not_adopted() {
   const PlaybackViewSourceIdentity recordingSource{loop.playbackRevision, 1,
                                                    loop.publishedSnapshotIdentity()};
   for (size_t i = 0; i < 16; ++i) runtime.serviceFirstRecordingBar(loop, recordingSource, 768, 1);
-  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(768));
-  auto* set = runtime.viewSetIfPrewarmed();
-  const uint8_t window = set->firstRecordReturnWindowIndex();
-  TEST_ASSERT_NOT_EQUAL(RuntimePlaybackViewLifecycle::kNoView, window);
-  TEST_ASSERT_TRUE(set->views[window].firstRecordReturnWindowHasHeldNote);
+  // Two bars: the window keeps its bar-1 coverage and is bound to the loop length.
+  TEST_ASSERT_TRUE(runtime.bindFirstRecordingBar(1536));
+  runtime.reset(true);
+  const PlaybackViewSourceIdentity launchSource{loop.playbackRevision + 1, 2, nullptr};
 
-  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow({loop.playbackRevision + 1, 2, nullptr}, 768));
+  // The launch phase is where the take stopped: the two notes below it were
+  // already heard live, so the cursor starts at the first event after it instead
+  // of replaying the window as a loop-start catch-up.
+  loop.lastTickInLoop = 253;
+  loop.nextEventIndex = 0;
+  const RuntimePlaybackView* adopted =
+      runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 1536, 253);
+  TEST_ASSERT_NOT_NULL(adopted);
+  TEST_ASSERT_EQUAL_UINT32(768, adopted->coverage.lengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(1536, adopted->coverage.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT16(2, loop.nextEventIndex);
+  TEST_ASSERT_EQUAL_UINT32(400, adopted->storage.events[adopted->storage.order[loop.nextEventIndex]].tick);
+  // Past the window's coverage the caller falls back instead of emitting nothing
+  // from a source that never held bar 2.
+  TEST_ASSERT_NULL(runtime.adoptFirstRecordingBarReturnWindow(loop, launchSource, 1536, 800));
 }
 
 void test_first_record_return_window_release_covers_a_bound_window() {
@@ -6419,7 +6438,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_first_record_preparation_failure_does_not_change_existing_runtime);
   RUN_TEST(test_first_record_return_window_releases_for_the_next_take);
   RUN_TEST(test_first_record_bound_window_is_adopted_as_the_audible_source);
-  RUN_TEST(test_first_record_bound_window_with_a_held_note_is_not_adopted);
+  RUN_TEST(test_first_record_first_bar_window_serves_a_multi_bar_launch);
   RUN_TEST(test_first_record_return_window_release_covers_a_bound_window);
   RUN_TEST(test_first_record_window_refresh_reuses_capture_store_and_restarts_on_append);
   RUN_TEST(test_boot_playback_prewarm_does_not_allocate_capture_workers_and_upgrades_in_place);
