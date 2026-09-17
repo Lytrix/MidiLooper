@@ -1177,14 +1177,36 @@ def _device_bar_index_at_record_start(
 
 
 def _device_bar_probe(serial_collector: Any):
-    """Probe over the capture tail: returns the newest device bar index."""
+    """Returns the newest device bar index, scanning only new capture lines.
+
+    A fixed tail slice was not enough: at the run's line rate a 400-line tail can hold no
+    `BAR` row at all (the device emits one per bar), so the probe always returned None and
+    the stream fell back to its duration. A forward cursor keeps the scan O(total lines).
+    """
+
+    state = {"cursor": 0}
 
     def _probe() -> Optional[int]:
         try:
             lines = serial_collector.snapshot()
         except Exception:
             return None
-        return _latest_device_bar_index(lines[-400:])
+        cursor = state["cursor"]
+        if len(lines) < cursor:
+            cursor = 0  # ring wrapped
+        latest: Optional[int] = None
+        for line in lines[cursor:]:
+            if not line.startswith("#CAP,") or ",BAR," not in line:
+                continue
+            parts = line.split(",")
+            if len(parts) < 5:
+                continue
+            try:
+                latest = int(parts[4])
+            except ValueError:
+                continue
+        state["cursor"] = len(lines)
+        return latest
 
     return _probe
 
