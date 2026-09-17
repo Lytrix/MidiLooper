@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 
+#include "Utils/ExternalPoolAccounting.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/DebugSessionCapture.h"
 
@@ -386,7 +387,10 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCaptureStaging(
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews() {
-  if (!prewarmCaptureStaging()) return false;
+  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
+  const bool stagingReady = prewarmCaptureStaging();
+  ExternalPoolAccounting::endTag();
+  if (!stagingReady) return false;
   if (!viewSet->prewarmed && (viewSet->frozenCaptureStaging().frozen ||
       viewSet->frozenCaptureStaging().storage.eventCount ||
       viewSet->frozenCaptureStaging().openReservationCount() ||

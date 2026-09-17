@@ -20,6 +20,7 @@
 #include "Utils/MemoryMonitor.h"
 #include "Utils/MemoryPressurePolicy.h"
 #include "Utils/RecordStopLength.h"
+#include "Utils/ExternalPoolAccounting.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "OverlapNoteIdSet.h"
 
@@ -387,14 +388,21 @@ void Track::startRecording(uint32_t currentTick) {
   // leaves the retained view ready for the record-stop handoff.
   // Reset invalidates canonical generations and snapshot ownership. Reserve
   // the new take's resources afterwards, so its later stop can use them.
+  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagResetPassTimeline);
   loop.resetPassTimeline();
+  ExternalPoolAccounting::endTag();
+  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
   prewarmPlaybackForSlot(activeLoopIndex, true);
+  ExternalPoolAccounting::endTag();
   auto preRoll = std::move(armedPreRollNotes);
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {
     // Establish the empty bar-1 playback view before the first accepted input.
     // Later capture updates are still admitted by the canonical capture store;
     // this preparation step must never become a new input rejection policy.
-    if (!runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR)) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPrepareFirstBar);
+    const bool firstBarReady = runtime->prepareFirstRecordingBar(Config::TICKS_PER_BAR);
+    ExternalPoolAccounting::endTag();
+    if (!firstBarReady) {
       logger.log(CAT_TRACK, LOG_WARNING,
                  "First-record bar-1 playback preparation unavailable; capture admission retained");
     }
