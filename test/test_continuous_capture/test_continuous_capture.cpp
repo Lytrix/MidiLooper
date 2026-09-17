@@ -190,6 +190,7 @@ struct TrackCaptureStopTestAccess {
     return runtime(track).frozenCaptureCanonicalOrder.complete();
   }
   static bool frozenOrderComplete(Track& track) { return runtime(track).frozenCaptureOrder.complete(); }
+  static bool wrapCommitPending(Track& track) { return track.overdubWrapCommitPending_; }
   static bool canonicalHasFrozenBinding(Track& track) {
     return runtime(track).canonicalPassInputs.hasFrozenBinding();
   }
@@ -1780,36 +1781,21 @@ void test_ineligible_stored_verification_queue_keeps_pending_dump() {
   TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
 }
 
-/// DEC-069: the live interval's wrap is a *third* transition that touches the slot's canonical
-/// work, after the start and before the stop, and it must respect the pending predecessor job's
-/// ownership of it exactly as the other two do.
-///
-/// Before this change `commitOverdubWrap` (a) called `resumeCanonicalAfterAppend`, whose
-/// `resumeCurrentAfterAppend` resets the frozen capture binding, and (b) discarded the frozen
-/// order/rewrite builders unconditionally. Both are owned by a pending stop job, so a successor
-/// wrap clobbered its predecessor mid-flight.
-///
-/// This test pins the part that is fixed here: the wrap no longer destroys the predecessor's
-/// binding or its builders. What it cannot pin natively is the predecessor's *retirement*, because
-/// the wrap's pass commit also advances the loop's playback revision, and the predecessor's
-/// canonical frozen source is pinned to the revision it was admitted against
-/// (`RuntimeCanonicalPassInputs::valid` compares the live `playbackRevision`). `ready()` therefore
-/// goes false, its `CanonicalTail` phase denies forever, it never retires, and the live interval's
-/// own stop stays refused as `deferred/frozen admission role is occupied` -- the device symptom in
-/// `captures/session_20260917_172651.log` (OD2's job pending from 590.687 s, OD3's stop refused at
-/// 598.245 s). Gating that revision advance is the DEC-069 decision, verified on device.
+/// DEC-069 defensive guard: `Track::commitOverdubWrap` may only be entered when no deferred job
+/// owns the slot (the deferral gate in `maybeCommitOverdubWrap` is the primary owner of that
+/// question), but the wrap must still not clobber a pending predecessor's canonical work if it is
+/// ever reached with a job pending. It used to call `resumeCanonicalAfterAppend` -- whose
+/// `resumeCurrentAfterAppend` resets the frozen capture binding -- and to discard the frozen
+/// order/rewrite builders unconditionally. This pins the guard directly.
 void test_successor_wrap_keeps_the_predecessors_frozen_builders() {
   Track& track = preparePlayingTrack();
-  Loop& loop = track.getActiveLoop();
-  // A: deferred stop whose job owns the frozen role and has closure work (held note).
+  // A: deferred stop whose job owns the frozen role and binds the slot's canonical source.
   clockManager.assignCurrentTickSilently(96);
   midiButtonActions.handleToggleRecord();
   inputNote(60, 97, UINT32_MAX);
   clockManager.assignCurrentTickSilently(144);
   midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
-  // Let the predecessor reach the phase where it owns the slot's canonical work: the frozen
-  // order/rewrite binding and the canonical inputs' frozen source.
   for (unsigned grain = 0;
        grain < 20000 &&
        TrackCaptureStopTestAccess::jobPhase(track) <
@@ -1820,34 +1806,75 @@ void test_successor_wrap_keeps_the_predecessors_frozen_builders() {
        grain < 64 && !TrackCaptureStopTestAccess::canonicalHasFrozenBinding(track); ++grain)
     (void)TrackCaptureStopTestAccess::step(track);
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalHasFrozenBinding(track),
-      "the predecessor must bind its frozen canonical source before the successor wraps");
+      "the predecessor must bind its frozen canonical source first");
   const uint64_t generationBefore = TrackCaptureStopTestAccess::frozenOrderStorageGeneration(track);
-  const bool canonicalCompleteBefore = TrackCaptureStopTestAccess::canonicalOrderComplete(track);
-  // B: successor interval whose wrap crosses loop end while A's job is still pending.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalOrderComplete(track));
+  // B: successor interval with rows, then a direct commit attempt while A is still pending.
   clockManager.assignCurrentTickSilently(192);
   track.startOverdubbing(192);
   inputNote(64, 193, UINT32_MAX);
   inputNote(62, 200, 240);
-  TEST_ASSERT_TRUE(track.maybeCommitOverdubWrap(700, 40));
+  (void)track.commitOverdubWrap();
   TEST_ASSERT_EQUAL_UINT64_MESSAGE(
       generationBefore, TrackCaptureStopTestAccess::frozenOrderStorageGeneration(track),
-      "the successor wrap must not discard the pending predecessor's frozen builders");
+      "the wrap must not discard the pending predecessor's frozen builders");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalOrderComplete(track),
-      "the predecessor's completed canonical order must survive the successor wrap");
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(
-      static_cast<uint8_t>(canonicalCompleteBefore ? 1 : 0),
-      static_cast<uint8_t>(TrackCaptureStopTestAccess::canonicalOrderComplete(track) ? 1 : 0),
-      "the successor wrap must not reset the predecessor's canonical order state");
+      "the predecessor's completed canonical order must survive the wrap");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalHasFrozenBinding(track),
-      "the successor wrap must not reset the pending predecessor's frozen canonical source");
+      "the wrap must not reset the pending predecessor's frozen canonical source");
 }
 
-/// A note held across the successor's wrap must keep an open staging reservation for the
-/// successor capture tail, so the physical NoteOff that arrives after the wrap closes the
-/// recorded note. Without it the off is rejected as `unmatched NoteOff`, the note stays in
-/// the live pending set (so the next NoteOn for that pitch is silently dropped as a
-/// duplicate and every later off is rejected too), and the committed content carries the
-/// NoteOn with no terminal off — the reported "third overdub lengthens the note offs".
+/// DEC-069 Option A: while a deferred stop job owns the slot's canonical revision, the live
+/// interval's wrap records across loop end but seals no pass; the commit is owed to the first turn
+/// after the job retires. Before this, the seal advanced `Loop::playbackRevision`, which
+/// invalidated the job's frozen canonical source, so it never retired and this interval's own stop
+/// was refused as occupied for the rest of the session.
+void test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // A: deferred stop whose job owns the slot's canonical work (held note gives it closure work).
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, UINT32_MAX);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  const uint32_t revisionBefore = loop.playbackRevision;
+  const size_t passesBefore = loop.passes.overdubPasses.size();
+  // B: successor interval that crosses loop end while A is still pending.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(64, 193, UINT32_MAX);
+  inputNote(62, 200, 240);
+  TEST_ASSERT_FALSE_MESSAGE(track.maybeCommitOverdubWrap(700, 40),
+      "the crossing must not seal a pass while a stop job owns the slot's revision");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::wrapCommitPending(track),
+      "the deferred wrap commit must be owed, not dropped");
+  TEST_ASSERT_EQUAL_UINT32(revisionBefore, loop.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(passesBefore),
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  // A retires: nothing advanced the revision it pinned, so its own commit succeeds.
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+      "the predecessor must retire when the successor wrap defers its pass commit");
+  const size_t passesAfterPredecessor = loop.passes.overdubPasses.size();
+  const uint32_t revisionAfterPredecessor = loop.playbackRevision;
+  // The owed commit runs on the next ordinary playback turn and seals exactly one pass.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::wrapCommitPending(track));
+  TEST_ASSERT_TRUE(track.maybeCommitOverdubWrap(40, 41));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::wrapCommitPending(track));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(passesAfterPredecessor + 1),
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  TEST_ASSERT_GREATER_THAN_UINT32(revisionAfterPredecessor, loop.playbackRevision);
+}
+
+/// With the wrap commit deferred (DEC-069 Option A) a note held across loop end never loses its
+/// staging reservation at all: the rows stay in the same unsealed pass, so the physical NoteOff
+/// that arrives after the crossing closes the recorded note instead of being rejected as
+/// `unmatched NoteOff`. Rejection left the note in the live pending set (the next NoteOn for that
+/// pitch is dropped as a duplicate and every later off is rejected too) and the committed content
+/// carried a NoteOn with no terminal off -- the reported "third overdub lengthens the note offs".
 void test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off() {
   Track& track = preparePlayingTrack();
   Loop& loop = track.getActiveLoop();
@@ -1863,27 +1890,38 @@ void test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off
   inputNote(62, 200, 240);
   TEST_ASSERT_EQUAL_UINT32(1u, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveNotes(track).size()));
   TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveReservations(track)));
-  TEST_ASSERT_TRUE(track.maybeCommitOverdubWrap(700, 40));
+  TEST_ASSERT_FALSE(track.maybeCommitOverdubWrap(700, 40));
   TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(
       0u, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveReservations(track)),
-      "the held note must be re-reserved into the successor capture tail at the wrap");
-  // The physical NoteOff arrives after the wrap.
+      "a deferred wrap must not reset the held note's reservation");
+  // The physical NoteOff arrives after the crossing and must be admitted.
   clockManager.assignCurrentTickSilently(768 + 250);
   midiHandler.handleMidiMessage(midi::NoteOff, 1, 64, 0, SOURCE_USB);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(
       0u, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveNotes(track).size()),
-      "the post-wrap NoteOff must be admitted, not rejected as unmatched");
+      "the post-crossing NoteOff must be admitted, not rejected as unmatched");
   TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(TrackCaptureStopTestAccess::liveReservations(track)));
+  // The pass still in the producer now carries the complete pair: a NoteOn and its terminal off,
+  // with no dangling NoteOn for the resolver to lengthen into the previous overdub's content.
   const auto& capture = loop.capture.store;
-  bool closed = false;
-  for (size_t i = capture.size(); i > 0; --i) {
-    const MidiEvent& evt = capture.at(i - 1);
-    if (evt.isNoteOff() && evt.data.noteData.note == 64) {
-      closed = true;
-      break;
-    }
+  bool hasOn = false;
+  bool hasOff = false;
+  for (size_t i = 0; i < capture.size(); ++i) {
+    const MidiEvent& evt = capture.at(i);
+    if (evt.channel != 1 || evt.data.noteData.note != 64) continue;
+    if (evt.isNoteOn()) hasOn = true;
+    if (evt.isNoteOff()) hasOff = true;
   }
-  TEST_ASSERT_TRUE_MESSAGE(closed, "the successor capture tail must own the held note's terminal off");
+  TEST_ASSERT_TRUE_MESSAGE(hasOn && hasOff,
+      "the deferred pass must carry the held note's on and its terminal off");
+  // Once the predecessor retires, the owed commit seals that pass exactly once.
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  const size_t passesAfterPredecessor = loop.passes.overdubPasses.size();
+  TEST_ASSERT_TRUE(track.maybeCommitOverdubWrap(40, 41));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(passesAfterPredecessor + 1),
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
 }
 
 /// The deferred overdub-stop completion is the normal commit route for a stop during
@@ -1958,6 +1996,7 @@ int main() {
   RUN_TEST(test_successor_start_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy);
   RUN_TEST(test_deferred_predecessor_completion_leaves_successor_interval_untouched);
+  RUN_TEST(test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending);
   RUN_TEST(test_successor_wrap_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off);
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);

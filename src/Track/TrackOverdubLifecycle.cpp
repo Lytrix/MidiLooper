@@ -400,8 +400,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
                                                 loop.loopLengthTicks);
 #endif
   job.loopId = loop.loopId;
-  job.slot = activeLoopIndex;
-  job.phaseTick = capturePhaseTick(currentTick);
+  job.slot = activeLoopIndex;  job.phaseTick = capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
   job.interval = captureInterval_;
   job.admission.sessionExitReceiptRing = sessionExitReceiptRing;
@@ -443,6 +442,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     overdubSessionBeforePublished_ = {};
     hasOverdubSessionBeforePublished_ = false;
   }
+  // DEC-069: this interval's owed wrap commit is consumed by its own stop. The rows that had not
+  // been sealed at a crossing travel with the sealed extent into the pass this job commits, so no
+  // deferred wrap survives its interval.
+  overdubWrapCommitPending_ = false;
   // Button A closes input at this boundary. The sealed frozen capture owns all
   // remaining canonical/companion work, while the existing prepared playback
   // window remains the active source. Publish PLAYING immediately so the
@@ -1140,6 +1143,8 @@ void Track::startOverdubbing(uint32_t currentTick) {
   loopPrefixMeasureAfterUndo_ = false;
   loopPrefixMeasureAfterUndoNoted_ = false;
   overdubStopDebtProbeArmed_ = false;
+  // DEC-069: a wrap commit owed by a previous interval never crosses an interval boundary.
+  overdubWrapCommitPending_ = false;
   const uint32_t telemetryStartUs = micros();
   SC_ODUB_STAGE("enter", 0, DebugSessionCapture::kUnsampledHeapBytes,
                 DebugSessionCapture::kUnsampledHeapBytes, "ok");
@@ -1364,6 +1369,8 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
     return;
   }
   overdubStopDebtProbeArmed_ = false;
+  // DEC-069: this interval's own rows are sealed below, so no deferred wrap commit survives it.
+  overdubWrapCommitPending_ = false;
   const uint32_t currentTick = clockManager.getCurrentTick();
   Loop& loop = getActiveLoop();
   const uint32_t stopStartUs = micros();

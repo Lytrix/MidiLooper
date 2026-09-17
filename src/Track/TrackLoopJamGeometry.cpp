@@ -48,6 +48,8 @@ TRACK_COLD_MEM void Track::clear() {
     playingMidiDrainAfterOverdubStopIdleNoted_ = false;
     loopPrefixMeasureAfterUndo_ = false;
     loopPrefixMeasureAfterUndoNoted_ = false;
+    // DEC-069: clearing the slot discards the rows a deferred wrap commit was owed for.
+    overdubWrapCommitPending_ = false;
     invalidateCaches();
     editManager.revertNoteEditSessionForLoopClear(*this);
     logger.logTrackEvent("Track cleared", clockManager.getCurrentTick());

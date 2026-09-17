@@ -450,6 +450,9 @@ private:
   bool loopPrefixMeasureAfterUndo_ = false;
   bool loopPrefixMeasureAfterUndoNoted_ = false;
   bool overdubStopDebtProbeArmed_ = false;
+  /// DEC-069: a wrap crossing happened while a deferred stop job owned the slot's canonical
+  /// revision, so the pass commit is owed to the first turn after that job retires.
+  bool overdubWrapCommitPending_ = false;
   uint32_t overdubStopDebtProbeArmedUs_ = 0;
   bool overdubStopVisualDirtyBefore_ = false;
   bool overdubStopVisualDirtyAfter_ = false;

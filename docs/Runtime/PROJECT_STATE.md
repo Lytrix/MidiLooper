@@ -13,9 +13,11 @@ record at the wrap. DEC-067's rule — a resource blocks the transition that fir
 therefore applies to the wrap as it already does to start and stop. Landed: the wrap no longer
 resets a pending predecessor's frozen canonical source or its frozen order/rewrite builders (two
 new native cases; full native 2211 / 1 skipped / 0 failures; RAM1 locals 6464; firmware builds).
-Open: DEC-069's revision gate, Option A (defer the wrap pass commit while a stop job is pending,
-recommended) versus Option B (restart the predecessor's tail across the append) — awaiting the
-owner's choice before the device acceptance run (task 7.2).
+DEC-069 Option A is now implemented (owner's choice): the crossing is recorded as an owed commit
+and sealed on the first turn after the job retires, so the revision the job pinned never moves; the
+held note's reservation is never reset, which removes the live interval's `unmatched NoteOff`
+rejections as well. Three native cases (two fail without the gate); full native 2,212 / 1 skipped /
+0 failures; RAM1 locals 6,464. Outstanding: the wrap interaction's device acceptance (task 7.2).
 
 
 **2026-09-17 reentry session ownership (DEC-068).** Tasks 5.1(d)/(e) landed and immediately
