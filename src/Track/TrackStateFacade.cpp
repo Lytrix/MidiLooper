@@ -82,10 +82,11 @@ TRACK_COLD_MEM bool Track::transitionState(TrackState newState) {
     armedPreRollNotes.clear();
   }
 
+  // One ST,Track capture line per transition: `Logger::logStateTransition` already emits
+  // `SC_STATE(component, from, to)`, so the direct SC_STATE here duplicated every track
+  // transition in the capture stream (the host had to collapse the pairs).
   logger.logStateTransition("Track", TrackStateMachine::toString(oldState),
                             TrackStateMachine::toString(newState));
-  SC_STATE("Track", TrackStateMachine::toString(oldState),
-           TrackStateMachine::toString(newState));
   return true;
 }
 
