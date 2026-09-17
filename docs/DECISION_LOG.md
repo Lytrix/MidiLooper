@@ -131,6 +131,27 @@ cannot keep: the job was still at `PrepareTransfer` when the transport stopped, 
 rows without the transforms the display resolves the overdubbed notes from. Audible content is intact
 because the raw rows and the bridge window carry it.
 
+**Probe result (2026-09-17, `captures/successor-wrap-43`, read-only).** The retarget logs the companion
+predicates before and after the command-epoch retarget: `probe_before=73`, `probe_after=205`
+(bit0 prefix Ready, bit1 inputs-generation match, bit2 `canonicalPassInputs.ready()`, bit3 capture
+attached, bit4 `frozenCaptureCompanions.idle()`, bit5 `frozenCompanionPasses.idle()`, bit6 companion
+apply available, bit7 frozen source current for the post-stop epoch, bit8 `canonicalTailPhase == Idle`,
+bit9 companions verified). The epoch retarget works (bit7 and bit2 flip to set). What blocks the
+companion path is bits 4/5/8: the slot's canonical tail phase and companion workers are **not idle** --
+they are the *retained* tail cache the predecessor's cleanup keeps across punch-out
+(`retainCommittedCanonicalTail` leaves `canonicalTailPhase == Complete` with the companion workers
+owned). So the conflict is cache capacity, not a stale epoch: a retargeted successor cannot begin its
+own companion preparation while the retained cache owns those workers.
+
+**Consequent fix (not yet implemented).** At the retarget: (1) release the retained cache
+(`discardFrozenCanonicalTail`, which drops the companion rows/passes/inputs for the completed phase);
+(2) do **not** call `retireSkippedCompanionPreparation`, because that is what zeroed the undo-collection
+estimate and left the interval without a protected undo entry; (3) let the job continue
+`CanonicalTail -> CompanionHistory -> UndoCollection -> CompanionBridge -> AtomicTransfer` so
+`commitStoppedWithUndo` publishes both the companion representation and the undo; (4) keep the bounded
+per-phase fallback purely as a safety net, with its raw-only commit documented as losing the display
+representation and the undo. The cached tail is recomputable, so releasing it costs work, not content.
+
 **Attempted fix implemented, then reverted (2026-09-17, `baafd68a` reverts the attempt).** Keeping the
 companion preparation on the retarget (preference order plus a bounded 512-grain per-phase fallback)
 restored the display -- `captures/successor-wrap-42` reports `overdub_ok=True`, up from `False` in the
