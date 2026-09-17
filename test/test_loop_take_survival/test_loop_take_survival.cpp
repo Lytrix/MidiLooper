@@ -1808,6 +1808,79 @@ void test_overdub_wrap_ahead_does_not_publish_until_session_exit() {
   TEST_ASSERT_EQUAL(1, countNoteOns(snapshotEvents, 67));
 }
 
+void test_stale_root_overlay_keeps_a_journaled_wrap_pass_after_session_close() {
+  // User report (2026-09-17): record 8 bars, then an overdub that starts at bar 3 and crosses
+  // loop end. The wrap commits pass 1 (the pre-wrap bars) and the stop commits pass 2 (the
+  // wrap tail). After the slot stopped, pass 1 kept showing on the display but was never
+  // audible again -- the display resolves every Active pass from `loop.passes`, while the
+  // audible reader reads the published snapshot root plus a curated overlay of passes the root
+  // does not yet carry.
+  //
+  // The wrapped pass is tracked as a *wrap journal*, and `queueSessionExitSnapshot` refuses to
+  // queue it again because `passAlreadyTracked` sees `journaledPassIds`. Once the session
+  // closes, `overdubSessionPassIds_` no longer enumerates it either, so the stale-root overlay
+  // used to carry only the stop's pass and the wrapped bars went silent for every cycle until
+  // the wrap journal itself finished publishing.
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+
+  loop.openOverdubSession(0);
+  TEST_ASSERT_TRUE(static_cast<bool>(loop.publishedSnapshot()));
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  // The wrap journal carries the close-set rows, so give pass 1 one closed pending change
+  // (the device wrap path always has its session's rows there). Without it the journal has
+  // nothing to queue and the wrapped pass would publish through the ordinary pass route.
+  pushClosedPendingAdd(loop, 1, 64, 400, 480);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(800, 1, 67, 80)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(860, 1, 67, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, 860));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  // The wrapped pass must already be covered by the stale-root view. The publisher's first
+  // turns consume the session exit and start the wrap journal's construction, and the window
+  // gather must keep both committed passes visible throughout -- this is exactly the pass-id
+  // scan the audible reader uses while the root lags.
+  SessionMidiEventVec beforeFirstTurn;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(beforeFirstTurn, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(beforeFirstTurn, 64));
+  TEST_ASSERT_EQUAL(1, countNoteOns(beforeFirstTurn, 67));
+
+  // Drain one publisher turn at a time. For every turn on which the overlay is what answers,
+  // both committed passes must be visible: the wrapped pass 64 and the stop's pass 67.
+  SessionMidiEventVec effective;
+  loop.copyEffectiveCommittedEventsInRange(effective, 0, 3072, true);
+  TEST_ASSERT_EQUAL(1, countNoteOns(effective, 64));
+  TEST_ASSERT_EQUAL(1, countNoteOns(effective, 67));
+
+  size_t turns = 0;
+  while (loop.hasPendingSnapshotPublish() && turns < 10000) {
+    loop.stepPendingSnapshotPublish(1, true);
+    ++turns;
+    SessionMidiEventVec overlay;
+    TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(overlay, 0, 3072));
+    TEST_ASSERT_EQUAL_MESSAGE(1, countNoteOns(overlay, 64),
+                             "the wrapped pass must stay audible while its journal publishes");
+    TEST_ASSERT_EQUAL_MESSAGE(1, countNoteOns(overlay, 67),
+                             "the stop's pass must stay audible while the root is stale");
+  }
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  SessionMidiEventVec published;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(published, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(published, 64));
+  TEST_ASSERT_EQUAL(1, countNoteOns(published, 67));
+}
+
 void test_visual_cache_reads_published_snapshot_with_fallback() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -6349,6 +6422,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_exit_restarts_construction_when_overdub_would_block_start);
   RUN_TEST(test_playback_session_exit_publication_gap_predicate);
   RUN_TEST(test_overdub_wrap_ahead_does_not_publish_until_session_exit);
+  RUN_TEST(test_stale_root_overlay_keeps_a_journaled_wrap_pass_after_session_close);
   RUN_TEST(test_settled_overdub_wrap_publishes_current_snapshot);
   RUN_TEST(test_snapshot_yield_retains_then_retries_to_publish);
   RUN_TEST(test_unstamped_wrap_journal_leaves_snapshot_unselected);

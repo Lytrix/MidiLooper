@@ -432,6 +432,93 @@ void test_record_admission_denied_when_required_prewarm_fails() {
   TEST_ASSERT_TRUE(loop.captureActive());
 }
 
+/// Task 4.2: the three admission routes (direct `Track::startOverdubbing`, the manager's
+/// `TrackManager::startOverdubbingTrack`, and Button A's `MidiButtonActions::handleToggleRecord`)
+/// must agree. Each route is driven against the same fixture - A deferred and owning the
+/// frozen/deferred role, B started into the live role - and must produce the same observable
+/// outcome for the admit and for the capacity denial. `Track::stopOverdubbing` is the stop edge
+/// for all three routes, so the stop half asserts the same denial through each route's entry.
+enum class ReentryRoute : uint8_t { TrackDirect, Manager, ButtonA };
+
+const char* reentryRouteName(ReentryRoute route) {
+  switch (route) {
+    case ReentryRoute::TrackDirect: return "Track::startOverdubbing";
+    case ReentryRoute::Manager: return "TrackManager::startOverdubbingTrack";
+    case ReentryRoute::ButtonA: return "MidiButtonActions::handleToggleRecord";
+  }
+  return "unknown";
+}
+
+void startSuccessorThrough(ReentryRoute route, Track& track, uint32_t tick) {
+  clockManager.assignCurrentTickSilently(tick);
+  switch (route) {
+    case ReentryRoute::TrackDirect: track.startOverdubbing(tick); return;
+    case ReentryRoute::Manager: trackManager.startOverdubbingTrack(trackManager.getSelectedTrackIndex()); return;
+    case ReentryRoute::ButtonA: midiButtonActions.handleToggleRecord(); return;
+  }
+}
+
+void stopSuccessorThrough(ReentryRoute route, Track& track, uint32_t tick) {
+  clockManager.assignCurrentTickSilently(tick);
+  switch (route) {
+    case ReentryRoute::TrackDirect: track.stopOverdubbing(); return;
+    case ReentryRoute::Manager:
+    case ReentryRoute::ButtonA: midiButtonActions.handleToggleRecord(); return;
+  }
+}
+
+void assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute route) {
+  const char* const routeName = reentryRouteName(route);
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // A: a normal route start/stop that defers, so A owns the frozen/deferred role.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL(1, TrackCaptureStopTestAccess::queueSize(track));
+  // Admit: every route must open B's live interval while A pends.
+  startSuccessorThrough(route, track, 192);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), routeName);
+  inputNote(62, 193, 216);
+  const size_t rowsAfterAdmit = loop.capture.store.size();
+  const size_t notesAfterAdmit = TrackCaptureStopTestAccess::liveNotes(track).size();
+  const size_t queueAfterAdmit = TrackCaptureStopTestAccess::queueSize(track);
+  TEST_ASSERT_EQUAL_MESSAGE(2, rowsAfterAdmit, routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(193, loop.capture.store.at(0).tick, routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(216, loop.capture.store.at(1).tick, routeName);
+  // Deny: a stop that exceeds the declared capacity is explicit and non-destructive.
+  stopSuccessorThrough(route, track, 240);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "an occupied deferred role must deny the stop through every route");
+  TEST_ASSERT_EQUAL_MESSAGE(queueAfterAdmit, TrackCaptureStopTestAccess::queueSize(track), routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(rowsAfterAdmit, loop.capture.store.size(), routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(notesAfterAdmit, TrackCaptureStopTestAccess::liveNotes(track).size(), routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(193, loop.capture.store.at(0).tick, routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(216, loop.capture.store.at(1).tick, routeName);
+  // All three routes leave the identical live interval, so they agree bit for bit: the
+  // same two accepted rows, no lingering pending note, no second descriptor.
+  TEST_ASSERT_EQUAL_MESSAGE(2, rowsAfterAdmit, routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(0, notesAfterAdmit, routeName);
+  TEST_ASSERT_EQUAL_MESSAGE(1, queueAfterAdmit, routeName);
+  // Leave the fixture clean for the next route: the denial above deliberately keeps this
+  // job parked, so retire it (and the interval) before the next route reuses the track.
+  stopSuccessorThrough(route, track, 288);
+  for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)),
+                                   routeName);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(), routeName);
+}
+
+void test_reentry_routes_agree_on_admission_and_capacity_denial() {
+  assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute::Manager);
+  assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute::ButtonA);
+  assertRouteAgreesOnSuccessorAdmitAndDenial(ReentryRoute::TrackDirect);
+}
+
 void test_manager_reentry_with_a_held_same_pitch_note() {
   Track& track = preparePlayingTrack();
   clockManager.assignCurrentTickSilently(96);
@@ -2052,6 +2139,7 @@ int main() {
   RUN_TEST(test_button_a_successor_stop_denied_until_deferred_role_available);
   RUN_TEST(test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive);
   RUN_TEST(test_record_admission_denied_when_required_prewarm_fails);
+  RUN_TEST(test_reentry_routes_agree_on_admission_and_capacity_denial);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
   RUN_TEST(test_session_exit_receipts_are_per_interval);
