@@ -42,11 +42,22 @@ published root nor the stale-root overlay once its session closed -- the display
   1 MiB; `[env:teensy41-capture-serial-no-grain]` (`SESSION_CAPTURE_GRAIN=0`) drops the family for
   acceptance runs. A runtime serial flag was tried and reverted: it cost 4 KB of the RAM1 local
   allowance (2,304 left) even factored out as a FLASHMEM helper, so the switch is a build flag.
-- Still open: one deterministic residual missing row on the 5-bar shape (`content-verify-51-playback`:
-  note-off tick 128, ch 4, note 78) that does not match the documented loop-boundary residual; and
-  the OpenSpec 5.5 `CompanionHistory` checkpoint (a predecessor paused there never re-admits its
-  companion work once a successor starts -- `captureStopOwner` stays held; red reproducer in
-  `test_continuous_capture`).
+- Still open: the OpenSpec 5.5 `CompanionHistory` checkpoint. A predecessor paused there never
+  re-admits its companion work once a successor starts, so it holds `captureStopOwner` and the
+  frozen role for the rest of the session -- the same wedge as the device's `Overdub stop refused:
+  stop_job_pending phase=7 dest=1`. The reproducer is
+  `test_adversarial_reentry_at_a_companion_checkpoint`, gated behind `REENTRY_RED=1` so a new failure
+  cannot hide under it (default `test_continuous_capture` 55/55, full native 2,219 / 1 skipped /
+  0 failures; `REENTRY_RED=1` shows the one expected failure). Measured this session: the stall has
+  the loop's prepared companion horizon **unowned** (`preparedCompanionHistoryInFlight == false`)
+  and parked at `Prewarmed`, so the driver's `preparedCompanionHistoryCanStep` is false while
+  `beginPreparedCompanionHistory` is re-entered every turn. Ruled out: a
+  `prewarmPreparedCompanionHistory` reset of an in-flight preparation (a guard for it never fires)
+  and a transport command-epoch mismatch (the epoch still matches). Next: trace which phase the
+  preparation reaches before it stops advancing, and whether the successor's start invalidates the
+  frozen staging or the capture-inputs binding that the phase's `sourceCurrent()` reads.
+- Ignored per the owner: one deterministic coalesced note-off on the 5-bar shape
+  (`content-verify-51-playback`, tick 128 / ch 4 / note 78 / velocity 0).
 
 **2026-09-17 pacing FIXED and verified; the successor device case is blocked by a firmware
 guard, not the harness.** [`deadline-pacing-01`](../../captures/deadline-pacing-01/session_20260917_133833.log)
