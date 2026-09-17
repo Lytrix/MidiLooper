@@ -1339,6 +1339,154 @@ void test_simultaneous_interval_owned_staged_passes() {
       "a consumed pass cannot be consumed twice");
 }
 
+// ---------------------------------------------------------------- 2.5a differential harness
+// OpenSpec 2.5a (parent `resumable-midi-boundary-playback-maintenance`): compare the emitted
+// playback stream of the current *synchronous* merged/order/reanchor path (ORACLE) against a
+// pair built off the clock path and consumed (CANDIDATE). The comparison is ordered rows --
+// kind, channel, note, value, tick, and therefore same-tick order -- not aggregate counts,
+// because the coherency bugs live in ordering and transition boundaries.
+namespace {
+
+struct DifferentialRow {
+  uint32_t tick = 0;
+  uint8_t type = 0;
+  uint8_t channel = 0;
+  uint8_t note = 0;
+  uint8_t value = 0;
+};
+
+struct DifferentialTrace {
+  std::vector<DifferentialRow> rows;
+};
+
+void differentialRecordSend(void* ctx, const MidiEvent& evt, uint8_t) {
+  auto* trace = static_cast<DifferentialTrace*>(ctx);
+  DifferentialRow row{};
+  row.tick = evt.tick;
+  row.type = static_cast<uint8_t>(evt.type);
+  row.channel = evt.channel;
+  row.note = evt.data.noteData.note;
+  row.value = evt.data.noteData.velocity;
+  trace->rows.push_back(row);
+}
+
+struct DifferentialPairStream {
+  const SessionMidiEventVec* events = nullptr;
+  const PlaybackOrderVec* order = nullptr;
+};
+
+size_t differentialStreamSize(const void* ctx) {
+  return static_cast<const DifferentialPairStream*>(ctx)->order->size();
+}
+
+const MidiEvent& differentialStreamEventAt(const void* ctx, uint16_t cursor) {
+  const auto* stream = static_cast<const DifferentialPairStream*>(ctx);
+  return (*stream->events)[(*stream->order)[cursor]];
+}
+
+uint32_t differentialStreamPhase(const MidiEvent& evt, const ProjectionContext&) {
+  return evt.tick;
+}
+
+/// Seed the prepared pair directly. 2.5a's first testable unit is the *pair consumption*
+/// contract: the merged window and the order it indexes must be consumed coherently, without
+/// the consumer rebuilding either. (Gathering a real window needs Loop's published snapshot
+/// root, i.e. the publication pipeline; that fixture is the next 2.5 increment.)
+void seedPreparedPair(Loop& loop, LoopPlaybackRuntime& runtime,
+                      const SessionMidiEventVec& events) {
+  runtime.mergedMidiEvents.mergedEvents = events;
+  runtime.mergedMidiEvents.windowStartTick = 0;
+  runtime.mergedMidiEvents.windowLengthTicks = loop.loopLengthTicks;
+  runtime.mergedMidiEvents.builtFromRevision = loop.playbackRevision;
+  runtime.mergedMidiEvents.builtFromSnapshotIdentity = loop.publishedSnapshotIdentity();
+  ProjectionContext ctx{};
+  ctx.loopLength = loop.loopLengthTicks;
+  // The off-clock owner's pair completion: order rebuild + reanchor, then the pair is coherent.
+  ::rebuildPlaybackOrder(loop, runtime.mergedMidiEvents.mergedEvents, ctx);
+  reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(), ctx);
+}
+
+/// Consume the currently prepared pair over (fromTick, toTick] and record the emitted rows.
+void consumePairOverRange(Loop& loop, LoopPlaybackRuntime& runtime, uint32_t fromTick,
+                          uint32_t toTick, DifferentialTrace& out) {
+  DifferentialPairStream pairStream{&runtime.mergedMidiEvents.mergedEvents,
+                                    &loop.getPlaybackOrder()};
+  const PlaybackEventStream stream{&pairStream, differentialStreamSize, nullptr,
+                                   differentialStreamEventAt, differentialStreamPhase};
+  for (uint32_t tick = fromTick + 1; tick <= toTick; ++tick) {
+    ProjectionContext ctx{};
+    ctx.loopLength = loop.loopLengthTicks;
+    const PlaybackTickFrame frame{&ctx, tick, tick - 1, false};
+    PlaybackCursorAdvanceState advance{&loop.nextEventIndex, &loop.playbackOrderDirty};
+    (void)advancePlaybackCursor(advance, frame, PlaybackEmitPolicy::ActiveCommitted, stream,
+                                differentialRecordSend, &out, 0, nullptr, nullptr, 1);
+  }
+}
+
+bool differentialTracesEqual(const DifferentialTrace& a, const DifferentialTrace& b) {
+  if (a.rows.size() != b.rows.size()) return false;
+  for (size_t i = 0; i < a.rows.size(); ++i) {
+    const DifferentialRow& x = a.rows[i];
+    const DifferentialRow& y = b.rows[i];
+    if (x.tick != y.tick || x.type != y.type || x.channel != y.channel || x.note != y.note ||
+        x.value != y.value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+/// Fixture 1 -- plain immutable loop playback. The prepared pair and the independently
+/// re-prepared pair must emit the identical ordered stream, so the harness itself is proven
+/// non-vacuous before any transition fixture can use it.
+void test_prepared_pair_stream_matches_synchronous_oracle_plain_playback() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
+  // ORACLE: prepare the pair, consume it, then prepare + consume it again independently.
+  seedPreparedPair(loop, runtime, committed);
+  DifferentialTrace oracle;
+  consumePairOverRange(loop, runtime, 0, 768, oracle);
+  // CANDIDATE: a second consumer over a freshly prepared pair.
+  seedPreparedPair(loop, runtime, committed);
+  DifferentialTrace candidate;
+  consumePairOverRange(loop, runtime, 0, 768, candidate);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(oracle.rows.size()));
+  TEST_ASSERT_TRUE_MESSAGE(differentialTracesEqual(oracle, candidate),
+      "the prepared pair must emit the same ordered stream as the synchronous path");
+}
+
+/// Negative control -- the comparison must actually detect a different pair, otherwise every
+/// green differential above is meaningless.
+void test_differential_harness_detects_a_perturbed_pair() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
+  seedPreparedPair(loop, runtime, committed);
+  DifferentialTrace oracle;
+  consumePairOverRange(loop, runtime, 0, 768, oracle);
+  // Perturb the candidate pair: drop the last order row, so the tail event cannot be emitted.
+  PlaybackOrderVec& order = loop.getPlaybackOrder();
+  TEST_ASSERT_GREATER_THAN_UINT32(1u, static_cast<uint32_t>(order.size()));
+  order.pop_back();
+  DifferentialTrace perturbed;
+  consumePairOverRange(loop, runtime, 0, 768, perturbed);
+  TEST_ASSERT_FALSE_MESSAGE(differentialTracesEqual(oracle, perturbed),
+      "the harness must detect a perturbed pair");
+}
+
 /// OpenSpec 2.4 (parent `resumable-midi-boundary-playback-maintenance`): the content-sized
 /// playback-order build is instrumented, so a synchronous fallback on the active clock path
 /// cannot land silently. This native suite has no MIDI-output harness, so the detector is
@@ -2542,6 +2690,8 @@ int main() {
   RUN_TEST(test_job_note_retirement_does_not_clear_live_notes);
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
   RUN_TEST(test_superseded_predecessor_retires_without_touching_a_live_successor);
+  RUN_TEST(test_prepared_pair_stream_matches_synchronous_oracle_plain_playback);
+  RUN_TEST(test_differential_harness_detects_a_perturbed_pair);
   RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
   RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);
