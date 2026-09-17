@@ -4333,6 +4333,36 @@ def _run_overdub_pass(
                 channel_1based=CONTROL_CHANNEL_1BASED,
                 press_ms=press_ms,
             )
+            # TEMPORARY VARIANT (DEC-069 acceptance): the successor must own rows *before* its loop
+            # crossing for the deferred wrap commit to be observable. The canonical flow stops
+            # streaming when the predecessor's pass ends, so B would always cross empty.
+            successor_stream_bars = int(getattr(args, "successor_reentry_stream_bars", 0) or 0)
+            if successor_stream_bars > 0:
+                print(
+                    f"[track {_user_track_number(idx)}] successor reentry: streaming "
+                    f"{successor_stream_bars} bar(s) into the live successor interval"
+                )
+                _stream_pattern_for_bars(
+                    out_port,
+                    in_port,
+                    midi_channel_1based=args.midi_channel,
+                    low_note=low_note,
+                    high_note=high_note,
+                    step_clocks=step_clocks,
+                    gate_clocks=gate_clocks,
+                    target_bars=successor_stream_bars,
+                    cc_number=args.cc_number,
+                    cc_step=args.cc_step,
+                    pitch_cycle_bars=args.pitch_cycle_bars,
+                    phase_start_delay_bars=0,
+                    phase_start_delay_beats=0,
+                    max_seconds_guard=max(10.0, successor_stream_bars * seconds_per_bar * 3.0),
+                    fixed_note=args.overdub_fixed_note if args.fixed_grid_notes else None,
+                    stop_press_note=None,
+                    abort=abort,
+                    emit_immediate_first_step=True,
+                    wall_clock_tempo_bpm=wall_clock_tempo,
+                )
             if denial_delay_ms > 0:
                 # Anchor the denial press on B going live rather than on a fixed delay: the
                 # predecessor's remaining window scales with the loop (8 bars ~2.1 s, 4 bars
@@ -4941,6 +4971,17 @@ def run() -> int:
             "pending), press the record button again after this delay to open a successor "
             "interval inside the predecessor's window. Keep it above the button tap window "
             "(300 ms). 0 disables the probe."
+        ),
+    )
+    parser.add_argument(
+        "--successor-reentry-stream-bars",
+        type=int,
+        default=0,
+        help=(
+            "TEMPORARY VARIANT (DEC-069 acceptance): after the successor start press, stream this "
+            "many bars of the same pattern into the live successor interval, so its loop crossing "
+            "carries rows. The canonical base preset streams nothing once the predecessor's stream "
+            "ends, which makes every successor crossing empty."
         ),
     )
     parser.add_argument(

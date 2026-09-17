@@ -2654,14 +2654,20 @@ The straddling rows stay in the producer, so the held note's reservation is neve
 live interval's `unmatched NoteOff` rejections disappear with it. Three native cases cover the gate
 (two fail without it); full native 2,212 / 1 skipped / 0 failures; RAM1 locals 6,464; no new
 human-log literal (one added string in that translation unit costs 4,096 bytes of DTCM, so the
-deferral is observed through marker ordering). Outstanding: DEC-069's device acceptance (openspec
-task 7.2) — the wrap interaction has not yet been re-run on hardware. Attempt 1
-(`captures/successor-wrap-30`, 2026-09-19) is inconclusive, not negative: `--record-bars 1` never
-established a loop (`record loop length (final ticks): 0/768 (raw 2171)`), so the successor had no
-loop boundary to cross and the harness aborted on its serial heartbeat. The reproducer needs a
-successor press placed inside the predecessor's deferred window; bar-granular harness scheduling
-cannot do that on an 8-bar record (A's stop phase is `(delay_bars + overdub_bars) mod record_bars`,
-and the allowed bar counts reach only 10 s of a 16 s loop).
+deferral is observed through marker ordering). **Device acceptance closed** (`captures/successor-wrap-36`, firmware at the Option A commit): the
+successor's crossing of tick 6144 was deferred, `Overdub wrap committed @ tick 6460` follows it
+(only the deferred retry can report a later tick than the crossing), the predecessor's
+`Reentry released` follows at 60.534 s — the outcome the old path made impossible — the successor's
+own stop is admitted at 62.736 s, and the run has no `unmatched NoteOff` and no
+`Capture admission rejected` row. Regression `captures/successor-wrap-33` (DEC-068 flags) is a clean
+harness PASS (`overlap=True`, `denied_stop=True`, both retirements). Two route notes for the
+reproducer: the successor must own rows *before* its crossing, which the canonical preset cannot
+supply once the predecessor's stream ends, so the acceptance used a temporary
+`--successor-reentry-stream-bars` flag (default 0, canonical behavior unchanged, promotion to a
+registered `STIM-…-02` pending); and the predecessor's stop phase must sit ~0.5 bar before loop end
+(`A_stop_phase ~= (A_start_phase + delay_bars + overdub_bars) mod record_bars`, with A starting
+~1 bar after the record stop). Earlier attempts are recorded as inconclusive, not negative:
+`successor-wrap-30` used `--record-bars 1`, which never establishes a loop (0/768).
 
 
 **2026-09-17 — reentry session ownership — LANDED (DEC-068, device PASS

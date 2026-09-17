@@ -17,7 +17,10 @@ DEC-069 Option A is now implemented (owner's choice): the crossing is recorded a
 and sealed on the first turn after the job retires, so the revision the job pinned never moves; the
 held note's reservation is never reset, which removes the live interval's `unmatched NoteOff`
 rejections as well. Three native cases (two fail without the gate); full native 2,212 / 1 skipped /
-0 failures; RAM1 locals 6,464. Outstanding: the wrap interaction's device acceptance (task 7.2).
+0 failures; RAM1 locals 6,464. Device acceptance closed (`captures/successor-wrap-36`): the successor's deferred crossing
+committed after the predecessor retired, with no `unmatched NoteOff`; `captures/successor-wrap-33` is
+the matching DEC-068 regression PASS. The reproducer's temporary successor-stream flag is not yet
+promoted to a registered stimulus variant.
 
 
 **2026-09-17 reentry session ownership (DEC-068).** Tasks 5.1(d)/(e) landed and immediately
