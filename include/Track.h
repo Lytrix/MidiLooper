@@ -198,6 +198,11 @@ public:
   bool prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
+  /// Task 2.4 instrumentation: count of content-sized playback-order builds (merged
+  /// gather/assign, order resize/phase fill/sort, full reanchor) that ran while a track was
+  /// timing-critical. Must be zero on the active clock path; the builder is the STOPPED oracle.
+  static void resetPlaybackOrderHotRebuildCount();
+  static uint32_t playbackOrderHotRebuildCount();
   /// True when primary playback window matches current loop revision (safe LoopEnd activate).
   bool isPlaybackMergedMidiEventsReadyForSlot(uint8_t slotIndex) const;
   /// Drop cached playback merge buffers for all slots (frees extmem during capture).
