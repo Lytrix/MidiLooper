@@ -1133,6 +1133,41 @@ def _stream_fixture_record_serial_anchored(
 
 
 
+
+def _latest_device_bar_index(lines: list[str]) -> Optional[int]:
+    """Newest device ``BAR,<tick>,<index>`` index in the given lines, or None.
+
+    The device's own bar counter is the authority for how much musical time a phase has
+    covered; the host's clock-message count and seconds-per-bar estimate both over-ran on
+    device (11-34 bars for an 8-bar request).
+    """
+    latest: Optional[int] = None
+    for line in lines:
+        if not line.startswith("#CAP,") or ",BAR," not in line:
+            continue
+        parts = line.split(",")
+        if len(parts) < 5:
+            continue
+        try:
+            latest = int(parts[4])
+        except ValueError:
+            continue
+    return latest
+
+
+def _device_bar_probe(serial_collector: Any):
+    """Probe over the capture tail: returns the newest device bar index."""
+
+    def _probe() -> Optional[int]:
+        try:
+            lines = serial_collector.snapshot()
+        except Exception:
+            return None
+        return _latest_device_bar_index(lines[-400:])
+
+    return _probe
+
+
 def _stream_fixture_record_bars(
     out_port: mido.ports.BaseOutput,
     in_port: mido.ports.BaseInput,
@@ -3910,6 +3945,9 @@ def _run_overdub_pass(
                 abort=abort,
                 emit_immediate_first_step=True,
                 wall_clock_tempo_bpm=wall_clock_tempo,
+                device_bar_probe=(
+                    _device_bar_probe(serial_collector) if serial_collector is not None else None
+                ),
             )
     else:
         od_notes, od_cc = _stream_dense_chromatic(
@@ -5073,6 +5111,11 @@ def run() -> int:
                             emit_immediate_first_step=True,
                             wall_clock_tempo_bpm=wall_clock_tempo,
                             stream_start_monotonic=recording_confirmed_at,
+                            device_bar_probe=(
+                                _device_bar_probe(serial_collector)
+                                if serial_collector is not None
+                                else None
+                            ),
                         )
                 else:
                     rec_notes, rec_cc = _stream_dense_chromatic(

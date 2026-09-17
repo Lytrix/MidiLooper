@@ -27,6 +27,7 @@ from hitl.legacy_record_baseline import (
     _evaluate_clear_precondition,
     _serial_has_clear_aborted,
     _track_cleared_for_record,
+    _latest_device_bar_index,
     _verify_record_loop_length,
     _verify_successor_reentry,
 )
@@ -108,6 +109,33 @@ class ProxyTimedRecordLengthOracleTests(unittest.TestCase):
         result = _verify_record_loop_length(rows, record_bars=8, proxy_timed=True)
         self.assertFalse(result["final_length_ok"])
 
+
+
+class DeviceBarProbeOracleTests(unittest.TestCase):
+    """The device's own BAR index is the authority for a phase's musical length.
+
+    Host clock-message counting and seconds-per-bar estimates both over-ran on device
+    (11-34 bars for an 8-bar request), while the device quantizes the loop from its own
+    bar counter.
+    """
+
+    def test_latest_index_reads_the_newest_bar_row(self) -> None:
+        lines = [
+            "#CAP,100,BAR,0,0",
+            "#CAP,200,MO,144,4,60,98",
+            "#CAP,300,BAR,768,1",
+            "#CAP,400,BAR,1536,2",
+            "#CAP,500,RING,overflow,1",
+        ]
+        self.assertEqual(2, _latest_device_bar_index(lines))
+
+    def test_no_bar_rows_is_none(self) -> None:
+        self.assertIsNone(_latest_device_bar_index([]))
+        self.assertIsNone(_latest_device_bar_index(["#CAP,1,MO,144,4,60,98"]))
+
+    def test_malformed_index_is_skipped(self) -> None:
+        lines = ["#CAP,100,BAR,768,1", "#CAP,200,BAR,1536,notanindex"]
+        self.assertEqual(1, _latest_device_bar_index(lines))
 
 class SuccessorReentryProbeOracleTests(unittest.TestCase):
     """The probe is only meaningful when the successor overlaps the predecessor's job.
