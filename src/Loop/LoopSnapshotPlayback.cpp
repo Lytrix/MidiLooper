@@ -222,6 +222,25 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     if (!isRecordPassId(passes, box.constructionPassId)) {
       appendUniquePassId(unpublishedPassIds, box.constructionPassId);
     }
+    // A wrapped pass is tracked as a wrap journal, not as a queued pass: the wrap
+    // commit journals it (`queueOverdubWrapSnapshotJournal`) and the stop's session-exit
+    // queue then skips it as already tracked (`passAlreadyTracked`). Enumerating it here
+    // is the only place that keeps it audible while the root is stale -- the root itself
+    // predates the wrap and the journal's own publish is deferred behind the session exit.
+    // Without this the wrapped pass stayed omitted from the stale-root overlay after its
+    // session closed (its `overdubSessionPassIds_` scan is gone), so the display resolved
+    // it from `passes` while playback never emitted it (user report 2026-09-17: record 8
+    // bars, overdub starting at bar 3; pass 1 inaudible, the wrapped tail audible).
+    for (const PassId passId : box.journaledPassIds) {
+      if (!isRecordPassId(passes, passId)) {
+        appendUniquePassId(unpublishedPassIds, passId);
+      }
+    }
+    for (const SnapshotWrapJournalFragment& journal : box.queuedWrapJournals) {
+      if (!isRecordPassId(passes, journal.wrapPassId)) {
+        appendUniquePassId(unpublishedPassIds, journal.wrapPassId);
+      }
+    }
   }
 
   // Overlay EVERY queued (not-yet-published) session exit, not just one: a
