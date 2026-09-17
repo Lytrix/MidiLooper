@@ -42,6 +42,40 @@ and lookup prewarms in the same function (`frozenCompanionPairLookup`,
 `kEventsPerView`/`kRecordsPerBridge`). The first part is measured; the second is inference
 from the prewarm list plus the class shape, not yet individually tagged.
 
+**2026-09-17 NEGATIVE RESULT: a boundary probe cannot make the record arm safe; reverted.**
+Tried the "reserve required memory, and if reservation fails the operation does not start"
+pattern from the user's plan, at the record-arm boundary, using a direct allocate-then-release
+probe rather than an estimate. Two attempts, both failed, both reverted:
+
+| probe | result |
+|---|---|
+| single block, the measured largest request (81920 bytes) | **passed**, arm still aborted at that same 80 KB allocation ([`reserve-gate-01`](../../captures/reserve-gate-01/session_20260917_111603.log): refusal at `heap_free=76KB, tag=6`) |
+| 16-block profile of the arm's shapes (~307 KB total) | **passed**, arm still aborted identically ([`reserve-shape-01`](../../captures/reserve-shape-01/session_20260917_111749.log)) |
+
+Why: the arm allocates roughly **960 KB across ~100 blocks** (tag 1 `80 + tag 2 `790 + tag 5 `7
++ tag 6 `80), so a single-block probe validates headroom that the arm's own earlier
+allocations then consume, and a 16-block probe still under-reserves by 3x. Probing the
+aggregate as one block would be fragmentation-hostile and would deny records that could
+succeed; probing enough blocks to be faithful is no longer a probe.
+
+So a per-boundary **probe** cannot predict this operation, and the honest options are:
+
+1. **Shrink the arm's footprint** — the named levers are the seven companion/lookup
+   prewarms at **450 KB measured** (`canonicalPassInputs` 144, `companionPasses` 96,
+   `companionBridgeMap` 68, `companionApply` 66, `companionReconstruction` 64,
+   `pairLookup` 10, `spans` 2) and capture staging at **1334 KB per slot**, which is
+   prewarmed per track/slot and is the largest single line item in the whole budget.
+   This is the recommended path.
+2. **Hold a real reservation** rather than probe: acquire the arm's blocks up front and
+   release them to the owner instead of back to the pool. That is a design change with
+   ownership consequences, not an admission check.
+3. **Coarse aggregate margin gate** (~1 MB at the record arm). It would deny records on a
+   loaded device, which is arguably correct since the arm would abort there anyway, but it
+   is a user-visible capability change and needs the user's call.
+
+Reverted rather than left in place: a probe that cycles ~300 KB through the pool on every
+record arm, and still does not prevent the abort, is worse than no gate at all.
+
 **2026-09-17 record-arm reservation MEASURED per contributor - and it is NOT staging.**
 The refusal line now dumps the whole tag vector, which matters because the process dies
 there, so one arm gives every contributor's retained size. Measured
