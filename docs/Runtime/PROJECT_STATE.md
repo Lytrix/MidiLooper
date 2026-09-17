@@ -20,7 +20,7 @@ device [`captures/successor-ownership-06`](../captures/successor-ownership-06/se
 managed HITL `base`, `Result: PASS`, `overlap=True denied_stop=True retirement_ok=true` (A retires
 inside B's live interval; B then stages and transfers its own pass). The host probe oracle now also
 accepts the current `Overdub stop refused: stop_job_pending` denial wording. OpenSpec 5.5 remains
-open for its own parameterized checkpoint coverage and gate promotion.
+open for its own parameterized checkpoint coverage and gate promotion; the change's remaining pick-up order (5.5 first, then one 5.9/5.11/6.2 device session, then 6.1 and 6.3) is recorded at the top of its `tasks.md`.
 
 **2026-09-17 transport-stop retarget re-route (DEC-070).** The post-HITL stuck state machine was a
 deferred stop job admitted for PLAYING, retargeted to Stopped and left on the PLAYING phase path; its

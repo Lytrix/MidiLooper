@@ -2752,8 +2752,17 @@ terminal transfer consumes it directly (`Loop::transferCapturePass` and the expl
 [`captures/successor-ownership-06`](../../captures/successor-ownership-06/session_20260917_230432.log)
 managed HITL `base`, `Result: PASS`, `overlap=True denied_stop=True retirement_ok=true` (A retires
 inside B's live interval; B then stages and transfers its own pass). Host oracle corrected to accept
-the current `Overdub stop refused: stop_job_pending` denial wording. Next for this change: 5.5's own
-parameterized coverage and gate promotion, then 6.1/6.2/6.3.
+the current `Overdub stop refused: stop_job_pending` denial wording. **Next (reviewed 2026-09-17 — the
+pick-up order is recorded at the top of that change's `tasks.md`):** the open items are now only 5.5,
+5.9, 5.11, 6.1, 6.2 and 6.3 (4.3 closed), and the best next step is **5.5** — the only host-only item,
+the one D8 directly unblocked, and the one still hiding coverage behind `REENTRY_RED=1`: add the
+missing "after the raw-range stage" checkpoint (`CanonicalRewrite`; `ReservedClosure` is the
+alternative), then delete the `REENTRY_RED` gate so the case runs in the default suite. Then plan
+**5.9 + 5.11 + 6.2 as one device session** (5.9 still needs the `hitl-content-verification` audibility
+proof for "all overdubbed bars stay audible"; 5.11 closes on that run; 6.2 still needs a successor
+that *carries rows* plus a boot-prewarm headroom read), then re-run **6.1** and finish **6.3** (which
+includes ticking the parent change's task 2.3, already annotated with the deferred three-deep capacity
+case).
 
 **2026-09-17 — transport-stop retarget re-route (DEC-070, implemented + device-verified; openspec
 5.3/5.7/5.8).** The user's stuck state machine after the HITL runs was a deferred job admitted for
