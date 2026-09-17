@@ -3948,6 +3948,11 @@ def _run_overdub_pass(
                 device_bar_probe=(
                     _device_bar_probe(serial_collector) if serial_collector is not None else None
                 ),
+                device_bar_baseline=(
+                    _latest_device_bar_index(serial_collector.snapshot()[-400:])
+                    if serial_collector is not None
+                    else None
+                ),
             )
     else:
         od_notes, od_cc = _stream_dense_chromatic(
@@ -5116,6 +5121,11 @@ def run() -> int:
                                 if serial_collector is not None
                                 else None
                             ),
+                            device_bar_baseline=(
+                                _latest_device_bar_index(serial_collector.snapshot()[-400:])
+                                if serial_collector is not None
+                                else None
+                            ),
                         )
                 else:
                     rec_notes, rec_cc = _stream_dense_chromatic(
@@ -5234,6 +5244,11 @@ def run() -> int:
                             "record_grid_steps_emitted": int(rec_timing["grid_steps_emitted"]),
                             "record_max_abs_grid_jitter_clocks": rec_timing["max_abs_grid_jitter_clocks"],
                             "record_mean_abs_grid_jitter_clocks": rec_timing["mean_abs_grid_jitter_clocks"],
+                            "record_device_bar_start": int(rec_timing.get("device_bar_start", -1)),
+                            "record_device_bar_latest": int(rec_timing.get("device_bar_latest", -1)),
+                            "record_device_bar_relative_bars": int(
+                                rec_timing.get("device_bar_relative_bars", 0)
+                            ),
                             "overdub_notes_sent": 0,
                             "overdub_cc_sent": 0,
                             "overdub_clock_pulses_seen": 0,
@@ -5404,6 +5419,11 @@ def run() -> int:
                         "overdub_grid_steps_emitted": int(od_timing["grid_steps_emitted"]),
                         "overdub_max_abs_grid_jitter_clocks": od_timing["max_abs_grid_jitter_clocks"],
                         "overdub_mean_abs_grid_jitter_clocks": od_timing["mean_abs_grid_jitter_clocks"],
+                        "overdub_device_bar_start": int(od_timing.get("device_bar_start", -1)),
+                        "overdub_device_bar_latest": int(od_timing.get("device_bar_latest", -1)),
+                        "overdub_device_bar_relative_bars": int(
+                            od_timing.get("device_bar_relative_bars", 0)
+                        ),
                         "second_overdub_notes_sent": od2_notes,
                         "second_overdub_cc_sent": od2_cc,
                         "second_overdub_clock_pulses_seen": od2_clock_count,
