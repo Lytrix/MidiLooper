@@ -5,6 +5,28 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 the over-run is per-step sleep drift, not a bar-grid problem - and the BAR signal
+is not available during a take.** Two measurements closed this out:
+
+- The session log for [`bar-anchor-08`](../../captures/bar-anchor-08/session_20260917_133506.log)
+  contains only **4 `BAR` rows** (bars 0-3, i.e. before the note stream starts) out of a take that
+  ran 10 bars, and no `ST,Track,...,RECORDING` row either. The device/capture tier simply stops
+  delivering `BAR` rows once notes flow, so a device-bar end condition can only ever see the
+  first few bars - BAR-anchored pacing is not viable in this capture configuration without a
+  firmware tier/emission change.
+- With that ruled out, the remaining cause is host-side and measured: the wall-clock streamer
+  paced with `time.sleep(seconds_per_clock)` **per step**, which adds the per-iteration MIDI send
+  and loop overhead on top of the 20.83 ms interval - a nominal 16 s (8-bar) stream ran ~20 s and
+  the device therefore recorded 10 bars. The streamer now paces to an **absolute deadline**
+  (`start + n * seconds_per_clock`), so the total is `target_clocks * seconds_per_clock`
+  regardless of per-step cost.
+
+The device verification of that change ([`bar-anchor-09`](../../captures/bar-anchor-09/session_20260917_133556.log)) came back
+`SPARSE_CAPTURE` with a capture-ring overflow, so it produced no length evidence; that is the
+third time in this stretch that runs went sparse on a long-running device, and a re-flash has
+restored healthy evidence twice. Re-verify the deadline pacing after a fresh flash, then run the
+successor probe.
+
 **2026-09-17 BAR probe visible at last: the device is already 3 bars in, and no BAR rows arrive
 during the stream.** After making the parser prefix-tolerant and instrumenting every per-track
 stats block, `bar-anchor-07` reports `record_device_bar_start = 3`, `record_device_bar_latest =
