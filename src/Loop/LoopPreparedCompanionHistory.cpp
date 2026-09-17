@@ -94,7 +94,10 @@ LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
   // checks; never restart an in-flight worker by rebinding its inputs.
   if (work.phase != PreparedCompanionHistory::Phase::Prewarmed ||
       !preparedCompanionHistoryOwnedBy(owner) ||
-      historyCount > work.rows.size() || rows.size() > work.rows.size() - historyCount ||
+      // Fit is a capacity question, never a current-size question: `Phase::Trim` (and
+      // the recycle path) shrink the vector's *size* to the last interval's actual
+      // demand, so a later, larger interval must still be admitted against the reserve.
+      work.rows.capacity() < historyCount + rows.size() ||
       historyCount > work.rowLimit || rows.size() > work.rowLimit - historyCount ||
       rows.size() > work.companionCapacity || rows.size() > work.companionIds.capacity() ||
       passes.editPasses.capacity() < work.rowLimit ||
@@ -123,6 +126,13 @@ LOOP_COLD_MEM bool Loop::beginPreparedCompanionHistory(
   work.revision = playbackRevision; work.firstId = nextPassId_;
   work.capturePassId = hasPendingCapturePass_ ? pendingCapturePass_.id : kInvalidPassId;
   work.targetCount = work.historyCount + rows.size(); work.row = work.event = 0;
+  // Size the working vector to *this interval's* actual demand. The grant (capacity)
+  // still covers the whole horizon, so the resize allocates nothing; what it removes is
+  // the `Phase::Trim` walk, which otherwise pops one unused row per quantum unit -
+  // `grantedCompanionCapacity - actualCompanionRows` units, about 2,030 of pure trimming
+  // for a full horizon with a sparse overdub. Rows below `historyCount` keep their
+  // prewarmed payload capacity, which is what the copy phase relies on.
+  work.rows.resize(work.targetCount);
   work.phase = snapshotCount ? PreparedCompanionHistory::Phase::CopySnapshot :
       (work.historyCount ? PreparedCompanionHistory::Phase::CopyRow : PreparedCompanionHistory::Phase::Append);
   return true;
@@ -448,13 +458,12 @@ LOOP_COLD_MEM bool Loop::stepRecyclePreparedCompanionHistory(size_t quantum, uin
     } else if (work.phase == Phase::RecycleGrow) {
       // Size, unlike capacity, must match the usable horizon: extra rows would
       // add unreserved Trim units when snapshot slack is smaller than row slack.
-      const auto targetRows = work.historyCount + work.companionCapacity;
-      if (work.rows.size() < targetRows) work.rows.resize(work.rows.size() + 1);
-      if (work.rows.size() == targetRows) {
-        // Receipt lifetime ends here; the horizon is owner-agnostic again.
-        work.owner = 0;
-        work.phase = Phase::Prewarmed;
-      }
+      // Batched: every row here is inside the reserve, so one resize restores the
+      // horizon without spending a quantum unit per row.
+      work.rows.resize(work.historyCount + work.companionCapacity);
+      // Receipt lifetime ends here; the horizon is owner-agnostic again.
+      work.owner = 0;
+      work.phase = Phase::Prewarmed;
     }
   }
   return true;

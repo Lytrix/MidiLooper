@@ -2263,6 +2263,44 @@ void test_companion_history_reservation_survives_snapshot_cleanup() {
   TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed(4));
 }
 
+/// Demand-shaped preparation work: the working row vector is sized to *this* interval's
+/// actual demand, so the preparation's unit cost scales with the rows it produces, not
+/// with the horizon it was granted. A stop that prepares one companion row over a
+/// 512-row reserve must not spend ~511 trim units walking unused tail rows; it must reach
+/// Ready inside a small constant envelope, and the materialized size must equal the
+/// demand (canonical rows plus produced companion rows), not the reserve.
+void test_companion_history_prep_units_scale_with_demand_not_reserve() {
+  Loop loop;
+  loop.nextPassId_ = 100;
+  TEST_ASSERT_TRUE(loop.prewarmPreparedCompanionHistory(512));
+  TEST_ASSERT_EQUAL_UINT32(512, static_cast<uint32_t>(loop.preparedCompanionHistory_.companionCapacity));
+  TEST_ASSERT_EQUAL_UINT32(512, static_cast<uint32_t>(loop.preparedCompanionHistory_.rows.capacity()));
+  CanonicalPrefixFixture f;
+  prepareUnsortedFrozenTailCapture(f.runtime);
+  auto& capture = f.runtime.viewSetIfPrewarmed()->frozenCaptureStaging();
+  auto& rows = f.runtime.frozenCaptureCompanions;
+  PendingNoteChangeVec changes{{PendingNoteChangeKind::Hide, 2, 1, 62, 80, 20, 60}};
+  TEST_ASSERT_TRUE(rows.begin(capture, 4, changes));
+  while (rows.step(1) == RuntimePlaybackOrderBuildResult::Pending) {
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(rows.size()));
+  TEST_ASSERT_TRUE(loop.beginPreparedCompanionHistory(rows, capture));
+  // One produced companion row over a 512-row grant. The old horizon walk needed
+  // 511 `Phase::Trim` units here; the demand-sized vector needs a handful.
+  unsigned units = 0;
+  while (!loop.preparedCompanionHistoryReady() && units < 64) {
+    TEST_ASSERT_TRUE(loop.stepPreparedCompanionHistory(1));
+    ++units;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(loop.preparedCompanionHistoryReady(),
+                           "preparation must reach Ready well inside the quantum budget");
+  TEST_ASSERT_TRUE(units <= 32);
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(loop.preparedCompanionHistory()->size()));
+  // The grant is untouched: a later, larger interval still fits the same reserve.
+  TEST_ASSERT_EQUAL_UINT32(512, static_cast<uint32_t>(loop.preparedCompanionHistory_.companionCapacity));
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistory_.rows.capacity() >= 512);
+}
+
 void test_companion_history_binds_wrap_publication_before_begin() {
   for (unsigned mode = 0; mode < 3; ++mode) {
     Loop loop; loop.nextPassId_ = 100;
@@ -6091,6 +6129,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_frozen_tail_uses_private_sort_when_shared_order_is_audible);
   RUN_TEST(test_companion_history_stages_metadata_payloads_and_ids_without_publication);
   RUN_TEST(test_companion_history_reservation_survives_snapshot_cleanup);
+  RUN_TEST(test_companion_history_prep_units_scale_with_demand_not_reserve);
   RUN_TEST(test_companion_history_binds_wrap_publication_before_begin);
   RUN_TEST(test_companion_history_atomic_swap_preserves_snapshot_and_undo_ids);
   RUN_TEST(test_capture_and_companion_history_commit_together_or_leave_both_pending);
