@@ -371,6 +371,17 @@ TRACK_COLD_MEM __attribute__((noinline)) void Track::collectOverlapHoldPlaybackN
 }
 
 void Track::startRecording(uint32_t currentTick) {
+  // Capture admission, and it sits before every mutation on purpose - including the
+  // take reset below, which clears the slot's passes. The required reserves do not
+  // depend on the new take's timeline (only their generation stamp does, which the
+  // post-reset pass re-applies), so establishing them first means a denied take leaves
+  // the slot's pass timeline, the armed pre-roll, the pending-note set, the capture
+  // baseline and the track state exactly as they were. Admission succeeds only if every
+  // allocation-free-stop prerequisite for this take has been established.
+  if (!prewarmPlaybackForSlot(activeLoopIndex, true)) {
+    MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::RecordStart);
+    return;
+  }
   Loop& loop = getActiveLoop();
   recordCaptureBaselineGeometry_ = {loop.loopLengthTicks, loop.startLoopTick, loop.loopStartTick};
   hasRecordCaptureBaselineGeometry_ = true;
@@ -392,7 +403,11 @@ void Track::startRecording(uint32_t currentTick) {
   loop.resetPassTimeline();
   ExternalPoolAccounting::endTag();
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
-  prewarmPlaybackForSlot(activeLoopIndex, true);
+  // Re-run against the new take so generation-stamped receipts describe this take.
+  // Everything is already reserved by the admission pass above, so this allocates
+  // nothing; it exists to re-stamp against the post-reset canonical generation and the
+  // now-empty pass set.
+  (void)prewarmPlaybackForSlot(activeLoopIndex, true);
   ExternalPoolAccounting::endTag();
   auto preRoll = std::move(armedPreRollNotes);
   if (LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex)) {

@@ -56,6 +56,11 @@
 #include "../../src/Track/TrackLoopJamGeometry.cpp"
 #include "../../src/Track/TrackOverdubLifecycle.cpp"
 #include "../../src/Track/TrackDeferredMaintenance.cpp"
+#include "../../src/Utils/CommittedMidiScratch.cpp"
+// Record-arm admission now runs on this suite's route, so the derived-cache
+// invalidation the admitted arm performs is production code here rather than an
+// off-path stub (see off_path_deps.h).
+#include "../../src/Track/TrackMidiEventRouting.cpp"
 #include "../../src/TrackManager.cpp"
 
 #include "../../src/MidiButtonActions.cpp"
@@ -339,6 +344,38 @@ void test_button_a_successor_stop_denied_until_deferred_role_available() {
   inputNote(64, 337, 360);
   TEST_ASSERT_EQUAL(2, loop.capture.store.size());
   TEST_ASSERT_EQUAL(337, loop.capture.store.at(0).tick);
+}
+
+
+// Record admission is atomic: a failed *required* prewarm refuses the take instead of
+// being ignored and letting RECORDING start with an unestablished stop prerequisite.
+// The fixture prewarms slot 0, so this uses a fresh slot where the companion-history
+// horizon genuinely has to be reserved.
+void test_record_admission_denied_when_required_prewarm_fails() {
+  Track& track = preparePlayingTrack();
+  TrackCaptureStopTestAccess::selectSlot(track, 1);
+  Loop& loop = track.getActiveLoop();
+  const size_t stopQueueBefore = TrackCaptureStopTestAccess::queueSize(track);
+
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  track.forceSetState(TRACK_ARMED);
+  track.startRecording(0);
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+
+  // Denied: no RECORDING transition, no capture interval admitted, no pending stop
+  // ownership, no pre-roll admitted, and the armed state is what it was.
+  TEST_ASSERT_EQUAL(static_cast<int>(TRACK_ARMED), static_cast<int>(track.getState()));
+  TEST_ASSERT_FALSE(loop.captureActive());
+  TEST_ASSERT_EQUAL(stopQueueBefore, TrackCaptureStopTestAccess::queueSize(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::liveNotes(track).empty());
+  TEST_ASSERT_EQUAL_UINT32(0u, static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+
+  // Control: with the reserve available the same call is admitted, so the assertions
+  // above are about admission and not about the state machine refusing everything.
+  track.forceSetState(TRACK_ARMED);
+  track.startRecording(0);
+  TEST_ASSERT_EQUAL(static_cast<int>(TRACK_RECORDING), static_cast<int>(track.getState()));
+  TEST_ASSERT_TRUE(loop.captureActive());
 }
 
 void test_manager_reentry_with_a_held_same_pitch_note() {
@@ -1300,6 +1337,7 @@ int main() {
   RUN_TEST(test_stop_job_denies_changed_geometry_before_closure_mutation);
   RUN_TEST(test_button_a_successor_stop_denied_until_deferred_role_available);
   RUN_TEST(test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive);
+  RUN_TEST(test_record_admission_denied_when_required_prewarm_fails);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);

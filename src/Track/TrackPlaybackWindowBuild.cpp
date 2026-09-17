@@ -419,13 +419,17 @@ TRACK_COLD_MEM void Track::invalidatePlaybackMergedMidiEvents(bool preserveLedge
   bumpPlaybackGeneration();
   playbackRuntime.resetAll(preserveLedger);
 }
-TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture) {
+TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture) {
   ensureLoopsAllocated();
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
-    return;
+    return false;
   }
+  // `ok` is the capture-admission answer: every reserve that exists to keep the later
+  // deferred stop grains allocation-free must have been established. Callers that are
+  // admitting a take must act on it; the boot/load caller may ignore it.
+  bool ok = true;
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStopJobs);
-  (void)prewarmCaptureStopJobs();
+  ok = prewarmCaptureStopJobs() && ok;
   ExternalPoolAccounting::endTag();
   Loop& loop = loopForSlot(slotIndex);
   LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
@@ -434,16 +438,20 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
     // has no equivalent allocation call.
     if (prepareCapture) {
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
-      (void)runtime->prewarmViews();
+      ok = runtime->prewarmViews() && ok;
       ExternalPoolAccounting::endTag();
     } else {
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
-      (void)runtime->prewarmCaptureStaging();
+      ok = runtime->prewarmCaptureStaging() && ok;
       ExternalPoolAccounting::endTag();
     }
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCanonicalOutput);
-    (void)runtime->prewarmCanonicalCaptureOutput();
+    ok = runtime->prewarmCanonicalCaptureOutput() && ok;
     ExternalPoolAccounting::endTag();
+  } else if (prepareCapture) {
+    // Without a runtime slot there is no staging and no canonical output, so the take
+    // cannot be admitted on the terms this reserve exists to guarantee.
+    ok = false;
   }
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::capturePrewarm(resolveTrackIndexForPersistence(*this), slotIndex,
@@ -459,7 +467,7 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // active transport turn.
   if (prepareCapture || !anyTimingCriticalTrackActive()) {
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
-    (void)loop.prewarmActiveOverdubTransferHorizon();
+    ok = loop.prewarmActiveOverdubTransferHorizon() && ok;
     ExternalPoolAccounting::endTag();
     // Companion rows are part of the same deferred stop admission. Reserve
     // the complete fixed row horizon while the loop is cold so stop grains
@@ -468,14 +476,16 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
       const size_t usedRows = std::min(loop.passes.editPasses.size(),
                                        RuntimePlaybackViewConfig::kRecordsPerBridge);
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
-      (void)loop.prewarmPreparedCompanionHistory(
-          RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows);
+      ok = loop.prewarmPreparedCompanionHistory(
+               RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows) &&
+           ok;
       ExternalPoolAccounting::endTag();
     }
   }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
   (void)loop.getPlaybackOrder();
   ExternalPoolAccounting::endTag();
+  return ok;
 }
 
 void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {

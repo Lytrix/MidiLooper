@@ -137,6 +137,15 @@ enum class OperationKind : uint8_t {
 bool admitOperationMemory(OperationKind operation, uint32_t marginBytes);
 
 /**
+ * @brief Report that an operation was denied because a required prewarm failed.
+ *
+ * Used where admission is decided by the prewarm's own result rather than by a
+ * headroom gate, so the denial is still explicit and attributable. Emits the same
+ * `#MEM_DENIED` line with `reason=prewarm_failed`.
+ */
+void reportPrewarmAdmissionDenied(OperationKind operation);
+
+/**
  * @brief Advisory pressure signal (Phase 1A — compute + telemetry only).
  * Subsystems consult; owners decide safe actions. Updated once per main-loop turn.
  */
@@ -154,6 +163,9 @@ void resetNativeTestFreeHeap();
 void setNativeTestChunksFree(uint16_t chunksFree);
 void setNativeTestPersistQueueDepth(uint16_t depth);
 void resetNativeTestPressureInputs();
+/// Force `admitOperationMemory` to deny, so a test can assert that a failed required
+/// prewarm refuses admission rather than being ignored.
+void setNativeForcedReserveDenied(bool denied);
 #endif
 
 }  // namespace MemoryMonitor

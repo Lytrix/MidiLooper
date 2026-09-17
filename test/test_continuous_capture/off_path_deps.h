@@ -19,7 +19,15 @@ void Track::startPlaying(uint32_t, bool) { OFF_PATH(); }
 void Track::stopRecording(uint32_t) { OFF_PATH(); }
 void Track::stopRecordingToStopped(uint32_t) { OFF_PATH(); }
 void Track::togglePlayStop() { OFF_PATH(); }
-void Track::invalidateCaches(bool) { OFF_PATH(); }
+// Track::invalidateCaches and its committed-scratch neighbour are production code here
+// (TrackMidiEventRouting.cpp / CommittedMidiScratch.cpp are linked by the test TU):
+// record-arm admission runs on this suite's route and the admitted arm invalidates the
+// slot's derived caches. Only the edit-session neighbours stay off-path.
+void EditManager::bumpSessionPreviewRevision() { OFF_PATH(); }
+void EditManager::bumpSessionPlaybackPreviewRevision() { OFF_PATH(); }
+void EditManager::scheduleDeferredNoteEditDisplayRefresh() { OFF_PATH(); }
+MidiEventVec& EditManager::editMidiEvents(Track&) { OFF_PATH(); static MidiEventVec empty; return empty; }
+const MidiEventVec& EditManager::editMidiEvents(const Track&) const { OFF_PATH(); static MidiEventVec empty; return empty; }
 CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t) { OFF_PATH(); return {}; }
 void Track::silenceTrackMidiOutput() { OFF_PATH(); }
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
