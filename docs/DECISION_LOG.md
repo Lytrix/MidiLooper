@@ -14,7 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — implementation authorized; device START/STOP proof open |
+| [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implementation authorized; six native cases + device retirement proof are the gates |
+| [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — device START/STOP proof PASS [`successor-reentry-26`](../captures/successor-reentry-26/session_20260917_161119.log) |
 | [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
 | [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — validated on device |
 | [DEC-063](#dec-063--protected-stop-undo-publication-and-bounded-reclamation) | 2026-09-14 | Protected stop transaction preserves feedback trimming; latest deferred Undo/Redo wins per Track | Accepted — implementation authorized; validation gates remain open |
@@ -80,7 +81,93 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-068 -->
+<!-- Append new entries below (newest first). Next ID: DEC-069 -->
+
+## DEC-068 — An overdub session belongs to one capture interval
+
+**Date:** 2026-09-17
+**Status:** Accepted — implementation authorized by the user; the six native cases and the device retirement proof are the gates.
+**Owner:** `Loop` overdub-session state (`openOverdubSession` / `closeOverdubSession` / `overdubSessionPassIds_` / `sessionExitHandedOff_`), the session-exit receipt ring (`SessionExitSnapshotHandoff`), `Track::beginDeferredOverdubStop`, `TrackPreparedStopCommit::completeDeferredCleanup`
+
+**Context:** the task 5.1(d) case (`test_successor_same_interval_transfers_exactly_once`) proved the
+capture-transfer half of exact-once and then exposed the publication half. With A's deferred job
+pending and B live, `completeDeferredCleanup` unconditionally called
+`loop.handoffSessionExitSnapshot(...)` and `loop.closeOverdubSession()`:
+
+1. the receipt was built from the **current shared session state**, which under reentry belongs to
+   B, so A's session-exit publication carried the successor's pass ids;
+2. `closeOverdubSession()` closed **B's** session while B was still recording
+   (`loop.hasOverdubSession()` false for a live interval);
+3. B's own `DeferredCleanup` then could not hand off (`!hasOverdubSession()`), so B's job reached
+   phase 11 and never retired — its descriptor leaked and its session-exit publication never
+   queued. Reachable on device in the verified DEC-067 sequence (`captures/successor-reentry-25`:
+   A released at 52.195 s with B live since 49.986 s).
+
+Root cause: `Loop::openOverdubSession` early-returns while `hasOverdubSession()`, so a successor
+interval **joins the predecessor's session**, while `sessionExitHandedOff_`, the receipt ring and
+`lastCommittedPassId_` are written as if a session belonged to one interval.
+
+**Decision:** an overdub session belongs to one capture interval. A deferred stop job carries the
+session-exit receipt for **its own** interval from stop admission onward. Retirement consumes only
+that job-owned receipt. A retiring predecessor may close shared live session state only if it still
+owns the live interval; otherwise the successor's session remains open and independent.
+
+```text
+A live                      → session A
+A STOP admitted             → A's session tail captured into the job-owned receipt slot
+                              (live session state keeps serving paint/overlay until retirement)
+B START                     → opens session B (its own index/ids), does not join A's tail
+A cleanup                   → fills its receipt's final pass id, marks it ready, consumes only
+                              that receipt, retires; must not close session B
+B STOP later                → captures receipt B, publishes B, retires B
+```
+
+Call-site audit — who consumes the shared session state, and what each needs:
+
+| consumer (current) | what it actually needs | after DEC-068 |
+|---|---|---|
+| `handoffSessionExitSnapshot` (deferred cleanup) | the retiring interval's own pass/session ids | **replaced**: the job's receipt was captured at its stop admission; `lastPassId` is filled at its commit |
+| `closeOverdubSession` (deferred cleanup) | end *this* interval's session | **gated**: only when the retiring job still owns the live session (`job.interval == captureInterval_`, the current implementation predicate for session ownership) |
+| `stepPendingSnapshotPublish` (`oldestPendingSessionExitReceipt`) | one interval-level receipt per turn, FIFO | unchanged, plus: a receipt whose final pass id is not yet committed is **not ready** and is skipped in place (FIFO preserved) |
+| `queueSessionExitSnapshot` (box assembly) | the receipt's ids, not the live session | unchanged (it already prefers `oldestPendingSessionExitReceipt()`) |
+| display / paint / pending-changes / overlay (`hasOverdubSession()`) | "a session is being recorded or finalized here" | unchanged: the live session state stays populated until the retiring job owns the last interval |
+| `TrackUndo` session queries | the live session's undo state | unchanged (the job already owns `beforePublished`) |
+| legacy synchronous stop (`finalizeCommitSideEffects`) | one-shot handoff with no job | unchanged (`handoffSessionExitSnapshot`) |
+
+**Implementation shape (pinned):**
+
+1. `beginDeferredOverdubStop` (which has already proved no job owns the finalization resources)
+   reserves a receipt slot and copies the live session tail into it — pass ids, companion ids,
+   cursor, session index — leaving it **not ready**. A full ring is the documented stop denial it
+   already is (`canHandoffSessionExitSnapshot()`); no capacity is added.
+2. `completeDeferredCleanup` fills that receipt's final pass id from its own commit, marks it
+   ready, and closes the live session only when the job still owns it. It never touches another
+   interval's session and never builds a receipt from live state.
+3. The publisher consumes only ready receipts, oldest first, exactly one per turn.
+4. A successor start opens a **fresh** session even while a predecessor's tail is still draining;
+   the predecessor's tail lives in its own receipt.
+5. Session ownership is the architectural rule; `job.interval == captureInterval_` is only the
+   current predicate for it and may be replaced without reopening this decision.
+
+**Required native gates (six cases):** (1) A receipt isolation — A's publication carries A's
+pass/session ids even after B started; (2) B session survival — A's cleanup leaves
+`hasOverdubSession()` true for live B; (3) A retirement — A's descriptor retires exactly once while
+B remains live; (4) B retirement — after B stops, B queues its own session-exit publication and its
+descriptor retires; (5) no receipt reuse — A's and B's receipts have distinct interval/session
+identity; (6) supersession — A retiring through the causal-base-superseded route consumes only its
+own receipt and cannot close B.
+
+**Device acceptance:** the DEC-067 overlap sequence extended past B's admitted stop until **both**
+descriptors are retired and **both** session-exit publications are resolved (a second
+`Reentry released` for B, no leaked descriptor, no stop denied for an occupied finalizer).
+
+**Not in this decision:** per-interval receipt capacity (the ring stays at
+`kSessionExitReceiptCapacity = 4`), display/paint routing changes, DEC-067's admission direction,
+and DEC-045's idle publication scheduling.
+
+**References:** `openspec/changes/successor-capture-reentry-unguarding/` tasks 2.3/5.1/5.4/6.2,
+[`CURRENT_WORK.md`](Runtime/CURRENT_WORK.md) § Now implementing, native
+`test_successor_same_interval_transfers_exactly_once`.
 
 ## DEC-067 — Finalization-resource admission is stop-directed
 
