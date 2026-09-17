@@ -1339,6 +1339,46 @@ void test_simultaneous_interval_owned_staged_passes() {
       "a consumed pass cannot be consumed twice");
 }
 
+/// OpenSpec 2.4 (parent `resumable-midi-boundary-playback-maintenance`): the content-sized
+/// playback-order build is instrumented, so a synchronous fallback on the active clock path
+/// cannot land silently. This native suite has no MIDI-output harness, so the detector is
+/// proven directly: a build that runs while a track is timing-critical is counted, and the
+/// STOPPED-oracle build is not. When the tick's request/consume conversion lands, the active
+/// route must leave this counter at zero.
+void test_active_transport_playback_order_rebuild_is_instrumented() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  track.forceSetState(TRACK_PLAYING);
+  TEST_ASSERT_TRUE(track.isAudiblePlaybackActive());
+  SessionMidiEventVec merged;
+  merged.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  merged.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  const ProjectionContext ctx = makePlaybackContext(track, loop, 96);
+  Track::resetPlaybackOrderHotRebuildCount();
+  rebuildPlaybackOrder(loop, merged, ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, Track::playbackOrderHotRebuildCount(),
+      "a content-sized order build during active transport must be counted");
+  reanchorPlaybackIndex(loop, merged, loop.getPlaybackOrder(), ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, Track::playbackOrderHotRebuildCount(),
+      "the paired full reanchor must be counted too");
+}
+
+void test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  track.forceSetState(TRACK_STOPPED);
+  TEST_ASSERT_FALSE(track.isAudiblePlaybackActive());
+  SessionMidiEventVec merged;
+  merged.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  const ProjectionContext ctx = makePlaybackContext(track, loop, 0);
+  Track::resetPlaybackOrderHotRebuildCount();
+  // The complete in-place builder is retained as the STOPPED-state oracle (task 2.4).
+  rebuildPlaybackOrder(loop, merged, ctx);
+  reanchorPlaybackIndex(loop, merged, loop.getPlaybackOrder(), ctx);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, Track::playbackOrderHotRebuildCount(),
+      "the STOPPED oracle build is not an active-transport rebuild");
+}
+
 void test_adversarial_reentry_at_a_canonical_checkpoint() {
   runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::CanonicalOrder),
                                 "paused in canonical ordering");
@@ -2502,6 +2542,8 @@ int main() {
   RUN_TEST(test_job_note_retirement_does_not_clear_live_notes);
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
   RUN_TEST(test_superseded_predecessor_retires_without_touching_a_live_successor);
+  RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
+  RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);
   // OpenSpec 5.12 / D8 made the `CompanionHistory` checkpoint green (see that test's comment and
   // CURRENT_WORK); 5.5 owns promoting it into the default gate, so it stays behind `REENTRY_RED`

@@ -108,7 +108,32 @@ bool anyTimingCriticalTrackActive() {
   return false;
 }
 
+/// Task 2.4 instrumentation: a content-sized playback-order build ran while a track was
+/// timing-critical. The active clock path must consume a prepared source instead; this
+/// counter is what a native test asserts against, so a new synchronous fallback fails.
+///
+/// Placed in RAM2 (DMAMEM) on device: the tree sits one 32 KB FlexRAM bank / one DTCM
+/// alignment edge from the RAM1 local allowance, and a 4-byte .bss addition here measured
+/// 4 KB of lost headroom (locals 6,400 -> 2,304). It is read only by tests and diagnostics,
+/// never on the per-event path.
+#if defined(__IMXRT1062__)
+#define PLAYBACK_ORDER_METRIC_MEM DMAMEM
+#else
+#define PLAYBACK_ORDER_METRIC_MEM
+#endif
+PLAYBACK_ORDER_METRIC_MEM uint32_t g_playbackOrderHotRebuildCount = 0;
+
+inline void noteContentSizedPlaybackBuildOnActiveTransport() {
+  if (anyTimingCriticalTrackActive()) {
+    ++g_playbackOrderHotRebuildCount;
+  }
+}
+
 }  // namespace
+
+void Track::resetPlaybackOrderHotRebuildCount() { g_playbackOrderHotRebuildCount = 0; }
+
+uint32_t Track::playbackOrderHotRebuildCount() { return g_playbackOrderHotRebuildCount; }
 
 ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint32_t currentTick) {
   return IntervalProjection::buildPlaybackProjectionContext(
@@ -122,6 +147,7 @@ ProjectionContext makePlaybackContext(const Track& track, const Loop& loop, uint
 /// After a mid-pass playback-order rebuild, point nextEventIndex at the current playhead.
 void reanchorPlaybackIndex(Loop& loop, const SessionMidiEventVec& mergedEvents, const PlaybackOrderVec& order,
                            const ProjectionContext& playbackContext) {
+  noteContentSizedPlaybackBuildOnActiveTransport();
   if (loop.lastTickInLoop == UINT32_MAX) {
     loop.nextEventIndex = 0;
     return;
@@ -215,6 +241,7 @@ bool ensurePlaybackMergedMidiEventsBuilt(Track& track, Loop& loop, LoopPlaybackR
   }
   loop.clearLastOverdubSealAdmitReceipt();
 
+  noteContentSizedPlaybackBuildOnActiveTransport();
   mergedMidiEventsBuildInProgress = true;
 #if RUNTIME_TIMING_ENABLED || defined(SESSION_CAPTURE)
   const uint32_t playbackBuildStartUs = micros();
@@ -289,6 +316,7 @@ TRACK_INTERNAL_MEM __attribute__((noinline)) void reconcilePlaybackLedgerAfterFu
 }
 TRACK_INTERNAL_MEM __attribute__((noinline)) void rebuildPlaybackOrder(
     Loop& loop, const SessionMidiEventVec& mergedEvents, const ProjectionContext& playbackContext) {
+  noteContentSizedPlaybackBuildOnActiveTransport();
   PlaybackOrderVec& playbackOrder = loop.getPlaybackOrder();
   playbackOrder.resize(mergedEvents.size());
   for (size_t i = 0; i < mergedEvents.size(); i++) {
