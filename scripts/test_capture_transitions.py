@@ -28,6 +28,7 @@ from hitl.legacy_record_baseline import (
     _serial_has_clear_aborted,
     _track_cleared_for_record,
     _verify_record_loop_length,
+    _verify_successor_reentry,
 )
 from hitl.serial_timing import extract_phase_sessions
 from hitl.serial_collector import serial_line_resets_heartbeat
@@ -106,6 +107,73 @@ class ProxyTimedRecordLengthOracleTests(unittest.TestCase):
         rows = [{"final_length": 7000, "raw_length": 7000}]
         result = _verify_record_loop_length(rows, record_bars=8, proxy_timed=True)
         self.assertFalse(result["final_length_ok"])
+
+
+class SuccessorReentryProbeOracleTests(unittest.TestCase):
+    """The probe is only meaningful when the successor overlaps the predecessor's job.
+
+    A successor start inside the predecessor's deferred window (before
+    `ODUB,stop,bridge_ready`) is the admission case; a stop press before that completion
+    must NOT produce a stop edge, which is the denied-stop branch.
+    """
+
+    _OVERLAPPING = [
+        "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+        "#CAP,2000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+        "#CAP,2001,ST,Track,OVERDUB_STOPPING,PLAYING",
+        "#CAP,2100,ODUB,stop,bridge_base,0,0,0,0,1,1,prepared_window",
+        "#CAP,2300,ST,Track,PLAYING,OVERDUBBING",
+        "#CAP,2600,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+        "#CAP,3000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
+        "#CAP,3100,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+    ]
+
+    def test_overlapping_successor_with_denied_stop(self) -> None:
+        result = _verify_successor_reentry(
+            self._OVERLAPPING, requested_delay_ms=500, requested_stop_delay_ms=300
+        )
+        self.assertTrue(result["probe_requested"])
+        self.assertTrue(result["overlap_ok"])
+        # The quick press produced a stop edge *before* the predecessor completed: a denial
+        # failure, not evidence for the denied-stop branch.
+        self.assertFalse(result["denied_stop_ok"])
+        self.assertEqual(0.3, result["successor_start_delay_ms"])
+
+    def test_denied_stop_accepted_when_the_press_is_refused(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,2001,ST,Track,OVERDUB_STOPPING,PLAYING",
+            "#CAP,2300,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
+            "#CAP,3100,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+        ]
+        result = _verify_successor_reentry(
+            lines, requested_delay_ms=500, requested_stop_delay_ms=300
+        )
+        self.assertTrue(result["overlap_ok"])
+        self.assertTrue(result["denied_stop_ok"])
+
+    def test_sequential_successor_is_not_overlapping(self) -> None:
+        lines = [
+            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,2001,ST,Track,OVERDUB_STOPPING,PLAYING",
+            "#CAP,3000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
+            "#CAP,9000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,10000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+        ]
+        result = _verify_successor_reentry(
+            lines, requested_delay_ms=500, requested_stop_delay_ms=0
+        )
+        self.assertFalse(result["overlap_ok"])
+
+    def test_probe_off_reports_no_verdict(self) -> None:
+        result = _verify_successor_reentry(
+            self._OVERLAPPING, requested_delay_ms=0, requested_stop_delay_ms=0
+        )
+        self.assertFalse(result["probe_requested"])
+        self.assertIsNone(result["overlap_ok"])
 
 class CaptureTransitionEvidenceTests(unittest.TestCase):
     def test_armed_detects_human_log(self) -> None:

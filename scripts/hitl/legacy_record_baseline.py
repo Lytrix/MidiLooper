@@ -3219,6 +3219,80 @@ def _runtime_stats_pass_baseline(
     return True
 
 
+
+def _verify_successor_reentry(
+    lines: list[str],
+    *,
+    requested_delay_ms: int,
+    requested_stop_delay_ms: int,
+) -> dict[str, object]:
+    """Evidence that the successor-reentry probe overlapped its predecessor's deferred job.
+
+    The probe is only meaningful if the successor's ``PLAYING -> OVERDUBBING`` edge lands
+    before the predecessor's ``ODUB,stop,bridge_ready``, i.e. while the predecessor still
+    owns the frozen role. The optional quick stop is a denial probe: if the predecessor is
+    still pending, that press must not produce an ``OVERDUBBING -> OVERDUB_STOPPING`` edge
+    before the predecessor completes.
+    """
+    from hitl.serial.protocol import parse_cap_micros, track_transitions
+
+    result: dict[str, object] = {
+        "probe_requested": requested_delay_ms > 0,
+        "delay_ms": requested_delay_ms,
+        "stop_delay_ms": requested_stop_delay_ms,
+        "predecessor_stop_ts": None,
+        "predecessor_ready_ts": None,
+        "successor_start_ts": None,
+        "stop_after_successor_ts": None,
+        "overlap_ok": None,
+        "denied_stop_ok": None,
+    }
+    if requested_delay_ms <= 0:
+        return result
+
+    transitions = track_transitions(lines)
+    overdub_starts = [ts for ts, edge in transitions if edge == ("PLAYING", "OVERDUBBING")]
+    overdub_stop_entries = [
+        ts for ts, edge in transitions if edge == ("OVERDUBBING", "OVERDUB_STOPPING")
+    ]
+    if len(overdub_starts) < 2 or not overdub_stop_entries:
+        return result
+
+    predecessor_stop_ts = overdub_stop_entries[0]
+    successor_start_ts = overdub_starts[1]
+    ready_ts: Optional[int] = None
+    for line in lines:
+        if ",ODUB,stop,bridge_ready," not in line:
+            continue
+        ts = parse_cap_micros(line)
+        if ts is not None and ts > predecessor_stop_ts:
+            ready_ts = ts
+            break
+    stop_after_successor = next(
+        (ts for ts in overdub_stop_entries if ts > successor_start_ts), None
+    )
+    overlap_ok = ready_ts is not None and successor_start_ts < ready_ts
+    denied_stop_ok: Optional[bool] = None
+    if requested_stop_delay_ms > 0:
+        denied_stop_ok = stop_after_successor is None or (
+            ready_ts is not None and stop_after_successor > ready_ts
+        )
+    result.update(
+        {
+            "predecessor_stop_ts": predecessor_stop_ts,
+            "predecessor_ready_ts": ready_ts,
+            "successor_start_ts": successor_start_ts,
+            "successor_start_delay_ms": (
+                None if ready_ts is None else (successor_start_ts - predecessor_stop_ts) / 1000.0
+            ),
+            "stop_after_successor_ts": stop_after_successor,
+            "overlap_ok": overlap_ok,
+            "denied_stop_ok": denied_stop_ok,
+        }
+    )
+    return result
+
+
 def _build_serial_verification(
     lines: list[str],
     args: argparse.Namespace,
@@ -3566,6 +3640,19 @@ def _build_serial_verification(
                     issues.append("second_overdub_stored_span_too_short")
                 elif not stored_second_overdub_span.get("bars_match_ok", False):
                     issues.append("second_overdub_stored_bars_short")
+    successor_reentry = _verify_successor_reentry(
+        lines,
+        requested_delay_ms=int(getattr(args, "successor_reentry_delay_ms", 0) or 0),
+        requested_stop_delay_ms=int(getattr(args, "successor_reentry_stop_delay_ms", 0) or 0),
+    )
+    if successor_reentry.get("probe_requested"):
+        if not successor_reentry.get("overlap_ok"):
+            issues.append("successor_reentry_not_overlapping")
+        if (
+            int(successor_reentry.get("stop_delay_ms") or 0) > 0
+            and successor_reentry.get("denied_stop_ok") is False
+        ):
+            issues.append("successor_reentry_stop_not_denied")
     display_verification: Optional[dict[str, object]] = None
     if not record_only and loop_length_ticks > 0:
         display_verification = _verify_display_snapshots(
@@ -3591,6 +3678,7 @@ def _build_serial_verification(
         },
         "record_phase": record,
         "overdub_phase": overdub,
+        "successor_reentry": successor_reentry,
         "record_loop_length": record_loop_length,
         "record_note_span": record_note_span,
         "stored_record_grid": stored_record_grid,
@@ -3902,6 +3990,39 @@ def _run_overdub_pass(
                 od_clock_count,
                 od_timing,
                 od_fallback_seconds,
+            )
+    if pass_label == "overdub" and getattr(args, "successor_reentry_delay_ms", 0) > 0:
+        # Purpose-built overlapping successor. The bar-scheduled second overdub cannot
+        # express this: its start is grid-aligned and lands ~8.6 s after the predecessor's
+        # stop, outside the ~1.2 s deferred window. Here the predecessor's state is already
+        # PLAYING while its deferred job still finalizes, so one more press after a bounded
+        # delay - longer than the button's tap window, so it is not read as a double press -
+        # opens a successor interval inside that window. The optional quick stop then tries
+        # the denied-stop branch while the predecessor still owns the frozen role.
+        reentry_delay_ms = max(int(args.successor_reentry_delay_ms), 0)
+        time.sleep(reentry_delay_ms / 1000.0)
+        print(
+            f"[track {_user_track_number(idx)}] successor reentry start "
+            f"(+{reentry_delay_ms} ms after {pass_label} stop)"
+        )
+        _send_short_press(
+            out_port,
+            note=RECORD_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=args.press_ms,
+        )
+        reentry_stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0)), 0)
+        if reentry_stop_delay_ms > 0:
+            time.sleep(reentry_stop_delay_ms / 1000.0)
+            print(
+                f"[track {_user_track_number(idx)}] successor reentry stop press "
+                f"(+{reentry_delay_ms + reentry_stop_delay_ms} ms; predecessor may still be pending)"
+            )
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=args.press_ms,
             )
     time.sleep(args.phase_wait_ms / 1000.0)
     return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
@@ -4405,6 +4526,27 @@ def run() -> int:
         type=int,
         default=0,
         help="Delay second overdub note stream by this many bars after entering overdub",
+    )
+    parser.add_argument(
+        "--successor-reentry-delay-ms",
+        type=int,
+        default=0,
+        help=(
+            "Probe only: after the first overdub stop (state already PLAYING, deferred job "
+            "pending), press the record button again after this delay to open a successor "
+            "interval inside the predecessor's window. Keep it above the button tap window "
+            "(300 ms). 0 disables the probe."
+        ),
+    )
+    parser.add_argument(
+        "--successor-reentry-stop-delay-ms",
+        type=int,
+        default=0,
+        help=(
+            "Probe only: after the successor start, press the button again after this delay "
+            "to attempt a stop while the predecessor still owns the frozen role (expect a "
+            "denial). 0 sends no successor stop."
+        ),
     )
     parser.add_argument(
         "--second-overdub-start-delay-beats",
@@ -5629,6 +5771,17 @@ def run() -> int:
                 )
             else:
                 print(f"  ST {row['from']}->{row['to']}: {row['actual']} (min {row['expected_min']})")
+        if serial_verification is not None and serial_verification.get("successor_reentry", {}).get(
+            "probe_requested"
+        ):
+            sr = serial_verification["successor_reentry"]
+            print(
+                "  VERIFY successor reentry: "
+                f"predecessor_stop={sr.get('predecessor_stop_ts')} "
+                f"predecessor_ready={sr.get('predecessor_ready_ts')} "
+                f"successor_start={sr.get('successor_start_ts')} "
+                f"overlap={sr.get('overlap_ok')} denied_stop={sr.get('denied_stop_ok')}"
+            )
         if serial_verification is not None:
             rv = serial_verification["record_phase"]
             ov = serial_verification["overdub_phase"]
