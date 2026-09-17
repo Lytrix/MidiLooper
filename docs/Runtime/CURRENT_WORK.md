@@ -5,6 +5,48 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 8-bar record + overdub reproduces the hang: allocator exhaustion, not
+a spin.** Temporary variant of `STIM-BASE-2-ONE-OD-01` (`--record-bars 8
+--overdub-bars 2 --second-overdub-bars 0`) on scratch track 4 / slot 1, which was
+verified empty first (`!CAPTURE_CONTENT` → `length=0`, zero record and effective rows)
+so nothing musical was cleared. Evidence:
+`captures/hang-8bar-track4-slot1-01/session_20260917_094002.log`.
+
+The device recorded an 11-bar loop (8448 ticks; the wall-clock tempo proxy overshot 8
+bars), stopped at 152.142 s, started the overdub at 153.369 s (`Overdubbing started @
+tick 768`), and **about five seconds later printed
+`[ExternalMemoryFirstAllocator] FATAL: both external memory and internal heap are
+exhausted!` and went permanently silent** — 0 bytes in a 6 s probe with the USB port
+still enumerated. That is the musician's hang, reproduced on the bench.
+
+Two things this settles:
+
+- **The hang is `abort()`, and it leaves no crash record.** `crashlog.txt` was unchanged
+  at 394,625 bytes after the event and the next boot reported `crash=0`. `abort()` does
+  not raise a Teensy `CrashReport`, which is why this class of failure has always read
+  as a silent hang over serial and why "USB dropped" was the only host-visible signal.
+  It is not a spin loop, and the earlier spin/`DACCVIOL` framing was wrong for this
+  event.
+- **Memory is already deep in the red before the record starts.**
+  `[Memory] heap free=68 used=393 total=461 KB min_ever=68 KB` at 127.7 s uptime, against
+  `heap free=280 used=181` at 6.3 s in the 00:39 session: roughly **212 KB of internal
+  heap consumed in about two minutes** with four boot-playback slots loaded, before this
+  test's own record. The 11-bar record plus its overdub then finished the job.
+
+Harness verdict was `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`, abort reason *"serial
+heartbeat lost (20.0s since last meaningful line)"*. Worth noting for the harness: the
+device kept emitting `CC ignored` DEBUG spam while the heartbeat filter saw nothing
+meaningful, so the reported abort preceded the real terminal event by ~5 s; the
+allocator line is the authoritative one. The follow-on DACCVIOL this session started
+from is most likely the same pressure family — element 128 written through a lost
+vector header is what a corrupted header looks like, and pressure is what corrupts it.
+
+**Next:** trace what grows the external pool and the internal heap across a long record
+plus overdub. The periodic 60 s `[Memory]` line is far too coarse and this run logged no
+PSRAM free/used at all; the useful capture is a bounded per-phase memory sample
+(record start/stop, overdub start, each deferred grain) with the allocator's own
+pool counters.
+
 **2026-09-17 `!RESTORE_WORKSPACE` — the missing inverse of quarantine (shipped to
 the device).** The workspace quarantine had no restore path, so it was one-way from
 the device's point of view: nothing in the firmware read a `.bad.` path back. Added a
