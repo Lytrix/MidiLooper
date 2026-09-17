@@ -191,6 +191,11 @@ struct TrackCaptureStopTestAccess {
   }
   static bool frozenOrderComplete(Track& track) { return runtime(track).frozenCaptureOrder.complete(); }
   static bool wrapCommitPending(Track& track) { return track.overdubWrapCommitPending_; }
+  static uint8_t jobDestination(Track& track) {
+    return static_cast<uint8_t>(job(track).admission.destination);
+  }
+  static void requestStoppedStop(Track& track) { track.requestDeferredOverdubStopToStopped(); }
+  static bool captureStopOwnerClear(Track& track) { return runtime(track).captureStopOwner == nullptr; }
   static bool canonicalHasFrozenBinding(Track& track) {
     return runtime(track).canonicalPassInputs.hasFrozenBinding();
   }
@@ -1869,6 +1874,63 @@ void test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending() {
   TEST_ASSERT_GREATER_THAN_UINT32(revisionAfterPredecessor, loop.playbackRevision);
 }
 
+/// DEC-070: a transport stop retargets a job that was admitted for PLAYING. Its PLAYING-only
+/// preparation (canonical tail, companion history, undo collection, companion bridge) is bound to
+/// the pre-stop transport command epoch, so continuing it parked the job forever -- holding
+/// `captureStopOwner`, the frozen role and the session-exit receipt -- and every later stop was
+/// refused until a reboot (`Overdub stop refused: stop_job_pending phase=7 dest=1`). The retarget
+/// must re-route onto the STOPPED route's continuation and retire the job.
+void test_transport_stop_retarget_retires_a_midflight_playing_job() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopDestination::Playing),
+                          TrackCaptureStopTestAccess::jobDestination(track));
+  // Drive the job past the transfer decision point into the PLAYING-only branch
+  // (`CanonicalTail`..`CompanionBridge`); without a retarget it parks there.
+  for (unsigned grain = 0; grain < 20000; ++grain) {
+    const uint8_t phase = TrackCaptureStopTestAccess::jobPhase(track);
+    if (phase >= static_cast<uint8_t>(PendingStopPhase::CanonicalTail) &&
+        phase != static_cast<uint8_t>(PendingStopPhase::PrepareTransfer))
+      break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  const uint8_t phaseBeforeStop = TrackCaptureStopTestAccess::jobPhase(track);
+  TEST_ASSERT_TRUE_MESSAGE(
+      phaseBeforeStop >= static_cast<uint8_t>(PendingStopPhase::CanonicalTail) &&
+          phaseBeforeStop != static_cast<uint8_t>(PendingStopPhase::PrepareTransfer),
+      "the job must reach the PLAYING-only branch before the transport stop");
+  // Transport Stop while the job is mid-flight.
+  TrackCaptureStopTestAccess::requestStoppedStop(track);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopDestination::Stopped),
+                          TrackCaptureStopTestAccess::jobDestination(track));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::AtomicTransfer),
+      TrackCaptureStopTestAccess::jobPhase(track),
+      "the retarget must re-route the job onto the STOPPED continuation, not leave it parked");
+  // A newer interval owns the live state (the device case: the transport stops while a successor is
+  // live), so the retiring job must be job-local and must not drive the track's state transition.
+  TrackCaptureStopTestAccess::advanceInterval(track);
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+      "a transport-stop retarget must retire the mid-flight job");
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::captureStopOwnerClear(track),
+      "the retired job must release the stop owner");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));
+  // And a later stop of a live interval is admitted again.
+  clockManager.assignCurrentTickSilently(240);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  clockManager.assignCurrentTickSilently(288);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+      "the slot must accept a later stop once the retargeted job retired");
+}
+
 /// With the wrap commit deferred (DEC-069 Option A) a note held across loop end never loses its
 /// staging reservation at all: the rows stay in the same unsealed pass, so the physical NoteOff
 /// that arrives after the crossing closes the recorded note instead of being rejected as
@@ -1996,6 +2058,7 @@ int main() {
   RUN_TEST(test_successor_start_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy);
   RUN_TEST(test_deferred_predecessor_completion_leaves_successor_interval_untouched);
+  RUN_TEST(test_transport_stop_retarget_retires_a_midflight_playing_job);
   RUN_TEST(test_successor_wrap_defers_its_pass_commit_while_a_stop_job_is_pending);
   RUN_TEST(test_successor_wrap_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_wrap_keeps_a_held_note_reservation_for_its_physical_note_off);

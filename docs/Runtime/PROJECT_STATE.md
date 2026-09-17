@@ -1,5 +1,18 @@
 # Project state (execution context)
 
+**2026-09-17 transport-stop retarget re-route (DEC-070).** The post-HITL stuck state machine was a
+deferred stop job admitted for PLAYING, retargeted to Stopped and left on the PLAYING phase path; its
+companion work is bound to the transport epoch the stop invalidates, so it parked in
+`CompanionHistory` and held the slot's finalization resources, refusing every later stop until a
+reboot. The retarget now re-routes the job onto the STOPPED continuation
+(`retireSkippedCompanionPreparation` -> `AtomicTransfer` -> deferred cleanup). Native case
+`test_transport_stop_retarget_retires_a_midflight_playing_job` fails without it (full native 2,213 /
+1 skipped / 0 failures; RAM1 locals 6,400); device `captures/successor-wrap-40` shows the retargeted
+job retiring 2.2 s after the teardown transport stop and the slot staying usable across repeated
+enter/stop cycles. openspec 5.3/5.7/5.8 closed; diagnostic instrumentation for stall reasons stays
+in place.
+
+
 **2026-09-17 the wrap owns the slot's canonical revision too (DEC-069; hardening landed, gate
 open).** A manual three-overdub device session
 ([`captures/session_20260917_172651.log`](../../captures/session_20260917_172651.log)) shows the

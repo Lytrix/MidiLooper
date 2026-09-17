@@ -615,9 +615,31 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
 
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   if (!hasPendingDeferredOverdubStop()) return;
-  captureStopJob().admission.requestTransportStop();
-  if (auto* runtime = playbackRuntime.slotIfAllocated(captureStopJob().slot)) {
-    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*runtime, captureStopJob().admission);
+  CaptureStopJob& job = captureStopJob();
+  job.admission.requestTransportStop();
+  // DEC-070: a job admitted for PLAYING that has already entered the PLAYING-only preparation
+  // branch (canonical tail, companion history, undo collection, companion bridge) cannot complete
+  // once the transport stops. That work is bound to the pre-stop transport command epoch and to the
+  // frozen source generation, so every grain denied -- silently -- and the job parked in
+  // `CompanionHistory` forever holding `captureStopOwner`, the frozen staging role and its
+  // session-exit receipt. Every later stop was then refused as occupied until a reboot
+  // (`Overdub stop refused: stop_job_pending phase=7 dest=1`).
+  //
+  // Re-route on this same edge instead of only re-labelling the destination: retire the companion
+  // and undo estimates a STOPPED-admitted job never contracts, drop the half-prepared companion
+  // horizon (so the atomic transfer takes the STOPPED commit path rather than consulting a
+  // verification that can no longer hold), and continue at `AtomicTransfer`, which commits the
+  // already-staged prepared pass and retires the job through deferred cleanup.
+  if (job.owner != nullptr && job.admission.destination == PendingStopDestination::Stopped &&
+      job.admission.phase >= PendingStopPhase::CanonicalTail &&
+      job.admission.phase <= PendingStopPhase::CompanionBridge) {
+    job.admission.setPhase(PendingStopPhase::PrepareTransfer);
+    (void)job.admission.retireSkippedCompanionPreparation(false);
+    job.owner->discardPreparedCompanionHistory(job.admission.intervalToken());
+    job.admission.setPhase(PendingStopPhase::AtomicTransfer);
+  }
+  if (auto* runtime = playbackRuntime.slotIfAllocated(job.slot)) {
+    (void)TrackPreparedStopCommit::retargetStoppedRecovery(*runtime, job.admission);
   }
 }
 
