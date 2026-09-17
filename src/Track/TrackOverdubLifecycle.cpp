@@ -1203,7 +1203,18 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   // rows, reservations, pending notes and preview intact, and no stop descriptor is
   // created for it. A later stop request is admitted once the predecessor retires.
   // This is the precise capacity question the pending-deferred predicate answers.
-  if (hasPendingDeferredOverdubStop()) {
+  // A denial is only a *fault* when nothing can say why. When the finalization
+  // resources this stop would need are still owned or not yet replenished, the
+  // denial is a capacity answer and the interval keeps recording (DEC-067); the
+  // legacy fallback below would otherwise freeze a pass against spent credits.
+  auto* stopRuntime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  const bool finalizationResourcesBusy =
+      stopRuntime != nullptr &&
+      (stopRuntime->captureStopOwner != nullptr ||
+       !stopRuntime->canonicalCaptureOutputAdmitted() ||
+       !loop.hasActiveOverdubTransferAdmission() ||
+       !loop.canHandoffSessionExitSnapshot());
+  if (hasPendingDeferredOverdubStop() || finalizationResourcesBusy) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        captureStopQueueDepth(), 0, "successor_stop_denied_capacity");
     logger.log(CAT_TRACK, LOG_INFO,

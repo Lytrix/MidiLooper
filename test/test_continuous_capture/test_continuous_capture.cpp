@@ -173,6 +173,25 @@ struct TrackCaptureStopTestAccess {
   static void setPlaybackRevision(Track& track, uint32_t revision) {
     track.getActiveLoop().playbackRevision = revision;
   }
+  static bool frozenOrderActive(Track& track) { return runtime(track).frozenCaptureOrder.active(); }
+  static bool frozenOrderComplete(Track& track) { return runtime(track).frozenCaptureOrder.complete(); }
+  static uint64_t frozenOrderStorageGeneration(Track& track) {
+    return runtime(track).frozenCaptureOrderStorageGeneration;
+  }
+  static bool canonicalOutputAdmitted(Track& track) {
+    return runtime(track).canonicalCaptureOutputAdmitted();
+  }
+  static size_t canonicalChunks(Track& track) {
+    return runtime(track).canonicalCaptureChunks.availableChunks();
+  }
+  /// Emulate the predecessor's transfer spending the slot's canonical copy credits.
+  static void drainCanonicalChunks(Track& track) {
+    auto& reservation = runtime(track).canonicalCaptureChunks;
+    (void)reservation.releaseGrain(reservation.availableChunks());
+  }
+  static bool restoreCanonicalChunks(Track& track, size_t chunks) {
+    return runtime(track).canonicalCaptureChunks.reserveChunks(chunks);
+  }
 };
 
 /// Read a job-owned sealed extent's rows in stored order (bounded by its exact
@@ -433,6 +452,93 @@ void test_track_reentry_does_not_depend_on_manager_guard() {
       "A's completion must not transition B's live interval");
   TEST_ASSERT_EQUAL(stateBeforeCompletion, track.getState());
   TEST_ASSERT_EQUAL(rowsBeforeCompletion, track.getActiveLoop().capture.store.size());
+}
+
+/// DEC-067: START is admitted on the live role alone. The device refused successor starts
+/// with "canonical copy chunks are not reserved" while the predecessor finalized
+/// (`successor-reentry-19` / `-20`); those resources are first used at the successor's own
+/// stop edge, so they must not gate its start.
+void test_successor_start_is_admitted_while_finalization_resources_are_busy() {
+  Track& track = preparePlayingTrack();
+  const size_t chunksBefore = TrackCaptureStopTestAccess::canonicalChunks(track);
+  // A: deferred stop admitted while the resources were still available.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // A now owns them: its copy target is in use and its transfer credits are spent.
+  TrackCaptureStopTestAccess::drainCanonicalChunks(track);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));
+  // B: START must not wait for them.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "a successor start must not require the predecessor's finalization resources");
+  inputNote(62, 193, 216);
+  TEST_ASSERT_TRUE(track.getActiveLoop().capture.store.size() > 0);
+  // Let A retire with its credits restored, so the next case starts from the prewarmed state.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::restoreCanonicalChunks(track, chunksBefore));
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+}
+
+/// DEC-067: the frozen order/rewrite builders are per slot, not per interval. The start path
+/// used to discard them unconditionally, which would clobber a pending predecessor mid-order;
+/// it now only clears them when no job owns them.
+void test_successor_start_keeps_the_predecessors_frozen_builders() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, UINT32_MAX);  // held: the interval carries an open reservation and closure work
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  for (unsigned grain = 0; grain < 64 && !TrackCaptureStopTestAccess::frozenOrderComplete(track); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::frozenOrderComplete(track),
+      "the predecessor must reach its frozen order before the successor starts");
+  const uint64_t generationBefore = TrackCaptureStopTestAccess::frozenOrderStorageGeneration(track);
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::frozenOrderComplete(track),
+      "the successor start must not discard the pending predecessor's frozen order");
+  TEST_ASSERT_EQUAL_UINT64(generationBefore,
+                           TrackCaptureStopTestAccess::frozenOrderStorageGeneration(track));
+  const size_t passesBefore = track.getActiveLoop().passes.overdubPasses.size();
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(passesBefore + 1, track.getActiveLoop().passes.overdubPasses.size());
+}
+
+/// DEC-067: the stop admission is the single owner of the finalization-resource questions.
+/// With no stop owner yet, an unavailable canonical copy target must refuse the stop
+/// atomically: still recording, no descriptor, accepted rows intact.
+void test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy() {
+  Track& track = preparePlayingTrack();
+  const size_t chunksBefore = TrackCaptureStopTestAccess::canonicalChunks(track);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TrackCaptureStopTestAccess::drainCanonicalChunks(track);
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));
+  const uint8_t stateBefore = track.getState();
+  const size_t rowsBefore = track.getActiveLoop().capture.store.size();
+  const size_t descriptorsBefore = TrackCaptureStopTestAccess::queueSize(track);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+      "a stop without the canonical copy target must stay in the live interval");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(descriptorsBefore),
+                           static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_UINT8(stateBefore, track.getState());
+  TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::restoreCanonicalChunks(track, chunksBefore));
 }
 
 /// Task 5.2 isolation: A's deferred completion during B's capture leaves B's rows, pending
@@ -1404,6 +1510,9 @@ int main() {
   RUN_TEST(test_record_admission_denied_when_required_prewarm_fails);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
+  RUN_TEST(test_successor_start_is_admitted_while_finalization_resources_are_busy);
+  RUN_TEST(test_successor_start_keeps_the_predecessors_frozen_builders);
+  RUN_TEST(test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy);
   RUN_TEST(test_deferred_predecessor_completion_leaves_successor_interval_untouched);
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);
   RUN_TEST(test_ineligible_stored_verification_queue_keeps_pending_dump);
