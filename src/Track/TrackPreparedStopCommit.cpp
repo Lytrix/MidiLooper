@@ -143,7 +143,13 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
   runtime.discardCanonicalWindow();
   // Keep the already-computed per-pass companion results across punch-out.
   // This exchanges owned scratch buffers; it never replays history here.
-  if (runtime.canonicalPassInputs.captureAttached()) {
+  // DEC-070: this retention exists to save the *next* interval work, but when a successor interval is
+  // already live it is exactly what blocks that successor -- the retained `canonicalPassInputs` keeps
+  // its frozen capture attached and `beginFrozenCanonicalTail` refuses that (probe bit 3 in
+  // `captures/successor-wrap-43`; `-45` shows the resulting stall), while clearing the attachment at
+  // the retarget would invalidate the canonical prefix it still needs. Retain only while this job is
+  // still the live interval; a live successor prepares its own canonical inputs.
+  if (ownsLiveSession && runtime.canonicalPassInputs.captureAttached()) {
     const auto generation = runtime.canonicalPrefixSource.sourceGeneration;
     const PlaybackViewSourceIdentity source{loop.playbackRevision, generation, loop.publishedSnapshotIdentity()};
     // Bind the original live generation owner, not this local scalar.
