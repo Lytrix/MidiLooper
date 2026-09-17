@@ -2709,8 +2709,9 @@ memory work. In this order:
   `openspec/changes/successor-capture-reentry-unguarding/design.md` task 1.2 ("START requires
   the live role to be free") is unreachable: `Track::startOverdubbing` also gates on
   `canonicalCaptureOutputAdmitted()`, `hasActiveOverdubTransferAdmission()` and
-  `canHandoffSessionExitSnapshot()` (tasks.md 2.1), all held by the predecessor's
-  finalization. Options: (A) narrow the declaration to the implementation; (B) give the
+  `canHandoffSessionExitSnapshot()` (tasks.md 2.1). Gate 2 is the one the device reported;
+  gates 3-4 sit behind it and have not been reached yet, so their holding is inferred from the
+  predecessor owning those per-slot reservations, not measured. Options: (A) narrow the declaration to the implementation; (B) give the
   successor its own canonical output (grows the envelope); (C) keep START on the live role
   and move the canonical/transfer/handoff questions to the successor's *stop* admission,
   which task 2.2 already answers. All three change a declared capacity, so they need a DEC.
