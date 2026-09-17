@@ -8,6 +8,7 @@ from typing import Optional
 from hitl.capture_transitions import _phase_ts_from_marker_line
 from hitl.contract import PhaseAmbiguity
 from hitl.control_constants import MIDI_CLOCKS_PER_BAR, MIDI_CLOCKS_PER_BEAT
+from hitl.serial.protocol import track_transitions
 from hitl.serial_transport import parse_latest_bpm
 
 
@@ -95,18 +96,7 @@ def _pair_record_sessions(
 ) -> tuple[list[tuple[int, int]], Optional[int]]:
     record_sessions: list[tuple[int, int]] = []
     open_record_start: Optional[int] = None
-    for line in lines[start_index:]:
-        if ",ST,Track," not in line:
-            continue
-        parts = line.split(",")
-        if len(parts) < 6:
-            continue
-        try:
-            ts = int(parts[1])
-        except ValueError:
-            continue
-        from_state = parts[4].strip()
-        to_state = parts[5].strip()
+    for ts, (from_state, to_state) in track_transitions(lines[start_index:]):
         if to_state == "RECORDING":
             open_record_start = ts
         elif (
@@ -153,18 +143,7 @@ def _pair_overdub_sessions(
 ) -> tuple[list[tuple[int, int]], list[int], list[int]]:
     st_overdub_starts: list[int] = []
     st_overdub_stops: list[int] = []
-    for line in lines[start_index:]:
-        if ",ST,Track," not in line:
-            continue
-        parts = line.split(",")
-        if len(parts) < 6:
-            continue
-        try:
-            ts = int(parts[1])
-        except ValueError:
-            continue
-        from_state = parts[4].strip()
-        to_state = parts[5].strip()
+    for ts, (from_state, to_state) in track_transitions(lines[start_index:]):
         if from_state == "PLAYING" and to_state == "OVERDUBBING":
             st_overdub_starts.append(ts)
         elif from_state == "OVERDUBBING" and to_state in (

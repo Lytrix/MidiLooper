@@ -146,7 +146,7 @@ To align stop actions with the intended musical boundary despite button short-pr
   This keeps overdub entry from landing too early in the loop while preserving repeatable bar-synced capture.
 - The script adds a final settle delay before exit (`--final-wait-ms 1200`) so deferred button actions can complete.
 - In bar mode, the script records clock pulses seen in the JSON report (`*_clock_pulses_seen`) so you can verify phase length. Counts come from host MIDI in or serial transport proxy pacing — not from `#CAP` clock lines.
-- Record stop returns to playback (`STOPPED_RECORDING -> PLAYING`), a second record short press enters overdub (`PLAYING -> OVERDUBBING`), and a third press exits overdub (`OVERDUBBING -> PLAYING`).
+- Record stop returns to playback (`STOPPED_RECORDING -> PLAYING`), a second record short press enters overdub (`PLAYING -> OVERDUBBING`), and a third press exits overdub. **The overdub exit may be immediate (`OVERDUBBING -> PLAYING`) or deferred (`OVERDUBBING -> OVERDUB_STOPPING -> PLAYING`); the verifier counts both shapes as one completed stop and closes the overdub phase window on either hop** (2026-09-17).
 - First-note latency (serial verification path) — **advisory only** (does not fail the run):
   - `--record-first-note-max-clocks` (default `12`)
   - `--overdub-first-note-max-clocks` (default `12`)
@@ -163,7 +163,7 @@ Each run writes JSON output into `captures/`:
 The report includes:
 - per-track sent note/CC counts,
 - serial capture marker counts (`RECA`, `RECS`) when enabled,
-- track transition counts for `ARMED->RECORDING`, `RECORDING->STOPPED_RECORDING`, `STOPPED_RECORDING->PLAYING`, `PLAYING->OVERDUBBING`, `OVERDUBBING->PLAYING`,
+- track transition counts for `ARMED->RECORDING`, `RECORDING->STOPPED_RECORDING`, `STOPPED_RECORDING->PLAYING`, `PLAYING->OVERDUBBING`, `OVERDUBBING->PLAYING` (the deferred `OVERDUB_STOPPING->PLAYING` hop counts toward this row),
 - serial first-note offsets (`record_first_note_offset`, `overdub_first_note_offset`) and advisory `timing_warnings` when latency exceeds threshold,
 - `overall_ok` pass/fail summary.
 
