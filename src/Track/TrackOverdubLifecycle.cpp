@@ -16,6 +16,7 @@
 #include "TrackUndoPublication.h"
 #include "TrackPreparedStopCommit.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 
@@ -1045,6 +1046,15 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!loopRef.canHandoffSessionExitSnapshot()) {
     logger.log(CAT_TRACK, LOG_WARNING,
                "Overdub start deferred: previous session snapshot handoff is pending");
+    return;
+  }
+  // Memory admission, and it sits before every mutation below on purpose: on
+  // 2026-09-17 an admitted overdub reached `ExternalMemoryFirstAllocator::abort()`
+  // about two seconds in and took the transport down with it. Exhaustion is an
+  // operation-level denial, so refuse here with the loop still playing and no
+  // ownership, reservation or state change to unwind. Emits `#MEM_DENIED` with the
+  // operation, the reason, the requested margin and the measured availability.
+  if (!MemoryMonitor::admitOperationMemory(MemoryMonitor::OperationKind::OverdubStart, 0)) {
     return;
   }
   runtime->discardFrozenCaptureOrder();

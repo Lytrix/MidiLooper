@@ -132,6 +132,7 @@ void recordPoolFree(void* pointer) {
 void recordPoolRefusal(size_t bytes) {
   const uint32_t clamped = static_cast<uint32_t>(bytes);
   gCounters.poolRefusedCount += 1;
+  gCounters.poolLastRefusalMs = millis();
   if (clamped > gCounters.poolRefusedLargestBytes) {
     gCounters.poolRefusedLargestBytes = clamped;
   }
