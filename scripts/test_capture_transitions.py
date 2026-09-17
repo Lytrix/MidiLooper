@@ -155,6 +155,8 @@ class SuccessorReentryProbeOracleTests(unittest.TestCase):
         "#CAP,2001000,ST,Track,OVERDUB_STOPPING,PLAYING",
         "[2.100] [INFO] [TRACK] Reentry window open slot=0",
         "#CAP,2300000,ST,Track,PLAYING,OVERDUBBING",
+        "[2.300] [DEBUG] [TRACK] Overdubbing started @ tick 100",
+        "[2.600] [INFO] [TRACK] Overdub stop deferred: deferred/frozen admission role is occupied",
         "#CAP,3000000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
         "[3.400] [INFO] [TRACK] Reentry released",
         "#CAP,3500000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
@@ -171,6 +173,7 @@ class SuccessorReentryProbeOracleTests(unittest.TestCase):
         # The admitted successor's own stop lands after the release: the quick press in
         # between produced no stop edge, which is the denial half.
         self.assertTrue(result["denied_stop_ok"])
+        self.assertEqual(2_600_000, result["denied_stop_ts"])
         self.assertEqual(300.0, result["successor_start_delay_ms"])
         self.assertEqual(1100.0, result["successor_start_before_release_ms"])
 
