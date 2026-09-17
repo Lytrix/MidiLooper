@@ -1041,6 +1041,21 @@ void Track::startOverdubbing(uint32_t currentTick) {
     MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::OverdubStart);
     return;
   }
+  // The companion-row reserve is derived from the slot's canonical content, which can grow
+  // when a pass commits; re-grant it here so this interval's transform set cannot outgrow a
+  // stale grant. Cold point only - this admission turn - never a deferred grain.
+  // `ensureCapacity` only grows, so a sparse slot keeps the smaller reserve.
+  bool companionRowsAdmitted = false;
+  if (stagingAdmission != nullptr) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
+    companionRowsAdmitted = stagingAdmission->frozenCaptureCompanions.ensureCapacity(
+        loopRef.companionRowHorizonBound());
+    ExternalPoolAccounting::endTag();
+  }
+  if (!companionRowsAdmitted) {
+    MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::OverdubStart);
+    return;
+  }
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   CaptureAdmissionStaging* viewSet =
       runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;

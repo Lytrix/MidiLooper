@@ -16,6 +16,17 @@ class RuntimeCaptureCompanions {
   RuntimeCaptureCompanions& operator=(const RuntimeCaptureCompanions&) = delete;
   ~RuntimeCaptureCompanions();
   bool prewarm(size_t capacity);
+  /// Grow the row reserve to at least `needed` rows. Cold-point only (the record arm or
+  /// the overdub admission): it releases and re-takes the reserve, so it must never run in
+  /// a deferred grain. A request no larger than the current capacity is satisfied without
+  /// touching the reserve, which is what lets a later, denser interval still fit after a
+  /// smaller grant, and lets canonical growth re-grant upward.
+  bool ensureCapacity(size_t needed);
+  /// Rows a frozen change set can actually produce. A companion row exists only for a
+  /// non-Add transform that carries a valid note id; the same vector also carries the
+  /// interval's `Add` entries, which become the capture pass and never become rows, so the
+  /// whole-vector size is not the row demand.
+  static size_t eligibleRowCount(const PendingNoteChangeVec& frozenChanges);
   /// Keep change contents frozen and all borrowed owners alive until this
   /// preparation and its consumers are discarded. Vector identity/count and
   /// frozen capture generation are checked each turn and on readiness queries.

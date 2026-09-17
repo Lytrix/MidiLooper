@@ -437,8 +437,11 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
     // This is a boot/load or pre-transport path. The hot MIDI path deliberately
     // has no equivalent allocation call.
     if (prepareCapture) {
+      // Derived companion-row reserve for this slot (DEC-066): a loop whose canonical
+      // payloads are sparse does not reserve the full row horizon, while a dense loop
+      // still reaches the ceiling. The clamp lives in the owner.
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
-      ok = runtime->prewarmViews() && ok;
+      ok = runtime->prewarmViews(loop.companionRowHorizonBound()) && ok;
       ExternalPoolAccounting::endTag();
     }
     // Boot reserves no capture staging (DEC-065). Staging is provisioned by capture
@@ -478,10 +481,14 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
     if (prepareCapture) {
       const size_t usedRows = std::min(loop.passes.editPasses.size(),
                                        RuntimePlaybackViewConfig::kRecordsPerBridge);
+      // The grant is the smaller of the remaining row ceiling and this loop's derived
+      // companion-row bound, so the preparation horizon never exceeds what this loop's
+      // source notes can produce.
+      const size_t companionCapacity =
+          std::min(RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows,
+                   loop.companionRowHorizonBound());
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
-      ok = loop.prewarmPreparedCompanionHistory(
-               RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows) &&
-           ok;
+      ok = loop.prewarmPreparedCompanionHistory(companionCapacity) && ok;
       ExternalPoolAccounting::endTag();
     }
   }
