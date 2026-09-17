@@ -131,6 +131,21 @@ cannot keep: the job was still at `PrepareTransfer` when the transport stopped, 
 rows without the transforms the display resolves the overdubbed notes from. Audible content is intact
 because the raw rows and the bridge window carry it.
 
+**Attempted fix implemented, then reverted (2026-09-17, `baafd68a` reverts the attempt).** Keeping the
+companion preparation on the retarget (preference order plus a bounded 512-grain per-phase fallback)
+restored the display -- `captures/successor-wrap-42` reports `overdub_ok=True`, up from `False` in the
+reproduction -- but broke three things the user relies on: only the **first overdubbed bar** stayed
+audible, the deferred **save never finalised**, and **no global undo entry was created**. Holding the
+job in the companion phases keeps `captureStopOwner` and the frozen role owned for as long as they run
+(the save queues behind them) and the raw-only recovery commit `commitPreparedCapturePassAtomic`
+deliberately publishes no protected undo entry while the Playing route's `UndoCollection` phase is
+skipped by the re-route. The correct fix therefore has **four** obligations at once: keep the note-edit
+display representation, publish the protected undo entry, let the deferred save complete, and keep full
+audio. It must let the retargeted job finish its companion **and** undo-collection preparation promptly
+(retarget the companion-side bindings, not only `canonicalPassInputs`'s command epoch) and publish
+through the undo-carrying stopped path -- neither skipping that work nor holding the slot while it runs
+(openspec 5.9/5.10).
+
 **Fix direction (not implemented).** The retarget must *complete and publish* the interrupted companion
 preparation on the STOPPED route instead of dropping it: extend `retargetStoppedRecovery` beyond
 `canonicalPassInputs`'s command epoch to the companion-side bindings (`canonicalTailInputGeneration`,
