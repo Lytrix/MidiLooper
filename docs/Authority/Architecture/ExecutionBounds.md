@@ -246,9 +246,17 @@ Every result is hidden until all passes complete. Source changes, invalid refs,
 aggregate capacity overflow or borrowed-worker reuse deny the candidate, and
 only the generation actually borrowed may be cancelled.
 
-Prewarm adds `C*(2*sizeof(MidiEvent)+sizeof(RuntimeCompanionPasses::Pass))` bytes
-external-first: one C-event raw scratch array, one C-event effective array, and
-C descriptors. No allocation occurs in begin/step/discard. Pass count P and
+Prewarm adds eight external-first arrays, not the three originally listed here:
+`2C*sizeof(MidiEvent)` (one C-event raw scratch array and one C-event effective
+array) + `2C*sizeof(RuntimeCompanionPasses::Pass)` (current and next output
+descriptors) + `C*sizeof(SealedPass)` (selection) + `kRecordsPerBridge*sizeof(const
+EditPass*)` (history pointers) + `2C*sizeof(uint16_t)` (capture order and capture
+scratch), i.e. **147,456 bytes at C=2048 on device** (`sizeof(MidiEvent)=20`,
+`sizeof(Pass)=sizeof(SealedPass)=8`), matching the measured
+`tag=16 canonicalPassInputs 144 KB` record-arm attribution. Allocation is capped by
+`capacity > kEventsPerView`; every array is allocated and fully constructed in
+`prewarm`, and each array alone is enough to fail the whole reserve. No allocation
+occurs in begin/step/discard. Pass count P and
 aggregate effective count are capped at C<=2048, raw pass size at C, each ref
 list at K<=512, history rows at R<=2048. A uint64 bound is
 `1+P*(H(C,R,Q)+ceil((C+512)/Q)+ceil(C/Q)+3)`, where H is the history batch bound
