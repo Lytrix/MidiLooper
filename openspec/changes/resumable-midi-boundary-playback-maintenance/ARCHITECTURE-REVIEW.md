@@ -71,6 +71,38 @@ complete in-order oracle on native fixtures). The phase gated here is **step 3**
   consume a prepared source during a source change, that path is recorded as its own
   slice rather than absorbed silently.
 
+## Amended sequence (owner decision 2026-09-17)
+
+The detector changed 2.4 from a scheduling refactor into a **coherency** problem: `mergedEvents` can
+advance while `playbackOrder` is still the previous one, so the active path needs a *coherent pair*
+and a source to keep consuming while the replacement prepares. The agreed order is therefore:
+
+```text
+2.4 slice 1   DONE   active-path rebuild detector + reachable-path audit
+2.5a          NEXT   byte-identical differential harness (oracle = today's synchronous path)
+2.4 slice 2          immutable PreparedPlaybackPair / last-prepared receipt;
+                     active path consumes only a coherent published pair;
+                     a source change requests replacement preparation;
+                     no merged/order mismatch is ever visible to playback
+measure replacement-preparation latency against the playback horizon
+IF it fits:          2.4 complete (no second ordering algorithm)
+ELSE:                2.4 slice 3 -- bounded incremental order update for the proven
+                     expensive delta (likely the admitted sealed pass)
+```
+
+Target model for slice 2:
+
+```text
+pair P0 prepared + published -> active playback consumes P0
+source changes               -> request preparation of P1; keep consuming P0
+off-clock                    -> build mergedEvents P1, playbackOrder P1, reanchor P1
+P1 complete and coherent     -> atomic pair publish; playback switches to P1
+```
+
+Counters to keep/add for the measurement (alongside `playbackOrderHotRebuildCount`):
+`prepared_pair_request_count`, `prepared_pair_publish_count`, `prepared_pair_hold_ticks`,
+`prepared_pair_rebuild_units`, `prepared_pair_max_latency_ticks`.
+
 ### Verification for this phase
 
 - New instrumentation counter (`Diagnostics::Counter::PlaybackOrderHotRebuild`),
