@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — user-directed; device gates open |
 | [DEC-063](#dec-063--protected-stop-undo-publication-and-bounded-reclamation) | 2026-09-14 | Protected stop transaction preserves feedback trimming; latest deferred Undo/Redo wins per Track | Accepted — implementation authorized; validation gates remain open |
 | [DEC-062](#dec-062--provisional-ranked-preparation-allowance) | 2026-09-14 | Allow 6240 ranked-preparation grains for integration; realtime reservations determined with HITL | Accepted — provisional; validation/HITL gates remain open |
 | [DEC-061](#dec-061--stable-raw-tick-ordering-after-create) | 2026-09-14 | Create appends then stably sorts raw ticks, including empty payloads | Accepted — explicit semantic correction; task 2.3 and validation/HITL gates remain open |
@@ -77,7 +78,86 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-065 -->
+<!-- Append new entries below (newest first). Next ID: DEC-066 -->
+
+## DEC-065 — Capture staging is provisioned by capture admission, not by boot
+
+**Date:** 2026-09-17
+**Status:** Accepted — user-directed ("take E first"); implementation authorized, device gates open
+**Owner:** `LoopPlaybackRuntime` capture-staging owner; `Track` capture admission (record arm and overdub start)
+
+**Context:** The two capture-admission staging roles per slot are reserved by
+`TrackManager::prewarmPlaybackRuntime` at boot for every enabled or non-empty slot
+(`Track::prewarmPlaybackForSlot(s, prepareCapture=false)`). Measured on the loaded device
+([`stepD-arm-delta-01`](../../captures/stepD-arm-delta-01/session_20260917_115207.log)):
+phase 1 prewarms 8 slots for 1,336 KB of PSRAM and phase 2 adds one slot for 156 KB
+(~157 KB per slot), i.e. `tag 3 = 1334 KB` is paid for slots that may never record. The
+record arm's own measured increment is 1,240 KB (views/bridges 790 + the seven
+companion/lookup prewarms 450) and it fails on exactly that device because the *last*
+reserve lacks 80 KB. Staging is only needed by a slot that records, and the record arm
+already reserves it (idempotently) through `prewarmViews` → `prewarmCaptureStaging`.
+
+**Decision:** Capture staging is provisioned by **capture admission**, not by slot
+existence.
+
+1. **Boot establishes only metadata/order needed to make admission deterministic:** the
+   runtime slot, the per-track stop-descriptor ring, the transfer horizon and the
+   canonical copy directory. It reserves **neither** staging role.
+2. **A capture operation is admitted only after its required staging capacity has been
+   reserved successfully.** Order is always *reserve → require → commit*: the record arm
+   reserves both roles through its existing admission; `Track::startOverdubbing` reserves
+   both roles on its own cold button turn before any mutation, and its
+   "staging must already exist" rejection becomes an explicit denial **after** that
+   reserve, never an implicit dependence on boot.
+3. **Both roles are reserved by the same admission.** The live ingress role and the frozen
+   stop-job role keep their DEC-058 split and constant-work
+   `exchangeCaptureStagingRoles`; punch-out therefore still never allocates, and the
+   successor interval gets a physically separate, already-reserved live role.
+4. **Ownership transfer and release follow the data, not UI state.** Live capture owns the
+   live role first; a stop job that freezes it owns the frozen role until its own cleanup.
+   Staging storage is released only by the **last owner** (runtime teardown), never because
+   live recording ended while an admitted deferred stop still owns backed rows.
+5. **Capacity denial is explicit and atomic.** If the reserve fails, no interval identity,
+   pending note, preview, stop ownership, reservation or track-state transition becomes
+   authoritative; the operation is denied with an explicit `#MEM_DENIED` reason and prior
+   playback/capture state is intact.
+6. **No allocation in a deferred grain.** Moving the reserve to admission changes *when*
+   memory is taken, never permitting allocation inside deferred-stop processing.
+
+**Scope boundary:** this decision covers staging only. The seven companion/lookup
+prewarms and the prepared-companion-history rows stay owned by the record arm, because
+`Loop::prewarmPreparedCompanionHistory` is documented STOPPED-only (it reshapes canonical
+vectors under an active read borrow). A loaded-slot overdub therefore keeps today's
+degraded canonical-prefix/companion path; upgrading it would be a separate decision.
+
+**Gates before this is closed:** boot ordering (capture-only structures still initialized
+in the documented order); admission atomicity; ownership transfer; last-owner release;
+explicit capacity denial; zero allocations in deferred grains; two-role reentry
+consistency with predecessor-pending successor capture. Device measurement must record
+boot free headroom, arm allocation delta, post-arm headroom, stop-grain allocation count,
+deferred completion and successor reentry, and - once headroom allows - one end-to-end
+successful 8-bar record + overdub run.
+
+**Supersedes:** the "boot prewarm admission" provisioning half of the DEC-058
+dual-staging follow-up (`docs/DECISION_LOG.md:117-138`). The dual-role split itself, the
+per-slot cost (160,536 B/slot for two 2,048-event roles) and all other DEC-058 gates stand.
+
+**References:** [ExecutionBounds — record-arm reservation](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17),
+[CURRENT_WORK steps A–F](Runtime/CURRENT_WORK.md).
+
+**2026-09-17 implementation amendment — the point-of-use gate must match the allocator.**
+Moving staging off boot was not sufficient to admit the loaded-set 8-bar arm: the remaining
+denial was `op=companion_history_reserve, reason=heap_low, need=81920B, heap_free=76KB` with
+`pool_refused=0/0B` and ~1.27 MB of pool free, because the 80 KB `EditPassVec` reserve is
+`InternalHeapFirstAllocator` (malloc, then extmem) while the gate vetoed on the heap floor
+alone. `admitOperationMemory` now treats the point-of-use probe as the **authority** for
+`CompanionHistoryReserve` - the probe tests exactly the malloc-then-extmem pair the real
+allocator will use - so the heap floor no longer refuses a request the pool can serve.
+Denial remains explicit when the probe fails or the pool refused inside its window. A gate
+that denies a succeeding reserve violates clause 2 (*reserve -> all succeed -> commit*), so
+this is part of the decision, not an exception to it. Device evidence:
+[`stepE-e2e-01`](../../captures/stepE-e2e-01/session_20260917_121721.log) - 0 denial,
+0 refusal, 0 FATAL, record + overdub + deferred stop to PLAYING.
 
 ## DEC-064 — Exclusive raw capture ranges for queued overdub preparation
 
