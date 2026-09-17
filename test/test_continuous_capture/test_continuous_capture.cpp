@@ -119,6 +119,13 @@ struct TrackCaptureStopTestAccess {
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
   static uint64_t interval(const Track& track) { return track.captureInterval_; }
   static uint64_t jobInterval(Track& track) { return job(track).interval; }
+  static size_t jobReceiptRing(Track& track) { return job(track).admission.sessionExitReceiptRing; }
+  static const SessionExitSnapshotHandoff* receiptAt(Track& track, size_t offset) {
+    return track.getActiveLoop().sessionExitReceiptAt(offset);
+  }
+  static size_t receiptCount(Track& track) {
+    return track.getActiveLoop().sessionExitReceiptCount();
+  }
   static uint8_t jobPhase(Track& track) {
     return static_cast<uint8_t>(job(track).admission.phase);
   }
@@ -459,6 +466,172 @@ void test_track_reentry_does_not_depend_on_manager_guard() {
   TEST_ASSERT_EQUAL(rowsBeforeCompletion, track.getActiveLoop().capture.store.size());
 }
 
+/// DEC-068 (1)(5): a session-exit receipt belongs to the interval that captured it. A's
+/// receipt is taken at A's stop admission (not ready), carries A's committed pass id once A
+/// retires, and B's receipt is a distinct one for a distinct interval.
+void test_session_exit_receipts_are_per_interval() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // A's tail is captured at admission, before any successor exists, and is not consumable yet.
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::receiptCount(track)));
+  const size_t aRing = TrackCaptureStopTestAccess::jobReceiptRing(track);
+  TEST_ASSERT_NOT_EQUAL(Loop::kInvalidSessionExitReceipt, aRing);
+  const SessionExitSnapshotHandoff* aReceipt = TrackCaptureStopTestAccess::receiptAt(track, 0);
+  TEST_ASSERT_NOT_NULL(aReceipt);
+  TEST_ASSERT_TRUE(aReceipt->pending);
+  TEST_ASSERT_FALSE(aReceipt->ready);
+  TEST_ASSERT_EQUAL(kInvalidPassId, aReceipt->lastPassId);
+  // B starts while A pends and gets its own session.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  inputNote(62, 193, 216);
+  // A retires: its receipt becomes ready with A's pass id, and B's session survives.
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  const PassId aPassId = loop.passes.overdubPasses.back().id;
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::receiptCount(track)));
+  aReceipt = TrackCaptureStopTestAccess::receiptAt(track, 0);
+  TEST_ASSERT_NOT_NULL(aReceipt);
+  TEST_ASSERT_TRUE(aReceipt->ready);
+  TEST_ASSERT_EQUAL(aPassId, aReceipt->lastPassId);
+  // The publisher consumes it once; B's own receipt is a different slot and a different pass.
+  for (unsigned grain = 0; grain < 10000 && loop.hasPendingSnapshotPublish(); ++grain)
+    loop.stepPendingSnapshotPublish(1);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::receiptCount(track)));
+  const size_t passesBeforeB = loop.passes.overdubPasses.size();
+  clockManager.assignCurrentTickSilently(288);
+  track.stopOverdubbing();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  const size_t bRing = TrackCaptureStopTestAccess::jobReceiptRing(track);
+  TEST_ASSERT_NOT_EQUAL(Loop::kInvalidSessionExitReceipt, bRing);
+  TEST_ASSERT_NOT_EQUAL(aRing, bRing);
+  for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_UINT32(passesBeforeB + 1,
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  const PassId bPassId = loop.passes.overdubPasses.back().id;
+  TEST_ASSERT_TRUE(bPassId != aPassId);
+  const SessionExitSnapshotHandoff* bReceipt = TrackCaptureStopTestAccess::receiptAt(track, 0);
+  TEST_ASSERT_NOT_NULL(bReceipt);
+  TEST_ASSERT_TRUE(bReceipt->ready);
+  TEST_ASSERT_EQUAL(bPassId, bReceipt->lastPassId);
+}
+
+/// DEC-068 (2)(3): A's cleanup retires A's descriptor while B stays live, and it must not close
+/// the successor's session. B's own session is still the live one after A is gone.
+void test_predecessor_cleanup_keeps_the_successor_session() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(62, 193, 240);
+  const size_t rowsBefore = loop.capture.store.size();
+  const size_t notesBefore = TrackCaptureStopTestAccess::liveNotes(track).size();
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  // A retired exactly once...
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  // ...without ending B's session or touching B's accepted state.
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasOverdubSession(),
+                           "A's cleanup closed the session of the live successor");
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL(rowsBefore, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(notesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+}
+
+/// DEC-068 (4): after B stops, B captures its own receipt, publishes it, and its descriptor
+/// retires — the successor's session ends with the successor.
+void test_successor_session_ends_with_its_own_retirement() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(62, 193, 216);
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  // The publisher drains A's receipt on idle turns (the harness drives them explicitly).
+  for (unsigned grain = 0; grain < 10000 && loop.hasPendingSnapshotPublish(); ++grain)
+    loop.stepPendingSnapshotPublish(1);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::receiptCount(track)));
+  clockManager.assignCurrentTickSilently(288);
+  track.stopOverdubbing();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  // B owns the last interval, so its retirement ends the session, and its receipt is queued for
+  // the publisher rather than dropped.
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::receiptCount(track)));
+  const SessionExitSnapshotHandoff* receipt = TrackCaptureStopTestAccess::receiptAt(track, 0);
+  TEST_ASSERT_NOT_NULL(receipt);
+  TEST_ASSERT_TRUE(receipt->ready);
+  TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id, receipt->lastPassId);
+}
+
+/// DEC-068 (6): the same rule on the superseded route — A retiring through
+/// `commitSupersededCausalBase` releases only its own receipt and cannot close B's session.
+void test_superseded_predecessor_releases_only_its_own_receipt() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  loop.storePublishedSnapshotForTest(
+      LoopSnapshot::createEmpty(loop.loopId, loop.loopLengthTicks, loop.loopStartTick,
+                                loop.nextNoteId_, 1),
+      loop.playbackRevision);
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, UINT32_MAX);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // The recorded causal base stops being the live root, so A retires superseded.
+  TrackCaptureStopTestAccess::setPlaybackRevision(track, TrackCaptureStopTestAccess::playbackRevision(track) + 7);
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(62, 193, 216);
+  const size_t passesBefore = loop.passes.overdubPasses.size();
+  for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_UINT8(RuntimePlaybackBridgeLifecycle::kNoBridge,
+                          TrackCaptureStopTestAccess::bridgeSelected(track));
+  TEST_ASSERT_EQUAL_UINT32(passesBefore + 1,
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  // A released its own receipt (consumed or still pending, but always with A's pass id)...
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::receiptCount(track)));
+  const SessionExitSnapshotHandoff* receipt = TrackCaptureStopTestAccess::receiptAt(track, 0);
+  TEST_ASSERT_NOT_NULL(receipt);
+  TEST_ASSERT_TRUE(receipt->ready);
+  TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id, receipt->lastPassId);
+  // ...and B's session is untouched by A's superseded retirement.
+  TEST_ASSERT_TRUE(loop.hasOverdubSession());
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+}
+
 /// Task 5.1(d): after A retires, B's own stop is admitted and that same interval transfers
 /// exactly once — one job descriptor for B's interval identity, B's accepted rows moved out of
 /// the live store in order, and exactly one committed pass whose content is those rows.
@@ -533,6 +706,19 @@ void test_successor_same_interval_transfers_exactly_once() {
     TEST_ASSERT_EQUAL(bAccepted[row].tick, committed[row].tick);
     TEST_ASSERT_EQUAL(bAccepted[row].data.noteData.note, committed[row].data.noteData.note);
   }
+  // ...and that interval's job retires, releasing its own receipt (DEC-068).
+  for (unsigned turn = 0; turn < 20000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_FALSE(loop.hasOverdubSession());
+  // A's receipt may still be queued ahead of it (FIFO); this interval's own is the newest.
+  const size_t receiptCount = TrackCaptureStopTestAccess::receiptCount(track);
+  TEST_ASSERT_TRUE(receiptCount >= 1);
+  const SessionExitSnapshotHandoff* receipt =
+      TrackCaptureStopTestAccess::receiptAt(track, receiptCount - 1);
+  TEST_ASSERT_NOT_NULL(receipt);
+  TEST_ASSERT_TRUE(receipt->ready);
+  TEST_ASSERT_EQUAL(loop.passes.overdubPasses.back().id, receipt->lastPassId);
 }
 
 /// Task 5.1(e): a start request while B is still live is not admitted as a second live
@@ -1650,6 +1836,10 @@ int main() {
   RUN_TEST(test_record_admission_denied_when_required_prewarm_fails);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
+  RUN_TEST(test_session_exit_receipts_are_per_interval);
+  RUN_TEST(test_predecessor_cleanup_keeps_the_successor_session);
+  RUN_TEST(test_successor_session_ends_with_its_own_retirement);
+  RUN_TEST(test_superseded_predecessor_releases_only_its_own_receipt);
   RUN_TEST(test_successor_same_interval_transfers_exactly_once);
   RUN_TEST(test_start_request_while_successor_is_live_is_not_a_second_interval);
   RUN_TEST(test_successor_start_is_admitted_while_finalization_resources_are_busy);

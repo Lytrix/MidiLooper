@@ -25,8 +25,8 @@ LOOP_COLD_MEM void Loop::syncNextOverdubSessionIndexFromPasses() {
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
 }
 
-LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
-  if (hasOverdubSession()) {
+LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, bool forceNew) {
+  if (hasOverdubSession() && !forceNew) {
     return;
   }
   // Record-stop may still hold sealed rows when visual has not consumed that
@@ -50,6 +50,16 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick) {
   // A successor session may hand off even while an unconsumed receipt sits in
   // the ring; the flag is per session, not per ring.
   sessionExitHandedOff_ = false;
+}
+
+LOOP_COLD_MEM bool Loop::markSessionExitTailReady(size_t ringIndex, PassId lastPassId) {
+  SessionExitSnapshotHandoff* receipt = sessionExitReceiptByRingIndex(ringIndex);
+  if (receipt == nullptr || !receipt->pending || receipt->ready) {
+    return false;
+  }
+  receipt->lastPassId = lastPassId;
+  receipt->ready = true;
+  return true;
 }
 
 LOOP_COLD_MEM void Loop::closeOverdubSession() {

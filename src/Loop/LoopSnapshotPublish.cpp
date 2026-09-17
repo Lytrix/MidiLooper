@@ -1828,6 +1828,42 @@ LOOP_COLD_MEM const SessionExitSnapshotHandoff* Loop::sessionExitReceiptAt(size_
   return &sessionExitReceipts_[(sessionExitReceiptHead_ + index) % kSessionExitReceiptCapacity];
 }
 
+LOOP_COLD_MEM SessionExitSnapshotHandoff* Loop::sessionExitReceiptByRingIndex(size_t ringIndex) {
+  if (sessionExitReceipts_ == nullptr || ringIndex >= kSessionExitReceiptCapacity) {
+    return nullptr;
+  }
+  return &sessionExitReceipts_[ringIndex];
+}
+
+LOOP_COLD_MEM const SessionExitSnapshotHandoff* Loop::sessionExitReceiptByRingIndex(
+    size_t ringIndex) const {
+  return const_cast<Loop*>(this)->sessionExitReceiptByRingIndex(ringIndex);
+}
+
+LOOP_COLD_MEM size_t Loop::captureSessionExitTail(CommitReason reason) {
+  if (!isSessionExit(reason) || !hasOverdubSession() || loopLengthTicks == 0) {
+    return kInvalidSessionExitReceipt;
+  }
+  if (sessionExitReceiptCount_ >= kSessionExitReceiptCapacity) {
+    return kInvalidSessionExitReceipt;
+  }
+  const size_t ringIndex =
+      (sessionExitReceiptHead_ + sessionExitReceiptCount_) % kSessionExitReceiptCapacity;
+  SessionExitSnapshotHandoff& receipt = sessionExitReceipts_[ringIndex];
+  receipt.reason = reason;
+  receipt.lastPassId = kInvalidPassId;
+  receipt.companionRowCount = std::min(overdubSessionCursor_, overdubSessionCompanionIds_.size());
+  // Swap, never copy: this admission boundary must not allocate, and this interval's identities
+  // must leave the shared slot so a successor opens a session of its own (DEC-068).
+  receipt.passIds.swap(overdubSessionPassIds_);
+  receipt.companionIds.swap(overdubSessionCompanionIds_);
+  overdubSessionCursor_ = 0;
+  receipt.pending = true;
+  receipt.ready = false;
+  ++sessionExitReceiptCount_;
+  return ringIndex;
+}
+
 LOOP_COLD_MEM bool Loop::handoffSessionExitSnapshot(CommitReason reason) {
   if (!canHandoffSessionExitSnapshot() || sessionExitHandedOff_ || !hasOverdubSession() ||
       !isOverdubSessionExit(reason) || loopLengthTicks == 0) return false;
@@ -1840,6 +1876,10 @@ LOOP_COLD_MEM bool Loop::handoffSessionExitSnapshot(CommitReason reason) {
   receipt.passIds.swap(overdubSessionPassIds_);
   receipt.companionIds.swap(overdubSessionCompanionIds_);
   receipt.pending = true;
+  // The legacy one-shot handoff is complete at capture; the deferred path instead captures a
+  // not-ready tail at its stop admission and fills the final pass id at its own commit
+  // (DEC-068).
+  receipt.ready = true;
   ++sessionExitReceiptCount_;
   sessionExitHandedOff_ = true;
   // Existing wrap construction must survive close until the idle owner merges
@@ -1958,6 +1998,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     // finalised, and each publisher turn handles exactly one.
     SessionExitSnapshotHandoff& receipt =
         sessionExitReceipts_[sessionExitReceiptHead_ % kSessionExitReceiptCapacity];
+    // DEC-068: an interval-level tail is only consumable once that interval's final pass has
+    // committed and its id is filled. Skip it in place so FIFO order is preserved.
+    if (!receipt.ready) return true;
     if (!queueSessionExitSnapshot(receipt.reason) && !publishedSnapshotIsCurrent()) return true;
     receipt.pending = false;
     receipt.passIds.clear();

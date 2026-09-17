@@ -121,11 +121,21 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
-    CapturePreview& preview) {
+    CapturePreview& preview, bool ownsLiveSession) {
   if (stop.phase != PendingStopPhase::DeferredCleanup || !stop.finalizationComplete() ||
       stop.historyRecycleOwner) return false;
-  if (!loop.handoffSessionExitSnapshot(stop.destination == PendingStopDestination::Playing
-          ? CommitReason::OverdubStop : CommitReason::OverdubStopToStopped)) return false;
+  // DEC-068: this interval's session-exit receipt was captured at its own stop admission, before
+  // any successor could touch the shared session state. The transfer above committed our final
+  // pass, so fill its id and release the receipt to the publisher. Building a receipt from the
+  // live session here is what handed the successor's identities to the predecessor.
+  if (stop.sessionExitReceiptRing != Loop::kInvalidSessionExitReceipt) {
+    if (!loop.markSessionExitTailReady(stop.sessionExitReceiptRing, loop.lastCommittedPassId())) {
+      return false;
+    }
+  } else if (!loop.handoffSessionExitSnapshot(stop.destination == PendingStopDestination::Playing
+                 ? CommitReason::OverdubStop : CommitReason::OverdubStopToStopped)) {
+    return false;
+  }
   loop.completePreparedCapturePassDeferredCleanup(preview);
   // Retire preparation workers only. The published bridge and any held-note
   // closure remain owned by the continuously advancing playback cursor.
@@ -140,7 +150,11 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
     runtime.retainCommittedCanonicalTail(loop, source);
   }
   runtime.discardFrozenCanonicalTail();
-  loop.closeOverdubSession();
+  // DEC-068: only the interval that still owns the live session may end it. A successor's
+  // session stays open and independent while this job retires.
+  if (ownsLiveSession) {
+    loop.closeOverdubSession();
+  }
   if (runtime.captureStopOwner == &stop) runtime.captureStopOwner = nullptr;
   // DEC-067: the successor's stop may be admitted again once this job's
   // finalization resources are back; the maintenance turn reports that edge.

@@ -141,6 +141,7 @@ void PendingStopAdmission::reset() {
   phase = PendingStopPhase::ReservedClosure;
   destination = PendingStopDestination::Playing;
   pending = false;
+  sessionExitReceiptRing = static_cast<size_t>(-1);
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool PendingStopAdmission::begin(uint32_t generation, uint32_t tick, uint32_t commandEpoch,

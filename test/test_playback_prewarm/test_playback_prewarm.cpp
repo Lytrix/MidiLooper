@@ -1845,7 +1845,9 @@ void test_runtime_canonical_window_prepares_spare_coverage_and_releases_tail_wor
       TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
       PendingStopAdmission stop; stop.pending = true;
       stop.setPhase(PendingStopPhase::DeferredCleanup);
-      TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
+      // `ownsLiveSession` (DEC-068): these fixtures retire the only interval, so the job still
+      // owns the live session and may end it.
+      TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
       TEST_ASSERT_TRUE(window->published);
       TEST_ASSERT_TRUE(cursor.selectAfterPhase(*window, bridge, 7));
       f.revision = target.playbackRevision; f.generation = target.sourceGeneration;
@@ -2986,7 +2988,7 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
     stop.historyRecycleOwner = nullptr;
     const size_t retainedNormalizedPasses = runtime.frozenCompanionPasses.normalizedPassCount();
-    TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
+    TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
     TEST_ASSERT_EQUAL_UINT32(retainedNormalizedPasses, runtime.canonicalPassInputs.completedPassCount());
     TEST_ASSERT_FALSE(runtime.canonicalPassInputs.captureAttached());
     TEST_ASSERT_EQUAL(variant < 9, runtime.selectedFullLoopBridge(target, 768) != nullptr);
@@ -5165,15 +5167,15 @@ void test_bridge_keeps_open_note_closure_until_changed_pair_next_cycle() {
   stop.destination = PendingStopDestination::Playing;
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   const auto playbackIndex = stream->playbackIndex;
-  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
+  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
   TEST_ASSERT_TRUE(stop.pending);
   TEST_ASSERT_TRUE(loop.hasOverdubSession());
   TEST_ASSERT_TRUE(runtime.ledger.isActive(1, 60));
   TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
   stop.historyRecycleOwner = &loop;
-  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
+  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
   stop.historyRecycleOwner = nullptr;
-  TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
+  TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
   TEST_ASSERT_FALSE(stop.pending);
   TEST_ASSERT_FALSE(loop.hasOverdubSession());
   // The receipt ring gate is a free slot, not an unconsumed singleton: the
@@ -5185,7 +5187,7 @@ void test_bridge_keeps_open_note_closure_until_changed_pair_next_cycle() {
   TEST_ASSERT_EQUAL_PTR(stream, runtime.prepareFullLoopBridgeStream(bridge.source, 768, 15));
   TEST_ASSERT_EQUAL_UINT16(playbackIndex, stream->playbackIndex);
   TEST_ASSERT_EQUAL_UINT32(100, stream->cursor.peek()->tick);
-  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview));
+  TEST_ASSERT_FALSE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
   TEST_ASSERT_TRUE(runtime.ledger.applyPlaybackEvent(1, *stream->cursor.peek()));
   TEST_ASSERT_TRUE(stream->cursor.advance());
   TEST_ASSERT_FALSE(runtime.ledger.isActive(1, 60));
