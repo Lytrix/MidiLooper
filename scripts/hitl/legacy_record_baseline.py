@@ -3361,13 +3361,25 @@ def _await_collector_marker(collector: Any, marker: str, *, baseline: int, timeo
                             poll_s: float = 0.002) -> Optional[float]:
     """Host monotonic time when the collector first showed `marker` at or after `baseline`.
 
-    Uses the collector's cheap single-marker scan: the deferred stop floods the stream, so a
-    full `snapshot()` per poll starved the probe (measured `successor-reentry-18`).
+    Prefers the collector's cheap single-marker scan: the deferred stop floods the stream, so
+    a full `snapshot()` per poll is what made the old anchor wait burn its whole timeout
+    (`successor-reentry-18`). Collectors that expose no scan fall back to a bounded snapshot
+    walk so a probe degrades instead of silently never seeing the edge.
     """
     deadline = time.monotonic() + max(timeout_s, 0.0)
+    find_line = getattr(collector, "find_line", None)
     while True:
+        found: Optional[int] = None
         try:
-            found = collector.find_line(marker, after_index=baseline)
+            if callable(find_line):
+                found = find_line(marker, after_index=baseline)
+            else:
+                lines = collector.snapshot()
+                found = next(
+                    (index for index in range(max(baseline, 0), len(lines))
+                     if marker in lines[index]),
+                    None,
+                )
         except Exception:  # noqa: BLE001 - a collector read must never abort the probe
             found = None
         if found is not None:

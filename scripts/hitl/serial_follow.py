@@ -195,6 +195,21 @@ class ExternalSerialFollowCollector:
                 self._mark_incomplete(f"serial follow error: {exc}")
             time.sleep(self._poll_interval_s)
 
+    def find_line(self, needle: str, *, after_index: int = 0) -> Optional[int]:
+        """Index of the first line at or after `after_index` containing `needle`, else None.
+
+        Same contract as `SerialCaptureCollector::find_line`: scan without copying the
+        retained list, so a probe can wait on one marker while the stream is flooded.
+        """
+        if not needle:
+            return None
+        with self._lock:
+            lines = self._lines
+            for index in range(max(after_index, 0), len(lines)):
+                if needle in lines[index]:
+                    return index
+        return None
+
     def snapshot(self) -> list[str]:
         with self._lock:
             return list(self._lines)
