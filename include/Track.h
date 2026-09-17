@@ -191,7 +191,10 @@ public:
   /// Arm sliced `#CAP,DIAG,lcr` on the selected track when idle (Stage 9 device gate). SESSION_CAPTURE only.
   void maybeQueueContentResolutionDeviceGate();
   /// Touch playback runtime and loop playback order for one slot (boot/load prewarm).
-  void prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
+  /// Establish every reserve that keeps the later deferred stop grains allocation-free.
+  /// Returns false when any required reserve failed, which is capture-admission denial:
+  /// the caller must not enter RECORDING. Boot/load callers may ignore the result.
+  bool prewarmPlaybackForSlot(uint8_t slotIndex, bool prepareCapture = true);
   /// Full merged-MIDI build for a slot (LoopEnd / NextGrid launch prep). Not for boot prewarm.
   void ensurePlaybackMergedEventsForSlot(uint8_t slotIndex);
   /// True when primary playback window matches current loop revision (safe LoopEnd activate).

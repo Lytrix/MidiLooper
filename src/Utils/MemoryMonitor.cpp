@@ -227,6 +227,17 @@ FLASHMEM const char* operationName(OperationKind operation) {
 }
 }  // namespace
 
+FLASHMEM void reportPrewarmAdmissionDenied(OperationKind operation) {
+  const ExternalPoolAccounting::Counters& pool = ExternalPoolAccounting::counters();
+  Serial.printf_P(
+      PSTR("#MEM_DENIED,%lu,op=%s,reason=prewarm_failed,need=0B,heap_free=%luKB,"
+           "pool_refused=%lu/%luB\n"),
+      static_cast<unsigned long>(micros()), operationName(operation),
+      static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
+      static_cast<unsigned long>(pool.poolRefusedCount),
+      static_cast<unsigned long>(pool.poolRefusedLargestBytes));
+}
+
 FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
   const uint32_t heapFree = getInternalHeapFreeBytes();
   const ExternalPoolAccounting::Counters& pool = ExternalPoolAccounting::counters();
@@ -492,9 +503,14 @@ uint32_t getInternalHeapMinEverFreeBytes() { return getInternalHeapFreeBytes(); 
 void resetInternalHeapWatermark() {}
 void logStatus(bool) {}
 void logExternalPoolAccounting(const char*) {}
+void reportPrewarmAdmissionDenied(OperationKind) {}
 // Native/other-platform stub: the gate has no pool to consult and must not
 // change host-test behaviour, so it always admits.
-bool admitOperationMemory(OperationKind, uint32_t) { return true; }
+namespace {
+bool sNativeForcedReserveDenied = false;
+}
+bool admitOperationMemory(OperationKind, uint32_t) { return !sNativeForcedReserveDenied; }
+void setNativeForcedReserveDenied(bool denied) { sNativeForcedReserveDenied = denied; }
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 namespace {
@@ -591,6 +607,7 @@ uint32_t getInternalHeapMinEverFreeBytes() { return 0; }
 void resetInternalHeapWatermark() {}
 void logStatus(bool) {}
 void logExternalPoolAccounting(const char*) {}
+void reportPrewarmAdmissionDenied(OperationKind) {}
 // Native/other-platform stub: the gate has no pool to consult and must not
 // change host-test behaviour, so it always admits.
 bool admitOperationMemory(OperationKind, uint32_t) { return true; }
