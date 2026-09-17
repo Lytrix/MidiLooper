@@ -201,9 +201,10 @@ which assume infallible allocation; a global null return would convert the abort
 unchecked null dereferences. The gate achieves the objective's outcome (operation-level
 denial, transport untouched) without that risk. **Residual:** an allocation failure
 *outside* a gated boundary can still reach `abort()`. Record start was audited and
-deliberately left ungated with a large margin — it is already refusal-tolerant (the record
-completed through 834 refusals), and its measured 168 KB heap cost would make a matching
-margin deny normal records.
+deliberately left ungated, on the reasoning that it was refusal-tolerant because the record
+completed through 834 refusals. **That reasoning was wrong** — those refusals are
+mid-record chunk retries, and the record *arm* has its own fatal allocation; see the
+CORRECTION entry above.
 
 **Observed consequence, not a regression:** on this device the canonical 2-bar recipe also
 drives the pool to ~99% after its record, so the gate denies its overdub too
