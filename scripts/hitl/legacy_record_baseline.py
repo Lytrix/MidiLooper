@@ -4076,6 +4076,38 @@ def _run_overdub_pass(
     stop_confirm_timeout_s = args.state_sync_timeout_ms / 1000.0
     if pass_label == "overdub" and getattr(args, "successor_reentry_delay_ms", 0) > 0:
         stop_confirm_timeout_s = min(stop_confirm_timeout_s, 1.2)
+    probe_delay_ms = max(int(getattr(args, "successor_reentry_delay_ms", 0) or 0), 0)
+    probe_stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0) or 0), 0)
+    probe_enabled = pass_label == "overdub" and probe_delay_ms > 0
+    if probe_enabled:
+        # Press the stop, then open the successor from this same flow *before* waiting for
+        # the stop confirmation: that wait takes ~1.4 s on device (the whole deferred
+        # window), which pushed a confirmation-relative press past the predecessor's
+        # completion (measured +1.7 to +1.9 s against a ~1.4 s window).
+        _send_overdub_stop()
+        time.sleep(probe_delay_ms / 1000.0)
+        print(
+            f"[track {_user_track_number(idx)}] successor reentry start "
+            f"(+{probe_delay_ms} ms after {pass_label} stop press)"
+        )
+        _send_short_press(
+            out_port,
+            note=RECORD_BUTTON_NOTE,
+            channel_1based=CONTROL_CHANNEL_1BASED,
+            press_ms=args.press_ms,
+        )
+        if probe_stop_delay_ms > 0:
+            time.sleep(probe_stop_delay_ms / 1000.0)
+            print(
+                f"[track {_user_track_number(idx)}] successor reentry stop press "
+                f"(+{probe_delay_ms + probe_stop_delay_ms} ms; predecessor may still be pending)"
+            )
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=args.press_ms,
+            )
     od_stop = request_state_transition(
         snapshot=serial_collector.snapshot,
         requested="PLAYING_AFTER_OVERDUB_STOP",
@@ -4090,7 +4122,7 @@ def _run_overdub_pass(
         disproved=lambda lines, baseline: (
             _latest_track_state(lines, after_index=baseline) == "OVERDUBBING"
         ),
-        send_request=_send_overdub_stop,
+        send_request=(lambda: None) if probe_enabled else _send_overdub_stop,
         timeout_s=stop_confirm_timeout_s,
         max_retries=1,
         abort=abort,
@@ -4118,36 +4150,6 @@ def _run_overdub_pass(
                 od_clock_count,
                 od_timing,
                 od_fallback_seconds,
-            )
-    if pass_label == "overdub" and getattr(args, "successor_reentry_delay_ms", 0) > 0:
-        # Sequential, not on a timer: the stop confirmation is now prompt (the predicate
-        # accepts the deferred edges) and its wait is bounded to 1.2 s, so pressing from the
-        # main flow lands inside the predecessor's ~1.2-1.8 s window. A background thread
-        # was tried and its mido sends never reached the device (no `MIDI Button A` line).
-        delay_ms = max(int(args.successor_reentry_delay_ms), 0)
-        stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0) or 0), 0)
-        time.sleep(delay_ms / 1000.0)
-        print(
-            f"[track {_user_track_number(idx)}] successor reentry start "
-            f"(+{delay_ms} ms after {pass_label} stop confirmation)"
-        )
-        _send_short_press(
-            out_port,
-            note=RECORD_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=args.press_ms,
-        )
-        if stop_delay_ms > 0:
-            time.sleep(stop_delay_ms / 1000.0)
-            print(
-                f"[track {_user_track_number(idx)}] successor reentry stop press "
-                f"(+{delay_ms + stop_delay_ms} ms; predecessor may still be pending)"
-            )
-            _send_short_press(
-                out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
-                press_ms=args.press_ms,
             )
     time.sleep(args.phase_wait_ms / 1000.0)
     return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
