@@ -149,6 +149,78 @@ void test_prepared_capture_transfer_moves_pass_without_vector_growth() {
   TEST_ASSERT_TRUE(loop.capturePreview.notes.empty());
 }
 
+/// OpenSpec 5.12 / D8, commit 1: moving the staged capture pass out of the loop producer is
+/// lossless, non-allocating, and leaves the documented postconditions. This is the primitive the
+/// deferred job will use to own its pass instead of depending on loop-global producer state.
+void test_take_pending_capture_pass_is_lossless_and_nonallocating() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  seedCommittedPair(loop);
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(1));
+  Capture source;
+  source.phase = CapturePhase::Overdub;
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::NoteOn(100, 1, 60, 90)));
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::NoteOff(148, 1, 60, 0)));
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::NoteOn(200, 1, 64, 80)));
+  TEST_ASSERT_TRUE(source.store.append(MidiEvent::NoteOff(248, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok,
+      loop.stagePreparedCapturePassFromActiveAdmission(source, 150, CommitReason::OverdubStop));
+  TEST_ASSERT_TRUE(loop.hasPendingCapturePass());
+
+  // Snapshot the receipt's scalars and its *live* chunk storage. `PendingCapturePass` copied by
+  // value would deep-copy the chunk list, so take the originals from the loop's own receipt before
+  // the move (a distinct vector buffer, which is exactly what the move must transfer).
+  const PassId sourceId = loop.pendingCapturePass().id;
+  const CapturePassPhase sourcePhase = loop.pendingCapturePass().phase;
+  const uint32_t sourceMergeSequence = loop.pendingCapturePass().mergeSequence;
+  const uint32_t sourceSealedAtTick = loop.pendingCapturePass().sealedAtTick;
+  const uint8_t sourceSessionIndex = loop.pendingCapturePass().overdubSessionIndex;
+  const bool sourceRetiresLive = loop.pendingCapturePass().retiresLiveCapture;
+  const size_t chunkCountBefore = loop.pendingCapturePass().committedChunkIds.size();
+  const uint16_t* const chunkDataBefore = loop.pendingCapturePass().committedChunkIds.data();
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(chunkCountBefore));
+
+  PendingCapturePass taken;
+  TEST_ASSERT_TRUE(loop.takePendingCapturePass(taken));
+
+  // Success postcondition: the receipt and its chunk-list storage moved, nothing aliases it.
+  TEST_ASSERT_FALSE(loop.hasPendingCapturePass());
+  TEST_ASSERT_EQUAL(sourceId, taken.id);
+  TEST_ASSERT_EQUAL(sourcePhase, taken.phase);
+  TEST_ASSERT_EQUAL_UINT32(sourceMergeSequence, taken.mergeSequence);
+  TEST_ASSERT_EQUAL_UINT32(sourceSealedAtTick, taken.sealedAtTick);
+  TEST_ASSERT_EQUAL(sourceSessionIndex, taken.overdubSessionIndex);
+  TEST_ASSERT_EQUAL(sourceRetiresLive, taken.retiresLiveCapture);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(chunkCountBefore),
+                           static_cast<uint32_t>(taken.committedChunkIds.size()));
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(chunkDataBefore, taken.committedChunkIds.data(),
+      "the move must transfer the chunk-list storage (a copy would relocate it)");
+  const uint16_t* const movedChunkData = taken.committedChunkIds.data();
+
+  // Failure postcondition: with nothing staged, the destination is untouched.
+  // The destination holds a distinct receipt with its own storage (the caller's), so the failure
+  // assertion is about "untouched", not about pointer identity.
+  const size_t unchangedSizeBefore = taken.committedChunkIds.size();
+  const uint16_t unchangedFirstBefore = taken.committedChunkIds.front();
+  PendingCapturePass unchanged = taken;
+  TEST_ASSERT_FALSE(loop.takePendingCapturePass(unchanged));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(unchangedSizeBefore),
+                           static_cast<uint32_t>(unchanged.committedChunkIds.size()));
+  TEST_ASSERT_EQUAL(unchangedFirstBefore, unchanged.committedChunkIds.front());
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(movedChunkData, taken.committedChunkIds.data(),
+      "a failed take must not disturb a receipt that already moved out");
+
+  // The located window stays correct after the transfer (same rows in the same order).
+  SessionMidiEventVec movedEvents;
+  LoopEventStore::appendChunkRefEvents(taken.committedChunkIds, movedEvents);
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(movedEvents.size()));
+  TEST_ASSERT_EQUAL(100, movedEvents[0].tick);
+  TEST_ASSERT_EQUAL(148, movedEvents[1].tick);
+  TEST_ASSERT_EQUAL(200, movedEvents[2].tick);
+  TEST_ASSERT_EQUAL(248, movedEvents[3].tick);
+}
+
 void test_job_owned_capture_commit_and_preview_cleanup_preserve_live_capture() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -6354,6 +6426,7 @@ void test_note_edit_committed_base_gather_keeps_snapshot_and_live_capture() {
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_prepared_capture_transfer_moves_pass_without_vector_growth);
+  RUN_TEST(test_take_pending_capture_pass_is_lossless_and_nonallocating);
   RUN_TEST(test_job_owned_capture_commit_and_preview_cleanup_preserve_live_capture);
   RUN_TEST(test_active_overdub_transfer_uses_prewarmed_capacity);
   RUN_TEST(test_active_transfer_at_full_pool_uses_owned_chunks);

@@ -2087,6 +2087,25 @@ void Loop::discardPendingCapturePass() {
   pendingVisualDelta.clear();
 }
 
+LOOP_COLD_MEM bool Loop::takePendingCapturePass(PendingCapturePass& out) {
+  if (!hasPendingCapturePass_) {
+    return false;  // out untouched: the documented failure postcondition.
+  }
+  // Chunk references move with the receipt. `swap` exchanges storage pointers, so this is a
+  // pointer exchange and never an element copy -- a move-construct would reallocate here because
+  // `CommittedChunkIdAllocator` is not `is_always_equal` (see `CommittedChunkIdAllocator`).
+  // Release whatever the caller's previous receipt owned first: it is being replaced.
+  LoopEventStore::releaseChunkRefs(out.committedChunkIds);
+  out = pendingCapturePass_;                     // scalars only; chunk list stays in the loop
+  out.committedChunkIds.swap(pendingCapturePass_.committedChunkIds);
+  // The loop now holds the caller's previous (released, empty) list. Assign a fresh receipt with
+  // no allocation, in case the caller's list still holds storage.
+  pendingCapturePass_ = PendingCapturePass{};
+  hasPendingCapturePass_ = false;
+  pendingVisualDelta.clear();
+  return true;
+}
+
 LOOP_COLD_MEM LoopStopFinalize::Result Loop::finalizeCaptureWrapWindowAtStop(uint32_t stopAbsTick) {
   if (capture.store.empty() || loopLengthTicks == 0) {
     return {};

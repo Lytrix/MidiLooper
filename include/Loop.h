@@ -228,6 +228,22 @@ struct Loop {
 
   bool hasPendingCapturePass() const { return hasPendingCapturePass_; }
   const PendingCapturePass& pendingCapturePass() const { return pendingCapturePass_; }
+
+  /// Move the staged capture pass out of the loop producer into `out`, leaving the loop with no
+  /// pending-pass binding (OpenSpec 5.12 / D8: a staged pass is owned by the interval that staged
+  /// it, and a deferred job must not depend on loop-global producer state after its stop
+  /// admission).
+  ///
+  /// Contract:
+  ///   success -> `out` owns the complete receipt and its chunk-list storage; `hasPendingCapturePass()`
+  ///              is false and nothing in the loop aliases the pass;
+  ///   failure -> `out` is unchanged and the loop keeps its pending pass. The only failure is
+  ///              "nothing is staged", so this is non-fallible once a pass exists.
+  /// Non-allocating: the chunk list is moved by swap, never copied.
+  /// The caller owns the moved chunk references and must either transfer them to a canonical pass
+  /// or release them with `LoopEventStore::releaseChunkRefs`.
+  bool takePendingCapturePass(PendingCapturePass& out);
+
   size_t activeCapturePassCount() const;
 
   bool hasCommittedPasses() const;
