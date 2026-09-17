@@ -187,6 +187,23 @@ which sub-case it hit. The incomplete case still commits the raw pass alone; if 
 that one, the follow-up is to make the interrupted companion preparation completable after the
 retarget instead of dropping it.
 
+**Implemented (2026-09-17, probe-driven).** `requestDeferredOverdubStopToStopped` now releases the
+slot's retained canonical tail cache (`discardFrozenCanonicalTail`), rebinds the canonical command
+epoch, leaves the job's phase untouched and does **not** retire the companion/undo estimates or drop
+the horizon. The job walks `CanonicalTail -> CompanionHistory -> UndoCollection -> CompanionBridge ->
+AtomicTransfer`, so `commitStoppedWithUndo` publishes the note-edit representation **and** the
+protected undo entry, and it retires promptly instead of holding `captureStopOwner`/the frozen role for
+the fallback window. `PrepareTransfer` keeps the companion path for a retargeted job
+(`PendingStopAdmission::retargetedFromPlaying`), and the grain keeps a bounded per-phase fallback (128
+grains, reset on progress) purely as a safety net -- its raw-only commit is documented as losing the
+display representation and the undo.
+
+Evidence: native `test_transport_stop_retarget_retires_a_midflight_playing_job` (companion path first,
+then the bounded fallback in the fixture, then retirement); full native 2,213 cases / 1 skipped /
+0 failures; RAM1 locals 6,400. Device `captures/successor-wrap-44` is **inconclusive**: the capture ring
+overflowed (`capture_ring_overflow`, `SERIAL_INCOMPLETE`), which shed the rows the display, save and
+undo verifiers read, so 5.9 still owes one clean run.
+
 **Fix, as specified before implementation.** Make the retarget re-route as well as re-label: when a job that has already
 passed the `PrepareTransfer` decision point is retargeted to Stopped, it must skip the remaining
 PLAYING-only preparation (companion history, canonical tail, companion bridge) and continue on the

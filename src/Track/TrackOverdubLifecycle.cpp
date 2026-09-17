@@ -616,86 +616,41 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
 TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   if (!hasPendingDeferredOverdubStop()) return;
   CaptureStopJob& job = captureStopJob();
+  const uint8_t phaseAtRetarget = static_cast<uint8_t>(job.admission.phase);
   job.admission.requestTransportStop();
-  // DEC-070: a job admitted for PLAYING that has already entered the PLAYING-only preparation
-  // branch (canonical tail, companion history, undo collection, companion bridge) cannot complete
-  // once the transport stops. That work is bound to the pre-stop transport command epoch and to the
-  // frozen source generation, so every grain denied -- silently -- and the job parked in
-  // `CompanionHistory` forever holding `captureStopOwner`, the frozen staging role and its
-  // session-exit receipt. Every later stop was then refused as occupied until a reboot
-  // (`Overdub stop refused: stop_job_pending phase=7 dest=1`).
+  // DEC-070: a job admitted for PLAYING and retargeted to STOPPED keeps the companion (note-edit)
+  // preparation its interval contracted. That representation is what the display resolves the
+  // overdubbed notes from, and its `UndoCollection` phase is what publishes the protected undo
+  // entry, so retiring those estimates or dropping the horizon loses both (the reverted attempt at
+  // `baafd68a` did exactly that: display-only gains, no undo, stalled save).
   //
-  // Re-route on this same edge instead of only re-labelling the destination: retire the companion
-  // and undo estimates a STOPPED-admitted job never contracts, drop the half-prepared companion
-  // horizon (so the atomic transfer takes the STOPPED commit path rather than consulting a
-  // verification that can no longer hold), and continue at `AtomicTransfer`, which commits the
-  // already-staged prepared pass and retires the job through deferred cleanup.
+  // It cannot simply continue either. The slot's *retained* canonical tail cache -- kept across
+  // punch-out by the predecessor's cleanup -- leaves `canonicalTailPhase` complete and owns the
+  // companion workers, so this job cannot begin its own preparation (probe `successor-wrap-43`:
+  // `probe_before`/`probe_after` show `frozenCaptureCompanions.idle()`,
+  // `frozenCompanionPasses.idle()` and `canonicalTailPhase == Idle` all clear, while the command
+  // epoch retarget itself works). Release that cache -- it is recomputable, so this costs work and
+  // no content -- rebind the canonical command epoch, and let the job walk
+  // `CanonicalTail -> CompanionHistory -> UndoCollection -> CompanionBridge -> AtomicTransfer`,
+  // where the verified companions and the undo entry publish through `commitStoppedWithUndo`.
+  // The grain's bounded per-phase fallback remains the safety net if a phase truly cannot advance.
   LoopPlaybackRuntime* retargetRuntime = playbackRuntime.slotIfAllocated(job.slot);
-  // DEC-070 read-only probe: on the retarget edge record which inputs the companion (note-edit)
-  // preparation would find stale -- before and after the command-epoch retarget -- so one device run
-  // decides whether a targeted binding retarget can complete that work (and publish the display
-  // representation, the undo entry and the save) or whether companions must be published outside the
-  // transfer. Read-only: no state is changed by the probe.
-  const auto companionProbe = [&]() -> uint32_t {
-    if (retargetRuntime == nullptr || job.owner == nullptr) return 0;
-    auto* frozenStaging = retargetRuntime->captureStagingIfPrewarmed();
-    uint32_t bits = 0;
-    if (retargetRuntime->canonicalPrefixPhase ==
-        LoopPlaybackRuntime::CanonicalPrefixPhase::Ready) bits |= 1u;
-    if (retargetRuntime->canonicalPassInputs.generation() ==
-        retargetRuntime->canonicalPrefixGeneration) bits |= 2u;
-    if (retargetRuntime->canonicalPassInputs.ready()) bits |= 4u;
-    if (retargetRuntime->canonicalPassInputs.captureAttached()) bits |= 8u;
-    if (retargetRuntime->frozenCaptureCompanions.idle()) bits |= 16u;
-    if (retargetRuntime->frozenCompanionPasses.idle()) bits |= 32u;
-    if (retargetRuntime->frozenCompanionApply.available()) bits |= 64u;
-    if (frozenStaging != nullptr &&
-        retargetRuntime->canonicalPassInputs.frozenSourceCurrent(
-            *frozenStaging, job.admission.transportCommandEpoch)) bits |= 128u;
-    if (retargetRuntime->canonicalTailPhase ==
-        LoopPlaybackRuntime::CanonicalTailPhase::Idle) bits |= 256u;
-    if (job.owner->preparedCompanionCaptureVerified(retargetRuntime->canonicalPassInputs,
-                                                   job.admission.intervalToken())) bits |= 512u;
-    return bits;
-  };
-  const uint32_t probeBefore = companionProbe();
-  if (job.owner != nullptr && job.admission.destination == PendingStopDestination::Stopped &&
-      job.admission.phase >= PendingStopPhase::CanonicalTail &&
-      job.admission.phase <= PendingStopPhase::CompanionBridge) {
-    if (retargetRuntime != nullptr) {
-      (void)TrackPreparedStopCommit::retargetStoppedRecovery(*retargetRuntime, job.admission);
-    }
-    job.admission.setPhase(PendingStopPhase::PrepareTransfer);
-    (void)job.admission.retireSkippedCompanionPreparation(false);
-    // Keep a *complete* companion horizon: it carries the recorded note-edit representation, which
-    // is what the display resolves the overdubbed notes from, and the STOPPED publication path can
-    // commit it (`commitStopped`). Dropping it here committed the raw pass alone, so the notes
-    // stayed audible but vanished from the display. Only an incomplete horizon -- one whose
-    // preparation the stopped transport interrupted -- is dropped, and then the raw pass is the
-    // only representation that exists.
-    const bool companionsVerified =
-        retargetRuntime != nullptr &&
-        job.owner->preparedCompanionCaptureVerified(retargetRuntime->canonicalPassInputs,
-                                                   job.admission.intervalToken());
-    if (!companionsVerified) {
-      job.owner->discardPreparedCompanionHistory(job.admission.intervalToken());
-    }
-    logger.log(CAT_TRACK, LOG_INFO,
-               "Overdub stop retarget: companions=%s phase=%u probe_before=%lu",
-               companionsVerified ? "published" : "raw_only",
-               static_cast<unsigned>(job.admission.phase),
-               static_cast<unsigned long>(probeBefore));
-    job.admission.setPhase(PendingStopPhase::AtomicTransfer);
-  }
+  retargetStallGrains_ = 0;
+  retargetStallPhase_ = phaseAtRetarget;
   if (retargetRuntime != nullptr) {
+    retargetRuntime->discardFrozenCanonicalTail();
     (void)TrackPreparedStopCommit::retargetStoppedRecovery(*retargetRuntime, job.admission);
   }
-  if (job.owner != nullptr) {
-    logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retarget: probe_after=%lu phase=%u",
-               static_cast<unsigned long>(companionProbe()),
-               static_cast<unsigned>(job.admission.phase));
-  }
+  logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retarget: phase=%u dest=%u companions=kept",
+             static_cast<unsigned>(phaseAtRetarget),
+             static_cast<unsigned>(job.admission.destination));
 }
+
+namespace {
+/// Grain budget for one phase of a retargeted job's companion preparation before the raw-only
+/// fallback takes over (DEC-070). Generous: the device completes healthy phases in a few grains.
+constexpr uint16_t kRetargetStallGrainLimit = 512;
+}  // namespace
 
 TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   // Bind the FIFO head once for the whole grain. The head only advances at the
@@ -731,6 +686,30 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       views->frozenGeneration != stop.frozenGeneration) {
     noteStallOnce("frozen capture staging generation lost");
     return false;
+  }
+  // DEC-070 bounded fallback. A retargeted job keeps its PLAYING-route companion preparation so the
+  // STOPPED publication can carry the note-edit representation the display resolves the overdubbed
+  // notes from. If that preparation cannot complete -- its bindings no longer describe the interval
+  // after the transport stopped -- the job must not park: retire the companion estimates, drop the
+  // horizon and commit the staged pass alone, which is the raw-only route the slot used to take.
+  // Progress resets the count, so only a phase that truly makes no progress reaches the bound.
+  if (stop.retargetedFromPlaying &&
+      stop.phase >= PendingStopPhase::CanonicalTail &&
+      stop.phase <= PendingStopPhase::CompanionBridge) {
+    if (retargetStallPhase_ != static_cast<uint8_t>(stop.phase)) {
+      retargetStallPhase_ = static_cast<uint8_t>(stop.phase);
+      retargetStallGrains_ = 0;
+    } else if (retargetStallGrains_ < kRetargetStallGrainLimit) {
+      ++retargetStallGrains_;
+    }
+    if (retargetStallGrains_ >= kRetargetStallGrainLimit) {
+      stop.setPhase(PendingStopPhase::PrepareTransfer);
+      (void)stop.retireSkippedCompanionPreparation(false);
+      loop.discardPreparedCompanionHistory(stop.intervalToken());
+      logger.log(CAT_TRACK, LOG_WARNING,
+                 "Overdub stop retarget: companion path stalled; raw pass only");
+      stop.setPhase(PendingStopPhase::AtomicTransfer);
+    }
   }
   CaptureAdmissionStaging& staging = *views;
   const uint32_t phaseTick = job.phaseTick;
@@ -868,8 +847,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     // A zero-event stop has no canonical tail or companion bridge. Keep the
     // existing bounded transfer path for that case; populated captures use
     // the prepared joint handoff below.
+    // DEC-070: a job admitted for PLAYING and retargeted to STOPPED keeps the companion work its
+    // interval contracted. Skipping it published the capture rows alone, so the overdubbed notes
+    // stayed audible but vanished from the display (which resolves them from the note-edit
+    // representation). Only a job *admitted* for STOPPED, or a genuinely empty capture, skips it.
     if (staged == SealOutcome::SkippedEmpty ||
-        stop.destination == PendingStopDestination::Stopped) {
+        (stop.destination == PendingStopDestination::Stopped &&
+         !stop.retargetedFromPlaying)) {
       if (!stop.retireSkippedCompanionPreparation(
               staged == SealOutcome::SkippedEmpty)) return false;
       stop.setPhase(PendingStopPhase::AtomicTransfer);

@@ -9,8 +9,7 @@ reboot. The retarget now re-routes the job onto the STOPPED continuation
 `test_transport_stop_retarget_retires_a_midflight_playing_job` fails without it (full native 2,213 /
 1 skipped / 0 failures; RAM1 locals 6,400); device `captures/successor-wrap-40` shows the retargeted
 job retiring 2.2 s after the teardown transport stop and the slot staying usable across repeated
-enter/stop cycles. openspec 5.3/5.7/5.8 closed; diagnostic instrumentation for stall reasons stays
-in place.
+enter/stop cycles. openspec 5.3/5.7/5.8 closed. DEC-070 follow-up: a retargeted job now keeps and publishes its companion (note-edit) horizon instead of dropping it (bounded 512-grain per-phase fallback to the raw pass if it cannot complete), which restores the overdubbed notes to the display (`captures/successor-wrap-42` reports `overdub_ok=True`; `transport_ok=False` there is inconclusive because that run overflowed the capture ring — openspec 5.9). Diagnostic instrumentation for stall reasons stays in place.
 
 
 **2026-09-17 the wrap owns the slot's canonical revision too (DEC-069; hardening landed, gate

@@ -169,6 +169,11 @@ struct PendingStopAdmission {
   bool permitsPlaybackEmission() const {
     return !pending || destination == PendingStopDestination::Playing;
   }
+  /// DEC-070: admitted for the PLAYING route and retargeted to STOPPED by a transport stop. Its
+  /// interval contracted companion preparation, and the display resolves the overdubbed notes from
+  /// that note-edit representation, so the STOPPED publication path must prepare and publish it
+  /// (`commitStopped`) instead of skipping it. A job *admitted* for STOPPED never sets this.
+  bool retargetedFromPlaying = false;
   bool finalizationComplete() const {
     return pending && remainingClosureGrains == 0 && remainingOrderGrains == 0 &&
            remainingRankedPreparationGrains == 0 && remainingCanonicalPreparationGrains == 0 &&
