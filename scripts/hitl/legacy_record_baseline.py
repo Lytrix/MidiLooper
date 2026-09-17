@@ -3935,6 +3935,46 @@ def _run_overdub_pass(
         return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
 
     stop_presses = {"count": 0}
+    reentry_probe_started = {"done": False}
+
+    def _schedule_successor_reentry_probe() -> None:
+        # The probe must be timed from the stop *press*, not from its confirmation: the
+        # deferred stop often reads as EVIDENCE_UNAVAILABLE for the full state-sync window
+        # (~8 s), by which time the predecessor has long finalized. Presses are therefore
+        # scheduled on a timer while the main flow keeps observing.
+        import threading
+
+        delay_ms = max(int(getattr(args, "successor_reentry_delay_ms", 0) or 0), 0)
+        stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0) or 0), 0)
+        if delay_ms <= 0:
+            return
+
+        def _presses() -> None:
+            time.sleep(delay_ms / 1000.0)
+            print(
+                f"[track {_user_track_number(idx)}] successor reentry start "
+                f"(+{delay_ms} ms after {pass_label} stop press)"
+            )
+            _send_short_press(
+                out_port,
+                note=RECORD_BUTTON_NOTE,
+                channel_1based=CONTROL_CHANNEL_1BASED,
+                press_ms=args.press_ms,
+            )
+            if stop_delay_ms > 0:
+                time.sleep(stop_delay_ms / 1000.0)
+                print(
+                    f"[track {_user_track_number(idx)}] successor reentry stop press "
+                    f"(+{delay_ms + stop_delay_ms} ms; predecessor may still be pending)"
+                )
+                _send_short_press(
+                    out_port,
+                    note=RECORD_BUTTON_NOTE,
+                    channel_1based=CONTROL_CHANNEL_1BASED,
+                    press_ms=args.press_ms,
+                )
+
+        threading.Thread(target=_presses, name="successor-reentry-probe", daemon=True).start()
 
     def _send_overdub_stop() -> None:
         if stop_sent_in_stream and stop_presses["count"] == 0:
@@ -3947,6 +3987,9 @@ def _run_overdub_pass(
             channel_1based=CONTROL_CHANNEL_1BASED,
             press_ms=args.press_ms,
         )
+        if pass_label == "overdub" and not reentry_probe_started["done"]:
+            reentry_probe_started["done"] = True
+            _schedule_successor_reentry_probe()
 
     od_stop = request_state_transition(
         snapshot=serial_collector.snapshot,
@@ -3990,39 +4033,6 @@ def _run_overdub_pass(
                 od_clock_count,
                 od_timing,
                 od_fallback_seconds,
-            )
-    if pass_label == "overdub" and getattr(args, "successor_reentry_delay_ms", 0) > 0:
-        # Purpose-built overlapping successor. The bar-scheduled second overdub cannot
-        # express this: its start is grid-aligned and lands ~8.6 s after the predecessor's
-        # stop, outside the ~1.2 s deferred window. Here the predecessor's state is already
-        # PLAYING while its deferred job still finalizes, so one more press after a bounded
-        # delay - longer than the button's tap window, so it is not read as a double press -
-        # opens a successor interval inside that window. The optional quick stop then tries
-        # the denied-stop branch while the predecessor still owns the frozen role.
-        reentry_delay_ms = max(int(args.successor_reentry_delay_ms), 0)
-        time.sleep(reentry_delay_ms / 1000.0)
-        print(
-            f"[track {_user_track_number(idx)}] successor reentry start "
-            f"(+{reentry_delay_ms} ms after {pass_label} stop)"
-        )
-        _send_short_press(
-            out_port,
-            note=RECORD_BUTTON_NOTE,
-            channel_1based=CONTROL_CHANNEL_1BASED,
-            press_ms=args.press_ms,
-        )
-        reentry_stop_delay_ms = max(int(getattr(args, "successor_reentry_stop_delay_ms", 0)), 0)
-        if reentry_stop_delay_ms > 0:
-            time.sleep(reentry_stop_delay_ms / 1000.0)
-            print(
-                f"[track {_user_track_number(idx)}] successor reentry stop press "
-                f"(+{reentry_delay_ms + reentry_stop_delay_ms} ms; predecessor may still be pending)"
-            )
-            _send_short_press(
-                out_port,
-                note=RECORD_BUTTON_NOTE,
-                channel_1based=CONTROL_CHANNEL_1BASED,
-                press_ms=args.press_ms,
             )
     time.sleep(args.phase_wait_ms / 1000.0)
     return None, od_notes, od_cc, od_clock_count, od_timing, od_fallback_seconds
