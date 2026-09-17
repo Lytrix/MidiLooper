@@ -1908,22 +1908,16 @@ void test_transport_stop_retarget_retires_a_midflight_playing_job() {
   TrackCaptureStopTestAccess::requestStoppedStop(track);
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopDestination::Stopped),
                           TrackCaptureStopTestAccess::jobDestination(track));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::AtomicTransfer),
+      TrackCaptureStopTestAccess::jobPhase(track),
+      "the retarget must re-route the job onto the STOPPED continuation, not leave it parked");
   // A newer interval owns the live state (the device case: the transport stops while a successor is
   // live), so the retiring job must be job-local and must not drive the track's state transition.
   TrackCaptureStopTestAccess::advanceInterval(track);
-  // The retarget keeps the interval's companion (note-edit) preparation: the display resolves the
-  // overdubbed notes from it, so it must be *prepared and published*, not skipped. The job therefore
-  // continues into the PLAYING-route companion phases instead of jumping straight to the transfer.
-  (void)TrackCaptureStopTestAccess::step(track);
-  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::CanonicalTail),
-      TrackCaptureStopTestAccess::jobPhase(track),
-      "a retargeted job must keep preparing its companion representation");
-  // Those phases cannot complete in this fixture (their playback-side inputs never run), so the
-  // bounded fallback must take over and retire the job rather than park it.
   for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
     (void)TrackCaptureStopTestAccess::step(track);
   TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
-      "a transport-stop retarget must retire the mid-flight job, not park it");
+      "a transport-stop retarget must retire the mid-flight job");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::captureStopOwnerClear(track),
       "the retired job must release the stop owner");
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track));

@@ -131,28 +131,7 @@ cannot keep: the job was still at `PrepareTransfer` when the transport stopped, 
 rows without the transforms the display resolves the overdubbed notes from. Audible content is intact
 because the raw rows and the bridge window carry it.
 
-**Implemented (2026-09-17).** `PendingStopAdmission::retargetedFromPlaying` is set by
-`requestTransportStop`, and `PrepareTransfer` now keeps the companion preparation for a *retargeted*
-job (`destination == Stopped && retargetedFromPlaying` continues to `CanonicalTail`); only a job
-*admitted* for STOPPED, or a genuinely empty capture, skips it. `retargetStoppedRecovery` rebinds the
-canonical command epoch so those phases accept the post-stop epoch, and the atomic transfer publishes
-the companions through `commitStopped` once they verify. A bounded fallback in the grain counts grains
-spent in one companion phase (512, reset on progress) and, if a phase truly cannot complete, retires
-the estimates, drops the horizon, logs
-`Overdub stop retarget: companion path stalled; raw pass only` and commits the staged pass alone — so
-the slot can never park again. The retarget diagnostic now logs the phase it saw
-(`Overdub stop retarget: phase=<n> dest=<n>`).
-
-Evidence: native `test_transport_stop_retarget_retires_a_midflight_playing_job` (the retargeted job
-continues into `CanonicalTail` and then retires through the bounded fallback; full native 2,213 cases /
-1 skipped / 0 failures; RAM1 locals 6,400). Device `captures/successor-wrap-42` (same recipe as the
-reproduction, with the play-from-stopped step): the display verifier flips to `overdub_ok=True` from
-`overdub_ok=False` in `captures/successor-wrap-41` — the overdubbed notes are back in the display
-resolution. That run also reports `transport_ok=False` and a `capture_ring_overflow` with
-`SERIAL_INCOMPLETE`, so the post-stop window check is not yet conclusive; a clean re-run is owed
-(openspec 5.9).
-
-**Fix direction, as recorded before implementation.** The retarget must *complete and publish* the interrupted companion
+**Fix direction (not implemented).** The retarget must *complete and publish* the interrupted companion
 preparation on the STOPPED route instead of dropping it: extend `retargetStoppedRecovery` beyond
 `canonicalPassInputs`'s command epoch to the companion-side bindings (`canonicalTailInputGeneration`,
 `frozenCaptureCompanions`, `frozenCompanionPasses`), let the job continue `CanonicalTail` ->
