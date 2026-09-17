@@ -130,6 +130,14 @@ struct TrackCaptureStopTestAccess {
   static uint8_t jobPhase(Track& track) {
     return static_cast<uint8_t>(job(track).admission.phase);
   }
+  /// Identity of the loop's staged capture pass (`kInvalidPassId` when none is staged).
+  /// OpenSpec 5.12 / D8 asserts on this instead of on row counts, so accidental shared-container
+  /// reuse is caught even when the rows happen to come out right.
+  static PassId stagedPassId(Track& track) {
+    const Loop& loop = track.getActiveLoop();
+    return loop.hasPendingCapturePass() ? loop.pendingCapturePass().id : kInvalidPassId;
+  }
+  static bool hasStagedPass(Track& track) { return track.getActiveLoop().hasPendingCapturePass(); }
   static auto generation(const Track& track) { return track.playbackGeneration; }
   static size_t liveReservations(Track& track) {
     auto* staging = runtime(track).liveCaptureStagingIfPrewarmed();
@@ -1160,9 +1168,25 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
   TEST_ASSERT_GREATER_OR_EQUAL_UINT8_MESSAGE(
       checkpointPhase, TrackCaptureStopTestAccess::jobPhase(track), checkpointName);
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(), checkpointName);
+  // OpenSpec 5.12 / D8: once the predecessor has staged its pass (`PrepareTransfer` and later),
+  // that pass must survive the successor's capture start with its own identity, because the
+  // predecessor's companion preparation admits only while it exists. Asserting identity -- not row
+  // counts -- catches a shared container that happens to hold the right number of rows. Earlier
+  // checkpoints never staged a pass (nothing to protect yet), so the assertion is scoped there.
+  // The staged pass exists from `PrepareTransfer` through the companion work; at
+  // `AtomicTransfer` the job has already consumed it, so there is nothing to protect.
+  const bool passStaged = checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CanonicalTail) ||
+      checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CompanionHistory);
+  const PassId aStagedBeforeB = TrackCaptureStopTestAccess::stagedPassId(track);
   // The successor starts at the checkpoint, on the live role, and accepts its own row.
   clockManager.assignCurrentTickSilently(192);
   midiButtonActions.handleToggleRecord();
+  if (passStaged) {
+    TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::hasStagedPass(track),
+        "the predecessor's staged pass must survive the successor's capture start");
+    TEST_ASSERT_EQUAL_MESSAGE(aStagedBeforeB, TrackCaptureStopTestAccess::stagedPassId(track),
+        "the surviving pass must still be the predecessor's own pass");
+  }
   TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(), checkpointName);
   inputNote(62, 193, 216);
   const size_t bRows = loop.capture.store.size();

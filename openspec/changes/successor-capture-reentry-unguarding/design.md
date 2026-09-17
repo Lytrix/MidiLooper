@@ -182,22 +182,61 @@ successor's `Track::startOverdubbing` -> `beginCapture` threw that pass away, af
 which the predecessor's `beginPreparedCompanionHistory` was refused forever by its own
 `!hasPendingCapturePass_` precondition, its companion work never left `Prewarmed`, and
 its job held `captureStopOwner` and the frozen role for the rest of the session (the
-device's `Overdub stop refused: stop_job_pending phase=7 dest=1`). The staged pass is
-therefore per-interval state:
+device's `Overdub stop refused: stop_job_pending phase=7 dest=1).
+
+The fix is *not* "protect the loop-shared pass from discard" — that merely preserves
+the collision that produced `AlreadyPending` when the successor tried to stage its own.
+The fix is to **detach the staged pass from the loop-shared producer state and move it
+with its interval owner**, so that opening another interval's capture finds no pass to
+collide with. Ownership lifecycle:
 
 ```text
-A stages its pass at PrepareTransfer        -> the pass belongs to A's interval
-B opens its live capture (start/stop/wrap)  -> B does NOT discard A's pass
-A reaches AtomicTransfer                    -> A consumes its own pass and retires
-B stages its own pass at its PrepareTransfer-> the shared slot is free again
+A live capture
+-> A owns its staged pass (producer binding is A's)
+
+A STOP admitted
+-> staged-pass ownership transfers to job A's detached transfer context
+-> the Loop producer no longer owns that pass
+
+B START
+-> B begins with no staged pass
+-> B may stage its own pass independently
+
+A finalizes
+-> consumes only A's staged pass; retires A's ownership
+
+B STOP / wrap
+-> operates only on B's pass
 ```
 
-Guarding the discard alone is not sufficient: with A's pass preserved, B's own staging
-at its `PrepareTransfer` returns `AlreadyPending`, so the fix has to move the pass with
-its owner (take it into the job and restage it at the job's transfer) rather than
-merely skip the clear. The owner transfer must stay allocation-free and must not add a
-fallible step after the ownership transfer (the allocation-free stop contract).
-Task 5.12 owns this; it is the blocker for 5.5.
+The invariant this establishes:
+
+> **At most one owner holds a given staged pass, and multiple intervals may each hold
+> their own staged pass concurrently.**
+
+**Transfer rule (destination-first, non-fallible).** All capacity the destination owner
+needs SHALL be admitted *before* the ownership transfer. Once the transfer begins it is
+non-fallible and leaves no shared alias in the producer. The forbidden shape is
+remove-then-allocate:
+
+```text
+prepare destination
+-> prove destination capacity
+-> transfer / swap ownership
+-> clear the producer binding
+```
+
+not copy-then-cleanup, and never
+
+```text
+A's pass removed from the Loop
+-> transfer allocation fails
+-> neither the Loop nor the job holds a complete pass
+```
+
+Guarding the discard alone is therefore insufficient by construction: with A's pass
+still in the shared slot, B's own staging at its `PrepareTransfer` returns
+`AlreadyPending`. Task 5.12 owns this; it is the blocker for 5.5.
 
 ## Risks / Trade-offs
 
