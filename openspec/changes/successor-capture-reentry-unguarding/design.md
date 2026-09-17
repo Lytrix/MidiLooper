@@ -173,6 +173,32 @@ Admission, denial (with its reason) and retirement stage lines carrying interval
 identity and queue depth, reusing `SC_ODUB_STOP_STAGE`; no per-event logging on the
 capture path.
 
+**D8 — A staged capture pass is interval-owned, not loop-shared.**
+`Loop::pendingCapturePass_` is a single scalar, and `Loop::beginCapture` discarded it
+unconditionally at its first line. A deferred job stages its pass from the detached
+`canonicalCaptureOutput` at `PrepareTransfer` (`retiresLiveCapture == false`) and
+resolves it at its own `AtomicTransfer`, which can be many turns later — so a
+successor's `Track::startOverdubbing` -> `beginCapture` threw that pass away, after
+which the predecessor's `beginPreparedCompanionHistory` was refused forever by its own
+`!hasPendingCapturePass_` precondition, its companion work never left `Prewarmed`, and
+its job held `captureStopOwner` and the frozen role for the rest of the session (the
+device's `Overdub stop refused: stop_job_pending phase=7 dest=1`). The staged pass is
+therefore per-interval state:
+
+```text
+A stages its pass at PrepareTransfer        -> the pass belongs to A's interval
+B opens its live capture (start/stop/wrap)  -> B does NOT discard A's pass
+A reaches AtomicTransfer                    -> A consumes its own pass and retires
+B stages its own pass at its PrepareTransfer-> the shared slot is free again
+```
+
+Guarding the discard alone is not sufficient: with A's pass preserved, B's own staging
+at its `PrepareTransfer` returns `AlreadyPending`, so the fix has to move the pass with
+its owner (take it into the job and restage it at the job's transfer) rather than
+merely skip the clear. The owner transfer must stay allocation-free and must not add a
+fallible step after the ownership transfer (the allocation-free stop contract).
+Task 5.12 owns this; it is the blocker for 5.5.
+
 ## Risks / Trade-offs
 
 - **The third-interval reproducer cannot pass under D2.** Its C step needs two frozen
@@ -186,6 +212,10 @@ capture path.
 - **Transport Stop with both intervals live.** Stop must retarget the pending job and
   preserve the successor's accepted input without publishing a stale window.
   Mitigation: explicit ordering coverage (task 5.3) and device acceptance.
+- **The staged pass is shared state between two intervals.** A successor's capture
+  start currently discards a predecessor's staged pass, which strands the
+  predecessor's companion preparation and holds the finalization resources. Reproducer
+  and fix direction: task 5.12 / D8.
 - **Held same-pitch identity.** B's NoteOn of A's held pitch must not be paired with
   A's closure. Mitigation: the manager reproducer plus a note-identity assertion.
 - **Successor-stop denial can look like unresponsiveness.** The denial must be
