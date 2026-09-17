@@ -5,6 +5,38 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 deferred-stop confirmation fixed, and the record over-run root-caused to
+clock-count pacing.** Two more host-side oracle items, plus the real reason the record
+length keeps missing.
+
+- `_serial_has_overdubbing_stopped` accepted only the human `Overdubbing stopped` marker or
+  the direct `OVERDUBBING -> PLAYING` edge - neither of which the deferred path emits - so
+  **every** deferred stop ran out the full state-sync budget as `EVIDENCE_UNAVAILABLE`. That
+  is the same defect family as the earlier counting/pairing fixes, and it is why the
+  successor probe fired 8,638 ms after the stop it was meant to overlap. It now also accepts
+  `OVERDUBBING -> OVERDUB_STOPPING` and `OVERDUB_STOPPING -> PLAYING`, so a deferred stop
+  confirms promptly.
+- The probe additionally bounds its own stop-confirmation wait to 1.2 s (a timeout there is
+  already non-fatal), so its presses can land inside the predecessor's window.
+- **Root cause of the 8-bar -> 10-34 bar record over-run, now identified:** in device-clock
+  mode `resolve_wall_tempo_for_proxy` returns `None` (by design - it only resolves a tempo for
+  the serial proxy), so `stream_pattern_for_bars` takes its `in_port` clock-message path and
+  paces by **counting clock messages** against `target_bars * MIDI_CLOCKS_PER_BAR = 8 * 96 =
+  768`. The device's bar cadence is exactly **2.00 s/bar at 384 ticks/s** (measured from its
+  own `BAR,<tick>,<index>` rows), so 768 host clocks should be 16 s; the observed streams ran
+  23-68 s (11-34 device bars), i.e. far fewer than 96 clock messages per device bar reach the
+  host. An attempt to force the clock path explicitly (`wall_clock_tempo_bpm=None`) made it
+  worse - 20 bars, because the stream then ran to its `max_seconds_guard` - and is reverted
+  with that evidence recorded at the choice site.
+  The fix is to stop the stream on the **device's own `BAR` index** (or measure clocks-per-bar
+  empirically at the start and scale the target), not to count host clock messages or a host
+  seconds-per-bar estimate. Until then the strict length check keeps flagging these runs, and
+  it is right to.
+- Consequence for the successor probe: the two most recent probe runs were inconclusive
+  (`SPARSE_CAPTURE` - the over-long stream floods the relevant evidence), so the
+  successor-reentry device case is **blocked behind the `BAR`-anchored stop**, not by the
+  probe's own design.
+
 **2026-09-17 successor-reentry probe: instrumented and unit-tested, device evidence still
 open (two device attempts, both diagnosed).** The probe and its oracle are implemented
 (`--successor-reentry-delay-ms` / `--successor-reentry-stop-delay-ms`, default off;
