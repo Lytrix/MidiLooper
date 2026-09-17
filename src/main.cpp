@@ -938,7 +938,7 @@ void loop() {
   // pool with no trend visible at all (2026-09-17). `logStatus(true)` cannot be used
   // here; that walk costs ~593 ms and loses external MIDI clock.
   static uint32_t lastExternalAccountingLog = 0;
-  constexpr uint32_t EXTERNAL_ACCOUNTING_INTERVAL_MS = 5000;
+  constexpr uint32_t EXTERNAL_ACCOUNTING_INTERVAL_MS = 1000;
   if (now - lastExternalAccountingLog >= EXTERNAL_ACCOUNTING_INTERVAL_MS) {
     lastExternalAccountingLog = now;
     MemoryMonitor::logExternalPoolAccounting("tick");

@@ -10,6 +10,7 @@
 #include <Arduino.h>
 
 #include "LoopEventStore.h"
+#include "LoopSnapshot.h"
 #include "PersistenceQueue.h"
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/ExternalPoolAccounting.h"
@@ -233,7 +234,7 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
   return false;
 }
 
-void logExternalPoolAccounting(const char* phase) {
+FLASHMEM void logExternalPoolAccounting(const char* phase) {
   // One-shot positive control: on a healthy boot the gate must report ADMIT here, so
   // the denial lines after a record are demonstrably a threshold crossing and not a
   // gate that simply always refuses.
@@ -243,10 +244,17 @@ void logExternalPoolAccounting(const char* phase) {
     (void)admitOperationMemory(OperationKind::BootProbe, 0);
   }
   const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
+  // Comma-separated and timestamped so a run can be reduced to a per-interval delta
+  // table and correlated with the control-event log. `cls` is live KB per size class
+  // (<=128B, <=1K, <=8K, <=32K, <=128K, >128K): a jump concentrated in one class names
+  // the kind of buffer that grew, which a single total cannot.
   Serial.printf_P(
-      PSTR("[Memory] ext phase=%s live=%luKB high=%luKB blocks=%lu/%lu alloc=%luKB freed=%luKB "
-           "untracked=%lu unknown=%lu refused=%lu/%luB heap_free=%luKB heap_min=%luKB\n"),
-      phase != nullptr ? phase : "-", static_cast<unsigned long>(c.liveBytes / 1024),
+      PSTR("[Memory] ext,%lu,phase=%s,live=%luKB,high=%luKB,blocks=%lu/%lu,alloc=%luKB,"
+           "freed=%luKB,untracked=%lu,unknown=%lu,refused=%lu/%luB,"
+           "cls=%lu/%lu/%lu/%lu/%lu/%luKB,clsn=%lu/%lu/%lu/%lu/%lu/%lu,chunks_free=%lu,snap=%luKB,"
+           "heap_free=%luKB,heap_min=%luKB\n"),
+      static_cast<unsigned long>(micros()), phase != nullptr ? phase : "-",
+      static_cast<unsigned long>(c.liveBytes / 1024),
       static_cast<unsigned long>(c.highWaterLiveBytes / 1024),
       static_cast<unsigned long>(c.liveBlocks),
       static_cast<unsigned long>(c.highWaterLiveBlocks),
@@ -256,6 +264,23 @@ void logExternalPoolAccounting(const char* phase) {
       static_cast<unsigned long>(c.unknownFrees),
       static_cast<unsigned long>(c.poolRefusedCount),
       static_cast<unsigned long>(c.poolRefusedLargestBytes),
+      static_cast<unsigned long>(c.liveBytesByClass[0] / 1024),
+      static_cast<unsigned long>(c.liveBytesByClass[1] / 1024),
+      static_cast<unsigned long>(c.liveBytesByClass[2] / 1024),
+      static_cast<unsigned long>(c.liveBytesByClass[3] / 1024),
+      static_cast<unsigned long>(c.liveBytesByClass[4] / 1024),
+      static_cast<unsigned long>(c.liveBytesByClass[5] / 1024),
+      static_cast<unsigned long>(c.liveBlocksByClass[0]),
+      static_cast<unsigned long>(c.liveBlocksByClass[1]),
+      static_cast<unsigned long>(c.liveBlocksByClass[2]),
+      static_cast<unsigned long>(c.liveBlocksByClass[3]),
+      static_cast<unsigned long>(c.liveBlocksByClass[4]),
+      static_cast<unsigned long>(c.liveBlocksByClass[5]),
+      // Existing O(1) owner counters, named so a class of growth can be attributed
+      // without per-site instrumentation: LoopEventStore chunks are 256 x 28 B
+      // (the <=8 KB class) and snapshot slabs are the large <=128 KB class.
+      static_cast<unsigned long>(LoopEventStore::freeChunkCount()),
+      static_cast<unsigned long>(snapshotAllocByteCount() / 1024),
       static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
       static_cast<unsigned long>(getInternalHeapMinEverFreeBytes() / 1024));
 }

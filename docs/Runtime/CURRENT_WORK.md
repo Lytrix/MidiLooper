@@ -5,6 +5,47 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 record-start reservation attributed to the first record arm, with a
+size profile and two candidates eliminated.** Sampling moved to 1 s with an
+`ExternalPoolAccounting` **live-bytes-by-size-class** breakdown (`cls=` live KB and
+`clsn=` live block counts for <=128 B, <=1 KB, <=8 KB, <=32 KB, <=128 KB, >128 KB),
+plus `chunks_free=` (`LoopEventStore::freeChunkCount()`) and `snap=` (`snapshotAllocByteCount()`),
+both already-existing O(1) counters. Evidence:
+[`attrib-record-start-03`](../../captures/attrib-record-start-03/session_20260917_103705.log).
+
+The whole reservation lands in **one 1 s interval** and reads:
+
+```
+t=15.08  dLive=+1240KB  dBlocks=+104   dHeap=0
+         class <=8KB:   +82 blocks = +390KB   (~4.8 KB each)
+         class <=32KB:   +4 blocks =  +58KB   (~14.5 KB each)
+         class <=128KB: +17 blocks = +792KB   (~47 KB each)
+         chunks_free unchanged (384)          snap: 172KB -> 4KB
+```
+
+Correlating with the control-event log, that interval contains `Loop 1: Start
+Recording` at 14.55 and `Recording started @ tick 484` at 14.80 — the harness's
+**first arm on the freshly selected slot**, inside its clear ritual. The actual 10-bar
+record at 22.91 adds **nothing** (`dLive` stays within +1-2 KB per interval). So the
+~1.24 MB is a **one-time first-record-arm / slot-prewarm cost, not a per-record
+cost**.
+
+Two candidates are **eliminated**: it is not LoopEventStore chunk storage
+(`chunks_free` never moves) and not snapshot slabs — `snap` *falls* from 172 KB to
+4 KB at the same instant, i.e. the published snapshot is released while the 1.24 MB is
+taken. Naming the individual buffers needs per-site tagging; the profile above
+(17 x ~47 KB, 82 x ~4.8 KB) is the input to that.
+
+Also landed: the accounting functions (`recordPoolAllocation` / `recordPoolFree` /
+`recordPoolRefusal` / `reset` / `logExternalPoolAccounting`) are now **`FLASHMEM`**.
+They were in ITCM and growing them crossed the FlexRAM bank boundary again; moving them
+to flash **freed 688 bytes of ITCM** (`RAM1 code` 425944 -> 425256, `padding` 40 -> 728,
+`free for local variables` 6624). The emitter being flash-resident is what makes adding
+fields to the 1 s line free in ITCM terms.
+
+**Still open:** name the individual buffers behind the 17 x ~47 KB and 82 x ~4.8 KB
+allocations, and decide whether any unaudited boundary needs its own gate.
+
 **2026-09-17 failure-semantics fix landed: overdub admission denies instead of
 aborting (verified before/after on the same recipe).** `MemoryMonitor::admitOperationMemory`
 is a pre-emptive admission gate called from `Track::startOverdubbing` **before** the first

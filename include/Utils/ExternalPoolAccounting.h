@@ -58,7 +58,26 @@ struct Counters {
   /// ask "is the pool refusing right now?" without walking it — an exact signal,
   /// unlike the live-byte counter, which over-reports.
   uint32_t poolLastRefusalMs = 0;
+
+  /// Number of size classes used by `liveBytesByClass` / `liveBlocksByClass`.
+  static constexpr size_t kSizeClassCount = 6;
+  /// Live bytes per size class, derived by re-reading the shadowed size when a block
+  /// is freed. This is what attributes growth: "+1.26 MB in 8-32 KB blocks" and
+  /// "+1.26 MB in hundreds of small blocks" call for completely different fixes.
+  /// Classes: <=128 B, <=1 KB, <=8 KB, <=32 KB, <=128 KB, >128 KB.
+  uint32_t liveBytesByClass[kSizeClassCount] = {};
+  uint32_t liveBlocksByClass[kSizeClassCount] = {};
 };
+
+/// Size-class index for `bytes` (0..kSizeClassCount-1).
+constexpr size_t sizeClassFor(size_t bytes) {
+  if (bytes <= 128) return 0;
+  if (bytes <= 1024) return 1;
+  if (bytes <= 8 * 1024) return 2;
+  if (bytes <= 32 * 1024) return 3;
+  if (bytes <= 128 * 1024) return 4;
+  return 5;
+}
 
 /// Read-only view of the counters. O(1).
 const Counters& counters();

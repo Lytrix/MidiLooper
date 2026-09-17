@@ -55,9 +55,9 @@ void ensureShadowReady() {
 
 namespace ExternalPoolAccounting {
 
-const Counters& counters() { return gCounters; }
+FLASHMEM const Counters& counters() { return gCounters; }
 
-void recordPoolAllocation(void* pointer, size_t bytes) {
+FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
   if (pointer == nullptr) {
     return;
   }
@@ -70,10 +70,20 @@ void recordPoolAllocation(void* pointer, size_t bytes) {
   for (size_t probe = 0; probe < kShadowCapacity; ++probe) {
     ShadowEntry& entry = gShadow[(start + probe) & kShadowMask];
     if (entry.pointer == pointer) {
-      // Re-allocation at the same address: retire the stale size first.
+      // Re-allocation at the same address: retire the stale size and its class first.
+      const size_t staleClass = sizeClassFor(entry.bytes);
+      gCounters.liveBytesByClass[staleClass] -=
+          entry.bytes < gCounters.liveBytesByClass[staleClass] ? entry.bytes
+                                                              : gCounters.liveBytesByClass[staleClass];
+      if (gCounters.liveBlocksByClass[staleClass] > 0) {
+        gCounters.liveBlocksByClass[staleClass] -= 1;
+      }
       gCounters.liveBytes -= entry.bytes < gCounters.liveBytes ? entry.bytes : gCounters.liveBytes;
       entry.bytes = clamped;
       gCounters.liveBytes += clamped;
+      const size_t freshClass = sizeClassFor(clamped);
+      gCounters.liveBytesByClass[freshClass] += clamped;
+      gCounters.liveBlocksByClass[freshClass] += 1;
       if (gCounters.liveBytes > gCounters.highWaterLiveBytes) {
         gCounters.highWaterLiveBytes = gCounters.liveBytes;
       }
@@ -89,6 +99,9 @@ void recordPoolAllocation(void* pointer, size_t bytes) {
       gCounters.liveBytes += clamped;
       gCounters.liveBlocks += 1;
       gCounters.trackedBlocks += 1;
+      const size_t freshClass = sizeClassFor(clamped);
+      gCounters.liveBytesByClass[freshClass] += clamped;
+      gCounters.liveBlocksByClass[freshClass] += 1;
       if (gCounters.liveBytes > gCounters.highWaterLiveBytes) {
         gCounters.highWaterLiveBytes = gCounters.liveBytes;
       }
@@ -103,7 +116,7 @@ void recordPoolAllocation(void* pointer, size_t bytes) {
   gCounters.untrackedBlocks += 1;
 }
 
-void recordPoolFree(void* pointer) {
+FLASHMEM void recordPoolFree(void* pointer) {
   if (pointer == nullptr) {
     return;
   }
@@ -113,6 +126,13 @@ void recordPoolFree(void* pointer) {
     ShadowEntry& entry = gShadow[(start + probe) & kShadowMask];
     if (entry.pointer == pointer) {
       const uint32_t bytes = entry.bytes;
+      const size_t blockClass = sizeClassFor(bytes);
+      gCounters.liveBytesByClass[blockClass] -=
+          bytes < gCounters.liveBytesByClass[blockClass] ? bytes
+                                                         : gCounters.liveBytesByClass[blockClass];
+      if (gCounters.liveBlocksByClass[blockClass] > 0) {
+        gCounters.liveBlocksByClass[blockClass] -= 1;
+      }
       entry.pointer = kTombstone;
       entry.bytes = 0;
       gCounters.liveBytes -= bytes < gCounters.liveBytes ? bytes : gCounters.liveBytes;
@@ -129,7 +149,7 @@ void recordPoolFree(void* pointer) {
   gCounters.unknownFrees += 1;
 }
 
-void recordPoolRefusal(size_t bytes) {
+FLASHMEM void recordPoolRefusal(size_t bytes) {
   const uint32_t clamped = static_cast<uint32_t>(bytes);
   gCounters.poolRefusedCount += 1;
   gCounters.poolLastRefusalMs = millis();
@@ -159,7 +179,7 @@ void recordPoolRefusal(size_t bytes) {
       static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024));
 }
 
-void reset() {
+FLASHMEM void reset() {
   gCounters = Counters{};
   std::memset(gShadow, 0, sizeof(gShadow));
   gShadowReady = true;
