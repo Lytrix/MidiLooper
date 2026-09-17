@@ -82,22 +82,43 @@ Evidence:
 - Replayed on `successor-reentry-01`: `PLAYING->OVERDUBBING` 4 -> 2, effective
   `OVERDUBBING->PLAYING` 2, and the second overdub pairs to its own window.
 
-**Successor-reentry device case: still not covered, and the reason is now precise.** The
-canonical second overdub is *sequential*: in [`successor-reentry-01`](../../captures/successor-reentry-01/session_20260917_125433.log)
-the predecessor stops at 683.06 s and the successor starts at 691.69 s (8.6 s later, with the
-canonical post-stop undo/redo in between), so it does **not** overlap the predecessor's
-~1.18 s deferred window. Forcing the overlap with `--second-overdub-start-delay-bars 0
---second-overdub-start-delay-beats 0` made the harness abort on its own sequencing
-precondition ("second overdub transition not confirmed") before the device emitted the ST
-edges ([`successor-reentry-02`](../../captures/successor-reentry-02/session_20260917_125734.log),
-firmware clean: 0 FATAL / 0 denial / 0 refusal, device alive). The overlapping case
-therefore needs a purpose-built sequence - press the successor start ~200-400 ms after the
-predecessor's stop, then stop the successor inside its own pending window to reach the
-denied-stop branch - plus an observation that the predecessor is still pending while the
-successor is live (`ODUB,stop,*` stages overlapping a later `OVERDUBBING` interval, and the
-`!STOP_STATUS queue=depth/capacity` line). That is the next harness increment; the native
-tests already cover both branches (`test_button_a_successor_stop_denied_until_deferred_role_available`,
+**Successor-reentry device case: still open, and now measured precisely.** With the repaired
+oracle and a fresh device, the canonical second-overdub run **passes**
+([`successor-reentry-06`](../../captures/successor-reentry-06/session_20260917_130431.log)):
+`PLAYING->OVERDUBBING: 2 (min 2)`, `OVERDUBBING->PLAYING: 2 (ST 0, min 2)` (both stops
+counted through the deferred hop), second overdub 8/8 notes, record 128/128, both SEVT spans
+`count_ok/span_ok/bars_ok`, both display checks green. But it is **sequential, not
+overlapping**: the measured timeline is OD1 start 34,072.9 ms -> OD1 stop 41,064.8 ms
+(deferred, `bridge_base` 41,178.6, `bridge_ready` 42,269.1) -> **OD2 start 49,713.4 ms**, an
+**8,648 ms gap** against a ~1.2 s deferred window. Removing the post-stop undo/redo did not
+change that gap, so the second-overdub start is bar/grid-scheduled rather than
+stop-relative - the canonical knob cannot express an overlapping successor.
+
+What the case needs, concretely: a millisecond-scheduled successor press - after the first
+overdub stop press, press the same button again after a bounded delay (~200-400 ms) without
+waiting for a bar boundary, then optionally press stop again inside the successor's own
+pending window to reach the denied-stop branch - plus a verification that a
+`PLAYING -> OVERDUBBING` edge lands **before** the predecessor's `bridge_ready`/`prefix_reuse`
+completion (or that the phases overlap), and a `!STOP_STATUS queue=depth/capacity` read.
+That is a small, self-contained addition to the legacy runner (a new delay flag and one extra
+button action) plus a verifier predicate; it is the next harness increment. Native already
+covers both branches
+(`test_button_a_successor_stop_denied_until_deferred_role_available`,
 `test_successor_stop_denied_by_occupied_deferred_capacity_is_non_destructive`).
+
+**Device-state hazard found while doing this (not caused by the oracle work): a deferred save
+can wedge, and it then blocks every subsequent HITL run.** After an aborted run the clear
+ritual reports
+`[StorageManager] ERROR: Persistence drain stuck after 256 iterations (max 256, expected ~2362 slice steps, ~158848 SD bytes)`
+and the firmware aborts the clear (`Clear waiting for deferred save completion` ->
+`Clear aborted: could not complete deferred save first`), so no run can clear its slot.
+Increasing the harness boot settle to 45 s did not help. The device also does **not** reset on
+serial open in this setup - uptime climbed to 1,195 s across the aborted runs, and a 1200-baud
+touch did not reset it. **Recovery: re-flash (`pio run -e teensy41-capture-serial -t upload`,
+which hard-resets); after that the device booted at 6.8 s uptime and the next run passed.**
+Two follow-ups worth a decision: make the harness force or verify a fresh boot before a run
+that matters, and look at why the blocking drain makes *zero* progress in that state
+(158 KB pending, `chunks_free=362`, `snap=3389KB`) rather than merely being slow.
 
 **2026-09-17 C3 increment 2 LANDED and device-measured: the companion-row reserve is derived
 from the loop, and the deferred stop is twice as fast to its prepared window.** The reserve
@@ -2426,11 +2447,19 @@ memory work. In this order:
   is now first-class in the transition counts and the phase pairing; duplicate observer ST
   edges are collapsed; a wall-clock-proxied stop reports its length instead of failing it.
   Device `oracle-fixed-01` = **PASS**. See the oracle entry below.
-- **2. Successor-reentry device case — OPEN.** Needs a purpose-built harness sequence
-  (successor start ~200-400 ms after the predecessor's stop; successor stop inside its own
-  pending window) plus an observation that the predecessor is pending while the successor is
-  live. The canonical second overdub is sequential, and forcing a zero delay makes the
-  harness abort on its own precondition. Native covers both branches.
+- **2. Successor-reentry device case — OPEN, precisely scoped.** The canonical
+  second-overdub run now passes but is **sequential** (measured 8,648 ms gap against a ~1.2 s
+  deferred window), so it does not overlap the predecessor. Needs a small legacy-runner
+  addition: a millisecond-scheduled successor press (~200-400 ms after the predecessor's stop
+  press), an optional quick stop inside the successor's pending window for the denied branch,
+  and a verifier predicate that the successor's `PLAYING -> OVERDUBBING` edge lands before the
+  predecessor's `bridge_ready`/`prefix_reuse`. Native covers both branches.
+- **2b. Device-state hazard (new, needs a decision).** An aborted run can wedge the deferred
+  workspace save (`Persistence drain stuck after 256 iterations`, 158 KB pending); the clear
+  ritual then aborts and **every** later run fails its preconditions until the device is
+  re-flashed (the device does not reset on serial open, and a 1200-baud touch did not reset
+  it). Recovery is `pio run -t upload`. Decide whether the harness should force/verify a fresh
+  boot, and whether the firmware's blocking drain deserves its own look.
 - **3. Bridge map/compile profiling — DONE (profile below).** The 1.07 s tail is
   **cadence-bound, not work-bound**: 466 of 490 deferred-stop grains are the
   `CompanionBridge` phase, they cost only 65.4 ms of the 1,068 ms window, and they issue at a
