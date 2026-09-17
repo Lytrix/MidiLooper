@@ -67,6 +67,52 @@ void appendChunkListForPass(const LoopPasses& passes, PassId passId,
   }
 }
 
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+constexpr uint32_t kGatherDestinationReportLimit = 8;
+
+/// Diagnostic guard for the snapshot-window gather destinations.
+///
+/// The 2026-09-17 device fault was a DACCVIOL *inside* this fill: a block store
+/// to address 0xE00 == 128 * sizeof(MidiEvent), i.e. the destination vector's
+/// storage pointer had been lost while its element count lived on. Prove the
+/// invariant before the fill so a corrupted destination reports itself instead
+/// of faulting, and write the report straight to USB serial: the `#CAP` ring is
+/// itself under suspicion and PLAYING/OVERDUBBING never flush it, so ring-routed
+/// evidence would die with the reset.
+bool sessionMidiEventVecStorageIntact(const SessionMidiEventVec& vec) {
+  // A non-zero capacity means storage was allocated, so `data()` cannot be null.
+  return vec.capacity() == 0 || vec.data() != nullptr;
+}
+
+LOOP_COLD_MEM __attribute__((noinline)) void reportGatherDestinationLostStorage(
+    const void* owner, const SessionMidiEventVec& vec, const char* site) {
+  static uint32_t reports = 0;
+  if (reports >= kGatherDestinationReportLimit) {
+    return;
+  }
+  ++reports;
+  // Format strings stay in flash (`printf_P` + `PSTR`): DTCM `.rodata` is charged
+  // against the RAM1 budget that pays for the stack, which is only a few KB here.
+  Serial.printf_P(
+      PSTR("#GATHER_DEST_CORRUPT,%lu,site=%s,loop=0x%08lx,dest=0x%08lx,data=0x%08lx,size=%lu,capacity=%lu\r\n"),
+      static_cast<unsigned long>(micros()), site, reinterpret_cast<unsigned long>(owner),
+      reinterpret_cast<unsigned long>(&vec), reinterpret_cast<unsigned long>(vec.data()),
+      static_cast<unsigned long>(vec.size()), static_cast<unsigned long>(vec.capacity()));
+}
+
+/// False when the destination cannot be filled safely; the caller must then
+/// report a gather miss instead of writing through lost storage. Out of line so
+/// the report path never inflates the gather's own stack frame.
+LOOP_COLD_MEM __attribute__((noinline)) bool gatherDestinationIsWritable(
+    const void* owner, SessionMidiEventVec& out, const char* site) {
+  if (sessionMidiEventVecStorageIntact(out)) {
+    return true;
+  }
+  reportGatherDestinationLostStorage(owner, out, site);
+  return false;
+}
+#endif
+
 void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidiEventVec& out,
                                        uint32_t windowStart, uint32_t windowLength) {
   const uint32_t loopLength = snapshot.loopLengthTicks();
@@ -125,6 +171,14 @@ void gatherPublishedSnapshotMembership(const LoopSnapshot& snapshot, SessionMidi
 LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     SessionMidiEventVec& out, uint32_t windowStart, uint32_t windowLength,
     SnapshotWindowGatherPath* pathOut) const {
+#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+  if (!gatherDestinationIsWritable(this, out, "snapshot_window")) {
+    if (pathOut != nullptr) {
+      *pathOut = SnapshotWindowGatherPath::None;
+    }
+    return false;
+  }
+#endif
   const ImmutableLoopSnapshotRef snapshot = publishedSnapshot();
   if (!snapshot) {
     if (pathOut != nullptr) {

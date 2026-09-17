@@ -182,6 +182,194 @@ CAPTURE_HITL_MEM bool removeHitlSetFolderTree(const char* setFolderPath) {
     return removeEmptyDirectoryIfPresent(setFolderPath);
 }
 
+/// Newest `<parentDir>/<baseName>.bad.<stamp>` directory, or false when none
+/// exists. `quarantineCurrentWorkspaceOnSdImpl` names them that way.
+CAPTURE_HITL_MEM bool findNewestQuarantinedSibling(const char* parentDir, const char* baseName,
+                                                   unsigned long& stampOut, char* nameOut,
+                                                   size_t nameOutLen) {
+    stampOut = 0;
+    if (nameOut != nullptr && nameOutLen > 0) {
+        nameOut[0] = '\0';
+    }
+    if (parentDir == nullptr || baseName == nullptr || nameOut == nullptr || nameOutLen == 0) {
+        return false;
+    }
+    File dir = SD.open(parentDir);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) {
+            dir.close();
+        }
+        return false;
+    }
+    const size_t baseLen = std::strlen(baseName);
+    while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+            break;
+        }
+        char name[72];
+        std::snprintf(name, sizeof(name), "%s", entry.name());
+        const bool isDirectory = entry.isDirectory();
+        entry.close();
+        if (!isDirectory || std::strncmp(name, baseName, baseLen) != 0 || name[baseLen] != '.' ||
+            std::strncmp(name + baseLen + 1, "bad.", 4) != 0) {
+            continue;
+        }
+        unsigned long stamp = 0;
+        for (const char* cursor = name + baseLen + 5; *cursor >= '0' && *cursor <= '9'; ++cursor) {
+            stamp = stamp * 10UL + static_cast<unsigned long>(*cursor - '0');
+        }
+        if (stamp >= stampOut) {
+            stampOut = stamp;
+            std::snprintf(nameOut, nameOutLen, "%s", name);
+        }
+    }
+    dir.close();
+    return nameOut[0] != '\0';
+}
+
+/// Rename `parentDir/baseName` aside to `parentDir/baseName.bad.<stamp>`.
+/// Rename only — this never deletes, so the live tree stays recoverable.
+CAPTURE_HITL_MEM bool parkLiveTreeAsQuarantine(const char* parentDir, const char* baseName,
+                                               unsigned long stamp) {
+    char live[96];
+    char parked[96];
+    const int liveWritten = std::snprintf(live, sizeof(live), "%s/%s", parentDir, baseName);
+    const int parkedWritten =
+        std::snprintf(parked, sizeof(parked), "%s/%s.bad.%lu", parentDir, baseName, stamp);
+    if (liveWritten <= 0 || static_cast<size_t>(liveWritten) >= sizeof(live) ||
+        parkedWritten <= 0 || static_cast<size_t>(parkedWritten) >= sizeof(parked)) {
+        return false;
+    }
+    if (!SD.exists(live)) {
+        return true;
+    }
+    if (SD.rename(live, parked)) {
+        Serial.printf_P(PSTR("[StorageManager] Parked: %s -> %s\n"), live, parked);
+        return true;
+    }
+    Serial.printf_P(PSTR("[StorageManager] ERROR: park rename failed: %s\n"), live);
+    return false;
+}
+
+/// List every `<parentDir>/<baseName>.bad.<stamp>` tree. The quarantine stamp is
+/// device `millis()` at the moment of rename, so it is not reproducible from the
+/// host; the inventory is the only reliable way to name a restore target.
+CAPTURE_HITL_MEM void printQuarantineInventoryForHitl(const char* parentDir, const char* baseName) {
+    File dir = SD.open(parentDir);
+    if (!dir || !dir.isDirectory()) {
+        if (dir) {
+            dir.close();
+        }
+        Serial.printf_P(PSTR("[StorageManager] Quarantine inventory %s: unavailable\n"), parentDir);
+        return;
+    }
+    const size_t baseLen = std::strlen(baseName);
+    unsigned count = 0;
+    while (true) {
+        File entry = dir.openNextFile();
+        if (!entry) {
+            break;
+        }
+        char name[72];
+        std::snprintf(name, sizeof(name), "%s", entry.name());
+        const bool isDirectory = entry.isDirectory();
+        entry.close();
+        if (!isDirectory || std::strncmp(name, baseName, baseLen) != 0 || name[baseLen] != '.' ||
+            std::strncmp(name + baseLen + 1, "bad.", 4) != 0) {
+            continue;
+        }
+        ++count;
+        Serial.printf_P(PSTR("[StorageManager] Quarantine inventory %s/%s\n"), parentDir, name);
+    }
+    dir.close();
+    Serial.printf_P(PSTR("[StorageManager] Quarantine inventory %s: %u tree(s)\n"), baseName,
+                    count);
+}
+
+/// Rename `parentDir/baseName.bad.<stamp>` back to the live name.
+CAPTURE_HITL_MEM bool restoreQuarantinedSibling(const char* parentDir, const char* baseName,
+                                                unsigned long stamp) {
+    if (stamp == 0) {
+        return false;
+    }
+    char src[96];
+    char dest[96];
+    const int srcWritten =
+        std::snprintf(src, sizeof(src), "%s/%s.bad.%lu", parentDir, baseName, stamp);
+    const int destWritten = std::snprintf(dest, sizeof(dest), "%s/%s", parentDir, baseName);
+    if (srcWritten <= 0 || static_cast<size_t>(srcWritten) >= sizeof(src) || destWritten <= 0 ||
+        static_cast<size_t>(destWritten) >= sizeof(dest)) {
+        return false;
+    }
+    if (!SD.exists(src)) {
+        Serial.printf_P(PSTR("[StorageManager] ERROR: no such quarantined tree: %s\n"), src);
+        return false;
+    }
+    if (SD.rename(src, dest)) {
+        Serial.printf_P(PSTR("[StorageManager] Restored: %s -> %s\n"), src, dest);
+        return true;
+    }
+    Serial.printf_P(PSTR("[StorageManager] ERROR: restore rename failed: %s\n"), src);
+    return false;
+}
+
+/// Inverse of `!QUARANTINE_WORKSPACE`. `requestedStamp == 0` selects the newest
+/// quarantined tree of each kind. Renames only: the live trees are parked as
+/// `<name>.bad.<now>` rather than deleted, so the operation stays reversible.
+/// Stopped-transport only; `.cursor/rules/Destructive-SD-Operations.mdc`
+/// requires explicit user permission before running it.
+CAPTURE_HITL_MEM void restoreQuarantinedWorkspaceForHitl(unsigned long requestedStamp,
+                                                        bool listOnly) {
+    const unsigned long parkStamp = millis();
+
+    printQuarantineInventoryForHitl("/MidiLooper", "current");
+    printQuarantineInventoryForHitl("/MidiLooper/recovery", "checkpoints");
+    if (listOnly) {
+        Serial.printf_P(PSTR("[StorageManager] Quarantine inventory only; nothing renamed.\n"));
+        return;
+    }
+
+    unsigned long currentStamp = requestedStamp;
+    if (currentStamp == 0) {
+        char newest[72];
+        (void)findNewestQuarantinedSibling("/MidiLooper", "current", currentStamp, newest,
+                                           sizeof(newest));
+        Serial.printf_P(PSTR("[StorageManager] Restore target current: %s\n"),
+                        newest[0] != '\0' ? newest : "(none)");
+    }
+
+    unsigned long checkpointsStamp = requestedStamp;
+    if (checkpointsStamp == 0) {
+        char newest[72];
+        (void)findNewestQuarantinedSibling("/MidiLooper/recovery", "checkpoints", checkpointsStamp,
+                                           newest, sizeof(newest));
+        Serial.printf_P(PSTR("[StorageManager] Restore target checkpoints: %s\n"),
+                        newest[0] != '\0' ? newest : "(none)");
+    }
+
+    const bool parkedCurrent = parkLiveTreeAsQuarantine("/MidiLooper", "current", parkStamp);
+    const bool parkedCheckpoints =
+        parkLiveTreeAsQuarantine("/MidiLooper/recovery", "checkpoints", parkStamp);
+    const bool restoredCurrent =
+        parkedCurrent && restoreQuarantinedSibling("/MidiLooper", "current", currentStamp);
+    const bool restoredCheckpoints =
+        parkedCheckpoints &&
+        restoreQuarantinedSibling("/MidiLooper/recovery", "checkpoints", checkpointsStamp);
+    Serial.printf_P(
+        PSTR("[StorageManager] Workspace restore: parked current=%u checkpoints=%u, "
+             "restored current=%u checkpoints=%u\n"),
+        parkedCurrent ? 1U : 0U, parkedCheckpoints ? 1U : 0U, restoredCurrent ? 1U : 0U,
+        restoredCheckpoints ? 1U : 0U);
+    if (restoredCurrent) {
+        Serial.printf_P(
+            PSTR("[StorageManager] Workspace restore complete. Reboot Teensy to load it.\n"));
+    } else {
+        Serial.printf_P(PSTR(
+            "[StorageManager] Workspace restore incomplete (no matching quarantined current).\n"));
+    }
+}
+
 CAPTURE_HITL_MEM bool renamePathOnSdIfPresent(const char* src, const char* dest) {
     if (src == nullptr || dest == nullptr || src[0] == '\0' || dest[0] == '\0') {
         return false;
@@ -498,6 +686,26 @@ CAPTURE_HITL_MEM void StorageManager::processHitlSerialCommands() {
                 nukeHitlSetsCatalog();
             } else if (StorageManagerInternal::handleHitlQuarantineCommandLine(sHitlSerialLineBuffer)) {
                 Serial.println("[StorageManager] Reboot Teensy to load empty workspace.");
+            } else if (std::strncmp(sHitlSerialLineBuffer, "!RESTORE_WORKSPACE", 18) == 0 &&
+                       !clockManager.isTransportRunning()) {
+                // Inverse of quarantine. Stopped-only, and renames only: the live
+                // trees are parked as `.bad.<now>` instead of being deleted. An
+                // optional trailing stamp selects which quarantine to restore
+                // (`0`/absent picks the newest).
+                unsigned long requestedStamp = 0;
+                bool listOnly = false;
+                const char* cursor = sHitlSerialLineBuffer + 18;
+                while (*cursor == ' ') {
+                    ++cursor;
+                }
+                if (std::strncmp(cursor, "list", 4) == 0) {
+                    listOnly = true;
+                }
+                for (; *cursor >= '0' && *cursor <= '9'; ++cursor) {
+                    requestedStamp =
+                        requestedStamp * 10UL + static_cast<unsigned long>(*cursor - '0');
+                }
+                restoreQuarantinedWorkspaceForHitl(requestedStamp, listOnly);
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_YES") == 0) {
                 confirmRevisionLoadAfterCommitForHitl();
             } else if (std::strcmp(sHitlSerialLineBuffer, "!REV_LOAD_DIRTY_NO") == 0) {

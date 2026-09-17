@@ -350,6 +350,23 @@ private:
     bool loadSaveDetailCacheValid_ = false;
     bool loadSaveDetailCacheOk_ = false;
 
+    /// Diagnostic sentinel (verified in `update()` when SESSION_CAPTURE is on).
+    /// `.bss.dma` is NOLOAD and not zero-initialized, and
+    /// `DisplayManagerInternal::liveDisplayEventBuffer` is linked flush against
+    /// the tail of this object in RAM2, so any overrun past `displayManager`
+    /// lands on that buffer's vector header — the 2026-09-17 DACCVIOL was a
+    /// gather filling such a buffer through lost storage. Keeping the sentinel
+    /// last makes an overrun report itself where it happens instead of surfacing
+    /// later as a fault inside the snapshot fill.
+    static constexpr uint32_t kDmaTailCanary = 0xD1A6C0DEu;
+    uint32_t dmaTailCanary_ = kDmaTailCanary;
+
+    /// Diagnostic: report a RAM2 overrun past this object, or a gather
+    /// destination that lost its storage header. Defined out of line so it does
+    /// not inflate `update()`'s stack frame, and with flash-resident format
+    /// strings so it stays off the RAM1 stack budget.
+    void checkDmaStagingDiagnostics();
+
     static constexpr float PULSE_SPEED = 1.0f; // Pulses per second (slowed by 40%)
     // Track status rendering
     void drawTrackStatus(uint8_t selectedTrack, uint32_t currentMillis);

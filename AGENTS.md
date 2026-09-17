@@ -46,6 +46,10 @@ path and confidence when alternatives exist; do not block on vagueness.
 - **Upload:** after a *successful* firmware build, **ask** before flashing the
   board. Exception: while evaluating the change with a dedicated HITL preset,
   upload and run without asking.
+- **Device SD is user data:** quarantine (`!QUARANTINE_WORKSPACE`), delete or
+  rename on the card only with explicit permission in the same session. The
+  firmware has no restore command, so quarantine is one-way in practice — see
+  [`Destructive-SD-Operations.mdc`](.cursor/rules/Destructive-SD-Operations.mdc).
 - **Host tests:** run `pio test -e native` before push, merge, or finishing a PR.
 - **HITL:** a firmware change observable over serial needs a **registered or
   reused stimulus** (`scripts/hitl/stimuli/`). List before adding:
@@ -110,6 +114,7 @@ Optional roles: [`docs/Agents/architect.md`](docs/Agents/architect.md),
 | Vocabulary and naming | `Naming-Vocabulary-Teensy-Looper.mdc` |
 | Translation-unit splits | `Mechanical-TU-Split-Workflow.mdc` |
 | RAM1 linker overflow | `Teensy-RAM1-Bank-Overflow.mdc` |
+| Device-SD quarantine / delete / rename | `Destructive-SD-Operations.mdc` |
 
 ## Skills
 
