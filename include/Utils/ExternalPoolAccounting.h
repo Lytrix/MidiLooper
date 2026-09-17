@@ -54,6 +54,10 @@ struct Counters {
   uint32_t poolRefusedCount = 0;
   /// Largest single pool request that was refused, in bytes.
   uint32_t poolRefusedLargestBytes = 0;
+  /// `millis()` of the most recent refusal, or 0 when none. Lets an admission gate
+  /// ask "is the pool refusing right now?" without walking it — an exact signal,
+  /// unlike the live-byte counter, which over-reports.
+  uint32_t poolLastRefusalMs = 0;
 };
 
 /// Read-only view of the counters. O(1).

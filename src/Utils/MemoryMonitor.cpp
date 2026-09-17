@@ -147,7 +147,101 @@ void logStatus(bool includeExternalPoolUsage) {
   }
 }
 
+
+// --- Operation admission gate -------------------------------------------------
+// Constants are deliberately conservative and documented, because the whole point
+// is to refuse *before* the allocator is asked: 2026-09-17 showed the device already
+// at 99.5% pool with 4 KB heap free, denying a 32 KB request 841 times, before a
+// single 5120-byte request on an unguarded path reached
+// `ExternalMemoryFirstAllocator::abort()`.
+namespace {
+/// Internal-heap floor an admitted operation must leave untouched, before margin.
+constexpr uint32_t kOperationHeapFloorBytes = 32u * 1024u;
+/// How recently the pool must have refused a request to count as "full right now".
+constexpr uint32_t kPoolRefusalWindowMs = 2000u;
+
+/// Per-operation headroom the operation must leave untouched beyond the floor.
+/// Overdub start gets the largest because 2026-09-17 showed it still requesting
+/// 5120 bytes about two seconds after admission, on top of 32 KB chunk retries;
+/// record start is already refusal-tolerant and only needs a floor. Zero at the
+/// call site means "use the default for this kind".
+FLASHMEM uint32_t defaultMarginFor(OperationKind operation) {
+  switch (operation) {
+    case OperationKind::RecordStart:
+      return 8u * 1024u;
+    case OperationKind::OverdubStart:
+      return 16u * 1024u;
+    case OperationKind::SnapshotReserve:
+      return 8u * 1024u;
+    case OperationKind::BootProbe:
+      // Deliberately mirrors OverdubStart so the boot probe and a post-record
+      // overdub denial are an apples-to-apples pair: same requirement, different
+      // availability.
+      return 16u * 1024u;
+  }
+  return 8u * 1024u;
+}
+
+FLASHMEM const char* operationName(OperationKind operation) {
+  switch (operation) {
+    case OperationKind::RecordStart:
+      return PSTR("record_start");
+    case OperationKind::OverdubStart:
+      return PSTR("overdub_start");
+    case OperationKind::SnapshotReserve:
+      return PSTR("snapshot_reserve");
+    case OperationKind::BootProbe:
+      return PSTR("boot_probe");
+  }
+  return PSTR("unknown");
+}
+}  // namespace
+
+FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes) {
+  const uint32_t heapFree = getInternalHeapFreeBytes();
+  const ExternalPoolAccounting::Counters& pool = ExternalPoolAccounting::counters();
+  const uint32_t nowMs = millis();
+  const uint32_t sinceRefusalMs =
+      pool.poolLastRefusalMs == 0 ? UINT32_MAX : (nowMs - pool.poolLastRefusalMs);
+  const uint32_t requiredBytes =
+      marginBytes != 0 ? marginBytes : defaultMarginFor(operation);
+  const bool heapLow = heapFree < (kOperationHeapFloorBytes + requiredBytes);
+  const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
+  const bool reportAdmitted = operation == OperationKind::BootProbe;
+  if (!heapLow && !poolRefusing) {
+    if (reportAdmitted) {
+      Serial.printf_P(
+          PSTR("#MEM_ADMIT,%lu,op=%s,need=%luB,heap_free=%luKB,pool_refused=%lu/%luB,"
+               "since_refusal=%lums\n"),
+          static_cast<unsigned long>(micros()), operationName(operation),
+          static_cast<unsigned long>(requiredBytes), static_cast<unsigned long>(heapFree / 1024),
+          static_cast<unsigned long>(pool.poolRefusedCount),
+          static_cast<unsigned long>(pool.poolRefusedLargestBytes),
+          static_cast<unsigned long>(sinceRefusalMs));
+    }
+    return true;
+  }
+  Serial.printf_P(
+      PSTR("#MEM_DENIED,%lu,op=%s,reason=%s,need=%luB,heap_free=%luKB,"
+           "pool_refused=%lu/%luB,since_refusal=%lums\n"),
+      static_cast<unsigned long>(micros()), operationName(operation),
+      heapLow ? PSTR("heap_low") : PSTR("pool_refusing"),
+      static_cast<unsigned long>(requiredBytes), static_cast<unsigned long>(heapFree / 1024),
+      static_cast<unsigned long>(pool.poolRefusedCount),
+      static_cast<unsigned long>(pool.poolRefusedLargestBytes),
+      static_cast<unsigned long>(sinceRefusalMs));
+  return false;
+}
+
 void logExternalPoolAccounting(const char* phase) {
+  // One-shot positive control: on a healthy boot the gate must report ADMIT here, so
+  // the denial lines after a record are demonstrably a threshold crossing and not a
+  // gate that simply always refuses.
+  static bool bootProbeDone = false;
+  if (!bootProbeDone) {
+    bootProbeDone = true;
+    (void)admitOperationMemory(OperationKind::BootProbe, 0);
+  }
   const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
   Serial.printf_P(
       PSTR("[Memory] ext phase=%s live=%luKB high=%luKB blocks=%lu/%lu alloc=%luKB freed=%luKB "
@@ -329,6 +423,10 @@ bool isLowMemory(uint32_t) { return false; }
 uint32_t getInternalHeapMinEverFreeBytes() { return getInternalHeapFreeBytes(); }
 void resetInternalHeapWatermark() {}
 void logStatus(bool) {}
+void logExternalPoolAccounting(const char*) {}
+// Native/other-platform stub: the gate has no pool to consult and must not
+// change host-test behaviour, so it always admits.
+bool admitOperationMemory(OperationKind, uint32_t) { return true; }
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 namespace {
@@ -424,6 +522,10 @@ bool isLowMemory(uint32_t) { return false; }
 uint32_t getInternalHeapMinEverFreeBytes() { return 0; }
 void resetInternalHeapWatermark() {}
 void logStatus(bool) {}
+void logExternalPoolAccounting(const char*) {}
+// Native/other-platform stub: the gate has no pool to consult and must not
+// change host-test behaviour, so it always admits.
+bool admitOperationMemory(OperationKind, uint32_t) { return true; }
 void logStatusAtAddedNotes(uint32_t, size_t, const void*, size_t, bool) {}
 
 }  // namespace MemoryMonitor

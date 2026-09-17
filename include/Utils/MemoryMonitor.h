@@ -96,6 +96,42 @@ void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount = 0,
                           bool loopChunkBacked = false);
 
 /**
+ * @brief Operation kinds that require pool/heap headroom at their admission boundary.
+ *
+ * Passed as a number, not a string: the gate is called from transport code and this
+ * tree has essentially no ITCM or DTCM-rodata headroom, so the call site must not
+ * carry a literal. Names are resolved in the .cpp.
+ */
+enum class OperationKind : uint8_t {
+  RecordStart = 1,
+  OverdubStart = 2,
+  SnapshotReserve = 3,
+  /// Diagnostic only: report the decision whether it admits or denies, so a healthy
+  /// boot shows the gate admitting rather than staying silent. Never gates anything.
+  BootProbe = 4,
+};
+
+/**
+ * @brief Admission gate for an operation that needs memory headroom.
+ *
+ * Call this *before* the operation mutates any state, so a denial is a clean
+ * refusal rather than a rollback of a half-started interval. It is safe from the
+ * transport thread: it reads the O(1) heap counters and the O(1) external-pool
+ * refusal record, and never walks the pool.
+ *
+ * Denies when the internal heap is below its floor plus `marginBytes`, or when the
+ * pool has refused an allocation within its recency window — an exact "the pool is
+ * full right now" signal, which matters because the accounting's live-byte figure
+ * over-reports and cannot be used for headroom.
+ *
+ * On denial it emits `#MEM_DENIED` with the operation, the reason, the requested
+ * margin, heap free, and the pool refusal count/size/age.
+ *
+ * @return true when the operation may proceed.
+ */
+bool admitOperationMemory(OperationKind operation, uint32_t marginBytes);
+
+/**
  * @brief Advisory pressure signal (Phase 1A — compute + telemetry only).
  * Subsystems consult; owners decide safe actions. Updated once per main-loop turn.
  */

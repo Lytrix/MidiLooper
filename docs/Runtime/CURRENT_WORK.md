@@ -5,6 +5,69 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 failure-semantics fix landed: overdub admission denies instead of
+aborting (verified before/after on the same recipe).** `MemoryMonitor::admitOperationMemory`
+is a pre-emptive admission gate called from `Track::startOverdubbing` **before** the first
+mutation, so a denial is a clean refusal with nothing to unwind. It reads only O(1)
+signals: the internal-heap free counters and the external pool's *refusal* record
+(`ExternalPoolAccounting::counters().poolLastRefusalMs`, set by the `--wrap` wrapper).
+Deliberately not the live-byte counter, which over-reports and cannot size headroom.
+Denies when heap free is below a 32 KB floor plus a per-operation margin (16 KB for
+overdub start, 8 KB for record start / snapshot reserve) or when the pool refused an
+allocation within 2 s. Emits `#MEM_DENIED` with operation, reason, required bytes, heap
+free, and the pool refusal count/size/age. The operation is passed as a numeric
+`OperationKind` and the gate is `FLASHMEM`, so the call site carries no literal and the
+whole slice cost **zero ITCM** (`code:425944 + padding:40 = 425984`, still 13 banks;
+`free for local variables` 6656).
+
+**Acceptance, same 8-bar track 4 slot 1 recipe:** before,
+`[ExternalMemoryFirstAllocator] FATAL` and a silent device
+([`hang-8bar-refusal-03`](../../captures/hang-8bar-refusal-03/session_20260917_101436.log));
+after,
+[`hang-8bar-admit-01`](../../captures/hang-8bar-admit-01/session_20260917_101926.log) logs
+two `#MEM_DENIED`s, **no `FATAL`**, no `Overdubbing started` line, and the device stayed
+responsive (487 KB of serial in a 6 s probe against silence before) with the loop playing
+until the harness's own transport stop. Not a single ownership, reservation or state
+change happened, because the gate sits before all of them.
+
+**Discrimination proven on-device** with a one-shot boot probe that evaluates the same
+requirement as the overdub gate:
+
+```
+#MEM_ADMIT,  op=boot_probe,   need=16384B, heap_free=216KB, pool_refused=0/0B
+#MEM_DENIED, op=overdub_start, need=16384B, heap_free=4KB,  pool_refused=715/32768B, since_refusal=1ms
+```
+
+So the denial is a threshold crossing, not a gate that always refuses.
+
+**Deviation from the written plan, deliberate:** the allocator itself was *not* changed to
+return null. The reach audit showed `ExternalMemoryFirstAllocator` backs
+`SessionMidiEventVec`, `DisplayNoteVec`, `PlaybackOrderVec`, `PresentNoteVec`,
+`NoteSpanVec`, the undo vectors and the note-edit map allocator across ~29 files, most of
+which assume infallible allocation; a global null return would convert the abort into
+unchecked null dereferences. The gate achieves the objective's outcome (operation-level
+denial, transport untouched) without that risk. **Residual:** an allocation failure
+*outside* a gated boundary can still reach `abort()`. Record start was audited and
+deliberately left ungated with a large margin — it is already refusal-tolerant (the record
+completed through 834 refusals), and its measured 168 KB heap cost would make a matching
+margin deny normal records.
+
+**Observed consequence, not a regression:** on this device the canonical 2-bar recipe also
+drives the pool to ~99% after its record, so the gate denies its overdub too
+([`admit-regression-2bar-01`](../../captures/admit-regression-2bar-01/session_20260917_102138.log)).
+Previously that path aborted; now it refuses and keeps playing. The capability gap is
+real and is what defect 2 must close — the gate makes it visible instead of fatal.
+
+Landing note: `test_continuous_capture` compiles `TrackOverdubLifecycle.cpp`, so the gate
+needed a native stub in `MemoryMonitor.cpp`'s `PIO_UNIT_TEST_NATIVE`/host sections (it
+always admits there). Without it that suite ERRORED at link and the run silently reported
+2157 cases instead of 2192 — worth watching, because a dropped suite looks like a clean
+pass. With the stub: native **2192 cases, 2188 passed, 1 skipped, the same two known
+unguarded reentry failures**.
+
+**Still open:** attribute the record-start reservation (+1.26 MB pool / +168 KB heap) to
+named contributors, and decide whether any unaudited boundary needs its own gate.
+
 **2026-09-17 failure-semantics audit: the pool was already denying allocations for most
 of the record; one 5 KB request with no denial handling is fatal.** Added
 `#MEM_EXT_REFUSED` to `__wrap_extmem_malloc` (distinct-size logging plus a
