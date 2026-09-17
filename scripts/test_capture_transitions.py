@@ -12,6 +12,7 @@ if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 from hitl.capture_transitions import (
+    _effective_transition_actual,
     _extract_recs_lengths_from_human_logs,
     _merge_transition_counts_with_evidence,
     _serial_capture_sparse_for_verification,
@@ -26,9 +27,85 @@ from hitl.legacy_record_baseline import (
     _evaluate_clear_precondition,
     _serial_has_clear_aborted,
     _track_cleared_for_record,
+    _verify_record_loop_length,
 )
+from hitl.serial_timing import extract_phase_sessions
 from hitl.serial_collector import serial_line_resets_heartbeat
 
+
+
+class DeferredOverdubStopOracleTests(unittest.TestCase):
+    """The deferred stop is OVERDUBBING -> OVERDUB_STOPPING -> PLAYING.
+
+    The oracle used to require the direct OVERDUBBING -> PLAYING edge, so every
+    deferred stop looked like a missing phase boundary and its first-note window
+    never closed.
+    """
+
+    def test_deferred_hop_counts_as_the_playing_transition(self) -> None:
+        deferred = {("OVERDUBBING", "OVERDUB_STOPPING"): 1, ("OVERDUB_STOPPING", "PLAYING"): 1}
+        self.assertEqual(
+            1, _effective_transition_actual("OVERDUBBING", "PLAYING", deferred)
+        )
+        # Immediate stops keep counting, and both shapes sum when both occurred.
+        self.assertEqual(
+            1, _effective_transition_actual("OVERDUBBING", "PLAYING", {("OVERDUBBING", "PLAYING"): 1})
+        )
+        both = dict(deferred)
+        both[("OVERDUBBING", "PLAYING")] = 1
+        self.assertEqual(2, _effective_transition_actual("OVERDUBBING", "PLAYING", both))
+
+    def test_overdub_phase_session_closes_on_the_deferred_stop(self) -> None:
+        lines = [
+            "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000000,MI,U,144,4,60,98",
+            "#CAP,3000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,3000020,ST,Track,OVERDUB_STOPPING,PLAYING",
+        ]
+        report = extract_phase_sessions(lines)
+        self.assertIsNotNone(report.overdub)
+        assert report.overdub is not None
+        self.assertEqual(1000000, report.overdub.start_ts)
+        self.assertEqual(3000000, report.overdub.stop_ts)
+        self.assertIsNone(report.overdub.ambiguity)
+        self.assertFalse(
+            any("without stop" in diagnostic for diagnostic in report.diagnostics)
+        )
+
+    def test_immediate_stop_still_pairs(self) -> None:
+        lines = [
+            "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,3000000,ST,Track,OVERDUBBING,PLAYING",
+        ]
+        report = extract_phase_sessions(lines)
+        assert report.overdub is not None
+        self.assertEqual((1000000, 3000000), (report.overdub.start_ts, report.overdub.stop_ts))
+
+
+class ProxyTimedRecordLengthOracleTests(unittest.TestCase):
+    """A wall-clock-proxied stop cannot predict the device's bar grid.
+
+    The recorded length is then a report, not a firmware verdict: any bar-aligned
+    length at or above the request is consistent with the proxy and must not be
+    raised as a content defect.
+    """
+
+    def test_proxy_timed_longer_bar_aligned_length_is_reported_not_enforced(self) -> None:
+        rows = [{"final_length": 7680, "raw_length": 7722}]
+        proxied = _verify_record_loop_length(rows, record_bars=8, proxy_timed=True)
+        self.assertTrue(proxied["final_length_ok"])
+        self.assertTrue(proxied["proxy_only_slop"])
+        self.assertEqual(7680, proxied["actual_final_length"])
+        self.assertEqual(6144, proxied["expected_final_length"])
+
+        enforced = _verify_record_loop_length(rows, record_bars=8, proxy_timed=False)
+        self.assertFalse(enforced["final_length_ok"])
+        self.assertFalse(enforced["proxy_only_slop"])
+
+    def test_proxy_timed_does_not_accept_a_non_bar_aligned_length(self) -> None:
+        rows = [{"final_length": 7000, "raw_length": 7000}]
+        result = _verify_record_loop_length(rows, record_bars=8, proxy_timed=True)
+        self.assertFalse(result["final_length_ok"])
 
 class CaptureTransitionEvidenceTests(unittest.TestCase):
     def test_armed_detects_human_log(self) -> None:

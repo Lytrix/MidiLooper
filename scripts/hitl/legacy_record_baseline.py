@@ -1184,10 +1184,16 @@ def _stream_fixture_record_bars(
         return 0, 0, False, False
 
     proxy_bpm = wall_clock_tempo or float(getattr(args, "tempo_bpm", 120.0) or 120.0)
+    # Record the timing source for the verifier: a wall-clock proxy cannot predict the
+    # device's own bar grid, so a requested bar count is not an authoritative length
+    # expectation in that mode.
+    setattr(args, "transport_timing_source",
+            "wall_clock_proxy" if using_serial_proxy else "device_clock")
     if using_serial_proxy:
         print(
             "[info] Bar sync via wall-clock tempo proxy "
-            f"({proxy_bpm:.1f} BPM) — Teensy clock not on USB MIDI in."
+            f"({proxy_bpm:.1f} BPM) — Teensy clock not on USB MIDI in; "
+            "recorded length is reported, not enforced."
         )
 
     if record_schedule_start_mono is not None:
@@ -2203,6 +2209,7 @@ def _verify_record_loop_length(
     *,
     record_bars: int,
     ticks_per_bar: int = TICKS_PER_BAR,
+    proxy_timed: bool = False,
 ) -> dict[str, object]:
     if record_bars <= 0:
         return {"phase_disabled": True}
@@ -2227,6 +2234,14 @@ def _verify_record_loop_length(
             actual % ticks_per_bar == 0
             and expected <= actual <= expected + ticks_per_bar
         )
+    # Wall-clock proxy: the host paces the stop by its own clock, so the device's bar
+    # grid can quantize the loop longer than requested. The length is then a report,
+    # not a verdict - any bar-aligned length at or above the request is consistent with
+    # a proxy-timed stop, and the mismatch must not read as a firmware/content defect.
+    proxy_only_slop = False
+    if not final_length_ok and proxy_timed and ticks_per_bar > 0:
+        proxy_only_slop = actual % ticks_per_bar == 0 and actual >= expected
+        final_length_ok = final_length_ok or proxy_only_slop
     return {
         "phase_disabled": False,
         "recs_missing": False,
@@ -2234,6 +2249,8 @@ def _verify_record_loop_length(
         "actual_final_length": actual,
         "bar_aligned_final_length": bar_aligned,
         "final_length_ok": final_length_ok,
+        "proxy_timed": proxy_timed,
+        "proxy_only_slop": proxy_only_slop,
         "raw_length": raw_length,
     }
 
@@ -2687,9 +2704,14 @@ def _extract_overdub_memory_note_count(
     if overdub_stop_ts is None:
         return None
     stop_idx: Optional[int] = None
-    marker = f"#CAP,{overdub_stop_ts},ST,Track,OVERDUBBING,PLAYING"
+    # The stop may be immediate (OVERDUBBING -> PLAYING) or deferred, in which case the
+    # window ends at OVERDUBBING -> OVERDUB_STOPPING.
+    markers = (
+        f"#CAP,{overdub_stop_ts},ST,Track,OVERDUBBING,PLAYING",
+        f"#CAP,{overdub_stop_ts},ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+    )
     for i, line in enumerate(lines):
-        if marker in line:
+        if any(marker in line for marker in markers):
             stop_idx = i
             break
     if stop_idx is None:
@@ -3279,6 +3301,7 @@ def _build_serial_verification(
         record_loop_length = _verify_record_loop_length(
             recs_lengths,
             record_bars=args.record_bars,
+            proxy_timed=getattr(args, "transport_timing_source", "") == "wall_clock_proxy",
         )
         record_note_span = _verify_record_note_span(
             recs_lengths,
@@ -3360,6 +3383,12 @@ def _build_serial_verification(
                 issues.append("record_recs_missing")
         elif not record_loop_length.get("final_length_ok", False):
             issues.append("record_loop_length_mismatch")
+        elif record_loop_length.get("proxy_only_slop"):
+            timing_warnings.append(
+                "record_loop_length_proxy_timed:"
+                f"{record_loop_length.get('actual_final_length')}/"
+                f"{record_loop_length.get('expected_final_length')}"
+            )
     if record_note_span is not None:
         if record_note_span.get("recs_missing"):
             if "record_recs_missing" not in issues:

@@ -215,6 +215,15 @@ def _effective_transition_actual(
 ) -> int:
     if from_state == "ARMED" and to_state == "RECORDING":
         return _record_entry_to_recording_count(transition_counts)
+    if from_state == "OVERDUBBING" and to_state == "PLAYING":
+        # A stop can be immediate (OVERDUBBING -> PLAYING) or deferred
+        # (OVERDUBBING -> OVERDUB_STOPPING -> PLAYING). Each completed stop produces
+        # exactly one of the two shapes, so the effective count is their sum; counting
+        # only the direct edge made every deferred stop look like a missing phase.
+        return (
+            transition_counts.get(("OVERDUBBING", "PLAYING"), 0)
+            + transition_counts.get(("OVERDUB_STOPPING", "PLAYING"), 0)
+        )
     return transition_counts.get((from_state, to_state), 0)
 
 

@@ -167,7 +167,17 @@ def _pair_overdub_sessions(
         to_state = parts[5].strip()
         if from_state == "PLAYING" and to_state == "OVERDUBBING":
             st_overdub_starts.append(ts)
-        elif from_state == "OVERDUBBING" and to_state in ("PLAYING", "STOPPED"):
+        elif from_state == "OVERDUBBING" and to_state in (
+            "PLAYING",
+            "STOPPED",
+            # Deferred stop: the interval's last admissible input is when it leaves
+            # OVERDUBBING for OVERDUB_STOPPING; the audible completion is the later
+            # OVERDUB_STOPPING -> PLAYING hop. Both are legitimate ends of the phase
+            # window, and the earliest matching stop is the precise one.
+            "OVERDUB_STOPPING",
+        ):
+            st_overdub_stops.append(ts)
+        elif from_state == "OVERDUB_STOPPING" and to_state in ("PLAYING", "STOPPED"):
             st_overdub_stops.append(ts)
 
     human_overdub_starts: list[int] = []
