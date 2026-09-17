@@ -53,9 +53,13 @@ published root nor the stale-root overlay once its session closed -- the display
   and parked at `Prewarmed`, so the driver's `preparedCompanionHistoryCanStep` is false while
   `beginPreparedCompanionHistory` is re-entered every turn. Ruled out: a
   `prewarmPreparedCompanionHistory` reset of an in-flight preparation (a guard for it never fires)
-  and a transport command-epoch mismatch (the epoch still matches). Next: trace which phase the
-  preparation reaches before it stops advancing, and whether the successor's start invalidates the
-  frozen staging or the capture-inputs binding that the phase's `sourceCurrent()` reads.
+  and a transport command-epoch mismatch (the epoch still matches). Located on the second turn: the rejecting gate is the `captureInputs` condition
+  (`!hasPendingCapturePass_`). At the `CanonicalTail` -> `CompanionHistory` boundary the pending pass
+  **is** staged (`ownsRawRange` true, live store empty), but by the `begin` call it is gone while the
+  frozen binding is otherwise intact, so the pass is consumed or discarded inside `CanonicalTail`.
+  Next target: that consumer (`beginFrozenCanonicalTail` / `stepReservedFrozenCanonicalTail` / the
+  retention path), and whether companion admission should require the pending pass at all. Iterate with
+  `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture`.  frozen staging or the capture-inputs binding that the phase's `sourceCurrent()` reads.
 - Ignored per the owner: one deterministic coalesced note-off on the 5-bar shape
   (`content-verify-51-playback`, tick 128 / ch 4 / note 78 / velocity 0).
 
