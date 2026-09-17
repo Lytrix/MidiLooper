@@ -2741,6 +2741,42 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — parent change task 2.4 (active clock path consumes prepared views): slice 1 + the 2.5a
+parity oracle are landed; the next step is 2.4 slice 2.** This is now the active code work on
+`resumable-midi-boundary-playback-maintenance`, alongside the successor change's own pick-up order
+(best next there: 5.5). Where it stands, all committed:
+
+- **2.4 slice 1 (`4bd368ca`).** `openspec/changes/resumable-midi-boundary-playback-maintenance/ARCHITECTURE-REVIEW.md`
+  is new (the change had no phase-gate artifact) and carries the per-phase gate for 2.4 -- ownership / state
+  transition / execution bound all **NO**, reuse **YES** -- plus the architecture-checkpoint answers.
+  `Track::resetPlaybackOrderHotRebuildCount()` / `playbackOrderHotRebuildCount()` count content-sized
+  order builds (heavy merged build, `rebuildPlaybackOrder`, full `reanchorPlaybackIndex`) that run while
+  `anyTimingCriticalTrackActive()`. The counter is in **RAM2/DMAMEM**: a 4-byte DTCM addition here costs
+  4 KB of RAM1 local allowance through the alignment edge, and a `Diagnostics::Counter` slot was rejected
+  for the same reason. Two native tests prove the detector fires on active transport and stays clean for
+  the STOPPED-oracle build.
+- **2.5a parity oracle (`f44e0077`, `f76fa22f`) -- prerequisite, not 2.5 completion; 2.5 still finishes
+  after 2.4.** Differential harness in `test_continuous_capture`: `DifferentialRow`/`DifferentialTrace`
+  capture (tick, kind, channel, note, value) in **emission order**; `consumePairOverRange` drives a
+  prepared `(mergedEvents, playbackOrder)` pair through `advancePlaybackCursor`; `differentialTracesEqual`
+  compares ordered rows. Fixtures landed in the owner's priority order: plain pair parity, the permanent
+  **negative control**, **seal admitted into the pair** (the transition that invalidated literal
+  request+hold: the stale pair cannot emit the admitted rows, a full replacement does, and the streams
+  differ), **same-tick Off-before-On**, and **the anchor/cursor seed is part of the pair**.
+- **Finding that narrowed 2.4.** `Loop::tryGatherPublishedSnapshotEventsInWindow` returns false when there
+  is no published root and the merged consumer then holds empty, so the post-commit publish gap is not a
+  second active rebuild case; the reachable active rebuild is concentrated in seal admission.
+- **2.4 slice 2 (next).** Pinned invariant: *playback never observes `mergedEvents` and `playbackOrder`
+  from different generations; a pair becomes consumable only when both members and their cursor/reanchor
+  state are complete for the same source generation.* Implement
+  `PreparedPlaybackPair { generation, mergedEvents, playbackOrder, anchor/cursor seed, source identity, ready }`
+  with one atomic authority change (`P0 playing` -> source change -> request P1, keep consuming P0 ->
+  P1 complete -> atomic `P0 -> P1`), then measure `prepared_pair_hold_ticks` / `max_latency_ticks` against
+  the **latest legal publication/audibility edge** (not only the one-bar maintenance budget) before
+  deciding whether slice 3 (b), a bounded incremental order update, is needed. Remaining 2.5a fixtures
+  before/alongside that: wrap + loop-edge note, source change mid-window, long-loop window, record-stop
+  gap, plus the published-snapshot-root fixture helper those gathering cases need.
+
 **2026-09-17 — OpenSpec 5.12 / D8 interval-owned staged pass LANDED (DEC-072), and the 5.5
 `CompanionHistory` blocker is cleared.** A deferred job now owns its staged capture pass from its own
 `PrepareTransfer` grain (`CaptureStopJob::pendingPass` + `ownsPendingPass`,
