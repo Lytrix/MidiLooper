@@ -116,10 +116,15 @@ interval that does not own it, and SHALL NOT find another interval's pass occupy
 own staging slot. At most one owner may hold a given staged pass, while multiple
 intervals may each hold their own staged pass concurrently.
 
+A terminal transfer SHALL consume the pass from its owning interval/job and SHALL NOT
+require that owner to reacquire loop-global producer state, so a deferred interval can
+always finish with the pass it already owns.
+
 All capacity the destination owner requires SHALL be admitted before ownership
 transfers. Once the transfer begins it SHALL be non-fallible and SHALL leave no shared
 alias of the pass in the producer, so no failure can leave the pass owned by neither
-the producer nor the destination.
+the producer nor the destination. The loop's pending-pass slot SHALL be producer-local:
+a deferred interval SHALL NOT depend on its contents after its stop admission.
 
 #### Scenario: A successor opens its interval while the predecessor is finalizing
 
@@ -130,6 +135,17 @@ the producer nor the destination.
 - **AND** the predecessor's job reaches its own terminal transfer and retires
 - **AND** neither interval's accepted rows, pending notes, reservations or interval
   identity are changed by the other's capture start
+
+#### Scenario: Both intervals hold a staged pass at the same time
+
+- **WHEN** the predecessor's staged pass has moved into its deferred job, the successor
+  then starts and stages its own pass (for example through a wrap), and the predecessor
+  reaches its terminal transfer
+- **THEN** the predecessor's transfer consumes only its own pass, without reacquiring the
+  loop's pending-pass slot, and performs no allocation
+- **AND** the successor's staged pass is unchanged in identity, chunks and session
+  identity across that transfer
+- **AND** the successor later consumes its own pass exactly once
 
 #### Scenario: A successor moves its held note across loop end while the predecessor finalizes
 

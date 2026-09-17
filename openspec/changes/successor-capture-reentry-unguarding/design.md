@@ -214,6 +214,30 @@ The invariant this establishes:
 > **At most one owner holds a given staged pass, and multiple intervals may each hold
 > their own staged pass concurrently.**
 
+**The terminal transfer reads the job-owned pass, never the Loop slot.** A deferred
+predecessor SHALL NOT reacquire `Loop::pendingCapturePass_` to finish. Restaging would
+recreate exactly the serialization D8 removes: with B legitimately owning the Loop slot,
+A already owns every byte of the pass it needs yet would be denied for lack of a slot
+neither interval should have to share:
+
+```text
+A STOP         -> takePendingCapturePass() -> job A owns pass A
+B START        -> the Loop pending slot now belongs exclusively to B
+A PrepareTransfer -> transferFrom(jobA.pendingPass); no restage; consume A
+B wrap / B STOP   -> the Loop stages pass B independently
+```
+
+The atomic transfer therefore takes the pass from its owning interval/job as an
+argument; it SHALL NOT discover the pass through Loop-global producer state. The Loop
+slot is *producer-local* scratch, and its invariant is:
+
+> **A deferred job never depends on `Loop::pendingCapturePass_` after its stop
+> admission.** Anything in that slot belongs to the current producer/live interval, so
+> `beginCapture` may clear it unconditionally.
+
+`restagePendingCapturePass()` may exist for rollback or test lifecycles, but not on the
+normal deferred-completion path.
+
 **Transfer rule (destination-first, non-fallible).** All capacity the destination owner
 needs SHALL be admitted *before* the ownership transfer. Once the transfer begins it is
 non-fallible and leaves no shared alias in the producer. The forbidden shape is
