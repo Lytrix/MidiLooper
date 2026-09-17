@@ -3408,7 +3408,22 @@ def _await_collector_marker(collector: Any, marker: str, *, baseline: int, timeo
         time.sleep(max(poll_s, 0.0))
 
 
-REENTRY_DENIAL_MARKER = "Overdub stop deferred: deferred/frozen admission role is occupied"
+# A successor stop refused while the predecessor's deferred job still owns the finalization
+# resources. Two firmware vintages phrase the same denial differently, and both are the contract:
+# the DEC-070 build refuses through `Track::stopOverdubbing`'s reason list (the head job is still
+# pending), while the DEC-067 build logged the frozen-role occupancy directly. Accepting only the
+# older string made every current-firmware run report `successor_reentry_stop_not_denied` while the
+# device log carried the refusal (`captures/successor-ownership-03`).
+REENTRY_DENIAL_MARKERS = (
+    "Overdub stop refused: stop_job_pending",
+    "Overdub stop deferred: deferred/frozen admission role is occupied",
+)
+
+
+def _first_marker_micros(lines: list[str], markers: tuple[str, ...], *, after_ts: int = 0) -> Optional[int]:
+    """Earliest device time matching any of `markers`, or None."""
+    stamps = [ts for marker in markers for ts in _marker_micros_list(lines, marker, after_ts=after_ts)]
+    return min(stamps) if stamps else None
 
 
 def _marker_micros_list(lines: list[str], marker: str, *, after_ts: int = 0) -> list[int]:
@@ -3442,8 +3457,10 @@ def _verify_successor_reentry(
 
       * A stop -> ``Reentry window open`` (predecessor owns the frozen role, live role free)
       * B start -> ``Overdubbing started``, before ``Reentry released``  => overlap
-      * B quick stop -> ``Overdub stop deferred: ... role is occupied`` => the denial, with B
-        still recording and no stop edge
+      * B quick stop -> a refusal on the prompt channel => the denial, with B still recording and
+        no stop edge. Both firmware wordings count: ``Overdub stop refused: stop_job_pending``
+        (DEC-070 and later) and the older
+        ``Overdub stop deferred: deferred/frozen admission role is occupied`` (DEC-067).
       * ``Reentry released`` -> B's stop admitted afterwards (its own deferred admission, or
         an ``Overdubbing stopped`` line) => the admitted stop
 
@@ -3492,7 +3509,7 @@ def _verify_successor_reentry(
     window_ts = _marker_micros(lines, REENTRY_WINDOW_MARKER, after_ts=predecessor_start_ts)
     ready_ts = _marker_micros(lines, "ODUB,stop,bridge_ready,", after_ts=predecessor_start_ts)
     released_ts = _marker_micros(lines, REENTRY_RELEASE_MARKER, after_ts=predecessor_start_ts)
-    denied_ts = _marker_micros(lines, REENTRY_DENIAL_MARKER, after_ts=successor_start_ts)
+    denied_ts = _first_marker_micros(lines, REENTRY_DENIAL_MARKERS, after_ts=successor_start_ts)
     # The predecessor's stop edge: the CAP entry when present, else the window marker (the
     # same admission, logged on the prompt channel).
     earlier_stops = [ts for ts in overdub_stop_entries if ts < successor_start_ts]

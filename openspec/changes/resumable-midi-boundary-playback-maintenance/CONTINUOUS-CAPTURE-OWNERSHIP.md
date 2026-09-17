@@ -57,10 +57,18 @@ remains incomplete and the production admission guards remain necessary.
   now job-owned** (2026-09-16, see below): swapped into `CaptureStopJob.pendingChanges`
   at admission with a job-identified read borrow for display, so the worker
   resolves against its own set while a successor keeps an independent prewarmed
-  set. `pendingCapturePass_` and the prepared companion history are still tied to
-  the active session; borrowing shared worker scratch must be explicitly
-  job-qualified and successor semantic resolution must wait for its causal
-  predecessor.
+  set. **The staged capture pass is job-owned too now (2026-09-17, DEC-072 /
+  OpenSpec 5.12 D8):** a deferred job stages at its own `PrepareTransfer` and
+  immediately takes the receipt into `CaptureStopJob.pendingPass` in the same
+  non-yielding grain, the prepared companion history binds that receipt by
+  address (`PreparedCompanionHistory::capturePass`), and the job's
+  `AtomicTransfer` consumes it directly through `Loop::transferCapturePass`.
+  `Loop::pendingCapturePass_` is producer-local scratch: a deferred job never
+  depends on its contents after stop admission, every deferred reader resolves
+  the receipt through the job with no fallback, and `beginCapture` may keep
+  clearing it unconditionally. Invariant: at most one owner holds a given staged
+  pass, and two intervals may hold one each concurrently. Successor semantic
+  resolution still waits for its causal predecessor.
 - Overdub session undo, Track's before snapshot, session-exit snapshot handoff
   and prepared transfer receipts: retain originating interval/session/slot until
   their actual consumer accepts them. No old-job cleanup may consume a newer

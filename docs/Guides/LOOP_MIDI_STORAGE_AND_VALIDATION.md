@@ -129,6 +129,18 @@ flowchart LR
 4. **`discardCapture`** — undo open overdub capture (session still open).
 5. **`discardPendingCapturePass`** — rollback failed seal/publish.
 
+**Deferred (punch-out) ownership — DEC-072.** The steps above are the live/producer path. When a stop
+is admitted as a deferred job, that job stages its pass at its own `PrepareTransfer` and immediately
+moves it out of `Loop::pendingCapturePass_` into `CaptureStopJob::pendingPass`
+(`Loop::takePendingCapturePass`), because the Loop slot is producer-local scratch a successor interval
+may take over at any moment. From then on the job's `AtomicTransfer` consumes the job-owned pass
+directly (`Loop::transferCapturePass`), and every deferred reader — companion-history verification,
+undo identity, the bridge-refresh decision, stop telemetry and chunk/event accounting — resolves the
+receipt through the job, never through `Loop::pendingCapturePass_`. A deferred job therefore never
+depends on the Loop slot after its stop admission, and `beginCapture` may keep clearing it
+unconditionally. Invariant: at most one owner holds a given staged pass, and two intervals may hold
+one each concurrently.
+
 After commit, **`finalizeLoopAtStop`** runs (see below). Loop length is set on record stop before commit/validate; overdub stop uses playhead close tick.
 
 ---

@@ -75,7 +75,8 @@ public:
   /// Does not finish session-exit undo, cleanup or Track state transitions.
   static bool commitPreparedOverdubStopBridge(Loop& loop, LoopPlaybackRuntime& runtime,
       PendingStopAdmission& stop, const uint32_t& generation, const EmissionCursor& cursor,
-      PreparedCapturePassTransfer& transferred);
+      PreparedCapturePassTransfer& transferred,
+      PendingCapturePass* pendingPass = nullptr);
 
   // State management
   TrackState getState() const;
@@ -547,12 +548,27 @@ private:
     /// before the atomic commit, then drained in bounded DeferredCleanup turns.
     bool undoPublicationStarted = false;
     bool undoPublicationReady = false;
+    /// OpenSpec 5.12 / D8: this interval's staged capture pass. Ownership moves out of the
+    /// Loop producer slot in this job's own `PrepareTransfer` turn and is consumed only by
+    /// this job's terminal transfer. A successor interval therefore stages its own pass into
+    /// the (now empty) Loop slot without the `AlreadyPending` collision that a shared scalar
+    /// produced, and a deferred reader resolves the receipt through the job, never through
+    /// `Loop::pendingCapturePass()`. `ownsPendingPass` is the ownership receipt: at most one
+    /// owner holds a given staged pass, and two intervals may each hold one concurrently.
+    PendingCapturePass pendingPass;
+    bool ownsPendingPass = false;
     PendingNoteMap pendingNotes;
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
   // duplicated. Additional admission stays guarded until session isolation.
   struct CaptureStopJobs {
     static constexpr size_t kCapacity = 4;
+    /// Out-of-line and FLASH-resident. `CaptureStopJob` owns a `PendingCapturePass`
+    /// (OpenSpec 5.12 / D8), so the ring's constructor is non-trivial; the implicit aggregate
+    /// form was emitted into ITCM and cost one 32 KB FlexRAM bank on this tree's RAM1 edge.
+    /// Default-initialization is value-initialization here: every member has an initializer or a
+    /// non-trivial default constructor.
+    CaptureStopJobs();
     CaptureStopJob entries[kCapacity];
     size_t head = 0;
     size_t count = 0;
@@ -576,6 +592,11 @@ private:
   /// head advance can never redirect work already in progress.
   CaptureStopJob* captureStopJobHead();
   const CaptureStopJob* captureStopJobHead() const;
+  /// OpenSpec 5.12 / D8: the staged pass the head job owns, or nullptr when it owns none.
+  /// Every deferred reader of the interval's receipt resolves it through here while the pass
+  /// lives in the job; only the live producer path reads `Loop::pendingCapturePass()`.
+  PendingCapturePass* ownedPendingCapturePass();
+  const PendingCapturePass* ownedPendingCapturePass() const;
   /// FIFO tail: the descriptor a new stop interval is admitted into. Null when
   /// the ring is full, which is the explicit exhaustion result.
   CaptureStopJob* captureStopJobTail();

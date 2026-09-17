@@ -2353,42 +2353,63 @@ LOOP_COLD_MEM bool Loop::canTransferPendingCapturePassWithoutAllocation() const 
   if (!hasPendingCapturePass_) {
     return false;
   }
-  if (pendingCapturePass_.phase == CapturePassPhase::Record) {
+  return canTransferCapturePassWithoutAllocation(pendingCapturePass_);
+}
+
+LOOP_COLD_MEM bool Loop::canTransferCapturePassWithoutAllocation(
+    const PendingCapturePass& pass) const {
+  if (pass.id == kInvalidPassId) {
+    return false;
+  }
+  if (pass.phase == CapturePassPhase::Record) {
     return !passes.hasRecordPass();
   }
   return passes.overdubPasses.capacity() > passes.overdubPasses.size();
 }
 
 LOOP_COLD_MEM bool Loop::transferPreparedCapturePass(PreparedCapturePassTransfer& transferred) {
-  if (!canTransferPendingCapturePassWithoutAllocation()) {
+  if (!hasPendingCapturePass_) {
+    return false;
+  }
+  if (!transferCapturePass(pendingCapturePass_, transferred)) {
+    return false;
+  }
+  hasPendingCapturePass_ = false;
+  pendingVisualDelta.clear();
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::transferCapturePass(PendingCapturePass& pass,
+                                             PreparedCapturePassTransfer& transferred) {
+  if (!canTransferCapturePassWithoutAllocation(pass)) {
     return false;
   }
 
   // Preserve only scalar metadata. Chunk refs move exactly once, from the prepared pass
   // into its canonical owner below.
   transferred = PreparedCapturePassTransfer{};
-  transferred.retiresLiveCapture = pendingCapturePass_.retiresLiveCapture;
-  transferred.id = pendingCapturePass_.id;
-  transferred.phase = pendingCapturePass_.phase;
-  transferred.mergeSequence = pendingCapturePass_.mergeSequence;
-  transferred.sealedAtTick = pendingCapturePass_.sealedAtTick;
-  transferred.overdubSessionIndex = pendingCapturePass_.overdubSessionIndex;
+  transferred.retiresLiveCapture = pass.retiresLiveCapture;
+  transferred.id = pass.id;
+  transferred.phase = pass.phase;
+  transferred.mergeSequence = pass.mergeSequence;
+  transferred.sealedAtTick = pass.sealedAtTick;
+  transferred.overdubSessionIndex = pass.overdubSessionIndex;
 
-  if (pendingCapturePass_.phase == CapturePassPhase::Record) {
+  if (pass.phase == CapturePassPhase::Record) {
     RecordPass record{};
-    record.id = pendingCapturePass_.id;
+    record.id = pass.id;
     record.state = CapturePassState::Active;
-    record.sealedAtTick = pendingCapturePass_.sealedAtTick;
-    record.committedChunkIds = std::move(pendingCapturePass_.committedChunkIds);
+    record.sealedAtTick = pass.sealedAtTick;
+    record.committedChunkIds = std::move(pass.committedChunkIds);
     passes.recordPass = std::move(record);
   } else {
     OverdubPass overdub{};
-    overdub.id = pendingCapturePass_.id;
-    overdub.mergeSequence = pendingCapturePass_.mergeSequence;
+    overdub.id = pass.id;
+    overdub.mergeSequence = pass.mergeSequence;
     overdub.state = CapturePassState::Active;
-    overdub.sealedAtTick = pendingCapturePass_.sealedAtTick;
-    overdub.overdubSessionIndex = pendingCapturePass_.overdubSessionIndex;
-    overdub.committedChunkIds = std::move(pendingCapturePass_.committedChunkIds);
+    overdub.sealedAtTick = pass.sealedAtTick;
+    overdub.overdubSessionIndex = pass.overdubSessionIndex;
+    overdub.committedChunkIds = std::move(pass.committedChunkIds);
     // Capacity was proven above; this placement cannot grow the vector.
     passes.overdubPasses.push_back(std::move(overdub));
   }
@@ -2398,14 +2419,24 @@ LOOP_COLD_MEM bool Loop::transferPreparedCapturePass(PreparedCapturePassTransfer
   // deferred post-commit owner, but readers can use this monotonically increasing
   // identity immediately to reject an old immutable projection.
   ++playbackRevision;
-  pendingCapturePass_ = PendingCapturePass{};
-  hasPendingCapturePass_ = false;
+  // Retire the consumed receipt. The loop-slot caller clears `hasPendingCapturePass_`
+  // in `transferPreparedCapturePass`; an interval-owned pass is retired by its owner.
+  pass = PendingCapturePass{};
   return true;
 }
 
 LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
     PreparedCapturePassTransfer& transferred) {
   if (!transferPreparedCapturePass(transferred)) {
+    return false;
+  }
+  completePreparedCapturePassAtomic(transferred.retiresLiveCapture);
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::commitPreparedCapturePassAtomic(
+    PreparedCapturePassTransfer& transferred, PendingCapturePass& pass) {
+  if (!transferCapturePass(pass, transferred)) {
     return false;
   }
   completePreparedCapturePassAtomic(transferred.retiresLiveCapture);

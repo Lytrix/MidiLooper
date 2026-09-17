@@ -361,7 +361,8 @@ LOOP_INTERNAL_MEM const char* sealOutcomeLabel(SealOutcome outcome) {
   return "unknown";
 }
 
-LOOP_INTERNAL_MEM size_t stopPathChunkRefCount(const Loop& loop) {
+LOOP_INTERNAL_MEM size_t stopPathChunkRefCount(const Loop& loop,
+                                               const PendingCapturePass* ownerPass) {
   size_t refs = 0;
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
     refs += loop.passes.recordPass.committedChunkIds.size();
@@ -371,13 +372,18 @@ LOOP_INTERNAL_MEM size_t stopPathChunkRefCount(const Loop& loop) {
       refs += pass.committedChunkIds.size();
     }
   }
-  if (loop.hasPendingCapturePass()) {
+  // OpenSpec 5.12 / D8: a deferred job's receipt is read from the job, never the Loop slot,
+  // which a successor interval may already own.
+  if (ownerPass != nullptr) {
+    refs += ownerPass->committedChunkIds.size();
+  } else if (loop.hasPendingCapturePass()) {
     refs += loop.pendingCapturePass().committedChunkIds.size();
   }
   return refs;
 }
 
-LOOP_INTERNAL_MEM size_t stopPathEventCount(const Loop& loop) {
+LOOP_INTERNAL_MEM size_t stopPathEventCount(const Loop& loop,
+                                            const PendingCapturePass* ownerPass) {
   size_t events = 0;
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
     events += LoopEventStore::countEventsInChunkIds(loop.passes.recordPass.committedChunkIds);
@@ -387,7 +393,9 @@ LOOP_INTERNAL_MEM size_t stopPathEventCount(const Loop& loop) {
       events += LoopEventStore::countEventsInChunkIds(pass.committedChunkIds);
     }
   }
-  if (loop.hasPendingCapturePass()) {
+  if (ownerPass != nullptr) {
+    events += LoopEventStore::countEventsInChunkIds(ownerPass->committedChunkIds);
+  } else if (loop.hasPendingCapturePass()) {
     events += LoopEventStore::countEventsInChunkIds(loop.pendingCapturePass().committedChunkIds);
   }
   if (loop.captureActive()) {

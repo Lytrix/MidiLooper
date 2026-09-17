@@ -25,8 +25,11 @@ struct StopPathStorageStats {
   size_t chunkRefCount = 0;
 };
 
+/// OpenSpec 5.12 / D8: `ownerPass` is the interval's job-owned staged receipt when a deferred
+/// job holds one; nullptr means "the Loop's own producer-local pending pass".
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
-                                                                    bool includeCaptureBuffer = true);
+                                                                    bool includeCaptureBuffer = true,
+                                                                    const PendingCapturePass* ownerPass = nullptr);
 
 TRACK_INTERNAL_MEM const char* commitResultLabel(CommitResult result);
 
@@ -38,7 +41,8 @@ TRACK_INTERNAL_MEM void logRecordStopStage(const Loop& loop, uint32_t stopStartU
 TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStartUs, const char* stage,
                                             uint32_t stageDurationUs, uint32_t heapBefore,
                                             uint32_t heapAfter, const char* outcome,
-                                            const StopPathStorageStats* cachedStats = nullptr);
+                                            const StopPathStorageStats* cachedStats = nullptr,
+                                            const PendingCapturePass* ownerPass = nullptr);
 
 TRACK_INTERNAL_MEM void emitOverdubStopDisplaySnapshot(Track& track, uint8_t displaySlot,
                                                        uint32_t currentTick);

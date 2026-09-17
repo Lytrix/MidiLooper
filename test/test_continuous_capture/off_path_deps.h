@@ -8,7 +8,7 @@ void DisplayManager::emitDisplayCaptureSnapshot(const Track&, uint8_t, uint32_t)
 void DisplayManager::refreshViewportAfterOverdubStop(Track&, uint8_t, uint32_t) {}
 void emitOverdubStopDisplaySnapshot(Track&, uint8_t, uint32_t) {}
 void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
-void logOverdubStopStage(const Loop&, uint32_t, const char*, uint32_t, uint32_t, uint32_t, const char*, const StopPathStorageStats*) {}
+void logOverdubStopStage(const Loop&, uint32_t, const char*, uint32_t, uint32_t, uint32_t, const char*, const StopPathStorageStats*, const PendingCapturePass*) {}
 const char* commitResultLabel(CommitResult) { return "native"; }
 void requestActiveLoopSlotPersist(Track&) { OFF_PATH(); }
 MidiEventVec& EditManager::sessionMidiEvents() { OFF_PATH(); static MidiEventVec empty; return empty; }

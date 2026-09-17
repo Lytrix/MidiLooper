@@ -17,6 +17,65 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 OpenSpec 5.12 / D8 LANDED and device-verified: a staged capture pass is owned by its
+interval (DEC-072), and the `CompanionHistory` checkpoint that had been red for two days is green.**
+The 5.5 blocker was that one `Loop` scalar, `pendingCapturePass_`, served two intervals: a deferred
+predecessor staged its pass at `PrepareTransfer`, a successor's `beginCapture` discarded it
+unconditionally, the predecessor's `beginPreparedCompanionHistory` was then refused forever by its own
+`!hasPendingCapturePass_` precondition, and its job held `captureStopOwner` and the frozen role for
+the rest of the session. Guarding the discard only preserved the `AlreadyPending` collision at the
+successor's own staging, so the fix moves ownership instead:
+
+- `CaptureStopJob::pendingPass` + `ownsPendingPass`; the job stages into the Loop slot and
+  immediately takes the receipt (`Loop::takePendingCapturePass`, chunk-list swap, non-allocating) in
+  the same non-yielding `PrepareTransfer` grain. `beginCapture` keeps its unconditional
+  producer-local clear, and a deferred job never depends on the slot afterwards.
+- `Loop::transferCapturePass` / `canTransferCapturePassWithoutAllocation` /
+  `commitPreparedCapturePassAtomic(transferred, pass)` plus
+  `commitPreparedCaptureAndCompanionsAtomic(transferred, owner, pass)` for a specified receipt; the
+  Loop-slot forms are thin wrappers, so the live path is unchanged.
+- `PreparedCompanionHistory::capturePass` is bound by address at
+  `beginPreparedCompanionHistory` and validated by `preparedCompanionHistorySourceCurrent`, so a
+  successor can neither destroy nor rebind the predecessor's verification source. A caller that names
+  no receipt still resolves the Loop's own staged pass (the live producer path and fixtures); a
+  deferred job names `&job.pendingPass` unconditionally at its one production call site, so a missed
+  ownership transition denies instead of silently reading a successor's receipt.
+- Reader sweep in the same commit: the undo identity in `stepDeferredUndoCollection` and the two
+  `canPublish` sites; `requiresBridgeRefresh`; `commitStopped[WithUndo]` / `commitWithUndo` /
+  `commitSupersededCausalBase`; `stopPathChunkRefCount`/`stopPathEventCount` and
+  `collectStopPathStorageStats`/`logOverdubStopStage` (the deferred debt-probe call site passes
+  `Track::ownedPendingCapturePass()`); `#STOP_HISTORY` also reports `pass_id`; and the job releases and
+  clears its receipt at retirement.
+- RAM1: `CaptureStopJob` now owns a `PendingCapturePass`, so the implicit
+  `Track::CaptureStopJobs::CaptureStopJobs()` became non-trivial and, emitted into ITCM, cost one
+  32 KB FlexRAM bank (`locals 6,400 -> -26,368`). Defined out-of-line and FLASH-resident, the build is
+  back to RAM1 variables 91,904 / code 425,816 / padding 168 / **locals 6,400**.
+
+Evidence. `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture` green (the former red
+reproducer); `REENTRY_RED=1 pio test -e native -f test_continuous_capture` 57/57; full native 2,221
+cases / 1 skipped / 0 failures; `test_playback_prewarm` 173/173. New
+`test_simultaneous_interval_owned_staged_passes` asserts the invariant directly: job A owns pass A
+with the Loop slot empty, B stages a distinct pass (different identity, chunk storage and session
+index), A's transfer appends exactly one canonical pass by pointer move with the canonical row vector
+unchanged in capacity and address, B's receipt is untouched, and B then consumes B exactly once.
+Device, managed HITL `base` (8-bar record / 2-bar overdub, temporary `d8-ownership` stimulus variant),
+[`captures/successor-ownership-06`](../../captures/successor-ownership-06/session_20260917_230432.log):
+**`Result: PASS`**, `overlap=True denied_stop=True retirement_ok=true` — 50.903 s A's stop admitted;
+51.392 s B starts 1,122 ms before A's release; 51.935 s B's quick stop refused
+(`Overdub stop refused: stop_job_pending phase=9 dest=0`) with B still recording; 52.514 s A
+`Reentry released` while B stays live; 52.979 s B's own stop admitted and 52.996 s B's job retired.
+0 `FATAL` / `#MEM_DENIED` / `#MEM_EXT_REFUSED`, no `stop_job_pending phase=7`, no
+`companion path stalled`, `overflow_free=true`, display `overdub_ok`/`transport_ok` true.
+
+Harness correction in the same change: `_verify_successor_reentry` accepted only the DEC-067 denial
+wording (`Overdub stop deferred: deferred/frozen admission role is occupied`), so every
+current-firmware probe reported `successor_reentry_stop_not_denied` while the device log carried the
+refusal (`successor-ownership-01`/`-03`). It now accepts both wordings (`REENTRY_DENIAL_MARKERS`) with
+a regression test; `scripts/test_capture_transitions.py` 42/42. OpenSpec 5.5 stays open for its own
+remaining work (the complete parameterized checkpoint set, and promoting
+`test_adversarial_reentry_at_a_companion_checkpoint` into the default gate — it is still behind
+`REENTRY_RED`).
+
 **2026-09-17 multi-pass overdub playback is device-verified (DEC-071), and the base-run harness
 was the thing that was broken.** The user's report was "only the wrapped part of the overdub plays";
 the shape is a *multi-pass* overdub (8-bar record, 8-bar overdub starting at bar 3, so the wrap
@@ -42,27 +101,27 @@ published root nor the stale-root overlay once its session closed -- the display
   1 MiB; `[env:teensy41-capture-serial-no-grain]` (`SESSION_CAPTURE_GRAIN=0`) drops the family for
   acceptance runs. A runtime serial flag was tried and reverted: it cost 4 KB of the RAM1 local
   allowance (2,304 left) even factored out as a FLASHMEM helper, so the switch is a build flag.
-- Still open: the OpenSpec 5.5 `CompanionHistory` checkpoint. A predecessor paused there never
-  re-admits its companion work once a successor starts, so it holds `captureStopOwner` and the
-  frozen role for the rest of the session -- the same wedge as the device's `Overdub stop refused:
-  stop_job_pending phase=7 dest=1`. The reproducer is
-  `test_adversarial_reentry_at_a_companion_checkpoint`, gated behind `REENTRY_RED=1` so a new failure
-  cannot hide under it (default `test_continuous_capture` 55/55, full native 2,219 / 1 skipped /
-  0 failures; `REENTRY_RED=1` shows the one expected failure). Measured this session: the stall has
-  the loop's prepared companion horizon **unowned** (`preparedCompanionHistoryInFlight == false`)
-  and parked at `Prewarmed`, so the driver's `preparedCompanionHistoryCanStep` is false while
-  `beginPreparedCompanionHistory` is re-entered every turn. Ruled out: a
-  `prewarmPreparedCompanionHistory` reset of an in-flight preparation (a guard for it never fires)
-  and a transport command-epoch mismatch (the epoch still matches).
-- Root cause, located on the third turn: the successor's own `Track::startOverdubbing` -> `Loop::beginCapture`
-  discards the predecessor's staged pass with an unconditional `discardPendingCapturePass()`.
-  `pendingCapturePass_` is one Loop scalar shared by both intervals, so the predecessor's companion
-  admission (`!hasPendingCapturePass_`) is then refused forever, the work stays at `Prewarmed`, and
-  the job holds `captureStopOwner`. A guarded `beginCapture` (discard only a pass that retires the
-  live capture) does make the `CompanionHistory` checkpoint retire, but it breaks the successor's own
-  staging at `PrepareTransfer` (`AlreadyPending`), so the real fix must give the staged pass an owner:
-  take it into the job and restage it at the job's `PrepareTransfer`. That is an ownership change to
-  the allocation-free stop contract, so it needs its own coverage and device verification. Iterate with
+- **RESOLVED 2026-09-17 by OpenSpec 5.12 / D8 (DEC-072)** -- kept for the diagnosis: the OpenSpec 5.5
+  `CompanionHistory` checkpoint used to be red. A predecessor paused there never re-admitted its
+  companion work once a successor started, so it held `captureStopOwner` and the frozen role for the
+  rest of the session -- the same wedge as the device's `Overdub stop refused: stop_job_pending
+  phase=7 dest=1`. Measured then: the loop's prepared companion horizon was **unowned**
+  (`preparedCompanionHistoryInFlight == false`) and parked at `Prewarmed`, so the driver's
+  `preparedCompanionHistoryCanStep` was false while `beginPreparedCompanionHistory` was re-entered
+  every turn; a `prewarmPreparedCompanionHistory` reset of an in-flight preparation and a transport
+  command-epoch mismatch were both ruled out by measurement. The reproducer
+  (`test_adversarial_reentry_at_a_companion_checkpoint`) is green now; it is still gated behind
+  `REENTRY_RED=1`, and promoting it into the default gate is 5.5's remaining work.
+- Root cause, located on the third turn and fixed by DEC-072: the successor's own
+  `Track::startOverdubbing` -> `Loop::beginCapture` discarded the predecessor's staged pass with an
+  unconditional `discardPendingCapturePass()`. `pendingCapturePass_` was one Loop scalar shared by
+  both intervals, so the predecessor's companion admission (`!hasPendingCapturePass_`) was refused
+  forever, the work stayed at `Prewarmed`, and the job held `captureStopOwner`. A guarded
+  `beginCapture` (discard only a pass that retires the live capture) made the `CompanionHistory`
+  checkpoint retire but broke the successor's own staging at `PrepareTransfer` (`AlreadyPending`),
+  so the landed fix gives the staged pass an owner: the job takes it in the same `PrepareTransfer`
+  grain, binds it in the companion history by address and consumes it at its own `AtomicTransfer`.
+  See the DEC-072 entry at the top of this journal. Iterate with
   `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture`.
 - Ignored per the owner: one deterministic coalesced note-off on the 5-bar shape
   (`content-verify-51-playback`, tick 128 / ch 4 / note 78 / velocity 0).
@@ -2681,6 +2740,20 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ---
 
 ## Now implementing
+
+**2026-09-17 — OpenSpec 5.12 / D8 interval-owned staged pass LANDED (DEC-072), and the 5.5
+`CompanionHistory` blocker is cleared.** A deferred job now owns its staged capture pass from its own
+`PrepareTransfer` grain (`CaptureStopJob::pendingPass` + `ownsPendingPass`,
+`Loop::takePendingCapturePass`), the companion history binds that receipt by address, and the job's
+terminal transfer consumes it directly (`Loop::transferCapturePass` and the explicit-pass overloads).
+`beginCapture` keeps its unconditional producer-local clear; no deferred reader falls back to
+`Loop::pendingCapturePass_`. Native: `ONLY_COMPANION=1` green, `REENTRY_RED=1` 57/57, full native
+2,221 / 1 skipped / 0 failures; RAM1 locals 6,400. Device:
+[`captures/successor-ownership-06`](../../captures/successor-ownership-06/session_20260917_230432.log)
+managed HITL `base`, `Result: PASS`, `overlap=True denied_stop=True retirement_ok=true` (A retires
+inside B's live interval; B then stages and transfers its own pass). Host oracle corrected to accept
+the current `Overdub stop refused: stop_job_pending` denial wording. Next for this change: 5.5's own
+parameterized coverage and gate promotion, then 6.1/6.2/6.3.
 
 **2026-09-17 — transport-stop retarget re-route (DEC-070, implemented + device-verified; openspec
 5.3/5.7/5.8).** The user's stuck state machine after the HITL runs was a deferred job admitted for

@@ -11,25 +11,29 @@ struct LoopPlaybackRuntime;
 struct PendingStopAdmission;
 struct EmissionCursor;
 struct PreparedCapturePassTransfer;
+struct PendingCapturePass;
 struct CapturePreview;
 // Stateless implementation of Track's handoff, kept independent of Arduino
 // so native tests execute the same joint preflight and publication body.
 namespace TrackPreparedStopCommit {
 // Empty post-wrap stops retain the current audible source and need no bridge.
+/// OpenSpec 5.12 / D8: `pendingPass` is the interval-owned staged receipt when a deferred job
+/// holds one; nullptr means the live producer slot (Loop::pendingCapturePass_).
 bool requiresBridgeRefresh(const Loop& loop, const LoopPlaybackRuntime& runtime,
-    const PendingStopAdmission& stop, const EmissionCursor& cursor);
+    const PendingStopAdmission& stop, const EmissionCursor& cursor,
+    const PendingCapturePass* pendingPass = nullptr);
 // Production atomic dispatch. A populated PLAYING transfer must publish its
 // bridge jointly; a failed preflight never falls back to canonical-only commit.
 bool advanceAtomicTransfer(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred);
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass = nullptr);
 /// Same atomic dispatch, publishing the prepared protected undo entry in the same
 /// turn as the canonical/audible commit. The caller must already have proven
 /// `undo.canPublish(stack, loopId, finalPassId)` through the readiness path.
 bool advanceAtomicTransferWithUndo(Loop& loop, LoopPlaybackRuntime& runtime,
     PendingStopAdmission& stop, const uint32_t& generation, const EmissionCursor& cursor,
     PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack,
-    TrackUndoPublication& undo);
+    TrackUndoPublication& undo, PendingCapturePass* pendingPass = nullptr);
 // Finish canonical session bookkeeping after recycling. Preserve the selected
 // audible source, its cursor and ledger; Track owns transport-Stop silence.
 // `preview` is the admitted job's owned capture preview, so the deferred seal
@@ -45,7 +49,8 @@ bool completeDeferredCleanup(Loop& loop, LoopPlaybackRuntime& runtime,
 /// and content the newer root already carries is not duplicated. The caller has
 /// already retired the preparation credits.
 bool commitSupersededCausalBase(Loop& loop, PendingStopAdmission& stop,
-    PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo);
+    PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo,
+    PendingCapturePass* pendingPass = nullptr);
 // One admitted canonical preparation grain; setup and unused credit retirement
 // remain separate turns. Complete readiness queries consume no additional credit.
 RuntimePlaybackOrderBuildResult stepPreparation(Loop& loop, LoopPlaybackRuntime& runtime,
@@ -59,14 +64,17 @@ RuntimePlaybackOrderBuildResult stepHistoryRecycle(Loop& loop, PendingStopAdmiss
     size_t quantum);
 bool retargetStoppedRecovery(LoopPlaybackRuntime& runtime, const PendingStopAdmission& stop);
 bool commitStopped(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
-    const uint32_t& generation, PreparedCapturePassTransfer& transferred);
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    PendingCapturePass* pendingPass = nullptr);
 bool commitStoppedWithUndo(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
-    GlobalUndoStack& stack, TrackUndoPublication& undo);
+    GlobalUndoStack& stack, TrackUndoPublication& undo,
+    PendingCapturePass* pendingPass = nullptr);
 bool commitWithUndo(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo);
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo,
+    PendingCapturePass* pendingPass = nullptr);
 bool commit(Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred);
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass = nullptr);
 }

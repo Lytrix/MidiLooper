@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-072](#dec-072--a-staged-capture-pass-is-owned-by-its-capture-interval-not-by-the-loop-producer-slot) | 2026-09-17 | A staged capture pass is owned by its capture interval, not by the Loop producer slot | Accepted — implemented; former `REENTRY_RED` reproducer green; device PASS [`successor-ownership-06`](../captures/successor-ownership-06/session_20260917_230432.log) |
 | [DEC-070](#dec-070--a-transport-stop-retarget-must-re-route-a-mid-flight-deferred-stop-job-not-only-re-label-its-destination) | 2026-09-17 | Transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label it | Accepted — implemented; native case fails without it; device PASS [`successor-wrap-40`](../captures/successor-wrap-40/session_20260917_195608.log) |
 | [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented; native green; device PASS [`successor-wrap-36`](../captures/successor-wrap-36/session_20260917_193344.log) |
 | [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implemented; six native cases pass, device retirement proof PASS [`successor-reentry-27`](../captures/successor-reentry-27/session_20260917_163416.log) |
@@ -83,7 +84,102 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-072 -->
+<!-- Append new entries below (newest first). Next ID: DEC-073 -->
+
+## DEC-072 — A staged capture pass is owned by its capture interval, not by the Loop producer slot
+
+**Date:** 2026-09-17
+**Status:** Accepted — implemented and device-verified (`captures/successor-ownership-06`: the predecessor retired inside the successor's live interval and the successor then staged and transferred its own pass; `Result: PASS`, `overlap=True denied_stop=True`).
+**Owner:** `Track::CaptureStopJob::pendingPass` / `ownsPendingPass` (the receipt), `Loop::takePendingCapturePass` / `transferCapturePass` (the move and the terminal transfer), `Loop::beginPreparedCompanionHistory` (the bound verification source), `Track::ownedPendingCapturePass` (the deferred reader)
+**Supersedes:** the implicit "one staged pass lives in `Loop::pendingCapturePass_` for whoever staged it last" ownership recorded by DEC-067/DEC-068 prose. This entry is the structured record of OpenSpec task 5.12, design decision D8 in [`successor-capture-reentry-unguarding/design.md`](changes/successor-capture-reentry-unguarding/design.md).
+
+**Report.** Same wedge family as DEC-070, different trigger: a predecessor's deferred stop was
+admitted and had already staged its capture pass at `PrepareTransfer` when a successor interval
+started. `Loop::beginCapture` discards the pending pass unconditionally, so the successor's
+`Track::startOverdubbing` destroyed the predecessor's receipt; the predecessor's
+`beginPreparedCompanionHistory` was then refused forever by its own `!hasPendingCapturePass_`
+precondition, its companion work never left `Prewarmed`, and its job held `captureStopOwner` and the
+frozen role for the rest of the session — the device's
+`Overdub stop refused: stop_job_pending phase=7 dest=1`. The native red reproducer is
+`test_adversarial_reentry_at_a_companion_checkpoint` (paused at `CompanionHistory`), gated behind
+`REENTRY_RED=1`.
+
+**Why the obvious fix was rejected.** Guarding the discard (`beginCapture` clears the loop's slot only
+when the staged pass retires the live capture) does make that checkpoint retire, because the shared
+scalar keeps the predecessor's receipt. But `pendingCapturePass_` is then still one object serving two
+intervals: the successor's own staging at its `PrepareTransfer` returns `AlreadyPending`, so the
+`AtomicTransfer` checkpoint goes red. "Protect the shared pass" only moves the collision in time.
+
+**Decision.** The staged pass is a `PrepareTransfer`-time object owned by the interval that produced
+it:
+
+```text
+A live                         -> A owns its pass
+A STOP admitted                -> job A owns its frozen/raw/canonical inputs; no pass yet
+B may start                    -> the Loop pending slot belongs to the live producer only
+A reaches PrepareTransfer      -> stage into the Loop slot, then immediately take it into job A
+B start / wrap / staging       -> may use the Loop pending slot independently
+A AtomicTransfer               -> consumes job A's pass directly; never restages
+```
+
+Invariant: **at most one owner holds a given staged pass, and multiple intervals may each hold their
+own staged pass concurrently.** Corollaries, all enforced in the implementation:
+
+- The Loop pending slot is producer-local scratch. A deferred job may use it only as a transient
+  construction point inside its own `PrepareTransfer` turn (stage then take, no yield between), so a
+  job never depends on the slot's contents after stop admission and `beginCapture` may keep clearing
+  it unconditionally.
+- The terminal transfer reads the job-owned pass and has **no fallback** to `Loop::pendingCapturePass_`;
+  a fallback would silently read a successor's receipt. `restagePendingCapturePass`-style helpers are
+  not on the normal deferred path.
+- Deferred readers resolve the receipt through the job: undo identity (`canPublish`, the collected
+  final pass id), the companion-history verification source, `requiresBridgeRefresh`, the stop
+  telemetry/accounting counts, and the transfer itself.
+- A stop-admission placeholder was rejected: it would imply ownership of an object that does not exist
+  yet and re-introduce a shared-slot step. The staged-pass lifecycle deliberately does not mirror
+  `pendingNotes` / `preview` / `beforePublished`, which do exist at admission.
+
+**Implemented (2026-09-17).** `CaptureStopJob::pendingPass` + `ownsPendingPass`; `Loop::takePendingCapturePass`
+(move by chunk-list swap, non-allocating) called in the same grain as the staging;
+`Loop::transferCapturePass` / `canTransferCapturePassWithoutAllocation` /
+`commitPreparedCapturePassAtomic(transferred, pass)` for a specified receipt;
+`beginPreparedCompanionHistory` binds `PreparedCompanionHistory::capturePass` by address so a
+successor's capture start can neither destroy nor rebind the predecessor's verification source;
+every deferred reader above takes the job pass explicitly; the job releases and clears its receipt at
+retirement. The implicit `Track::CaptureStopJobs::CaptureStopJobs()` became non-trivial, so it is now
+defined out-of-line and FLASH-resident — as an implicit aggregate constructor it landed in ITCM and
+pushed RAM1 across a 32 KB FlexRAM bank (`locals 6,400 -> -26,368`); the build is back to
+`RAM1 variables 91,904 / code 425,816 / padding 168 / locals 6,400` and `FLASH code 1,003,112`.
+
+**Native evidence.** `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture` green (the
+former red reproducer); `REENTRY_RED=1` full `test_continuous_capture` 57/57; new
+`test_simultaneous_interval_owned_staged_passes` asserts the invariant directly (job A owns pass A with
+the Loop slot empty, B stages its own distinct pass with different identity/chunk storage/session
+index, A's transfer appends exactly one canonical pass by pointer-move with the canonical row vector
+unchanged in capacity and address, B's receipt is untouched, and B then consumes B exactly once).
+
+**Device evidence (`captures/successor-ownership-06`, managed HITL, `base`, 8-bar record / 2-bar
+overdub, temporary `d8-ownership` stimulus variant).** 50.903 s A's stop admitted (`Reentry window
+open`, job phase 9); 51.392 s B starts, 1,122 ms before A's release (`overlap=True`); 51.935 s B's quick
+stop refused (`Overdub stop refused: stop_job_pending phase=9 dest=0`) with B still recording
+(`denied_stop=True`); 52.514 s A `Reentry released` while B is live — A's companion preparation
+completed and A's own pass transferred; 52.979 s B's own stop admitted and 52.996 s its job retired
+(`successor_retirement_ts`, `retirement_ok=true`), i.e. **B staged and transferred its own pass with
+no `AlreadyPending`**. Oracle `Result: PASS` (`overall_ok=true`), `overflow_free=true`, display
+`overdub_ok/transport_ok` true, 0 `FATAL` / `#MEM_DENIED` / `#MEM_EXT_REFUSED`, no
+`stop_job_pending phase=7`, no `companion path stalled`. The run's identity is `firmware_hex_sha256=24b86a9736b2a3d882b0c179bd9d8efda2b386a44894178cef202ffd42e1c65b` (`build_env=teensy41-capture-serial`, `preset=base`, temporary stimulus sidecar in the run directory).
+
+**Harness correction in the same change.** `_verify_successor_reentry` accepted only the DEC-067-era
+denial wording (`Overdub stop deferred: deferred/frozen admission role is occupied`), so every
+current-firmware run reported `successor_reentry_stop_not_denied` while the device log carried the
+refusal (runs `successor-ownership-01`/`-03`). It now accepts both wordings
+(`REENTRY_DENIAL_MARKERS`), with a regression test
+(`test_current_firmware_denial_wording_counts_as_the_denial`); `scripts/test_capture_transitions.py`
+42/42.
+
+**Deliberately out of scope.** OpenSpec 5.5 stays open: its parameterized checkpoint coverage and the
+promotion of `test_adversarial_reentry_at_a_companion_checkpoint` into the default gate belong to 5.5,
+which this decision unblocks.
 
 ## DEC-071 — The audible stale-root view must enumerate wrap-journaled passes, not only queued ones
 

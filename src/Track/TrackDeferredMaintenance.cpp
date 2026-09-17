@@ -833,7 +833,8 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
                                                 overdubStopSavePendingAfter_, 0, 0);
   logOverdubStopStage(loop, overdubStopDebtProbeArmedUs_, "debt_handoff", 0,
                       DebugSessionCapture::kUnsampledHeapBytes,
-                      DebugSessionCapture::kUnsampledHeapBytes, visualClass);
+                      DebugSessionCapture::kUnsampledHeapBytes, visualClass, nullptr,
+                      ownedPendingCapturePass());
 #if defined(ARDUINO)
   char line[288];
   snprintf(line, sizeof(line),
