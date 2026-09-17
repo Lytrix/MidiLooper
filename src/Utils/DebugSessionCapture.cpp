@@ -568,9 +568,18 @@ SC_MEM_ATTR void runtimeTimingTelemetry(const char* tag, uint32_t maxUs, uint32_
 
 SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs,
                                     uint32_t overflowCount) {
+#if SESSION_CAPTURE_DROID_QUEUE
   emitCapPrintf("#CAP,%lu,DIAG,droid_queue,%u,%lu,%lu\r\n", (unsigned long)micros(),
                 static_cast<unsigned>(depth), (unsigned long)oldestAgeUs,
                 (unsigned long)overflowCount);
+#else
+  // Acceptance build (`teensy41-capture-serial-no-grain`): the family is dropped at compile time
+  // so the capture ring keeps the snapshot-publication and transition rows. The queue counters and
+  // the overflow `logger.log` warning are unaffected.
+  (void)depth;
+  (void)oldestAgeUs;
+  (void)overflowCount;
+#endif
 }
 
 SC_MEM_ATTR void runtimeTimingTrackUpdate(uint8_t trackIndex, uint32_t maxUs,
