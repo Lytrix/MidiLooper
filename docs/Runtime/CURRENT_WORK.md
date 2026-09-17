@@ -5,6 +5,45 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 step A landed: a failed required prewarm now denies the record arm.**
+The correction below left the arm gated only at the companion-history reserve; every
+other arm-time prewarm was still advisory. `Track::prewarmPlaybackForSlot` returned
+`void`, so its caller could not distinguish "reserved" from "failed and ignored", and
+`Track::startRecording` proceeded into the take reset and RECORDING regardless. The
+device therefore still reached the deferred stop with an unestablished prerequisite -
+the deferred risk the point-of-use probe only converted from an immediate death.
+
+`prewarmPlaybackForSlot` now returns whether every required reserve was established, and
+`startRecording` consults it as its **first statement** - before the take reset, the
+baseline stamp, the pre-roll move and the state transition. A denied take leaves the pass
+timeline, the armed pre-roll, the pending-note set, the capture baseline and the track
+state exactly as they were. The denial is explicit and distinct from the headroom gate:
+
+```
+#MEM_DENIED,<us>,op=companion_history_reserve,reason=reserve_failed,need=81920B,...
+#MEM_DENIED,<us>,op=record_start,reason=prewarm_failed,need=0B,...
+```
+
+A **missing runtime slot** is now a denial too: without it there is no staging and no
+canonical output, so the take cannot be admitted on the terms the reserve exists to
+guarantee. That is a deliberate tightening for a slot whose `editPasses` exceed the
+bridge row horizon (previously such a take was admitted with no reserves).
+
+Evidence. Device ([`arm-admission-01`](../../captures/arm-admission-01/session_20260917_113447.log)):
+exactly one `op=companion_history_reserve`, exactly one `op=record_start`, **zero**
+`Recording started`, zero `FATAL`, device alive. `native`: **2193 cases, 2 failed (both
+pre-existing unguarded-reentry failures), 1 skipped, 2189 succeeded**, including the new
+`test_record_admission_denied_when_required_prewarm_fails`, which asserts the denial is
+non-destructive *and* that the same call still arms when the reserve is available - so the
+assertions cannot pass by the state machine refusing everything. The continuous-capture
+fixture now links `TrackMidiEventRouting.cpp` / `CommittedMidiScratch.cpp` because the
+admitted arm reaches `Track::invalidateCaches`; only the edit-session neighbours stay
+off-path stubs.
+
+Stale claim corrected in place: the earlier note that a boundary probe could not be made
+predictive is superseded for this arm - the required prewarm's own result *is* the
+prediction, and acting on it needs no margin heuristic.
+
 **2026-09-17 CORRECTION: the record arm is NOT refusal-tolerant - it aborts too.**
 The failure-semantics entry above left the record boundary ungated on the reasoning that
 "the record completed through 834 refusals". That conflated two different things: those
@@ -1827,6 +1866,30 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ---
 
 ## Now implementing
+
+**2026-09-17 — memory-exhaustion admission RC: close record-arm semantics, then footprint
+(user-directed, seven steps).** Both boundaries now deny explicitly at the point of the
+failure (overdub: `admitOperationMemory`; record arm: the required prewarm's own result),
+so no operation reaches a fatal allocator. The remaining work is to make the *reservation*
+itself smaller and better attributed, in this order:
+
+- **A. Record-arm admission closure — LANDED.** `prewarmPlaybackForSlot` returns its
+  result and `Track::startRecording` denies before any mutation. Do not regress to
+  "advisory prewarm".
+- **B. View/history lifetime audit.** For each of the seven companion prewarms (450 KB
+  measured) plus `prewarmPreparedCompanionHistory`'s 80 KB row horizon, establish: element
+  type/capacity/bytes, write window, read window, minimum required lifetime, and whether it
+  is live *simultaneously* with its neighbours. Decide per buffer whether capacity must
+  exist for the whole take or only before a deferred phase, and which buffers are
+  phase-exclusive scratch.
+- **C. Bounded shared/reusable stop working storage.** Design only, from B. Hard
+  constraints: no allocation in a stop grain, no unbounded vector growth in a grain, and
+  no new ITCM growth (the committed tree sits exactly on the 13-bank FlexRAM boundary).
+- **D. Rerun the loaded-set / 8-bar recipe** and measure the new arm delta and headroom.
+- **E. Only then the 1334 KB steady staging** - decide slot-provisioned vs
+  role/admission-provisioned.
+- **F. Separately identify the transport-start 81920-byte owner.** Transport start has no
+  admission gate; keep it **out of this RC** - identification only.
 
 **2026-09-16 — task 2.3 continuous queued capture: ingress/staging ownership isolation (user-directed).**
 Continue the user-approved `CONTINUOUS-CAPTURE-IMPLEMENTATION-PLAN.md` sequence for
