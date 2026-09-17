@@ -5,6 +5,49 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 there are TWO aborting allocators, and the cliff is reached during
+prepare, so the fatal allocation lands on whichever operation comes first.**
+`ExternalMemoryFirstAllocator` (extmem -> malloc -> abort) is the one the failure-semantics
+gate covers. `InternalHeapFirstAllocator` (malloc -> extmem -> abort, line ~82 of
+`include/Utils/InternalHeapFirstAllocator.h`) is a **second** abort site, and it fires on
+paths with no gate. Observed in
+[`attrib-tags-01`](../../captures/attrib-tags-01/session_20260917_104406.log), right
+after a Global Transport press:
+
+```
+[23.219] Button press: Global Transport (short)
+[23.219] [MIDI] OUT MIDI Start (DIN=1 USB=1)
+#MEM_EXT_REFUSED,23485180,bytes=81920,count=1,live=8104KB,blocks=643,heap_free=56KB
+[InternalHeapFirstAllocator] FATAL: both internal heap and external memory are exhausted!
+```
+
+An **80 KB** request with 56 KB of heap free and the pool at 8104 KB. It aborts even
+though the pooling heap had 56 KB — the request is simply larger than the remainder, so
+a headroom gate would have caught it exactly as the overdub one does.
+
+**This reshapes the remaining work.** The device reaches the cliff during the harness's
+*prepare* phase, so the first allocation that cannot be served lands on a different
+operation run to run: a transport start here, the record arm in
+[`attrib-record-start-03`](../../captures/attrib-record-start-03/session_20260917_103705.log).
+A gate at one mutating boundary therefore only fixes that boundary, which is the case for
+gating **every** mutating boundary or for making the allocators themselves non-fatal on
+audited paths.
+
+**Tag-scoped attribution landed and is validated on the boot path.** `beginTag`/`endTag`
+brackets the five steps of `Track::prewarmPlaybackForSlot`, and the tag is stored per
+shadow entry so a free decrements the tag that allocated the block. The 1 s line gained
+`tags=` (net KB for tags 1-7). Boot samples read `tags=[80, 0, 1334, 0, 8, 0, 0]` — i.e.
+`prewarmCaptureStaging` retains **1334 KB**, `prewarmCaptureStopJobs` 80 KB,
+`prewarmActiveOverdubTransferHorizon` 8 KB. Boot takes the staging tag
+(`prepareCapture == false`); the record arm takes the `prewarmViews` tag, which is the one
+still unread. The brackets sit in a `TRACK_COLD_MEM` unit so they cost **zero ITCM**
+(`RAM1 code` unchanged at 425256); the 12-byte shadow entries cost 32 KB of RAM2
+(`variables` 149664, 374 KB still free).
+
+**Still open:** read the record-arm tags (the run must get past the transport-start
+abort), gate the transport-start boundary, and decide whether the allocators themselves
+should be non-fatal on audited paths.
+
 **2026-09-17 record-start reservation attributed to the first record arm, with a
 size profile and two candidates eliminated.** Sampling moved to 1 s with an
 `ExternalPoolAccounting` **live-bytes-by-size-class** breakdown (`cls=` live KB and

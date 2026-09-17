@@ -67,6 +67,28 @@ struct Counters {
   /// Classes: <=128 B, <=1 KB, <=8 KB, <=32 KB, <=128 KB, >128 KB.
   uint32_t liveBytesByClass[kSizeClassCount] = {};
   uint32_t liveBlocksByClass[kSizeClassCount] = {};
+
+  /// Size classes plus bracket tags for attribution.
+  static constexpr size_t kTagCount = 8;
+  /// Net bytes attributed to each bracket tag (see `beginTag`). Exact: the tag is
+  /// stored per shadow entry, so a free decrements the tag that allocated it
+  /// whatever scope is active at free time. Slot 0 is untagged.
+  uint32_t tagBytes[kTagCount] = {};
+  uint32_t tagBlocks[kTagCount] = {};
+};
+
+/// Bracket tags. A scope attributes every allocation made inside it, including
+/// nested calls, which is what identifies a prewarm step's buffers without
+/// instrumenting each allocation site.
+enum Tag : uint8_t {
+  TagNone = 0,
+  TagCaptureStopJobs = 1,
+  TagViewPrewarm = 2,
+  TagCaptureStaging = 3,
+  TagCanonicalOutput = 4,
+  TagTransferHorizon = 5,
+  TagCompanionHistory = 6,
+  TagPlaybackOrder = 7,
 };
 
 /// Size-class index for `bytes` (0..kSizeClassCount-1).
@@ -94,5 +116,16 @@ void recordPoolRefusal(size_t bytes);
 
 /// Zero the counters and the shadow table. Cold path only.
 void reset();
+
+#if defined(__IMXRT1062__)
+/// Enter/leave an attribution bracket. Nesting is supported to depth 4; the tag is
+/// recorded on each allocation made while it is current. Device-only by design, so
+/// a native build inlines the no-ops below and never needs the definitions.
+void beginTag(uint8_t tag);
+void endTag();
+#else
+inline void beginTag(uint8_t) {}
+inline void endTag() {}
+#endif
 
 }  // namespace ExternalPoolAccounting

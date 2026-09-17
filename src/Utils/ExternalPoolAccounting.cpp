@@ -28,7 +28,17 @@ void* const kTombstone = reinterpret_cast<void*>(1);
 struct ShadowEntry {
   void* pointer = nullptr;
   uint32_t bytes = 0;
+  /// Bracket tag active when this block was allocated, so a free decrements the
+  /// right tag regardless of the scope at free time. Costs 96 KB of RAM2 for the
+  /// table (12 B/entry) and buys exact per-step attribution.
+  uint8_t tag = 0;
 };
+
+/// Bracket stack. Depth 4 is well past the nesting a prewarm step uses.
+constexpr size_t kTagStackDepth = 4;
+uint8_t gTagStack[kTagStackDepth] = {};
+uint8_t gCurrentTag = 0;
+size_t gTagDepth = 0;
 
 /// RAM2. Four kilobytes of shadow metadata must not touch the ~700 bytes of ITCM
 /// headroom or the DTCM budget. `.bss.dma` is NOLOAD and not zeroed at startup, so
@@ -57,6 +67,17 @@ namespace ExternalPoolAccounting {
 
 FLASHMEM const Counters& counters() { return gCounters; }
 
+FLASHMEM void beginTag(uint8_t tag) {
+  if (gTagDepth < kTagStackDepth) {
+    gTagStack[gTagDepth++] = gCurrentTag;
+  }
+  gCurrentTag = tag;
+}
+
+FLASHMEM void endTag() {
+  gCurrentTag = gTagDepth > 0 ? gTagStack[--gTagDepth] : 0;
+}
+
 FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
   if (pointer == nullptr) {
     return;
@@ -84,6 +105,8 @@ FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
       const size_t freshClass = sizeClassFor(clamped);
       gCounters.liveBytesByClass[freshClass] += clamped;
       gCounters.liveBlocksByClass[freshClass] += 1;
+      gCounters.tagBytes[gCurrentTag] += clamped;
+      gCounters.tagBlocks[gCurrentTag] += 1;
       if (gCounters.liveBytes > gCounters.highWaterLiveBytes) {
         gCounters.highWaterLiveBytes = gCounters.liveBytes;
       }
@@ -96,12 +119,15 @@ FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
       const size_t slot = reusable != kShadowCapacity ? reusable : ((start + probe) & kShadowMask);
       gShadow[slot].pointer = pointer;
       gShadow[slot].bytes = clamped;
+      gShadow[slot].tag = gCurrentTag;
       gCounters.liveBytes += clamped;
       gCounters.liveBlocks += 1;
       gCounters.trackedBlocks += 1;
       const size_t freshClass = sizeClassFor(clamped);
       gCounters.liveBytesByClass[freshClass] += clamped;
       gCounters.liveBlocksByClass[freshClass] += 1;
+      gCounters.tagBytes[gCurrentTag] += clamped;
+      gCounters.tagBlocks[gCurrentTag] += 1;
       if (gCounters.liveBytes > gCounters.highWaterLiveBytes) {
         gCounters.highWaterLiveBytes = gCounters.liveBytes;
       }
@@ -133,8 +159,14 @@ FLASHMEM void recordPoolFree(void* pointer) {
       if (gCounters.liveBlocksByClass[blockClass] > 0) {
         gCounters.liveBlocksByClass[blockClass] -= 1;
       }
+      const uint8_t tag = entry.tag;
+      gCounters.tagBytes[tag] -= bytes < gCounters.tagBytes[tag] ? bytes : gCounters.tagBytes[tag];
+      if (gCounters.tagBlocks[tag] > 0) {
+        gCounters.tagBlocks[tag] -= 1;
+      }
       entry.pointer = kTombstone;
       entry.bytes = 0;
+      entry.tag = 0;
       gCounters.liveBytes -= bytes < gCounters.liveBytes ? bytes : gCounters.liveBytes;
       gCounters.cumulativeFreedBytes += bytes;
       if (gCounters.liveBlocks > 0) {
