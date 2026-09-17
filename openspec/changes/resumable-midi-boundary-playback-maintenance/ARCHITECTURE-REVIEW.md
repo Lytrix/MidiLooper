@@ -103,6 +103,42 @@ Counters to keep/add for the measurement (alongside `playbackOrderHotRebuildCoun
 `prepared_pair_request_count`, `prepared_pair_publish_count`, `prepared_pair_hold_ticks`,
 `prepared_pair_rebuild_units`, `prepared_pair_max_latency_ticks`.
 
+### Slice 2 invariant (pinned by the owner, 2026-09-17)
+
+> Playback never observes `mergedEvents` and `playbackOrder` from different generations. A pair becomes
+> consumable only when both members and their cursor/reanchor state are complete for the same source
+> generation.
+
+The reanchor/cursor seed is part of the pair's identity, not an after-publish fixup:
+
+```text
+PreparedPlaybackPair
+    generation
+    mergedEvents
+    playbackOrder
+    anchor / cursor seed
+    source identity
+    ready
+```
+
+Publication is one atomic authority change: `P0 playing` -> source generation changes -> request P1,
+keep consuming P0 -> P1 fully prepared -> atomic `P0 -> P1`.
+
+**Measurement caveat.** "Continue P0" is safe only while P0 remains semantically valid for the
+audible interval. If newly accepted material must become audible at a particular quantized edge, hold
+time is bounded by that **latest legal publication/audibility edge**, not by the generic one-bar
+maintenance budget. Report both, and only then decide whether slice 3 (b) -- bounded incremental
+order maintenance -- is required.
+
+### 2.5a is a parity-oracle prerequisite, not 2.5 completion
+
+2.5 (the full differential matrix) still completes **after** 2.4. The landed increment builds only
+the oracle that the 2.4 conversion is validated against; the task docs say so explicitly so the
+numbering cannot read as 2.5 leapfrogging 2.4. Fixture order agreed with the owner: (1) overdub seal
+admitted into merged events, (2) same-tick NoteOff/NoteOn ordering, (3) the reanchor case, (4) wrap
+and loop-edge note, (5) source change mid-window, (6) long-loop window, (7) record-stop gap. The
+negative control stays permanently.
+
 ### Verification for this phase
 
 - New instrumentation counter (`Diagnostics::Counter::PlaybackOrderHotRebuild`),
