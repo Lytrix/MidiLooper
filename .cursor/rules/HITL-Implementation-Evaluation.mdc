@@ -54,6 +54,29 @@ Do **not** copy a full scenario. Extend or call the existing owners:
 
 New code belongs in `scripts/hitl/scenarios/`, `scripts/hitl/verify/`, `scripts/hitl/stimuli/`, or a shared helper under `scripts/hitl/` — not a one-off inline script. Live USB MIDI stays the sender (`flows/`, `canonical_*_legacy_args`, `stream_pattern_for_bars`). Do not generate `.mid` files.
 
+## Deterministic markers for timed probes
+
+When a HITL probe must act on a device edge (press inside a window, wait for a release),
+the firmware must publish that edge on the **human log channel** (`logger.log`), not only as
+a `#CAP` diagnostic: the capture tiers queue behind heavy telemetry and reached the host
+seconds late, which is what made the successor-reentry presses miss a 1.4 s window
+(`captures/successor-reentry-18`/`-19`). Keep the `#CAP` row as the timestamped evidence tier.
+
+Marker rules, learned on device:
+
+1. **Short and fixed-format.** A long literal can tip a `.data`/`.bss` alignment snap worth
+   4 KB of the RAM1 local allowance with no symbol-size hint (the `Reentry window open`
+   markers cost 4 KB until shortened; see `Teensy-RAM1-Bank-Overflow.mdc`). Put the numbers in
+   the `#CAP` row, the words in the human line.
+2. **One line per transition, not per turn.** An interactive marker is Tier-A-like budget: a
+   per-tick marker floods the same channel the probe is reading.
+3. **Wait on the edge, not on a delay.** Read the marker through the collector's cheap
+   single-marker scan (`SerialCaptureCollector::find_line`) and press immediately; a fixed
+   delay from a press has to absorb the flood, the gesture window and the device queue
+   (`hitl.probe_press` stays only as the degraded fallback).
+4. **Check the allowance after adding one.** Read `free for local variables` in the build
+   output before and after; a capture or marker string is a RAM1 change.
+
 ## Upload and run without asking
 
 For a HITL that evaluates the change just implemented:

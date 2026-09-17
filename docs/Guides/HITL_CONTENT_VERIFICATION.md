@@ -116,6 +116,22 @@ Stop is sent a configured delay after the overdub-stop button release. It writes
 The fixture's focused verdict covers stop precedence and silence only; it does
 not assert snapshot content. Content parity is the separate procedure above.
 
+## Deterministic edges for timed probes
+
+A probe that must act on a device edge (a successor press inside a predecessor's deferred
+window, a stop retry after a release) paces from a **human-log marker**, not from a fixed
+delay and not from a `#CAP` diagnostic. Capture-tier rows queue behind heavy telemetry: in
+`captures/successor-reentry-19` the `ST,Track,OVERDUBBING,OVERDUB_STOPPING` row with device
+time 50.395970 appeared in the arrival-ordered log thousands of lines after human lines for
+50.896, so any live pacing on it lands seconds late. The markers used by the reentry probe are
+`Reentry window open slot=<n>` and `Reentry released`, with `DIAG,reentry_window_open` and
+`DIAG,canonical_release` as the evidence tier.
+
+Marker discipline (see `.cursor/rules/HITL-Implementation-Evaluation.mdc`): short fixed-format
+strings, one line per transition, waited on through `find_line` rather than a snapshot copy,
+and the build's `free for local variables` checked afterwards — a long marker literal tipped a
+4 KB `.data`/`.bss` alignment snap once with no symbol-size warning.
+
 ## Related
 
 - Recipe: [`.agents/skills/hitl-content-verification`](../../.agents/skills/hitl-content-verification/SKILL.md)
