@@ -2634,6 +2634,7 @@ horizon, continue at `AtomicTransfer` and retire through deferred cleanup. Nativ
 74.873 s with the successor's job pending, `Reentry released` 77.053 s, then two admitted enter/stop
 cycles (97.1/99.2 s, 105.6/107.7 s) with no refusal. Diagnosis instrumentation (one-shot
 `Deferred stop stalled: <reason>`, `Overdub stop refused: <resource>` + parked phase) stays in place.
+**Follow-up regression (user, 2026-09-17):** after the re-route the first overdubbed notes vanish from the *display* while remaining audible, with only the wrapped notes visible. Cause: the re-route discarded the prepared companion horizon, which carries the note-edit representation the display resolves from. The re-route now keeps a verified horizon (published by `commitStopped`) and drops only an incomplete one, and logs `Overdub stop retarget: companions=<published|raw_only> phase=<n>` so the next reproduction names the sub-case. Native capture suite 50/50; RAM1 locals 6,400. Device confirmation outstanding.
 
 
 **2026-09-17 — the wrap is the third owner of the slot's canonical preparation (DEC-069; hardening

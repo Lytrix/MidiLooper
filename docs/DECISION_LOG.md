@@ -120,6 +120,17 @@ Device: `captures/successor-wrap-40` — `Transport stopped` 74.873 s with the s
 `Reentry released` 77.053 s (pre-fix builds parked it and needed a reboot), and repeated
 enter/stop cycles afterwards with no refusal.
 
+**Display regression follow-up (2026-09-17).** The user reports that after the re-route the *first*
+overdubbed notes disappear from the display when playback resumes from STOPPED while they stay
+audible, and only the wrapped notes remain visible. The discarded horizon is the recorded note-edit
+(companion) representation the display resolves those notes from; the raw capture pass still plays.
+The re-route now keeps a horizon whose preparation completed and verified (`commitStopped` publishes
+it on the STOPPED route) and drops only an incomplete one, logging
+`Overdub stop retarget: companions=<published|raw_only> phase=<n>` so the next reproduction names
+which sub-case it hit. The incomplete case still commits the raw pass alone; if the reported case is
+that one, the follow-up is to make the interrupted companion preparation completable after the
+retarget instead of dropping it.
+
 **Fix, as specified before implementation.** Make the retarget re-route as well as re-label: when a job that has already
 passed the `PrepareTransfer` decision point is retargeted to Stopped, it must skip the remaining
 PLAYING-only preparation (companion history, canonical tail, companion bridge) and continue on the
