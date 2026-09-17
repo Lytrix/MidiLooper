@@ -339,6 +339,15 @@ def _serial_has_overdubbing_stopped(lines: list[str], *, after_index: int = 0) -
         return True
     if any(",ST,Track,OVERDUBBING,PLAYING" in line for line in suffix):
         return True
+    # Deferred stop: the interval leaves OVERDUBBING for OVERDUB_STOPPING, and the audible
+    # completion arrives from OVERDUB_STOPPING. Either hop is a stopped overdub - without
+    # this the deferred path never confirmed and every run burned the full state-sync
+    # timeout as EVIDENCE_UNAVAILABLE (which is what made the successor probe fire 8.6 s
+    # after the stop it was supposed to overlap).
+    if any(",ST,Track,OVERDUBBING,OVERDUB_STOPPING" in line for line in suffix):
+        return True
+    if any(",ST,Track,OVERDUB_STOPPING,PLAYING" in line for line in suffix):
+        return True
     return False
 
 

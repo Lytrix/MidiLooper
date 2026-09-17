@@ -1132,6 +1132,7 @@ def _stream_fixture_record_serial_anchored(
     return note_on_count, phase_clock
 
 
+
 def _stream_fixture_record_bars(
     out_port: mido.ports.BaseOutput,
     in_port: mido.ports.BaseInput,
@@ -1184,6 +1185,15 @@ def _stream_fixture_record_bars(
         return 0, 0, False, False
 
     proxy_bpm = wall_clock_tempo or float(getattr(args, "tempo_bpm", 120.0) or 120.0)
+    # `wall_clock_tempo` is passed to the streamer even when a device clock was seen, and
+    # that is deliberate after a failed experiment (2026-09-17): preferring the clock
+    # (`wall_clock_tempo_bpm=None`) makes the streamer wait on `in_port` clock messages, and
+    # when those do not flow for the whole stream it runs to `max_seconds_guard` - an 8-bar
+    # request recorded 20 bars (`BAR,15360,20`, captures/pacing-fix-01), worse than the
+    # ~10-12 bars the wall-clock path produces. `clock_ok` (24 preamble clocks) does not
+    # prove the clock will pace the stream. The real fix is to end the stream on the device's
+    # own serial `BAR` bar index; until then the strict length check stays as a warning only
+    # under the serial proxy and as an issue when a device clock was seen.
     # Record the timing source for the verifier: a wall-clock proxy cannot predict the
     # device's own bar grid, so a requested bar count is not an authoritative length
     # expectation in that mode.
@@ -3991,6 +4001,12 @@ def _run_overdub_pass(
             reentry_probe_started["done"] = True
             _schedule_successor_reentry_probe()
 
+    # With the reentry probe enabled the successor must be pressed inside the predecessor's
+    # ~1-2 s deferred window, so do not spend the whole state-sync budget confirming the
+    # stop first; a timeout here is already non-fatal for this phase.
+    stop_confirm_timeout_s = args.state_sync_timeout_ms / 1000.0
+    if pass_label == "overdub" and getattr(args, "successor_reentry_delay_ms", 0) > 0:
+        stop_confirm_timeout_s = min(stop_confirm_timeout_s, 1.2)
     od_stop = request_state_transition(
         snapshot=serial_collector.snapshot,
         requested="PLAYING_AFTER_OVERDUB_STOP",
@@ -4006,7 +4022,7 @@ def _run_overdub_pass(
             _latest_track_state(lines, after_index=baseline) == "OVERDUBBING"
         ),
         send_request=_send_overdub_stop,
-        timeout_s=args.state_sync_timeout_ms / 1000.0,
+        timeout_s=stop_confirm_timeout_s,
         max_retries=1,
         abort=abort,
         latest_state=lambda lines, baseline: _latest_track_state(lines, after_index=baseline),
