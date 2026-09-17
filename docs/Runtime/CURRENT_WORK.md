@@ -5,6 +5,30 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 narrowing the 80 KB `InternalHeapFirstAllocator` request (offline).** The
+fatal transport-start request is 81920 bytes. Element sizes were computed on the host:
+`CausingTargetPair` 8, `ConstrainedNoteGeometry` 20, `PendingNoteChange` 20, `NoteId` /
+`PassId` / `EditPassId` / `MidiEvent*` / 32-bit `size_t` 4, `uint16_t` 2, and
+`EditSessionInteraction` **36** (its `NoteBaseline` is 12 bytes, not 8 — an earlier
+hand-count of 28 was wrong). So possible element counts are 10240 x 8, 4096 x 20,
+20480 x 4 or 40960 x 2, and `EditSessionInteraction` plus `MidiEvent` (28 bytes by the
+snapshot-gather stride in `0x6002C97C`) are **eliminated** because neither divides
+81920.
+
+No `reserve()` in the tree takes 4096/8192/10240 literally, so the allocation is almost
+certainly a **`std::vector` doubling**, and `81920 = 4096 x 20` is exactly the doubling of
+a **2048-row horizon** (`RuntimePlaybackViewConfig::kRecordsPerBridge = 2048`). The
+obvious 2048-row candidate, `Loop::prewarmPreparedCompanionHistory`, is **not** claimed:
+it guards `passes.editPasses.size() > limit || companionCapacity > limit - size` and
+returns false rather than growing. So the doubling is a *hypothesis with arithmetic
+support*, not a located owner.
+
+**Device is offline as of this note** (`/dev/cu.usbmodem154944801` not enumerated): the
+transport-start abort left it hung, and it no longer answers the loader handshake — the
+Teensy Loader reports *"Please press the PROGRAM MODE BUTTON on your Teensy to upload
+your sketch."* Reading the record-arm tags and any further device verification needs a
+physical PROGRAM MODE press / power cycle.
+
 **2026-09-17 there are TWO aborting allocators, and the cliff is reached during
 prepare, so the fatal allocation lands on whichever operation comes first.**
 `ExternalMemoryFirstAllocator` (extmem -> malloc -> abort) is the one the failure-semantics
