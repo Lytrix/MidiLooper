@@ -5,6 +5,37 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 successor-reentry probe: instrumented and unit-tested, device evidence still
+open (two device attempts, both diagnosed).** The probe and its oracle are implemented
+(`--successor-reentry-delay-ms` / `--successor-reentry-stop-delay-ms`, default off;
+`_verify_successor_reentry` reads the deduped transition stream plus
+`ODUB,stop,bridge_ready` and requires the successor's `PLAYING -> OVERDUBBING` edge before
+the predecessor's completion, with the quick stop producing no stop edge before it). Four
+host tests cover the branches; `test_capture_transitions` passes 30/30.
+
+Device attempts:
+- [`successor-reentry-07`](../../captures/successor-reentry-07/session_20260917_130811.log):
+  the probe fired **8,638 ms** after the predecessor's stop (window was 1,816 ms), because it
+  ran after `request_state_transition` returned - the deferred stop reads as
+  `EVIDENCE_UNAVAILABLE` for the whole state-sync window. Fixed by timing the presses from
+  the stop *press* on a timer.
+- [`successor-reentry-08`](../../captures/successor-reentry-08/session_20260917_131145.log):
+  the timer version **raced the harness's own blocking confirmation** - no
+  `OVERDUBBING -> OVERDUB_STOPPING` edge was emitted at all, the successor-reentry block
+  reported `None` throughout, and the run ended ARMED (inconclusive). So the probe needs its
+  own observation path (or a bounded `--state-sync-timeout-ms` for probe runs) instead of
+  racing `request_state_transition`. That is the next step for this case.
+
+**Also reproduced while probing: the record stream is paced longer than requested.** The
+device recorded 11 bars (8,448 ticks) and 12 bars (9,216 ticks) for an 8-bar (6,144-tick)
+request; the stream ran 23.0 s against a 16 s request at the device's own 2.0 s/bar cadence
+(`BAR` markers every 2.0 s, `EMPTY -> RECORDING` 254.13 s -> `RECORDING -> STOPPED_RECORDING`
+277.10 s). The device is quantizing correctly for what it received - the host stream and stop
+moment are the problem. This is the remaining half of the wall-clock item: when the device's
+own `BAR`/`BPM` markers are available, the stream duration and the stop moment should follow
+them rather than a host-side seconds-per-bar estimate. Until that is fixed, the strict
+record-length check will keep flagging these runs, and it is right to.
+
 **2026-09-17 bridge tail profiled: it is cadence-bound, not work-bound.** Goal step 3, from
 [`c3-derived-reserve-01`](../../captures/c3-derived-reserve-01/session_20260917_124359.log) -
 the deferred Playing stop, `ODUB,stop,bridge_base` 54.929612 s to `ODUB,stop,bridge_ready`
@@ -2443,17 +2474,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 closed as validated, so the next priority is trustworthy device evidence rather than more
 memory work. In this order:
 
+- **1b. Record-stream pacing — OPEN (found while probing).** The host streams longer than
+  requested (23.0 s for an 8-bar/16 s request at the device's own 2.0 s/bar cadence), so the
+  device legitimately records 11-12 bars. When the device's `BAR`/`BPM` markers are available,
+  the stream duration and stop moment must follow them rather than a host seconds-per-bar
+  estimate. This is the remaining half of item 2 and it keeps flagging strict length checks.
 - **1. Oracle repair — LANDED.** Deferred stop (`OVERDUBBING -> OVERDUB_STOPPING -> PLAYING`)
   is now first-class in the transition counts and the phase pairing; duplicate observer ST
   edges are collapsed; a wall-clock-proxied stop reports its length instead of failing it.
   Device `oracle-fixed-01` = **PASS**. See the oracle entry below.
-- **2. Successor-reentry device case — OPEN, precisely scoped.** The canonical
-  second-overdub run now passes but is **sequential** (measured 8,648 ms gap against a ~1.2 s
-  deferred window), so it does not overlap the predecessor. Needs a small legacy-runner
-  addition: a millisecond-scheduled successor press (~200-400 ms after the predecessor's stop
-  press), an optional quick stop inside the successor's pending window for the denied branch,
-  and a verifier predicate that the successor's `PLAYING -> OVERDUBBING` edge lands before the
-  predecessor's `bridge_ready`/`prefix_reuse`. Native covers both branches.
+- **2. Successor-reentry device case — OPEN.** The probe and its oracle are implemented and
+  unit-tested (`--successor-reentry-delay-ms` / `--successor-reentry-stop-delay-ms`, four host
+  tests), but two device attempts did not produce evidence: the first fired ~8.6 s late
+  (sequenced after the blocking state-sync wait), the timer-based second raced the harness's
+  own blocking confirmation and desynced the run. Next: give the probe its own observation
+  path, or bound `--state-sync-timeout-ms` for probe runs. Native still covers both branches.
 - **2b. Device-state hazard (new, needs a decision).** An aborted run can wedge the deferred
   workspace save (`Persistence drain stuck after 256 iterations`, 158 KB pending); the clear
   ritual then aborts and **every** later run fails its preconditions until the device is
