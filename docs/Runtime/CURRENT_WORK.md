@@ -5,6 +5,63 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 step E: the 1334 KB is slot-provisioned boot staging, and it is the headroom
+the arm needs.** `TrackManager::prewarmPlaybackRuntime` (`src/TrackManager.cpp:59-80`) calls
+`prewarmPlaybackForSlot(s, false)` at boot for every slot that is enabled or has committed
+passes, and that call reserves **both** capture-admission stagings plus the slot runtime
+itself - capture-only, no views, no workers. The step-D run shows the cost directly in its
+own boot lines: phase 1 prewarms 8 slots and PSRAM free falls `5,140,416 -> 3,772,224`
+(**1,336 KB**), phase 2 adds one more slot and falls `3,766,404 -> 3,606,348` (**156 KB**),
+i.e. **~157 KB per slot** (2 x 61,952 staging + the runtime struct) plus ~10 KB per *track*
+for the stop-jobs ring (`tag 1 = 80 KB` over 8 tracks). So `tag 3 = 1334 KB` is a
+per-slot, boot-resident reservation for slots that may never record, not an admission
+requirement: staging is only needed by a slot that records.
+
+The step-E decision is therefore **slot-provisioned -> admission-provisioned**: move the
+staging reserve from boot to the arm (the same cold allocation window the arm already uses
+for the 1.24 MB view/worker set), keeping the frozen role reserved at the same moment so
+punch-out still never allocates. That returns ~1.33 MB at boot - more than the 1.24 MB arm
+increment that currently fails - and it makes the arm's true requirement explicit instead
+of paying it for every content slot at boot. The counter-obligation to re-check is the
+documented capture-only boot ordering, which uses staging readiness
+(`ExecutionBounds.md`, "staging-only boot"): that contract must be restated in terms of
+"staging is reserved when the slot is admitted for capture" rather than "at boot". This is
+a design conclusion for the user's decision, not an implemented change; it needs a DEC with
+the C3 capacity decision because both change a gated execution bound.
+
+**2026-09-17 step D: the loaded-set 8-bar recipe now denies instead of hanging, measured.**
+Run [`stepD-arm-delta-01`](../../captures/stepD-arm-delta-01/session_20260917_115207.log)
+(rebuilt and flashed from this tree; `--record-bars 8`, one overdub, track 4 slot 1, the
+device's own loaded workspace). Before this RC the same recipe ended in
+`[ExternalMemoryFirstAllocator] FATAL` and a silent hang; now:
+
+```
+#MEM_ADMIT,5411558,op=boot_probe,need=16384B,heap_free=184KB,pool_refused=0/0B   <- positive control
+#MEM_EXT_REFUSED,14399844,bytes=81920,count=1,live=8095KB,blocks=637,heap_free=76KB,
+  tag=6,tag_live=0KB,tags=80/790/1334/0/7/0/0/0/0/10/2/64/66/68/96/144/0
+#MEM_DENIED,14399858,op=companion_history_reserve,reason=reserve_failed,need=81920B
+#MEM_DENIED,14399880,op=record_start,reason=prewarm_failed,need=0B
+```
+
+- **Zero `FATAL`, zero `Recording started`, device alive**, and playback continued
+  (`STOPPED_RECORDING->PLAYING: 4`); the harness then aborts its own run because RECORDING
+  is not confirmed, which is the intended consequence of a denied arm.
+- **The arm delta is measured at 1,240 KB** on the 1 s accounting line (`dLive=+1240KB,
+  dBlocks=+104, dHeapFree=-76KB`) - exactly the audit's prediction of tag 2's 790 KB plus
+  the seven separately-tagged prewarms' 450 KB, and the whole set is retained because only
+  the *last* reserve failed. The refusal line's full tag vector confirms every other
+  contributor was already resident (`tag 6 = 0` at the first request).
+- **Full arm requirement on a fresh slot = 1,320-1,400 KB**: 1,240 KB of views/workers plus
+  the two `2048 x 40` history vectors, which is what the 80 KB refusal was.
+- Headroom at denial: pool `8095/8182 KB`, heap **76 KB** on the first attempt and 64 KB on
+  the second, `heap_min` 64 KB over the run - far above the 32 KB floor, so this denial is
+  "the request exceeds what remains", not a floor heuristic. The two attempts 8.3 s apart
+  produce identical refusals, which is the idempotence the slot prewarm is supposed to have.
+- Honest residual: a denied arm **keeps** the 1,240 KB it did establish (it is the same
+  idempotent slot prewarm), so on a device in this state every further arm attempt fails the
+  same way and no slot can start a record until memory is freed or the boot reservation is
+  reduced - which is exactly why step E matters for the fix, not just for footprint.
+
 **2026-09-17 step C design: the stop working set cannot be shared - the levers are
 capacity shaping and a single deferred-stop working set.** Design only; implementation
 needs a DEC because the interval horizon is a gated execution bound
@@ -2071,20 +2128,31 @@ itself smaller and better attributed, in this order:
 - **A. Record-arm admission closure — LANDED.** `prewarmPlaybackForSlot` returns its
   result and `Track::startRecording` denies before any mutation. Do not regress to
   "advisory prewarm".
-- **B. View/history lifetime audit.** For each of the seven companion prewarms (450 KB
-  measured) plus `prewarmPreparedCompanionHistory`'s 80 KB row horizon, establish: element
-  type/capacity/bytes, write window, read window, minimum required lifetime, and whether it
-  is live *simultaneously* with its neighbours. Decide per buffer whether capacity must
-  exist for the whole take or only before a deferred phase, and which buffers are
-  phase-exclusive scratch.
-- **C. Bounded shared/reusable stop working storage.** Design only, from B. Hard
-  constraints: no allocation in a stop grain, no unbounded vector growth in a grain, and
-  no new ITCM growth (the committed tree sits exactly on the 13-bank FlexRAM boundary).
-- **D. Rerun the loaded-set / 8-bar recipe** and measure the new arm delta and headroom.
-- **E. Only then the 1334 KB steady staging** - decide slot-provisioned vs
-  role/admission-provisioned.
-- **F. Separately identify the transport-start 81920-byte owner.** Transport start has no
-  admission gate; keep it **out of this RC** - identification only.
+- **B. View/history lifetime audit — DONE.** All buffers byte-accounted against the measured
+  tags; the seven prewarms are one concurrently-live working set, not phase-exclusive, and
+  live canonical-prefix service needs them during RECORDING. Table and citations:
+  [ExecutionBounds](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17).
+  Corrections it forced (device `sizeof(MidiEvent)=20`, 1.24 MB arm, boot-aggregate tags,
+  the 0xE00 stride argument) are applied in place.
+- **C. Bounded shared/reusable stop working storage — DESIGN DONE, DECISION OPEN.** Sharing
+  the seven workers is disproved (C1); the levers are capacity shaping from the admitted
+  interval horizon (C3, halves ~1.24 MB -> ~0.62 MB if the interval horizon halves) and one
+  device-wide deferred-stop working set (C4, ~228 KB per armed slot, restricts concurrent
+  deferred stops). Implementation needs a DEC either way. Full text: the step-C entry below.
+- **D. Loaded-set / 8-bar rerun — DONE.** `captures/stepD-arm-delta-01`: zero FATAL, zero
+  `Recording started`, device alive, playback continuing, one explicit
+  `op=companion_history_reserve` + one `op=record_start` denial, arm delta measured at
+  1,240 KB, headroom 64-76 KB heap at the refusal. Boot probe `#MEM_ADMIT` in the same run.
+- **E. The 1334 KB steady staging — INVESTIGATED.** It is slot-provisioned boot staging
+  (~157 KB per content slot + ~10 KB per track of stop-jobs ring), prewarmed for slots that
+  may never record. Recommendation: make staging admission-provisioned at the arm and keep
+  the frozen role reserved there too; ~1.33 MB returns at boot. Needs the same DEC as C.
+- **F. Transport-start 81920-byte owner — DONE (identification only, no gate).** It is the
+  deferred record arm released by `handlePendingRecordStart`; step A already gates it.
+
+Wait: step 5 of the goal phrasing used "record-arm exhaustion is not yet fully an
+operation-level denial" - that is now closed (A). Overdub exhaustion was already
+operation-level.
 
 **2026-09-16 — task 2.3 continuous queued capture: ingress/staging ownership isolation (user-directed).**
 Continue the user-approved `CONTINUOUS-CAPTURE-IMPLEMENTATION-PLAN.md` sequence for
