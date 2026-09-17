@@ -1181,17 +1181,30 @@ def _device_bar_index_at_record_start(
     return None
 
 
-def _device_bar_probe(serial_collector: Any):
-    """Returns the newest device bar index, scanning only new capture lines.
+def _device_bar_probe(serial_collector: Any, log_path: Optional[Any] = None):
+    """Returns the newest device bar index from the raw session log, else the collector.
 
-    A fixed tail slice was not enough: at the run's line rate a 400-line tail can hold no
-    `BAR` row at all (the device emits one per bar), so the probe always returned None and
-    the stream fell back to its duration. A forward cursor keeps the scan O(total lines).
+    The in-process collector's ring drops or tiers out `BAR` rows while the note stream is
+    flowing (``record_device_bar_latest = -1`` on device even though the row exists in the
+    session log), and without them the device-bar end condition never fires. The session log
+    file is written from the raw stream, so read new lines from it when it is available.
     """
 
-    state = {"cursor": 0}
+    state = {"cursor": 0, "lines": 0}
 
-    def _probe() -> Optional[int]:
+    def _from_log() -> Optional[int]:
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
+                lines = handle.readlines()
+        except (OSError, TypeError):
+            return None
+        if len(lines) < state["lines"]:
+            state["lines"] = 0  # truncated/replaced
+        fresh = lines[state["lines"] :]
+        state["lines"] = len(lines)
+        return _latest_device_bar_index(fresh)
+
+    def _from_collector() -> Optional[int]:
         try:
             lines = serial_collector.snapshot()
         except Exception:
@@ -1199,22 +1212,18 @@ def _device_bar_probe(serial_collector: Any):
         cursor = state["cursor"]
         if len(lines) < cursor:
             cursor = 0  # ring wrapped
-        latest: Optional[int] = None
-        for line in lines[cursor:]:
-            if ",BAR," not in line:
-                continue
-            cap_index = line.find("#CAP,")
-            if cap_index < 0:
-                continue
-            parts = line[cap_index:].split(",")
-            if len(parts) < 5:
-                continue
-            try:
-                latest = int(parts[4])
-            except ValueError:
-                continue
+        latest = _latest_device_bar_index(lines[cursor:])
         state["cursor"] = len(lines)
         return latest
+
+    def _probe() -> Optional[int]:
+        if log_path is not None:
+            value = _from_log()
+            if value is not None:
+                return value
+        if serial_collector is None:
+            return None
+        return _from_collector()
 
     return _probe
 
@@ -4000,7 +4009,7 @@ def _run_overdub_pass(
                 emit_immediate_first_step=True,
                 wall_clock_tempo_bpm=wall_clock_tempo,
                 device_bar_probe=(
-                    _device_bar_probe(serial_collector) if serial_collector is not None else None
+                    _device_bar_probe(serial_collector, getattr(args, "follow_serial_log", None)) if serial_collector is not None else None
                 ),
                 device_bar_baseline=(
                     _latest_device_bar_index(serial_collector.snapshot()[-400:])
@@ -5171,7 +5180,7 @@ def run() -> int:
                             wall_clock_tempo_bpm=wall_clock_tempo,
                             stream_start_monotonic=recording_confirmed_at,
                             device_bar_probe=(
-                                _device_bar_probe(serial_collector)
+                                _device_bar_probe(serial_collector, getattr(args, "follow_serial_log", None))
                                 if serial_collector is not None
                                 else None
                             ),
