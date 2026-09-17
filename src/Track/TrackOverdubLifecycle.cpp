@@ -399,6 +399,7 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   DebugSessionCapture::successorStartWindowOpen(activeLoopIndex, currentTick,
                                                 loop.loopLengthTicks);
 #endif
+  deferredStopStallNoted_ = false;
   job.loopId = loop.loopId;
   job.slot = activeLoopIndex;  job.phaseTick = capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
@@ -631,16 +632,28 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   if (!stop.pending) {
     return false;
   }
+  // DEC-070 diagnostic: every silent early-out below holds the job's finalization resources, so a
+  // predicate that can never become true wedges the slot (no stop is ever admitted again). Name it
+  // once instead of returning silently forever -- an aborted HITL run left exactly this state.
+  const auto noteStallOnce = [&](const char* reason) {
+    if (deferredStopStallNoted_) return;
+    deferredStopStallNoted_ = true;
+    logger.log(CAT_TRACK, LOG_WARNING, "Deferred stop stalled: %s", reason);
+  };
   // Never reinterpret a saved job through the currently selected slot.
   if (!job.owner || !loopsAllocated() ||
       loopIdForSlot(job.slot) != job.loopId ||
       &getLoop(job.slot) != job.owner ||
-      job.owner->loopLengthTicks != job.loopLengthTicks) return false;
+      job.owner->loopLengthTicks != job.loopLengthTicks) {
+    noteStallOnce("job owner or loop geometry no longer matches");
+    return false;
+  }
   Loop& loop = *job.owner;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(job.slot);
   CaptureAdmissionStaging* views = runtime != nullptr ? runtime->captureStagingIfPrewarmed() : nullptr;
   if (runtime == nullptr || views == nullptr ||
       views->frozenGeneration != stop.frozenGeneration) {
+    noteStallOnce("frozen capture staging generation lost");
     return false;
   }
   CaptureAdmissionStaging& staging = *views;
@@ -931,11 +944,23 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
 
   if (stop.historyRecycleOwner == &loop) {
     if (!stop.historyRecycleStarted) {
-      if (!TrackPreparedStopCommit::beginHistoryRecycle(loop, stop)) return false;
+      if (!TrackPreparedStopCommit::beginHistoryRecycle(loop, stop)) {
+        // DEC-070 diagnostic: `beginHistoryRecycle` needs the contracted recycle quantum and the
+        // *current* prepared-companion-history generation. A job admitted for the PLAYING route and
+        // then retargeted to STOPPED by `stopOverdubbingToStopped` can satisfy neither, and it used
+        // to return here silently forever -- holding `captureStopOwner`, the frozen role and the
+        // session-exit receipt, so every later stop was refused and the slot needed a reboot.
+        noteStallOnce("history recycle cannot start for this job contract");
+        return false;
+      }
       return false;
     }
     const auto result = TrackPreparedStopCommit::stepHistoryRecycle(
         loop, stop, kDeferredStopPreparationQuantum);
+    if (result == RuntimePlaybackOrderBuildResult::Denied) {
+      noteStallOnce("history recycle denied for this job contract");
+      return false;
+    }
     if (result != RuntimePlaybackOrderBuildResult::Complete) return false;
     stop.historyRecycleOwner = nullptr;
   }
@@ -953,8 +978,13 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
       job.slot == activeLoopIndex;
   const PendingStopDestination destination = stop.destination;
   if (!TrackPreparedStopCommit::completeDeferredCleanup(loop, *runtime, stop, job.preview,
-                                                         ownsTrackState))
+                                                         ownsTrackState)) {
+    if (stop.phase == PendingStopPhase::DeferredCleanup &&
+        (stop.finalizationComplete() || stop.historyRecycleOwner)) {
+      noteStallOnce("deferred cleanup prerequisites unmet");
+    }
     return false;
+  }
   // Retire this job's immutable frozen admission rows now that no consumer
   // borrows them. The role then returns to clean ingress ownership on the next
   // exchange; no live ingress state is touched here.
@@ -1244,8 +1274,23 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   if (hasPendingDeferredOverdubStop() || finalizationResourcesBusy) {
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                        captureStopQueueDepth(), 0, "successor_stop_denied_capacity");
-    logger.log(CAT_TRACK, LOG_INFO,
-               "Overdub stop deferred: deferred/frozen admission role is occupied");
+    // DEC-070 diagnostic: name the resource that is still owned. The generic message hid which of
+    // five different leaks wedged the slot (`ring_count_without_job` in particular means the ring
+    // bookkeeping, not a live job, is holding the refusal).
+    const CaptureStopJob* headJob = captureStopJobHead();
+    const char* busyReason =
+        hasPendingDeferredOverdubStop()
+            ? ((headJob != nullptr && headJob->admission.pending) ? "stop_job_pending"
+                                                                 : "ring_count_without_job")
+            : (stopRuntime == nullptr
+                   ? "runtime_unavailable"
+                   : stopRuntime->captureStopOwner != nullptr
+                         ? "stop_owner"
+                         : !stopRuntime->canonicalCaptureOutputAdmitted()
+                               ? "canonical_output"
+                               : !loop.hasActiveOverdubTransferAdmission() ? "transfer_admission"
+                                                                          : "session_exit_handoff");
+    logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s", busyReason);
     return;
   }
   // The admitted path above must leave the MIDI button handler without
