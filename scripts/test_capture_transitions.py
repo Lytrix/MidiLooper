@@ -23,6 +23,8 @@ from hitl.capture_transitions import (
     _serial_has_recording_active,
 )
 from hitl.legacy_record_baseline import (
+    _await_collector_marker,
+    _marker_micros,
     _probe_press_delays,
     _can_skip_clear_before_record,
     _evaluate_clear_precondition,
@@ -139,22 +141,23 @@ class DeviceBarProbeOracleTests(unittest.TestCase):
         self.assertEqual(1, _latest_device_bar_index(lines))
 
 class SuccessorReentryProbeOracleTests(unittest.TestCase):
-    """The probe is only meaningful when the successor overlaps the predecessor's job.
+    """The probe proves the two halves of the DEC-067 contract.
 
-    A successor start inside the predecessor's deferred window (before
-    `ODUB,stop,bridge_ready`) is the admission case; a stop press before that completion
-    must NOT produce a stop edge, which is the denied-stop branch.
+    A successor START is admitted while the predecessor's deferred job is pending
+    (before the `Reentry released` marker), and its own STOP is refused until the
+    predecessor's finalization resources are admitted again. Device times are micros in
+    both the `#CAP` rows and the human `[<seconds>.<ms>]` prefixes.
     """
 
     _OVERLAPPING = [
-        "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
-        "#CAP,2000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
-        "#CAP,2001,ST,Track,OVERDUB_STOPPING,PLAYING",
-        "#CAP,2100,ODUB,stop,bridge_base,0,0,0,0,1,1,prepared_window",
-        "#CAP,2300,ST,Track,PLAYING,OVERDUBBING",
-        "#CAP,2600,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
-        "#CAP,3000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
-        "#CAP,3100,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+        "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+        "#CAP,2000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+        "#CAP,2001000,ST,Track,OVERDUB_STOPPING,PLAYING",
+        "[2.100] [INFO] [TRACK] Reentry window open slot=0",
+        "#CAP,2300000,ST,Track,PLAYING,OVERDUBBING",
+        "#CAP,3000000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
+        "[3.400] [INFO] [TRACK] Reentry released",
+        "#CAP,3500000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
     ]
 
     def test_overlapping_successor_with_denied_stop(self) -> None:
@@ -163,39 +166,57 @@ class SuccessorReentryProbeOracleTests(unittest.TestCase):
         )
         self.assertTrue(result["probe_requested"])
         self.assertTrue(result["overlap_ok"])
-        # The quick press produced a stop edge *before* the predecessor completed: a denial
-        # failure, not evidence for the denied-stop branch.
-        self.assertFalse(result["denied_stop_ok"])
-        self.assertEqual(0.3, result["successor_start_delay_ms"])
+        self.assertEqual(2_100_000, result["reentry_window_ts"])
+        self.assertEqual(3_400_000, result["finalization_released_ts"])
+        # The admitted successor's own stop lands after the release: the quick press in
+        # between produced no stop edge, which is the denial half.
+        self.assertTrue(result["denied_stop_ok"])
+        self.assertEqual(300.0, result["successor_start_delay_ms"])
+        self.assertEqual(1100.0, result["successor_start_before_release_ms"])
 
-    def test_denied_stop_accepted_when_the_press_is_refused(self) -> None:
+    def test_stop_edge_before_the_release_is_a_denial_failure(self) -> None:
         lines = [
-            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
-            "#CAP,2000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
-            "#CAP,2001,ST,Track,OVERDUB_STOPPING,PLAYING",
-            "#CAP,2300,ST,Track,PLAYING,OVERDUBBING",
-            "#CAP,3000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
-            "#CAP,3100,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "[2.100] [INFO] [TRACK] Reentry window open slot=0",
+            "#CAP,2300000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2400000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "[3.400] [INFO] [TRACK] Reentry released",
         ]
         result = _verify_successor_reentry(
             lines, requested_delay_ms=500, requested_stop_delay_ms=300
         )
         self.assertTrue(result["overlap_ok"])
-        self.assertTrue(result["denied_stop_ok"])
+        self.assertFalse(result["denied_stop_ok"])
 
     def test_sequential_successor_is_not_overlapping(self) -> None:
         lines = [
-            "#CAP,1000,ST,Track,PLAYING,OVERDUBBING",
-            "#CAP,2000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
-            "#CAP,2001,ST,Track,OVERDUB_STOPPING,PLAYING",
-            "#CAP,3000,ODUB,stop,bridge_ready,0,0,0,0,1,7680,context_retained",
-            "#CAP,9000,ST,Track,PLAYING,OVERDUBBING",
-            "#CAP,10000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "[2.100] [INFO] [TRACK] Reentry window open slot=0",
+            "[2.900] [INFO] [TRACK] Reentry released",
+            "#CAP,9000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,10000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
         ]
         result = _verify_successor_reentry(
             lines, requested_delay_ms=500, requested_stop_delay_ms=0
         )
         self.assertFalse(result["overlap_ok"])
+
+    def test_supersession_without_a_release_marker_still_proves_overlap(self) -> None:
+        # Supersession can retire the predecessor without a bridge_ready or release row;
+        # the window marker plus the successor's start is then the available evidence.
+        lines = [
+            "#CAP,1000000,ST,Track,PLAYING,OVERDUBBING",
+            "#CAP,2000000,ST,Track,OVERDUBBING,OVERDUB_STOPPING",
+            "[2.100] [INFO] [TRACK] Reentry window open slot=0",
+            "#CAP,2300000,ST,Track,PLAYING,OVERDUBBING",
+        ]
+        result = _verify_successor_reentry(
+            lines, requested_delay_ms=500, requested_stop_delay_ms=0
+        )
+        self.assertTrue(result["overlap_ok"])
+        self.assertIsNone(result["finalization_released_ts"])
 
     def test_probe_off_reports_no_verdict(self) -> None:
         result = _verify_successor_reentry(
@@ -203,6 +224,43 @@ class SuccessorReentryProbeOracleTests(unittest.TestCase):
         )
         self.assertFalse(result["probe_requested"])
         self.assertIsNone(result["overlap_ok"])
+
+
+class ReentryMarkerTests(unittest.TestCase):
+    def test_human_marker_micros_uses_the_millis_prefix(self) -> None:
+        self.assertEqual(2_100_000, _marker_micros(
+            ["[2.100] [INFO] [TRACK] Reentry window open slot=0"], "Reentry window open"))
+        self.assertIsNone(_marker_micros(["[2.100] [INFO] other"], "Reentry window open"))
+
+    def test_marker_micros_reads_a_capture_row_when_present(self) -> None:
+        lines = ["#CAP,3400000,DIAG,canonical_release,0,1536,8"]
+        self.assertEqual(3_400_000, _marker_micros(lines, "DIAG,canonical_release,"))
+
+    def test_await_marker_scans_without_copying_the_snapshot(self) -> None:
+        class Collector:
+            def __init__(self, lines):
+                self.lines = lines
+                self.scans = 0
+
+            def find_line(self, needle, *, after_index=0):
+                self.scans += 1
+                for index in range(after_index, len(self.lines)):
+                    if needle in self.lines[index]:
+                        return index
+                return None
+
+            def snapshot(self):  # pragma: no cover - must not be used by the waiter
+                raise AssertionError("marker wait must not copy the snapshot")
+
+        collector = Collector(["[1.000] [INFO] [TRACK] Reentry released"])
+        seen = _await_collector_marker(collector, "Reentry released", baseline=0,
+                                       timeout_s=0.2, poll_s=0.0)
+        self.assertIsNotNone(seen)
+        self.assertEqual(1, collector.scans)
+        missing = _await_collector_marker(collector, "Reentry window open", baseline=1,
+                                          timeout_s=0.01, poll_s=0.0)
+        self.assertIsNone(missing)
+
 
 class SuccessorProbePressScheduleTests(unittest.TestCase):
     """The probe's two presses are scheduled in their own process (hitl.probe_press).
