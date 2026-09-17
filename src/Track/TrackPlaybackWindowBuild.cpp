@@ -16,6 +16,7 @@
 #include "Utils/IntervalProjection.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/ExternalPoolAccounting.h"
 #include "Utils/RuntimeTimingTelemetry.h"
 #include "PlaybackMergedMidiEvents.h"
 #include "Utils/CommittedMidiScratch.h"
@@ -423,16 +424,26 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
     return;
   }
+  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStopJobs);
   (void)prewarmCaptureStopJobs();
+  ExternalPoolAccounting::endTag();
   Loop& loop = loopForSlot(slotIndex);
   LoopPlaybackRuntime* runtime = playbackRuntime.trySlot(slotIndex);
   if (runtime != nullptr) {
     // This is a boot/load or pre-transport path. The hot MIDI path deliberately
     // has no equivalent allocation call.
     if (prepareCapture) {
+      ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
       (void)runtime->prewarmViews();
-    } else (void)runtime->prewarmCaptureStaging();
+      ExternalPoolAccounting::endTag();
+    } else {
+      ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
+      (void)runtime->prewarmCaptureStaging();
+      ExternalPoolAccounting::endTag();
+    }
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCanonicalOutput);
     (void)runtime->prewarmCanonicalCaptureOutput();
+    ExternalPoolAccounting::endTag();
   }
 #if defined(SESSION_CAPTURE)
   DebugSessionCapture::capturePrewarm(resolveTrackIndexForPersistence(*this), slotIndex,
@@ -447,18 +458,24 @@ TRACK_COLD_MEM void Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // Boot-only staging keeps the all-stopped guard and never grows during an
   // active transport turn.
   if (prepareCapture || !anyTimingCriticalTrackActive()) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
     (void)loop.prewarmActiveOverdubTransferHorizon();
+    ExternalPoolAccounting::endTag();
     // Companion rows are part of the same deferred stop admission. Reserve
     // the complete fixed row horizon while the loop is cold so stop grains
     // never grow vectors or relocate canonical history.
     if (prepareCapture) {
       const size_t usedRows = std::min(loop.passes.editPasses.size(),
                                        RuntimePlaybackViewConfig::kRecordsPerBridge);
+      ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
       (void)loop.prewarmPreparedCompanionHistory(
           RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows);
+      ExternalPoolAccounting::endTag();
     }
   }
+  ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
   (void)loop.getPlaybackOrder();
+  ExternalPoolAccounting::endTag();
 }
 
 void Track::ensurePlaybackMergedEventsForSlot(uint8_t slotIndex) {

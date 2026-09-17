@@ -251,7 +251,8 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
   Serial.printf_P(
       PSTR("[Memory] ext,%lu,phase=%s,live=%luKB,high=%luKB,blocks=%lu/%lu,alloc=%luKB,"
            "freed=%luKB,untracked=%lu,unknown=%lu,refused=%lu/%luB,"
-           "cls=%lu/%lu/%lu/%lu/%lu/%luKB,clsn=%lu/%lu/%lu/%lu/%lu/%lu,chunks_free=%lu,snap=%luKB,"
+           "cls=%lu/%lu/%lu/%lu/%lu/%luKB,clsn=%lu/%lu/%lu/%lu/%lu/%lu,"
+           "tags=%lu/%lu/%lu/%lu/%lu/%lu/%luKB,chunks_free=%lu,snap=%luKB,"
            "heap_free=%luKB,heap_min=%luKB\n"),
       static_cast<unsigned long>(micros()), phase != nullptr ? phase : "-",
       static_cast<unsigned long>(c.liveBytes / 1024),
@@ -276,6 +277,13 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
       static_cast<unsigned long>(c.liveBlocksByClass[3]),
       static_cast<unsigned long>(c.liveBlocksByClass[4]),
       static_cast<unsigned long>(c.liveBlocksByClass[5]),
+      static_cast<unsigned long>(c.tagBytes[1] / 1024),
+      static_cast<unsigned long>(c.tagBytes[2] / 1024),
+      static_cast<unsigned long>(c.tagBytes[3] / 1024),
+      static_cast<unsigned long>(c.tagBytes[4] / 1024),
+      static_cast<unsigned long>(c.tagBytes[5] / 1024),
+      static_cast<unsigned long>(c.tagBytes[6] / 1024),
+      static_cast<unsigned long>(c.tagBytes[7] / 1024),
       // Existing O(1) owner counters, named so a class of growth can be attributed
       // without per-site instrumentation: LoopEventStore chunks are 256 x 28 B
       // (the <=8 KB class) and snapshot slabs are the large <=128 KB class.
