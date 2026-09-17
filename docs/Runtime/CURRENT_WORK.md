@@ -2747,7 +2747,10 @@ memory work. In this order:
   `DIAG,canonical_release` on the evidence tier), and the probe/oracle drive and verify the
   sequence from them.
   Device `captures/successor-reentry-25` (managed HITL, `base`, 8-bar record / 2-bar overdub,
-  build identity in its `metadata.json`): 44.253 s A `Overdubbing started`; 49.403 s
+  build identity in its `metadata.json`), re-verified on the current firmware as
+  `captures/successor-reentry-26` (48.857 s `Reentry window open`, 49.399 s B START 2,011 ms
+  before A's release, 49.942 s B's stop refused, 51.410 s `Reentry released`, 52.109 s B's stop
+  admitted; oracle PASS): 44.253 s A `Overdubbing started`; 49.403 s
   `Reentry window open`; 49.986 s **B START, 583 ms after A's stop and 2,209 ms before A's
   finalization released**; 50.500 s **B's stop refused** (`Overdub stop deferred: deferred/frozen
   admission role is occupied`) with B still recording; 52.195 s `Reentry released`; 52.778 s
