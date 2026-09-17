@@ -204,7 +204,25 @@ then the bounded fallback in the fixture, then retirement); full native 2,213 ca
 overflowed (`capture_ring_overflow`, `SERIAL_INCOMPLETE`), which shed the rows the display, save and
 undo verifiers read, so 5.9 still owes one clean run.
 
-**Fix, as specified before implementation.** Make the retarget re-route as well as re-label: when a job that has already
+**Second attempt falls short, denial now precise (2026-09-17, `captures/successor-wrap-45`).**
+Releasing both retained caches at the retarget (runtime `discardFrozenCanonicalTail` **and** the Loop's
+prepared companion horizon via `restoreSupersededPreparedCompanionHistory`/`discardPreparedCompanionHistory`)
+still stalls: the log shows `Overdub stop retarget: phase=7 dest=1 companions=kept` then, 0.76 s later,
+`Overdub stop retarget: companion path stalled; raw pass only`. Combined with the probe bits, the
+remaining denier is `LoopPlaybackRuntime::beginFrozenCanonicalTail`, which refuses when
+`canonicalPassInputs.captureAttached()` -- and probe bit 3 (attached) was set. That attachment is the
+predecessor's retained canonical inputs. Clearing it is not a retarget-time option: `discard()`
+invalidates the canonical prefix (`beginFrozenCanonicalTail` also requires
+`canonicalPassInputs.generation() == canonicalPrefixGeneration && ready()`), and rebuilding the prefix
+needs playback turns the stopped transport does not provide. So the fix belongs at **retention time**:
+`TrackPreparedStopCommit::completeDeferredCleanup` should not retain the committed canonical tail when a
+successor interval is already live (`job.interval != captureInterval_`), because that cache is what
+blocks the successor's own companion preparation -- it exists to save the *next* interval work, and here
+it prevents it. Until that lands, the retarget keeps falling back to the raw pass: audio, save and undo
+behave as before, the note-edit display representation is still lost in this edge case, and 5.9 remains
+open.
+
+**Fix, as specified before implementation.****Fix, as specified before implementation.** Make the retarget re-route as well as re-label: when a job that has already
 passed the `PrepareTransfer` decision point is retargeted to Stopped, it must skip the remaining
 PLAYING-only preparation (companion history, canonical tail, companion bridge) and continue on the
 Stopped route's own path (`retireSkippedCompanionPreparation` -> `AtomicTransfer` ->

@@ -638,7 +638,16 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   retargetStallGrains_ = 0;
   retargetStallPhase_ = phaseAtRetarget;
   if (retargetRuntime != nullptr) {
+    // Two caches hold the predecessor's companion work, one on each side of the boundary:
+    // the runtime's frozen canonical tail and the Loop's prepared companion-history horizon (the
+    // retained worker stays owned by the interval that prepared it, so a retargeted successor's
+    // `beginPreparedCompanionHistory` cannot claim it -- `captures/successor-wrap-44` still stalled
+    // in `CompanionHistory` after only the runtime side was released). Return both to their
+    // prewarmed state; both are recomputable, so this costs work and no content.
     retargetRuntime->discardFrozenCanonicalTail();
+    if (!job.owner->restoreSupersededPreparedCompanionHistory(job.admission.intervalToken())) {
+      job.owner->discardPreparedCompanionHistory();
+    }
     (void)TrackPreparedStopCommit::retargetStoppedRecovery(*retargetRuntime, job.admission);
   }
   logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retarget: phase=%u dest=%u companions=kept",
