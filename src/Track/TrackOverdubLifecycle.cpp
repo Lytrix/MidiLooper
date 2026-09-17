@@ -16,6 +16,7 @@
 #include "TrackUndoPublication.h"
 #include "TrackPreparedStopCommit.h"
 #include "Utils/DebugSessionCapture.h"
+#include "Utils/ExternalPoolAccounting.h"
 #include "Utils/MemoryMonitor.h"
 #include "Utils/HotPathTelemetry.h"
 #include "Utils/RuntimeTimingTelemetry.h"
@@ -1023,8 +1024,23 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (trackState == TRACK_OVERDUBBING && loopRef.capture.phase == CapturePhase::Overdub) {
     return;
   }
-  // Admission storage must already exist. Do not allocate it from this active
-  // transport command: setup/load/record-start prewarm owns that work.
+  // Capture staging is provisioned by capture admission, not by boot (DEC-065). This
+  // is the overdub operation's own cold admission turn: reserve both roles *before*
+  // any mutation and deny explicitly if the pool and the heap cannot supply them.
+  // Reserving both keeps punch-out allocation-free (the live role is frozen while the
+  // successor uses the other, already-reserved role), and the checks below are the
+  // require step that runs after the reserve.
+  LoopPlaybackRuntime* stagingAdmission = playbackRuntime.trySlot(activeLoopIndex);
+  bool stagingAdmitted = false;
+  if (stagingAdmission != nullptr) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
+    stagingAdmitted = stagingAdmission->prewarmCaptureStaging();
+    ExternalPoolAccounting::endTag();
+  }
+  if (!stagingAdmitted) {
+    MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::OverdubStart);
+    return;
+  }
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   CaptureAdmissionStaging* viewSet =
       runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;

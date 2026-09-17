@@ -246,14 +246,21 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
       pool.poolLastRefusalMs == 0 ? UINT32_MAX : (nowMs - pool.poolLastRefusalMs);
   const uint32_t requiredBytes =
       marginBytes != 0 ? marginBytes : defaultMarginFor(operation);
-  const bool heapLow = heapFree < (kOperationHeapFloorBytes + requiredBytes);
-  const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
-  const bool reportAdmitted = operation == OperationKind::BootProbe;
   // Point-of-use reserves are the one case where a probe is predictive, so they are the
   // only kind that uses one. Everything else keeps the heap-floor / pool-refusal checks
   // that were verified on the overdub boundary.
-  const bool reserveFailed = operation == OperationKind::CompanionHistoryReserve &&
-                             requiredBytes != 0 && !probeBlockAvailable(requiredBytes);
+  const bool pointOfUseReserve =
+      operation == OperationKind::CompanionHistoryReserve && requiredBytes != 0;
+  // For that kind the probe is the *authority*, not an extra veto: its caller will hand
+  // the same byte count to an allocator that falls back from malloc to extmem, so a
+  // request the pool can serve is not a heap depletion. 2026-09-17 device evidence
+  // (`stepE-staging-admission-01`): the history reserve was denied `heap_low` with
+  // `pool_refused=0/0B` and ~1.27 MB of pool free, which made an available operation fail.
+  const bool heapLow =
+      !pointOfUseReserve && heapFree < (kOperationHeapFloorBytes + requiredBytes);
+  const bool poolRefusing = sinceRefusalMs <= kPoolRefusalWindowMs;
+  const bool reserveFailed = pointOfUseReserve && !probeBlockAvailable(requiredBytes);
+  const bool reportAdmitted = operation == OperationKind::BootProbe;
   if (!heapLow && !poolRefusing && !reserveFailed) {
     if (reportAdmitted) {
       Serial.printf_P(
