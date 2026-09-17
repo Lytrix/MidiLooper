@@ -42,6 +42,49 @@ and lookup prewarms in the same function (`frozenCompanionPairLookup`,
 `kEventsPerView`/`kRecordsPerBridge`). The first part is measured; the second is inference
 from the prewarm list plus the class shape, not yet individually tagged.
 
+**2026-09-17 record-arm reservation MEASURED per contributor - and it is NOT staging.**
+The refusal line now dumps the whole tag vector, which matters because the process dies
+there, so one arm gives every contributor's retained size. Measured
+([`attrib-arm-vector-01`](../../captures/attrib-arm-vector-01/session_20260917_111029.log)):
+
+```
+tags (KB) = 80 / 790 / 1334 / 0 / 7 / 0 / 0 / 0 / 0 / 10 / 2 / 64 / 66 / 68 / 96 / 144 / 0
+tag ids:    1    2    3     4   5   6   7   8   9   10  11  12   13   14   15   16
+```
+
+| contributor | measured |
+|---|---|
+| 1 `prewarmCaptureStopJobs` | 80 KB |
+| 2 `prewarmViews` (total, record arm) | **790 KB** |
+| 3 `prewarmCaptureStaging` (cumulative, mostly boot) | 1334 KB |
+| 5 `prewarmActiveOverdubTransferHorizon` | 7 KB |
+| 6 `prewarmPreparedCompanionHistory` | **0 KB - this is the call that aborts** |
+| 10 `frozenCompanionPairLookup` | 10 KB |
+| 11 `frozenCompanionSpans` | 2 KB |
+| 12 `frozenCompanionReconstruction` | 64 KB |
+| 13 `frozenCompanionApply` | 66 KB |
+| 14 `frozenCompanionBridgeMap` | 68 KB |
+| 15 `frozenCompanionPasses` | 96 KB |
+| 16 `canonicalPassInputs` | **144 KB** |
+| 4 `prewarmCanonicalCaptureOutput`, 7 `getPlaybackOrder`, 8 `resetPassTimeline`, 9 `prepareFirstRecordingBar` | 0 KB |
+
+**This corrects the entry above.** Staging does dominate the *boot* footprint (1334 KB,
+and tag 3 barely moves on the arm because that slot's staging was already prewarmed), but
+the arm itself is dominated by **`prewarmViews` at 790 KB**, of which the seven
+companion/lookup prewarms are **450 KB measured** (`canonicalPassInputs` 144,
+`companionPasses` 96, `companionBridgeMap` 68, `companionApply` 66,
+`companionReconstruction` 64, `pairLookup` 10, `spans` 2) and ~340 KB is
+`viewSet->prewarm()` plus `frozenCaptureCompanions.prewarm(kRecordsPerBridge)`. The
+round-4 sentence calling the ~390 KB companion group "inference" is now measurement, and
+its size was under-estimated by ~60 KB.
+
+So arming one record on a slot costs roughly **2.3 MB** end to end: ~1334 KB of staging
+(from boot or the clear ritual) plus 790 KB of view prewarms, 80 KB of stop jobs, 80 KB of
+companion-history rows and 7 KB of transfer horizon. Against the ~1.3 MB a loaded device
+has free at boot, that is the whole reason a device with several slots loaded cannot arm a
+record - and `prewarmPreparedCompanionHistory`'s 80 KB row horizon is simply the last
+allocation in that sequence, which is why it is the one that aborts.
+
 **2026-09-17 the 80 KB fatal request is NAMED and measured: the companion-history row
 horizon.** The `#MEM_EXT_REFUSED` line now carries the active bracket tag, so a request
 that kills the process still identifies the step that made it. On the record arm

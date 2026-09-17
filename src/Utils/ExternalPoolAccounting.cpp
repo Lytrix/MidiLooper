@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -66,6 +67,23 @@ void ensureShadowReady() {
 namespace ExternalPoolAccounting {
 
 FLASHMEM const Counters& counters() { return gCounters; }
+
+FLASHMEM void formatTagVector(char* out, size_t outLen) {
+  if (out == nullptr || outLen == 0) {
+    return;
+  }
+  size_t used = 0;
+  out[0] = '\0';
+  for (size_t tag = 1; tag < Counters::kTagCount; ++tag) {
+    const int written = std::snprintf(out + used, outLen - used, "%s%lu",
+                                      used == 0 ? "" : "/",
+                                      static_cast<unsigned long>(gCounters.tagBytes[tag] / 1024));
+    if (written <= 0 || static_cast<size_t>(written) >= outLen - used) {
+      break;
+    }
+    used += static_cast<size_t>(written);
+  }
+}
 
 FLASHMEM void beginTag(uint8_t tag) {
   if (gTagDepth < kTagStackDepth) {
@@ -202,16 +220,18 @@ FLASHMEM void recordPoolRefusal(size_t bytes) {
     return;
   }
   lastLoggedRefusedBytes = clamped;
+  char tagVector[160];
+  formatTagVector(tagVector, sizeof(tagVector));
   Serial.printf_P(
       PSTR("#MEM_EXT_REFUSED,%lu,bytes=%lu,count=%lu,live=%luKB,blocks=%lu,heap_free=%luKB,"
-           "tag=%u,tag_live=%luKB\n"),
+           "tag=%u,tag_live=%luKB,tags=%s\n"),
       static_cast<unsigned long>(micros()), static_cast<unsigned long>(clamped),
       static_cast<unsigned long>(gCounters.poolRefusedCount),
       static_cast<unsigned long>(gCounters.liveBytes / 1024),
       static_cast<unsigned long>(gCounters.liveBlocks),
       static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024),
       static_cast<unsigned>(gCurrentTag),
-      static_cast<unsigned long>(gCounters.tagBytes[gCurrentTag] / 1024));
+      static_cast<unsigned long>(gCounters.tagBytes[gCurrentTag] / 1024), tagVector);
 }
 
 FLASHMEM void reset() {
