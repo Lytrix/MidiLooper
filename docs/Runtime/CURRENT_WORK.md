@@ -5,6 +5,43 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 CORRECTION: the record arm is NOT refusal-tolerant - it aborts too.**
+The failure-semantics entry above left the record boundary ungated on the reasoning that
+"the record completed through 834 refusals". That conflated two different things: those
+834 refusals are chunk retries **during** recording, which really are tolerated; the
+**record arm** has its own fatal allocation. Measured twice
+([`attrib-tags-02`](../../captures/attrib-tags-02/session_20260917_105922.log),
+[`attrib-tags-03`](../../captures/attrib-tags-03/session_20260917_110118.log)):
+
+```
+[15.341] Button press: Loop 1 (short)
+[15.361] Loop 1: Start Recording
+#MEM_EXT_REFUSED,15616436,bytes=81920,count=1,live=8095KB,blocks=637,heap_free=56KB
+[InternalHeapFirstAllocator] FATAL: both internal heap and external memory are exhausted!
+```
+
+Note `count=1`: this is the **first** refusal of the run, so a gate consulting
+"has the pool refused recently?" would not have denied it, and the heap (56 KB) is above
+the 32 KB floor — an 80 KB request simply exceeds what remains. A record-arm gate would
+need a margin derived from that measured 80 KB, which is a real trade-off (it would deny
+records on healthy devices with under ~112 KB of heap), so it needs the user's decision
+rather than a unilateral threshold.
+
+**Record-arm reservation attributed: capture staging dominates.** The record arm's first
+action is `LoopPlaybackRuntime::prewarmViews()`, whose first line is
+`prewarmCaptureStaging()`; the boot tag measurement puts `prewarmCaptureStaging` at
+**1334 KB retained** (`tags=[84, 0, 1334, 0, 8, 0, 0]`, tag 3), matching the +1240 KB the
+arm adds. The class profile from
+[`attrib-record-start-03`](../../captures/attrib-record-start-03/session_20260917_103705.log)
+splits consistently: **+17 blocks of ~47 KB (792 KB)** is `FixedPlaybackEventStorage`'s
+raw arrays (2048-entry `events`/`order`/`phases`/`mergeScratch`/`retained`, ~57 KB each,
+across the live and frozen roles), and **+82 blocks of ~4.8 KB (390 KB)** is the companion
+and lookup prewarms in the same function (`frozenCompanionPairLookup`,
+`frozenCompanionSpans`, `frozenCompanionReconstruction`, `frozenCompanionApply`,
+`frozenCompanionBridgeMap`, `frozenCompanionPasses`, `canonicalPassInputs`, each sized to
+`kEventsPerView`/`kRecordsPerBridge`). The first part is measured; the second is inference
+from the prewarm list plus the class shape, not yet individually tagged.
+
 **2026-09-17 narrowing the 80 KB `InternalHeapFirstAllocator` request (offline).** The
 fatal transport-start request is 81920 bytes. Element sizes were computed on the host:
 `CausingTargetPair` 8, `ConstrainedNoteGeometry` 20, `PendingNoteChange` 20, `NoteId` /
