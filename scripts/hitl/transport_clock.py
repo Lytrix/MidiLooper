@@ -180,6 +180,7 @@ def stream_pattern_for_bars(
     wall_clock_tempo_bpm: Optional[float] = None,
     stream_start_monotonic: Optional[float] = None,
     device_bar_probe: Optional[Callable[[], Optional[int]]] = None,
+    device_bar_baseline: Optional[int] = None,
 ) -> tuple[int, int, int, dict[str, float]]:
     """Send note pattern until target bar count from MIDI clock or wall-clock proxy.
 
@@ -243,10 +244,13 @@ def stream_pattern_for_bars(
     if wall_clock_tempo_bpm is not None and wall_clock_tempo_bpm > 0:
         seconds_per_clock = (60.0 / wall_clock_tempo_bpm) / 24.0
 
-    device_bar_start: Optional[int] = None
+    # The baseline must be the device bar index at the *phase* start (the record or overdub
+    # boundary), not at the note stream's first clock: the device begins counting before the
+    # host streams, so a stream-relative baseline makes an 8-bar request record 10 bars.
+    device_bar_start: Optional[int] = device_bar_baseline
     device_bar_latest: Optional[int] = None
     device_bar_relative_bars = 0
-    if device_bar_probe is not None:
+    if device_bar_start is None and device_bar_probe is not None:
         device_bar_start = device_bar_probe()
 
     while phase_clock_count < target_clocks:
