@@ -1,5 +1,23 @@
 # Immediate overdub reentry with continuous queued preparation
 
+> **Reconciliation 2026-09-17 (depth-2 decision; DEC-067/DEC-072).** This plan's
+> central mechanism stands, but its **capacity envelope and queue wording are
+> superseded** wherever they imply N simultaneously sealed intervals
+> (`jobs=[A,B]`, "stop B, start C", "A/B/C/D", "multiple punch cycles can
+> accumulate", "third/fourth punch"). The approved capacity is **directional and
+> bounded: one finalizing predecessor plus one independently recording successor
+> (depth 2 in capture lifecycle, not depth 2 in deferred-stop queueing)**. The
+> A/B/C/D walkthrough and the finite-capacity counterexample below are retained as
+> the **N-job deferred queueing follow-up**, which needs additional admission roles
+> and its own capacity decision before it can be claimed. Read every "queue"
+> reference below as "the fixed-capacity descriptor ring whose head is the one
+> admitted deferred job". Authoritative statements:
+> [`CONTINUOUS-CAPTURE-OWNERSHIP.md`](CONTINUOUS-CAPTURE-OWNERSHIP.md) § *Declared
+> capacity (directional)*, `design.md` § capacity, and the spec delta
+> `midi-boundary-runtime-maintenance` § *Live capture is independent from deferred
+> stop jobs*.
+
+
 Implementation handoff, 2026-09-16. User-authorized direction; implementation is pending.
 Active change: `resumable-midi-boundary-playback-maintenance`, primarily task 2.3,
 with affected 2.4–2.5, 3.3–3.4 and task-5 validation obligations. This plan does
@@ -10,8 +28,11 @@ not close those tasks or replace normative OpenSpec requirements.
 When DROID Button A punches out, the current capture interval closes at that
 command's musical position. Playback keeps advancing. A subsequent Button A
 punch-in MUST start accepting notes at that command's musical position even
-while earlier intervals are normalizing, resolving companions, publishing,
-recycling history or handing off snapshots. Multiple punch cycles can accumulate.
+while the predecessor interval is normalizing, resolving companions, publishing,
+recycling history or handing off snapshots. One finalizing predecessor may coexist
+with one independently recording successor (the depth-2 envelope); a second
+simultaneously frozen interval is refused explicitly and N-job queueing is the
+documented follow-up.
 
 “Immediate” means the existing interpreted Button A action callback, after the
 existing press/debounce/double-tap classification. Do not change that classifier
@@ -189,14 +210,21 @@ predicates cannot express that distinction. Do not globally invert the old query
 
 Expected sequence with worker service deliberately paused:
 
-1. Start A: live=A, jobs=[]; notes append to A.
-2. Stop A: live=none, jobs=[A]; A enters its stopping lifecycle.
-3. Start B immediately: live=B, jobs=[A]; notes append to B now.
-4. Stop B, start C: live=C, jobs=[A,B].
-5. Service A to completion: live=C, jobs=[B]; selected source advances safely to A.
-6. Service B: resolve against A's resulting version; live=C remains unaffected.
-7. Stop C: live=none; C's job follows B and eventually publishes through the same
-   pipeline. No command or note needs to be replayed at this point.
+**Superseded walkthrough (N-job deferred queueing, not this change's capacity).**
+Retained for the follow-up; the approved envelope only performs steps 1-3 and then
+services A before B may freeze:
+
+1. Start A: live=A, ring empty; notes append to A.
+2. Stop A: live=none, ring=[A]; A enters its stopping lifecycle and owns the
+   deferred/frozen role.
+3. Start B immediately: live=B, ring=[A]; notes append to B now. B is admitted
+   because START needs only the live role.
+   -> B's own stop is REFUSED here (deferred/frozen role occupied) and creates no
+      descriptor; B stays live and unchanged.
+4. Service A to completion: live=B, ring=[]; the deferred/frozen role is free.
+5. Stop B: admitted; B enters the stopping lifecycle and transfers exactly once.
+   -> the earlier "stop B, start C; live=C, jobs=[A,B]" and "service B against A"
+      steps belong to the N-job follow-up, not to this envelope.
 
 Each job must retain its own stop tick. Never substitute the later drain tick.
 The latest active interval and its backlog can coexist; a single Track enum cannot
@@ -225,12 +253,15 @@ producer to a pre-reserved tail chunk before the next append. A boundary inside 
 partially filled chunk must be covered by a test; copying or detaching an
 unbounded chunk list at the Button A edge is not an acceptable substitute.
 
-**Finite-capacity counterexample:** With service paused, repeated A/B/C/D punches
-eventually exhaust physical interval descriptors, staging rows, chunk reservations
-or NoteOff/bridge/stop credits. The design must declare the supported simultaneous
-live-plus-queued count and expose explicit admission failure for a new interval.
-It must never discard an accepted event, alias the third job to an earlier staging
-buffer, or report capacity exhaustion as ordinary finalization latency.
+**Finite-capacity counterexample (restated for the depth-2 envelope):** With
+service paused, a predecessor holds the deferred/frozen role. The design must
+expose explicit, non-destructive admission failure at the *directional* boundary --
+a successor STOP while that role is occupied is refused with no descriptor, and a
+START/NoteOn that cannot obtain the live role is denied before mutation. It must
+never discard an accepted event, alias two intervals' staging, or report capacity
+exhaustion as ordinary finalization latency. The original repeated-A/B/C/D form is
+the **N-job deferred queueing follow-up** (see the banner above): it is not a
+requirement of this envelope.
 
 **Causal-source counterexample:** B starts while A is unpublished. If B stores
 only raw events and later resolves against whichever canonical source is current,
@@ -250,10 +281,11 @@ cycle-qualified cursor; otherwise the implementation can duplicate, omit or dela
 an event even though canonical pass contents are correct.
 
 The decisive reproducer therefore runs through the real Button A handler,
-TrackManager route and Track input path with worker service paused: A/B/C (and a
-fourth interval where capacity permits), distinct notes, same-pitch held notes,
-old-job completion while the newest interval is live, and one-grain-at-a-time
-resume. It must assert interval membership, state/preview ownership, predecessor
+TrackManager route and Track input path with worker service paused: A sealed,
+B admitted live, B's stop refused while A owns the deferred/frozen role, A's
+completion while B stays live, B's own stop admitted afterwards, distinct notes,
+same-pitch held notes, and one-grain-at-a-time resume. (The A/B/C-and-possibly-
+fourth form is the N-job follow-up.) It must assert interval membership, state/preview ownership, predecessor
 ordering, transport-stop precedence, bridge immutability and zero allocation at
 each punch boundary.
 

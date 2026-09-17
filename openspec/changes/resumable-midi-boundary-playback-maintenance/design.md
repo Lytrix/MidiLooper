@@ -996,11 +996,12 @@ The replacement is a scoped fixed interval queue, not a generic scheduler:
 TrackCaptureIngress
     live interval -> accepts input and owns live pending notes/preview
           |
-          +-- punch-out: immutable CaptureIntervalJob enters FIFO
-                         (range, reservations, stop receipts, predecessor id)
+          +-- punch-out: immutable CaptureIntervalJob enters the descriptor ring
+                         (range, reservations, stop receipts, predecessor id);
+                         admission needs the free deferred/frozen role (DEC-067)
 
 LoopPlaybackRuntime
-    one shared worker graph -> borrows only FIFO head scratch
+    one shared worker graph -> borrows only the ring-head descriptor's scratch
     current published view -> remains immutable during every job build
 ```
 
@@ -1026,28 +1027,44 @@ PLAYING, clear live pending notes, close the newer session or replace its
 preview. If no live interval exists, `OVERDUB_STOPPING` may describe the head
 job's visible lifecycle; otherwise the live overdub state wins.
 
-Queue capacity is explicit and finite. The implementation must declare the
-supported simultaneous live-plus-queued interval count and prewarm metadata,
-staging, chunk reservations and closure credits. When full, a new punch-in or
-NoteOn is denied before mutation, with a distinct capacity diagnostic. Already
-accepted intervals remain recoverable. A third rapid punch must not reuse the
-first job's staging; a fourth is either admitted by the declared capacity or
-explicitly rejected.
+Capacity is explicit, finite and **directional** (DEC-067; revised 2026-09-17
+after the depth-2 decision): **START requires the free live role, STOP requires the
+free deferred/frozen role.** The declared envelope is one finalizing predecessor
+plus one independently recording successor -- depth 2 in capture lifecycle, *not*
+depth 2 in deferred-stop queueing. The descriptor ring is fixed-capacity, but the
+physical frozen/finalization capacity is one interval: there is one
+`captureStopOwner` and one frozen staging role. The implementation must therefore
+declare prewarm metadata, staging, chunk reservations and closure credits for that
+envelope. A stop that would need an occupied deferred/frozen role is refused with
+its own explicit, non-destructive outcome and creates no stop descriptor; a start or
+NoteOn that cannot obtain the live role is denied before mutation with a distinct
+capacity diagnostic; already accepted intervals remain recoverable.
 
-The queue head resolves against its stored predecessor id/source identity. A
+**Superseded by that decision:** the earlier A/B/C/D walkthrough in this change
+(`jobs=[A,B]`, "stop B, start C", "three rapid punch cycles", "a third rapid punch /
+a fourth") described N simultaneously sealed jobs. That is not this change's
+capacity and not the shipped behaviour. The original three-deep case survives only
+as the documented **N-job deferred queueing follow-up** in
+[CONTINUOUS-CAPTURE-OWNERSHIP.md](CONTINUOUS-CAPTURE-OWNERSHIP.md) § *Declared
+capacity (directional)* and in `tasks.md` § 2, which needs additional admission
+roles and a per-job drain order before it can be claimed.
+
+The ring head resolves against its stored predecessor id/source identity. A
 successor captures raw accepted input immediately but does not permanently bind
 to the stale canonical source visible at punch-in. Source-dependent companion,
 overlap and bridge work starts only after the predecessor reaches the required
 published or STOPPED recovery version.
 
-Required falsification tests are: service-paused A/B/C reentry through the real
-Button A route; same-pitch held-note overlap; old completion while the newest
-interval is live; a partial-chunk boundary; queue-full admission; source change
-while a predecessor is pending; selected-bridge immutability; and Transport
-Stop between every finalization phase. Every test checks exact interval
-membership, state/preview ownership, causal publication, no replay/omission,
-and zero allocation at punch edges. This amendment does not close task 2.3 or
-any HITL gate until those tests and device evidence pass.
+Required falsification tests are, in the approved envelope: a successor start
+through the real Button A route while a predecessor finalizes (re-scoped from the
+old service-paused A/B/C case); the successor's stop refused while the predecessor
+owns the deferred/frozen role, then admitted after it retires; same-pitch held-note
+overlap; old completion while the newest interval is live; a partial-chunk boundary;
+live-role capacity exhaustion; source change while a predecessor is pending;
+selected-bridge immutability; and Transport Stop between every finalization phase.
+Every test checks exact interval membership, state/preview ownership, causal
+publication, no replay/omission, and zero allocation at punch edges. This amendment
+does not close task 2.3 or any HITL gate until those tests and device evidence pass.
 
 **2026-09-16 continuous preparation across punch-in/out:**
 Canonical preparation now runs during PLAYING as well as OVERDUBBING, using the

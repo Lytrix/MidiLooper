@@ -128,6 +128,13 @@ skipped or rewritten into assertions of the existing bug. They remain in the
 native suite. They do not yet prove queue membership, job cleanup, predecessor
 resolution, stop epochs or audible parity; those require the integration above.
 
+> **Historical (2026-09-16 audit).** The service-paused A/B/C reproducer named here
+> was **re-scoped 2026-09-17** to
+> `test_button_a_successor_stop_denied_until_deferred_role_available` for the
+> depth-2 envelope; the three-deep form is the N-job deferred-queueing follow-up.
+> See § *Declared capacity (directional)* below. The paragraph is kept as the
+> record of the starting state, not as a current requirement.
+
 ## Migration and remaining gates
 
 Next bind one fixed-capacity descriptor ring to the existing owners above,
@@ -1517,6 +1524,62 @@ The original three-deep case is retained as a **documented follow-up capacity
 case** — N-job deferred queueing needs additional admission roles, a per-job drain
 order and its own PSRAM admission measurement — and is not a skipped red test in the
 current suite.
+
+### Permanent continuous-capture invariants (consolidated 2026-09-17)
+
+The capacity decision above settled *how many* intervals may be in flight. The
+following invariants settle *who owns what* while they are, and they are what every
+later reentry task must preserve. They are the durable statement; the sections above
+are the evidence trail that produced them.
+
+1. **Directional, bounded capacity (DEC-067).** START requires the free live role;
+   STOP requires the free deferred/frozen role. One finalizing predecessor plus one
+   independently recording successor. A successor stop against an occupied
+   deferred/frozen role is refused explicitly and non-destructively; a start or
+   NoteOn that cannot obtain the live role is denied before any mutation.
+2. **State-mutation authority is interval-qualified (D6).** A retiring job may
+   commit its own result, release its own resources and clear its own receipts
+   unconditionally, but it may mutate live `Track`/`Loop` capture state (pending
+   notes, preview, capture extent, reservations, track state) only while its
+   interval still identifies the live interval (`job.interval == captureInterval_`
+   and `job.slot == activeLoopIndex`). Otherwise its cleanup is job-local.
+3. **The session-exit receipt belongs to its interval (DEC-068).** Each interval's
+   session-exit tail is captured at its own stop admission (swap, not copy) and
+   released with its own pass id at its own commit; the publisher consumes ready
+   receipts FIFO. A successor opens a fresh session instead of joining the draining
+   one, and a retiring job ends the live session only when it still owns it. No job
+   ever builds a receipt from live session state.
+4. **The staged capture pass belongs to its interval (DEC-072).** A deferred job
+   stages at its own `PrepareTransfer` and immediately takes the receipt
+   (`CaptureStopJob::pendingPass` / `ownsPendingPass`,
+   `Loop::takePendingCapturePass`). `Loop::pendingCapturePass_` is producer-local
+   scratch: a deferred job never depends on its contents after stop admission, every
+   deferred reader resolves the receipt through the job with no fallback, and
+   `beginCapture` may keep clearing it unconditionally. Invariant: at most one owner
+   holds a given staged pass, and two intervals may each hold one concurrently. The
+   prepared companion history binds that receipt by address
+   (`PreparedCompanionHistory::capturePass`) so a successor's capture start can
+   neither destroy nor rebind it.
+5. **The causal predecessor is recorded, not re-resolved (2026-09-16 increment B).**
+   Each job pins the published source it succeeded at admission; ordering
+   preparation resolves live, but the recorded identity decides supersession, and a
+   superseded job publishes `kNoBridge` without regressing the newer root.
+6. **Revision and epoch ownership is explicit (DEC-069, DEC-070).** The live
+   interval's wrap commit may not advance the revision a pending job's frozen source
+   is pinned to (it is deferred until the ring is empty or the interval's own stop
+   consumes it); a transport-stop retarget re-routes a mid-flight job instead of
+   re-labelling it. Shrinking these to "the pending job might re-resolve" is not an
+   option.
+7. **Publication stays atomic and immutable.** No partially built view becomes
+   current; a successor build never mutates the active view; promotion preserves
+   exactly-once audible output; the visible state never retires frozen ownership
+   before the interval that owns it has published.
+8. **Accepted input is never lost and never converted into hidden latency.** An
+   accepted NoteOn reserves its terminal closure, wrap continuation, staging,
+   bridge and stop-finalization credits before capture mutation; a matching Off
+   consumes that reservation. An unreservable NoteOn is rejected before capture and
+   its later unmatched Off bypasses capture mutation. Finalization work length is
+   never itself an admission rejection reason.
 
 ### Reentry-path site inventory (1.1)
 
