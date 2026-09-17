@@ -631,6 +631,34 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   // verification that can no longer hold), and continue at `AtomicTransfer`, which commits the
   // already-staged prepared pass and retires the job through deferred cleanup.
   LoopPlaybackRuntime* retargetRuntime = playbackRuntime.slotIfAllocated(job.slot);
+  // DEC-070 read-only probe: on the retarget edge record which inputs the companion (note-edit)
+  // preparation would find stale -- before and after the command-epoch retarget -- so one device run
+  // decides whether a targeted binding retarget can complete that work (and publish the display
+  // representation, the undo entry and the save) or whether companions must be published outside the
+  // transfer. Read-only: no state is changed by the probe.
+  const auto companionProbe = [&]() -> uint32_t {
+    if (retargetRuntime == nullptr || job.owner == nullptr) return 0;
+    auto* frozenStaging = retargetRuntime->captureStagingIfPrewarmed();
+    uint32_t bits = 0;
+    if (retargetRuntime->canonicalPrefixPhase ==
+        LoopPlaybackRuntime::CanonicalPrefixPhase::Ready) bits |= 1u;
+    if (retargetRuntime->canonicalPassInputs.generation() ==
+        retargetRuntime->canonicalPrefixGeneration) bits |= 2u;
+    if (retargetRuntime->canonicalPassInputs.ready()) bits |= 4u;
+    if (retargetRuntime->canonicalPassInputs.captureAttached()) bits |= 8u;
+    if (retargetRuntime->frozenCaptureCompanions.idle()) bits |= 16u;
+    if (retargetRuntime->frozenCompanionPasses.idle()) bits |= 32u;
+    if (retargetRuntime->frozenCompanionApply.available()) bits |= 64u;
+    if (frozenStaging != nullptr &&
+        retargetRuntime->canonicalPassInputs.frozenSourceCurrent(
+            *frozenStaging, job.admission.transportCommandEpoch)) bits |= 128u;
+    if (retargetRuntime->canonicalTailPhase ==
+        LoopPlaybackRuntime::CanonicalTailPhase::Idle) bits |= 256u;
+    if (job.owner->preparedCompanionCaptureVerified(retargetRuntime->canonicalPassInputs,
+                                                   job.admission.intervalToken())) bits |= 512u;
+    return bits;
+  };
+  const uint32_t probeBefore = companionProbe();
   if (job.owner != nullptr && job.admission.destination == PendingStopDestination::Stopped &&
       job.admission.phase >= PendingStopPhase::CanonicalTail &&
       job.admission.phase <= PendingStopPhase::CompanionBridge) {
@@ -652,13 +680,20 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
     if (!companionsVerified) {
       job.owner->discardPreparedCompanionHistory(job.admission.intervalToken());
     }
-    logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retarget: companions=%s phase=%u",
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Overdub stop retarget: companions=%s phase=%u probe_before=%lu",
                companionsVerified ? "published" : "raw_only",
-               static_cast<unsigned>(job.admission.phase));
+               static_cast<unsigned>(job.admission.phase),
+               static_cast<unsigned long>(probeBefore));
     job.admission.setPhase(PendingStopPhase::AtomicTransfer);
   }
   if (retargetRuntime != nullptr) {
     (void)TrackPreparedStopCommit::retargetStoppedRecovery(*retargetRuntime, job.admission);
+  }
+  if (job.owner != nullptr) {
+    logger.log(CAT_TRACK, LOG_INFO, "Overdub stop retarget: probe_after=%lu phase=%u",
+               static_cast<unsigned long>(companionProbe()),
+               static_cast<unsigned>(job.admission.phase));
   }
 }
 
