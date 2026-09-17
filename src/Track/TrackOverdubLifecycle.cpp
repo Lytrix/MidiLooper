@@ -260,6 +260,13 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_handoff_full");
     return false;
   }
+  // This admission just proved that no job owns the slot's finalization resources, so the
+  // frozen order/rewrite builders still carry the *retired* interval's binding. Clear it
+  // here: this interval's CanonicalOrder phase binds them for its own frozen rows, and
+  // `beginFrozenCaptureOrder` denies a build whose binding does not match the role
+  // (a successor job stalled in CanonicalOrder until this moved out of `startOverdubbing`).
+  runtime->discardFrozenCaptureOrder();
+  runtime->discardFrozenCaptureCanonicalOrder();
   CaptureAdmissionStaging& staging = *views;
   const size_t openReservations = staging.openReservationCount();
   const size_t finalFrozenCount = staging.storage.eventCount + openReservations;
@@ -1108,14 +1115,9 @@ void Track::startOverdubbing(uint32_t currentTick) {
   if (!MemoryMonitor::admitOperationMemory(MemoryMonitor::OperationKind::OverdubStart, 0)) {
     return;
   }
-  // These two builders are per slot, not per interval: a pending predecessor is
-  // mid order/rewrite on them. Only clear them when no job owns them.
-  const bool stopOwnerLive =
-      runtime->captureStopOwner != nullptr && runtime->captureStopOwner->pending;
-  if (!hasPendingDeferredOverdubStop() && !stopOwnerLive) {
-    runtime->discardFrozenCaptureOrder();
-    runtime->discardFrozenCaptureCanonicalOrder();
-  }
+  // The frozen order/rewrite builders are the STOP's scratch, not the start's: a pending
+  // predecessor is mid order/rewrite on them, and this admission must not touch them
+  // (DEC-067). `beginDeferredOverdubStop` resets them once no job owns them.
   viewSet->reset();
   viewSet->captureGeneration = playbackGeneration;
   playingMidiDrainAfterOverdubStop_ = false;

@@ -117,6 +117,11 @@ struct TrackCaptureStopTestAccess {
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
+  static uint64_t interval(const Track& track) { return track.captureInterval_; }
+  static uint64_t jobInterval(Track& track) { return job(track).interval; }
+  static uint8_t jobPhase(Track& track) {
+    return static_cast<uint8_t>(job(track).admission.phase);
+  }
   static auto generation(const Track& track) { return track.playbackGeneration; }
   static size_t liveReservations(Track& track) {
     auto* staging = runtime(track).liveCaptureStagingIfPrewarmed();
@@ -452,6 +457,141 @@ void test_track_reentry_does_not_depend_on_manager_guard() {
       "A's completion must not transition B's live interval");
   TEST_ASSERT_EQUAL(stateBeforeCompletion, track.getState());
   TEST_ASSERT_EQUAL(rowsBeforeCompletion, track.getActiveLoop().capture.store.size());
+}
+
+/// Task 5.1(d): after A retires, B's own stop is admitted and that same interval transfers
+/// exactly once — one job descriptor for B's interval identity, B's accepted rows moved out of
+/// the live store in order, and exactly one committed pass whose content is those rows.
+///
+/// Scope note (open finding, CURRENT_WORK): the assertions stop at the committed pass, because
+/// a retiring predecessor's cleanup closes the *live successor's* overdub session
+/// (`Loop::closeOverdubSession`), so B's own `DeferredCleanup` can never hand off its session
+/// exit and B's descriptor leaks. That is a session-ownership defect under reentry, documented
+/// separately; the transfer and the committed content below are independent of it.
+void test_successor_same_interval_transfers_exactly_once() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // A: deferred stop owning the finalization resources.
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // B: live interval with distinctive input while A pends.
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 193, 216);
+  inputNote(64, 217, 240);
+  const uint64_t bInterval = TrackCaptureStopTestAccess::interval(track);
+  TEST_ASSERT_EQUAL_UINT64(2u, bInterval);
+  MidiEventVec bAccepted;
+  for (size_t row = 0; row < loop.capture.store.size(); ++row) {
+    bAccepted.push_back(loop.capture.store.at(row));
+  }
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(bAccepted.size()));
+  // B's stop while A owns those resources: refused, nothing consumed, same interval.
+  clockManager.assignCurrentTickSilently(240);
+  track.stopOverdubbing();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT64(bInterval, TrackCaptureStopTestAccess::interval(track));
+  TEST_ASSERT_EQUAL_UINT32(4, static_cast<uint32_t>(loop.capture.store.size()));
+  // A retires.
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  const size_t passesBeforeB = loop.passes.overdubPasses.size();
+  // The same interval's stop is admitted, once, and it belongs to B's interval identity.
+  clockManager.assignCurrentTickSilently(288);
+  track.stopOverdubbing();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_UINT64(bInterval, TrackCaptureStopTestAccess::jobInterval(track));
+  // The transfer moved B's accepted rows out of the live store, in order.
+  const SessionMidiEventVec sealed = sealedRangeRows(TrackCaptureStopTestAccess::rawRange(track));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bAccepted.size()),
+                           static_cast<uint32_t>(loop.capture.store.size() + sealed.size()));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bAccepted.size()),
+                           static_cast<uint32_t>(sealed.size()));
+  for (size_t row = 0; row < bAccepted.size() && row < sealed.size(); ++row) {
+    TEST_ASSERT_EQUAL(bAccepted[row].tick, sealed[row].tick);
+    TEST_ASSERT_EQUAL(bAccepted[row].data.noteData.note, sealed[row].data.noteData.note);
+  }
+  // Exactly one committed pass, whose content is the accepted B input, once.
+  for (unsigned turn = 0;
+       turn < 20000 && loop.passes.overdubPasses.size() == passesBeforeB; ++turn) {
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_EQUAL_UINT32(passesBeforeB + 1,
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  SessionMidiEventVec committed;
+  LoopEventStore::appendChunkRefEvents(loop.passes.overdubPasses.back().committedChunkIds, committed);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bAccepted.size()),
+                           static_cast<uint32_t>(committed.size()));
+  for (size_t row = 0; row < bAccepted.size(); ++row) {
+    TEST_ASSERT_EQUAL(bAccepted[row].tick, committed[row].tick);
+    TEST_ASSERT_EQUAL(bAccepted[row].data.noteData.note, committed[row].data.noteData.note);
+  }
+}
+
+/// Task 5.1(e): a start request while B is still live is not admitted as a second live
+/// interval — same interval identity, no staging reset, accepted state untouched — and a start
+/// becomes admissible again after B's interval transfers (the live role is free from B's
+/// admission; the transfer releases nothing the live role needs).
+void test_start_request_while_successor_is_live_is_not_a_second_interval() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  clockManager.assignCurrentTickSilently(192);
+  track.startOverdubbing(192);
+  inputNote(62, 193, 216);
+  const uint64_t bInterval = TrackCaptureStopTestAccess::interval(track);
+  const size_t rowsBefore = loop.capture.store.size();
+  const size_t notesBefore = TrackCaptureStopTestAccess::liveNotes(track).size();
+  const size_t reservationsBefore = TrackCaptureStopTestAccess::liveReservations(track);
+  const uint32_t stagingGenerationBefore =
+      TrackCaptureStopTestAccess::runtime(track).liveCaptureStagingIfPrewarmed()->captureGeneration;
+  // The request is refused as a *new* interval: same identity, no reset, nothing consumed.
+  clockManager.assignCurrentTickSilently(220);
+  track.startOverdubbing(220);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT64_MESSAGE(bInterval, TrackCaptureStopTestAccess::interval(track),
+                                   "a start while live must not create a second interval");
+  TEST_ASSERT_EQUAL_UINT32(stagingGenerationBefore,
+                           TrackCaptureStopTestAccess::runtime(track)
+                               .liveCaptureStagingIfPrewarmed()->captureGeneration);
+  TEST_ASSERT_EQUAL(rowsBefore, loop.capture.store.size());
+  TEST_ASSERT_EQUAL(notesBefore, TrackCaptureStopTestAccess::liveNotes(track).size());
+  TEST_ASSERT_EQUAL(reservationsBefore, TrackCaptureStopTestAccess::liveReservations(track));
+  // Input after the request continues the same interval.
+  inputNote(65, 221, 240);
+  TEST_ASSERT_EQUAL(rowsBefore + 2, loop.capture.store.size());
+  // A retires, then B's own stop is admitted once (its interval identity is preserved).
+  for (unsigned turn = 0; turn < 10000 && TrackCaptureStopTestAccess::queueSize(track) > 0; ++turn)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  clockManager.assignCurrentTickSilently(288);
+  track.stopOverdubbing();
+  TEST_ASSERT_FALSE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT64(bInterval, TrackCaptureStopTestAccess::jobInterval(track));
+  // A start is admissible again — the live role was freed when B froze into its job — as a
+  // new interval with a clean live store. Its own stop is denied while B's job holds the
+  // finalization resources, which is the same capacity rule one level down.
+  clockManager.assignCurrentTickSilently(336);
+  track.startOverdubbing(336);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_EQUAL_UINT64(bInterval + 1, TrackCaptureStopTestAccess::interval(track));
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(loop.capture.store.size()));
+  clockManager.assignCurrentTickSilently(400);
+  track.stopOverdubbing();
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+                           "a successor stop must wait for the previous job's resources");
 }
 
 /// DEC-067: START is admitted on the live role alone. The device refused successor starts
@@ -1510,6 +1650,8 @@ int main() {
   RUN_TEST(test_record_admission_denied_when_required_prewarm_fails);
   RUN_TEST(test_manager_reentry_with_a_held_same_pitch_note);
   RUN_TEST(test_track_reentry_does_not_depend_on_manager_guard);
+  RUN_TEST(test_successor_same_interval_transfers_exactly_once);
+  RUN_TEST(test_start_request_while_successor_is_live_is_not_a_second_interval);
   RUN_TEST(test_successor_start_is_admitted_while_finalization_resources_are_busy);
   RUN_TEST(test_successor_start_keeps_the_predecessors_frozen_builders);
   RUN_TEST(test_successor_stop_is_denied_when_the_canonical_copy_target_is_busy);
