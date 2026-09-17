@@ -1290,7 +1290,19 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
                                ? "canonical_output"
                                : !loop.hasActiveOverdubTransferAdmission() ? "transfer_admission"
                                                                           : "session_exit_handoff");
-    logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s", busyReason);
+    if (headJob != nullptr && headJob->admission.pending) {
+      logger.log(CAT_TRACK, LOG_INFO,
+                 "Overdub stop refused: %s phase=%u dest=%u closure=%u recycle_owner=%u "
+                 "recycle_started=%u undo_ready=%u",
+                 busyReason, static_cast<unsigned>(headJob->admission.phase),
+                 static_cast<unsigned>(headJob->admission.destination),
+                 static_cast<unsigned>(headJob->admission.remainingClosureGrains),
+                 headJob->admission.historyRecycleOwner != nullptr ? 1u : 0u,
+                 headJob->admission.historyRecycleStarted ? 1u : 0u,
+                 headJob->undoPublicationReady ? 1u : 0u);
+    } else {
+      logger.log(CAT_TRACK, LOG_INFO, "Overdub stop refused: %s", busyReason);
+    }
     return;
   }
   // The admitted path above must leave the MIDI button handler without
