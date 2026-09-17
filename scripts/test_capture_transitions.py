@@ -23,6 +23,7 @@ from hitl.capture_transitions import (
     _serial_has_recording_active,
 )
 from hitl.legacy_record_baseline import (
+    _probe_press_delays,
     _can_skip_clear_before_record,
     _evaluate_clear_precondition,
     _serial_has_clear_aborted,
@@ -202,6 +203,36 @@ class SuccessorReentryProbeOracleTests(unittest.TestCase):
         )
         self.assertFalse(result["probe_requested"])
         self.assertIsNone(result["overlap_ok"])
+
+class SuccessorProbePressScheduleTests(unittest.TestCase):
+    """The probe's two presses are scheduled in their own process (hitl.probe_press).
+
+    `successor-reentry-18` measured +1535 ms against a requested +400 ms because the deferred
+    stop's serial flood starves the harness process, so the presses get delays measured from a
+    go-ahead line instead. These cases pin the device's double-press floor.
+    """
+
+    def test_successor_delay_respects_the_double_press_floor(self) -> None:
+        successor_ms, denial_ms = _probe_press_delays(
+            probe_delay_ms=400, press_ms=120, stop_delay_ms=400
+        )
+        # press_ms + 380 = 500 ms is the floor: below it the device reads a double press.
+        self.assertEqual(500, successor_ms)
+        self.assertEqual(400, denial_ms)
+
+    def test_requested_delay_wins_when_it_clears_the_floor(self) -> None:
+        successor_ms, denial_ms = _probe_press_delays(
+            probe_delay_ms=900, press_ms=120, stop_delay_ms=0
+        )
+        self.assertEqual(900, successor_ms)
+        self.assertEqual(0, denial_ms)
+
+    def test_negative_stop_delay_is_no_denial_press(self) -> None:
+        _, denial_ms = _probe_press_delays(
+            probe_delay_ms=500, press_ms=120, stop_delay_ms=-5
+        )
+        self.assertEqual(0, denial_ms)
+
 
 class CaptureTransitionEvidenceTests(unittest.TestCase):
     def test_armed_detects_human_log(self) -> None:
