@@ -1487,6 +1487,121 @@ void test_differential_harness_detects_a_perturbed_pair() {
       "the harness must detect a perturbed pair");
 }
 
+/// Fixture 2 (owner priority #1) -- an overdub seal admitted into the merged window. This is the
+/// transition that invalidated literal request+hold: `tryAdmitLastOverdubSealIntoMergedEvents`
+/// appends the sealed pass's events and sets `playbackOrderDirty`, so the pair's members are from
+/// different generations until the order is rebuilt. The oracle (full replacement) publishes the
+/// sealed rows; continuing to consume the stale pair loses them. Slice 2's atomic pair publication
+/// is what makes the losing case unreachable; this pins the boundary.
+void test_seal_admitted_into_pair_requires_atomic_replacement() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
+  seedPreparedPair(loop, runtime, committed);
+  DifferentialTrace before;
+  consumePairOverRange(loop, runtime, 0, 192, before);
+
+  // The seal admission: the window gains the sealed pass and the order is now stale.
+  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOn(240, 1, 60, 80));
+  runtime.mergedMidiEvents.mergedEvents.push_back(MidiEvent::NoteOff(288, 1, 60, 0));
+  loop.playbackOrderDirty = true;
+  TEST_ASSERT_TRUE(loop.playbackOrderDirty);
+
+  // Stale pair: consumed without replacement, so the sealed rows cannot reach the output.
+  DifferentialTrace stale;
+  consumePairOverRange(loop, runtime, 192, 384, stale);
+  bool stale_has_sealed = false;
+  for (const DifferentialRow& row : stale.rows) {
+    if (row.note == 60) stale_has_sealed = true;
+  }
+  TEST_ASSERT_FALSE_MESSAGE(stale_has_sealed,
+      "a stale pair cannot emit the newly admitted seal -- this is why replacement is required");
+
+  // Full replacement (the oracle): rebuild the order + reanchor, then consume the same range.
+  const SessionMidiEventVec replacedEvents = runtime.mergedMidiEvents.mergedEvents;
+  seedPreparedPair(loop, runtime, replacedEvents);
+  DifferentialTrace replaced;
+  consumePairOverRange(loop, runtime, 192, 384, replaced);
+  bool replaced_has_sealed = false;
+  for (const DifferentialRow& row : replaced.rows) {
+    if (row.note == 60) replaced_has_sealed = true;
+  }
+  TEST_ASSERT_TRUE_MESSAGE(replaced_has_sealed,
+      "the replacement pair must publish the admitted seal (no accepted audio lost)");
+  TEST_ASSERT_FALSE_MESSAGE(differentialTracesEqual(stale, replaced),
+      "the transition must be observable as a stream difference before slice 2 makes it atomic");
+}
+
+/// Fixture 3 (owner priority #2) -- same-tick NoteOff/NoteOn ordering. The pair's order rebuild
+/// carries the equal-phase Off-before-On key; a prepared pair must preserve it exactly.
+void test_prepared_pair_preserves_same_tick_off_before_on_order() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  // Closing Off and a new On share tick 192.
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(192, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(192, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(336, 1, 55, 0));
+  seedPreparedPair(loop, runtime, committed);
+  DifferentialTrace trace;
+  consumePairOverRange(loop, runtime, 0, 384, trace);
+  size_t off_index = trace.rows.size();
+  size_t on_index = trace.rows.size();
+  for (size_t i = 0; i < trace.rows.size(); ++i) {
+    const DifferentialRow& row = trace.rows[i];
+    if (row.tick != 192) continue;
+    const bool is_off = row.type == static_cast<uint8_t>(midi::NoteOff);
+    const bool is_on = row.type == static_cast<uint8_t>(midi::NoteOn);
+    if (is_off && row.note == 48 && off_index == trace.rows.size()) off_index = i;
+    if (is_on && row.note == 55 && on_index == trace.rows.size()) on_index = i;
+  }
+  TEST_ASSERT_NOT_EQUAL(trace.rows.size(), off_index);
+  TEST_ASSERT_NOT_EQUAL(trace.rows.size(), on_index);
+  TEST_ASSERT_TRUE_MESSAGE(off_index < on_index,
+      "a same-tick NoteOff must precede its NoteOn in the prepared pair");
+}
+
+/// Fixture 4 (owner priority #3) -- the reanchor case. The anchor/cursor seed is part of the
+/// pair's identity: a pair anchored at a mid-loop playhead must not re-emit what is already behind
+/// it, and two pairs anchored differently must not produce the same stream.
+void test_prepared_pair_anchor_is_part_of_its_identity() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  LoopPlaybackRuntime& runtime = TrackCaptureStopTestAccess::runtime(track);
+  SessionMidiEventVec committed;
+  committed.push_back(MidiEvent::NoteOn(0, 1, 48, 100));
+  committed.push_back(MidiEvent::NoteOff(48, 1, 48, 0));
+  committed.push_back(MidiEvent::NoteOn(384, 1, 55, 90));
+  committed.push_back(MidiEvent::NoteOff(432, 1, 55, 0));
+  // P0 playing: the cursor is ahead of tick 0, so nothing before it may be emitted again.
+  seedPreparedPair(loop, runtime, committed);
+  loop.lastTickInLoop = 192;
+  ProjectionContext ctx{};
+  ctx.loopLength = loop.loopLengthTicks;
+  reanchorPlaybackIndex(loop, runtime.mergedMidiEvents.mergedEvents, loop.getPlaybackOrder(), ctx);
+  DifferentialTrace anchored;
+  consumePairOverRange(loop, runtime, 192, 448, anchored);
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(anchored.rows.size()));
+  for (const DifferentialRow& row : anchored.rows) {
+    TEST_ASSERT_TRUE_MESSAGE(row.tick > 192,
+        "a pair anchored at 192 must not re-emit the events behind its anchor");
+  }
+  // A pair anchored at the loop start is a different pair: consumed from tick 0 it also emits
+  // the rows the anchored pair had already passed, so the anchor seed is part of the identity.
+  loop.nextEventIndex = 0;
+  DifferentialTrace fromStart;
+  consumePairOverRange(loop, runtime, 0, 448, fromStart);
+  TEST_ASSERT_TRUE_MESSAGE(fromStart.rows.size() > anchored.rows.size(),
+      "an unanchored pair emits from the loop start; the anchor seed is part of the pair");
+}
+
 /// OpenSpec 2.4 (parent `resumable-midi-boundary-playback-maintenance`): the content-sized
 /// playback-order build is instrumented, so a synchronous fallback on the active clock path
 /// cannot land silently. This native suite has no MIDI-output harness, so the detector is
@@ -2692,6 +2807,9 @@ int main() {
   RUN_TEST(test_superseded_predecessor_retires_without_touching_a_live_successor);
   RUN_TEST(test_prepared_pair_stream_matches_synchronous_oracle_plain_playback);
   RUN_TEST(test_differential_harness_detects_a_perturbed_pair);
+  RUN_TEST(test_seal_admitted_into_pair_requires_atomic_replacement);
+  RUN_TEST(test_prepared_pair_preserves_same_tick_off_before_on_order);
+  RUN_TEST(test_prepared_pair_anchor_is_part_of_its_identity);
   RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
   RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);
