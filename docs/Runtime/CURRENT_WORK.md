@@ -5,6 +5,59 @@
 > reverse-chronological session journal (newest first); read it for evidence, not
 > for scope. `AGENTS.md` step 2 points here.
 
+**2026-09-17 step B audit: the arm reservation is byte-exactly accounted, and the seven
+workers are one concurrent working set - not phase-exclusive scratch.** Full table with
+write/read windows and lifetime classes:
+[ExecutionBounds](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17).
+What the audit established, and the corrections it forced:
+
+- **Device element sizes were measured, not assumed** (device toolchain, env flags):
+  `MidiEvent` **20**, `EditPass` 40, `Pass`/`SealedPass` 8, `Origin` 4, `DisplayNote` 16,
+  `Action` 16, `PlaybackBridgeRecord` 28, `MidiEventVec` 12. Every buffer then reconciles
+  exactly with the measured tags: `canonicalPassInputs` 147,456 B = 144 KB (its eight
+  arrays, not the three the architecture doc still described), `companionPasses` 98,304,
+  `bridgeMap` 69,632, `apply` 67,584, `reconstruction` 65,536, `pairLookup` 10,240,
+  `spans` 2,048 - the 450 KB group; `frozenCaptureCompanions` 81,920 and views+bases
+  358,400 + bridges 368,640 = 727,040, which with the companions is exactly tag 2's 790 KB.
+- **The seven workers are live simultaneously and are NOT stop-only.** `apply::begin` binds
+  `candidate_`, `pair_`, `deletion_`, `spans_`, `reconstruction_`, `overlaps_` at once;
+  `Reconstruct` borrows spans+pair; the overlap walk reads reconstruction's live `notes_`;
+  and the merge reads apply data while writing `companionPasses`' alternate buffers and
+  `canonicalPassInputs.normalizedScratch`. Worse for a "stop working storage" framing:
+  `Track::processDeferredCanonicalPrefix` runs the *same* workers while a track is merely
+  playing or overdubbing (`TrackDeferredMaintenance.cpp:855-877`), so their capacity is
+  required **during RECORDING**, not only from punch-out. The only plausible disjoint pair
+  is `bridgeMap.records_` (68 KB) against the apply group, and its `baseOrigins_`/
+  `prepared_` borrows must survive to bridge compile and can be re-entered via
+  `requiresBridgeRefresh`; even then an arena is sized to the max, not the sum.
+- **Tag-scoping corrections that change the arm arithmetic.** Tag 2 is not
+  "prewarmViews total": the inner prewarms are tagged 10-16, so `prewarmViews` costs
+  **1,240 KB** (790 + 450), and the earlier "~340 KB `viewSet->prewarm()` plus
+  `frozenCaptureCompanions`" was a double-subtraction. Tags 1 (80 KB), 3 (1334 KB) and
+  5 (7 KB) are **boot aggregates** over tracks/enabled slots - not per-arm costs, so the
+  "2.3 MB" and "1.8 MB" arm figures are both withdrawn. The arm increment is ~1.24 MB plus
+  the two 80 KB history vectors on first use.
+- **The two 80 KB history vectors are a permanent rotating pair.** At commit,
+  `publishPreparedCompanionHistory` swaps `preparedCompanionHistory_.rows` into
+  `passes.editPasses`, so both 2048-row `EditPass` vectors stay resident (160 KB) and the
+  pair's capacity becomes canonical history; only the *content* is stop-only.
+- **The earlier `0xE00 == 128 * sizeof(MidiEvent)` attribution was wrong** and is corrected
+  in place here and in `PROJECT_STATE.md`. With `sizeof(MidiEvent) = 20`, `0xE00` does not
+  decode to element 128 of a `MidiEvent` store; the 28-byte stride is
+  `PlaybackBridgeRecord`, and the faulting object is unidentified. The gather-destination
+  guard stays as defence in depth; the reproduced allocator-exhaustion hang is unaffected.
+
+Consequence for step C: a single shared buffer cannot absorb the 450 KB group, so the
+reduction has to come from capacity shaping (2048-row horizons sized from actual content
+with explicit admission denial) and from revisiting whether a full view set (727 KB) must
+be provisioned per armed slot - which is step E's question. Recorded per-buffer lifetimes
+the design must respect: live-ingress capacity (`liveCaptureStaging`, `capture.store`,
+`pendingNoteChanges_`, `overdubPasses`), MIDI-tick service capacity (`canonicalPassInputs`,
+`companionPasses`, `apply`, `reconstruction`, `spans`, `pairLookup`), stop-only capacity
+(`frozenCaptureCompanions`, `bridgeMap`, the history pair), and published/borrowed
+artifacts that cannot be repurposed (views, selected bridge, `bridgeBases`, history rows,
+transfer-horizon rows).
+
 **2026-09-17 step F: the transport-start 81920-byte owner is the deferred record arm, not
 a separate transport path.** Identification only - no firmware change, and no transport
 admission gate is added (the user kept this out of the RC). The chain is: a record request
@@ -197,10 +250,10 @@ tag ids:    1    2    3     4   5   6   7   8   9   10  11  12   13   14   15   
 
 | contributor | measured |
 |---|---|
-| 1 `prewarmCaptureStopJobs` | 80 KB |
-| 2 `prewarmViews` (total, record arm) | **790 KB** |
+| 1 `prewarmCaptureStopJobs` | 80 KB (boot aggregate over 8 tracks) |
+| 2 `prewarmViews` tagged portion | **790 KB** |
 | 3 `prewarmCaptureStaging` (cumulative, mostly boot) | 1334 KB |
-| 5 `prewarmActiveOverdubTransferHorizon` | 7 KB |
+| 5 `prewarmActiveOverdubTransferHorizon` | 7 KB (boot aggregate) |
 | 6 `prewarmPreparedCompanionHistory` | **0 KB - this is the call that aborts** |
 | 10 `frozenCompanionPairLookup` | 10 KB |
 | 11 `frozenCompanionSpans` | 2 KB |
@@ -211,21 +264,44 @@ tag ids:    1    2    3     4   5   6   7   8   9   10  11  12   13   14   15   
 | 16 `canonicalPassInputs` | **144 KB** |
 | 4 `prewarmCanonicalCaptureOutput`, 7 `getPlaybackOrder`, 8 `resetPassTimeline`, 9 `prepareFirstRecordingBar` | 0 KB |
 
+**CORRECTED 2026-09-17 (step B audit, see
+[ExecutionBounds](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17)):
+tag 2 is not "prewarmViews total".** The seven inner prewarms are tagged 10-16, so
+`prewarmViews` costs **1,240 KB** = tag 2's 790 KB + those 450 KB, and the earlier
+sentence calling "~340 KB `viewSet->prewarm()` plus `frozenCaptureCompanions`"
+double-subtracted the 450 KB group. Tag 2's 790 KB is exactly views+bases 350 KB +
+bridges 360 KB + `frozenCaptureCompanions` 80 KB. Tags 1/3/5 are **boot
+aggregates** over tracks or enabled slots (`TrackManager::prewarmPlaybackRuntime`
+prewarms every enabled, non-empty slot with `prepareCapture=false`), so they are
+not per-arm costs: the arm's incremental cost is 790 + 450 + the two 80 KB history
+vectors (once) + 0 for staging/stop-jobs/horizon. Device element sizes were
+measured with the device toolchain (`sizeof(MidiEvent) = 20`, not 28) and every
+buffer reconciles exactly with these tags.
+
 **This corrects the entry above.** Staging does dominate the *boot* footprint (1334 KB,
 and tag 3 barely moves on the arm because that slot's staging was already prewarmed), but
 the arm itself is dominated by **`prewarmViews` at 790 KB**, of which the seven
 companion/lookup prewarms are **450 KB measured** (`canonicalPassInputs` 144,
 `companionPasses` 96, `companionBridgeMap` 68, `companionApply` 66,
-`companionReconstruction` 64, `pairLookup` 10, `spans` 2) and ~340 KB is
-`viewSet->prewarm()` plus `frozenCaptureCompanions.prewarm(kRecordsPerBridge)`. The
+`companionReconstruction` 64, `pairLookup` 10, `spans` 2) and **790 KB** is
+`viewSet->prewarm()` plus `frozenCaptureCompanions.prewarm(kRecordsPerBridge)` (350 KB
+views+bases, 360 KB bridges, 80 KB companion rows). The
 round-4 sentence calling the ~390 KB companion group "inference" is now measurement, and
 its size was under-estimated by ~60 KB.
 
-So arming one record on a slot costs roughly **2.3 MB** end to end: ~1334 KB of staging
-(from boot or the clear ritual) plus 790 KB of view prewarms, 80 KB of stop jobs, 80 KB of
-companion-history rows and 7 KB of transfer horizon. Against the ~1.3 MB a loaded device
-has free at boot, that is the whole reason a device with several slots loaded cannot arm a
-record - and `prewarmPreparedCompanionHistory`'s 80 KB row horizon is simply the last
+**CORRECTED 2026-09-17 (step B): the "~340 KB" in the sentence above was wrong; it is 790
+KB, and the seven prewarms are *not* a subset of it.** See
+[ExecutionBounds](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17).
+
+So arming one record on a slot costs roughly **1.24 MB of new reservation**, not 2.3 MB:
+790 KB tagged `prewarmViews` + the 450 KB seven-prewarm group, plus the two 80 KB
+companion-history vectors the first time, plus 0 for staging, stop jobs and the transfer
+horizon, which are already boot-resident. The 1334 KB figure is the *boot aggregate* of
+both staging roles over every enabled slot (~116 KB per slot), and the 80 KB stop-jobs
+figure is a boot aggregate over eight tracks - neither is a per-arm cost, so adding them
+to the arm double-counts. Against the ~1.3 MB a loaded device has free at boot, the 1.24 MB
+arm is still the whole reason a device with several slots loaded cannot arm a record - and
+`prewarmPreparedCompanionHistory`'s 80 KB row horizon is simply the last
 allocation in that sequence, which is why it is the one that aborts.
 
 **2026-09-17 the 80 KB fatal request is NAMED and measured: the companion-history row
@@ -256,12 +332,15 @@ overran `kRecordsPerBridge`; the arm simply asks for one more 80 KB block when t
 at 8095/8182 KB and the heap at 56 KB, and neither can supply it.
 
 **Record-arm reservation, now attributed step by step** (order is
-`prewarmPlaybackForSlot`): capture stop jobs, then `prewarmViews` (staging measured at
-1334 KB by the boot tag, plus the seven companion/lookup prewarms), then canonical capture
+`prewarmPlaybackForSlot`): capture stop jobs, then `prewarmViews` (staging, plus the seven
+companion/lookup prewarms), then canonical capture
 output, then the overdub-transfer horizon, then the 80 KB companion-history rows, then the
-playback order. That is roughly 1.8 MB of reservation to arm one record on a slot whose
-staging is not yet prewarmed, against the ~1.3 MB a loaded device has free at boot — which
-is the whole reason a device with several slots loaded cannot start a record.
+playback order. **CORRECTED 2026-09-17 (step B):** the "1.8 MB" here is superseded by the
+measured 1.24 MB arm increment (tag 2's 790 KB + the 450 KB seven-prewarm group + the two
+80 KB history vectors), because the staging, stop-job and horizon figures quoted in this
+paragraph are boot aggregates, not arm costs. See
+[ExecutionBounds](../Authority/Architecture/ExecutionBounds.md#record-arm-reservation-buffers-bytes-and-lifetimes-2026-09-17) -
+read that section, not the sums in this entry, for the arm reservation.
 
 **2026-09-17 narrowing the 80 KB `InternalHeapFirstAllocator` request (offline).** The
 fatal transport-start request is 81920 bytes. Element sizes were computed on the host:
@@ -269,17 +348,27 @@ fatal transport-start request is 81920 bytes. Element sizes were computed on the
 `PassId` / `EditPassId` / `MidiEvent*` / 32-bit `size_t` 4, `uint16_t` 2, and
 `EditSessionInteraction` **36** (its `NoteBaseline` is 12 bytes, not 8 — an earlier
 hand-count of 28 was wrong). So possible element counts are 10240 x 8, 4096 x 20,
-20480 x 4 or 40960 x 2, and `EditSessionInteraction` plus `MidiEvent` (28 bytes by the
-snapshot-gather stride in `0x6002C97C`) are **eliminated** because neither divides
-81920.
+20480 x 4 or 40960 x 2, and `EditSessionInteraction` plus `MidiEvent` are **eliminated**
+because neither divides 81920.
+
+**CORRECTED 2026-09-17:** the parenthetical that `MidiEvent` is "28 bytes by the
+snapshot-gather stride in `0x6002C97C`" is wrong - `sizeof(MidiEvent)` is **20 bytes** on
+device, measured by instantiating the headers with the
+`teensy41-capture-serial` toolchain (`midi::MidiType` is `: uint8_t`). `0xE00` is therefore
+*not* `128 * sizeof(MidiEvent)`; the stride that makes `0xE00` exactly 128 elements is 28,
+which is `sizeof(PlaybackBridgeRecord)`. Which object owned that address is not
+established by the stride, so the DACCVIOL attribution built on the old arithmetic (a
+snapshot-gather fill writing element 128 through a lost destination base) is
+**unverified** and is corrected in place below. The landed gather-destination guard stays
+useful regardless; the reproduced allocator-exhaustion hang is unaffected.
 
 No `reserve()` in the tree takes 4096/8192/10240 literally, so the allocation is almost
 certainly a **`std::vector` doubling**, and `81920 = 4096 x 20` is exactly the doubling of
 a **2048-row horizon** (`RuntimePlaybackViewConfig::kRecordsPerBridge = 2048`). The
-obvious 2048-row candidate, `Loop::prewarmPreparedCompanionHistory`, is **not** claimed:
-it guards `passes.editPasses.size() > limit || companionCapacity > limit - size` and
-returns false rather than growing. So the doubling is a *hypothesis with arithmetic
-support*, not a located owner.
+obvious 2048-row candidate, `Loop::prewarmPreparedCompanionHistory`, is not claimed *by
+this entry*: at this point its guard was thought to preclude growth. **SUPERSEDED
+2026-09-17:** it *is* the owner, and the request is the designed row horizon rather than a
+doubling (see the entry above and the step-F entry at the top).
 
 **Device is offline as of this note** (`/dev/cu.usbmodem154944801` not enumerated): the
 transport-start abort left it hung, and it no longer answers the loader handshake — the
@@ -635,11 +724,17 @@ session (`captures/session_20260917_003908.log`) that ended right after
 hang: the SD crashlog for that boot reads `Code was executing from address
 0x6002C97C`, `CFSR: 82 (DACCVIOL)`, `Accessed Address: 0xE00`. Resolved against the
 flashed ELF that is `Loop::tryGatherPublishedSnapshotEventsInWindow`
-(`src/Loop/LoopSnapshotPlayback.cpp`); the faulting instruction is the 28-byte
-`MidiEvent` block store and `0xE00 == 128 * sizeof(MidiEvent)`, i.e. a fill writing
-element 128 through a **null destination base**. `ExternalMemoryFirstAllocator`
-cannot return null (extmem, then `malloc`, then `abort`), so this is a lost vector
-header, not exhaustion. USB stayed enumerated across the reboot and
+(`src/Loop/LoopSnapshotPlayback.cpp`). **CORRECTED 2026-09-17 (step B):** the arithmetic
+that follows is wrong. `sizeof(MidiEvent)` is **20 bytes** on device (measured with the
+device toolchain), so `0xE00` is *not* `128 * sizeof(MidiEvent)`; the stride that makes
+`0xE00` exactly 128 elements is 28, which is `sizeof(PlaybackBridgeRecord)`, so the
+faulting instruction's object is not identified. The original claim - the faulting
+instruction is the 28-byte `MidiEvent` block store and `0xE00 == 128 * sizeof(MidiEvent)`,
+i.e. a fill writing element 128 through a **null destination base** - and the
+"lost vector header, not exhaustion" conclusion drawn from it are **unverified**.
+`ExternalMemoryFirstAllocator` still cannot return null (extmem, then `malloc`, then
+`abort`), which is why the guard diagnostic was worth shipping, but it is now defence in
+depth rather than a fix for an attributed fault. USB stayed enumerated across the reboot and
 `capture_session.py` only reports a reconnect on a read error, so the fault was
 invisible; two independent blind spots (no `#CAP` flush while PLAYING/OVERDUBBING,
 and no CDC liveness check) hid it. Retrieved report and the RAM2 map are in
@@ -679,8 +774,10 @@ the condition any next attempt must reproduce: seed loops on multiple tracks and
 them playing while recording an 8+ bar pass, then overdub immediately after the stop.
 Likely coupling: more simultaneously playing slots means more per-slot playback
 windows, so more concurrent gather targets and more resident snapshot/bridge state —
-the direction that matches `0xE00 == 128 * sizeof(MidiEvent)` needing a destination
-that already held at least 128 rows.
+a direction that **used to be** argued from `0xE00 == 128 * sizeof(MidiEvent)`. That
+arithmetic is withdrawn (see the correction above: `sizeof(MidiEvent) = 20`), so the
+coupling is a hypothesis without a stride argument; it still does not affect the
+reproduction recipe or the allocator-exhaustion finding.
 **2026-09-16 task 2.3 causal predecessor/source identity — increment B (approved
 superseded rule).** The user approved option (A): a deferred stop whose recorded
 causal predecessor is no longer the published root must retire without publishing a

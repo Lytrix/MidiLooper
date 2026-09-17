@@ -1169,3 +1169,94 @@ is still blocked by the existing staging/session owners. Local code/ring admissi
 tests do not close that gate. Dense timing review records a CanonicalOrder grain
 crossing a service deadline and zero correlated emission rows; no audible deadline
 PASS is established. See active FOCUSED-STOP-HITL.md.
+
+### Record-arm reservation: buffers, bytes, and lifetimes (2026-09-17)
+
+Step B of the memory-exhaustion RC. Device element sizes are **measured**, not
+assumed: compiling the headers with the `teensy41-capture-serial` toolchain
+(`arm-none-eabi-g++`, the env's own flags) resolves `sizeof(MidiEvent) = 20`,
+`sizeof(EditPass) = 40`, `RuntimeCompanionPasses::Pass` / `SealedPass` = 8,
+`Origin` = 4, `NoteUtils::DisplayNote` = 16,
+`RuntimeCompanionOverlapWalk::Action` = 16, `PlaybackBridgeRecord` = 28,
+`PlaybackPassEventOrigin` = 4, `MidiEventVec` = 12. Native/host sizes are larger
+(8-byte pointers), so the host numbers must never be used for device bounds.
+Every buffer below then reconciles **exactly** with the measured
+`EXTERNAL_POOL_WRAP` tag record, which is itself evidence the sizes are right.
+
+`LoopPlaybackRuntime::prewarmViews` (`src/Track/TrackPlaybackRuntime.cpp:389-416`)
+is the arm's dominant reservation, and it is **larger than its own tag shows**:
+its inner prewarms each open their own accounting tag, so no single tag is
+"prewarmViews total".
+
+| buffer | element x capacity = device bytes | written | read | required lifetime |
+|---|---|---|---|---|
+| three rolling views + two bridge bases (`include/RuntimePlaybackView.h:352-358`) | `RuntimePlaybackView` x 5 = 350 KB (`RuntimePlaybackView.cpp:184`, `:690`) | view build/fill during playback and stop | playback cursor emission, bridge selection | published/borrowed by playback, so it outlives preparation |
+| two bridges (`FixedPlaybackBridgeStorage`) | 2 x 184,320 = 360 KB (`RuntimePlaybackView.cpp:692`, `:222`) | bridge compile | playback emission of the selected bridge | selected bridge is read until replaced |
+| `frozenCaptureCompanions` | `EditPass` x 2048 = 80 KB (`RuntimeCaptureCompanions.cpp:24-34`) | companion preparation at punch-out | `RuntimeCaptureCompanions::step`, `beginFrozen` guards | stop-only content; capacity needed from arm |
+| `canonicalPassInputs` | 8 arrays = 147,456 B = 144 KB (`RuntimeCanonicalPassInputs.cpp:29-56`) | `beginCurrent`/`step` during **live overdub canonical-prefix service** and during stop | `frozenCompanionPasses` merge, `canonicalPassInputs.matches*`, commit preflight | **capacity needed during RECORDING**, not only at punch-out |
+| `frozenCompanionPasses` | `events[2]` 80 KB + `origins[2]` 16 KB = 96 KB (`RuntimeCompanionPasses.cpp:29-48`) | per-pass apply/merge | view build, bridge map, committed normalization | capacity needed during RECORDING (same live service) |
+| `frozenCompanionBridgeMap` | `records` 56 KB + 3 x `uint16[2048]` 12 KB = 68 KB (`RuntimeCompanionBridgeMap.cpp:65-79`) | `CompanionBridge` phase, after merge completes | bridge compile and `refreshFrozenCompanionBridge` re-entry | from map begin through compile |
+| `frozenCompanionApply` | `FixedPlaybackEventStorage(2048)` 59,392 + `provenance_` 8192 = 66 KB (`RuntimeCompanionApply.cpp:14-21`) | apply step machine (Copy..Permute) | merge (`RuntimeCompanionPasses.cpp:170-184`) | one apply run; capacity from arm |
+| `frozenCompanionReconstruction` | `DisplayNote` x 4096 = 64 KB (`RuntimeCompanionReconstruction.cpp:15-25`) | Reconstruct phase | overlap walk (`RuntimeCompanionApply.cpp:366`) | one apply run |
+| `frozenCompanionPairLookup` | 2048 x (2+2+1) = 10 KB (`RuntimeNotePairLookup.cpp:23-35`) | Find/Pair and reconstruction wrap lookup | Pair step, `SpanWalk` | one apply run |
+| `frozenCompanionSpans` | `flags[2048]` = 2 KB (`RuntimeCompanionSpanWalk.cpp:14-22`) | SpanWalk initialize/scan | reconstruction projection | one apply run |
+| `overlaps` + `deleteLookup` | 0 external bytes (`Action` inline, delete lookup borrows) | - | - | - |
+| `preparedCompanionHistory_.rows` | `EditPass` x 2048 = 80 KB (`LoopPreparedCompanionHistory.cpp:68-74`) | companion preparation at punch-out | `publishPreparedCompanionHistory` swaps it into `passes.editPasses` (`:295-301`) | becomes canonical history, so capacity is permanent |
+| `passes.editPasses` canonical reserve | `EditPass` x 2048 = 80 KB (`LoopPreparedCompanionHistory.cpp:54-62`) | canonical history over time | all canonical consumers | permanent; the two vectors form a rotating pair |
+| `captureStopJobs_` ring | 4 descriptors per track (`include/Track.h:544-549`), ~80 KB over 8 tracks boot aggregate | punch-out admission, retired in grains | deferred stop worker | whole take; an admission limit, not a grain allocation |
+| `captureStagings[2]` | `FixedPlaybackEventStorage(2048)` 59,392 + 128 reservations = 61,952 each (`RuntimePlaybackView.cpp:369-371`) | live ingress during RECORDING; the frozen role from punch-out | transfer/commit and the stop worker | boot-provisioned per enabled slot, both roles |
+| transfer horizon | `overdubPasses` + chunk-id pool + session-exit receipts ~1.1 KB/track (`LoopCapture.cpp:2205-2229`) | live overdub ingress grows `overdubPasses`; pool consumed at seal | pass seal, atomic transfer | **needed during RECORDING** |
+
+Reconciling the measured tag vector (tag order 1,2,3,5,6,10-16):
+`tag 2 = 790 KB` is views+bases 350 KB + bridges 360 KB + `frozenCaptureCompanions`
+80 KB - it does **not** include the seven inner prewarms, which are tagged 10-16
+(450 KB). So `prewarmViews` costs **1,240 KB**, not 790 KB, and the earlier
+"~340 KB is `viewSet->prewarm()` plus `frozenCaptureCompanions`" note
+double-subtracted that 450 KB. `tag 1 = 80 KB` and `tag 5 = 7 KB` are boot
+aggregates over all tracks (`src/TrackManager.cpp:59-80` prewarms every enabled,
+non-empty slot with `prepareCapture=false`); `tag 3 = 1334 KB` is the boot
+aggregate of both staging roles over every enabled slot (~116 KB per slot), not a
+per-arm or per-slot figure. The arm's incremental cost is therefore
+`790 + 450 + (two 80 KB history vectors once) + 0` for staging, stop jobs and
+horizon, which are already boot-resident.
+
+**Termination of the transport-start 81920.** A record request with the clock
+stopped is parked as `pendingRecord` (`TrackManagerCaptureQueue.cpp:53-77`) and
+released by `handlePendingRecordStart` at transport start, which reaches the same
+arm. Playback start never touches the `EditPass` horizon, and boot prewarm
+deliberately uses `prepareCapture=false` - which is why the first record command
+pays the two 80 KB reserves. There is no separate transport-start allocation.
+
+**Exclusivity verdict (the design input for step C).** The apply group cannot be
+merged into one buffer. `RuntimeCompanionApply::begin` binds `candidate_`,
+`pair_`, `deletion_`, `spans_`, `reconstruction_` and `overlaps_` at once
+(`RuntimeCompanionApply.cpp:98-108`); `Reconstruct` borrows `spans_` and `pair_`
+(`:338`); `SpanWalk` borrows `pair_` (`RuntimeCompanionSpanWalk.h:20`); the
+overlap walk reads reconstruction's live `notes_` output (`:366`); and the merge
+reads `apply_->data()` while writing `frozenCompanionPasses`' alternate buffers
+*and* `canonicalPassInputs.normalizedScratch`
+(`RuntimeCompanionPasses.cpp:170-184`). All of them are live inside one run, and
+the same workers are additionally used by live canonical-prefix service while
+overdubbing (`TrackDeferredMaintenance.cpp:855-877`), so their capacity is
+required during RECORDING, not only from punch-out. The only plausible disjoint
+pair is `frozenCompanionBridgeMap.records_` (68 KB) against the apply group: the
+map is built in the `CompanionBridge` phase after the merge completes and apply is
+released. The counterexample is that `frozenCompanionBridgeMap.begin` stores
+`prepared_`/`baseOrigins_`/`base_` borrows that must stay valid through compile
+(`TrackPlaybackRuntime.cpp:1099-1112`, `:1185`) and can be re-entered through
+`requiresBridgeRefresh` (`TrackOverdubLifecycle.cpp:847-849`); and 68 KB > 66 KB,
+so even then the arena is sized to the maximum, not the sum. Reducing this
+working set therefore has to come from capacity shaping or from not provisioning
+a full view set per armed slot - not from aliasing the workers.
+
+Lifetime classes, which the step-C design must respect: (a) live-ingress capacity
+required for the whole take - `liveCaptureStaging`, `Loop::capture.store`,
+`pendingNoteChanges_`, `overdubPasses`; (b) capacity required from arm because a
+MIDI-tick service consumes it while overdubbing - `canonicalPassInputs`,
+`frozenCompanionPasses`, `frozenCompanionApply`, `reconstruction`, `spans`,
+`pairLookup`; (c) stop-only content whose capacity must already exist at arm -
+`frozenCaptureCompanions`, `bridgeMap`, the two 80 KB history vectors; (d)
+published/borrowed artifacts that cannot be repurposed even after preparation -
+the views, the selected bridge, `bridgeBases`, `preparedCompanionHistory_.rows`
+(becomes canonical history) and the transfer-horizon rows (become committed chunk
+refs).
