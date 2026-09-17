@@ -398,15 +398,22 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews() {
       viewSet->liveCaptureStaging().storage.eventCount ||
       viewSet->liveCaptureStaging().openReservationCount()))
     return false; // Upgrading must never reset accepted staging state.
-  return viewSet->prewarm() &&
-         frozenCaptureCompanions.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge) &&
-         frozenCompanionPairLookup.prewarm(RuntimePlaybackViewConfig::kEventsPerView) &&
-         frozenCompanionSpans.prewarm(RuntimePlaybackViewConfig::kEventsPerView) &&
-         frozenCompanionReconstruction.prewarm(2 * RuntimePlaybackViewConfig::kEventsPerView) &&
-         frozenCompanionApply.prewarm(RuntimePlaybackViewConfig::kEventsPerView) &&
-         frozenCompanionBridgeMap.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge) &&
-         frozenCompanionPasses.prewarm(RuntimePlaybackViewConfig::kEventsPerView) &&
-         canonicalPassInputs.prewarm(RuntimePlaybackViewConfig::kEventsPerView);
+  if (!viewSet->prewarm()) return false;
+  if (!frozenCaptureCompanions.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge)) return false;
+#define RUNTIME_PREWARM_TAGGED(resultName, tag, expr) \
+  ExternalPoolAccounting::beginTag(tag);              \
+  const bool resultName = (expr);                     \
+  ExternalPoolAccounting::endTag();                   \
+  if (!resultName) return false;
+  RUNTIME_PREWARM_TAGGED(prewarmPairLookupOk, ExternalPoolAccounting::TagCompanionPairLookup, frozenCompanionPairLookup.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
+  RUNTIME_PREWARM_TAGGED(prewarmSpansOk, ExternalPoolAccounting::TagCompanionSpans, frozenCompanionSpans.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
+  RUNTIME_PREWARM_TAGGED(prewarmReconstructionOk, ExternalPoolAccounting::TagCompanionReconstruction, frozenCompanionReconstruction.prewarm(2 * RuntimePlaybackViewConfig::kEventsPerView))
+  RUNTIME_PREWARM_TAGGED(prewarmApplyOk, ExternalPoolAccounting::TagCompanionApply, frozenCompanionApply.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
+  RUNTIME_PREWARM_TAGGED(prewarmBridgeMapOk, ExternalPoolAccounting::TagCompanionBridgeMap, frozenCompanionBridgeMap.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge))
+  RUNTIME_PREWARM_TAGGED(prewarmPassesOk, ExternalPoolAccounting::TagCompanionPasses, frozenCompanionPasses.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
+  RUNTIME_PREWARM_TAGGED(prewarmCanonicalInputsOk, ExternalPoolAccounting::TagCanonicalPassInputs, canonicalPassInputs.prewarm(RuntimePlaybackViewConfig::kEventsPerView))
+#undef RUNTIME_PREWARM_TAGGED
+  return true;
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedOracleView(

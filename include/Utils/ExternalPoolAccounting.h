@@ -69,7 +69,7 @@ struct Counters {
   uint32_t liveBlocksByClass[kSizeClassCount] = {};
 
   /// Size classes plus bracket tags for attribution.
-  static constexpr size_t kTagCount = 10;
+  static constexpr size_t kTagCount = 18;
   /// Net bytes attributed to each bracket tag (see `beginTag`). Exact: the tag is
   /// stored per shadow entry, so a free decrements the tag that allocated it
   /// whatever scope is active at free time. Slot 0 is untagged.
@@ -91,7 +91,18 @@ enum Tag : uint8_t {
   TagPlaybackOrder = 7,
   TagResetPassTimeline = 8,
   TagPrepareFirstBar = 9,
+  TagCompanionPairLookup = 10,
+  TagCompanionSpans = 11,
+  TagCompanionReconstruction = 12,
+  TagCompanionApply = 13,
+  TagCompanionBridgeMap = 14,
+  TagCompanionPasses = 15,
+  TagCanonicalPassInputs = 16,
 };
+
+/// Every tag's retained KB, for a refusal line that must survive the process dying.
+void formatTagVector(char* out, size_t outLen);
+
 
 /// Size-class index for `bytes` (0..kSizeClassCount-1).
 constexpr size_t sizeClassFor(size_t bytes) {
