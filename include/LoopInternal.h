@@ -46,8 +46,12 @@ LOOP_INTERNAL_MEM bool canHeapAdmitEditPass(const EditPass& row);
 
 LOOP_INTERNAL_MEM const char* sealOutcomeLabel(SealOutcome outcome);
 
-LOOP_INTERNAL_MEM size_t stopPathChunkRefCount(const Loop& loop);
+/// OpenSpec 5.12 / D8: `ownerPass` is the interval's job-owned staged receipt when a deferred
+/// job holds one; nullptr means "the Loop's own producer-local pending pass".
+LOOP_INTERNAL_MEM size_t stopPathChunkRefCount(const Loop& loop,
+                                               const PendingCapturePass* ownerPass = nullptr);
 
-LOOP_INTERNAL_MEM size_t stopPathEventCount(const Loop& loop);
+LOOP_INTERNAL_MEM size_t stopPathEventCount(const Loop& loop,
+                                            const PendingCapturePass* ownerPass = nullptr);
 
 LOOP_INTERNAL_MEM uint32_t traceMicros();

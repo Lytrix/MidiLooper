@@ -167,6 +167,11 @@ struct Loop {
     const RuntimeCaptureCompanions* source = nullptr;
     const CaptureAdmissionStaging* capture = nullptr;
     const RuntimeCanonicalPassInputs* captureInputs = nullptr;
+    /// OpenSpec 5.12 / D8: the staged pass this preparation verifies its capture chunks
+    /// against. Bound by address at `beginPreparedCompanionHistory`, so a deferred job's
+    /// receipt survives a successor's capture start, and a successor's own staging cannot be
+    /// confused with a predecessor's. Null when the preparation carries no frozen capture.
+    PendingCapturePass* capturePass = nullptr;
     uint64_t captureInputsGeneration = 0;
     const uint16_t* captureChunks = nullptr;
     size_t captureChunkCount = 0, captureChunk = 0, captureEvent = 0, comparedEvents = 0;
@@ -622,10 +627,18 @@ struct Loop {
   /// `owner` is the admitted stop job that will consume this preparation (the
   /// live session path passes nullptr); it is the identity every accessor below
   /// requires while the receipt is live.
+  /// `capturePass` (OpenSpec 5.12 / D8) is the staged pass the preparation verifies against.
+  /// A deferred job passes its own job-owned receipt (`&job.pendingPass`) and never the Loop
+  /// producer slot, which a successor interval may own. The default nullptr means "this caller
+  /// names no receipt" -- the live producer path and fixtures -- and the Loop's own staged pass is
+  /// then bound, the only receipt that exists there. When `captureInputs` is non-null the resolved
+  /// pass must carry a valid id and chunks, so a deferred job that owns nothing is denied instead
+  /// of silently binding a successor's receipt.
   bool beginPreparedCompanionHistory(const RuntimeCaptureCompanions& rows,
                                      const CaptureAdmissionStaging& capture,
                                      const RuntimeCanonicalPassInputs* captureInputs = nullptr,
-                                     uint64_t owner = 0);
+                                     uint64_t owner = 0,
+                                     PendingCapturePass* capturePass = nullptr);
   /// One unit is row metadata, a payload/snapshot item, an unused tail row,
   /// or one staged-capture event/chunk-boundary comparison.
   bool stepPreparedCompanionHistory(size_t quantum, uint64_t owner = 0);
@@ -644,9 +657,13 @@ struct Loop {
   /// or STOPPED prewarm/discard. Reuse consumes the initially reserved row horizon.
   bool commitPreparedCompanionHistoryAtomic(uint64_t owner = 0);
   /// Joint canonical preflight. Audible source/epoch/ledger checks belong to Track.
-  bool canCommitPreparedCaptureAndCompanions(uint64_t owner = 0) const;
+  /// `pass` (OpenSpec 5.12 / D8) is the interval's staged receipt; a deferred job passes its
+  /// job-owned pass, and nullptr means "resolve it from this preparation / the live producer slot".
+  bool canCommitPreparedCaptureAndCompanions(uint64_t owner = 0,
+                                             const PendingCapturePass* pass = nullptr) const;
   bool commitPreparedCaptureAndCompanionsAtomic(PreparedCapturePassTransfer& transferred,
-                                               uint64_t owner = 0);
+                                               uint64_t owner = 0,
+                                               PendingCapturePass* pass = nullptr);
   const EditPassIdList* preparedCompanionHistoryIds(uint64_t owner = 0) const;
   /// Caller has consumed the ID receipt. Recycling ends that receipt's lifetime.
   /// No active allocation/free; returns to Prewarmed within the remaining horizon.
@@ -1075,6 +1092,14 @@ struct Loop {
   bool preparePendingCapturePassTransfer();
   /// True when the pending pass can change canonical ownership without growing pass storage.
   bool canTransferPendingCapturePassWithoutAllocation() const;
+  /// OpenSpec 5.12 / D8: capacity preflight and transfer for a *specified* staged pass, so an
+  /// interval can commit its own job-owned receipt without the Loop producer slot carrying it.
+  bool canTransferCapturePassWithoutAllocation(const PendingCapturePass& pass) const;
+  /// Move an already sealed pass into canonical ownership without scanning events or allocating.
+  /// `transferred` receives the pass identity and seal metadata; chunk refs move directly
+  /// into the canonical pass, and `pass` is consumed. Callers remain responsible for deferred
+  /// cache/UI cleanup.
+  bool transferCapturePass(PendingCapturePass& pass, PreparedCapturePassTransfer& transferred);
   /// Move an already sealed pass into canonical ownership without scanning events or allocating.
   /// `transferred` receives the pass identity and seal metadata; chunk refs move directly
   /// into the canonical pass. Callers remain responsible for deferred cache/UI cleanup.
@@ -1084,6 +1109,9 @@ struct Loop {
   /// deliberately does not publish derived content, persist, build a bridge,
   /// or perform display/source cleanup.
   bool commitPreparedCapturePassAtomic(PreparedCapturePassTransfer& transferred);
+  /// Same handoff for a specified interval-owned pass (OpenSpec 5.12 / D8).
+  bool commitPreparedCapturePassAtomic(PreparedCapturePassTransfer& transferred,
+                                       PendingCapturePass& pass);
   /// Atomic completion after `transferPreparedCapturePass()`: retire the
   /// mutable capture ownership and invalidate derived identities only. It
   /// deliberately does not retain display rows, build views, persist, or run

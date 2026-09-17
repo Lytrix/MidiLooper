@@ -1,5 +1,27 @@
 # Project state (execution context)
 
+**2026-09-17 interval-owned staged capture pass (DEC-072; OpenSpec 5.12 / D8 landed and
+device-verified).** The 5.5 `CompanionHistory` blocker was one `Loop` scalar
+(`pendingCapturePass_`) serving two capture intervals: a deferred predecessor staged its pass at
+`PrepareTransfer`, a successor's `beginCapture` discarded it unconditionally, the predecessor's
+`beginPreparedCompanionHistory` was refused forever by its own precondition, and its job held
+`captureStopOwner` and the frozen role for the rest of the session. Guarding the discard only
+preserved the successor's `AlreadyPending` collision, so ownership moved instead: the job stages into
+the Loop slot and immediately takes the receipt into `CaptureStopJob::pendingPass` in the same
+non-yielding grain, the companion history binds that receipt by address, and the job's
+`AtomicTransfer` consumes it directly through `Loop::transferCapturePass`; every deferred reader
+(undo identity, bridge-refresh, companion verification, stop telemetry/accounting) resolves the
+receipt through the job with no fallback. `beginCapture` keeps its unconditional producer-local
+clear. Evidence: `ONLY_COMPANION=1 pio test -e native -f test_continuous_capture` green (the former
+red reproducer), `REENTRY_RED=1` 57/57, full native 2,221 / 1 skipped / 0 failures, RAM1 locals
+6,400 (the ring constructor had to become FLASH-resident: `CaptureStopJob` now owns a
+`PendingCapturePass`, and the implicit aggregate constructor cost one 32 KB FlexRAM bank in ITCM);
+device [`captures/successor-ownership-06`](../captures/successor-ownership-06/session_20260917_230432.log)
+managed HITL `base`, `Result: PASS`, `overlap=True denied_stop=True retirement_ok=true` (A retires
+inside B's live interval; B then stages and transfers its own pass). The host probe oracle now also
+accepts the current `Overdub stop refused: stop_job_pending` denial wording. OpenSpec 5.5 remains
+open for its own parameterized checkpoint coverage and gate promotion.
+
 **2026-09-17 transport-stop retarget re-route (DEC-070).** The post-HITL stuck state machine was a
 deferred stop job admitted for PLAYING, retargeted to Stopped and left on the PLAYING phase path; its
 companion work is bound to the transport epoch the stop invalidates, so it parked in

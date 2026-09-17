@@ -59,6 +59,14 @@ constexpr size_t kUndoCollectionReserveRows = 64;
 
 }  // namespace
 
+TRACK_COLD_MEM Track::CaptureStopJobs::CaptureStopJobs() {
+  // OpenSpec 5.12 / D8: the ring carries `PendingCapturePass` receipts, so this constructor is
+  // non-trivial. Keep it in FLASH -- as an implicit aggregate constructor it was emitted into
+  // ITCM and pushed RAM1 across a 32 KB FlexRAM bank (locals 6,400 -> -26,368).
+  // Every member has an initializer or a non-trivial default constructor, so this body leaves the
+  // same state the previous value-initialized aggregate had.
+}
+
 TRACK_COLD_MEM void Track::CaptureStopJobsDeleter::operator()(CaptureStopJobs* jobs) const {
   if (!jobs) return;
   jobs->~CaptureStopJobs();
@@ -115,6 +123,16 @@ TRACK_COLD_MEM Track::CaptureStopJob* Track::captureStopJobHead() {
 TRACK_COLD_MEM const Track::CaptureStopJob* Track::captureStopJobHead() const {
   if (!captureStopJobs_ || captureStopJobs_->count == 0) return nullptr;
   return &captureStopJobs_->entries[captureStopJobs_->head];
+}
+
+TRACK_COLD_MEM PendingCapturePass* Track::ownedPendingCapturePass() {
+  CaptureStopJob* head = captureStopJobHead();
+  return (head != nullptr && head->ownsPendingPass) ? &head->pendingPass : nullptr;
+}
+
+TRACK_COLD_MEM const PendingCapturePass* Track::ownedPendingCapturePass() const {
+  const CaptureStopJob* head = captureStopJobHead();
+  return (head != nullptr && head->ownsPendingPass) ? &head->pendingPass : nullptr;
 }
 
 TRACK_COLD_MEM Track::CaptureStopJob* Track::captureStopJobTail() {
@@ -200,14 +218,19 @@ TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
         set ? set->lifecycle.retained : 255u);
     const auto& loop = getActiveLoop();
     const auto& work = loop.preparedCompanionHistory_;
-    Serial.printf("#STOP_HISTORY,phase=%u,storage=%llu,current=%llu,history=%u,current_history=%u,rows=%u,prewarmed=%u,pass=%u,chunks=%u\r\n",
+    const PendingCapturePass* jobPass = ownedPendingCapturePass();
+    const bool hasStagedPass = jobPass != nullptr || loop.hasPendingCapturePass();
+    const size_t stagedChunks = jobPass != nullptr ? jobPass->committedChunkIds.size()
+                                                   : loop.pendingCapturePass_.committedChunkIds.size();
+    const PassId stagedPassId = jobPass != nullptr ? jobPass->id : loop.pendingCapturePass_.id;
+    Serial.printf("#STOP_HISTORY,phase=%u,storage=%llu,current=%llu,history=%u,current_history=%u,rows=%u,prewarmed=%u,pass=%u,pass_id=%u,chunks=%u\r\n",
         static_cast<unsigned>(work.phase),
         static_cast<unsigned long long>(work.storageGeneration),
         static_cast<unsigned long long>(loop.canonicalStorageGeneration),
         static_cast<unsigned>(work.historyCount), static_cast<unsigned>(loop.passes.editPasses.size()),
         static_cast<unsigned>(runtime->frozenCaptureCompanions.size()),
         loop.preparedCompanionHistoryPrewarmed(runtime->frozenCaptureCompanions.size()),
-        loop.hasPendingCapturePass(), static_cast<unsigned>(loop.pendingCapturePass_.committedChunkIds.size()));
+        hasStagedPass, static_cast<unsigned>(stagedPassId), static_cast<unsigned>(stagedChunks));
   }
 }
 #endif
@@ -215,8 +238,9 @@ TRACK_COLD_MEM void Track::printStoppedServiceStatusForHitl() {
 TRACK_COLD_MEM bool Track::commitPreparedOverdubStopBridge(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred) {
-  return TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred);
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass) {
+  return TrackPreparedStopCommit::commit(loop, runtime, stop, generation, cursor, transferred,
+                                        pendingPass);
 }
 
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination destination,
@@ -571,9 +595,13 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop&
                                                       PendingStopAdmission& stop) {
   if (!job.undoCollectionStarted) {
     job.undoCollectionStarted = true;
+    // OpenSpec 5.12 / D8: this interval's final pass identity comes from the job-owned receipt
+    // while it lives in the job; the Loop producer slot may already belong to a successor.
+    const PassId finalPassId = job.ownsPendingPass ? job.pendingPass.id
+                                                   : loop.pendingCapturePass().id;
     job.undoCollectable = loop.beginCollectOverdubStopUndoPasses(
         job.undoCollection, job.undoPassIds, job.undoCompanionIds,
-        loop.pendingCapturePass().id, true, job.admission.intervalToken());
+        finalPassId, true, job.admission.intervalToken());
     (void)stop.consumeUndoCollectionGrain();
     if (!job.undoCollectable) {
       // No prepared session identities to record for this interval.
@@ -869,6 +897,16 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     if (staged != SealOutcome::Ok && staged != SealOutcome::SkippedEmpty) {
       return false;
     }
+    // OpenSpec 5.12 / D8: take ownership of the pass in the same non-yielding grain that staged
+    // it. The Loop pending slot is only this job's transient construction point; from here the
+    // receipt lives in the job, so a successor interval's `beginCapture` cannot discard it and
+    // this job's terminal transfer never has to reacquire the (possibly successor-owned) slot.
+    if (staged == SealOutcome::Ok) {
+      if (!loop.takePendingCapturePass(job.pendingPass)) {
+        return false;  // Cannot happen: the staging call just proved a pass exists.
+      }
+      job.ownsPendingPass = true;
+    }
     // A zero-event stop has no canonical tail or companion bridge. Keep the
     // existing bounded transfer path for that case; populated captures use
     // the prepared joint handoff below.
@@ -908,8 +946,14 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
                                                                 staging, runtime->canonicalPassInputs,
                                                                 job.admission.intervalToken());
       if (!canStep) {
+        // OpenSpec 5.12 / D8: name this interval's own staged receipt unconditionally. The Loop
+        // producer slot may already belong to a successor, and passing `&job.pendingPass` even when
+        // the job owns nothing lets `beginPreparedCompanionHistory` deny explicitly instead of
+        // silently binding a successor's receipt.
         if (!loop.beginPreparedCompanionHistory(runtime->frozenCaptureCompanions,
-                                                 staging, &runtime->canonicalPassInputs, job.admission.intervalToken())) {
+                                                 staging, &runtime->canonicalPassInputs,
+                                                 job.admission.intervalToken(),
+                                                 &job.pendingPass)) {
           return false;
         }
         return false; // Setup is its own admitted owner turn.
@@ -981,12 +1025,15 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
                          "causal_base_superseded");
       PreparedCapturePassTransfer supersededTransfer{};
       TrackUndoPublication* supersededUndo = protectedUndo();
+      // OpenSpec 5.12 / D8: the undo identity is this interval's own job-owned receipt.
+      const PassId jobFinalPassId = job.ownsPendingPass ? job.pendingPass.id
+                                                        : loop.pendingCapturePass().id;
       const bool supersededPublishable = job.undoPublicationReady && supersededUndo != nullptr &&
-          supersededUndo->canPublish(getGlobalUndoStack(), loop.loopId,
-                                     loop.pendingCapturePass().id);
+          supersededUndo->canPublish(getGlobalUndoStack(), loop.loopId, jobFinalPassId);
       if (!TrackPreparedStopCommit::commitSupersededCausalBase(
               loop, stop, supersededTransfer,
-              supersededPublishable ? supersededUndo : nullptr))
+              supersededPublishable ? supersededUndo : nullptr,
+              job.ownsPendingPass ? &job.pendingPass : nullptr))
         return false;
       // The unpublished companion preparation returns to its prewarmed horizon
       // here, so the next interval never needs a STOPPED-only re-prewarm.
@@ -997,8 +1044,9 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     }
     const auto anchor = runtime->currentCycleCursor(
         loop.lastTickInLoop == UINT32_MAX ? phaseTick : loop.lastTickInLoop, targetSource.sourceGeneration);
+    PendingCapturePass* jobPass = job.ownsPendingPass ? &job.pendingPass : nullptr;
     if (TrackPreparedStopCommit::requiresBridgeRefresh(
-            loop, *runtime, stop, anchor)) {
+            loop, *runtime, stop, anchor, jobPass)) {
       stop.setPhase(PendingStopPhase::CompanionBridge);
       return false;
     }
@@ -1006,19 +1054,21 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
     TrackUndoPublication* undo = protectedUndo();
     // The caller must prove publishability before entering the undo path; a
     // Ready-but-unpublishable transaction is restored by the drain instead.
+    const PassId jobFinalPassId = jobPass != nullptr ? jobPass->id
+                                                     : loop.pendingCapturePass().id;
     const bool publishable = job.undoPublicationReady && undo != nullptr &&
-        undo->canPublish(getGlobalUndoStack(), loop.loopId, loop.pendingCapturePass().id);
+        undo->canPublish(getGlobalUndoStack(), loop.loopId, jobFinalPassId);
     if (publishable) {
       (void)TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
           loop, *runtime, stop, playbackGeneration, anchor, transferred,
-          getGlobalUndoStack(), *undo);
+          getGlobalUndoStack(), *undo, jobPass);
     } else {
       if (job.undoPublicationReady) {
         SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX,
                            job.undoPublicationReady, undo != nullptr, "undo_not_publishable");
       }
       (void)TrackPreparedStopCommit::advanceAtomicTransfer(
-          loop, *runtime, stop, playbackGeneration, anchor, transferred);
+          loop, *runtime, stop, playbackGeneration, anchor, transferred, jobPass);
     }
     return false;
   }
@@ -1090,6 +1140,14 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   job.causalBase = {};
   job.causalBaseSnapshot = {};
   job.causalBaseRecorded = false;
+  // OpenSpec 5.12 / D8: end this interval's staged-pass ownership. The terminal transfer already
+  // consumed the receipt on every committing route; release anything a skipped route left so a
+  // job can never retire holding chunk references the pool cannot reclaim.
+  if (job.ownsPendingPass) {
+    LoopEventStore::releaseChunkRefs(job.pendingPass.committedChunkIds);
+  }
+  job.pendingPass = PendingCapturePass{};
+  job.ownsPendingPass = false;
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;

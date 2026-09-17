@@ -130,14 +130,31 @@ struct TrackCaptureStopTestAccess {
   static uint8_t jobPhase(Track& track) {
     return static_cast<uint8_t>(job(track).admission.phase);
   }
-  /// Identity of the loop's staged capture pass (`kInvalidPassId` when none is staged).
+  /// Identity of the interval's staged capture pass (`kInvalidPassId` when none is staged).
   /// OpenSpec 5.12 / D8 asserts on this instead of on row counts, so accidental shared-container
-  /// reuse is caught even when the rows happen to come out right.
+  /// reuse is caught even when the rows happen to come out right. The receipt is the *job-owned*
+  /// pass while a deferred job holds one (D8 moved it out of the shared Loop slot); otherwise the
+  /// live producer slot.
   static PassId stagedPassId(Track& track) {
+    const auto* job = track.captureStopJobHead();
+    if (job != nullptr && job->ownsPendingPass) return job->pendingPass.id;
     const Loop& loop = track.getActiveLoop();
     return loop.hasPendingCapturePass() ? loop.pendingCapturePass().id : kInvalidPassId;
   }
-  static bool hasStagedPass(Track& track) { return track.getActiveLoop().hasPendingCapturePass(); }
+  static bool hasStagedPass(Track& track) {
+    const auto* job = track.captureStopJobHead();
+    if (job != nullptr && job->ownsPendingPass) return true;
+    return track.getActiveLoop().hasPendingCapturePass();
+  }
+  /// The head job's owned staged pass, or nullptr when it owns none (OpenSpec 5.12 / D8).
+  static auto* jobPass(Track& track) {
+    auto* job = track.captureStopJobHead();
+    return (job != nullptr && job->ownsPendingPass) ? &job->pendingPass : nullptr;
+  }
+  static auto* loopPass(Track& track) {
+    Loop& loop = track.getActiveLoop();
+    return loop.hasPendingCapturePass() ? &loop.pendingCapturePass_ : nullptr;
+  }
   static auto generation(const Track& track) { return track.playbackGeneration; }
   static size_t liveReservations(Track& track) {
     auto* staging = runtime(track).liveCaptureStagingIfPrewarmed();
@@ -1143,14 +1160,11 @@ void test_superseded_predecessor_retires_without_touching_a_live_successor() {
 /// accepts a distinctive row, and the predecessor is then resumed to completion. Both intervals
 /// are verified at every checkpoint: the successor keeps its accepted input and stays the live
 /// interval, and the predecessor retires exactly once with its own job-local cleanup.
-/// Open finding (2026-09-17): the `CompanionHistory` checkpoint is red. Pausing the predecessor
-/// there and starting a successor leaves the predecessor's companion work with
-/// `preparedCompanionHistoryCanStep == false` while its work phase cycles Prewarmed<->Committed, so
-/// `beginPreparedCompanionHistory` never re-admits it and the job never retires -- it holds
-/// `captureStopOwner` and the frozen role for the rest of the session (the same resource wedge the
-/// device showed as `Overdub stop refused: stop_job_pending phase=7`). The canonical-order and
-/// atomic-transfer checkpoints pass, so this is a narrow successor-start-versus-companion-
-/// preparation conflict, not a general mid-grain dependency.
+/// OpenSpec 5.12 / D8 resolved the `CompanionHistory` checkpoint that used to be red here: the
+/// predecessor's staged pass is now interval-owned, so the successor's capture start cannot
+/// discard it and the companion preparation re-admits against the job's own receipt. 5.5 owns
+/// promoting this case into the default gate as part of its parameterized coverage; until then
+/// `REENTRY_RED=1` (or `ONLY_COMPANION=1`) runs it.
 void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpointName) {
   Track& track = preparePlayingTrack();
   Loop& loop = track.getActiveLoop();
@@ -1196,12 +1210,9 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
   // Resume the predecessor: it must retire without disturbing the live successor.
   for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
     (void)TrackCaptureStopTestAccess::step(track);
-  // Open finding (2026-09-17, this checkpoint): pausing the predecessor in `CompanionHistory`
-  // and then starting a successor leaves the predecessor's companion work with
-  // `preparedCompanionHistoryCanStep == false` while its phase cycles Prewarmed<->Committed, so
-  // `beginPreparedCompanionHistory` never re-admits it and the job never retires -- it holds
-  // `captureStopOwner` and the frozen role. Asserting the required outcome makes this checkpoint
-  // the red reproducer for the successor-start-vs-companion-preparation conflict.
+  // OpenSpec 5.12 / D8 retired this checkpoint's open finding. The predecessor's staged pass now
+  // lives in its own job from `PrepareTransfer` onward, so the successor's `beginCapture` no longer
+  // discards it, `beginPreparedCompanionHistory` binds the job-owned receipt, and the job retires.
   TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
       "a predecessor paused at CompanionHistory must still retire after a successor starts");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::captureStopOwnerClear(track), checkpointName);
@@ -1210,6 +1221,122 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
                                    static_cast<uint32_t>(loop.capture.store.size()), checkpointName);
   TEST_ASSERT_EQUAL_MESSAGE(193, loop.capture.store.at(0).tick, checkpointName);
   TEST_ASSERT_EQUAL_MESSAGE(216, loop.capture.store.at(1).tick, checkpointName);
+}
+
+/// OpenSpec 5.12 / D8: a staged capture pass is interval-owned, not loop-shared. This is the
+/// strongest D8 regression because it proves the shared-slot dependency is *gone* rather than
+/// merely deferred in time.
+///
+/// A reaches `CompanionHistory`, so A's pass has been staged and moved into job A while the Loop
+/// pending slot is empty again. B (the live successor) then stages its own pass into that slot --
+/// exactly the staging a successor's `PrepareTransfer` performs. The old shared scalar answered
+/// `AlreadyPending` here, and the "protect the shared pass" attempt could only buy A's survival by
+/// denying B. With D8 both receipts exist concurrently with distinct identities and chunk storage.
+///
+/// Route note: a wrap commit cannot produce this state today because DEC-069 defers the live
+/// interval's wrap commit while the ring is non-empty, so the case is constructed at the same Loop
+/// boundary that owns the collision (`stagePreparedCapturePassFromActiveAdmission`).
+void test_simultaneous_interval_owned_staged_passes() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  // Advance A to the companion checkpoint: its pass exists and is owned by the job.
+  for (unsigned grain = 0; grain < 20000; ++grain) {
+    if (TrackCaptureStopTestAccess::jobPhase(track) >=
+        static_cast<uint8_t>(PendingStopPhase::CompanionHistory)) break;
+    (void)TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT8(static_cast<uint8_t>(PendingStopPhase::CompanionHistory),
+                                     TrackCaptureStopTestAccess::jobPhase(track));
+  const auto* aPass = TrackCaptureStopTestAccess::jobPass(track);
+  TEST_ASSERT_NOT_NULL_MESSAGE(aPass, "job A must own its staged pass from PrepareTransfer onward");
+  const PassId aId = aPass->id;
+  const uint16_t* const aChunkData = aPass->committedChunkIds.data();
+  const size_t aChunkCount = aPass->committedChunkIds.size();
+  const uint8_t aSession = aPass->overdubSessionIndex;
+  TEST_ASSERT_GREATER_THAN_UINT32(0u, static_cast<uint32_t>(aChunkCount));
+  TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::loopPass(track),
+      "the Loop pending slot is empty once job A owns its pass");
+  const size_t aPassCount = loop.passes.overdubPasses.size();
+  const size_t aPassCapacity = loop.passes.overdubPasses.capacity();
+  const void* const aPassRowData = loop.passes.overdubPasses.data();
+  // B starts on the live role and accepts its own distinctive row.
+  clockManager.assignCurrentTickSilently(192);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(62, 193, 216);
+  // B's own `PrepareTransfer` staging: the Loop slot it uses is free *because* A's receipt moved
+  // into the job, which is what makes concurrent ownership possible at all.
+  Capture bCapture;
+  bCapture.phase = CapturePhase::Overdub;
+  TEST_ASSERT_TRUE(bCapture.store.append(MidiEvent::NoteOn(193, 1, 62, 100)));
+  TEST_ASSERT_TRUE(bCapture.store.append(MidiEvent::NoteOff(216, 1, 62, 0)));
+  TEST_ASSERT_EQUAL_MESSAGE(SealOutcome::Ok,
+      loop.stagePreparedCapturePassFromActiveAdmission(bCapture, 240, CommitReason::OverdubStop),
+      "a successor must be able to stage its own pass while a predecessor job owns one");
+  const auto* bPass = TrackCaptureStopTestAccess::loopPass(track);
+  TEST_ASSERT_NOT_NULL(bPass);
+  // Simultaneous ownership with distinct identities, storage and session.
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(aId, bPass->id, "the two intervals must own distinct passes");
+  TEST_ASSERT_TRUE_MESSAGE(bPass->committedChunkIds.data() != aChunkData,
+      "the two intervals must not share one chunk container");
+  if (aSession != kUngroupedOverdubSessionIndex) {
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(aSession, bPass->overdubSessionIndex,
+        "a successor opens its own overdub session");
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(aId, TrackCaptureStopTestAccess::jobPass(track)->id,
+      "B's staging must not rebind A's receipt");
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(aChunkData,
+      TrackCaptureStopTestAccess::jobPass(track)->committedChunkIds.data(),
+      "B's staging must not relocate A's chunk storage");
+  // Resume A. Its terminal transfer consumes A's pass directly -- never the Loop slot -- and does
+  // no allocation: the canonical row vector neither grows nor relocates, and A's chunk storage is
+  // moved by pointer into A's canonical pass.
+  for (unsigned grain = 0; grain < 20000 && track.hasPendingDeferredOverdubStop(); ++grain)
+    (void)TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_NULL_MESSAGE(TrackCaptureStopTestAccess::jobPass(track),
+      "A's ownership is retired with its job");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(aPassCount + 1),
+      static_cast<uint32_t>(loop.passes.overdubPasses.size()),
+      "A's transfer must append exactly one canonical pass");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(aPassCapacity),
+                           static_cast<uint32_t>(loop.passes.overdubPasses.capacity()));
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(aPassRowData, loop.passes.overdubPasses.data(),
+      "A's transfer must not relocate canonical pass storage");
+  TEST_ASSERT_EQUAL(aId, loop.passes.overdubPasses.back().id);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(aChunkData, loop.passes.overdubPasses.back().committedChunkIds.data(),
+      "A's transfer must move its chunk storage, not copy it");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(aChunkCount),
+      static_cast<uint32_t>(loop.passes.overdubPasses.back().committedChunkIds.size()));
+  // B's receipt is exactly where and what it was: A's retirement cannot consume or clear it.
+  const auto* bPassAfter = TrackCaptureStopTestAccess::loopPass(track);
+  TEST_ASSERT_NOT_NULL(bPassAfter);
+  TEST_ASSERT_NOT_EQUAL(aId, bPassAfter->id);
+  TEST_ASSERT_TRUE(loop.hasPendingCapturePass());
+  const PassId bId = bPassAfter->id;
+  const uint16_t* const bChunkData = bPassAfter->committedChunkIds.data();
+  const size_t bChunkCount = bPassAfter->committedChunkIds.size();
+  // B then consumes B exactly once, and its own receipt is the one that moves.
+  PreparedCapturePassTransfer bTransfer{};
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(bTransfer));
+  TEST_ASSERT_EQUAL(bId, bTransfer.id);
+  TEST_ASSERT_FALSE(loop.hasPendingCapturePass());
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(aPassCount + 2),
+                           static_cast<uint32_t>(loop.passes.overdubPasses.size()));
+  TEST_ASSERT_EQUAL(bId, loop.passes.overdubPasses.back().id);
+  TEST_ASSERT_EQUAL_PTR_MESSAGE(bChunkData,
+      loop.passes.overdubPasses.back().committedChunkIds.data(),
+      "B's transfer must move B's chunk storage, not copy A's");
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(bChunkCount),
+      static_cast<uint32_t>(loop.passes.overdubPasses.back().committedChunkIds.size()));
+  TEST_ASSERT_FALSE_MESSAGE(loop.commitPreparedCapturePassAtomic(bTransfer),
+      "a consumed pass cannot be consumed twice");
 }
 
 void test_adversarial_reentry_at_a_canonical_checkpoint() {
@@ -2376,12 +2503,12 @@ int main() {
   RUN_TEST(test_deferred_stop_records_and_pins_its_causal_predecessor_source);
   RUN_TEST(test_superseded_predecessor_retires_without_touching_a_live_successor);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);
-  // OpenSpec 5.5 red reproducer: the `CompanionHistory` checkpoint is a known defect (see that
-  // test's comment and CURRENT_WORK). Keep it out of the default gate so a genuine new failure is
-  // not buried under a known one; run it with
-  // `REENTRY_RED=1 pio test -e native -f test_continuous_capture`.
+  // OpenSpec 5.12 / D8 made the `CompanionHistory` checkpoint green (see that test's comment and
+  // CURRENT_WORK); 5.5 owns promoting it into the default gate, so it stays behind `REENTRY_RED`
+  // here and is the isolated case under `ONLY_COMPANION=1`.
   if (getenv("REENTRY_RED") != nullptr) RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
   RUN_TEST(test_adversarial_reentry_at_the_publication_checkpoint);
+  RUN_TEST(test_simultaneous_interval_owned_staged_passes);
   RUN_TEST(test_stop_job_owns_held_notes_and_closes_original_slot);
   RUN_TEST(test_stop_job_denies_changed_geometry_before_closure_mutation);
   RUN_TEST(test_button_a_successor_stop_denied_until_deferred_role_available);

@@ -41,7 +41,8 @@ TRACK_INTERNAL_MEM bool shouldRestoreCommittedOverlapOnOverdubStop(const Loop& l
 }
 
 TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& loop,
-                                                                    bool includeCaptureBuffer) {
+                                                                    bool includeCaptureBuffer,
+                                                                    const PendingCapturePass* ownerPass) {
   StopPathStorageStats stats{};
   if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active) {
     stats.chunkRefCount += loop.passes.recordPass.committedChunkIds.size();
@@ -54,10 +55,13 @@ TRACK_INTERNAL_MEM StopPathStorageStats collectStopPathStorageStats(const Loop& 
     stats.chunkRefCount += pass.committedChunkIds.size();
     stats.eventCount += LoopEventStore::countEventsInChunkIds(pass.committedChunkIds);
   }
-  if (loop.hasPendingCapturePass()) {
-    const PendingCapturePass& pending = loop.pendingCapturePass();
-    stats.chunkRefCount += pending.committedChunkIds.size();
-    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending.committedChunkIds);
+  // OpenSpec 5.12 / D8: a deferred job's receipt is read from the job, never the Loop slot,
+  // which a successor interval may already own.
+  const PendingCapturePass* pending = ownerPass;
+  if (pending == nullptr && loop.hasPendingCapturePass()) pending = &loop.pendingCapturePass();
+  if (pending != nullptr) {
+    stats.chunkRefCount += pending->committedChunkIds.size();
+    stats.eventCount += LoopEventStore::countEventsInChunkIds(pending->committedChunkIds);
   }
   if (includeCaptureBuffer && loop.captureActive()) {
     stats.eventCount += loop.capture.store.size();
@@ -92,9 +96,10 @@ TRACK_INTERNAL_MEM void logRecordStopStage(const Loop& loop, uint32_t stopStartU
 TRACK_INTERNAL_MEM void logOverdubStopStage(const Loop& loop, uint32_t stopStartUs, const char* stage,
                                            uint32_t stageDurationUs, uint32_t heapBefore,
                                            uint32_t heapAfter, const char* outcome,
-                                           const StopPathStorageStats* cachedStats) {
+                                           const StopPathStorageStats* cachedStats,
+                                           const PendingCapturePass* ownerPass) {
   const StopPathStorageStats stats =
-      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, false);
+      cachedStats ? *cachedStats : collectStopPathStorageStats(loop, false, ownerPass);
   const uint32_t elapsedUs = micros() - stopStartUs;
   SC_ODUB_STOP_STAGE(stage, elapsedUs, stageDurationUs, heapBefore, heapAfter, stats.eventCount,
                      stats.chunkRefCount, outcome);

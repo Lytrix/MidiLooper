@@ -21,16 +21,25 @@ TRACK_COLD_MEM bool denyAtomicTransfer(uint16_t reason) {
   return false;
 }
 
+/// OpenSpec 5.12 / D8: the interval's final pass identity. A deferred job owns its staged receipt
+/// from `PrepareTransfer` onward, so the Loop producer slot may already carry a successor's pass
+/// and must never be consulted for this interval's identity.
+TRACK_COLD_MEM PassId finalPassId(const PendingCapturePass* pendingPass, const Loop& loop) {
+  if (pendingPass != nullptr) return pendingPass->id;
+  return loop.hasPendingCapturePass() ? loop.pendingCapturePass().id : kInvalidPassId;
+}
+
 TRACK_COLD_MEM bool commitPreparedStop(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo) {
+    PreparedCapturePassTransfer& transferred, TrackUndoPublication* undo,
+    PendingCapturePass* pendingPass) {
   const auto* views = runtime.viewSetIfPrewarmed();
   if (!views) return denyAtomicTransfer(1);
   uint16_t denied = !stop.canonicalPreparationQuantum ? 2 : 0;
   denied |= !stop.historyRecycleQuantum ? 4 : 0;
   denied |= !stop.remainingHistoryRecycleGrains ? 8 : 0;
-  denied |= !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken()) ? 16 : 0;
+  denied |= !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken(), pendingPass) ? 16 : 0;
   denied |= !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()) ? 32 : 0;
   denied |= !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(), stop.intervalToken()) ? 64 : 0;
   denied |= !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
@@ -58,7 +67,8 @@ TRACK_COLD_MEM bool commitPreparedStop(
   // This turn cannot interleave MIDI emission or owner mutation. Canonical
   // transfer's fallible checks precede mutation; bridge publication below uses
   // only prepared storage and the lifecycle/source/ledger proof above.
-  if (!loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken())) return false;
+  if (!loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken(), pendingPass))
+    return false;
   if (undo) undo->publishAtCommit();
   runtime.publishPreflightedFullLoopBridge(cursor);
   stop.historyRecycleOwner = &loop;
@@ -72,9 +82,14 @@ TRACK_COLD_MEM bool commitPreparedStop(
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::requiresBridgeRefresh(
     const Loop& loop, const LoopPlaybackRuntime& runtime,
-    const PendingStopAdmission& stop, const EmissionCursor& cursor) {
+    const PendingStopAdmission& stop, const EmissionCursor& cursor,
+    const PendingCapturePass* pendingPass) {
+  // OpenSpec 5.12 / D8: "is a receipt staged for this interval" is answered by the job-owned
+  // pass when the job holds one, never by the Loop slot a successor may own.
+  const bool staged = pendingPass != nullptr ? pendingPass->id != kInvalidPassId
+                                            : loop.hasPendingCapturePass();
   return stop.destination == PendingStopDestination::Playing &&
-      loop.hasPendingCapturePass() &&
+      staged &&
       !runtime.canSelectFrozenCaptureBridge(stop.frozenGeneration,
           stop.transportCommandEpoch, loop.loopLengthTicks, cursor);
 }
@@ -82,17 +97,21 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::requiresBridgeRefresh(
 TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransfer(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred) {
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass) {
   if (stop.phase != PendingStopPhase::AtomicTransfer ||
       !stop.canCommit(stop.transportCommandEpoch, stop.destination)) return false;
-  if (loop.hasPendingCapturePass()) {
+  // OpenSpec 5.12 / D8: the interval's receipt lives in its job from `PrepareTransfer` onward.
+  const bool staged = pendingPass != nullptr ? pendingPass->id != kInvalidPassId
+                                            : loop.hasPendingCapturePass();
+  if (staged) {
     if (stop.destination == PendingStopDestination::Playing)
-      return commit(loop, runtime, stop, generation, cursor, transferred);
+      return commit(loop, runtime, stop, generation, cursor, transferred, pendingPass);
     if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
-      return commitStopped(loop, runtime, stop, generation, transferred);
+      return commitStopped(loop, runtime, stop, generation, transferred, pendingPass);
     // Transport Stop can recover the frozen canonical pass before companion
     // preparation. This route never authorizes an audible PLAYING successor.
-    if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+    if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
+                               : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;
@@ -102,18 +121,23 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
     PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack,
-    TrackUndoPublication& undo) {
+    TrackUndoPublication& undo, PendingCapturePass* pendingPass) {
   if (stop.phase != PendingStopPhase::AtomicTransfer ||
       !stop.canCommit(stop.transportCommandEpoch, stop.destination)) return false;
-  if (loop.hasPendingCapturePass()) {
+  const bool staged = pendingPass != nullptr ? pendingPass->id != kInvalidPassId
+                                            : loop.hasPendingCapturePass();
+  if (staged) {
     if (stop.destination == PendingStopDestination::Playing)
-      return commitWithUndo(loop, runtime, stop, generation, cursor, transferred, stack, undo);
+      return commitWithUndo(loop, runtime, stop, generation, cursor, transferred, stack, undo,
+                            pendingPass);
     if (loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()))
-      return commitStoppedWithUndo(loop, runtime, stop, generation, transferred, stack, undo);
+      return commitStoppedWithUndo(loop, runtime, stop, generation, transferred, stack, undo,
+                                   pendingPass);
     // Transport Stop can recover the frozen canonical pass before companion
     // preparation. This route never authorizes an audible PLAYING successor, and
     // it publishes no protected undo entry.
-    if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+    if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
+                               : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;
@@ -181,7 +205,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::retargetStoppedRecovery(
 static TRACK_COLD_MEM bool commitPreparedStopped(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
-    GlobalUndoStack* stack, TrackUndoPublication* undo) {
+    GlobalUndoStack* stack, TrackUndoPublication* undo, PendingCapturePass* pendingPass) {
   const auto* views = runtime.viewSetIfPrewarmed();
   if (!views || stop.phase != PendingStopPhase::AtomicTransfer ||
       !stop.canCommit(stop.transportCommandEpoch, PendingStopDestination::Stopped) ||
@@ -190,13 +214,15 @@ static TRACK_COLD_MEM bool commitPreparedStopped(
       !runtime.canonicalPassInputs.matchesFrozenCommand(stop.transportCommandEpoch) ||
       !runtime.canonicalPassInputs.matchesCanonicalOwner(loop.passes,
           {loop.playbackRevision, generation, loop.loopLengthTicks, loop.canonicalStorageGeneration}) ||
-      !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken()) ||
+      !loop.canCommitPreparedCaptureAndCompanions(stop.intervalToken(), pendingPass) ||
       !loop.preparedCompanionCaptureVerified(runtime.canonicalPassInputs, stop.intervalToken()) ||
       !loop.preparedCompanionHistoryMatches(runtime.frozenCaptureCompanions, views->frozenCaptureStaging(), stop.intervalToken()) ||
-      (undo && (!stack || !undo->canPublish(*stack, loop.loopId, loop.pendingCapturePass().id)))) return false;
+      (undo && (!stack || !undo->canPublish(*stack, loop.loopId, finalPassId(pendingPass, loop)))))
+    return false;
   const uint32_t revisionDelta = loop.preparedCompanionHistoryIds(stop.intervalToken())->empty() ? 1 : 2;
   if (loop.playbackRevision > UINT32_MAX - revisionDelta ||
-      !loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken())) return false;
+      !loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken(), pendingPass))
+    return false;
   if (undo) undo->publishAtCommit();
   // STOPPED has no audible successor selection. The old PLAYING command and
   // bridge epoch stay invalid; transport silence is owned by Track's stop action.
@@ -209,30 +235,36 @@ static TRACK_COLD_MEM bool commitPreparedStopped(
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStopped(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
-    const uint32_t& generation, PreparedCapturePassTransfer& transferred) {
-  return commitPreparedStopped(loop, runtime, stop, generation, transferred, nullptr, nullptr);
+    const uint32_t& generation, PreparedCapturePassTransfer& transferred,
+    PendingCapturePass* pendingPass) {
+  return commitPreparedStopped(loop, runtime, stop, generation, transferred, nullptr, nullptr,
+                               pendingPass);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitStoppedWithUndo(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, PreparedCapturePassTransfer& transferred,
-    GlobalUndoStack& stack, TrackUndoPublication& undo) {
-  return commitPreparedStopped(loop, runtime, stop, generation, transferred, &stack, &undo);
+    GlobalUndoStack& stack, TrackUndoPublication& undo, PendingCapturePass* pendingPass) {
+  return commitPreparedStopped(loop, runtime, stop, generation, transferred, &stack, &undo,
+                               pendingPass);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitWithUndo(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo) {
-  if (!undo.canPublish(stack, loop.loopId, loop.pendingCapturePass().id)) return false;
-  return commitPreparedStop(loop, runtime, stop, generation, cursor, transferred, &undo);
+    PreparedCapturePassTransfer& transferred, GlobalUndoStack& stack, TrackUndoPublication& undo,
+    PendingCapturePass* pendingPass) {
+  if (!undo.canPublish(stack, loop.loopId, finalPassId(pendingPass, loop))) return false;
+  return commitPreparedStop(loop, runtime, stop, generation, cursor, transferred, &undo,
+                            pendingPass);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commit(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
-    PreparedCapturePassTransfer& transferred) {
-  return commitPreparedStop(loop, runtime, stop, generation, cursor, transferred, nullptr);
+    PreparedCapturePassTransfer& transferred, PendingCapturePass* pendingPass) {
+  return commitPreparedStop(loop, runtime, stop, generation, cursor, transferred, nullptr,
+                            pendingPass);
 }
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::beginHistoryRecycle(
@@ -260,13 +292,16 @@ TRACK_COLD_MEM RuntimePlaybackOrderBuildResult TrackPreparedStopCommit::stepHist
 
 TRACK_COLD_MEM bool TrackPreparedStopCommit::commitSupersededCausalBase(
     Loop& loop, PendingStopAdmission& stop, PreparedCapturePassTransfer& transferred,
-    TrackUndoPublication* undo) {
+    TrackUndoPublication* undo, PendingCapturePass* pendingPass) {
   if (stop.phase != PendingStopPhase::AtomicTransfer) return false;
   // No bridge, no companion publication, no stale PLAYING successor selection.
   // The accepted capture pass is still committed, and a prepared undo entry for
   // it is published in the same turn.
-  if (loop.hasPendingCapturePass()) {
-    if (!loop.commitPreparedCapturePassAtomic(transferred)) return false;
+  const bool staged = pendingPass != nullptr ? pendingPass->id != kInvalidPassId
+                                            : loop.hasPendingCapturePass();
+  if (staged) {
+    if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
+                               : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
     if (undo != nullptr) undo->publishAtCommit();
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
