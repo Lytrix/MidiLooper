@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implementation authorized; six native cases + device retirement proof are the gates |
+| [DEC-068](#dec-068--an-overdub-session-belongs-to-one-capture-interval) | 2026-09-17 | An overdub session belongs to one capture interval; a deferred job carries its own session-exit receipt | Accepted — implemented; six native cases pass, device retirement proof PASS [`successor-reentry-27`](../captures/successor-reentry-27/session_20260917_163416.log) |
 | [DEC-067](#dec-067--finalization-resource-admission-is-stop-directed) | 2026-09-17 | Overdub START admits on the live role; canonical/transfer/session-exit capacity is checked at STOP | Accepted — device START/STOP proof PASS [`successor-reentry-26`](../captures/successor-reentry-26/session_20260917_161119.log) |
 | [DEC-066](#dec-066--per-owner-capacity-derivation-for-the-stop-working-set-under-the-existing-ceilings) | 2026-09-17 | Stop working-set capacity derived per owner under the existing 2,048 ceilings | Accepted — implemented and device-verified |
 | [DEC-065](#dec-065--capture-staging-is-provisioned-by-capture-admission-not-by-boot) | 2026-09-17 | Capture staging is reserved by capture admission (record arm, overdub start), not at boot | Accepted — validated on device |
@@ -86,7 +86,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-068 — An overdub session belongs to one capture interval
 
 **Date:** 2026-09-17
-**Status:** Accepted — implementation authorized by the user; the six native cases and the device retirement proof are the gates.
+**Status:** Accepted — implemented and device-verified (`captures/successor-reentry-27`, first clean `PASS` of the reentry stretch: `overlap_ok`, `denied_stop_ok`, `retirement_ok` all true).
 **Owner:** `Loop` overdub-session state (`openOverdubSession` / `closeOverdubSession` / `overdubSessionPassIds_` / `sessionExitHandedOff_`), the session-exit receipt ring (`SessionExitSnapshotHandoff`), `Track::beginDeferredOverdubStop`, `TrackPreparedStopCommit::completeDeferredCleanup`
 
 **Context:** the task 5.1(d) case (`test_successor_same_interval_transfers_exactly_once`) proved the
