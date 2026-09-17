@@ -1162,10 +1162,16 @@ void test_superseded_predecessor_retires_without_touching_a_live_successor() {
 /// interval, and the predecessor retires exactly once with its own job-local cleanup.
 /// OpenSpec 5.12 / D8 resolved the `CompanionHistory` checkpoint that used to be red here: the
 /// predecessor's staged pass is now interval-owned, so the successor's capture start cannot
-/// discard it and the companion preparation re-admits against the job's own receipt. 5.5 owns
-/// promoting this case into the default gate as part of its parameterized coverage; until then
-/// `REENTRY_RED=1` (or `ONLY_COMPANION=1`) runs it.
-void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpointName) {
+/// discard it and the companion preparation re-admits against the job's own receipt. All
+/// checkpoints now run in the default gate; 5.5's parameterized coverage is complete.
+///
+/// `pauseAtStagedPassOwnership` is the D8 boundary itself: the phase enum is *not* execution order
+/// (`PrepareTransfer` dispatches before `CanonicalTail`), and the grain that enters
+/// `PrepareTransfer` also stages the pass and leaves the phase, so that checkpoint cannot be
+/// expressed as a phase threshold. It is instead "the turn on which the job first owns its staged
+/// pass", which is exactly the state a successor's `beginCapture` used to destroy.
+void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpointName,
+                                   bool pauseAtStagedPassOwnership = false) {
   Track& track = preparePlayingTrack();
   Loop& loop = track.getActiveLoop();
   clockManager.assignCurrentTickSilently(96);
@@ -1175,12 +1181,28 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
   midiButtonActions.handleToggleRecord();
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(), checkpointName);
   // Advance the predecessor's worker to the requested checkpoint and stop turning it there.
-  for (unsigned grain = 0; grain < 20000; ++grain) {
-    if (TrackCaptureStopTestAccess::jobPhase(track) >= checkpointPhase) break;
-    (void)TrackCaptureStopTestAccess::step(track);
+  if (pauseAtStagedPassOwnership) {
+    for (unsigned grain = 0; grain < 20000; ++grain) {
+      if (TrackCaptureStopTestAccess::jobPass(track) != nullptr) break;
+      (void)TrackCaptureStopTestAccess::step(track);
+    }
+    TEST_ASSERT_NOT_NULL_MESSAGE(TrackCaptureStopTestAccess::jobPass(track),
+        "the ownership checkpoint requires the predecessor to own its staged pass");
+    // Staging, taking the receipt and advancing the phase are one non-yielding grain, so the pause
+    // lands on the phase that follows `PrepareTransfer` (`CanonicalTail`: the capture is populated).
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopPhase::CanonicalTail),
+        TrackCaptureStopTestAccess::jobPhase(track),
+        "the ownership checkpoint must pause on the turn the staged pass moved into the job");
+  } else {
+    for (unsigned grain = 0; grain < 20000; ++grain) {
+      if (TrackCaptureStopTestAccess::jobPhase(track) >= checkpointPhase) break;
+      (void)TrackCaptureStopTestAccess::step(track);
+    }
+    // Equality, not a threshold: a checkpoint that silently ran past its phase would not be the
+    // state the fixture claims to exercise.
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(checkpointPhase, TrackCaptureStopTestAccess::jobPhase(track),
+        checkpointName);
   }
-  TEST_ASSERT_GREATER_OR_EQUAL_UINT8_MESSAGE(
-      checkpointPhase, TrackCaptureStopTestAccess::jobPhase(track), checkpointName);
   TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(), checkpointName);
   // OpenSpec 5.12 / D8: once the predecessor has staged its pass (`PrepareTransfer` and later),
   // that pass must survive the successor's capture start with its own identity, because the
@@ -1189,7 +1211,8 @@ void runAdversarialMidGrainReentry(uint8_t checkpointPhase, const char* checkpoi
   // checkpoints never staged a pass (nothing to protect yet), so the assertion is scoped there.
   // The staged pass exists from `PrepareTransfer` through the companion work; at
   // `AtomicTransfer` the job has already consumed it, so there is nothing to protect.
-  const bool passStaged = checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CanonicalTail) ||
+  const bool passStaged = pauseAtStagedPassOwnership ||
+      checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CanonicalTail) ||
       checkpointPhase == static_cast<uint8_t>(PendingStopPhase::CompanionHistory);
   const PassId aStagedBeforeB = TrackCaptureStopTestAccess::stagedPassId(track);
   // The successor starts at the checkpoint, on the live role, and accepts its own row.
@@ -2244,9 +2267,29 @@ void test_adversarial_reentry_at_a_canonical_checkpoint() {
                                 "paused in canonical ordering");
 }
 
+/// 5.5's missing "after the raw-range stage" checkpoint: the predecessor's raw range is sealed and
+/// its canonical order is built, and it is rewriting that order into the canonical copy when the
+/// successor starts. No staged pass exists yet, so this checkpoint proves the successor's capture
+/// start does not disturb the frozen canonical claim either.
+void test_adversarial_reentry_at_a_canonical_rewrite_checkpoint() {
+  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::CanonicalRewrite),
+                                "paused in canonical rewrite");
+}
+
 void test_adversarial_reentry_at_a_companion_checkpoint() {
   runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::CompanionHistory),
                                 "paused in companion history");
+}
+
+/// The D8 ownership boundary as an adversarial pause: the successor starts on the exact turn the
+/// predecessor first owns its staged pass. This is the state a successor's `beginCapture` used to
+/// destroy, and it cannot be named by a phase threshold (see the helper's comment).
+void test_adversarial_reentry_at_the_staged_pass_ownership_checkpoint() {
+  // The nominal phase is the boundary this checkpoint represents; the flag selects the
+  // ownership-based pause, because `PrepareTransfer` is not observable as a resting phase.
+  runAdversarialMidGrainReentry(static_cast<uint8_t>(PendingStopPhase::PrepareTransfer),
+                                "paused on first staged-pass ownership",
+                                /*pauseAtStagedPassOwnership=*/true);
 }
 
 void test_adversarial_reentry_at_the_publication_checkpoint() {
@@ -3369,8 +3412,8 @@ void test_deferred_overdub_stop_completion_queues_stored_verification() {
 
 int main() {
   UNITY_BEGIN();
-  // `ONLY_COMPANION=1` runs just the OpenSpec 5.5 red reproducer, so an investigation trace is not
-  // diluted by every other fixture in this suite.
+  // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
+  // the default gate): it keeps an investigation trace from being diluted by every other fixture.
   if (getenv("ONLY_COMPANION") != nullptr) {
     RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
     return UNITY_END();
@@ -3418,10 +3461,10 @@ int main() {
   RUN_TEST(test_active_transport_playback_order_rebuild_is_instrumented);
   RUN_TEST(test_stopped_oracle_playback_order_build_is_not_a_hot_rebuild);
   RUN_TEST(test_adversarial_reentry_at_a_canonical_checkpoint);
-  // OpenSpec 5.12 / D8 made the `CompanionHistory` checkpoint green (see that test's comment and
-  // CURRENT_WORK); 5.5 owns promoting it into the default gate, so it stays behind `REENTRY_RED`
-  // here and is the isolated case under `ONLY_COMPANION=1`.
-  if (getenv("REENTRY_RED") != nullptr) RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
+  RUN_TEST(test_adversarial_reentry_at_a_canonical_rewrite_checkpoint);
+  // OpenSpec 5.5 promoted the D8-fixed `CompanionHistory` checkpoint into the default gate.
+  RUN_TEST(test_adversarial_reentry_at_a_companion_checkpoint);
+  RUN_TEST(test_adversarial_reentry_at_the_staged_pass_ownership_checkpoint);
   RUN_TEST(test_adversarial_reentry_at_the_publication_checkpoint);
   RUN_TEST(test_simultaneous_interval_owned_staged_passes);
   RUN_TEST(test_stop_job_owns_held_notes_and_closes_original_slot);

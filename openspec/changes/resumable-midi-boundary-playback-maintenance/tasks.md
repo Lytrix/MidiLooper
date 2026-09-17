@@ -39,9 +39,9 @@ which several older passages still described as N simultaneously sealed jobs:
   admission and the non-destructive deferred-role stop denial as scenarios, and N-job queueing is explicitly outside
   the requirement.
 
-Decision order is unchanged: **2.4 next.** The successor
+Decision order for this change: **2.5 next.** The successor
 change `successor-capture-reentry-unguarding` is independent of this list and its own pick-up order is recorded in its
-`tasks.md` (5.5 first).
+`tasks.md` (5.5 is closed; 5.9/5.11 device proof next).
 
 ## 1. Decision and baseline gates
 

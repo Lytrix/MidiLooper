@@ -2741,6 +2741,37 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-17 — successor change task 5.5 CLOSED: the adversarial mid-grain checkpoint set is complete
+and runs in the default gate.** 5.5 was the only remaining host-only item of
+`successor-capture-reentry-unguarding`, the one D8 (DEC-072) directly unblocked, and the one still
+hiding coverage behind `REENTRY_RED=1`. What landed:
+
+- **The missing "after the raw-range stage" checkpoint:** `CanonicalRewrite`
+  (`test_adversarial_reentry_at_a_canonical_rewrite_checkpoint`) — the raw range is sealed and its
+  canonical order is built, the canonical copy is being rewritten, and no staged pass exists yet, so
+  this checkpoint proves a successor's capture start does not disturb the predecessor's frozen
+  canonical claim either.
+- **One checkpoint beyond the named set, because the phase enum is not execution order:**
+  `PrepareTransfer` dispatches before `CanonicalTail`, and the grain that enters `PrepareTransfer` also
+  stages the pass and takes the receipt (`Loop::takePendingCapturePass`), so that state cannot be named
+  by a phase threshold. It is expressed as *the turn the job first owns its staged pass*
+  (`test_adversarial_reentry_at_the_staged_pass_ownership_checkpoint`, stepping until
+  `jobPass(track) != nullptr`) — exactly the state a successor's `beginCapture` used to destroy.
+- **`REENTRY_RED` is gone:** the `CompanionHistory` checkpoint is in the default suite. The env var is
+  now a no-op; `ONLY_COMPANION=1` remains as the focused single-case runner.
+- **The checkpoints are tight:** the helper asserts each phase checkpoint by **equality** (a checkpoint
+  that silently ran past its phase would not be the state it claims), and the ownership checkpoint
+  asserts it pauses on `CanonicalTail`, the phase that follows the non-yielding staging grain. Five
+  checkpoints total: `CanonicalOrder`, `CanonicalRewrite`, `CompanionHistory`, staged-pass ownership,
+  `AtomicTransfer`.
+
+Evidence: `test_continuous_capture` 74/74 (all five in the default gate), `ONLY_COMPANION=1` 1/1,
+`REENTRY_RED=1` 74/74 (redundant), `test_playback_prewarm` 173/173, full native **2,239 / 1 skipped /
+0 failures**, `teensy41-capture-serial` SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488
+/ locals 6,400 (test-only increment), both `openspec validate --strict` checks valid. **Next in that
+change:** 5.9 (the `hitl-content-verification` audibility proof), then 5.11 on its run, then 6.2 as a
+device session, then the 6.1 re-run and 6.3 closeout.
+
 **2026-09-17 — parent change task 2.4 (active clock path consumes prepared views): slices 1 and 2 are
 landed and the slice-3 decision is made (not required); 2.4 ticks on the 5.3 device measurement.** This is
 the active code work on `resumable-midi-boundary-playback-maintenance`, alongside the successor change's
