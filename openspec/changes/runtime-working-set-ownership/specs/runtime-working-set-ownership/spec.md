@@ -119,6 +119,36 @@ only immutable events, and SHALL NOT require a resident whole-loop immutable roo
   on the next pass
 - **AND** playback is never torn, never held silent, and never deferred in a way that disturbs timing
 
+### Requirement: Standby excerpts are bounded, budgeted and immutable
+A per-slot standby excerpt MAY be retained so that activation and queued switching need no preparation at the
+boundary. Standby SHALL be byte-capped with eviction, accounted as its own budget term, immutable, and
+invalidated by any mutation covering its ticks.
+
+#### Scenario: A queued switch needs no preparation at the boundary
+- **WHEN** a switch to a slot that holds a valid standby excerpt is executed
+- **THEN** the inbound slot's immutable state is already available
+- **AND** the switch performs no preparation or allocation at the boundary
+
+#### Scenario: Preparation is scheduled against a known deadline
+- **WHEN** a recording or overdub stops, or any mutation changes content at known ticks
+- **THEN** the next arrival of those ticks is known and preparation is scheduled against that deadline
+- **AND** preparation is performed as resumable deferred work rather than at the switch
+
+#### Scenario: Standby is capped and evicted, not granted to every slot
+- **WHEN** the number or density of slots requesting standby would exceed the standby byte cap
+- **THEN** standby is evicted by the declared policy (LRU or candidate set)
+- **AND** the total remains within the cap so inactive-slot memory stays flat as the library grows
+
+#### Scenario: A mutation invalidates standby
+- **WHEN** content covering a standby excerpt's ticks changes
+- **THEN** the excerpt is invalidated and not used for playback
+- **AND** the slot falls back to the previous immutable generation until re-prepared
+
+#### Scenario: Cold-slot standby depends on descriptor rehydration
+- **WHEN** standby is requested for a slot whose canonical content is not resident
+- **THEN** the excerpt is derived through descriptor-based rehydration
+- **AND** an all-slots standby policy is not claimed before that path exists
+
 ### Requirement: The readiness window size is configurable and traded deliberately
 The immutable-readiness window SHALL be configurable rather than fixed to bars, and its size SHALL be chosen
 from measurement because it trades resident bytes, achievable switch quantisation, and publication load.

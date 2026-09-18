@@ -11,6 +11,12 @@
 | F5 | **Agreed.** The role tiers fold into `activeLoopIndex` (+ `CapturePhase` / `TrackState`) rather than forming a second authority. |
 | F6 | **Resolved by S2 + G.2** (windowed sizing and non-destructive admission): the acceptance becomes diagnostic once the windowed path and queue-based admission exist. |
 
+A further refinement (F2 follow-up): a **bounded standby tier** -- a small pre-resolved immutable excerpt per
+candidate slot, prepared against the *known* next arrival of the ticks it covers -- makes the readiness
+contract scheduleable rather than urgent. Its size is density-dependent (1-bar standby is ~2.5 KB/slot typical,
+~140 KB/slot at the representable ceiling), so it is byte-capped with eviction and accounted as its own budget
+term, and an all-slots policy waits on S6's descriptor rehydration.
+
 The findings below are kept as the record of what was wrong before these resolutions.
 
 Attempt to break the plan against the current tree. Each finding names the claim it attacks, the evidence,

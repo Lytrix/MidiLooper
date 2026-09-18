@@ -74,6 +74,10 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       that need a smaller P to reach 32 or 64 sounding slots.
 - [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
       resident working sets, and playback crosses window boundaries with no timing discontinuity.
+- [ ] S2.7 **Standby sizing**: size a per-slot standby excerpt at BOTH typical density (~72 events/bar) and
+      the representable ceiling (4,096 refs/bar), across 1/4-bar, 1-bar and 2-bar windows, and derive the
+      standby byte cap and its eviction policy (LRU or candidate set). Record the arithmetic; an all-slots
+      standby is a policy outcome the cap permits, never an assumption.
 - [ ] S2.6 **Window-size sweep**: make the readiness window configurable (pixels of size: resident bytes,
       switch granularity, publication load) and sweep from bar-based (1,536-tick merged window today) down
       toward **1/32 beat = 6 ticks** (1/16 beat = 12 ticks at 192 PPQN). Record the smallest window that still
@@ -139,6 +143,20 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       deadline follows the recorded rule; undo/save still obtain a checkpoint.
 - [ ] S4c gates: the budget shows no `N x whole-root` term; existing playback content parity preserved.
 
+## S4d — standby tier (bounded, scheduled, immutable)
+
+- [ ] S4d.1 Build a per-slot standby excerpt as resumable deferred work, scheduled against the **known next
+      arrival** of the ticks it covers (loop start tick is known after a stop).
+- [ ] S4d.2 Invalidate on any mutation covering the excerpt's ticks, falling back to rule (a) until
+      re-prepared.
+- [ ] S4d.3 Enforce the standby byte cap with the declared eviction policy; prove inactive-slot memory stays
+      flat as the library grows.
+- [ ] S4d.4 Candidates-only standby first (next-up and recently used); an all-slots policy only after S6's
+      descriptor-based rehydration exists.
+- [ ] S4d.5 Native fixtures: a switch with no preparation at the boundary; invalidation on mutation;
+      cap-eviction under growth; no torn or stale standby used for playback.
+- [ ] S4d gates: standby appears as its own budget term; the S2.7 cap is respected on device.
+
 ## S5 — demote inactive slots' derived state
 
 - [ ] S5.1 Drop the published snapshot root and whole-loop `VisualCache` for a slot leaving the active
@@ -187,6 +205,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
 - [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
       evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
+- [ ] S7.4c **Standby switch acceptance**: with a warm standby set, queue switches at 1/16 and 1/32 beat and
+      require zero preparation at the boundary, no stale standby output after a mutation, and the standby byte
+      cap respected under a 60+ slot library.
 - [ ] S7.4b **Fine-quantisation switch acceptance**: with transport playing and slots sounding, queue a slot
       switch at 1/16 beat and at 1/32 beat; require the inbound slot's immutable state to be ready at the
       boundary, no torn or held output, and the MIDI-boundary timing evidence clean. Record the quantisation
