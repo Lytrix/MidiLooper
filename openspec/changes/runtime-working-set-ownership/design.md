@@ -49,10 +49,21 @@ fixed PSRAM overhead
 <= safe PSRAM budget
 ```
 
-Taking ~8 MB total, minus the ~1 MB capture ring, the backed chunk pool, a canonical allowance and a
-transient reserve, leaves a few MB for leases: **32 leases plus transfer overlap means roughly 100-125 KB
-per lease**, against ~845 KB today. That is the number window sizing must reach, and it is why S2 is a
-prerequisite rather than a tidy-up. If the measured lease cannot reach that order, the honest outcome is a
+**The budget is per class, not per worst-case slot.** Conflating them would demand squeezing every 845 KB
+operation down to ~100 KB, which is both unnecessary and the wrong target:
+
+```
+fixed  +  32 x PlaybackWindowLease   (the only term multiplied 32 times)
+       +  LiveCaptureLease           (1)
+       +  DeferredFinalizationLease  (1, concurrent with a live successor)
+       +  InteractiveLease           (1, edit / undo / display)
+       +  transfer overlap           (measured, explicit)
+       +  canonical allowance  +  safety reserve
+       <=  PSRAM budget
+```
+
+So `PlaybackWindowLease` must be small and length-independent, while the specialized extensions may remain
+sizable. S2 measures each class separately. If the playback term cannot fit the sum, the honest outcome is a
 stated simultaneous-playback bound (`k` slots per track, `k < 2`) rather than a claim that the envelope is
 met.
 
@@ -70,9 +81,10 @@ atomic switch at a MIDI boundary   (allocation-free; no transport stop)
 outbound role released only after the last live owner retires
 ```
 
-- The same role -- the resumable small-packet logic already used at MIDI boundaries -- is what the
-  complex role holder runs for record/overdub/passes/undo/redo/display, so a switch **transfers the role**
-  rather than reconstructing it.
+- The same logic -- the resumable small-packet path already used at MIDI boundaries -- serves
+  record/overdub/passes/undo/redo/display, so a switch **transfers the role** rather than reconstructing it.
+- Transfer must **not steal resources from a still-live capture or deferred owner**: the inbound role is
+  provisioned *in addition to* whatever stays pinned, which is exactly what the overlap term budgets.
 - The switch path must perform **no allocation**: the inbound lease comes from the pool, which is why the
   pool must be provisioned for the envelope *plus* overlap.
 - The **transfer overlap is the transient headroom** in the budget arithmetic; it is not slack.
@@ -180,6 +192,47 @@ Consequences already folded into the proposal and spec:
   published root is reconstructed only if some authority requires one, so "drop whole root, rebuild whole
   root" does not become a permanent requirement;
 - S6 carries its own architecture gate and `DEC` amendment rather than being one more task.
+
+## Revision 9 — role classes and cardinalities (preserving successor re-entry)
+
+A single "exactly one complex role" is incompatible with what is already landed: DEC-067 supports a
+**deferred/finalizing predecessor (A) alongside an independently live recording successor (B)**
+simultaneously, so the runtime cannot have one indivisible record/overdub/passes/undo/redo/display role.
+The architecture already distinguishes live capture ownership from deferred finalization ownership and
+allows both concurrently; the new model must not design that away.
+
+| Role class | Cardinality | Notes |
+|---|---|---|
+| `PlaybackWindowLease` | up to **32** (2 per track, 16 tracks) | must be small and length-independent |
+| `LiveCaptureLease` | **1** | record/overdub ingress, staging, capture stop jobs |
+| `DeferredFinalizationLease` | **1** | successor-reentry predecessor, concurrent with a live successor |
+| `InteractiveLease` | **1** | edit / undo / redo / display, unless evidence requires more |
+| `TransferOverlap` | measured | explicitly budgeted, not slack |
+
+Classes are **composable**: a slot may hold several at once, and each owns only the resources its operation
+needs. Assignment is generation-qualified per class, so releasing a playback lease cannot disturb a live
+capture or deferred finalization lease on the same slot.
+
+## Revision 10 — dirty canonical generations pin residency (S6 durability rule)
+
+Once persistence becomes the backing authority, memory pressure must never be able to discard accepted
+input. The rule:
+
+> **Canonical content may be evicted only after persistence has durably acknowledged the exact canonical
+> generation being evicted. Dirty/unpersisted content pins canonical residency. Failure or delay of
+> persistence reduces available residency capacity; it never discards accepted input.**
+
+```
+cold + clean/durable      -> eligible for eviction
+cold + dirty (unpersisted)-> resident / pinned
+save completes for gen G  -> G becomes eviction-eligible
+new mutation gen G+1      -> pinned again
+```
+
+This is generation identity, not "slot saved": the acknowledgement must name the generation, so a save that
+completes for G cannot make G+1 evictable. It belongs in the S6 `DEC` amendment, and it has an adversarial
+test (dirty -> demote -> storage deliberately delayed -> pressure requests eviction -> content stays
+resident; save completes -> evictable; reload exact).
 
 ## Options considered
 

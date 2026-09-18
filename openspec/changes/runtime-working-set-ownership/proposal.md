@@ -28,33 +28,46 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 | Tracks | **16** (the target envelope; `NUM_TRACKS` is 8 today -- open decision 2) |
 | Slots sounding per track | **2** |
 | Slots sounding simultaneously | therefore **up to 32** (2 x 16), **regardless of each slot's loop length** |
-| Slots holding the complex role -- record / overdub / passes / undo / redo / display, resolved by the resumable small-packet logic inside MIDI boundaries | **exactly 1**, transferable to another slot/track quickly |
+| Slots holding a **playback window lease** | up to **32** (2 per track) |
+| Slots holding the **live capture** role (record / overdub, resumable small-packet logic inside MIDI boundaries) | **1** |
+| Slots holding **deferred finalization** (a predecessor finalizing while a successor records) | **1**, concurrently with live capture |
+| Slots holding the **interactive edit / undo / display** role | **1**, unless evidence requires more |
+| **Transfer overlap** | measured and explicitly budgeted |
 | Slots that may be selected or browsed | the whole library (~60 recorded) |
 | Transport continuity | the looper **never stops playing** across track/slot switching, record/overdub start, or undo/redo, with no MIDI timing degradation |
 
-So the resident set is **up to 32 playing leases + 1 complex lease**, and at today's per-slot cost that is
+So the resident set is **up to 32 playback-window leases plus one of each specialized role**. While the specialized roles may stay large, the lease that gets multiplied 32 times is what matters, and at today's cost:
 
 ```
 32 x  845 KB  ~=  27 MB
 32 x 1.47 MB  ~=  47 MB
 ```
 
-against ~8 MB PSRAM. **Window sizing is therefore a prerequisite, not a safeguard** -- it is the only thing
-that makes the 2-slot-per-track envelope both length-independent and small enough to fit. It exists so a
-64-bar slot costs what a 4-bar slot costs, with playback crossing window boundaries seamlessly.
+against ~8 MB PSRAM if every one of those 32 were a full complex working set -- which is precisely why the
+budget is **not** `32 x worst-case complex lease`. **Window sizing is a prerequisite, not a safeguard**: it
+must make the *playback* lease both length-independent (a 64-bar slot costs what a 4-bar slot costs, with
+playback crossing window boundaries seamlessly) and small enough that 32 of them fit, while the one-or-two
+specialized roles may remain considerably larger. That is the difference between a feasible envelope and
+pathological micro-optimization of every operation.
 
 Three distinct quantities are still designed separately:
 
 | Quantity | Value | Backed by |
 |---|---|---|
 | **Library residency** | ~60+ recorded slots | canonical metadata + persisted content |
-| **Logical active slots** | **up to 32 sounding (2 x 16) + 1 complex** | window-sized leases; roles/tiers |
+| **Logical active slots** | up to 32 playback + live capture 1 + deferred finalization 1 + interactive 1 | composable leases, one per role class |
 | **Resident working-set leases** | must fit PSRAM | bounded, window-sized |
 
-The third quantity must serve that envelope **including the transfer overlap**: 32 leases plus overlap out of
-a few MB means roughly **100-125 KB per lease**, against ~845 KB today. Window sizing must reach that order
-or the plan must state the achievable simultaneous-playback capability as a bound instead of claiming 2 per
-track.
+The third quantity is **per class**, and the constraint is:
+
+```
+fixed  +  32 x PlaybackWindowLease  +  LiveCaptureLease  +  DeferredFinalizationLease
+       +  InteractiveLease  +  transfer overlap  +  reserve   <=   PSRAM budget
+```
+
+Only `PlaybackWindowLease` is multiplied 32 times, so only it must be small; the specialized roles may stay
+large. If the measured playback lease cannot fit that sum, the plan states the achievable
+simultaneous-playback bound (`k` per track, `k < 2`) rather than claiming 2.
 
 Brownfield context:
 [`docs/Runtime/CURRENT_WORK.md`](../../../docs/Runtime/CURRENT_WORK.md),
@@ -76,10 +89,13 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Window-derived lease sizing is on the critical path.** Capacities are derived from the resolved
   window instead of the 2048-event ceiling so a slot's cost is **independent of its loop length**, and the
   feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
-- **One complex-role holder, and it is transferable.** Exactly one slot holds the complex role -- the
-  resumable small-packet logic that serves record, overdub, passes, undo/redo and display inside MIDI
-  boundaries. Selecting another slot or track **transfers that role quickly**, and switching must not
-  require a transport stop.
+- **Role classes with explicit cardinalities, and they are transferable.** Playback window leases scale with
+  the envelope (up to 32); live capture is one; deferred finalization is one and runs **concurrently with a
+  live successor** -- the already-landed successor-re-entry capability (DEC-067), which must not be designed
+  away; interactive edit/undo/display is one unless evidence requires more. A slot may hold several classes
+  at once, and selecting another slot or track **transfers the relevant role quickly** without a transport
+  stop. Classes are composable rather than one monolithic lease, so 32 playback slots do not each carry
+  fields only one live operation uses.
 - **The looper never stops playing.** Track/slot switching, record/overdub start and undo/redo all happen
   while playback continues, so the pool must **pre-provision the inbound role before releasing the
   outbound one**, the switch itself must be allocation-free, and it must land on a MIDI boundary. The
@@ -155,9 +171,9 @@ prerequisite S2, and reclassifies §5.13 as a symptom.
 2. **16 tracks as the target.** `NUM_TRACKS` is 8 today, so the envelope implies either a config change or
    a workstream of its own (per-track runtime structures, display, UI all scale with it). Confirm the track
    count and whether it lands inside this change.
-3. **How deep the transfer overlap must be.** How many roles may be simultaneously resident during a
-   switch, and whether the complex role overlaps the playing set (its holder may also be one of the two
-   sounding slots).
+3. **Confirm the role cardinalities** -- live capture 1, deferred finalization 1 alongside a live successor,
+   interactive 1 -- and how deep the **transfer overlap** must be, including whether a specialized role
+   overlaps the playing set (its holder may also be one of the sounding slots).
 4. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
 5. **Canonical residency policy** (fixed cap, LRU over the active set, or derived from loop length) and
    whether it needs a length cap at capture admission.
