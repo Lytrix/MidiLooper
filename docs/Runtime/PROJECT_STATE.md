@@ -1,5 +1,36 @@
 # Project state (execution context)
 
+**2026-09-18 the overdub live-capture one-frame paint flicker is CLOSED WITHOUT A FIX and folded into the
+memory-pressure work (user decision).** No firmware change was made and no GitHub Bug was opened. Two
+measurements from the reference capture
+([`captures/tidyup-base-track6-slot1-r2/session_20260918_221953.log`](../../captures/tidyup-base-track6-slot1-r2/session_20260918_221953.log))
+made the fold the honest close rather than a punt, and correct one assumption in the OPEN plan:
+
+- **The dip is real, already measured, and in the compose - not the draw.** The on-change `DISP` family is
+  emitted at `Transfer` from `resolvedPaintNotes()`, the same vector `Draw` read, so a lost row shows up as
+  a decrease. The whole capture has exactly two decreases: the `23.001 s` clear (`RECORDING`, 32 -> 0) and
+  **`49.972 s`: `OVERDUBBING`, `frameNotes` 75 -> 74, restored to 75 at `50.019 s`** - one painted frame
+  with one row fewer, right after the `49.946 s` MIDI event. The OPEN plan asserted the existing telemetry
+  could not catch a one-frame dip (true of `DFRAME` at every 30th frame) and made denser compose
+  instrumentation its first step; the on-change `DISP` family already catches it, so that step is
+  withdrawn.
+- **The paint's own source state cannot advance during the window.** The same capture carries **52**
+  `#MEM_DENIED,op=snapshot_reserve,reason=heap_low,need=40960B,heap_free=68KB,pool_refused=0/0B` rows,
+  continuously reported (1 s report window) from `27.64 s` to `79.06 s` - across the entire overdub.
+  `kSnapshotPublicationReserveBytes` (40,960) plus the 32 KB `kOperationHeapFloorBytes` needs 73,728 B
+  against 68 KB free. DEC-075 makes a denial deliberately non-fatal (previous root stays selected), so the
+  published root the paint composes from is held at the arm's heap state.
+
+Handed to `runtime-working-set-ownership` (now the ACTIVE scope in
+[`CURRENT_WORK.md`](CURRENT_WORK.md) § Now implementing), with the invariant *a note present in the
+composed paint set before and after a note-on/note-off must be painted in every frame in between* and a
+cheap re-measure recipe: after the lease/publication repair, scan the same fixture for `DISP` **decreases**
+inside the overdub window (no new firmware telemetry required); if the dip survives a healthy gate, re-open
+[`overdub_live_capture_one_frame_paint_flicker_bugfix.md`](../Plans/overdub_live_capture_one_frame_paint_flicker_bugfix.md)
+as a paint-path RC owning `DisplayManager::resolveDisplayNotesByDrawSource`. The tidy-up exoneration
+(P1-P6 behavior-preserving; base `4aacd18e` reproduced the blink) stands, so `runtime-code-tidyup` remains
+out of scope.
+
 **2026-09-18 `DIAG,droid_queue` is off in the default capture env, and that also removed the 4 KB RAM1 snap.**
 `SESSION_CAPTURE_DROID_QUEUE=0` now sits in `[env:teensy41-capture-serial]`, with
 `teensy41-capture-serial-investigation-diag` setting `=1` as the explicit debug gate and

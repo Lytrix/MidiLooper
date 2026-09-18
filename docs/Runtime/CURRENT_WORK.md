@@ -2741,23 +2741,33 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**2026-09-18 — ACTIVE IMPLEMENTATION SCOPE: overdub live-capture one-frame paint flicker.** During
-OVERDUB the piano roll flashes for one frame around each incoming note (both note-on and note-off).
-Confirmed **pre-existing on this branch**, not a `runtime-code-tidyup` regression: the blink reproduces on
-the base commit `4aacd18e` (hex `7bbc5e63…`) as well as on the tidy-up build (`d3fec28c`, hex
-`21b4d320…`), and the tidy-up diff on the live-capture display path is provably behavior-preserving
-(`activeNoteEntriesMatch` field-identical to all four originals, the `Phase::Trim` pop unreachable,
-`ceilGrains` sites all guarded, P5 splits bank-neutral). Work identity and boundary:
-[`overdub_live_capture_one_frame_paint_flicker_bugfix.md`](../Plans/overdub_live_capture_one_frame_paint_flicker_bugfix.md).
-Owner is not yet named — the boundary is the `DisplayManager` paint pipeline (frame phases →
-`resolveDisplayNotes` compose → draw-source selection); the capture/snapshot/companion content owners are
-excluded, and the frame-phase machine is already ruled out (`shouldClearResolvedPaintNotesNow` only clears
-when no frame is in progress). Next: per-frame (capture-gated) compose instrumentation, reproduce with the
-registered base preset on track 6 slot 1, then name the RC and open the GitHub Bug. **No firmware change
-yet.** Everything below this entry is queued, not started, and is not part of this scope.
+**2026-09-18 — ACTIVE IMPLEMENTATION SCOPE: WORKING-SET OWNERSHIP / HEAP PRESSURE
+(`runtime-working-set-ownership`).** The overdub live-capture one-frame paint flicker is **CLOSED
+without a fix at the user's direction** ("close this bug, we have a bigger plan to solve the memory
+heap issue") and folded into this scope. What the flicker pass established before closing is worth
+keeping, because it is evidence *for* this owner rather than a separate defect:
 
-**2026-09-18 — the next architectural target is WORKING-SET OWNERSHIP, not more per-slot trimming
-(`runtime-working-set-ownership`, requested as a `DEC-###`).** The record-arm exit reported on
+- The dip is real and already detectable: the on-change `DISP` family (emitted at `Transfer` from
+  `resolvedPaintNotes()`, the vector `Draw` used) records it as a **decrease**. Across
+  `captures/tidyup-base-track6-slot1-r2/session_20260918_221953.log` there are exactly two decreases —
+  the `23.001 s` clear (32 → 0) and **`49.972 s`: `OVERDUBBING` 75 → 74 → 75 at `50.019 s`**, one
+  painted frame, one row fewer, immediately after a MIDI event. The row is lost in the compose.
+- The same capture shows why the paint's own source state cannot advance: **52**
+  `#MEM_DENIED,op=snapshot_reserve,reason=heap_low,need=40960B,heap_free=68KB,pool_refused=0/0B` rows,
+  continuously reported (1 s window) from **27.64 s to 79.06 s**, i.e. across the whole overdub. DEC-075
+  makes that denial non-fatal, so the published root legitimately stays where it was — under the arm's
+  heap state.
+- Handed over invariant: *a note present in the composed paint set before and after a note-on/note-off
+  must be painted in every frame in between.* Re-measure after the lease/publication repair by scanning
+  for `DISP` decreases in the overdub window (no new firmware telemetry needed); if the dip survives a
+  healthy gate, re-open
+  [`overdub_live_capture_one_frame_paint_flicker_bugfix.md`](../Plans/overdub_live_capture_one_frame_paint_flicker_bugfix.md)
+  as a paint-path RC with `DisplayManager::resolveDisplayNotesByDrawSource` as the first owner.
+- The tidy-up exoneration stands (P1–P6 behavior-preserving; base commit `4aacd18e` reproduced the blink
+  too), so `runtime-code-tidyup` stays out of scope. **No firmware change was made for the flicker.**
+
+**2026-09-18 — the architectural target under that scope is WORKING-SET OWNERSHIP, not more per-slot
+trimming (`runtime-working-set-ownership`, requested as a `DEC-###`).** The record-arm exit reported on
 `captures/session_20260918_171613.log` is diagnosed (`immutable-loop-snapshot-passes` 5.13: an
 all-or-nothing ~845 KB arm prewarm chain against ~822 KB free, failing at `tag=12`'s 64 KiB request) but is
 **reclassified as a symptom**. The real mismatch is the scaling law: runtime working sets and whole-loop
