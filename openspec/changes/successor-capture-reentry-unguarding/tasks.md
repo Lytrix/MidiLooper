@@ -79,6 +79,34 @@ should be planned as one flash/session if the recipes can be combined (see their
   **Recommended fix (owner call 2026-09-18): fix (b) FIRST -- publisher coalescing/coverage correctness -- then add (a) as a persistence safety gate. Do NOT implement load-time reconciliation for this RCA** (it would treat the symptom at the wrong layer; the bad root exists before the save, which only serializes it faithfully).
   **Invariant to pin:** *when multiple snapshot-publication requests are coalesced, the candidate ultimately published must represent the latest committed-pass state covered by all requests consumed by that publication. A candidate derived from an earlier request may not become current merely because later requests were coalesced into its queue entry.* Queue consumption and candidate coverage must advance together; if a started candidate cannot safely retarget, the valid policy is to finish/publish it only for its own covered revision, leave the newer request pending, and then construct/publish the latest state -- a temporary intermediate root is allowed, silently declaring the newer request satisfied is not.
   **RC1 -- publisher correctness (primary).** Reproduce `OD2 -> Undo -> Redo -> coalesced snapshot requests` and prove `PassesResolve == published root` (57) *before any persistence runs*. Cover both a later request arriving before construction begins and one arriving while an earlier candidate is mid-construction (the second is the reported case). Strengthen "current" so it cannot lie: carry a **covered-pass revision** on the published root (`Root.coveredPassRevision`) and let publication set it only when the candidate was actually constructed from that committed-pass state; then `publishedSnapshotIsCurrent()`-equivalents must mean `Root.coveredPassRevision == committedPassRevision`, not merely "playbackRevision reached".
+  **Status 2026-09-18: RC1 implemented (DEC-073).** Coverage is now data on the root:
+  `PublishedSnapshotBox`/`PendingSnapshotPublishBox` carry `coveredPassRevision`,
+  `Loop::publishedSnapshotIsCurrent()` is `coveredPassRevision == committedPassRevision()` (never a revision
+  stamp), the session-exit/wrap/republish candidates publish their enumeration watermark, and the undo/redo
+  captured-root selection carries the coverage it was captured at (`UndoEntry::before/afterPublishedCoverage`,
+  job- and session-owned baselines). The two reproducers in `test/test_loop_take_survival`
+  (`test_coalesced_snapshot_request_before_construction_is_not_satisfied_early`,
+  `test_coalesced_snapshot_request_mid_construction_is_not_satisfied_early`) were red before the fix and are
+  green after: `test_loop_take_survival` 137/137, full native **2246 / 1 skipped / 0 failures**,
+  `teensy41-capture-serial` SUCCESS (RAM1 variables 91,968 / code 425,560 / padding 424 / locals free 6,336;
+  FLASH code 1,007,080). **Device read DONE 2026-09-18** (firmware `teensy41-capture-serial-no-grain`, hex
+  `f2f1d8bd…`, tree `d9eb419a` + this change; DEC-071 shape `--record-bars 8 --overdub-bars 8
+  --overdub-start-delay-bars 2`, track 4 slot 1, recipe undo/redo):
+  - `captures/rc1-coalescing-device` (managed `base`): two overdub sessions, undo=1 redo=1, display
+    `overdub_ok/transport_ok=True`, `overflow_free=True`; the post-redo republish (`q=0,a=4`) lands at 95.474 s,
+    the last `OverlayRejected`/`PassesResolve` row precedes it, and the LSV1 `tail_gather_begin` at 99.640 s
+    gathers that root. The base report's only issue is `persistence_stage_missing:result` -- the now-complete
+    600-row tail was still writing when the run closed serial; the device's own log records `PERS,result,…ok` at
+    111.14 s. The oracle miss is the run window, not the content.
+  - `captures/rc1-coalescing-reboot-playback` (**fresh boot**, `boot_reset,crash=0` at 3.0 s uptime, load
+    `start`/`ok`): `result: PASS`, `storage_matches_effective: true`, `record 384 + overdub 154 + 38 + 24 = 600`
+    effective rows, **all five playback cycles `inventory_equal: true`, `exact_order: true`, 0 missing, 0 extra**,
+    `max_bar_refs: 84`, 0 `RING,overflow`. The 24-row second-overdub pass that `content-verify-58` lost (28
+    missing/cycle) is audible after reboot. Live parity
+    (`captures/rc1-coalescing-device-playback`) is also 5/5 clean. **The fifth clause is proven; 5.9 is closed.**
+  - **Remaining (defense-in-depth, not this clause): RC2** -- the LSV1 body gather/admission gate
+    (`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()` with bounded re-admission,
+    else a passes-authoritative body).
   **RC2 -- persistence guard (secondary).** Once RC1 holds, require the LSV1 body gather/admission to see a demonstrably settled current root (`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()`) with bounded save re-admission; when no settled root is reachable, persist a **passes-authoritative** representation. Prefer LSV1's own "body without a selected snapshot/root" encoding if it has one; use the legacy format only if LSV1 cannot express it, and make that a deliberate format/migration decision rather than an incidental one.
   **Acceptance:** immediately before save admission the selected root and `PassesResolve` must already agree -- that separates publisher correctness from persistence correctness so a persistence test cannot hide a still-broken live publisher. Then save/load keeps `passes == root` with identical display and playback (pre-reboot `DISP` 57 and the 24-39 overdub range), and a known-good LSV1 load still takes the fast path with no rebuild/reconcile.
 

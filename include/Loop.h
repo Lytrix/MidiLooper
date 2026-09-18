@@ -786,8 +786,15 @@ struct Loop {
   const EditPassIdList& sealedCompanionOverlayIdsForTest() const {
     return sealedCompanionOverlayIds_;
   }
-  void storePublishedSnapshotForTest(ImmutableLoopSnapshotRef snapshot, uint32_t revision) {
-    storePublishedSnapshot(std::move(snapshot), revision);
+  void storePublishedSnapshotForTest(ImmutableLoopSnapshotRef snapshot, uint32_t revision,
+                                     uint32_t coveredPassRevision = kSnapshotCoverageCurrent) {
+    // DEC-073: an explicit revision stamp that is older than the live one is evidence the caller is
+    // installing a root for an earlier state; without explicit coverage that root is not current.
+    if (coveredPassRevision == kSnapshotCoverageCurrent && revision != 0 &&
+        revision != playbackRevision) {
+      coveredPassRevision = kSnapshotCoverageUnset;
+    }
+    storePublishedSnapshot(std::move(snapshot), revision, coveredPassRevision);
   }
   const LoopSnapshotChangeSet* pendingWrapJournalChangesForTest() const;
   /// Fingerprint of the authoritative (committed) pass-change fragment
@@ -825,13 +832,23 @@ struct Loop {
   }
 #endif
   ImmutableLoopSnapshotRef publishedSnapshot() const;
-  /// True when the published root was stored at the current `playbackRevision`.
+  /// DEC-073: true only when the published root's `coveredPassRevision` equals the loop's current
+  /// committed-pass revision (`committedPassRevision()`). A root selected from, or built for, an
+  /// older committed-pass state is never current, no matter which revision was reached afterwards.
+  /// The persistence gate (RC2) adds its own "publisher is settled" requirement on top.
   bool publishedSnapshotIsCurrent() const;
   /// Non-owning identity of the current published root, or nullptr when none is
   /// selected or the published root is stale versus `playbackRevision`.
   const void* publishedSnapshotIdentity() const;
   /// Revision captured when the published root was stored. Zero when no root exists.
   uint32_t publishedSnapshotRevision() const;
+  /// DEC-073: the committed-pass revision the published root was enumerated from
+  /// (`kSnapshotCoverageUnset` when no root or no recorded coverage).
+  uint32_t publishedSnapshotCoveredRevision() const;
+  /// DEC-073: revision of the publisher's enumerable committed-pass/companion inventory. Every
+  /// inventory change bumps `playbackRevision`, so this is an alias today; it is named separately
+  /// because the coverage comparison is about the pass inventory, not about any content revision.
+  uint32_t committedPassRevision() const;
 
   /// Seal handoff (`150650`). Between the seal and the moment a committed tier carries the
   /// sealed pass, neither Snapshot nor VisualCache can paint it, so the frame would fall back
@@ -1307,7 +1324,12 @@ struct Loop {
   /// `revision` is the `playbackRevision` the snapshot content represents. Zero
   /// selects the loop's current `playbackRevision` (session-exit publication, where
   /// the candidate is complete as of now).
-  void storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot, uint32_t revision = 0);
+  /// `coveredPassRevision` (DEC-073) is the committed-pass revision the content was enumerated
+  /// from. A deferred publication (session exit, wrap) must pass its own watermark; synchronous
+  /// publication passes `kSnapshotCoverageCurrent`. `kSnapshotCoverageUnset` records no coverage,
+  /// which is conservatively never current.
+  void storePublishedSnapshot(ImmutableLoopSnapshotRef snapshot, uint32_t revision = 0,
+                              uint32_t coveredPassRevision = kSnapshotCoverageUnset);
   void clearPendingSnapshotPublish();
   void discardUnpublishedSnapshotIfNotSessionExit();
   void enqueueLiveOverdubPasses();

@@ -18,6 +18,17 @@
 using EventId = uint32_t;
 constexpr EventId kInvalidEventId = 0;
 
+/// DEC-073 publication coverage. A published or pending snapshot root records the committed-pass
+/// revision its content was **enumerated and constructed from** (`coveredPassRevision`).
+/// `Loop::publishedSnapshotIsCurrent()` requires that coverage to equal the loop's current
+/// committed-pass revision (`Loop::committedPassRevision()`), so a root can never become current
+/// merely because a later revision was reached after it was built.
+/// `kSnapshotCoverageUnset` means no coverage was recorded: such a root is conservatively not
+/// current. `kSnapshotCoverageCurrent` is the explicit "derived from the current state in this same
+/// turn" stamp used by synchronous publication and the native test hook.
+inline constexpr uint32_t kSnapshotCoverageUnset = 0xFFFFFFFFu;
+inline constexpr uint32_t kSnapshotCoverageCurrent = 0xFFFFFFFEu;
+
 constexpr uint16_t kLoopSnapshotPitchCount = 128;
 constexpr uint16_t kLoopSnapshotBarsPerPage = 32;
 constexpr uint16_t kSnapshotMembershipPageCapacity = 16;

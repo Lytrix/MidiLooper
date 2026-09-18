@@ -487,8 +487,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   // baseline this interval's OverdubPassAdded entry must record.
   if (hasOverdubSessionBeforePublished_) {
     job.beforePublished = std::move(overdubSessionBeforePublished_);
+    job.beforePublishedCoverage = overdubSessionBeforePublishedCoverage_;
     job.hasBeforePublished = true;
     overdubSessionBeforePublished_ = {};
+    overdubSessionBeforePublishedCoverage_ = kSnapshotCoverageUnset;
     hasOverdubSessionBeforePublished_ = false;
   }
   // DEC-069: this interval's owed wrap commit is consumed by its own stop. The rows that had not
@@ -643,7 +645,8 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop&
   if (phase != Loop::SessionUndoCollection::Phase::Complete) return false;
   // Build the entry from the job's own slot and baseline, never the live session's.
   job.undoCollected = TrackUndo::prepareOverdubSessionEntry(
-      loop, job.undoCollection, job.slot, job.beforePublished, job.undoEntry);
+      loop, job.undoCollection, job.slot, job.beforePublished, job.undoEntry,
+      job.beforePublishedCoverage);
 #if defined(SESSION_CAPTURE)
   // The deferred route used to record only the final pass (the session identities had already
   // moved into this interval's session-exit receipt). Emit the same shape the synchronous

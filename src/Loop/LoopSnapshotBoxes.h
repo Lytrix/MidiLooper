@@ -63,10 +63,19 @@ struct PendingPassChangeProgress {
 struct PublishedSnapshotBox {
   ImmutableLoopSnapshotRef snapshot;
   uint32_t revision = 0;
+  /// DEC-073: the committed-pass revision this root's content was enumerated from. Unlike
+  /// `revision` (a stamp for cache keys), this is evidence about the content and is what makes
+  /// `Loop::publishedSnapshotIsCurrent()` true.
+  uint32_t coveredPassRevision = kSnapshotCoverageUnset;
 };
 
 struct PendingSnapshotPublishBox {
   bool sessionExitQueued = false;
+  /// DEC-073: the committed-pass revision the box's enumerated pass/companion inventory covers.
+  /// It advances only when a request actually enumerates passes into this box, and the candidate
+  /// finally published inherits it. A request that arrives later without being enumerated here
+  /// leaves the box's coverage behind, so the published root cannot claim to satisfy it.
+  uint32_t coveredPassRevision = kSnapshotCoverageUnset;
   /// Loaded adopt/restore: pass events are new to an empty-then-successor
   /// parent. Do not call `findNoteAtPitch` (005731 stack overflow).
   bool fromLoadedPasses = false;

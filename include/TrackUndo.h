@@ -23,7 +23,8 @@ public:
     /// Consume completed private IDs into an unpublished entry. Caller supplies
     /// the existing session-before root (or published fallback); no global push.
     static bool prepareOverdubSessionEntry(Loop& loop, Loop::SessionUndoCollection& collection,
-        uint8_t slotIndex, const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry);
+        uint8_t slotIndex, const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry,
+        uint32_t beforePublishedCoverage = kSnapshotCoverageUnset);
     static void pushNoteEditPassClosed(Track& track, uint8_t noteEditPassIndex,
                                        EditPassIdList editPassIds,
                                        ImmutableLoopSnapshotRef beforePublishedSnapshot = {});
@@ -42,8 +43,11 @@ public:
                                              UndoEntryId originatingEntryId);
     /// Bind deferred after-attach to the current GUS tip when session-exit is queued.
     static void bindTipSessionExitUndoAttach(Track& track, Loop& loop);
-    /// Friend-capable published-root select used by undo/redo apply (Pin C).
-    static void selectPublishedSnapshotForEntry(Loop& loop, ImmutableLoopSnapshotRef ref);
+    /// Friend-capable published-root select used by undo/redo apply (Pin C). DEC-073: the root is
+    /// stored with the committed-pass coverage it was captured at; an unset coverage is never
+    /// current.
+    static void selectPublishedSnapshotForEntry(Loop& loop, ImmutableLoopSnapshotRef ref,
+                                                uint32_t coveredPassRevision = kSnapshotCoverageUnset);
     static void beginOverdubSession(Track& track);
     static bool undoOverdubSession(Track& track, Loop& loop);
     static bool redoOverdubSession(Track& track, Loop& loop);

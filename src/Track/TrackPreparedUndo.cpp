@@ -6,7 +6,8 @@
 
 TRACK_COLD_MEM bool TrackPreparedUndo::prepareOverdubSessionEntry(
     Loop& loop, Loop::SessionUndoCollection& collection, uint8_t slotIndex,
-    const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry) {
+    const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry,
+    uint32_t beforePublishedCoverage) {
   if (slotIndex >= Config::MAX_LOOPS_PER_TRACK ||
       !loop.collectedOverdubSessionUndoPassesCurrent(collection) || collection.passIds->empty() ||
       entry.id != kInvalidUndoEntryId || entry.passId != kInvalidPassId || !entry.passIds.empty() || !entry.editPassIds.empty() ||
@@ -26,6 +27,7 @@ TRACK_COLD_MEM bool TrackPreparedUndo::prepareOverdubSessionEntry(
   entry.hasTrackState = entry.beforeSlotEnabled = entry.beforeSlotMuted = false;
   entry.hasSlotFlags = entry.hasRedoPayload = false;
   entry.beforePublishedSnapshot = beforePublished; // Destination was empty: retain only, no release.
+  entry.beforePublishedCoverage = beforePublishedCoverage; // DEC-073: coverage of that root.
   if (collection.passIds->size() > 1) entry.passIds.swap(*collection.passIds);
   entry.editPassIds.swap(*collection.companionIds);
   collection.phase = Loop::SessionUndoCollection::Phase::Cold; // Explicitly consumed, including single-pass/empty edits.

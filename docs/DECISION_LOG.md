@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 (persistence gate) follows |
 | [DEC-072](#dec-072--a-staged-capture-pass-is-owned-by-its-capture-interval-not-by-the-loop-producer-slot) | 2026-09-17 | A staged capture pass is owned by its capture interval, not by the Loop producer slot | Accepted — implemented; former `REENTRY_RED` reproducer green; device PASS [`successor-ownership-06`](../captures/successor-ownership-06/session_20260917_230432.log) |
 | [DEC-070](#dec-070--a-transport-stop-retarget-must-re-route-a-mid-flight-deferred-stop-job-not-only-re-label-its-destination) | 2026-09-17 | Transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label it | Accepted — implemented; native case fails without it; device PASS [`successor-wrap-40`](../captures/successor-wrap-40/session_20260917_195608.log) |
 | [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented; native green; device PASS [`successor-wrap-36`](../captures/successor-wrap-36/session_20260917_193344.log) |
@@ -84,7 +85,156 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-073 -->
+<!-- Append new entries below (newest first). Next ID: DEC-074 -->
+
+## DEC-073 — A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp
+
+**Date:** 2026-09-18
+**Status:** Accepted — RC1 (publisher correctness) implemented and **device-verified**
+(`captures/rc1-coalescing-reboot-playback`: fresh boot `boot_reset,crash=0` at 3.0 s uptime, then
+`result: PASS`, `storage_matches_effective: true`, `384 + 154 + 38 + 24 = 600` effective rows and **all five
+playback cycles `inventory_equal: true`, `exact_order: true`, 0 missing, 0 extra** — including the 24-row second
+overdub pass that was the reported loss). RC2 (the LSV1 persistence admission gate) is a separate follow-up and is
+**not** part of this entry's code scope.
+**Owner:** `Loop::storePublishedSnapshot` / `PublishedSnapshotBox` (`src/Loop/LoopSnapshotLifetime.cpp`,
+`src/Loop/LoopSnapshotBoxes.h`), `Loop::stepPendingSnapshotPublish` and the pending box
+(`src/Loop/LoopSnapshotPublish.cpp`), `Loop::publishedSnapshotIsCurrent`. The requesters that must supply coverage:
+`Loop::queueSessionExitSnapshot`, `Loop::requestCommittedPassesRepublish`, `Loop::queueOverdubWrapSnapshotJournal`
+(which already passes an explicit `targetRevision`), and the undo/redo captured-root selection
+(`TrackUndo::applyPublishedSnapshotSelect` -> `TrackUndo::selectPublishedSnapshotForEntry`).
+**Supersedes:** the implicit contract that a root is current when `PublishedSnapshotBox::revision == playbackRevision`
+(introduced with DEC-047/DEC-049 and relied on by the LSV1 body save since DEC-057). That equality stays necessary but
+is no longer sufficient.
+
+**Report (user, 2026-09-18).** After reboot the second overdub was not loaded: the committed passes are complete
+(`!CAPTURE_CONTENT` effective 142 rows, both overdub passes present) but the deferred save's LSV1 tail gathered a
+coalesced published root that encodes the **undo** state. `captures/gus-sanity-01` + `captures/reboot-01-playback`:
+`PassesResolve` 55 -> **48 after `Undo`** (149.33 s) -> **57 after `Redo`** (152.27 s); the save request was pending
+from 116.97 s, its tail gather fires at 154.269 s, and post-reboot the loaded body root resolves to **48** display
+rows vs 57 before the reboot with the 24-39 overdub range silent. The same class of loss is recorded for
+`content-verify-58`/`-59`/`-59b` and `content-verify-60`.
+
+**Mechanism ("current can lie").** Two independent holes in the same contract:
+
+- `Loop::stepPendingSnapshotPublish` publishes the session-exit candidate with
+  `storePublishedSnapshot(box.unpublishedCandidate)` and the default revision, which
+  `Loop::storePublishedSnapshot` fills with the **current** `playbackRevision` no matter which committed-pass state
+  the candidate was actually built from. Only the wrap branch passes an explicit revision
+  (`box.queuedWrapJournals.front().targetRevision`, DEC-047/DEC-051). So a candidate enumerated before the redo is
+  stamped current after it: the machinery cannot distinguish "this revision was reached" from "this candidate covers
+  that state". `Loop::publishedSnapshotIsCurrent()` is exactly `box.revision == playbackRevision`.
+- The undo/redo captured-root selection has the same shape: `TrackUndo::selectPublishedSnapshotForEntry` calls
+  `loop.storePublishedSnapshot(ref)` with the default revision, so a root captured at an older committed-pass state
+  is re-stamped with the current one. With the redo's `afterPublishedSnapshot` empty (the Pin A hole that DEC-071 /
+  `immutable-loop-snapshot-passes` 5.8 closed for the live path), the pre-undo root stayed selected and was stamped
+  current.
+
+In the same window the queue accounting (`pendingSnapshotQueuedPassCount` `q` / `pendingSnapshotAppliedPassCount`
+`a`) advanced `q=4 -> 0`, `a=0 -> 5` while the published candidate still resolved to the **undo-shaped 48-row** set
+against `PassesResolve` 57: **queue consumption and candidate coverage were not tied together**.
+
+**Decision.** Coverage is data carried with the root, not an inference from a revision that was reached.
+
+1. `Loop` keeps a **committed-pass revision** (`committedPassRevision`) that advances exactly when the publisher's
+   enumerable pass/companion inventory changes -- a record/overdub/wrap pass commit, a pass disable or reclaim, an
+   undo/redo pass restore, a note-edit row save/delete, a pending-change seal, or a clear. Audited 2026-09-18: every
+   site that bumps `playbackRevision` is one of those inventory changes, so `committedPassRevision()` is an alias for
+   `playbackRevision` today; it is named as its own contract because the coverage comparison is about the enumerable
+   pass inventory, and a future content-only revision bump must be excluded from it deliberately rather than by
+   accident.
+2. A candidate is published with `coveredPassRevision`: the committed-pass revision its content was **enumerated and
+   applied from**. `PendingSnapshotPublishBox` carries the watermark; it advances only when a request actually
+   enumerates passes into the box (an enumerated pass is always applied before the publish, because the publish
+   requires the queue to drain), so the watermark at publish time describes exactly the content the candidate
+   incorporated. A wrap candidate keeps its explicit `targetRevision` as both stamp and coverage.
+3. A published root carries that `coveredPassRevision`. **`publishedSnapshotIsCurrent()` means exactly
+   `root.coveredPassRevision == loop.committedPassRevision`.** No pending-request clause is needed at this level: a
+   later request cannot invalidate the root without moving the committed-pass inventory, which advances the revision
+   the comparison reads. A selected captured root is current only for the committed-pass state it was captured at,
+   never for one it was not built from; a captured ref supplied without coverage is conservatively not current. The
+   persistence gate (RC2) adds the separate "publisher is settled" requirement (`!hasPendingSnapshotPublish()`) at
+   its own admission point, because a save must not race an in-flight publication even when the live root is
+   coverage-current.
+4. **Coalescing rule.** When several requests are coalesced into one box, the candidate ultimately published must
+   represent the latest committed-pass state covered by **all** requests consumed by that publication. A candidate
+   derived from an earlier request may not become current merely because later requests were coalesced into its queue
+   entry. If a started candidate cannot safely retarget, the valid policy is to finish/publish it only for its own
+   covered revision, leave the newer request pending, and then construct and publish the latest state: a temporary
+   intermediate root is allowed, silently declaring the newer request satisfied is not.
+
+**RC1 -- publisher correctness (this entry's code scope).** Add the coverage field and the committed-pass revision,
+stamp the session-exit and republish candidates at enumeration, propagate coverage through `finishPendingConstruction`
+and every `storePublishedSnapshot` call, and make the currency predicate coverage-based. Reproduce
+`OD2 -> Undo -> Redo -> coalesced snapshot requests` and prove `PassesResolve == published root` **before any
+persistence runs**. Cover both a later request arriving before construction begins and one arriving while an earlier
+candidate is mid-construction (the second is the reported case).
+
+**RC2 -- persistence guard (follow-up, not this entry's scope).** Once RC1 holds, require the LSV1 body
+gather/admission to see a demonstrably settled current root
+(`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()`) with bounded save re-admission; when
+no settled root is reachable, persist a **passes-authoritative** representation, preferring LSV1's own
+"body without a selected snapshot/root" encoding over the legacy format, and making that a deliberate
+format/migration decision. Acceptance for the pair: immediately before save admission the selected root and
+`PassesResolve` already agree -- which separates publisher correctness from persistence correctness so a persistence
+test cannot hide a still-broken live publisher -- then save/load keeps `passes == root` with identical display and
+playback, and a known-good LSV1 load still takes the fast path with no rebuild/reconcile.
+
+**Rejected alternatives.**
+
+- *Load-time reconcile in `applyLoadedLoopSlotBodyCommit`* (owner call 2026-09-18): treats the symptom at the wrong
+  layer -- the bad root exists before the save, which only serializes it faithfully.
+- *Persist from `passes` first*: makes the persisted representation diverge from what playback consumes, so a
+  publisher defect becomes invisible instead of impossible.
+- *Keeping "revision reached" as proof*: measured to lie; the revision is a stamp, not evidence about a candidate's
+  content.
+- *Publishing only the newest state and never an intermediate root*: not required, and it would either block the
+  older candidate past its own coverage or drop its request; the intermediate root is allowed and must simply not
+  claim the newer coverage.
+
+**Consequences.** The LSV1 save admission, the playback stale-root overlay, the undo after-attach and the display
+cache revision keys keep reading `publishedSnapshotIsCurrent()`; the predicate becomes strictly stronger, so a caller
+that relied on the weaker form may now see "not current" and must take its pending/rebuild path. `playbackRevision`
+semantics are unchanged; the two revisions are compared only inside the publication contract.
+
+**Implemented (2026-09-18, RC1).** `PublishedSnapshotBox` and `PendingSnapshotPublishBox` carry
+`coveredPassRevision` (`src/Loop/LoopSnapshotBoxes.h`); `Loop::storePublishedSnapshot(snapshot, revision,
+coveredPassRevision)` never infers coverage from the revision stamp and resolves `kSnapshotCoverageCurrent` to the
+live committed-pass revision; `Loop::publishedSnapshotIsCurrent()` compares coverage only; new accessors
+`publishedSnapshotCoveredRevision()` / `committedPassRevision()`. Watermarks are set where the box actually
+enumerates (`queueSessionExitSnapshot`, `queueAllCommittedPassesInto` from both `queueLoadedSnapshotPublish` and
+`requestCommittedPassesRepublish`, `enqueueLiveOverdubPasses` when it queues a pass, wrap journals via their own
+`targetRevision` at publish), and the session-exit publish now passes `box.coveredPassRevision`. Undo/redo coverage
+travels with the retained root: `UndoEntry::before/afterPublishedCoverage` (`include/GlobalUndoStack.h`), captured at
+every `capturePublishedSnapshot` site, attached in `TrackUndo::attachAfterPublishedSnapshot`, plumbed through
+`TrackUndo::selectPublishedSnapshotForEntry(loop, ref, coverage)`, and carried by the job-owned and live
+session-before roots (`Track::CaptureStopJob::beforePublishedCoverage`,
+`Track::overdubSessionBeforePublishedCoverage_`, `TrackPreparedUndo::prepareOverdubSessionEntry`). Synchronous
+publication (note-edit close, loaded hydration) stamps `kSnapshotCoverageCurrent`; the native test hook defaults to
+the same but treats an explicit older revision stamp as uncovered.
+
+**Verification.** Native reproducers in `test/test_loop_take_survival`:
+`test_coalesced_snapshot_request_before_construction_is_not_satisfied_early` and
+`test_coalesced_snapshot_request_mid_construction_is_not_satisfied_early` (the reported timing). Both were red on the
+pre-fix tree on the same clause -- the selected root claimed current although its content predated the committed
+overdub pass -- and are green after the fix; `test_loop_take_survival` is 137/137, full native 2246 / 1 skipped /
+0 failures. Device (firmware `teensy41-capture-serial-no-grain`, hex
+`f2f1d8bdfc85b30727fc667e1c548066d1debf4854fa5acae8cdae645c735f1e`, working tree at `d9eb419a` + this change),
+the DEC-071 multi-pass shape (`--record-bars 8 --overdub-bars 8 --overdub-start-delay-bars 2`, track 4 slot 1) with
+the recipe's undo/redo:
+
+- `captures/rc1-coalescing-device` (managed `base`): `PLAYING->OVERDUBBING: 2`, `OVERDUBBING->PLAYING: 2`, undo=1
+  redo=1, `stored overdub span count=64/63` + `second overdub count=56/7`, display `overdub_ok/transport_ok=True`,
+  `overflow_free=True`. The run's own report is FAIL only on `persistence_stage_missing:result`: the post-redo
+  republish (`snapshot_unit,kind=publish,q=0,a=4` at 95.474 s) lands, the last `OverlayRejected`/`PassesResolve` row
+  precedes it (root_rev 5 vs playback_rev 6), the LSV1 `tail_gather_begin` at 99.640 s gathers that root, and the
+  now-complete 600-row tail was still being written when the base run closed serial -- the device's own log then
+  records `PERS,result,...,ok` at 111.14 s. The oracle miss is the run window, not the content.
+- `captures/rc1-coalescing-device-playback` (live): `result: PASS`, all five cycles `inventory_equal: true`,
+  `exact_order: true`, 0 missing/extra, `storage_matches_effective: true`.
+- `captures/rc1-coalescing-reboot-playback` (**fresh boot**, `boot_reset,crash=0` at 3.0 s uptime, load
+  `start`/`ok`): `result: PASS`, `storage_matches_effective: true`, `record 384 + overdub 154 + 38 + 24 = 600`
+  effective rows, **all five cycles `inventory_equal: true`, `exact_order: true`, 0 missing, 0 extra**,
+  `max_bar_refs: 84`, 0 `RING,overflow`. The previously silent 24-row second-overdub pass is audible after reboot.
 
 ## DEC-072 — A staged capture pass is owned by its capture interval, not by the Loop producer slot
 

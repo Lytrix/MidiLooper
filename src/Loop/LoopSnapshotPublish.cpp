@@ -1380,6 +1380,7 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
     return;
   }
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  const size_t queuedBefore = box.queuedPassIds.size();
   for (const PassId passId : overdubSessionPassIds_) {
     if (passId != kInvalidPassId && isCommittedOverdubPass(*this, passId) &&
         !passAlreadyTracked(box, passId)) {
@@ -1390,6 +1391,11 @@ LOOP_COLD_MEM void Loop::enqueueLiveOverdubPasses() {
       isCommittedOverdubPass(*this, lastCommittedPassId_) &&
       !passAlreadyTracked(box, lastCommittedPassId_)) {
     box.queuedPassIds.push_back(lastCommittedPassId_);
+  }
+  // DEC-073: coverage advances only for passes actually enumerated into the box, which are applied
+  // before any publish (`remainingSessionExitPublishWork` requires the queue to drain first).
+  if (box.queuedPassIds.size() != queuedBefore) {
+    box.coveredPassRevision = committedPassRevision();
   }
 }
 
@@ -1805,6 +1811,8 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
     clearPendingSnapshotPublish();
     return false;
   }
+  // DEC-073: the enumeration above covers the committed-pass inventory as of now.
+  box.coveredPassRevision = committedPassRevision();
   return true;
 }
 
@@ -1827,6 +1835,10 @@ LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
     clearPendingSnapshotPublish();
     return false;
   }
+  // DEC-073: the republish request covers the pass inventory it just enumerated. A later inventory
+  // change advances `committedPassRevision` without advancing this watermark, so the candidate
+  // built from this request publishes as an intermediate root and never claims the newer coverage.
+  box.coveredPassRevision = committedPassRevision();
   return true;
 }
 
@@ -1993,6 +2005,10 @@ LOOP_COLD_MEM bool Loop::queueSessionExitSnapshot(CommitReason reason,
     box.queuedPassIds.push_back(finalPassId);
   }
   box.companionsApplied = box.companionIds.empty();
+  // DEC-073: this enumeration reflects the committed-pass inventory as of now, so the box's
+  // coverage watermark advances to it. Only an actual enumeration may advance coverage; a request
+  // that arrives later without being enumerated here leaves the watermark behind.
+  box.coveredPassRevision = committedPassRevision();
 
   if (box.construction || !box.queuedPassIds.empty() || box.unpublishedCandidate ||
       !box.companionIds.empty() || !box.queuedWrapJournals.empty()) {
@@ -2186,7 +2202,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #if defined(SESSION_CAPTURE)
       SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
 #endif
-      storePublishedSnapshot(box.unpublishedCandidate, wrapTargetRevision);
+      // DEC-073: a wrap candidate carries its own target revision as coverage, so it publishes as
+      // an intermediate root when the live revision has already moved past the wrap seal.
+      storePublishedSnapshot(box.unpublishedCandidate, wrapTargetRevision, wrapTargetRevision);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
       emitSnapshotUnitCapture(*this, "publish", heapBefore);
 #endif
@@ -2209,7 +2227,11 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
       const uint32_t oldRoot = publishedSnapshotRevision();
 #endif
-      storePublishedSnapshot(box.unpublishedCandidate);
+      // DEC-073: publish the candidate only for the coverage it was actually enumerated from. If a
+      // newer request was coalesced into the queue without this candidate incorporating it, the
+      // watermark stays behind, this becomes an allowed intermediate root, and `publishedSnapshot-
+      // IsCurrent()` is false so the newer request stays authoritative.
+      storePublishedSnapshot(box.unpublishedCandidate, 0, box.coveredPassRevision);
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
       InvestigationCaptureLog::logSessionExitPostStopPublish(
           oldRoot, publishedSnapshotRevision(), playbackRevision);
@@ -2260,6 +2282,8 @@ LOOP_COLD_MEM bool Loop::tryPublishNoteEditSnapshot(const EditPassIdList& editPa
   if (!frozen) {
     return false;
   }
-  storePublishedSnapshot(std::move(frozen));
+  // DEC-073: a note-edit publication is constructed and published in one turn from the live state,
+  // so its coverage is the current committed-pass revision.
+  storePublishedSnapshot(std::move(frozen), 0, kSnapshotCoverageCurrent);
   return true;
 }
