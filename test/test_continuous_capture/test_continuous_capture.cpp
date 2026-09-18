@@ -3039,6 +3039,20 @@ void test_deferred_stop_undo_entry_carries_every_session_pass() {
   PassIdList undoIds;
   appendOverdubCapturePassIds(*overdubEntry, undoIds);
   TEST_ASSERT_EQUAL_UINT32(2u, undoIds.size());
+  // `applyUndoEntry` disables every id `appendOverdubCapturePassIds` yields, and refuses the whole
+  // entry if any id is missing. Both must therefore still be Active committed passes.
+  for (const PassId id : undoIds) {
+    bool found = false;
+    for (const OverdubPass& pass : track.getActiveLoop().passes.overdubPasses) {
+      if (pass.id == id) {
+        found = true;
+        TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(CapturePassState::Active),
+                                  static_cast<int>(pass.state),
+                                  "every pass in the entry must still be disableable");
+      }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(found, "every pass in the entry must still exist");
+  }
 }
 
 /// A full ring is explicit exhaustion, not finalization latency: admission is
