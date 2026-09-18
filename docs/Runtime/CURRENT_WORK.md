@@ -2782,58 +2782,57 @@ repro is also out of reach: `TICKS_PER_BAR = 768` makes the crashing loop 24 bar
 internal heap) remains the tunable if a healthy device parks; the DEC-073 RC1 control settles at 104 KB and this run
 was denied at 68 KB.
 
-**2026-09-18 — the blocking `saveState` drain's wedge: root cause found, fix written and native-verified, then
-REVERTED because it cannot be flashed (`immutable-loop-snapshot-passes` 5.7.6).** Fix commit `12fdf38d`, reverted by
-`d3290020`; cherry-pick `12fdf38d` after the RAM1 headroom below is resolved.
+**2026-09-18 — the blocking `saveState` drain's wedge is FIXED and device-verified, after a RAM1 bank reduction unblocked
+it (`immutable-loop-snapshot-passes` 5.7.6; commits `12fdf38d` -> reverted `d3290020` -> re-landed `0a036c63`, on
+linker change `ea9918ac`).**
 
-*Root cause (was an RC here).* The two base-preset runs that aborted at the harness's clear precondition
-(`captures/rcpub-gate-01`, `-02`) with `Persistence drain stuck after 33 iterations (max 33, expected ~1 slice
-steps, ~0 SD bytes)` were a **monotonic work-entry table**. `src/StorageManager/SyncDrainBudget.cpp:66` sets
-`finalizeSliceSteps` only when `pending && queueDepth == 0 && writingWorkItemCount == 0 && !itemActive`, so
-`expectedSliceSteps = 1` with 0 SD bytes pinned the state to `pending` alone with nothing to step; `maxSliceSteps =
-1*3/2 + 32 = 33` and `maxStuckIterations = min(64, 33) = 33` match the log exactly. `stepPersistenceWorkItem`
-returns success on that state while leaving `pending` set, and `maybeAdmitFinalizeWorkspaceAfterDrain` discarded
-`admitWork`'s result, so the drain could neither advance nor terminate. Why admission was refused: no path ever
-returns an entry to `NotScheduled` (`admitWork`/`markItemPersisted`/`requeueWritingEntryByIndex` only write
-`Queued`/`Writing`/`Persisted`) and `LoopPersist` is keyed by `LoopId`, which is fresh for every new loop, so each
-clear/record cycle permanently consumes one of the 256 slots -- once exhausted, admission fails for every key
-including `FinalizeWorkspace`. Eliminated: PSRAM exhaustion (`refused=0/0B` with 1.6 MB free) and the transport-flush
-deferral (`deferDispatchUntilMs` is only ever written 0; `deferWorkspaceSaveDispatchDuringPlayback` has no callers).
-Zero `PERS` rows in the wedged runs against 13 `PERS,work` in a working run of the same capture configuration placed
-the failure in admission, not in the finalize slice.
+*Root cause.* The two base-preset runs that aborted at the harness's clear precondition (`captures/rcpub-gate-01`,
+`-02`) with `Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)` were a
+**monotonic work-entry table**. `src/StorageManager/SyncDrainBudget.cpp:66` sets `finalizeSliceSteps` only when
+`pending && queueDepth == 0 && writingWorkItemCount == 0 && !itemActive`, so `expectedSliceSteps = 1` with 0 SD bytes
+pinned the state to `pending` alone with nothing to step; `maxSliceSteps = 1*3/2 + 32 = 33` and `maxStuckIterations =
+min(64, 33) = 33` match the log exactly. `stepPersistenceWorkItem` returns success on that state while leaving
+`pending` set, and `maybeAdmitFinalizeWorkspaceAfterDrain` discarded `admitWork`'s result, so the drain could
+neither advance nor terminate. Why admission was refused: no path ever returns an entry to `NotScheduled`
+(`admitWork`/`markItemPersisted`/`requeueWritingEntryByIndex` only write `Queued`/`Writing`/`Persisted`) and
+`LoopPersist` is keyed by `LoopId`, which is fresh for every new loop, so each clear/record cycle permanently
+consumes one of the 256 slots -- once exhausted, admission fails for every key including `FinalizeWorkspace`.
+Eliminated: PSRAM exhaustion (`refused=0/0B` with 1.6 MB free) and the transport-flush deferral
+(`deferDispatchUntilMs` is only ever written 0; `deferWorkspaceSaveDispatchDuringPlayback` has no callers). Zero
+`PERS` rows in the wedged runs against 13 `PERS,work` in a working run of the same capture configuration placed the
+failure in admission, not in the finalize slice.
 
-*The fix (native-verified, then reverted).* `admitWork` reclaims a `Persisted` tombstone when the table is full
-(lossless -- nothing reads `workState`, `visitScheduledWorkItems` skips tombstones, and a fresh admission reproduces
-the re-queue shortcut), never touching `Queued`/`Writing`; `maybeAdmitFinalizeWorkspaceAfterDrain` reports whether
-work is available; the drain fails fast with `SyncDrainFailureReason::AdmissionRefused` and a PROGMEM diagnostic
-naming `pending`/`queue`/`writing`/`active`. Native
-`test_exhausted_entry_table_still_admits_the_finalize` and
+*Fix.* `admitWork` reclaims a `Persisted` tombstone when the table is full (lossless -- nothing reads `workState`,
+`visitScheduledWorkItems` skips tombstones, and a fresh admission reproduces the re-queue shortcut), never touching
+`Queued`/`Writing`; `maybeAdmitFinalizeWorkspaceAfterDrain` reports whether work is available; the drain fails fast
+with `SyncDrainFailureReason::AdmissionRefused` and a PROGMEM diagnostic naming `pending`/`queue`/`writing`/`active`.
+Native `test_exhausted_entry_table_still_admits_the_finalize` and
 `test_full_table_reclaims_a_tombstone_and_never_a_queued_item` fail on the pre-fix behaviour (verified by disabling
-the reclaim) and pass after; suite 15/15; full native **2252 / 1 skipped / 0 failures**;
-`teensy41-capture-serial` SUCCESS.
+the reclaim) and pass after; suite 15/15; full native **2252 / 1 skipped / 0 failures**.
 
-*Why it was reverted: it costs 4 KB of DTCM, and that alone hangs the device boot.* The fix build reads
-`variables 91,968 -> 96,064` (`locals free 6,336 -> 2,240`), and on device it **hung during the boot workspace load**
-(`captures/drain-fix-01`/`-02`: 19-21 serial lines, stopping at `BOOT,scan,start` with no `scan,t0`, no `Memory]`
-ticks and no `#CAP`; USB still enumerated, no crash record -- the documented no-crash-record hang class). Control
-experiments: (1) the pre-fix firmware booted and streamed **1136 rows in 20 s** with the same SD state; (2) a
-**semantically neutral edit** to either `PersistenceWorkQueue.cpp` or `SyncDrainSaveState.cpp` (`volatile int
-probe = 0; (void)probe;`) produces the *same* 96,064 / locals 2,240 and the *same* boot hang (**105 rows in 35 s, no
-`BOOT,load,ok`**) with none of the fix's logic. So the hang is the 4 KB, not the fix. The growth adds no symbol: the
-two builds' full symbol tables are byte-identical and the sections grow by padding (`.data` +1,024, `.bss` +3,072);
-it survives removing every new literal (the diagnostic is PROGMEM) and every new struct field; a clean build
-reproduces it. The tree sits on a knife-edge where a few bytes of code flips one 4,096-byte DTCM alignment unit.
+*Why it needed the RAM1 bank reduction first.* The fix costs 4 KB of DTCM (`variables 91,968 -> 96,064`) and at 13
+ITCM banks that left `locals free` 2,240, which **hung the boot** during the workspace load (`captures/drain-fix-01`/
+`-02`: 19-21 serial lines, stopping at `BOOT,scan,start`, no `Memory]` ticks, no `#CAP`, USB enumerated, no crash
+record). Controls proved it was the 4 KB and not the logic: the pre-fix firmware booted and streamed **1136 rows in
+20 s** with the same SD state, and a **semantically neutral edit** (`volatile int probe = 0; (void)probe;`) to either
+`PersistenceWorkQueue.cpp` or `SyncDrainSaveState.cpp` gave the same 96,064 / 2,240 and the same hang (**105 rows in
+35 s, no `BOOT,load,ok`**) with none of the fix's logic. With no movable DTCM left (every symbol >= 128 B is Teensy
+core/USB, newlib/libstdc++, or the hot `midiHandler`/`trackManager`; the app's large state is already `DMAMEM`), the
+lever was ITCM: `ea9918ac` routes ten cold TUs (LoadLoopJob, CurrentSetBootLoad, RevisionCommit,
+CurrentWorkspaceStorage, RevisionLoad, LoopInternalColdHelpers, SetBrowserRead, StorageManagerHitlSerial,
+DebugSessionCapture, NoteEditSessionUndoStack) to FLASH in `linker/imxrt1062_t41_lcr.ld`. `code + padding` 425,984 ->
+393,216 = **13 -> 12 ITCM banks**, `free for local variables` 6,336 -> **39,104**, and with the fix re-landed on top
+`variables 96,064` still leaves **35,008**.
 
-*Why it cannot simply be paid for.* `code + padding = 425,984` is exactly 13 ITCM banks, so DTCM gets 3 banks
-(98,304 B) and `variables` 91,968 leaves only 6,336. There is no movable DTCM left: every symbol >=128 B is Teensy
-core/USB (`enumbuf`, `_VectorsRam`, `endpoint_queue_head`, `uframe_bandwidth`, the `rx_transfer`/`isr_table_*`
-tables, `MIDIserial`), newlib/libstdc++ (`__malloc_av_`, `__prime_list`, `__atexit0`, `__global_locale`, `__sf`,
-`_ctype_`, `__mprec_tens`, `__sincosf_table`, `digital_pin_to_info_PGM`) or the two hot app objects the rule forbids
-moving (`midiHandler` 5,568, `trackManager` 3,656); the app's own large state is already `DMAMEM`
-(`storageSession`, `displayManager`). **The lever that actually buys headroom is ITCM: moving ~32 KB of cold code to
-FLASH drops `code + padding` below 393,216 and frees a whole 32 KB DTCM bank**, which would also absorb the snap.
-That is the recommended follow-up; until it lands, any edit to those two TUs flips the snap and hangs the boot, so
-they are effectively frozen.
+*Device evidence (`captures/drain-fix-03`, git `0a036c63`, base preset track 5 slot 1):* the clear precondition is
+**satisfied** (`Clear completed (serial log); precondition satisfied` -- previously `Clear aborted: could not complete
+deferred save first`), with **0 `Persistence drain stuck`**, 0 `admission_refused`, 0 `no admittable work`,
+0 `FATAL`, 0 `#MEM_EXT_REFUSED`, **3,287 `#CAP` rows** and **12 `PERS,work`** rows (the wedged runs had 0). Boot probe
+of the same build: 1,023 rows in 30 s, `BOOT,load,ok`. The run then closed on the harness's
+`second overdub transition not confirmed` / `INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`, the separate ring-shed /
+8-bar-cap issue above, not the drain. **Caveat:** `padding` is now 1,256 B, so the next ~1.2 KB of new ITCM code
+crosses back to 13 banks and returns the allowance to ~7 KB; taking the next bank means moving another ~32 KB of cold
+code. Recorded in [`Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc).
 
 **2026-09-18 — RC recorded for the post-wrap device reset: the publication boundary neither admits memory nor parks
 an allocation failure (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: *the stress run crashed a
