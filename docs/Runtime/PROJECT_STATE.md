@@ -11,7 +11,12 @@ ring; `stepDeferredUndoCollection` passes `job.admission.sessionExitReceiptRing`
 the `#CAP,DIAG,gus` row now (`src=deferred`). New native fixture
 `test_deferred_stop_undo_entry_carries_every_session_pass` fails without the fix (`Expected 2 Was 0`);
 `test_continuous_capture` 75/75, full native **2,241 / 1 skipped / 0 failures**, RAM1 locals 6,400 unchanged.
-**Device gate pending** — the board dropped off USB after the display run and needs a PROGRAM-button reconnect.
+**Device gate closed:** `captures/gus-undo-01` (managed `base`, firmware from `7a4c8bfc`) logs
+`#CAP,66172706,DIAG,gus,slot,kind=1,passId=3,passIds_n=2,src=deferred` (one entry, both passes) and
+`DISP across undo/redo: before=189 after_undo=124 after_redo=188` — one undo removes the whole overdub, against the
+partial `194 -> 179 -> 193` before the fix. The run's base report is `FAIL` only on the known record
+stop-quantisation grid artifact and the redo re-verification span window, not the GUS entry; a second attempt
+(`gus-undo-02`) was `INCONCLUSIVE_CAPTURE` (setup).
 
 **2026-09-18 the 5.8 undo/redo fix's display half LANDED (`immutable-loop-snapshot-passes` 5.8a).** After 5.8
 made playback stop emitting a disabled pass, the OLED still painted the undone overdub: the sealed capture

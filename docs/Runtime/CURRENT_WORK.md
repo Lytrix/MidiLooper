@@ -2774,8 +2774,21 @@ published entry carries the wrap pass and the final pass, and that `appendOverdu
 yields both; it fails without the fix (`Expected 2 Was 0`). `test_continuous_capture` 75/75; full
 native **2,241 cases / 1 skipped / 0 failures** (was 2,240); `pio run -e teensy41-capture-serial`
 SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488 / **locals 6,400** unchanged.
-Device gate pending (awaiting a board that enumerates; the previous session's board dropped off USB
-and needs a PROGRAM-button reconnect).
+
+Device gate (managed `base`, `captures/gus-undo-01`, firmware from `7a4c8bfc`,
+`teensy41-capture-serial-no-grain`, DEC-071 shape + recipe undo/redo): `undo=1 redo=1`,
+`overflow_free=True`, and the new deferred telemetry
+`#CAP,66172706,DIAG,gus,slot,kind=1,passId=3,passIds_n=2,src=deferred` — the entry carries the wrap
+pass **and** the final stop pass. The same run's `DISP across undo/redo: before=189 after_undo=124
+after_redo=188` shows a single undo now removes the whole overdub (~65 display rows) and the redo
+restores it, against the partial `194 → 179 → 193` of the pre-fix `display-undo-03`. That run's base
+report is `FAIL (FIRMWARE_CONTRADICTION)` on `record_stored_note_grid` (4 bad deltas of budget 2) and
+`overdub_stored_span span_ok=False` (`last_tick=6810` against a loop that sealed at 8 bars / 6144
+ticks) — the known pacing/loop-length and re-verification-window artifacts of this recipe, not the
+GUS entry. A second attempt (`gus-undo-02`) is `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` (`undo=0
+redo=0`, transport STOPPED at the stop press), so it is not evidence either way. Owed: scope the
+stored-verification oracle to the pre-undo window so the redo's re-verification drain cannot fail the
+base run, and (for the base PASS) the record's stop-time quantisation slop (8 vs 9 bars).
 
 **2026-09-18 — the 5.8 undo/redo fix made playback correct but left the OLED painting the undone
 overdub; fixed (`immutable-loop-snapshot-passes` 5.8a).** The regression is the display half of the
