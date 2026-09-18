@@ -14,7 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented; native reproducer flips red→green; RAM1 allowance restored to RC1's |
+| [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented and device-verified (settled LSV1 save path, `q=0` publishes, post-reboot `storage_matches_effective`); native reproducer red→green; RAM1 allowance restored |
 | [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 landed as DEC-074 |
 | [DEC-072](#dec-072--a-staged-capture-pass-is-owned-by-its-capture-interval-not-by-the-loop-producer-slot) | 2026-09-17 | A staged capture pass is owned by its capture interval, not by the Loop producer slot | Accepted — implemented; former `REENTRY_RED` reproducer green; device PASS [`successor-ownership-06`](../captures/successor-ownership-06/session_20260917_230432.log) |
 | [DEC-070](#dec-070--a-transport-stop-retarget-must-re-route-a-mid-flight-deferred-stop-job-not-only-re-label-its-destination) | 2026-09-17 | Transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label it | Accepted — implemented; native case fails without it; device PASS [`successor-wrap-40`](../captures/successor-wrap-40/session_20260917_195608.log) |
@@ -91,9 +91,16 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-074 — The LSV1 body admits only a settled root; the format is pinned once and the fallback is the passes-authoritative legacy body
 
 **Date:** 2026-09-18
-**Status:** Accepted — implemented. Native reproducer `test_write_loop_persisted_requires_a_settled_published_snapshot`
-fails on the pre-RC2 predicate and passes after; `test_storage_loop_io` 47/47; full native green; firmware builds with
-the RAM1 local allowance restored to RC1's value. Device save/load re-verification owed.
+**Status:** Accepted — implemented and **device-verified**. Native reproducer
+`test_write_loop_persisted_requires_a_settled_published_snapshot` fails on the pre-RC2 predicate and passes after;
+`test_storage_loop_io` 47/47; full native 2248 / 1 skipped / 0 failures; firmware builds with the RAM1 local
+allowance restored to RC1's value. Device (`captures/rc2-settle-device-c` + `captures/rc2-settle-reboot-playback`,
+firmware `86fd8f07…`): the save took the settled LSV1 path (`tail_gather_begin`, `LoopSnapshotTail`, `q=0`
+publications), 0 `RING,overflow`, 0 `FATAL`, post-reboot `storage_matches_effective: true`. That session was
+accidentally recorded at **240 BPM instead of 120**, so its 17-bar `record_loop_length_mismatch` and the verify's 4
+unexplained wrap rows are a setup artifact, not a content finding; the intended DEC-071 shape's post-reboot parity is
+proven clean under DEC-073 (`captures/rc1-coalescing-reboot-playback`, 5/5 `inventory_equal`, 0 missing), and this
+entry changes only the admission, not the published content.
 **Owner:** `Loop::hasSettledPublishedSnapshotForSave` (`src/Loop/LoopSnapshotLifetime.cpp`),
 `loopUsesLoopSnapshotBodyFormatV1ForSave` / `decideLoopPersistBodyFormat` (`src/StorageLoopIo.cpp`,
 `include/StorageLoopIo.h`), `stepDeferredLoopPersist` / `deferUnsettledLoopPersist` and
@@ -149,14 +156,21 @@ the extra parameter, and moving the resolution out of the stage switch, restored
 `variables: 91968 / free for local variables: 6336` exactly. The deferral is deliberately **silent** for this
 reason; it stays bounded and transient, and the policy is covered natively.
 
+**Observability (acceptance env).** `[env:teensy41-capture-serial-no-grain]` also sets
+`-D SESSION_CAPTURE_LCR=0`, gating the `DIAG,lcr,*` family (`SESSION_CAPTURE_LCR`, default 1) at its
+lcr-only emitter blocks. On the 2026-09-18 device state (a loaded 20-bar loop) that family logged 12,733
+`DIAG,lcr,srcspan` rows of 13,173 `#CAP` lines and overflowed the 1 MiB ring in two attempts; with it gated the
+same recipe ran `overflow_free=True` (`captures/rc2-settle-device-c`, firmware `86fd8f07…`).
+
 **Verification.** `test_write_loop_persisted_requires_a_settled_published_snapshot` asserts the pre-RC2 predicate is
 still true at that point (`snapshot && publishedSnapshotIsCurrent()`) and that the new admission is false, then that
 `writeLoopPersisted` emits a **legacy** body while unsettled and LSV1 once the republish settles.
 `test_loop_persist_body_decision_awaits_settlement_within_its_budget` pins `AwaitSettled` / `PassesAuthoritative` /
 `Lsv1SelectedRoot` for the budget, stale-root and settled cases. `test_storage_loop_io` 47/47; full native
 **2248 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 variables 91,968 / code 425,560 /
-padding 424 / **locals free 6,336** (FLASH code 1,007,072) -- exactly the RC1 figures. Device re-verification of
-save/load parity on the DEC-071 multi-pass shape is the remaining gate.
+padding 424 / **locals free 6,336** (FLASH code 1,007,072) -- exactly the RC1 figures. Device: the save took the
+settled LSV1 path and reloaded with `storage_matches_effective: true`; see Status for why that run's 240 BPM
+mis-setup is not a content finding.
 
 ## DEC-073 — A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp
 

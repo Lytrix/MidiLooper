@@ -63,7 +63,13 @@ a missing `LoopSnapshot` section, so LSV1 cannot express a rootless body. A boun
 before falling back. Native: `test_storage_loop_io` 47/47 (two new fixtures, one red on the pre-RC2 predicate); full
 native green; `teensy41-capture-serial` SUCCESS with RAM1 variables 91,968 / padding 424 / **locals free 6,336**
 (the first implementation's new telemetry tag cost 4 KB of DTCM allowance via `ALIGN(4096)` churn; dropping it
-restored the figure). Remaining: the RC2 device save/load re-verification, then 6.1/6.2/6.3.
+restored the figure). **Device read closed 2026-09-18** (firmware `86fd8f07…`): the save took the settled LSV1
+path (`tail_gather_begin`, `LoopSnapshotTail` 1389 steps, `q=0` publications), 0 `RING,overflow`, 0 `FATAL`, and
+post-reboot `storage_matches_effective: true`. The verify's 4 unexplained wrap rows are a setup artifact -- that
+session recorded at 240 BPM instead of 120, so its 8-bar request became a 17-bar
+`record_loop_length_mismatch`; the intended shape's post-reboot parity is proven clean under DEC-073. The two
+earlier attempts' ring overflow is fixed by `SESSION_CAPTURE_LCR=0` in the no-grain acceptance env. Remaining:
+6.1/6.2/6.3, and the owning change's RC-PUB-1..3 publication-boundary work (`immutable-loop-snapshot-passes` 5.9).
 
 **2026-09-18 RC recorded for the post-reboot overdub loss (`successor-capture-reentry-unguarding` 5.9).** User report:
 after reboot the second overdub isn't loaded. Device `captures/gus-sanity-01` + `captures/reboot-01-playback`: the

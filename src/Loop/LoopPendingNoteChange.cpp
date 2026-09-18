@@ -519,7 +519,7 @@ LOOP_COLD_MEM void Loop::ensureOverdubSourceNotesForHold(uint32_t holdPhaseTick,
   if (newlyMergedPitchNotes != nullptr) {
     *newlyMergedPitchNotes = toMerge;
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   char line[224];
   snprintf(line, sizeof(line),
            LOOP_NOTECHANGE_DIAG_FMT("#CAP,%lu,DIAG,lcr,src,why=hold,from=cache,pitch=%u,merged=%u,"

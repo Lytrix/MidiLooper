@@ -116,8 +116,17 @@ should be planned as one flash/session if the recipes can be combined (see their
     `test_write_loop_persisted_requires_a_settled_published_snapshot` (red on the pre-RC2 predicate) and
     `test_loop_persist_body_decision_awaits_settlement_within_its_budget`; `test_storage_loop_io` 47/47; full native
     green; `teensy41-capture-serial` SUCCESS with RAM1 locals free **6,336** (a new telemetry tag had cost 4 KB of
-    DTCM allowance through `ALIGN(4096)` churn; dropped, so the deferral is silent). **Remaining:** the RC2 device
-    save/load re-verification on the DEC-071 shape.
+    DTCM allowance through `ALIGN(4096)` churn; dropped, so the deferral is silent). **Device read CLOSED
+    2026-09-18** (firmware `86fd8f07…`, env `teensy41-capture-serial-no-grain`): the save took the settled LSV1 path
+    (`tail_gather_begin` 1, `LoopSnapshotTail` 1389 steps, `snapshot_unit,kind=publish` with `q=0` for every
+    publication), 0 `RING,overflow`, 0 `FATAL`, and post-reboot `storage_matches_effective: true`
+    (`captures/rc2-settle-device-c` + `captures/rc2-settle-reboot-playback`). The verify's 4 unexplained
+    wrap-continuation rows are **not a content finding**: that session recorded at **240 BPM instead of 120**, so the
+    8-bar request became a 17-bar `record_loop_length_mismatch` and the read is not the DEC-071 shape; the intended
+    shape's post-reboot parity is already proven clean by DEC-073's `captures/rc1-coalescing-reboot-playback` (5/5
+    `inventory_equal`, 0 missing), and RC2 does not change the published content, only the admission that decides
+    whether that content is embedded. The ring overflow that blocked the two earlier attempts is fixed by
+    `-D SESSION_CAPTURE_LCR=0` (`SESSION_CAPTURE_LCR`, the `DIAG,lcr,*` family).
   **RC2 -- persistence guard (secondary).** Once RC1 holds, require the LSV1 body gather/admission to see a demonstrably settled current root (`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()`) with bounded save re-admission; when no settled root is reachable, persist a **passes-authoritative** representation. Prefer LSV1's own "body without a selected snapshot/root" encoding if it has one; use the legacy format only if LSV1 cannot express it, and make that a deliberate format/migration decision rather than an incidental one.
   **RC3 -- the publication boundary that RC1/RC2 read from has no memory admission (2026-09-18).** Recorded in its owning change, `immutable-loop-snapshot-passes` **5.9**, as `RC-PUB-1` (wire the dead `OperationKind::SnapshotReserve` gate into the publication start; on denial, leave the work pending), `RC-PUB-2` (park `LoopSnapshotFailureReason::Allocation` instead of retrying the fragment forever) and `RC-PUB-3` (drop `SnapshotSlabAllocator`'s fatal `abort()` backstop). Evidence: `captures/session_20260918_101615.log` reset the device six seconds after `Overdub wrap committed`, with no persistence running at all. RC2's device re-verification must expect this boundary's *parked* state -- previous root selected and `hasPendingSnapshotPublish()` true, which is exactly the `AwaitSettled` input RC2 already handles -- and must not treat it as a device failure; the two fixes are complementary, not alternatives.
   **Acceptance:** immediately before save admission the selected root and `PassesResolve` must already agree -- that separates publisher correctness from persistence correctness so a persistence test cannot hide a still-broken live publisher. Then save/load keeps `passes == root` with identical display and playback (pre-reboot `DISP` 57 and the 24-39 overdub range), and a known-good LSV1 load still takes the fast path with no rebuild/reconcile.
