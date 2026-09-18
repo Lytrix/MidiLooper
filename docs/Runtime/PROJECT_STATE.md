@@ -1,5 +1,18 @@
 # Project state (execution context)
 
+**2026-09-18 the GUS now records every pass of an overdub session (`successor-capture-reentry-unguarding` 8.1, DEC-068
+follow-up).** The reported defect: one undo removed only the last wrapped pass, not the whole overdub. Cause: the
+deferred stop admission swaps the interval's wrap identities out of the shared loop into its own session-exit
+receipt (DEC-068), but the deferred undo collection read the live session lists at its later `UndoCollection`
+phase, when they are empty — so the entry carried only the final pass. Fix: the deferred Pass/Companions phases
+read the interval's own session-exit receipt (`SessionUndoCollection` receipt pointers + a bound
+`receiptIdentity` that replaces the live generation guard; `beginCollectOverdubStopUndoPasses` takes the receipt
+ring; `stepDeferredUndoCollection` passes `job.admission.sessionExitReceiptRing`). The deferred route also emits
+the `#CAP,DIAG,gus` row now (`src=deferred`). New native fixture
+`test_deferred_stop_undo_entry_carries_every_session_pass` fails without the fix (`Expected 2 Was 0`);
+`test_continuous_capture` 75/75, full native **2,241 / 1 skipped / 0 failures**, RAM1 locals 6,400 unchanged.
+**Device gate pending** — the board dropped off USB after the display run and needs a PROGRAM-button reconnect.
+
 **2026-09-18 the 5.8 undo/redo fix's display half LANDED (`immutable-loop-snapshot-passes` 5.8a).** After 5.8
 made playback stop emitting a disabled pass, the OLED still painted the undone overdub: the sealed capture
 handoff (`retainCapturePreviewAtSeal`) is released only when `sealedCapturePreviewIsCovered()` sees each row in
