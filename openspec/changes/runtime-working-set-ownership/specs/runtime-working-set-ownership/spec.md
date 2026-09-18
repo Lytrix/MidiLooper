@@ -215,6 +215,19 @@ from measurement because it trades resident bytes, achievable switch quantisatio
 - **THEN** the smallest size that still meets the readiness deadline under load is recorded
 - **AND** the resulting publication load is reported alongside the resident-bytes and granularity effects
 
+### Requirement: Finalization preserves the existing directional admission contract
+The change SHALL preserve the existing deferred-finalization admission contract (DEC-067) rather than define a
+new one: one **active** finalizer, with a second stop denied non-destructively by the single-instance
+finalization resources and re-issued by the stop edge when they free. The descriptor ring SHALL be treated as
+descriptor depth whose tail must be free, so pending stop intervals are never stacked.
+
+#### Scenario: The preserved contract is what ships
+- **WHEN** the change is implemented
+- **THEN** no new finalization mechanism, queue or arbitration is introduced
+- **AND** the finalization behaviour asserted by the spec is the behaviour already in the tree, verified by
+  stage-name evidence (`finalizer_busy`, `transfer_denied`, `canonical_output_busy`, session-exit handoff,
+  `queue_full`) rather than by a new rule
+
 ### Requirement: Runtime roles are separate classes with declared cardinalities
 Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred
 finalization, interactive edit/undo/display -- each with a declared cardinality, rather than as one

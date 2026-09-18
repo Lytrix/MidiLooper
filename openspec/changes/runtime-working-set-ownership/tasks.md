@@ -150,7 +150,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
-- [ ] S4.5 **Finalization denial**: one finalizer; native fixture for A-stops-and-finalizes / B-records /
+- [ ] S4.5 **Finalization denial (verification only -- no mechanism change)**: preserve the existing contract; native fixture for A-stops-and-finalizes / B-records /
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — denied with no
       partial stop, B still recording/overdubbing, next stop succeeding after the role frees. Emit
       `finalization_lease_stop_denied`. Assert the **denial stage names** as the evidence (`finalizer_busy`,
