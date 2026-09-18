@@ -964,7 +964,12 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       `RuntimePlaybackViewSet::fixedExternalBytes()` is 727,040 B (5 views x 2048 x 35 B + 2 bridges x 2048 x 90 B),
       and `RuntimeCanonicalPassInputs::prewarm(2048)` is exactly 147,456 B over 8 arrays, which is the figure
       `ExecutionBounds.md` already records.
-      - **RC-MEM-2 -- per-slot bundles are sized by the representable ceiling, not by the window.** `kEventsPerView`
+      - **RC-MEM-2 -- per-slot bundles are sized by the representable ceiling, not by the window.**
+        **SUPERSEDED AS STRATEGY 2026-09-18 -> `runtime-working-set-ownership`.** Trimming capacities is a
+        safeguard, not the plan: the target (~60 recorded slots at up to 64 bars) needs the law to change from
+        `recorded slots x whole-loop state` to `active slots x bounded window`, which is an ownership change. The
+        landed part of RC-MEM-2 stays (it removed dead reservation and bought headroom); its outstanding item below
+        is absorbed there as safeguard G.1. `kEventsPerView`
         and `kRecordsPerBridge` are 2048 (`include/RuntimePlaybackView.h:19-22`), so an armed slot reserves ~1.16 MB
         whether or not the loop has content for it. Device evidence that this is reservation rather than use: the
         prepared-pair and stopped-oracle publishers require `coverage.lengthTicks == loopLengthTicks`
@@ -1406,6 +1411,9 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
 ## 5.13 Record arm exits because the arm prewarm chain no longer fits the pool (2026-09-18)
 
 - [ ] 5.13 Arming a track must not abort when the pool cannot satisfy the whole arm prewarm chain in one shot.
+      **RECLASSIFIED 2026-09-18: this is a SYMPTOM, not the problem.** The runtime is still too slot-resident, so
+      limits will keep appearing before the 60-slot target is reachable; the three fix directions recorded below are
+      kept as safeguards G.2/G.3 under `runtime-working-set-ownership`, which owns the architectural fix.
       **User report (2026-09-18):** *after fixing the memory issues on long recordings/overdub, arming a track and
       starting an external clock + MIDI notes exits arm so nothing can be recorded; same when arming and starting
       playback internally.* Capture: `captures/session_20260918_171613.log`.

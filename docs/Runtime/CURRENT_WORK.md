@@ -2741,6 +2741,29 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the next architectural target is WORKING-SET OWNERSHIP, not more per-slot trimming
+(`runtime-working-set-ownership`, requested as a `DEC-###`).** The record-arm exit reported on
+`captures/session_20260918_171613.log` is diagnosed (`immutable-loop-snapshot-passes` 5.13: an
+all-or-nothing ~845 KB arm prewarm chain against ~822 KB free, failing at `tag=12`'s 64 KiB request) but is
+**reclassified as a symptom**. The real mismatch is the scaling law: runtime working sets and whole-loop
+derived state are owned **per recorded slot, for the slot's lifetime**, so the 8 MB pool supports on the order of
+**four** resident slot bundles while the target is **~60 recorded slots at up to 64 bars**.
+
+Quantified: 64 slots exist (8 tracks x 8); one admitted slot's tagged runtime total is ~1.47 MB and its arm
+chain ~845 KB; whole-loop derived state is ~325 KB per loop (83 snapshot slabs / ~2.6 MB for a loaded
+workspace); the resident event store holds ~28 sixty-four-bar loops at the observed density
+(131,072-event ceiling / ~4,600 events per 64-bar loop). So both the runtime pools and the canonical store are
+slot-scaled where they must be active-scaled or streamed.
+
+The change: derived runtime views and capture companion storage become **owned by active runtime roles**, with
+inactive slots retaining only canonical/persistence state and bounded metadata; working sets are acquired on
+activation, reused across slots, and released when no live playback/capture/deferred owner remains. Acceptance is
+a **measured scaling curve** -- load 60+ long slots, activate A, activate B, deactivate A, activate C -- required
+to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. Staged S1..S6 in
+`openspec/changes/runtime-working-set-ownership/tasks.md`; S1 is measurement only, with no behaviour change.
+RC-MEM-2's outstanding item and §5.13's three fixes are demoted to safeguards (G.1-G.3) under it. RC-MEM-2 and
+RC-MEM-5 are **not** reverted -- they bought headroom and removed dead reservation.
+
 **2026-09-18 — 5.12 FIXED: the second overdub no longer erases the first from the display (`immutable-loop-snapshot-
 passes` 5.12).** The sealed capture handoff was the only carrier of a closed overdub's rows while the committed cache
 could not account for them, and `openOverdubSession` cleared it, so starting the second overdub took the first
