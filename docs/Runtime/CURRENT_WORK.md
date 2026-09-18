@@ -2741,6 +2741,38 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the deferred stop left the display serving pre-commit notes; fixed
+(`successor-capture-reentry-unguarding` 8.2).** The user report: *the second overdub disappeared on the
+display after overdub stop to playing, and reappeared at the loop wrap.*
+
+Root cause: the synchronous stop marks the committed pass's display ranges
+(`finalizeCommitSideEffects` → `Loop::markAffectedDisplayCacheRanges`), but the deferred terminal
+commit only called `Loop::completePreparedCaptureAndCompanionsAtomic` →
+`notifyCommittedContentChanged` → `markPassDerivedStale`, which sets `visualCacheDirty` but
+deliberately leaves `dirtyBars` as the previous rebuild left it. After a `slice_clean` that set is
+empty, so `rebuildVisualCacheIdleSlice` took its `slice_nodirty` early return and cleared the stale
+flag **without rebuilding** — the cache kept the pre-commit note set until something else marked bars
+(the wrap's `markAffectedDisplayCacheRanges`), which is exactly the "reappeared at loop wrap".
+Device `captures/gus-undo-04` shows it: after the second overdub stop the frame fell **176 → 144 at
+74.3 s** with `VCACHE,slice_nodirty notes,128`.
+
+Fix (`a91cb719`): `markDeferredCommitDisplayRanges` marks the committed pass plus the interval's
+prepared companion ids in every deferred terminal commit (`commitPreparedStop`,
+`commitPreparedStopped`, the two transport-stop recovery paths of `advanceAtomicTransfer[WithUndo]`,
+and `commitSupersededCausalBase`).
+
+Evidence. New native fixture `test_deferred_stop_commit_marks_the_display_ranges_of_the_new_pass`
+seeds the clean/empty-dirty precondition, drives the deferred stop, and requires the cache to be
+stale with a non-empty dirty set; it fails without the fix. Full native **2,242 cases / 1 skipped /
+0 failures**; `test_continuous_capture` 76/76; `teensy41-capture-serial` SUCCESS with RAM1 locals
+**6,400** unchanged. Device `captures/gus-undo-06` (managed `base`, two overdub sessions, firmware
+from `a91cb719`): the frame holds **176 from the second stop through the undo** (`VCACHE,stale_all
+dsz,9 dcnt,9` then `slice_clean notes,176`), the undo drops it to 144 and the redo restores 176
+(`DISP across undo/redo: before=176 after_undo=144 after_redo=176`) — no intermediate post-stop
+drop. Oracle robustness: the undo/redo display clause now bounds the post-redo sample at the next
+undo, so an `undo_redo_cycles > 1` run cannot report a false redo failure (run `-06` ran three
+cycles); `scripts/test_capture_transitions.py` 48/48.
+
 **2026-09-18 — the GUS recorded only the last pass of an overdub session, so one undo removed a
 partial overdub; fixed (`successor-capture-reentry-unguarding` 8.1, DEC-068 follow-up).** The user
 report: *the GUS is setup wrong — it undoes the last wrapped overdub pass, not the entire overdub

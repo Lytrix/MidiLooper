@@ -1,5 +1,17 @@
 # Project state (execution context)
 
+**2026-09-18 the deferred stop now marks the committed pass's display bars (`successor-capture-reentry-unguarding`
+8.2).** User report: the second overdub vanished from the OLED after its stop and came back at the loop wrap. The
+deferred terminal commit only called `notifyCommittedContentChanged` → `markPassDerivedStale`, which leaves
+`dirtyBars` empty after a `slice_clean`, so `rebuildVisualCacheIdleSlice` cleared the stale flag as
+`slice_nodirty` without rebuilding and the cache kept the pre-commit notes; the wrap's
+`markAffectedDisplayCacheRanges` was what brought them back (`gus-undo-04`: 176 → 144 at 74.3 s). Fix
+(`a91cb719`): mark the committed pass + prepared companion ids in every deferred terminal commit. New native
+fixture fails without it; full native **2,242 / 1 skipped / 0 failures**, RAM1 locals 6,400 unchanged. Device
+`captures/gus-undo-06`: frame holds 176 from the second stop through the undo, `before=176 after_undo=144
+after_redo=176`. The undo/redo display clause also bounds the post-redo sample at the next undo for
+`undo_redo_cycles > 1`; `scripts/test_capture_transitions.py` 48/48.
+
 **2026-09-18 the GUS now records every pass of an overdub session (`successor-capture-reentry-unguarding` 8.1, DEC-068
 follow-up).** The reported defect: one undo removed only the last wrapped pass, not the whole overdub. Cause: the
 deferred stop admission swaps the interval's wrap identities out of the shared loop into its own session-exit
