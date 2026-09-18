@@ -5245,12 +5245,11 @@ def _build_edit_baseline_parser() -> argparse.ArgumentParser:
     parser.add_argument("--track", "--track-number", dest="track_number", type=int, default=5)
     parser.add_argument("--loop-slot", type=int, default=0, help="Loop slot 1-8 on selected track")
     parser.add_argument("--midi-channel", type=int, default=None)
-    # 12/16/24 added 2026-09-18: the reported 24-bar-loop overdub refusal and the
-    # stop-time pool creep are length-sensitive, and a 24-bar internal loop (~18,432
-    # ticks) is what the device reaches at ~11-12 recorded bars under the 2x-tempo
-    # setup, so the acceptance shapes above 8 bars were previously unreachable.
+    # Mirrors the inner baseline parser's set. Above 8 bars was unreachable before
+    # 2026-09-18, but the reported 24-bar-loop overdub refusal and the stop-time pool
+    # creep are length-sensitive, and the acceptance shapes that reach them need 16/24.
     parser.add_argument("--record-bars", type=int, default=2,
-                        choices=[1, 2, 4, 8, 12, 16, 24])
+                        choices=[1, 2, 4, 5, 8, 16, 24, 32, 48, 64, 128])
     parser.add_argument("--tempo-bpm", type=float, default=120.0, help="Tempo for bar-sync wall-clock proxy")
     parser.add_argument(
         "--bar-sync-from-midi-clock",
