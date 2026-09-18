@@ -39,6 +39,7 @@
 #include "Loop.h"
 #include "TrackPlaybackRuntime.h"
 #include "Utils/MidiServiceDrain.h"
+#include "Utils/DisplayWindowUtils.h"
 
 // Production deferred cleanup consumes the admitted job's owned capture preview.
 // These fixtures assert canonical/bridge/undo bookkeeping, so the preview content
@@ -135,6 +136,152 @@ void test_staging_only_runtime_finishes_capture_orders_without_admitting_a_bridg
   TEST_ASSERT_TRUE(runtime.frozenCaptureCandidateReady(0));
   TEST_ASSERT_NULL(runtime.viewSetIfPrewarmed());
   TEST_ASSERT_FALSE(runtime.canSelectPreparedFullLoopBridge({}, 100, {}));
+}
+
+void test_full_take_admissibility_follows_the_windowed_policy() {
+  // RC-MEM-2 ties the whole-take reservation to the same policy that decides whether a
+  // full-loop window can be built at all: past `kMaxDetailedWindowBars` the windowed
+  // representation is the only authoritative one.
+  Loop loop;
+  loop.loopLengthTicks = DisplayWindowUtils::kMaxDetailedWindowBars * Config::TICKS_PER_BAR;
+  TEST_ASSERT_TRUE(loop.fullTakePlaybackViewAdmissible());
+  loop.loopLengthTicks += 1;
+  TEST_ASSERT_FALSE(loop.fullTakePlaybackViewAdmissible());
+  loop.loopLengthTicks = 24 * Config::TICKS_PER_BAR;
+  TEST_ASSERT_FALSE(loop.fullTakePlaybackViewAdmissible());
+  loop.loopLengthTicks = Config::TICKS_PER_BAR;
+  TEST_ASSERT_TRUE(loop.fullTakePlaybackViewAdmissible());
+  loop.loopLengthTicks = 0;
+  TEST_ASSERT_TRUE(loop.fullTakePlaybackViewAdmissible());
+}
+
+void test_windowed_only_slot_reserves_no_whole_take_representation() {
+  // RC-MEM-2: a loop that can never publish a full-take view (every full-take publisher
+  // requires an exactly full-loop coverage interval) must reserve only what the windowed lanes
+  // and capture admission actually use: the three rolling views and both capture stagings.
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                                       /*fullTakeAdmissible=*/false));
+  RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(set.prewarmed);
+  TEST_ASSERT_FALSE(set.wholeTakeViewsReserved());
+
+  for (uint8_t i = 0; i < RuntimePlaybackViewConfig::kViewCount; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kEventsPerView,
+                             set.views[i].storage.capacity);
+  }
+  TEST_ASSERT_TRUE(set.captureStagingsPrewarmed());
+
+  // The whole-take part is genuinely absent, not merely unused.
+  for (uint8_t i = 0; i < RuntimePlaybackViewConfig::kBridgeCount; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(0, set.bridges[i].capacity);
+    TEST_ASSERT_EQUAL_UINT32(0, set.bridgeBases[i].storage.capacity);
+  }
+  TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
+
+  // `fixedExternalBytes()` is the windowed reservation only, and the difference from a
+  // whole-take slot is exactly the two bridges plus their two immutable bases (512,000 B on
+  // the device).
+  constexpr size_t eventBytes = sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) +
+                                sizeof(uint16_t) + sizeof(uint8_t);
+  const size_t windowedBytes = set.fixedExternalBytes();
+  const size_t viewsAndStaging =
+      RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
+          (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
+      RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes * set.captureStagings.size();
+  TEST_ASSERT_EQUAL_UINT64(viewsAndStaging, windowedBytes);
+
+  LoopPlaybackRuntime wholeTake;
+  TEST_ASSERT_TRUE(wholeTake.prewarmViews());
+  TEST_ASSERT_TRUE(wholeTake.viewSetIfPrewarmed()->wholeTakeViewsReserved());
+  const size_t wholeTakeBytes = wholeTake.viewSetIfPrewarmed()->fixedExternalBytes();
+  TEST_ASSERT_TRUE(wholeTakeBytes > windowedBytes);
+  const size_t expectedDead =
+      RuntimePlaybackViewConfig::kBridgeCount * RuntimePlaybackViewConfig::kEventsPerView *
+          (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
+      RuntimePlaybackViewConfig::kBridgeCount *
+          (RuntimePlaybackViewConfig::kRecordsPerBridge *
+           (sizeof(PlaybackBridgeRecord) + eventBytes + 2 * sizeof(uint32_t) +
+            3 * sizeof(uint16_t) + sizeof(uint8_t)) +
+           RuntimePlaybackViewConfig::kEventsPerView *
+               (6 * sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint8_t)));
+  TEST_ASSERT_EQUAL_UINT64(expectedDead, wholeTakeBytes - windowedBytes);
+}
+
+void test_windowed_only_slot_refuses_the_whole_take_publishers() {
+  // The reservation and the publication contract are the same decision. The whole-take
+  // representation is the bridges (incremental full-take publication) and the prepared pair
+  // (which requires `isFullLoopMergedPlaybackWindow`), and both must deny for a slot that
+  // reserved neither. The `MidiEvent*` stopped-oracle overload is deliberately *not* in this
+  // set: it publishes whatever window the caller gathered, which is how the windowed lane
+  // paints, so it must keep working with a windowed-only reservation.
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                                       /*fullTakeAdmissible=*/false));
+  RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
+
+  LoopPlaybackRuntime wholeTake;
+  TEST_ASSERT_TRUE(wholeTake.prewarmViews());
+  RuntimePlaybackViewSet& wholeTakeSet = *wholeTake.viewSetIfPrewarmed();
+
+  // Differential on the whole-take representation itself: the same call is admitted for a
+  // whole-take slot and refused for a windowed-only one.
+  TEST_ASSERT_TRUE(wholeTakeSet.beginCandidateBridge());
+  TEST_ASSERT_FALSE(set.beginCandidateBridge());
+  TEST_ASSERT_FALSE(set.selectCandidateBridge(EmissionCursor{}));
+  TEST_ASSERT_TRUE(wholeTake.preparedPairStorage.isPrewarmed());
+  TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
+
+  // A full-loop canonical oracle publication requires an exactly full-loop coverage, which
+  // only a whole-take reservation can back.
+  LoopPasses passes;
+  const MidiEvent source[] = {MidiEvent::NoteOn(20, 1, 60, 100),
+                              MidiEvent::NoteOff(20, 1, 60)};
+  const PlaybackViewSourceIdentity identity{17, 31, reinterpret_cast<const void*>(0x1234)};
+  const PlaybackCoverageInterval fullCoverage{0, 768, 768};
+  const RuntimeCanonicalPassInputs::CurrentSource live{17, 31, 768, 0};
+  TEST_ASSERT_FALSE(runtime.publishStoppedCanonicalOracleView(passes, identity, live, source, 2,
+                                                             fullCoverage));
+
+  // The windowed oracle publication still works: a partial coverage is a legitimate
+  // windowed representation, and the three views are reserved for exactly this.
+  const PlaybackCoverageInterval windowedCoverage{0, 384, 768};
+  TEST_ASSERT_TRUE(runtime.publishStoppedOracleView(source, 2, identity, windowedCoverage));
+  TEST_ASSERT_EQUAL_UINT32(384,
+                           set.views[set.lifecycle.current].coverage.lengthTicks);
+}
+
+void test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission() {
+  // A slot admitted windowed-only (a long loop) can be armed again for a loop that has since
+  // become short. Record arm and overdub start are cold capture-admission boundaries, so the
+  // upgrade allocates there and the full-take publication then succeeds.
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                                       /*fullTakeAdmissible=*/false));
+  RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_FALSE(set.wholeTakeViewsReserved());
+  const size_t windowedBytes = set.fixedExternalBytes();
+  const auto* liveEvents = set.liveCaptureStaging().storage.events;
+
+  TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                                       /*fullTakeAdmissible=*/true));
+  TEST_ASSERT_TRUE(set.wholeTakeViewsReserved());
+  TEST_ASSERT_TRUE(set.fixedExternalBytes() > windowedBytes);
+  TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kRecordsPerBridge, set.bridges[0].capacity);
+  TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kEventsPerView,
+                           set.bridgeBases[0].storage.capacity);
+  TEST_ASSERT_TRUE(runtime.preparedPairStorage.isPrewarmed());
+  // The upgrade reuses the admitted staging instead of resetting it.
+  TEST_ASSERT_EQUAL_PTR(liveEvents, set.liveCaptureStaging().storage.events);
+
+  // The upgrade really re-arms the whole-take path: the bridge candidate that the windowed
+  // slot refused is now admitted, and the full-loop view becomes selectable.
+  TEST_ASSERT_TRUE(set.beginCandidateBridge());
+  const MidiEvent source[] = {MidiEvent::NoteOn(20, 1, 60, 100)};
+  const PlaybackViewSourceIdentity identity{17, 31, reinterpret_cast<const void*>(0x1234)};
+  TEST_ASSERT_TRUE(runtime.publishStoppedOracleView(source, 1, identity,
+                                                    PlaybackCoverageInterval{0, 768, 768}));
+  TEST_ASSERT_NOT_NULL(runtime.publishedFullLoopView(identity, 768));
 }
 
 void test_runtime_view_set_prewarm_has_fixed_capacity_and_no_growth() {
@@ -6505,5 +6652,9 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_maximum_frozen_capture_has_a_declared_stop_budget);
   RUN_TEST(test_session_exit_receipt_ring_is_fifo_and_not_serialized);
   RUN_TEST(test_prepared_companion_history_is_job_qualified);
+  RUN_TEST(test_full_take_admissibility_follows_the_windowed_policy);
+  RUN_TEST(test_windowed_only_slot_reserves_no_whole_take_representation);
+  RUN_TEST(test_windowed_only_slot_refuses_the_whole_take_publishers);
+  RUN_TEST(test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission);
   return UNITY_END();
 }

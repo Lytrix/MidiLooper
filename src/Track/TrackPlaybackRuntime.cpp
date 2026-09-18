@@ -408,7 +408,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCaptureStaging(
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
-    size_t companionRowCapacity) {
+    size_t companionRowCapacity, bool fullTakeAdmissible) {
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCaptureStaging);
   const bool stagingReady = prewarmCaptureStaging();
   ExternalPoolAccounting::endTag();
@@ -420,7 +420,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
       viewSet->liveCaptureStaging().storage.eventCount ||
       viewSet->liveCaptureStaging().openReservationCount()))
     return false; // Upgrading must never reset accepted staging state.
-  if (!viewSet->prewarm()) return false;
+  if (!viewSet->prewarm(fullTakeAdmissible)) return false;
   // Derived row reserve (DEC-066): a sparse slot does not take the full row horizon.
   // `ensureCapacity` only grows, so a later denser interval still fits.
   if (!frozenCaptureCompanions.ensureCapacity(companionRowCapacity)) return false;
@@ -442,6 +442,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
   // therefore carries no pair buffer and keeps the cache-hit merged fallback, which is
   // exactly the pre-existing path with no rebuild; the reachable active rebuild lives in
   // the seal-admission window, which only a capture-admitted slot can enter.
+  //
+  // RC-MEM-2: the pair's only publisher is `publishPreparedPlaybackPairFromWorkingWindow`,
+  // which requires `isFullLoopMergedPlaybackWindow`, so a slot whose loop cannot produce a
+  // full-loop window can never publish a pair. Reserving its buffer would be dead
+  // reservation, and admission must not report a reserve the capture path can never use.
+  if (!fullTakeAdmissible) return true;
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
   const bool pairReady = prewarmPreparedPlaybackPair();
   ExternalPoolAccounting::endTag();
@@ -622,7 +628,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedOracleVi
     const RuntimeCompanionPasses& baseline, const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage) {
   auto* set = viewSetIfPrewarmed();
-  if (!set || !baseline.uneditedBaseline(sourceIdentity) || !coverage.isValid() ||
+  // RC-MEM-2: a slot that reserved no whole-take representation refuses a full-take
+  // publication explicitly. The producers already decline for a loop that cannot build a
+  // full-loop window; this makes the reservation and the publication contract the same
+  // decision instead of two independent ones.
+  if (!set || !set->wholeTakeViewsReserved() || !baseline.uneditedBaseline(sourceIdentity) ||
+      !coverage.isValid() ||
       coverage.startPhase != 0 || coverage.lengthTicks != coverage.loopLengthTicks) return false;
   auto& current = set->views[set->lifecycle.current];
   if (!current.storage.isPrewarmed() || !current.passOrigins || baseline.size() > current.storage.capacity)
@@ -655,7 +666,11 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedCanonica
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
     const RuntimeCanonicalPassInputs::CurrentSource& live, const MidiEvent* oracle,
     size_t oracleCount, const PlaybackCoverageInterval& coverage) {
-  if (!viewSetIfPrewarmed() || !coverage.isValid() || coverage.startPhase != 0 ||
+  // RC-MEM-2: same explicit refusal as `publishStoppedOracleView` -- a slot with no
+  // whole-take reservation has no authoritative full-take representation to publish into.
+  const auto* wholeTakeSet = viewSetIfPrewarmed();
+  if (!wholeTakeSet || !wholeTakeSet->wholeTakeViewsReserved() || !coverage.isValid() ||
+      coverage.startPhase != 0 ||
       coverage.lengthTicks != coverage.loopLengthTicks || live.loopLengthTicks != coverage.loopLengthTicks ||
       oracleCount > RuntimePlaybackViewConfig::kEventsPerView || (oracleCount && !oracle) ||
       canonicalPrefixPhase != CanonicalPrefixPhase::Idle || canonicalTailPhase != CanonicalTailPhase::Idle ||

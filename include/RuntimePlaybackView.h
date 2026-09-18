@@ -390,8 +390,22 @@ struct RuntimePlaybackViewSet {
   RuntimePlaybackViewLifecycle lifecycle;
   RuntimePlaybackBridgeLifecycle bridgeLifecycle;
   bool prewarmed = false;
+  /// Whether `prewarm` reserved the whole-take representation (the two bridges and their
+  /// immutable bases). RC-MEM-2: every full-take publication requires an exactly full-loop
+  /// coverage interval (`publishStoppedOracleView`, `publishStoppedCanonicalOracleView`,
+  /// `publishPreparedPlaybackPairFromWorkingWindow` -> `isFullLoopMergedPlaybackWindow`), so a
+  /// loop that cannot produce one must not reserve the capacity -- and must be refused, not
+  /// merely unable, if a full-take publication is ever attempted. False means the windowed
+  /// representation is the only authoritative one for this slot.
+  bool wholeTakeReserved = false;
 
-  bool prewarm();
+  /// Reserve this slot's playback representation. `reserveWholeTake` must be the owning
+  /// loop's `fullTakePlaybackViewAdmissible()` answer; false keeps the three rolling views
+  /// and both capture stagings (the windowed lanes and capture admission need them) and
+  /// leaves the bridges, their bases and the prepared pair unreserved.
+  bool prewarm(bool reserveWholeTake = true);
+  /// True when the whole-take representation was reserved and can still be published.
+  bool wholeTakeViewsReserved() const { return wholeTakeReserved; }
   void resetMetadata();
   // Invalidate ordinary candidates while retaining the non-audible first-record
   // return view and its source identity. Used by cache refresh during capture.

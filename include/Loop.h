@@ -266,6 +266,24 @@ struct Loop {
   /// True when synchronous full visual-cache rebuild should be avoided (unbounded cost).
   bool shouldAvoidFullVisualRebuild(uint32_t loopLength) const;
 
+  /// True when a whole-loop ("full take") playback view can actually become
+  /// authoritative for this loop, which is what entitles a slot to reserve the
+  /// whole-take playback representation (RC-MEM-2).
+  ///
+  /// Every full-take publisher requires an exactly full-loop coverage interval --
+  /// `publishStoppedOracleView` / `publishStoppedCanonicalOracleView` reject
+  /// `coverage.lengthTicks != coverage.loopLengthTicks`, and
+  /// `publishPreparedPlaybackPairFromWorkingWindow` requires
+  /// `isFullLoopMergedPlaybackWindow` -- while the windowed policy never builds a
+  /// full-loop window once `shouldAvoidFullVisualRebuild` holds. Past that point the
+  /// three views' worth of windowed capacity is still needed (the live-record and
+  /// handoff lanes use them), but the bridges, their immutable bases and the prepared
+  /// pair can never be published, so reserving them is dead reservation by
+  /// construction.
+  bool fullTakePlaybackViewAdmissible() const {
+    return !shouldAvoidFullVisualRebuild(loopLengthTicks);
+  }
+
   /// Current-root snapshot edit-view copy; clears `out` on miss (OpenSpec 6.3.6).
   void copyEffectiveCommittedEvents(SessionMidiEventVec& out) const;
   /// Range query of committed content (chunk window + optional edit projection).
