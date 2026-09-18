@@ -156,7 +156,24 @@ idle-telemetry block out of `LoopSnapshotPublish.cpp`. Rules for every split:
 4. Splits with no clean seam stay intact: `RuntimeCompanionApply::step()` (one state machine),
    `StorageLoopIoBodyFormatV1.cpp` (one wire format + file-local layout table),
    `RuntimePlaybackBridgeBuild::step()`, and the four `Track*` stop/undo TUs (declaration/owner
-   boundaries).
+   boundaries). D8.4 records the measurement behind each refusal.
+
+#### D8.4 — Splits considered and rejected (task 6.4)
+
+Every item below was declined on its seam, never on its size, and none is a deferred "later" item: each
+names the state or format owner that already spans the proposed cut. No split in this change was done for
+line count either — 6.1–6.3 each separate a responsibility, and the line reductions they happen to produce
+are a consequence.
+
+| Candidate | Measurement | Why the seam is not real |
+|---|---|---|
+| `RuntimeCompanionApply::step()` out of `RuntimeCompanionApply.cpp` | `step()` is lines 208–466 of a 466-line TU — 259 of its 466 lines | The other 206 lines are the batch selectors `step()` drives (`selectBatchRow`, `startBatchRow`, `beginHistoryBatch`, `resumeOverlaps`, the grain estimates) and they all read and write the same `phase_`/`candidate_`/`cursor_` state. A split would put one state machine's per-turn transition in a different TU from its transition targets. |
+| `StorageLoopIoBodyFormatV1.cpp` split further | 1,658 lines: five file-local `Lsv1*` gather structs, `LoopSnapshotBodyFormatV1SaveWriteState`/`…SaveScratch`, the `kLsv1*` layout constants (including the `kLsv1MaxMembershipRefsPerBar == kSnapshotMembershipMaxRefsPerBar` `static_assert`), and the `BufferReader` | One wire format, written and read through the same file-local layout table; the gather structs are the shared vocabulary of both directions. A split must publish that table or duplicate it, and duplicating a wire layout is the drift DEC-057 exists to prevent. |
+| `RuntimePlaybackBridgeBuild::step()` out of `RuntimePlaybackBridge.cpp` | `step()` is lines 352–638 of the 639-line compile TU — 287 lines | `step()` advances the same `phase_`/`cursor_`/`order_`/`bridge_` state that `begin`, `beginSuccessor`, `beginInitialWindow`, `rebindBoundary`, `touchesOpenNote`, `insertionMatches` and `effectiveMask` set up and inspect. The method *is* the state machine rather than a helper beside one. |
+| The four `Track*` stop/undo TUs — `TrackPreparedStopCommit.cpp` 395, `TrackCaptureStopCommit.cpp` 604, `TrackUndoPublication.cpp` 159, `TrackUndoRetirement.cpp` 123 | One declaration owner each; they exist because of an earlier split | Their boundary already is the declaration/owner boundary. Splitting further separates the one TU that implements a declared owner from the header that declares it, which is the opposite of NAMING's file-per-owner rule, and (for a new or renamed TU) costs a fresh ITCM-bank measurement for no ownership gain. `RuntimeNoteDeleteLookup`/`RuntimeNotePairLookup` in P4 is the same refusal for the same reason. |
+
+The three in-scope splits passed the D8.3 bank criterion: `_itcm_block_count` stayed **12** and `free for
+local variables` stayed **34,976** after each of 6.1, 6.2 and 6.3 (tasks.md § P5 progress).
 
 ### D9 — Formatting becomes enforceable without a mass reformat
 
