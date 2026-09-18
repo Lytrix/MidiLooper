@@ -226,7 +226,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
 - [x] 4.3 Converge the lifecycle accessors per design § D5: `available()` as the admission-state query (replacing `idle()`/`active()` where they mean the same),
   `lastStepInputCount()` as the grain-progress query, one source-identity shape. Verify: grep shows one spelling per
   concept; native suite passes.
-- [ ] 4.4 Collapse the duplicated atomic-transfer bodies (`src/Track/TrackPreparedStopCommit.cpp:112-134` vs `:136-161`)
+- [x] 4.4 Collapse the duplicated atomic-transfer bodies (`src/Track/TrackPreparedStopCommit.cpp:112-134` vs `:136-161`)
   into one body parameterised by an undo pointer, and route `commitStopped`/`commitStoppedWithUndo`/`commitWithUndo`
   through the same shape so the three test-only wrappers stop being the only callers of a production path. Verify:
   `test_playback_prewarm` stop/undo cases pass; `commitStopped*` has either a production caller or is removed.
@@ -351,9 +351,24 @@ ownership question it answers instead of borrowing a phase word — one producti
 assertion and two comment mentions updated, no semantic change. `available()`/`idle()`/`active()` keep
 their distinct meanings and are documented here so a later reader does not "converge" them by mistake.
 
-**Still open in P3:** 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle accessor vocabulary), 4.4
-(atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), and the phase
-gate 4.14. The phase gate stays unchecked until they
+**Fifth sub-commit:** **4.4** — the two atomic-transfer bodies (`advanceAtomicTransfer` and
+`advanceAtomicTransferWithUndo`) were identical except for which tail commit published the protected undo
+entry. They now share one `advanceAtomicTransferImpl(..., GlobalUndoStack* stack, TrackUndoPublication* undo,
+...)` and are thin forwarders. Source length grew slightly (the shared body needs a parameterised branch
+where each original had a direct call) but there is now one body to maintain and the two routes cannot
+drift. The task's second clause ("`commitStopped*` has either a production caller or is removed") was
+checked and **dissolved**: the review counted only external callers, but `commit`, `commitWithUndo`,
+`commitStopped` and `commitStoppedWithUndo` are all invoked from the two advance functions, i.e. they are
+the routed production tail, not test-only wrappers. Sub-phase gate: native 2,262 / 1 skipped / 2,261
+passed; firmware SUCCESS with RAM1 unchanged (`code 391736 / padding 1480 / free 34976`).
+
+**Still open in P3:** 4.6 (admission/source guards) and the phase gate 4.14. Refined plan for 4.6, avoiding
+the layout risk the review flagged: add a per-class inline predicate for the admission check (ten sites of
+`phase_ != Idle && phase_ != Complete && phase_ != Denied`) and for the source-identity check (five sites of
+`source_ && *source_ == expected_`), **without** introducing a shared member struct — a shared
+`RuntimeWorkerSourceIdentity` would change the footprint of classes held by value in
+`TrackPlaybackRuntime`, and the naming/comparison win does not require moving the members. Measure the RAM1
+line either way before and after. The phase gate stays unchecked until they
 land; the P3 work is committed in sub-commits so each is independently bisectable.
 
 ## 5. P4 — converge naming on the authority (record the decision first)
