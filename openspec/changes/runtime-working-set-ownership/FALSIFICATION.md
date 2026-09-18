@@ -1,0 +1,149 @@
+# Falsification review — runtime-working-set-ownership
+
+Attempt to break the plan against the current tree. Each finding names the claim it attacks, the evidence,
+and what must change. Findings are ranked by whether they falsify the thesis, the envelope, or only the
+wording.
+
+**Summary: the thesis survives; the envelope and the budget do not, as written.** Four items must be
+resolved before S0 starts, and one of them (F1) is a product-capability decision rather than an edit.
+
+---
+
+## F1 — CRITICAL: "2 sounding slots per track" is not a memory question, it is a missing capability
+
+**Claim attacked.** The envelope enumerates "slots sounding per track: 2" and "up to 32 (2 x 16)", and the
+budget multiplies the playback lease by 32 on that basis.
+
+**Evidence.** A track has exactly one active, sounding slot:
+
+- `include/Track.h:473` — `uint8_t activeLoopIndex;  // Which loop slot (0-7) is active`
+- `include/Track.h:382-383` — `Loop& getActiveLoop() { return getLoop(activeLoopIndex); }`
+- `include/Track.h:335` — *"Per-slot capture state (only activeLoopIndex can be RECORDING/OVERDUBBING)."*
+- Playback is built from that one loop: `src/Track/TrackPlaybackWindowBuild.cpp:430`, `:447`
+  (`Loop& loop = getActiveLoop();`), and `Track::rebuildPlaybackOrder` takes `getActiveLoop()` plus
+  `playbackRuntime.slotIfAllocated(activeLoopIndex)` (`src/Track/TrackPlaybackHotPath.cpp:51-56`).
+
+**Finding.** There is no path by which two slots on one track sound simultaneously. Restating memory
+ownership cannot create one: it needs a multi-slot playback path (two sounding sources per track, their
+ledger/overlap semantics, and the display/selection model that goes with it). The change contains **no task
+for this** — S0-S7 are memory and ownership only — yet the spec states the 2-per-track envelope as the thing
+S2 must satisfy. S2 would therefore "prove" a budget for 32 leases that nothing can currently sound.
+
+**What must change.** One of:
+1. restate the envelope as the real capability — **1 sounding slot per track** (8 today, 16 if the track
+   count changes) — and let windowing answer "regardless of loop length" for that; or
+2. add an explicit multi-slot playback workstream to this change (or a sibling change it depends on), so
+   "2 per track" has an implementation and an owner; or
+3. state 2-per-track as a **target envelope the memory architecture must not preclude**, and instrument it,
+   while S2 proves the budget at the achievable count.
+
+This is the single most important finding: it decides whether the budget's 32x multiplier is real.
+
+## F2 — MAJOR: the budget omits a mandatory per-sounding-slot published root
+
+**Claim attacked.** `fixed + 32 x PlaybackWindowLease + LiveCaptureLease + DeferredFinalizationLease +
+InteractiveLease + overlap + canonical allowance + reserve <= budget`, with the assertion that "only the
+playback term is multiplied by the envelope".
+
+**Evidence.** Windowed playback is served *out of* the whole-loop published root:
+
+- `src/Loop/LoopSnapshotPlayback.cpp:171-183` — `Loop::tryGatherPublishedSnapshotEventsInWindow(...)` begins
+  with `const ImmutableLoopSnapshotRef snapshot = publishedSnapshot(); if (!snapshot) ... return false;`
+- the only alternatives are `SnapshotWindowGatherPath` values (`:193` `Snapshot`, `:316` `Overlay`) — i.e.
+  paths *through* a resident root, not a windowed representation that replaces it;
+- measured cost of a resident root per loop: ~325 KB (83 snapshot slabs, ~2.6 MB, for a loaded workspace).
+
+**Finding.** A *sounding* slot requires a resident published root, and the budget has no term for it. The
+plan only drops roots for **inactive** slots (S5), so the 32-sounding case carries 32 roots ≈ 10 MB — larger
+than the entire budget. The plan's own escape hatch ("a full published root only where an authority
+requires one") is defeated here, because the playback authority *does* require one today.
+
+**What must change.** Add the term explicitly (`+ 32 x root` if roots stay whole-loop), or make the snapshot
+itself windowed/streamed for active playback — which is a *snapshot-residency* change, not the
+canonical-residency change S6 covers, and therefore belongs in S2's scope or in its own gated phase. As
+written, the budget is incomplete by roughly an order of magnitude in the case it exists to serve.
+
+## F3 — MAJOR: the finalization cardinality is asserted without citing the existing admission guard
+
+**Claim attacked.** "`DeferredFinalizationLease` x 1 ... preserves DEC-067 successor re-entry", and one
+finalization lease is sufficient.
+
+**Evidence.** The stop-job ring already holds four entries:
+`include/Track.h:598-604` — `struct CaptureStopJobs { static constexpr size_t kCapacity = 4; ... }`, with the
+comment *"Additional admission stays guarded until session isolation"*, and a diagnostic that reports
+`captureStopQueueCapacity()` (`src/Track/TrackOverdubLifecycle.cpp:211`).
+
+**Finding.** The change does not cite, verify or bound the *current* admission limit. Two outcomes are
+possible and they differ materially: if admission is already 1, the plan is consistent and merely needs to
+cite the guard; if admission permits more than one, pinning a single lease **removes an existing
+capability** while claiming to preserve it. The requirement is therefore unverified rather than proven.
+
+**What must change.** S0 must cite the admission path and its effective limit, and state whether the
+finalization lease is equal to, or a reduction from, today's behaviour. If it is a reduction, it needs an
+explicit product statement (the plan currently implies it is a preservation).
+
+## F4 — MAJOR: the spec contains a requirement this change cannot satisfy
+
+**Claim attacked.** "The envelope to be served is up to two sounding slots per track across **up to sixteen
+tracks**."
+
+**Evidence.** `include/Globals.h:65` — `constexpr uint8_t NUM_TRACKS = 8;`. The change has no task to alter
+the track count.
+
+**Finding.** A requirement the change cannot satisfy is a spec defect, even when the proposal flags the gap
+as an open decision. Either the track count moves into scope (with its own costs: per-track runtime
+structures, display, UI, and the `MAX_LOOPS_PER_TRACK` product) or the requirement must be phrased as
+"the architecture must not scale with track count, demonstrated at the current count, with 16 as a target".
+
+## F5 — MODERATE: the role tiers create a second authority for "active"
+
+**Claim attacked.** The COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED lifecycle.
+
+**Evidence.** The tree already has authorities for this: `activeLoopIndex` (the one active slot per track),
+`CapturePhase`, and `TrackState` (EMPTY / ARMED / RECORDING / PLAYING / OVERDUBBING / STOPPED), with
+`include/Track.h:335` stating that only `activeLoopIndex` may be RECORDING/OVERDUBBING.
+
+**Finding.** The change introduces a parallel lifecycle without stating how it composes: may a slot be
+SELECTED while another slot on the same track is CAPTURE-ACTIVE? Does COLD imply `activeLoopIndex` has
+moved? `ARCHITECTURE_RULES.md` requires one owner per concept, so an unresolved second authority is a
+defect rather than a detail — and it is exactly the kind of ambiguity that produced the earlier ownership
+bugs.
+
+**What must change.** Define the tier transitions in terms of the existing authorities (or state the
+transfer explicitly, which is the ownership-transfer protocol), so the tiers are a view of `activeLoopIndex`
+/ `CapturePhase` / `TrackState` rather than a competitor.
+
+## F6 — MODERATE: the scaling acceptance cannot be attributed while F1/F2 are open
+
+**Claim attacked.** S7's curve — flat in recorded slots, one step per activation, reuse after deactivation.
+
+**Finding.** With F1 unresolved, the "activation" step's size is undefined (one lease or two?); with F2
+unresolved, the step includes an unbudgeted root term that dominates it. The test would therefore pass or
+fail on quantities the plan has not costed, which makes it non-diagnostic.
+
+**What must change.** Nothing new: S7 becomes meaningful once F1 and F2 are resolved. Until then it should
+be treated as a placeholder rather than a gate.
+
+---
+
+## What survives unchanged
+
+- **The thesis**: working RAM must scale with bounded active roles/windows, not with recorded-slot count.
+  Nothing above touches it.
+- **Lease identity and generation-qualified release** (F5 concerns where the tiers *live*, not that leases
+  need generations).
+- **Dirty-generation pinning** (F10/S6.1a) and **cold-save persistence parity** (S5.5) — independent of the
+  envelope questions.
+- **Non-destructive admission** (G.2, and the stop-denial rule) — if anything F3 strengthens the case for it.
+- **Red-first characterisation (S1)** and the measured-slope approach.
+- **Role classes as a concept** — F3 affects one cardinality, not the model.
+
+## Consequence for sequencing
+
+S0-S2 cannot be signed off until F1 (envelope restatement or new workstream), F2 (budget completeness) and
+F3 (admission guard citation) are resolved, because all three change S2's arithmetic. F4 is a wording/scope
+fix. F5 should be resolved in S0 alongside the role-class decision.
+
+The cheapest honest path is to run **S1 at today's capability (1 sounding slot per track)** first: it costs
+nothing, produces real per-class numbers, and sizes the omitted root term — which is exactly the input F1
+and F2 need.

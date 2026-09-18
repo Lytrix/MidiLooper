@@ -13,6 +13,11 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 
 ## S0 — pin the memory law (decisions before code)
 
+> **Blocked by [`FALSIFICATION.md`](FALSIFICATION.md):** F1 (is "2 sounding slots per track" real capability
+> or a restated target?), F2 (add the per-sounding-slot published-root term to the budget), F3 (cite the
+> stop-job admission guard), F4 (make the 16-track requirement satisfiable). F5 is resolved by S0.1/S0.1a
+> stating how the role tiers compose with `activeLoopIndex`, `CapturePhase` and `TrackState`.
+
 - [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
       with selection explicitly cheap and "about to sound"/arm/preload as the only cold admission boundary.
 - [ ] S0.1a `DEC`: **role classes and cardinalities** -- `PlaybackWindowLease` up to 32, `LiveCaptureLease` 1,
