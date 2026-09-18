@@ -113,11 +113,26 @@ only immutable events, and SHALL NOT require a resident whole-loop immutable roo
   incremental-publication system
 - **AND** what could not be reused is recorded explicitly
 
-#### Scenario: Missed-deadline behaviour is defined
+#### Scenario: A missed deadline keeps the previous generation authoritative
 - **WHEN** an update is not ready when the playhead reaches its tick
-- **THEN** the recorded rule applies (the previous immutable generation stays authoritative for that pass,
-  the span is held, or the deadline is extended)
-- **AND** the user-visible consequence of that rule is documented rather than incidental
+- **THEN** the previous immutable generation remains authoritative for that pass and the new one takes effect
+  on the next pass
+- **AND** playback is never torn, never held silent, and never deferred in a way that disturbs timing
+
+### Requirement: The readiness window size is configurable and traded deliberately
+The immutable-readiness window SHALL be configurable rather than fixed to bars, and its size SHALL be chosen
+from measurement because it trades resident bytes, achievable switch quantisation, and publication load.
+
+#### Scenario: Shorter windows enable finer queued switching
+- **WHEN** queued slot switching is requested at a finer quantisation (for example 1/16 or 1/32 beat)
+- **THEN** the readiness window is short enough for the inbound slot's immutable state to be ready at that
+  boundary
+- **AND** the deadline for that quantisation is stated in ticks and in milliseconds
+
+#### Scenario: Window size is measured, not assumed
+- **WHEN** the window size is chosen
+- **THEN** the smallest size that still meets the readiness deadline under load is recorded
+- **AND** the resulting publication load is reported alongside the resident-bytes and granularity effects
 
 ### Requirement: Runtime roles are separate classes with declared cardinalities
 Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred

@@ -82,6 +82,11 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
   slot-lifetime owned. Inactive slots retain only canonical descriptors, loop/pass summary, persistence
   identity and location, and tiny browser metadata.
+- **Window size becomes configurable and must be swept.** Windows are bar-based today (2-bar merged playback
+  window = 1,536 ticks), but **queued slot switching quantised at 1/16 or 1/32 beat for jamming** needs the
+  inbound slot's immutable state ready at a ~16-31 ms boundary (12 and 6 ticks at 192 PPQN). Window size
+  therefore trades resident bytes (how many slots can sound) against switch granularity against publication
+  load -- the third is the one that can fail, so the size must be measured, not assumed.
 - **The immutable-readiness guarantee becomes per-tick, not per-loop (F2, refined).** The invariant is:
   *after a recording, overdub or edit changes content at a tick, an updated **immutable** state must be ready
   by the time the current tick moves over that tick again.* Playback stays stable precisely because it is
@@ -227,5 +232,8 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
 5. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
 5. **Canonical residency policy** (fixed cap, LRU over the active set, or derived from loop length) and
    whether it needs a length cap at capture admission.
+5a. **Window size default and the achievable switch quantisation.** Sweep from bar-based down toward 1/32
+   beat and record the smallest window that still meets the readiness deadline under load; that number also
+   bounds how fine queued slot switching can be.
 6. **Whether any authority genuinely requires a full published root** for an active long loop, or whether
    the bounded runtime representation suffices everywhere.
