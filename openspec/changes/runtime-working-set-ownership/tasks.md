@@ -9,7 +9,9 @@ search [`docs/DECISION_LOG.md`](../../../docs/DECISION_LOG.md) (RC-MEM-2/RC-MEM-
 direct predecessors). The `DEC-###` for the ownership rule lands at S0; S6 needs its own amendment.
 
 Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870 B of padding before
-`code + padding` crosses a FlexRAM bank).
+`code + padding` crosses a FlexRAM bank); and hold the invariants in
+[`design.md`](design.md) § Invariants — a task that violates one is not complete, and an invariant with no
+enforcement point is a gap to record rather than a note to skip.
 
 ## S0 — pin the memory law (decisions before code)
 

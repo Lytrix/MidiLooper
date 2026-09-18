@@ -222,6 +222,12 @@ prerequisite S2, and reclassifies §5.13 as a symptom.
 
 **Read the RAM1 line on every task** (~870 B of padding before `code + padding` crosses a FlexRAM bank).
 
+## Invariants
+
+The change is bound by the invariants listed in [`design.md`](design.md) § Invariants (30, each with its
+enforcement point). They are the frame the tasks are judged against, not a summary: a task that violates one is
+not complete, and an invariant with no enforcement point is recorded as a gap.
+
 ## Falsification review (open)
 
 [`FALSIFICATION.md`](FALSIFICATION.md) attacks this plan against the current tree. **The thesis survives; the
