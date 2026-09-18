@@ -15,6 +15,7 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/Loop.cpp"
 #include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureStaging.cpp"
 #include "../../src/Track/RuntimePlaybackOrderBuilder.cpp"
 #include "../../src/Track/RuntimePlaybackBridge.cpp"
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"

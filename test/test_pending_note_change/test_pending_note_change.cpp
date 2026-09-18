@@ -23,6 +23,7 @@
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/Utils/RuntimeTimingTelemetry.cpp"
 #include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureStaging.cpp"
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"
 
 #include "Loop.h"

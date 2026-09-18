@@ -19,6 +19,7 @@
 #include "../../src/Track/RuntimeCanonicalPassInputs.cpp"
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"
 #include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureStaging.cpp"
 #include "../../src/Track/RuntimePlaybackOrderBuilder.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
