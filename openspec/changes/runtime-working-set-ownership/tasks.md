@@ -36,6 +36,11 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       product decision with its user-visible consequence recorded. Required before any flat-cold-memory claim.
 - [ ] S0.4 Record that **canonical residency is a separate gated phase** (S6) with its own `DEC`
       amendment, and that the cold contract is descriptor-based.
+- [ ] S0.6 Record the **resumable work-item contract** as a convention plus `DEC` (Revision 16): shared
+      `WorkIdentity { owner, generation, role }`, one terminal vocabulary, declared cost, declared deadline,
+      existing admission/accounting enums, non-destructive failure. Explicitly *not* a framework: header-only
+      vocabulary, concrete owner types, no vtables, no allocation. Retrofit is opportunistic and belongs in its
+      own change, not here.
 - [ ] S0.5 Confirm the **track count** for the envelope (16 in the requirement; `NUM_TRACKS` is 8 today) and
       whether that lands inside this change or as its own workstream, and record the **transfer-overlap
       depth** the pool must cover.
@@ -130,6 +135,8 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 
 ## S4c — immutable readiness at re-entry (prerequisite for the envelope, from F2)
 
+- [ ] S4c.0 Conform the readiness owner to the S0.6 contract (identity, cost, admission kind, accounting tag,
+      deadline, shared terminal vocabulary) before writing it.
 - [ ] S4c.1 Change the **publication unit** from whole-loop to interval/window with a **readiness deadline**:
       an update covering tick T must be immutable before the playhead returns to T.
 - [ ] S4c.2 **Reuse inventory, then reuse**: enumerate what the existing resumable deferred publication path

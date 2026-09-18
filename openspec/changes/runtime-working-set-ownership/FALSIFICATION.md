@@ -11,6 +11,13 @@
 | F5 | **Agreed.** The role tiers fold into `activeLoopIndex` (+ `CapturePhase` / `TrackState`) rather than forming a second authority. |
 | F6 | **Resolved by S2 + G.2** (windowed sizing and non-destructive admission): the acceptance becomes diagnostic once the windowed path and queue-based admission exist. |
 
+A contract refinement (owner request): the many small resumable owners -- display rebuild, companion/overlap
+resolution, snapshot publication, persistence drain, session close, store rewrite, read cursors, the LCR device
+gate -- have already converged on the same shape, evidenced by three byte-identical `{Pending, Complete, Denied}`
+trios and a shared `required*GrainsUpperBound` convention. What is missing is shared identity (generation),
+a declared deadline, one vocabulary and universal cost declaration, so the change now formalises a header-only
+contract and requires its new owners to conform -- while explicitly rejecting a framework and a big-bang retrofit.
+
 A visual-tier refinement: the display side already has most of the needed blocks -- a bar-sliced resumable
 renderer, a snapshot-identity/revision validity check, draw-source reuse keys, a per-bar overview mask, a compact
 note-count primitive, and a preload hook (`TrackManager::prewarmSelectedDisplayVisualCache`) that exists with no

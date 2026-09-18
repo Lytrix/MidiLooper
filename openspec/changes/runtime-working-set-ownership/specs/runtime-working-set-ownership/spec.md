@@ -119,6 +119,26 @@ only immutable events, and SHALL NOT require a resident whole-loop immutable roo
   on the next pass
 - **AND** playback is never torn, never held silent, and never deferred in a way that disturbs timing
 
+### Requirement: Resumable work owners conform to one contract
+A resumable work owner SHALL declare an identity (`owner`, `generation`, `role`), a cost estimate, an admission
+kind and accounting tag, a readiness deadline where its output must become immutable, and it SHALL use the shared
+terminal vocabulary with non-destructive failure.
+
+#### Scenario: A new work owner declares the contract
+- **WHEN** a work owner is added (windowed readiness, standby, visual tier, or later)
+- **THEN** it declares identity, cost, admission kind, accounting tag and deadline
+- **AND** it uses the shared terminal vocabulary rather than introducing another variant
+
+#### Scenario: The scheduler can treat owners uniformly
+- **WHEN** the scheduler selects work for a turn
+- **THEN** it can reason about cost and deadline without per-owner glue
+- **AND** staleness is decided by generation rather than by owner-specific rules
+
+#### Scenario: No framework is introduced
+- **WHEN** the contract is adopted
+- **THEN** owners keep concrete types with preallocated state and no virtual dispatch
+- **AND** existing owners are aligned only when they are next touched
+
 ### Requirement: A compact visual envelope is retained for every slot, with a capped detail window
 A compact per-bar visual envelope SHALL be retained for every recorded slot so that slot switching has immediate
 visual feedback without loading canonical content. A rendered detail window SHALL be retained only within a byte

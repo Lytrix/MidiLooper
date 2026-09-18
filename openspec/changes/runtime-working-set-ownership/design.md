@@ -412,6 +412,67 @@ The envelope is, like standby, a **deliberate bounded exception** to "inactive s
 It is safe at this size precisely because 64 B/slot does not scale with loop length in a way that threatens the
 law; the *window* is the part that must be capped.
 
+## Revision 16 — one contract for resumable work items (the owners already agree)
+
+The observation is correct and the evidence is in the tree: many small owners already look like the same
+service, and they converged **without** a shared contract.
+
+| Owner | begin | step | terminal vocabulary |
+|---|---|---|---|
+| `LoopSnapshotConstruction` | ctor(parent, changes) | `step(quantum)` | `Pending` / failed / `freeze()` |
+| `Loop::SessionClose` | `beginCloseOverdubSession(work)` | `stepCloseOverdubSession(work, quantum)` | `Phase` incl. `Denied` |
+| `RuntimePlaybackViewBuild` | `begin(view, source, coverage, ...)` | `stepFill` / `stepOrder` | `Fill` / `Order` / `Complete` / `Denied` |
+| `RuntimePlaybackOrderBuilder` | `begin(view, loopLength)` | `step(quantum)` | `Pending` / `Complete` |
+| `LoopEventStoreReadCursor` | `beginReadSealedChunks(...)` | `stepReadSealedChunks(cursor, quantum)` | `Pending` / `Complete` / `Denied` |
+| `LoopEventStoreRewriteCursor` | (start) | `stepRewriteFromOrderedSource(...)` | `Pending` / `Complete` / `Denied` |
+| `SessionUndoCollection` | `beginCollectOverdubSessionUndoPasses` | `stepCollectOverdubSessionUndoPasses` | `Phase` / `Denied` |
+| persistence work item | `admitWork(...)` | `stepPersistenceWorkItem(...)` | ok / drain budget |
+| LCR device gate | `beginCapturePass` | `appendCapturePassChunkEventRange` (8 events/slice) | slice complete |
+
+**Already converged, and duplicated by accident:**
+
+- `Loop.h:84` `Result { Pending, Complete, Denied }`, `LoopEventStore.h:62`
+  `LoopEventStoreRewriteResult { Pending, Complete, Denied }`, `LoopEventStore.h:64`
+  `LoopEventStoreReadResult { Pending, Complete, Denied }` -- **three identical terminal trios**;
+- `Phase` state machines with `Denied` as a member (`Loop.h:92`, `:156`, `:407`, `:430`);
+- a declared-cost convention: `requiredGrainsUpperBound`, `requiredSelectedGrainsUpperBound`,
+  `requiredFrozenOverdubGrainsUpperBound`, `requiredFrozenTailGrainsUpperBound`,
+  `requiredRankedGrainsUpperBound`, `requiredSuccessorGrainsUpperBound`, `requiredSessionUndoCollectionGrains`.
+
+**Already shared as machinery:** the scheduler (`MidiServiceDrain::DeferredIdleOwner` with per-turn budgets),
+admission (`MemoryMonitor::admitOperationMemory` + `defaultMarginFor` per `OperationKind`), and attribution
+(`ExternalPoolAccounting::beginTag`/`endTag` + 17 tags).
+
+**What is missing, and it is the whole gap:**
+
+1. **Identity.** Generation counters are ad-hoc per module (`overdubSessionUndoGeneration_`, `poolLifetime_`,
+   `storageGeneration`, `work.generation`), so every staleness check is re-implemented. A single
+   `WorkIdentity { owner, generation, role }` -- the same shape the lease model already needs -- would unify
+   them and is what makes stale-cleanup protection uniform rather than per-owner folklore.
+2. **Deadline.** No owner declares *when* its output must be ready. Revision 11's readiness deadline is the
+   new dimension, and it is exactly what would let the scheduler *order* work instead of round-robining it.
+3. **One vocabulary.** Three identical trios mean the scheduler needs per-module glue; a shared terminal type
+   plus a `Phase` convention removes it.
+4. **Universal cost declaration.** Present on the `Runtime*` families, absent elsewhere.
+
+**The contract (vocabulary + convention, not a framework):**
+
+```
+WorkIdentity   { owner, generation, role }
+WorkResult     { Pending, Complete, Denied }        // one shared type
+requiredGrains(...)                                 // declared cost, existing naming
+deadlineTicks                                       // NEW: when the output must be immutable
+OperationKind + accounting tag                      // admission and attribution, existing enums
+failure = no partial authority                      // non-destructive, existing contract (G.2)
+```
+
+**Constraints (non-negotiable on this target):** header-only vocabulary; concrete owner types, no vtables or
+type erasure; no allocation; FLASH-resident where cold; one owner per concept per `ARCHITECTURE_RULES.md`; and
+retrofit is **opportunistic** -- an owner is aligned when it is next touched, never in a big-bang sweep. The
+new stages of this change (S4c windowed readiness, S4d standby, S4e visual tier) are required to conform, which
+is where the contract earns its keep immediately: it stops the plan from adding a sixth variant of the same
+shape.
+
 ## Revision 12 — the role tiers fold into `activeLoopIndex` (F5)
 
 The COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED tiers are a **view of existing

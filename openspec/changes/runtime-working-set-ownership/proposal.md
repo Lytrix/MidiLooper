@@ -82,6 +82,16 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
   slot-lifetime owned. Inactive slots retain only canonical descriptors, loop/pass summary, persistence
   identity and location, and tiny browser metadata.
+- **One uniform contract for resumable work items, and the new stages conform to it.** The tree already
+  contains many small owners doing the same thing -- display cache rebuild, overlap/companion resolution,
+  snapshot publication, persistence drain, session close, store rewrite, read cursors, the LCR device gate --
+  and they have **independently converged on the same shape**: a `{Pending, Complete, Denied}` terminal trio
+  (three headers already declare it), a `Phase` state machine, and a `required*GrainsUpperBound(...)` cost
+  declaration. What they lack is a shared **identity** (`owner + generation + role`), a declared **deadline**,
+  and one vocabulary, which is why the scheduler needs per-module glue. This change formalises the contract as
+  header-only vocabulary and a convention, and requires **new** work items (windowed readiness, standby, visual
+  envelope) to conform -- so the plan does not add a sixth variant. Retrofit of existing modules is
+  opportunistic and explicitly out of scope here.
 - **A two-level visual tier, reusing the display machinery already present.** Visual switching has the same
   problem as MIDI switching, and most of the answer exists: a **compact per-bar envelope** for *every* slot
   (the analogue of a pre-rendered waveform file -- ~64 B/slot, so all 64-128 slots cost ~8-16 KB, affordable
@@ -171,6 +181,11 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
   prerequisite (S2).
 - More denial behaviour around an over-resident model.
 - Changing the canonical/persistence format or SD layout.
+- **A generic framework, service layer, or virtual dispatch.** The contract is a vocabulary and a convention
+  with concrete types and preallocated state; indirection costs ITCM/RAM1 on this target, where a single
+  non-trivial constructor has already cost a 32 KB FlexRAM bank. "Reusable building blocks" here means *uniform
+  contract with explicit ownership*, not message passing.
+- **A big-bang refactor of the existing owners.** They keep their concrete types; they are aligned when touched.
 - Re-opening the snapshot representation itself (`immutable-loop-snapshot-passes` owns that).
 
 ## Capabilities
@@ -252,5 +267,7 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
 5a. **Window size default and the achievable switch quantisation.** Sweep from bar-based down toward 1/32
    beat and record the smallest window that still meets the readiness deadline under load; that number also
    bounds how fine queued slot switching can be.
+5b. **Retrofit scope and sequencing.** Which existing owners get the uniform identity/deadline first, and
+   whether the retrofit is its own change (recommended) rather than riding on the memory work.
 6. **Whether any authority genuinely requires a full published root** for an active long loop, or whether
    the bounded runtime representation suffices everywhere.
