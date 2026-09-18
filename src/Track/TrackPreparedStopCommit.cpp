@@ -29,6 +29,20 @@ TRACK_COLD_MEM PassId finalPassId(const PendingCapturePass* pendingPass, const L
   return loop.hasPendingCapturePass() ? loop.pendingCapturePass().id : kInvalidPassId;
 }
 
+/// The synchronous stop marks the committed pass's display ranges
+/// (`finalizeCommitSideEffects` -> `markAffectedDisplayCacheRanges`). The deferred terminal commit
+/// must do the same: `notifyCommittedContentChanged` only sets `visualCacheDirty` and leaves an
+/// empty `dirtyBars`, and `rebuildVisualCacheIdleSlice`'s `slice_nodirty` branch then clears the
+/// flag without rebuilding — so a cache left clean by an earlier `slice_clean` keeps serving
+/// pre-commit content. That is the second-overdub case where the new pass vanished from the OLED
+/// after its stop and only came back at the next wrap (which marks bars).
+TRACK_COLD_MEM void markDeferredCommitDisplayRanges(Loop& loop, const PendingStopAdmission& stop,
+                                                    const PendingCapturePass* pendingPass) {
+  const EditPassIdList* companions = loop.preparedCompanionHistoryIds(stop.intervalToken());
+  loop.markAffectedDisplayCacheRanges(finalPassId(pendingPass, loop),
+                                      companions != nullptr ? *companions : EditPassIdList{});
+}
+
 TRACK_COLD_MEM bool commitPreparedStop(
     Loop& loop, LoopPlaybackRuntime& runtime, PendingStopAdmission& stop,
     const uint32_t& generation, const EmissionCursor& cursor,
@@ -69,6 +83,7 @@ TRACK_COLD_MEM bool commitPreparedStop(
   // only prepared storage and the lifecycle/source/ledger proof above.
   if (!loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken(), pendingPass))
     return false;
+  markDeferredCommitDisplayRanges(loop, stop, pendingPass);
   if (undo) undo->publishAtCommit();
   runtime.publishPreflightedFullLoopBridge(cursor);
   stop.historyRecycleOwner = &loop;
@@ -112,6 +127,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransfer(
     // preparation. This route never authorizes an audible PLAYING successor.
     if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
                                : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
+    markDeferredCommitDisplayRanges(loop, stop, pendingPass);
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;
@@ -138,6 +154,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::advanceAtomicTransferWithUndo(
     // it publishes no protected undo entry.
     if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
                                : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
+    markDeferredCommitDisplayRanges(loop, stop, pendingPass);
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);
   return true;
@@ -223,6 +240,7 @@ static TRACK_COLD_MEM bool commitPreparedStopped(
   if (loop.playbackRevision > UINT32_MAX - revisionDelta ||
       !loop.commitPreparedCaptureAndCompanionsAtomic(transferred, stop.intervalToken(), pendingPass))
     return false;
+  markDeferredCommitDisplayRanges(loop, stop, pendingPass);
   if (undo) undo->publishAtCommit();
   // STOPPED has no audible successor selection. The old PLAYING command and
   // bridge epoch stay invalid; transport silence is owned by Track's stop action.
@@ -302,6 +320,7 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::commitSupersededCausalBase(
   if (staged) {
     if (pendingPass != nullptr ? !loop.commitPreparedCapturePassAtomic(transferred, *pendingPass)
                                : !loop.commitPreparedCapturePassAtomic(transferred)) return false;
+    markDeferredCommitDisplayRanges(loop, stop, pendingPass);
     if (undo != nullptr) undo->publishAtCommit();
   }
   stop.setPhase(PendingStopPhase::DeferredCleanup);

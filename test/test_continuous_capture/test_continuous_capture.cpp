@@ -3055,6 +3055,39 @@ void test_deferred_stop_undo_entry_carries_every_session_pass() {
   }
 }
 
+/// The deferred terminal commit must name the committed pass's display bars. `notifyCommittedContentChanged`
+/// alone leaves `dirtyBars` as the previous rebuild left it, and after a `slice_clean` that set is empty --
+/// `rebuildVisualCacheIdleSlice` then takes its `slice_nodirty` early return and clears the stale flag without
+/// rebuilding, so the OLED keeps serving pre-commit content until the next wrap marks bars (the reported
+/// "second overdub disappeared after overdub stop and came back at the wrap").
+void test_deferred_stop_commit_marks_the_display_ranges_of_the_new_pass() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // The bug needs the precondition a settled display leaves behind: a non-empty cache that is NOT
+  // dirty and has an empty dirty set (`slice_clean`). Seed that state directly so the test does not
+  // depend on a snapshot drain.
+  loop.visualCache.notes.clear();
+  loop.visualCache.notes.push_back(NoteUtils::DisplayNote{});
+  loop.visualCache.dirtyBars.clear();
+  loop.visualCacheDirty = false;
+
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+
+  TEST_ASSERT_TRUE_MESSAGE(loop.visualCacheDirty,
+                           "a committed pass must leave the visual cache stale");
+  TEST_ASSERT_FALSE_MESSAGE(loop.visualCache.dirtyBars.empty(),
+                            "the committed pass must name the bars the rebuild may revisit");
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -3489,6 +3522,7 @@ int main() {
   RUN_TEST(test_capture_preview_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_owns_overdub_session_undo_baseline);
   RUN_TEST(test_deferred_stop_prepares_job_owned_undo_entry);
+  RUN_TEST(test_deferred_stop_commit_marks_the_display_ranges_of_the_new_pass);
   RUN_TEST(test_deferred_stop_undo_entry_carries_every_session_pass);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
