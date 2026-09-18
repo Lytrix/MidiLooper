@@ -205,13 +205,41 @@ allows both concurrently; the new model must not design that away.
 |---|---|---|
 | `PlaybackWindowLease` | up to **32** (2 per track, 16 tracks) | must be small and length-independent |
 | `LiveCaptureLease` | **1** | record/overdub ingress, staging, capture stop jobs |
-| `DeferredFinalizationLease` | **1** | successor-reentry predecessor, concurrent with a live successor |
+| `DeferredFinalizationLease` | **1** | one finalizing predecessor alongside one live successor (rotating, see below) |
 | `InteractiveLease` | **1** | edit / undo / redo / display, unless evidence requires more |
 | `TransferOverlap` | measured | explicitly budgeted, not slack |
 
 Classes are **composable**: a slot may hold several at once, and each owns only the resources its operation
 needs. Assignment is generation-qualified per class, so releasing a playback lease cannot disturb a live
 capture or deferred finalization lease on the same slot.
+
+### Why one finalization lease is sufficient
+
+Not because the Teensy has one core -- the finalization job is **resumable** and retains ownership across many
+service turns, so another capture runs while it is still alive. One lease suffices because of the rotation:
+
+```
+A recording/overdub -> STOP A -> A acquires the one DeferredFinalizationLease
+switch to B         -> START B -> B acquires LiveCaptureLease; B records while A finalizes
+A finishes          -> releases DeferredFinalizationLease
+STOP B              -> B acquires that same lease
+```
+
+Supported concurrency is therefore **1 deferred finalization + 1 live recording/overdub**, without
+provisioning two copies of the canonical/bridge/reconstruction machinery. The edge case:
+
+```
+STOP A (A still finalizing) -> START B (accepted) -> STOP B before A finishes
+```
+
+Under the same non-destructive contract as failed admission, **B's stop is denied and B remains
+recording/overdubbing**; once A releases, the next B stop succeeds. Normal use (record for at least a few
+seconds after a switch) will have A finished long before B stops; only very short captures and rapid
+punch-stop/start/stop sequences are constrained.
+
+The initial envelope therefore pays for **one** finalization lease and adds the counter
+`finalization_lease_stop_denied`. If real usage shows frequent denials, a second lease is evaluated **from
+that evidence** rather than reserved preemptively.
 
 ## Revision 10 — dirty canonical generations pin residency (S6 durability rule)
 
@@ -273,6 +301,11 @@ activate B            -> a second appears
 deactivate A          -> A's lease returns to the pool
 activate C            -> C reuses A's capacity, no net growth
 ```
+
+**Finalization-lease acceptance:** A stops and finalizes; B starts and records; A releases; B stops and takes
+the same lease. Separately, in the pathological shape (STOP B while A still finalizes), the stop is denied
+non-destructively, B stays recording/overdubbing, and the counter increments; after A releases, the next stop
+succeeds. `finalization_lease_stop_denied` is reported per run as the evidence for whether 1 is sufficient.
 
 **Adversarial owner acceptance (top-level, not just a fixture):**
 

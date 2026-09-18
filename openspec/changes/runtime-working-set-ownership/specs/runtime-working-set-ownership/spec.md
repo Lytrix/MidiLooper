@@ -95,6 +95,19 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **THEN** both hold their own leases concurrently
 - **AND** the successor-re-entry capability is preserved rather than serialized
 
+#### Scenario: The finalization lease rotates between captures
+- **WHEN** slot A stops and acquires the single finalization lease, slot B starts and records, then A finishes
+- **THEN** B may acquire that same finalization lease when it stops
+- **AND** the supported concurrency is one finalizing predecessor plus one live successor, not two
+  simultaneously finalizing captures
+
+#### Scenario: A stop that cannot get the finalization lease is denied non-destructively
+- **WHEN** a stop is requested while the single finalization lease is held by a predecessor that has not
+  finished
+- **THEN** the stop is denied and the requesting slot remains recording or overdubbing
+- **AND** the denial is counted as `finalization_lease_stop_denied` and the next stop succeeds once the lease
+  is released
+
 ### Requirement: Dirty canonical generations pin residency
 Once persistence is the backing authority, canonical content SHALL be evicted only after persistence has
 durably acknowledged the exact canonical generation being evicted. Unpersisted content SHALL pin residency,

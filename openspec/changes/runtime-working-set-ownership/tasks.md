@@ -16,8 +16,12 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
       with selection explicitly cheap and "about to sound"/arm/preload as the only cold admission boundary.
 - [ ] S0.1a `DEC`: **role classes and cardinalities** -- `PlaybackWindowLease` up to 32, `LiveCaptureLease` 1,
-      `DeferredFinalizationLease` 1 (concurrent with a live successor, preserving DEC-067 successor re-entry),
-      `InteractiveLease` 1 -- composable, each owning only the resources its operation needs.
+      `DeferredFinalizationLease` **1** (rotating: one finalizing predecessor + one live successor, preserving
+      DEC-067 successor re-entry; **not** two simultaneous finalizations), `InteractiveLease` 1 -- composable,
+      each owning only the resources its operation needs.
+- [ ] S0.1b Record that a second finalization lease is **not** provisioned preemptively, and that the evidence
+      path is the `finalization_lease_stop_denied` counter; note the constrained shapes (very short captures,
+      rapid punch-stop/start/stop).
 - [ ] S0.2 `DEC` invariant: lease identity is `slot + generation + role`; leases transfer and release by
       identity; a generation-mismatched release is a rejected, reported no-op.
 - [ ] S0.3 Pin the **cold undo policy** (open decision 1) from the four candidates in `design.md`, as a
@@ -82,6 +86,10 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
+- [ ] S4.5 **Finalization-lease rotation and denial**: emit `finalization_lease_stop_denied`; native fixture
+      for A-stops-and-finalizes / B-records / A-releases / B-stops-and-takes-the-lease, and for the
+      pathological shape where a stop arriving before A releases is denied non-destructively with the slot
+      still recording/overdubbing and the next stop succeeding.
 - [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
       rising and falling with activation/deactivation.
 
@@ -144,6 +152,8 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S7.3 Re-run the reported reproducer on the large library: arm a track, external clock + MIDI notes,
       and require it to reach `RECORDING`; also arm-and-play internally.
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
+- [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
+      evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
 - [ ] S7.5 **Continuity acceptance**: with transport playing, switch track and slot repeatedly while up to
       two slots per track sound, start record/overdub, and run undo/redo -- the transport never stops and
       the MIDI-boundary timing verifier reports no degradation on any switch.
