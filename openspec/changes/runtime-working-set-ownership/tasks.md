@@ -15,6 +15,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 
 - [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
       with selection explicitly cheap and "about to sound"/arm/preload as the only cold admission boundary.
+- [ ] S0.1a `DEC`: **role classes and cardinalities** -- `PlaybackWindowLease` up to 32, `LiveCaptureLease` 1,
+      `DeferredFinalizationLease` 1 (concurrent with a live successor, preserving DEC-067 successor re-entry),
+      `InteractiveLease` 1 -- composable, each owning only the resources its operation needs.
 - [ ] S0.2 `DEC` invariant: lease identity is `slot + generation + role`; leases transfer and release by
       identity; a generation-mismatched release is a rejected, reported no-op.
 - [ ] S0.3 Pin the **cold undo policy** (open decision 1) from the four candidates in `design.md`, as a
@@ -45,14 +48,14 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
-- [ ] S2.1 Derive working-set capacities from the resolved window instead of the 2048-event ceiling
-      (views, companion owners, canonical pass inputs, reconstruction, prepared pair). This is the
-      promotion of RC-MEM-2's outstanding item.
-- [ ] S2.2 Measure the resulting worst-case lease size.
-- [ ] S2.3 Compute the feasible cap from the PSRAM arithmetic in `design.md` (fixed overhead + canonical
-      allowance + `N` x worst-case lease + transfer overlap + transient/deferred headroom <= safe budget).
-      The envelope to serve is **up to 32 sounding leases (2 per track x 16 tracks) plus overlap**, which
-      needs roughly **100-125 KB per lease** against ~845 KB today.
+- [ ] S2.1 Derive the **playback window lease** capacities from the resolved window instead of the
+      2048-event ceiling (playback views and their ordering/provenance only). This is the promotion of
+      RC-MEM-2's outstanding item, and it is the term multiplied 32 times.
+- [ ] S2.2 Measure each class separately: `P` playback window lease, `C` live-capture extension, `D`
+      deferred-finalization extension, `I` interactive extension. Do **not** size the specialized classes by
+      the playback target.
+- [ ] S2.3 Prove the class budget: `fixed + 32P + C + D + I + transfer overlap + canonical allowance +
+      reserve <= PSRAM budget`, with the numbers recorded. Only `P` is multiplied by the envelope.
 - [ ] S2.4 Either show the envelope fits, or state the achievable simultaneous-playback capability as a
       bound (`k` slots per track, `k < 2`) with the arithmetic behind it.
 - [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
@@ -87,7 +90,8 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
       small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
 - [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
-      accounted in the S2 budget; the switch point performs no allocation.
+      accounted in the S2 budget; the switch point performs no allocation, and the transfer must not steal
+      resources from a still-live capture or deferred-finalization owner.
 - [ ] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
 - [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
@@ -103,6 +107,10 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S5.3 Native fixture: demote then re-activate, assert identical playback content and that
       re-derivation is not on a timing-critical edge.
 - [ ] S5.4 Device: snapshot slab bytes track the active set, not the recorded library.
+- [ ] S5.5 **Cold-save persistence parity**: with a slot demoted (no full published root), saving must use the
+      defined pass-authoritative / root-optional path, serialize no stale root, and reload to exact
+      passes/playback/display. This guards the LSV1 root/save authority work from being reopened through
+      runtime demotion.
 - [ ] S5 gates: S4 gates plus content parity for a demoted/re-activated slot (existing
       content-verification pipeline).
 
@@ -112,8 +120,14 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       the descriptor-based cold identity. Do not start S6 before it is accepted.
 - [ ] S6.1 Cap resident canonical event content per the chosen policy (fixed cap, LRU over the active set,
       or derived from loop length) and load cold loops' events on demand from SD.
+- [ ] S6.1a **Dirty-generation pinning**: canonical content is eviction-eligible only after persistence
+      durably acknowledges the exact generation being evicted; unpersisted content pins residency; a
+      persistence failure or delay reduces capacity and never discards accepted input.
 - [ ] S6.2 Prove the ceiling arithmetic (~28 sixty-four-bar loops resident at the observed density, so a
       60-slot library cannot be event-resident).
+- [ ] S6.2a Adversarial test: dirty -> demote -> storage deliberately delayed -> pressure requests eviction ->
+      content stays resident; save completes for that generation -> evictable; reload exact. And a save that
+      completes for G must not make G+1 evictable.
 - [ ] S6.3 Reload is byte-identical; loading an active loop stays within the existing admission contract.
 - [ ] S6.4 Consider a capture-admission length cap if the policy requires one.
 - [ ] S6 gates: S5 gates plus a 60-slot load/reload parity run.
@@ -137,8 +151,10 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 
 ## Safeguards (valuable, not the strategy)
 
-- [ ] G.2 `immutable-loop-snapshot-passes` §5.13: make the record-arm chain non-all-or-nothing so a
-      shortfall cannot exit the arm.
+- [ ] G.2 `immutable-loop-snapshot-passes` §5.13: **failed admission must be non-destructive and must not
+      cancel ARMED** -- derive the required set, acquire it completely, and on failure create no partial
+      authority, stay armed, and report a resource wait/denial. Partial capacity only where an owner
+      explicitly supports a smaller bounded grant.
 - [ ] G.3 §5.13: `RuntimeCompanionReconstruction`'s single 64 KiB buffer split into blocks.
 - [ ] G.4 Explicitly **not** the fix: releasing arm reserves on disarm (the same view set serves playback
       of the slot's committed content).

@@ -35,9 +35,10 @@ and never merely because a slot is selected.
 ### Requirement: Working sets are window-sized so the two-slots-per-track envelope fits PSRAM
 Working-set capacities SHALL be derived from the resolved window rather than a whole-loop event ceiling, so
 a slot's resident cost is independent of its loop length, and the number of simultaneously resident leases
-SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served
-is **up to two sounding slots per track across up to sixteen tracks** -- up to thirty-two sounding leases --
-plus the overlap a transfer requires.
+SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served is **up to two sounding slots per track across up to sixteen tracks** -- up to
+thirty-two playback window leases -- plus one live-capture lease, one deferred-finalization lease, one
+interactive lease where present, and the measured transfer overlap. The budget is per lease class: only the
+playback term is multiplied by the envelope, so only it must be small and length-independent.
 
 #### Scenario: The lease budget closes
 - **WHEN** fixed overhead, canonical allowance, transient and deferred headroom, and the worst-case lease
@@ -58,9 +59,10 @@ plus the overlap a transfer requires.
 
 ### Requirement: Role transfer never requires stopping playback
 Switching track or slot, starting record or overdub, and undo/redo SHALL all be performed while transport
-continues, without MIDI timing degradation. The single complex role -- the resumable small-packet logic
-inside MIDI boundaries that serves record, overdub, passes, undo/redo and display -- SHALL transfer to the
-newly selected slot or track, and the switch SHALL be allocation-free at the point of transfer.
+continues, without MIDI timing degradation. The relevant role -- the resumable small-packet logic inside MIDI boundaries that serves record, overdub,
+passes, undo/redo and display -- SHALL transfer to the newly selected slot or track, and the switch SHALL be
+allocation-free at the point of transfer. Transfer SHALL NOT steal resources from a still-live capture or
+deferred-finalization owner.
 
 #### Scenario: Switching while playing does not stop transport
 - **WHEN** a different track or slot is selected while playback is running
@@ -76,6 +78,54 @@ newly selected slot or track, and the switch SHALL be allocation-free at the poi
 - **WHEN** track/slot switching, record/overdub start, and undo/redo are exercised while playing
 - **THEN** the MIDI-boundary timing evidence reports no degradation and no overflow
 - **AND** the switch path performs no working-set allocation
+
+### Requirement: Runtime roles are separate classes with declared cardinalities
+Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred
+finalization, interactive edit/undo/display -- each with a declared cardinality, rather than as one
+monolithic per-slot lease. A slot MAY hold several classes simultaneously.
+
+#### Scenario: A playback lease carries no capture or deferred resources
+- **WHEN** a slot is sounding as one of up to two playback slots on its track
+- **THEN** its playback window lease carries no capture staging, stop-job, companion-history or
+  deferred-finalization capacity
+- **AND** those resources are held only by the role that needs them
+
+#### Scenario: Deferred finalization runs alongside a live successor
+- **WHEN** a predecessor slot is finalizing deferred work while a successor slot records live
+- **THEN** both hold their own leases concurrently
+- **AND** the successor-re-entry capability is preserved rather than serialized
+
+### Requirement: Dirty canonical generations pin residency
+Once persistence is the backing authority, canonical content SHALL be evicted only after persistence has
+durably acknowledged the exact canonical generation being evicted. Unpersisted content SHALL pin residency,
+and a persistence failure or delay SHALL reduce available residency capacity rather than discard accepted
+input.
+
+#### Scenario: Dirty content is not evicted under pressure
+- **WHEN** a slot's canonical content is dirty (a deferred save has not durably completed)
+- **AND** memory pressure requests eviction of that content
+- **THEN** the content remains resident
+- **AND** accepted input is never lost to memory pressure
+
+#### Scenario: Acknowledgement is generation-specific
+- **WHEN** persistence durably acknowledges generation G
+- **THEN** generation G becomes eviction-eligible
+- **AND** a later mutation G+1 pins residency again
+
+#### Scenario: Reload after eviction is exact
+- **WHEN** an acknowledged generation is evicted and later reloaded
+- **THEN** the reloaded content matches byte-for-byte
+
+### Requirement: Failed admission is non-destructive and preserves the armed state
+A required resource set SHALL be derived and acquired as a complete set. On failure there SHALL be no
+partial authority, the slot SHALL remain armed, and the failure SHALL be reported as an explicit
+resource wait or denial. Partial capacity SHALL be legal only where an individual owner explicitly supports
+a smaller bounded grant.
+
+#### Scenario: Short admission leaves the slot armed
+- **WHEN** the required resource set for starting a recording cannot be acquired
+- **THEN** no partial authority is created
+- **AND** the slot remains armed and reports a resource wait or denial rather than leaving the armed state
 
 ### Requirement: Working-set leases are generation-qualified
 A lease SHALL be identified by slot, generation and role, and SHALL be transferred and released by that
