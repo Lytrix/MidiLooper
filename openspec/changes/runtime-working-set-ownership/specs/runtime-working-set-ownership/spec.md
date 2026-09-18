@@ -119,6 +119,37 @@ only immutable events, and SHALL NOT require a resident whole-loop immutable roo
   on the next pass
 - **AND** playback is never torn, never held silent, and never deferred in a way that disturbs timing
 
+### Requirement: A compact visual envelope is retained for every slot, with a capped detail window
+A compact per-bar visual envelope SHALL be retained for every recorded slot so that slot switching has immediate
+visual feedback without loading canonical content. A rendered detail window SHALL be retained only within a byte
+cap with eviction, and SHALL reuse the existing resumable display renderer and validity identity.
+
+#### Scenario: Switching shows the new slot immediately
+- **WHEN** the displayed slot changes to one whose detail window is not resident
+- **THEN** the envelope for that slot is available immediately and the display reflects the change
+- **AND** the detail window is resolved through the existing resumable renderer rather than blocking the switch
+
+#### Scenario: The envelope is affordable for the whole library
+- **WHEN** every recorded slot retains an envelope
+- **THEN** the total envelope cost is bounded by a small per-bar-per-slot figure and does not scale with loop
+  length in a way that threatens the memory law
+- **AND** the envelope is accounted as its own budget term
+
+#### Scenario: The detail window is capped and evicted
+- **WHEN** the rendered detail windows would exceed the visual byte cap
+- **THEN** they are evicted by the declared policy
+- **AND** inactive-slot visual memory stays flat as the library grows
+
+#### Scenario: Envelopes are invalidated by mutation
+- **WHEN** content covering an envelope's bars changes
+- **THEN** the envelope is invalidated and re-rendered
+- **AND** a stale envelope is never presented as current
+
+#### Scenario: Existing renderer and identity are reused
+- **WHEN** the visual tier is implemented
+- **THEN** it reuses the existing idle-sliced renderer and the existing snapshot identity/revision validity
+- **AND** adding a parallel renderer or validity counter is recorded as a failure mode
+
 ### Requirement: Standby excerpts are bounded, budgeted and immutable
 A per-slot standby excerpt MAY be retained so that activation and queued switching need no preparation at the
 boundary. Standby SHALL be byte-capped with eviction, accounted as its own budget term, immutable, and

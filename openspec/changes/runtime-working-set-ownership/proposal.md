@@ -82,6 +82,13 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
   slot-lifetime owned. Inactive slots retain only canonical descriptors, loop/pass summary, persistence
   identity and location, and tiny browser metadata.
+- **A two-level visual tier, reusing the display machinery already present.** Visual switching has the same
+  problem as MIDI switching, and most of the answer exists: a **compact per-bar envelope** for *every* slot
+  (the analogue of a pre-rendered waveform file -- ~64 B/slot, so all 64-128 slots cost ~8-16 KB, affordable
+  unconditionally) plus a **capped rendered window** for slots that may be shown or switched to, reusing the
+  existing bar-sliced resumable renderer (`rebuildVisualCacheIdleSlice`), the existing validity identity
+  (`builtFromSnapshotIdentity` / `builtFromRevision`), the draw-source reuse keys, and the disconnected
+  `TrackManager::prewarmSelectedDisplayVisualCache` hook as the entry point.
 - **A bounded standby tier, scheduled against a deadline you already know.** When a recording stops, the
   loop's start tick is known, so the playhead's next arrival at every tick of that loop is known -- and the
   same is true after any mutation. Preparation can therefore be scheduled against a **known deadline** (up to a

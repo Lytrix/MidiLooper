@@ -74,6 +74,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       that need a smaller P to reach 32 or 64 sounding slots.
 - [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
       resident working sets, and playback crosses window boundaries with no timing discontinuity.
+- [ ] S2.8 **Visual sizing**: size the per-bar envelope (bytes/bar/slot, whole library) and the rendered
+      detail window at typical density (~36 notes/bar, `DisplayNote` = 16 B) and at the representable ceiling
+      (~2,048 notes/bar), and derive the visual byte cap and eviction policy alongside S2.6/S2.7.
 - [ ] S2.7 **Standby sizing**: size a per-slot standby excerpt at BOTH typical density (~72 events/bar) and
       the representable ceiling (4,096 refs/bar), across 1/4-bar, 1-bar and 2-bar windows, and derive the
       standby byte cap and its eviction policy (LRU or candidate set). Record the arithmetic; an all-slots
@@ -157,6 +160,22 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       cap-eviction under growth; no torn or stale standby used for playback.
 - [ ] S4d gates: standby appears as its own budget term; the S2.7 cap is respected on device.
 
+## S4e — visual tier (envelope for all slots, capped window)
+
+- [ ] S4e.1 Per-bar **visual envelope** for every slot (extend what `overviewCaptureBandMask_` already does
+      beyond capture preview), sized so the whole library fits.
+- [ ] S4e.2 **Rendered detail window** within the S2.8 cap, produced through the existing idle-sliced renderer
+      (`rebuildVisualCacheIdleSlice`) and validated by the existing `builtFromSnapshotIdentity` /
+      `builtFromRevision`.
+- [ ] S4e.3 Invalidate on any mutation covering the envelope's bars; fall back to the windowed gather.
+- [ ] S4e.4 Revive `TrackManager::prewarmSelectedDisplayVisualCache` as the visual scheduler entry point
+      (it currently has no caller); confirm which mechanism a dev-branch visual preload uses, and record the
+      two caller-less display paths (`resolveDisplayNotesCommitted`, `resolveDisplayNotesLiveCapture`) as
+      either reused or deleted rather than leaving a third variant.
+- [ ] S4e.5 Native fixtures: switch shows the new slot immediately from the envelope; detail resolves through
+      the existing renderer; mutation invalidates; cap and eviction hold under library growth.
+- [ ] S4e gates: envelope and window appear as budget terms; no new renderer or validity counter introduced.
+
 ## S5 — demote inactive slots' derived state
 
 - [ ] S5.1 Drop the published snapshot root and whole-loop `VisualCache` for a slot leaving the active
@@ -205,6 +224,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
 - [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
       evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
+- [ ] S7.4d **Visual switch acceptance**: switch display across a 60+ slot library and require immediate visual
+      feedback from the envelope, no full whole-loop rebuild on switch, no stale envelope after a mutation, and
+      the visual byte cap respected.
 - [ ] S7.4c **Standby switch acceptance**: with a warm standby set, queue switches at 1/16 and 1/32 beat and
       require zero preparation at the boundary, no stale standby output after a mutation, and the standby byte
       cap respected under a 60+ slot library.
