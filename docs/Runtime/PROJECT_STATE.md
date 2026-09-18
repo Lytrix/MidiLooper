@@ -1,5 +1,22 @@
 # Project state (execution context)
 
+**2026-09-18 successor 5.9 + 5.11 CLOSED and the defect fixed (`immutable-loop-snapshot-passes` 5.8).** The
+user's report — the overdub wrap's second pass shown on the display but not audible — had two independent
+causes, both leaving the published root not representing the committed passes: (1) `TrackUndo::
+applyPublishedSnapshotSelect` was a no-op when the asynchronous session-exit after-attach had not landed, so a
+redo kept the pre-undo root and the entry's pass restore made it stale (live-capture telemetry: window 384 → 576
+→ 384 after `Undo` → still 384 after `Redo` against 576 effective); and (2) `Track::processDeferredIdleMaintenance`
+admitted snapshot idle work only for `liveRecordPastFirstBar || inFlightConstruction || hasWrapJournal`, so a
+publication queued with none of those never started (the plain stop → play-again case). Fix (`31933183`):
+`Loop::requestCommittedPassesRepublish()` republishes every active committed pass on the normal lane without
+clearing the live root, called after both undo and redo of a record/overdub entry; the eligibility clause also
+admits `pendingSnapshotSessionExitQueued()`. Device gate: `content-verify-65` clean base PASS and
+`content-verify-65-playback` **`result: PASS`** with `storage_matches_effective: true` (384 + 157 + 35 == 576),
+**all five cycles inventory-equal, exact order, 0 missing, 0 extra**, `max_bar_refs: 72`; same run 0
+`companion path stalled`, 0 `RING,overflow`, 0 `FATAL`, 0 `MEM_DENIED`, save `ok`; firmware `f82ee9b9…`, git
+`31933183` clean. Full native 2,239 / 1 skipped / 0 failures; RAM1 locals 6,400. Owed: the native redo-requeue
+fixture and a load-time reconcile for already-saved stale roots (the fix applies to new activity).
+
 **2026-09-18 successor 5.9 device run FAILS: a committed overdub pass never reaches the MIDI output
 (OpenSpec `successor-capture-reentry-unguarding`).** The DEC-071 multi-pass shape was created on the
 flashed tree (`captures/content-verify-58`, git `4fde5c03` clean, firmware `d298f9ea…`, `teensy41-capture-serial`): the base run
