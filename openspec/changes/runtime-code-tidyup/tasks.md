@@ -220,10 +220,10 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
   merge-order key in a header-inline `include/Utils/PlaybackEventOrder.h`; migrate the duplicated comparator
   (`src/Track/RuntimePlaybackBridge.cpp:588-598` vs `:699-706`) and the 8 `eventKind` ternary sites in touched files.
   Verify: `test_playback_prewarm` and `test_continuous_capture` pass with byte-identical emitted traces.
-- [ ] 4.2 Introduce one `RuntimeWorkerStepResult` and rename the five result enums per design § D4 (folding `RuntimePlaybackViewBuildGrain` into the class's `Phase`/`nextGrain()`),
+- [x] 4.2 Introduce one `RuntimeWorkerStepResult` and rename the five result enums per design § D4 (folding `RuntimePlaybackViewBuildGrain` into the class's `Phase`/`nextGrain()`),
   preserving the extra `Ready` state where it carries information. Verify: compiles; every call site updated; native
   suite passes with unchanged case count.
-- [ ] 4.3 Converge the lifecycle accessors per design § D5: `available()` as the admission-state query (replacing `idle()`/`active()` where they mean the same),
+- [x] 4.3 Converge the lifecycle accessors per design § D5: `available()` as the admission-state query (replacing `idle()`/`active()` where they mean the same),
   `lastStepInputCount()` as the grain-progress query, one source-identity shape. Verify: grep shows one spelling per
   concept; native suite passes.
 - [ ] 4.4 Collapse the duplicated atomic-transfer bodies (`src/Track/TrackPreparedStopCommit.cpp:112-134` vs `:136-161`)
@@ -327,9 +327,11 @@ The enumerator rename cannot be done with a text sweep: `::Pending` (419), `::Co
 `::Denied` (343) are shared with many other enums in the repo, so every site needs type-aware rewriting.
 The functional gain is vocabulary consistency only, and the diff would touch most test files. The design's
 own rejected alternative ("rename only, keeping five names") exists precisely because this trade is
-unattractive, and NAMING.md forbids rename-only churn. Recommendation: keep the two small wins
-(`RuntimePlaybackViewBuildGrain` folding into `Phase`/`nextGrain()`, 75 sites) and leave the 800-site
-rename to touch-and-adopt, or drop 4.2 from this change.
+unattractive, and NAMING.md forbids rename-only churn. **Resolved with the user (2026-09-18):** keep only the small win. `RuntimePlaybackViewBuildGrain` was
+folded into the class as a public `RuntimePlaybackViewBuild::Grain` (the build's own stage, so one type
+instead of two: 94 references migrated, the free enum and the private duplicate `Phase` are gone). The
+800-site `RuntimePlaybackOrderBuildResult` rename is left to touch-and-adopt and is **not** part of this
+change.
 
 **4.3 — the three "synonym" accessors are three different predicates, not three names for one concept.**
 Measured definitions:
@@ -343,9 +345,11 @@ Measured definitions:
 
 Converging these onto one name would change behaviour at call sites (a `Complete` builder is `available()`
 but not `idle()`; a mid-grain builder is `active()` but not `available()`). Design D5 assumed they were
-synonyms; that assumption does not hold. Recommendation: **drop 4.3's rename**, and instead fix the one
-genuine naming defect — `RuntimeCaptureCompanions::idle()` should state the ownership question it answers
-(e.g. `hasCaptureOwner()`), which is a clarity fix with no semantic change.
+synonyms; that assumption does not hold. **Resolved with the user (2026-09-18):** the rename is dropped. The one genuine defect is fixed:
+`RuntimeCaptureCompanions::idle()` is now `hasCaptureOwner()` (`capture_ != nullptr`), which states the
+ownership question it answers instead of borrowing a phase word — one production guard, one native
+assertion and two comment mentions updated, no semantic change. `available()`/`idle()`/`active()` keep
+their distinct meanings and are documented here so a later reader does not "converge" them by mistake.
 
 **Still open in P3:** 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle accessor vocabulary), 4.4
 (atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), and the phase

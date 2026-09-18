@@ -607,21 +607,21 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::publishStoppedOracleVi
   if (!oracleBuild.begin(current, source, sourceCount, sourceIdentity, coverage, anchor, boundary)) {
     return false;
   }
-  while (oracleBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) {
+  while (oracleBuild.nextGrain() == RuntimePlaybackViewBuild::Grain::Fill) {
     if (oracleBuild.stepFill(sourceCount == 0 ? 1 : sourceCount) ==
-        RuntimePlaybackViewBuildGrain::Denied) {
+        RuntimePlaybackViewBuild::Grain::Denied) {
       current.resetMetadata();
       return false;
     }
   }
-  while (oracleBuild.nextGrain() == RuntimePlaybackViewBuildGrain::Order) {
+  while (oracleBuild.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) {
     if (oracleBuild.stepOrder(sourceCount == 0 ? 1 : sourceCount) ==
-        RuntimePlaybackViewBuildGrain::Denied) {
+        RuntimePlaybackViewBuild::Grain::Denied) {
       current.resetMetadata();
       return false;
     }
   }
-  if (oracleBuild.nextGrain() != RuntimePlaybackViewBuildGrain::Complete) {
+  if (oracleBuild.nextGrain() != RuntimePlaybackViewBuild::Grain::Complete) {
     current.resetMetadata();
     return false;
   }
@@ -1085,12 +1085,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackOrderBuildResult LoopPlaybackRunt
   }
   const auto result = canonicalWindowPhase == CanonicalWindowPhase::Fill
       ? viewBuild.stepFill(quantum) : viewBuild.stepOrder(quantum);
-  if (result == RuntimePlaybackViewBuildGrain::Denied) {
+  if (result == RuntimePlaybackViewBuild::Grain::Denied) {
     canonicalWindowPhase = CanonicalWindowPhase::Denied;
     return RuntimePlaybackOrderBuildResult::Denied;
   }
-  canonicalWindowPhase = result == RuntimePlaybackViewBuildGrain::Complete ? CanonicalWindowPhase::Publish
-      : result == RuntimePlaybackViewBuildGrain::Order ? CanonicalWindowPhase::Order : CanonicalWindowPhase::Fill;
+  canonicalWindowPhase = result == RuntimePlaybackViewBuild::Grain::Complete ? CanonicalWindowPhase::Publish
+      : result == RuntimePlaybackViewBuild::Grain::Order ? CanonicalWindowPhase::Order : CanonicalWindowPhase::Fill;
   return RuntimePlaybackOrderBuildResult::Pending;
 }
 
@@ -1101,7 +1101,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginFrozenCanonicalTa
   if (!set || &live.capture != &set->frozenCaptureStaging() || canonicalTailPhase != CanonicalTailPhase::Idle ||
       captureBridgePhase != CaptureBridgePhase::Idle || canonicalPrefixPhase != CanonicalPrefixPhase::Ready ||
       canonicalPassInputs.generation() != canonicalPrefixGeneration || !canonicalPassInputs.ready() ||
-      canonicalPassInputs.captureAttached() || !frozenCaptureCompanions.idle() ||
+      canonicalPassInputs.captureAttached() || frozenCaptureCompanions.hasCaptureOwner() ||
       !frozenCompanionPasses.idle() || !frozenCompanionApply.available()) return false;
   if (!frozenCaptureCompanions.begin(live.capture, live.capture.frozenGeneration, changes)) return false;
   const bool reuseOrder = !frozenCaptureOrderBinding.bound &&
@@ -1535,9 +1535,9 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceBridgeWindow(
       return true;
     }
     const auto grain = bridgeWindowBuild.nextGrain();
-    if (grain == RuntimePlaybackViewBuildGrain::Fill) bridgeWindowBuild.stepFill(quantum);
-    else if (grain == RuntimePlaybackViewBuildGrain::Order) bridgeWindowBuild.stepOrder(quantum);
-    else if (grain == RuntimePlaybackViewBuildGrain::Complete) {
+    if (grain == RuntimePlaybackViewBuild::Grain::Fill) bridgeWindowBuild.stepFill(quantum);
+    else if (grain == RuntimePlaybackViewBuild::Grain::Order) bridgeWindowBuild.stepOrder(quantum);
+    else if (grain == RuntimePlaybackViewBuild::Grain::Complete) {
       if (life.ready == RuntimePlaybackViewLifecycle::kNoView)
         (void)set->publishCompletedBuildAsReady();
       // Ready/build successors are complete but not yet published. Release
@@ -1623,7 +1623,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingB
     firstRecordingBarDenial_ = "fill_admission_denied";
     return false;
   }
-  if (viewBuild.stepFill(1) == RuntimePlaybackViewBuildGrain::Denied ||
+  if (viewBuild.stepFill(1) == RuntimePlaybackViewBuild::Grain::Denied ||
       !destination.complete || !destination.rawCoveragePrepared) {
     viewBuild.discard();
     firstRecordingBarDenial_ = "fill_grain_denied";
@@ -1762,13 +1762,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingB
                          EmissionCursor{}, LedgerBoundarySummary{},
                          RuntimePlaybackViewFillScope::RawCoverage)) return false;
   }
-  const RuntimePlaybackViewBuildGrain grain = viewBuild.nextGrain();
-  if (grain == RuntimePlaybackViewBuildGrain::Fill) {
-    if (viewBuild.stepFill(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
-  } else if (grain == RuntimePlaybackViewBuildGrain::Order) {
-    if (viewBuild.stepOrder(entryQuantum) == RuntimePlaybackViewBuildGrain::Denied) return false;
+  const RuntimePlaybackViewBuild::Grain grain = viewBuild.nextGrain();
+  if (grain == RuntimePlaybackViewBuild::Grain::Fill) {
+    if (viewBuild.stepFill(entryQuantum) == RuntimePlaybackViewBuild::Grain::Denied) return false;
+  } else if (grain == RuntimePlaybackViewBuild::Grain::Order) {
+    if (viewBuild.stepOrder(entryQuantum) == RuntimePlaybackViewBuild::Grain::Denied) return false;
   }
-  if (viewBuild.nextGrain() != RuntimePlaybackViewBuildGrain::Complete) return true;
+  if (viewBuild.nextGrain() != RuntimePlaybackViewBuild::Grain::Complete) return true;
   if (!set->publishCompletedBuildAsReady(PlaybackViewHandoffMode::Preparation) ||
       !set->lifecycle.replaceRetainedWithReady(set->views)) {
     viewBuild.discard();
@@ -1779,17 +1779,17 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingB
   return true;
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuildGrain
+TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuild::Grain
 LoopPlaybackRuntime::nextCoverageBuildGrain() const {
   return viewBuild.nextGrain();
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuildGrain
+TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuild::Grain
 LoopPlaybackRuntime::stepCoverageBuildFill(size_t entryQuantum) {
   return viewBuild.stepFill(entryQuantum);
 }
 
-TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuildGrain
+TRACK_PLAYBACK_RUNTIME_COLD_MEM RuntimePlaybackViewBuild::Grain
 LoopPlaybackRuntime::stepCoverageBuildOrder(size_t entryQuantum) {
   return viewBuild.stepOrder(entryQuantum);
 }
