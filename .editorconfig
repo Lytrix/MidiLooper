@@ -1,0 +1,33 @@
+# MidiLooper formatting baseline (runtime-code-tidyup task 7.3).
+#
+# Scope: the mechanical, non-controversial part of the house style. A
+# `.clang-format` was evaluated in the same task and rejected — no config derived
+# from the incumbent style reproduced it, and the closest candidate rewrote 2,274
+# lines across 45 files; see
+# openspec/changes/runtime-code-tidyup/CLANG-FORMAT-DRYRUN.md.
+#
+# `clang-format` therefore stays an authoring aid, not a repo gate.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown hard line breaks are two trailing spaces. 120 of the files this change
+# inherited use them, so the whitespace trim is off for prose.
+[*.md]
+trim_trailing_whitespace = false
+
+[*.{py,pyi}]
+indent_size = 4
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab

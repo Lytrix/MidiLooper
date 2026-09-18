@@ -580,7 +580,7 @@ The three splits reduce the files that carried a mixed responsibility: `RuntimeP
   `head -1` over the added files yields one form; no other line changed.
 - [x] 7.2 Strip trailing whitespace from the 24 added files that carry it. Verify: `grep -c '[ \t]$'` is zero for each;
   diff is whitespace-only.
-- [ ] 7.3 Add `.editorconfig` and a `.clang-format` derived from the incumbent style; accept the config only if
+- [x] 7.3 Add `.editorconfig` and a `.clang-format` derived from the incumbent style; accept the config only if
   `clang-format --dry-run` over the added files reports only the drifts 7.1/7.2 already fixed — otherwise ship
   `.editorconfig` only and record why (design § D9). Verify: the dry-run output is recorded in the change directory.
 - [ ] 7.4 Move the session journal out of `openspec/changes/resumable-midi-boundary-playback-maintenance/tasks.md` (20 checkboxes in 1,126 lines, with single prose lines up to 5,543 characters)
@@ -614,6 +614,17 @@ faulty character class `[ \t]$` produces: it matches a literal `t`, and 28 of th
 `t`. The 120 branch-added Markdown files that *do* carry trailing blanks are intentional two-space hard breaks and are
 left alone (`.editorconfig` does not trim `*.md`). Task's verify clause is therefore satisfied with zero edits; the
 corrected check is recorded here because the task's own `grep -c '[ \t]$'` would have reported false positives.
+
+**7.3 — `.editorconfig` ships; `.clang-format` is rejected.** `clang-format` is only reachable as
+`xcrun clang-format` on this host (Apple clang-format 17.0.0), and three candidates derived from the incumbent style
+were measured over the 61 added files: `BasedOnStyle: Google` + 100 columns rewrote 4,870 lines across 51 files;
+the same with no column limit (the incumbent code has 84 code lines over 120 columns and a 261-column maximum, so a
+limit is not what the style enforces) rewrote 2,274 lines across 45; `BasedOnStyle: LLVM` + 100 columns rewrote 6,989
+lines across 59. The best candidate is three orders of magnitude away from D9's "only the 7.1/7.2 drifts" criterion,
+and the drift is the incumbent's deliberate line packing, which clang-format splits unconditionally. Per D9 the phase
+ships `.editorconfig` only — UTF-8, LF, final newline, whitespace trim, 2-space C/C++ and shell, 4-space Python,
+`*.md` trim off because Markdown hard breaks are two trailing spaces. Command, candidates, counts and a representative
+diff are recorded in [`CLANG-FORMAT-DRYRUN.md`](CLANG-FORMAT-DRYRUN.md).
 
 ## 8. Closeout
 
