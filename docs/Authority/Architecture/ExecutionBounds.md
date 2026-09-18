@@ -634,6 +634,14 @@ All preflight denials precede mutation; occupied entries are rejected. Retained
 destination buffers move into the collection outputs rather than being freed.
 Global entry-ID/cursor publication, redo/trim retirement, session-before root
 retirement, snapshot-after attachment and capture-time admission remain open.
+The protected publication capacity is a precondition of that publication, not a
+measured grain: `GlobalUndoStack::entries` carries a reserved horizon
+(`kUndoStackProtectedCapacity`) that `TrackUndoPublication::begin` requires and
+that no stack rebuild may drop. A rebuild that shrinks the horizon turns the
+stop's protected publication into a plain commit — the pass still commits, but
+no `OverdubPassAdded` entry is recorded (see
+[`LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md)
+§ Undo).
 
 DEC-063 retirement helpers are structurally quantized but **not yet admitted to
 active production dispatch**. LoopSnapshot::stepRelease visits at most Q ownership

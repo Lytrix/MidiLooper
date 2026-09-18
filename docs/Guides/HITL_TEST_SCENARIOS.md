@@ -194,6 +194,14 @@ OpenSpec 5.5 adds `VERIFY deferred persist nonblocking` on this preset: sliced `
 
 OpenSpec 5.6 adds `VERIFY deferred persist large-loop bounds`: full LoopPersist phase progress, per-slice caps (max `PERS,work` / `DIAG,persist_save` ≤ 100 ms), active snapshot during PLAYING/OVERDUBBING save (±500 ms MO/`playback_build,snapshot` padding), and record-stop `save_request=requested` with slowest stop stage ≤ 100 ms.
 
+**Global undo (GUS) checks on this preset.** With the default second overdub on, the run exercises two overdub sessions plus the recipe's undo/redo; read the stack directly from the session log:
+
+- `MIDI: Undo (entries=N)` at the undo press is the per-loop undo depth. Fresh record + two overdub sessions must reach **3** (record + one entry per session); a lower value means a stop's entry was not published.
+- `#CAP,DIAG,gus,slot,kind=1,passId=...,passIds_n=...` is the entry as built (`passIds_n` counts extra wrap ids; `src=deferred` marks the deferred stop route). `#CAP,DIAG,gus,publish_begin,ok,phase,cursor,size,cap,...` is the protected publication attempt: `ok=0` means no entry was published, and `cap` below `kUndoStackProtectedCapacity` (32) means a stack rebuild dropped the pre-reserved horizon.
+- `VERIFY display … DISP across undo/redo` must drop the undone session's rows on `Undo` and restore them on `Redo`.
+
+A longer two-overdub variant (`--record-bars 8 --overdub-bars 4 --second-overdub-bars 4`) is **not** a reliable gate on the host MIDI path at the time of writing: runs `gus-undo-08`..`-11` all aborted with `MIDI in messages observed: 0` and a record sealed at ~475 ticks. Use the canonical 2+2 recipe above for GUS/undo evidence.
+
 Legacy entry: `scripts/host_midi_automation_baseline.py` (delegates to preset `base`).
 
 ### Stop/interruption fixture
