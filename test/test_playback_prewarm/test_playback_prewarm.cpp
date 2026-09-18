@@ -981,7 +981,7 @@ void test_runtime_view_build_retains_empty_non_note_and_repeated_note_id_instanc
   RuntimePlaybackViewBuild emptyBuild;
   TEST_ASSERT_TRUE(emptyBuild.begin(empty, nullptr, 0, PlaybackViewSourceIdentity{1, 1, nullptr},
                                     coverage, EmissionCursor{}, LedgerBoundarySummary{}));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, emptyBuild.stepFill(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, emptyBuild.stepFill(1));
   TEST_ASSERT_TRUE(empty.complete);
 
   MidiEvent source[] = {MidiEvent::ControlChange(10, 1, 7, 100),
@@ -996,13 +996,13 @@ void test_runtime_view_build_retains_empty_non_note_and_repeated_note_id_instanc
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(view, source, 5, PlaybackViewSourceIdentity{2, 2, nullptr},
                                coverage, EmissionCursor{}, LedgerBoundarySummary{}));
-  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Fill) {
+  while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Fill) {
     (void)build.stepFill(2);
   }
-  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) {
+  while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) {
     (void)build.stepOrder(2);
   }
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, build.nextGrain());
   TEST_ASSERT_EQUAL_UINT32(5, view.storage.eventCount);
   TEST_ASSERT_EQUAL_UINT32(0, view.storage.order[0]);
   TEST_ASSERT_EQUAL_UINT32(2, view.storage.order[1]);
@@ -1051,18 +1051,18 @@ void test_view_build_keeps_fill_and_order_as_separate_resumable_grains() {
   const PlaybackCoverageInterval coverage{0, 768, 768};
   TEST_ASSERT_TRUE(build.begin(view, source, 2, PlaybackViewSourceIdentity{1, 1, nullptr},
                                coverage, EmissionCursor{}, LedgerBoundarySummary{}));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, build.nextGrain());
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, build.stepFill(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Fill, build.nextGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Fill, build.stepFill(1));
   TEST_ASSERT_EQUAL_UINT32(1, view.storage.eventCount);
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, build.stepFill(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Order, build.stepFill(1));
   TEST_ASSERT_EQUAL_UINT32(2, view.storage.eventCount);
   TEST_ASSERT_FALSE(view.complete);
   while (build.active()) {
-    const RuntimePlaybackViewBuildGrain result = build.stepOrder(1);
-    TEST_ASSERT_TRUE(result == RuntimePlaybackViewBuildGrain::Order ||
-                     result == RuntimePlaybackViewBuildGrain::Complete);
+    const RuntimePlaybackViewBuild::Grain result = build.stepOrder(1);
+    TEST_ASSERT_TRUE(result == RuntimePlaybackViewBuild::Grain::Order ||
+                     result == RuntimePlaybackViewBuild::Grain::Complete);
   }
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, build.nextGrain());
   TEST_ASSERT_TRUE(view.complete);
   TEST_ASSERT_EQUAL_UINT32(1, view.storage.order[0]);
   TEST_ASSERT_EQUAL_UINT32(0, view.storage.order[1]);
@@ -1089,7 +1089,7 @@ void test_runtime_retains_only_a_coverage_proven_pending_build() {
   TEST_ASSERT_FALSE(runtime.beginCoverageBuild(denied, 700, 100, source, 2,
                                                PlaybackViewSourceIdentity{1, 1, nullptr}, coverage,
                                                EmissionCursor{}, LedgerBoundarySummary{}));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, runtime.nextCoverageBuildGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Denied, runtime.nextCoverageBuildGrain());
 
   const CoverageServiceContract admitted{8, 0, 1, 1, 1, 8};
   TEST_ASSERT_TRUE(runtime.beginCoverageBuild(admitted, 700, 100, source, 2,
@@ -1098,12 +1098,12 @@ void test_runtime_retains_only_a_coverage_proven_pending_build() {
   TEST_ASSERT_FALSE(runtime.beginCoverageBuild(admitted, 700, 100, source, 2,
                                                PlaybackViewSourceIdentity{2, 2, nullptr}, coverage,
                                                EmissionCursor{}, LedgerBoundarySummary{}));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, runtime.nextCoverageBuildGrain());
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Order, runtime.stepCoverageBuildFill(2));
-  while (runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuildGrain::Order) {
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Fill, runtime.nextCoverageBuildGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Order, runtime.stepCoverageBuildFill(2));
+  while (runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuild::Grain::Order) {
     (void)runtime.stepCoverageBuildOrder(1);
   }
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, runtime.nextCoverageBuildGrain());
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, runtime.nextCoverageBuildGrain());
 }
 
 void test_three_view_rotation_keeps_retired_current_idle_until_build_completes() {
@@ -2093,7 +2093,7 @@ void test_runtime_canonical_window_waits_for_shared_builder_without_stealing_it(
   TEST_ASSERT_TRUE(runtime.viewBuild.begin(pending, source, 1, f.source(), coverage, anchor, ledger));
   for (unsigned turn = 0; turn < 3; ++turn) {
     TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, runtime.stepCanonicalWindow(coverage, anchor, 1));
-    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, runtime.viewBuild.nextGrain());
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Fill, runtime.viewBuild.nextGrain());
     TEST_ASSERT_EQUAL_UINT32(0, pending.storage.eventCount);
     TEST_ASSERT_TRUE(runtime.frozenCompanionPasses.idle());
   }
@@ -2499,7 +2499,7 @@ void test_capture_companions_reserve_bounds_eligible_rows() {
   }
   TEST_ASSERT_EQUAL_UINT32(5, static_cast<uint32_t>(RuntimeCaptureCompanions::eligibleRowCount(transforms)));
   TEST_ASSERT_FALSE(small.begin(capture, 4, transforms));
-  TEST_ASSERT_TRUE(small.idle());
+  TEST_ASSERT_FALSE(small.hasCaptureOwner());
 }
 
 /// The derived companion-row bound scales with the loop's canonical payloads and still
@@ -3715,7 +3715,7 @@ void test_canonical_window_build_retains_provenance_and_bounds_filtered_work() {
     RuntimePlaybackViewBuild build;
     TEST_ASSERT_TRUE(build.begin(view, baseline, source, coverage, {}, {}));
     for (size_t index = 0; index < events.size(); ++index) {
-      TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Fill, build.nextGrain());
+      TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Fill, build.nextGrain());
       const auto before = view.storage.eventCount;
       build.stepFill(1);
       TEST_ASSERT_EQUAL_UINT32(before + (coverage.contains(events[index].tick) ? 1 : 0),
@@ -3726,9 +3726,9 @@ void test_canonical_window_build_retains_provenance_and_bounds_filtered_work() {
     TEST_ASSERT_TRUE(view.canonicalRanksReady);
     TEST_ASSERT_FALSE(view.published);
     baseline.discard(); // The window owns every copied origin after fill.
-    for (size_t turn = 0; turn < 100 && build.nextGrain() == RuntimePlaybackViewBuildGrain::Order; ++turn)
+    for (size_t turn = 0; turn < 100 && build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order; ++turn)
       build.stepOrder(1);
-    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.nextGrain());
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, build.nextGrain());
     TEST_ASSERT_TRUE(view.passOriginSource == source);
     for (size_t index = 0; index < view.storage.eventCount; ++index) {
       TEST_ASSERT_EQUAL_UINT16(0, view.passOrigins[index].pass);
@@ -6035,9 +6035,9 @@ void test_shared_window_fill_filters_before_capacity_and_preserves_loop_end_orde
   for (unsigned i = 0; i < 5; ++i) {
     TEST_ASSERT_FALSE(view.complete);
     const auto next = build.stepFill(1);
-    TEST_ASSERT_EQUAL(i == 4 ? RuntimePlaybackViewBuildGrain::Order : RuntimePlaybackViewBuildGrain::Fill, next);
+    TEST_ASSERT_EQUAL(i == 4 ? RuntimePlaybackViewBuild::Grain::Order : RuntimePlaybackViewBuild::Grain::Fill, next);
   }
-  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) build.stepOrder(1);
+  while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
   TEST_ASSERT_TRUE(view.complete);
   TEST_ASSERT_EQUAL_UINT32(3, view.storage.eventCount);
   TEST_ASSERT_EQUAL_UINT32(1536, view.storage.events[view.storage.order[0]].tick);
@@ -6073,7 +6073,7 @@ void test_shared_window_fill_wraps_coverage_and_denies_matching_overflow() {
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(view, events, 4, {1, 1, nullptr}, {1400, 272, 1536}, {}, {},
                               RuntimePlaybackViewFillScope::PlaybackCoverage));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(4));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Denied, build.stepFill(4));
   TEST_ASSERT_FALSE(view.sourceFilled); TEST_ASSERT_FALSE(view.complete); TEST_ASSERT_FALSE(view.published);
   TEST_ASSERT_EQUAL_UINT32(2, view.storage.eventCount);
   // The owner can discard the denied candidate and prepare a different window.
@@ -6081,7 +6081,7 @@ void test_shared_window_fill_wraps_coverage_and_denies_matching_overflow() {
   TEST_ASSERT_TRUE(build.begin(view, events, 4, {2, 2, nullptr}, {768, 768, 1536}, {}, {},
                               RuntimePlaybackViewFillScope::PlaybackCoverage));
   build.stepFill(4);
-  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) build.stepOrder(1);
+  while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
   TEST_ASSERT_TRUE(view.complete);
   TEST_ASSERT_EQUAL_UINT32(2, view.storage.eventCount);
 }
@@ -6092,7 +6092,7 @@ static void buildSharedTestBar(RuntimePlaybackView& view, uint32_t bar) {
   TEST_ASSERT_TRUE(build.begin(view, &event, 1, {1, 1, nullptr},
       {bar * 768, 768, 16 * 768}, {}, {}, RuntimePlaybackViewFillScope::PlaybackCoverage));
   build.stepFill(1);
-  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) build.stepOrder(1);
+  while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
   TEST_ASSERT_TRUE(view.complete);
 }
 
@@ -6152,7 +6152,7 @@ void test_shared_runtime_coverage_owner_filters_source() {
   TEST_ASSERT_TRUE(runtime.beginCoverageBuild(contract, 0, 768, source, 2, {1, 1, nullptr},
       {768, 768, 1536}, {}, {}));
   runtime.stepCoverageBuildFill(2);
-  while (runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuildGrain::Order)
+  while (runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuild::Grain::Order)
     runtime.stepCoverageBuildOrder(1);
   const auto* set = runtime.viewSetIfPrewarmed();
   const auto& view = set->views[set->lifecycle.build];
@@ -6175,11 +6175,11 @@ void test_shared_build_discard_detaches_pending_fill_and_order() {
     build.discard();
     TEST_ASSERT_FALSE(first.sourceFilled); TEST_ASSERT_FALSE(first.complete);
     TEST_ASSERT_FALSE(build.active());
-    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepFill(1));
-    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Denied, build.stepOrder(1));
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Denied, build.stepFill(1));
+    TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Denied, build.stepOrder(1));
     TEST_ASSERT_TRUE(build.begin(replacement, source, 3, {2, 2, nullptr}, {0, 768, 768}, {}, {}));
     build.stepFill(3);
-    while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) build.stepOrder(1);
+    while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
     TEST_ASSERT_TRUE(replacement.complete);
     TEST_ASSERT_EQUAL_UINT32(copied, first.storage.eventCount);
     TEST_ASSERT_FALSE(first.complete);
@@ -6384,9 +6384,9 @@ void test_first_record_window_refresh_reuses_capture_store_and_restarts_on_appen
   TEST_ASSERT_TRUE(runtime.prewarmViews());
   TEST_ASSERT_TRUE(runtime.prepareFirstRecordingBar(768));
   const PlaybackViewSourceIdentity source{loop.playbackRevision, 1, loop.publishedSnapshotIdentity()};
-  for (size_t i = 0; i < 16 && runtime.nextCoverageBuildGrain() != RuntimePlaybackViewBuildGrain::Denied; ++i) {
+  for (size_t i = 0; i < 16 && runtime.nextCoverageBuildGrain() != RuntimePlaybackViewBuild::Grain::Denied; ++i) {
     runtime.serviceFirstRecordingBar(loop, source, 768, 1);
-    if (runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuildGrain::Denied) break;
+    if (runtime.nextCoverageBuildGrain() == RuntimePlaybackViewBuild::Grain::Denied) break;
     if (runtime.viewSetIfPrewarmed()->views[runtime.viewSetIfPrewarmed()->lifecycle.current].storage.eventCount == 2) break;
   }
   auto* set = runtime.viewSetIfPrewarmed();
@@ -6409,7 +6409,7 @@ void test_shared_raw_window_binds_final_geometry_without_modulo_or_reordering() 
                               RuntimePlaybackViewFillScope::RawCoverage));
   TEST_ASSERT_FALSE(view.bindRawCoverage(1536));
   build.stepFill(4);
-  while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) build.stepOrder(1);
+  while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
   TEST_ASSERT_TRUE(view.complete); TEST_ASSERT_TRUE(view.rawCoveragePrepared);
   TEST_ASSERT_FALSE(view.bindRawCoverage(767));
   const auto* events = view.storage.events;
@@ -6422,7 +6422,7 @@ void test_shared_raw_window_binds_final_geometry_without_modulo_or_reordering() 
   TEST_ASSERT_TRUE(reference.begin(oracle, source, 4, {1, 1, nullptr}, {0, 768, 1536}, {}, {},
                                   RuntimePlaybackViewFillScope::PlaybackCoverage));
   reference.stepFill(4);
-  while (reference.nextGrain() == RuntimePlaybackViewBuildGrain::Order) reference.stepOrder(1);
+  while (reference.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) reference.stepOrder(1);
   TEST_ASSERT_EQUAL_UINT32(3, view.storage.eventCount);
   TEST_ASSERT_EQUAL_UINT32(oracle.storage.eventCount, view.storage.eventCount);
   for (size_t i = 0; i < order.size(); ++i) {
@@ -6439,7 +6439,7 @@ void test_shared_raw_window_cannot_become_audible_before_binding() {
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(ready, nullptr, 0, {1, 1, nullptr}, {0, 768, 0}, {}, {},
                               RuntimePlaybackViewFillScope::RawCoverage));
-  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuildGrain::Complete, build.stepFill(1));
+  TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, build.stepFill(1));
   TEST_ASSERT_TRUE(ready.complete);
   TEST_ASSERT_FALSE(set.handoffReadyCoverage());
   TEST_ASSERT_TRUE(ready.bindRawCoverage(768));
@@ -6455,7 +6455,7 @@ void test_shared_raw_preparation_rotates_then_returns_only_after_final_binding()
     TEST_ASSERT_TRUE(build.begin(set.views[index], &event, 1, {1, 1, nullptr},
         {bar * 768, 768, 0}, {}, {}, RuntimePlaybackViewFillScope::RawCoverage));
     build.stepFill(1);
-    while (build.nextGrain() == RuntimePlaybackViewBuildGrain::Order) build.stepOrder(1);
+    while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
     TEST_ASSERT_TRUE(set.views[index].complete);
   };
   auto& life = set.lifecycle;

@@ -16,11 +16,11 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
     RuntimePlaybackViewFillScope scope) {
   destination_ = nullptr;
-  phase_ = Phase::Denied;
+  phase_ = Grain::Denied;
   if (!fill_.begin(destination, baseline, sourceIdentity, coverage, cursorAnchor,
                    ledgerBoundary, scope)) return false;
   destination_ = &destination;
-  phase_ = Phase::Fill;
+  phase_ = Grain::Fill;
   return true;
 }
 
@@ -30,13 +30,13 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
     RuntimePlaybackViewFillScope scope) {
   destination_ = nullptr;
-  phase_ = Phase::Denied;
+  phase_ = Grain::Denied;
   if (!fill_.begin(destination, source, sourceCount, sourceIdentity, coverage, cursorAnchor,
                    ledgerBoundary, scope)) {
     return false;
   }
   destination_ = &destination;
-  phase_ = Phase::Fill;
+  phase_ = Grain::Fill;
   return true;
 }
 
@@ -46,71 +46,71 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
     const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
   destination_ = nullptr;
-  phase_ = Phase::Denied;
+  phase_ = Grain::Denied;
   if (!fill_.begin(destination, source, sourceIdentity, coverage, cursorAnchor,
                    ledgerBoundary, scope)) return false;
   destination_ = &destination;
-  phase_ = Phase::Fill;
+  phase_ = Grain::Fill;
   return true;
 }
 
-RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuild::Grain
 RuntimePlaybackViewBuild::nextGrain() const {
   switch (phase_) {
-    case Phase::Fill:
-      return RuntimePlaybackViewBuildGrain::Fill;
-    case Phase::Order:
-      return RuntimePlaybackViewBuildGrain::Order;
-    case Phase::Complete:
-      return RuntimePlaybackViewBuildGrain::Complete;
-    case Phase::Idle:
-    case Phase::Denied:
-      return RuntimePlaybackViewBuildGrain::Denied;
+    case Grain::Fill:
+      return RuntimePlaybackViewBuild::Grain::Fill;
+    case Grain::Order:
+      return RuntimePlaybackViewBuild::Grain::Order;
+    case Grain::Complete:
+      return RuntimePlaybackViewBuild::Grain::Complete;
+    case Grain::Idle:
+    case Grain::Denied:
+      return RuntimePlaybackViewBuild::Grain::Denied;
   }
-  return RuntimePlaybackViewBuildGrain::Denied;
+  return RuntimePlaybackViewBuild::Grain::Denied;
 }
 
-RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuild::Grain
 RuntimePlaybackViewBuild::stepFill(size_t entryQuantum) {
-  if (phase_ != Phase::Fill) {
+  if (phase_ != Grain::Fill) {
     return nextGrain();
   }
   const RuntimePlaybackViewFillResult result = fill_.step(entryQuantum);
   if (result == RuntimePlaybackViewFillResult::Denied || destination_ == nullptr) {
-    phase_ = Phase::Denied;
-    return RuntimePlaybackViewBuildGrain::Denied;
+    phase_ = Grain::Denied;
+    return RuntimePlaybackViewBuild::Grain::Denied;
   }
   if (result == RuntimePlaybackViewFillResult::Pending) {
-    return RuntimePlaybackViewBuildGrain::Fill;
+    return RuntimePlaybackViewBuild::Grain::Fill;
   }
   if (!order_.begin(*destination_, destination_->coverage.loopLengthTicks,
       destination_->rawCoveragePrepared ? RuntimePlaybackOrderMode::RawPlaybackTick
                                         : RuntimePlaybackOrderMode::PlaybackPhase)) {
-    phase_ = Phase::Denied;
-    return RuntimePlaybackViewBuildGrain::Denied;
+    phase_ = Grain::Denied;
+    return RuntimePlaybackViewBuild::Grain::Denied;
   }
-  phase_ = order_.complete() ? Phase::Complete : Phase::Order;
+  phase_ = order_.complete() ? Grain::Complete : Grain::Order;
   return nextGrain();
 }
 
-RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuildGrain
+RUNTIME_PLAYBACK_VIEW_BUILD_MEM RuntimePlaybackViewBuild::Grain
 RuntimePlaybackViewBuild::stepOrder(size_t entryQuantum) {
-  if (phase_ != Phase::Order) {
+  if (phase_ != Grain::Order) {
     return nextGrain();
   }
   const RuntimePlaybackOrderBuildResult result = order_.step(entryQuantum);
   if (result == RuntimePlaybackOrderBuildResult::Denied) {
-    phase_ = Phase::Denied;
-    return RuntimePlaybackViewBuildGrain::Denied;
+    phase_ = Grain::Denied;
+    return RuntimePlaybackViewBuild::Grain::Denied;
   }
   if (result == RuntimePlaybackOrderBuildResult::Complete) {
-    phase_ = Phase::Complete;
+    phase_ = Grain::Complete;
   }
   return nextGrain();
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::active() const {
-  return phase_ == Phase::Fill || phase_ == Phase::Order;
+  return phase_ == Grain::Fill || phase_ == Grain::Order;
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::discard(
@@ -123,7 +123,7 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM void RuntimePlaybackViewBuild::discard(
     destination_->complete = false;
   }
   destination_ = nullptr;
-  phase_ = Phase::Idle;
+  phase_ = Grain::Idle;
 }
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool CoverageServiceContract::isDeclared() const {

@@ -34,7 +34,9 @@ class RuntimeCaptureCompanions {
              const PendingNoteChangeVec& frozenChanges);
   RuntimePlaybackOrderBuildResult step(size_t inputQuantum);
   void discard();
-  bool idle() const { return capture_ == nullptr; }
+  /// True once a capture owner is attached. This is an ownership question, not a phase one: use
+  /// `available()`-style phase checks for admission and this for "whose capture am I holding".
+  bool hasCaptureOwner() const { return capture_ != nullptr; }
   bool sourceCurrent() const { return !denied_ && sourceMatches(); }
   bool ready(uint32_t generation) const;
   bool ready(const CaptureAdmissionStaging& capture) const;
