@@ -13,14 +13,17 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 
 ## S0 — pin the memory law (decisions before code)
 
-> **Blocked by [`FALSIFICATION.md`](FALSIFICATION.md):** F1 (is "2 sounding slots per track" real capability
-> or a restated target?), F2 (add the per-sounding-slot published-root term to the budget), F3 (cite the
-> stop-job admission guard), F4 (make the 16-track requirement satisfiable). F5 is resolved by S0.1/S0.1a
-> stating how the role tiers compose with `activeLoopIndex`, `CapturePhase` and `TrackState`.
+> **Findings resolved 2026-09-18 ([`FALSIFICATION.md`](FALSIFICATION.md) records the answers):** F1 -- the
+> envelope is **N derived**, today 8 tracks x 1 slot, and must not preclude 16/32/48/64 (slots-as-virtual-tracks
+> is a future requirement). F2 -- active playback must become **windowed/streamed**; the root narrows to the
+> undo/save checkpoint authority. F3 -- finalization is **one admission with a serialized queue** (depth 4),
+> not a denial. F4 -- 8 tracks today with **bank switching to 16 MIDI channels** as the target. F5 -- tiers
+> fold into `activeLoopIndex`/`CapturePhase`/`TrackState`. F6 -- resolved by S2 + G.2.
 
 - [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
       with selection explicitly cheap and "about to sound"/arm/preload as the only cold admission boundary.
-- [ ] S0.1a `DEC`: **role classes and cardinalities** -- `PlaybackWindowLease` up to 32, `LiveCaptureLease` 1,
+- [ ] S0.1a `DEC`: **role classes and cardinalities** -- `PlaybackWindowLease` **N, derived from the budget**
+      (8 today; must not preclude 16/32/48/64 sounding slots), `LiveCaptureLease` 1,
       `DeferredFinalizationLease` **1** (rotating: one finalizing predecessor + one live successor, preserving
       DEC-067 successor re-entry; **not** two simultaneous finalizations), `InteractiveLease` 1 -- composable,
       each owning only the resources its operation needs.
@@ -63,10 +66,12 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S2.2 Measure each class separately: `P` playback window lease, `C` live-capture extension, `D`
       deferred-finalization extension, `I` interactive extension. Do **not** size the specialized classes by
       the playback target.
-- [ ] S2.3 Prove the class budget: `fixed + 32P + C + D + I + transfer overlap + canonical allowance +
-      reserve <= PSRAM budget`, with the numbers recorded. Only `P` is multiplied by the envelope.
-- [ ] S2.4 Either show the envelope fits, or state the achievable simultaneous-playback capability as a
-      bound (`k` slots per track, `k < 2`) with the arithmetic behind it.
+- [ ] S2.3 Prove the class budget `fixed + N x P + C + D + I + transfer overlap + canonical allowance +
+      reserve <= PSRAM budget`, with the numbers recorded, and **derive and state the maximum N** the
+      budget supports. Only `P` is multiplied by N. Report N at today's capability (8 x 1 slot) and the
+      headroom toward 16/32/48/64.
+- [ ] S2.4 Show what N the budget supports and record it as a capability, with the arithmetic; note the shapes
+      that need a smaller P to reach 32 or 64 sounding slots.
 - [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
       resident working sets, and playback crosses window boundaries with no timing discontinuity.
 - [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
@@ -91,10 +96,10 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
-- [ ] S4.5 **Finalization-lease rotation and denial**: emit `finalization_lease_stop_denied`; native fixture
-      for A-stops-and-finalizes / B-records / A-releases / B-stops-and-takes-the-lease, and for the
-      pathological shape where a stop arriving before A releases is denied non-destructively with the slot
-      still recording/overdubbing and the next stop succeeding.
+- [ ] S4.5 **Finalization serialization**: one admission with a queue (depth `CaptureStopJobs::kCapacity`);
+      native fixture for A-stops-and-finalizes / B-records / A-releases / B-stops-and-takes-the-lease, and for
+      a stop queued behind a finalizing predecessor (slot stays recording until serviced) plus the full-queue
+      denial case. Emit the queue-depth/wait counter.
 - [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
       rising and falling with activation/deactivation.
 
@@ -110,6 +115,16 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
 - [ ] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
+
+## S4c — windowed/streamed playback (prerequisite for the envelope, from F2)
+
+- [ ] S4c.1 Make active playback resolve windows **without** a resident whole-loop published root, while the
+      root remains the immutable checkpoint authority for undo and save.
+- [ ] S4c.2 Establish the windowed/streamed source for both canonical content and derived playback views, so
+      a sounding slot's resident cost is a window working set.
+- [ ] S4c.3 Native fixture: N sounding slots with no per-slot resident root; and undo/save still obtain an
+      immutable checkpoint.
+- [ ] S4c gates: budget shows no `N x root` term; existing playback content parity preserved.
 
 ## S5 — demote inactive slots' derived state
 
@@ -127,7 +142,7 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S5 gates: S4 gates plus content parity for a demoted/re-activated slot (existing
       content-verification pipeline).
 
-## S6 — canonical residency architecture gate (own gate + DEC amendment)
+## S6 — persistence-backed canonical residency and windowed streaming (own gate + DEC amendment)
 
 - [ ] S6.0 Architecture gate: `DEC` amendment for persistence-backed cold canonical content, including
       the descriptor-based cold identity. Do not start S6 before it is accepted.

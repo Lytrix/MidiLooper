@@ -1,5 +1,18 @@
 # Falsification review — runtime-working-set-ownership
 
+## Resolution (2026-09-18) — all six answered; F1 and F2 change the plan's shape
+
+| # | Resolution |
+|---|---|
+| F1 | **Confirmed.** Only single-slot playback exists. Multiple simultaneous slots is a *future* requirement: the end state is that slots behave as **virtual tracks** (target **16 MIDI channels x 8 slots**), playable together whenever set active. Today the working envelope is **8 tracks x 1 sounding slot**; a typical scenario may be 2 per track, but that is a working number, not a limit. The memory law must therefore **derive** the maximum sounding count the budget supports and **not preclude 16/32/48/64**. |
+| F2 | **Confirmed, and the fix is larger.** The snapshot must become **windowed/streamed for active playback**. A root stays required as the **immutable checkpoint authority for undo/save** -- but whole loops will never fit once a whole song is built, so playback must resolve windows **without a resident whole-loop root**. "Published" was being read as "the playback source"; it is the checkpoint authority. |
+| F3 | **Resolved as a queue, not a denial.** There is still **one admission**; jobs run **in series** and extras are **queued** (`CaptureStopJobs::kCapacity = 4` is queue depth). A second stop is therefore *queued/serialized*, not refused; a **full queue** is the denial case. |
+| F4 | **Scope clarified.** The UI shows the first **8 tracks** today and that is what is built against; the end state is **bank switching across 8-track banks** to run **16 MIDI channels**. Requirements are therefore demonstrated at 8 tracks while not precluding 16. |
+| F5 | **Agreed.** The role tiers fold into `activeLoopIndex` (+ `CapturePhase` / `TrackState`) rather than forming a second authority. |
+| F6 | **Resolved by S2 + G.2** (windowed sizing and non-destructive admission): the acceptance becomes diagnostic once the windowed path and queue-based admission exist. |
+
+The findings below are kept as the record of what was wrong before these resolutions.
+
 Attempt to break the plan against the current tree. Each finding names the claim it attacks, the evidence,
 and what must change. Findings are ranked by whether they falsify the thesis, the envelope, or only the
 wording.
