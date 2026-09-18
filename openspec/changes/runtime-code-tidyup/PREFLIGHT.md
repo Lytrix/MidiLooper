@@ -124,3 +124,31 @@ $ openspec validate resumable-midi-boundary-playback-maintenance --strict
 Change 'resumable-midi-boundary-playback-maintenance' is valid
 exit=0
 ```
+
+### Final gates (task 8.5)
+
+Re-run together on the complete tree, after every phase commit and the closeout doc updates. All three are
+green, and the RAM1 line is byte-identical to the pre-change baseline recorded at the top of this file
+(96128 / 392344 / 872 / 34944 → 96096 / 391736 / 1480 / 34976: locals **+32**, code -608, padding +608).
+
+```
+$ pio test -e native
+========== 2262 test cases: 1 skipped, 2261 succeeded in 00:02:46 ==========
+
+$ pio run -e teensy41-capture-serial
+teensy_size:   FLASH: code:1004520, data:90492, headers:8856   free for files:7022596
+teensy_size:    RAM1: variables:96096, code:391736, padding:1480   free for local variables:34976
+teensy_size:    RAM2: variables:149664  free for malloc/new:374624
+teensy_size:  EXTRAM: variables:9312
+========================= [SUCCESS] Took 51.74 seconds =========================
+# arm-none-eabi-nm firmware.elf | grep -E '_itcm_block_count|_etext$'
+0005fa38 T _etext
+0000000c A _itcm_block_count
+
+$ openspec validate runtime-code-tidyup --strict
+Change 'runtime-code-tidyup' is valid
+ℹ [INFO] file: skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted
+```
+
+No Teensy upload was performed and no HITL run is owed: no phase changes observable device behavior
+(design § D10). The final PR decision is task 8.6 and is deliberately left to the user.

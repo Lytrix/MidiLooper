@@ -658,18 +658,45 @@ reachable at their `Task N.N` anchors in `CURRENT_WORK.md` from every checklist 
 
 ## 8. Closeout
 
-- [ ] 8.1 Update `docs/Runtime/CURRENT_WORK.md` and `docs/Runtime/PROJECT_STATE.md` to reflect the completed tidy-up and
+- [x] 8.1 Update `docs/Runtime/CURRENT_WORK.md` and `docs/Runtime/PROJECT_STATE.md` to reflect the completed tidy-up and
   remove it from § Now implementing. Verify: neither doc still describes the removed symbols or the old gate/name;
   `DOCUMENTATION_CLOSEOUT` checklist satisfied.
-- [ ] 8.2 Update [`docs/DELIVERABLE_TRACKING.md`](../../../docs/DELIVERABLE_TRACKING.md) with the maintainability
+- [x] 8.2 Update [`docs/DELIVERABLE_TRACKING.md`](../../../docs/DELIVERABLE_TRACKING.md) with the maintainability
   deliverable. Verify: a row names this change and its gates.
-- [ ] 8.3 Append the `DEC-###` entries required by this change (OD-1 naming, OD-2 instrumentation gating, plus any `ARCHITECTURE_RULES` requirement found in task 1.1).
+- [x] 8.3 Append the `DEC-###` entries required by this change (OD-1 naming, OD-2 instrumentation gating, plus any `ARCHITECTURE_RULES` requirement found in task 1.1).
   Verify: each entry cites the decision, the consequence and the rejected alternative.
-- [ ] 8.4 Run [`docs/Templates/SESSION_CLOSEOUT.md`](../../../docs/Templates/SESSION_CLOSEOUT.md) because design and
+- [x] 8.4 Run [`docs/Templates/SESSION_CLOSEOUT.md`](../../../docs/Templates/SESSION_CLOSEOUT.md) because design and
   exclusions were discussed, and record the outcome. Verify: the template's fields are filled in the change directory or
   the log.
-- [ ] 8.5 Confirm the final gates together — full native suite, firmware build with the RAM1 line, `openspec validate --strict`
+- [x] 8.5 Confirm the final gates together — full native suite, firmware build with the RAM1 line, `openspec validate --strict`
   — and record all three in `PREFLIGHT.md`. Verify: green before any archive step.
 - [ ] 8.6 **Ask** before opening the PR (no auto-PR per `AGENTS.md`): `refactor/runtime-code-tidyup` → the base chosen
   by OD-5 (default: `feature/resumable-midi-boundary-playback-maintenance`). Verify: the PR lists the phase commits and
   states that no behavior, format or persisted layout changed.
+
+### Closeout notes (2026-09-18)
+
+**8.1** `PROJECT_STATE.md` gained a lead entry and a `runtime-code-tidyup` row in § Active OpenSpec; `CURRENT_WORK.md`
+§ Now implementing now records P1–P6 complete (native 2,262 / firmware RAM1 byte-identical / `_itcm_block_count` 12 /
+`validate --strict` valid), states that no other scope is active, and points at the relocated journal. The
+`DOCUMENTATION_CLOSEOUT` check found one stale durable reference and it was fixed: `DEC-076` named
+`src/Loop/LoopSnapshotPublish.cpp` as the owner of the idle/unit telemetry P5.3 moved to
+`LoopSnapshotIdleTelemetry.cpp`. The log's `Next ID` marker was also corrected from `DEC-076` to `DEC-078`.
+
+**8.2** `DELIVERABLE_TRACKING.md` gained a § Deliverable Overview row and a § Complete-on-branch bullet, both naming the
+change and its three gates.
+
+**8.3** No new `DEC` is owed: `DEC-076` (OD-2) and `DEC-077` (OD-1) already exist with decision, consequence and rejected
+alternatives, and the `ARCHITECTURE_RULES` scan in task 1.1 found no additional requirement for a behavior-preserving
+refactor. Only the two stale references in the log were repaired (8.1).
+
+**8.4** [`SESSION_CLOSEOUT.md`](SESSION_CLOSEOUT.md) records the template's four checklist items with evidence, the five
+open-decision outcomes, and a rejected-alternative table whose reasons are actionable (task 4.2's ~930-site type-aware
+rename, task 4.3's three distinct predicates, the four declined file splits, the rejected `.clang-format`, the Markdown
+trailing-space decision, and the localised duplication that made a 131-sentence sweep unnecessary).
+
+**8.5** Final gates re-run together on the complete tree: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS
+with RAM1 `variables 96096 / code 391736 / padding 1480 / free for local variables 34976` and `_itcm_block_count` 12;
+`openspec validate runtime-code-tidyup --strict` valid. Raw output is in `PREFLIGHT.md` § Final gates.
+
+**8.6 is deliberately open** — the PR is not opened without the user's choice of base (OD-5).
