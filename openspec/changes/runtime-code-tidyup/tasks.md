@@ -465,7 +465,7 @@ is unavoidable collateral rather than unrelated churn. The distinction that matt
 Each split: native suite + firmware build, then compare the RAM1 line and `_itcm_block_count`
 (`linker/imxrt1062_t41_lcr.ld`). A split that crosses a bank is reverted and recorded as rejected.
 
-- [ ] 6.1 Move `CaptureAdmissionStaging` (`src/Track/RuntimePlaybackView.cpp:377-522`) and `CaptureNoteReservation`
+- [x] 6.1 Move `CaptureAdmissionStaging` (`src/Track/RuntimePlaybackView.cpp:377-522`) and `CaptureNoteReservation`
   (`include/RuntimePlaybackView.h:242-298`) into a new TU/header; keep the capacities owned where the DEC attribution
   table puts them, and state in the task log whether the new TU name matches the linker's flash allow-list or every
   function carries a marker (design § D8.2). Verify: native suite passes; RAM1 line and `_itcm_block_count` unchanged or
@@ -483,6 +483,32 @@ Each split: native suite + firmware build, then compare the RAM1 line and `_itcm
   Verify: each rejected split names its reason; no split was done for line count.
 - [ ] 6.5 P5 gate: full native suite plus firmware build and the recorded RAM1/`_itcm_block_count` comparison for all
   three splits. Verify: no bank crossing; `free for local variables` not reduced.
+
+### P5 progress (2026-09-18)
+
+**6.1 — `CaptureAdmissionStaging` implementation moves to `src/Track/RuntimeCaptureStaging.cpp`.** The thirteen
+out-of-line member definitions (`prewarm`…`close`) leave `RuntimePlaybackView.cpp`, which drops from 853 to 707 lines.
+The **declarations stay in `include/RuntimePlaybackView.h`** rather than moving to a new header: the struct holds a
+`FixedPlaybackEventStorage` by value and `RuntimePlaybackViewSet` owns two stagings by value, so a declaration move
+would need a third header for the fixed storage — a wider split than D8.1's "no data member moves between owners"
+sanctions. The capacities stay where the DEC attribution table puts them, in
+`RuntimePlaybackViewConfig`/`ActiveNoteLedger`.
+
+**D8.2 placement, stated before editing:** the new TU name is deliberately **off** the linker flash allow-list
+(`*LoopSnapshot*`/`*TrackUndo*`/…) and every moved function keeps its own marker treatment. `prewarm` keeps the cold
+marker (now `RUNTIME_CAPTURE_STAGING_COLD_MEM`, still an alias of `NOTE_EDIT_MEM`); the admission path
+(`reserve`/`appendReservedNoteOff`/`appendContinuationNoteOn`/…) stays unmarked and therefore in the ITCM default,
+exactly as it was, because it runs on the MIDI note-on/note-off turn. Forcing a marker onto every function — the other
+arm of D8.2 — would have moved the hot admission path to FLASH, so the allow-list-avoiding arm was chosen.
+
+Four native suites include firmware TUs by path (`test_edit_apply`, `test_playback_prewarm`, `test_continuous_capture`,
+`test_pending_note_change`), so each gained `#include "../../src/Track/RuntimeCaptureStaging.cpp"` beside its existing
+`RuntimePlaybackView.cpp` include; the first native run failed to link without it, which is how the pattern was
+confirmed.
+
+Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS with RAM1 byte-identical
+(`variables 96096 / code 391736 / padding 1480 / free for local variables 34976`), `_itcm_block_count` **12
+(unchanged)**, FLASH code 1,004,512 (-8).
 
 ## 7. P6 — formatting, docs and enforcement
 
