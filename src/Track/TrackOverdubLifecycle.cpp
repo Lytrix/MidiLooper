@@ -4,6 +4,7 @@
 #include "TrackInternal.h"
 
 #include <Arduino.h>
+#include <cstdio>
 
 #include "ClockManager.h"
 #include "DisplayManager.h"
@@ -601,7 +602,7 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop&
                                                    : loop.pendingCapturePass().id;
     job.undoCollectable = loop.beginCollectOverdubStopUndoPasses(
         job.undoCollection, job.undoPassIds, job.undoCompanionIds,
-        finalPassId, true, job.admission.intervalToken());
+        finalPassId, true, job.admission.intervalToken(), job.admission.sessionExitReceiptRing);
     (void)stop.consumeUndoCollectionGrain();
     if (!job.undoCollectable) {
       // No prepared session identities to record for this interval.
@@ -624,6 +625,20 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoCollection(CaptureStopJob& job, Loop&
   // Build the entry from the job's own slot and baseline, never the live session's.
   job.undoCollected = TrackUndo::prepareOverdubSessionEntry(
       loop, job.undoCollection, job.slot, job.beforePublished, job.undoEntry);
+#if defined(SESSION_CAPTURE)
+  // The deferred route used to record only the final pass (the session identities had already
+  // moved into this interval's session-exit receipt). Emit the same shape the synchronous
+  // `pushOverdubSessionOnStop` emits, so the GUS entry's pass count is device-visible.
+  if (job.undoCollected) {
+    char line[192];
+    snprintf(line, sizeof(line),
+             "#CAP,%lu,DIAG,gus,slot,kind=%u,passId=%lu,passIds_n=%u,src=deferred",
+             static_cast<unsigned long>(micros()), static_cast<unsigned>(job.undoEntry.kind),
+             static_cast<unsigned long>(job.undoEntry.passId),
+             static_cast<unsigned>(job.undoEntry.passIds.size()));
+    DebugSessionCapture::appendCaptureTextLine(line);
+  }
+#endif
   return job.undoCollected;
 }
 

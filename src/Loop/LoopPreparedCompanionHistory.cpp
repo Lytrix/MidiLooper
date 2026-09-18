@@ -432,11 +432,23 @@ LOOP_COLD_MEM bool Loop::preparedCompanionHistoryCanStep(const RuntimeCaptureCom
 
 LOOP_COLD_MEM bool Loop::beginCollectOverdubStopUndoPasses(SessionUndoCollection& work,
     PassIdList& passIds, EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass,
-    uint64_t owner) {
+    uint64_t owner, size_t sessionExitReceiptRing) {
   const auto* receipt = preparedCompanionHistoryIds(owner);
   if (!receipt || receipt->size() > 2048 || preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
-      preparedCompanionHistory_.revision != playbackRevision || preparedCompanionHistory_.firstId != nextPassId_ ||
-      !beginCollectOverdubSessionUndoPasses(work, passIds, companionIds)) return false;
+      preparedCompanionHistory_.revision != playbackRevision || preparedCompanionHistory_.firstId != nextPassId_) {
+    return false;
+  }
+  // DEC-068: this interval's wrap identities left the shared session at its stop admission
+  // (`captureSessionExitTail` swaps them into its own session-exit receipt) so a successor opens a
+  // clean session. The undo entry must therefore read that receipt: the live `overdubSessionPassIds_`
+  // is empty here and belongs to whatever interval is live now, so a plain
+  // `collectOverdubSessionUndoPasses` recorded only the final pass and a single undo removed just
+  // the last committed pass instead of the whole overdub session.
+  const SessionExitSnapshotHandoff* sessionReceipt =
+      sessionExitReceiptRing == kInvalidSessionExitReceipt
+          ? nullptr
+          : sessionExitReceiptByRingIndex(sessionExitReceiptRing);
+  if (!beginCollectOverdubSessionUndoPasses(work, passIds, companionIds, sessionReceipt)) return false;
   work.finalReceipt = true; work.finalPassId = finalPassId; work.includeFinalPass = includeFinalPass;
   work.receiptGeneration = preparedCompanionHistory_.preparationGeneration;
   work.receiptCount = receipt->size();

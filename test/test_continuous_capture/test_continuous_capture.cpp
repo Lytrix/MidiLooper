@@ -2999,6 +2999,48 @@ void test_deferred_stop_prepares_job_owned_undo_entry() {
   TEST_ASSERT_EQUAL(1, overdubEntries);
 }
 
+/// The GUS records ONE `OverdubPassAdded` per overdub session, and it must carry every pass that
+/// session committed -- a wrap pass plus the final stop pass. A single undo then removes the whole
+/// overdub, not just its last pass.
+void test_deferred_stop_undo_entry_carries_every_session_pass() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE_MESSAGE(track.commitOverdubWrap(), "the first lap must commit a wrap pass");
+  const PassId wrapPassId = track.getActiveLoop().lastCommittedPassId();
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, wrapPassId);
+  inputNote(62, 121, 140);
+
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  auto& job = TrackCaptureStopTestAccess::job(track);
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+    TrackCaptureStopTestAccess::step(track);
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+
+  // One GUS entry for the session, carrying the wrap pass and the final stop pass.
+  const GlobalUndoStack& stack = TrackCaptureStopTestAccess::undoStack(track);
+  const UndoEntry* overdubEntry = nullptr;
+  for (const UndoEntry& entry : stack.entries) {
+    if (entry.kind == UndoEntryKind::OverdubPassAdded && entry.slotIndex == job.slot) {
+      overdubEntry = &entry;
+    }
+  }
+  TEST_ASSERT_NOT_NULL(overdubEntry);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, overdubEntry->passIds.size(),
+                                   "one entry must carry every pass of the session");
+  TEST_ASSERT_EQUAL(wrapPassId, overdubEntry->passIds[0]);
+  TEST_ASSERT_EQUAL(overdubEntry->passId, overdubEntry->passIds[1]);
+  TEST_ASSERT_NOT_EQUAL(wrapPassId, overdubEntry->passId);
+  // A single undo must disable both passes, so the whole overdub leaves the committed set.
+  PassIdList undoIds;
+  appendOverdubCapturePassIds(*overdubEntry, undoIds);
+  TEST_ASSERT_EQUAL_UINT32(2u, undoIds.size());
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -3433,6 +3475,7 @@ int main() {
   RUN_TEST(test_capture_preview_borrow_release_is_owner_identified);
   RUN_TEST(test_stop_job_owns_overdub_session_undo_baseline);
   RUN_TEST(test_deferred_stop_prepares_job_owned_undo_entry);
+  RUN_TEST(test_deferred_stop_undo_entry_carries_every_session_pass);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);

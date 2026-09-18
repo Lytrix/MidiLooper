@@ -303,15 +303,26 @@ LOOP_COLD_MEM uint64_t Loop::requiredSessionUndoCollectionGrains(
 }
 
 LOOP_COLD_MEM bool Loop::beginCollectOverdubSessionUndoPasses(
-    SessionUndoCollection& work, PassIdList& passIds, EditPassIdList& companionIds) const {
+    SessionUndoCollection& work, PassIdList& passIds, EditPassIdList& companionIds,
+    const SessionExitSnapshotHandoff* receipt) const {
   using Phase = SessionUndoCollection::Phase;
-  const size_t limit = std::min(overdubSessionCursor_, overdubSessionPassIds_.size());
+  const bool receiptSourced = receipt != nullptr;
+  const size_t limit = receiptSourced
+                           ? receipt->passIds.size()
+                           : std::min(overdubSessionCursor_, overdubSessionPassIds_.size());
   if ((work.phase >= Phase::Pass && work.phase <= Phase::FinalCompanions) || limit > 2048 ||
       !passIds.empty() || !companionIds.empty() || passIds.capacity() < limit ||
       static_cast<const void*>(&passIds) == static_cast<const void*>(&companionIds)) return false;
   work = {};
   work.owner = this; work.generation = overdubSessionUndoGeneration_;
   work.passIds = &passIds; work.companionIds = &companionIds; work.limit = limit;
+  if (receiptSourced) {
+    work.receiptPassIds = receipt->passIds.data();
+    work.receiptPassIdCount = receipt->passIds.size();
+    work.receiptCompanionRows = receipt->companionIds.data();
+    work.receiptCompanionRowCount = receipt->companionIds.size();
+    work.receiptIdentity = receipt;
+  }
   work.phase = Phase::Pass;
   return true;
 }
@@ -319,7 +330,8 @@ LOOP_COLD_MEM bool Loop::beginCollectOverdubSessionUndoPasses(
 LOOP_COLD_MEM bool Loop::collectedOverdubSessionUndoPassesCurrent(
     const SessionUndoCollection& work) const {
   return work.phase == SessionUndoCollection::Phase::Complete && work.owner == this &&
-      work.generation == overdubSessionUndoGeneration_ && work.passIds && work.companionIds &&
+      (work.receiptIdentity != nullptr || work.generation == overdubSessionUndoGeneration_) &&
+      work.passIds && work.companionIds &&
       (!work.finalReceipt || (work.receiptGeneration == preparedCompanionHistory_.preparationGeneration &&
           preparedCompanionHistory_.storageGeneration == canonicalStorageGeneration &&
           preparedCompanionHistory_.revision == playbackRevision && preparedCompanionHistory_.firstId == nextPassId_ &&
@@ -342,31 +354,43 @@ LOOP_COLD_MEM Loop::SessionUndoCollection::Phase Loop::stepCollectOverdubSession
           (preparedCompanionHistory_.phase != PreparedCompanionHistory::Phase::Ready &&
            preparedCompanionHistory_.phase != PreparedCompanionHistory::Phase::Committed) ||
           work.receiptCount != preparedCompanionHistory_.companionIds.size())) ||
-      work.generation != overdubSessionUndoGeneration_ || !work.passIds || !work.companionIds ||
+      (work.receiptIdentity == nullptr && work.generation != overdubSessionUndoGeneration_) ||
+      !work.passIds || !work.companionIds ||
       work.passIds->size() != work.passCount || work.companionIds->size() != work.companionCount) {
     work.phase = Phase::Denied;
     return work.phase;
   }
+  // DEC-068: a deferred interval reads its own session-exit receipt, never the live session lists
+  // (a successor may already own those). Both sources are index-aligned row lists.
+  const PassId* sessionPassIds =
+      work.receiptIdentity != nullptr ? work.receiptPassIds : overdubSessionPassIds_.data();
+  const size_t sessionPassIdCount =
+      work.receiptIdentity != nullptr ? work.receiptPassIdCount : overdubSessionPassIds_.size();
+  const EditPassIdList* sessionCompanionRows =
+      work.receiptIdentity != nullptr ? work.receiptCompanionRows : overdubSessionCompanionIds_.data();
+  const size_t sessionCompanionRowCount =
+      work.receiptIdentity != nullptr ? work.receiptCompanionRowCount
+                                      : overdubSessionCompanionIds_.size();
   while (quantum-- && work.phase != Phase::Complete) {
     if (work.phase == Phase::Pass) {
       if (work.row == work.limit) {
         work.phase = work.finalReceipt ? Phase::FinalPass : Phase::Complete;
         continue;
       }
-      const PassId id = overdubSessionPassIds_[work.row];
+      const PassId id = work.row < sessionPassIdCount ? sessionPassIds[work.row] : kInvalidPassId;
       if (id == kInvalidPassId) { ++work.row; continue; }
       if (work.passCount == work.passIds->capacity()) { work.phase = Phase::Denied; break; }
       work.passIds->push_back(id); ++work.passCount;
       work.companion = 0; work.phase = Phase::Companions;
     } else if (work.phase == Phase::Companions) {
-      if (work.row >= overdubSessionCompanionIds_.size() ||
-          work.companion == overdubSessionCompanionIds_[work.row].size()) {
+      if (work.row >= sessionCompanionRowCount ||
+          work.companion == sessionCompanionRows[work.row].size()) {
         ++work.row; work.phase = Phase::Pass;
       } else {
         if (work.companionCount == 2048 || work.companionCount == work.companionIds->capacity()) {
           work.phase = Phase::Denied; break;
         }
-        work.companionIds->push_back(overdubSessionCompanionIds_[work.row][work.companion++]);
+        work.companionIds->push_back(sessionCompanionRows[work.row][work.companion++]);
         ++work.companionCount;
       }
     } else if (work.phase == Phase::FinalPass) {
