@@ -1,5 +1,20 @@
 # Project state (execution context)
 
+**2026-09-18 the 5.8 undo/redo fix's display half LANDED (`immutable-loop-snapshot-passes` 5.8a).** After 5.8
+made playback stop emitting a disabled pass, the OLED still painted the undone overdub: the sealed capture
+handoff (`retainCapturePreviewAtSeal`) is released only when `sealedCapturePreviewIsCovered()` sees each row in
+the committed `visualCache`, so disabling the pass on undo removed the rows from the committed set and coverage
+could never hold again; `applyDrawSourceOverlays` then unioned the stale rows into every frame. Device
+telemetry (`content-verify-65`): `DFRAME` 194 before `Undo` → **193** after, `DISP frame=193` against
+`visual=180` for the whole window, redo unchanged; the extra 13 rows are exactly the sealed handoff
+(`194 = 181 + 13`, `193 = 180 + 13`). `resetPassTimeline` already cleared the handoff for this hazard; the fix
+makes `Loop::setCapturePassState` do the same when a pass becomes `Disabled`. New native fixture
+`test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff` fails without the fix; full native
+**2,240 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 locals 6,400 unchanged. **Device
+gate owed:** the DEC-071 shape + undo/redo must show the OLED frame drop the overdub on `Undo` and restore it on
+`Redo` (the base runner's display check only proves a non-empty post-stop frame, so this needs an added `DISP`
+frame-count clause or the investigation-diag `DIAG,draw_src,layers` rows).
+
 **2026-09-18 successor 5.9 + 5.11 CLOSED and the defect fixed (`immutable-loop-snapshot-passes` 5.8).** The
 user's report — the overdub wrap's second pass shown on the display but not audible — had two independent
 causes, both leaving the published root not representing the committed passes: (1) `TrackUndo::
