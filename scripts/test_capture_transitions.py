@@ -33,6 +33,7 @@ from hitl.legacy_record_baseline import (
     _latest_device_bar_index,
     _verify_record_loop_length,
     _verify_successor_reentry,
+    _verify_undo_redo_display,
 )
 from hitl.serial_timing import extract_phase_sessions
 from hitl.serial_collector import serial_line_resets_heartbeat
@@ -547,6 +548,51 @@ class SerialVerificationRegressionTests(unittest.TestCase):
         summary = _summarize_persistence_handoff(heap_rows, record_stop_ts=50, lines=lines)
         self.assertIsNone(summary["first_missing_stage"])
         self.assertTrue(summary["dispatch_via_work"])
+
+
+class UndoRedoDisplayOracleTests(unittest.TestCase):
+    """A global undo/redo of a record/overdub entry must repaint the committed frame.
+
+    `content-verify-65` looked green on the stop-oracle while the OLED kept the undone overdub:
+    the frame stayed 193 against a record-only committed 180 across both `Undo` and `Redo`.
+    """
+
+    @staticmethod
+    def _lines(before: int, after_undo: int, after_redo: int) -> list[str]:
+        return [
+            "#CAP,71000000,DISP,0,PLAYING,6912,194,180,"
+            f"{before},{before},1\r\n",
+            "[73.582] [DEBUG] Undo applied: kind=1 undo_count=1",
+            "#CAP,73637013,DISP,0,PLAYING,6912,193,180,"
+            f"{after_undo},{after_undo},1\r\n",
+            "[76.775] [DEBUG] Redo applied: kind=1 redo_count=0",
+            "#CAP,77459037,DISP,0,STOPPED,6912,193,193,"
+            f"{after_redo},{after_redo},1\r\n",
+        ]
+
+    def test_frame_that_keeps_the_undone_overdub_is_flagged(self) -> None:
+        result = _verify_undo_redo_display(self._lines(194, 193, 193))
+        self.assertEqual(194, result["frame_before_undo"])
+        self.assertEqual(193, result["frame_after_undo"])
+        self.assertEqual(193, result["frame_after_redo"])
+        self.assertIn("display_redo_did_not_restore_the_overdub", result["issues"])
+
+    def test_frame_that_drops_then_restores_the_overdub_passes(self) -> None:
+        result = _verify_undo_redo_display(self._lines(194, 180, 193))
+        self.assertEqual([], result["issues"])
+
+    def test_undo_that_changes_nothing_is_flagged(self) -> None:
+        result = _verify_undo_redo_display(self._lines(193, 193, 193))
+        self.assertIn("display_undo_kept_the_overdub", result["issues"])
+        self.assertIn("display_redo_did_not_restore_the_overdub", result["issues"])
+
+    def test_missing_markers_are_not_evaluated(self) -> None:
+        lines = [
+            "#CAP,73637013,DISP,0,PLAYING,6912,193,180,193,193,1\r\n",
+        ]
+        result = _verify_undo_redo_display(lines)
+        self.assertIsNone(result["undo_ts"])
+        self.assertEqual([], result["issues"])
 
 
 if __name__ == "__main__":

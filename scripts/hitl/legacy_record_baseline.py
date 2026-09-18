@@ -49,6 +49,7 @@ from hitl.capture_transitions import (
     _merge_transition_counts_with_evidence,
     _parse_cap_micros,
     _parse_disp_track_state,
+    _phase_ts_from_marker_line,
     _record_entry_to_recording_count,
     _serial_capture_sparse_for_verification,
     _serial_has_recording_active,
@@ -2984,6 +2985,80 @@ def _extract_disp_snapshots(lines: list[str], *, after_ts: Optional[int] = None,
     return rows
 
 
+def _first_marker_ts(
+    lines: list[str], marker: str, *, after_ts: Optional[int] = None
+) -> Optional[int]:
+    """First micros timestamp of a human-log marker line, optionally at/after `after_ts`."""
+    for index, line in enumerate(lines):
+        if marker not in line:
+            continue
+        ts = _phase_ts_from_marker_line(lines, index)
+        if ts is None:
+            continue
+        if after_ts is not None and ts < after_ts:
+            continue
+        return ts
+    return None
+
+
+def _last_disp_frame_notes(rows: list[dict[str, object]]) -> Optional[int]:
+    for row in reversed(rows):
+        if int(row["published"]) != 1:
+            continue
+        frame_notes = int(row["frame_notes"])
+        if frame_notes > 0:
+            return frame_notes
+    return None
+
+
+def _verify_undo_redo_display(
+    lines: list[str], *, window_us: int = 8_000_000
+) -> dict[str, object]:
+    """The committed draw-source frame must follow a global undo/redo of a record/overdub entry.
+
+    The display resolves committed notes from `passes`, so an undo that disables the pass must drop
+    its rows from the frame, and the redo must bring them back. The stop-oracle only asserted a
+    non-empty frame after the overdub stop, so a frame that kept the undone overdub looked green:
+    on `captures/content-verify-65` the frame stayed 193 against a record-only committed 180 across
+    `Undo` and `Redo` (the sealed capture handoff kept painting the removed pass).
+    """
+    issues: list[str] = []
+    undo_ts = _first_marker_ts(lines, "Undo applied")
+    redo_ts = _first_marker_ts(lines, "Redo applied", after_ts=undo_ts)
+    result: dict[str, object] = {
+        "undo_ts": undo_ts,
+        "redo_ts": redo_ts,
+        "frame_before_undo": None,
+        "frame_after_undo": None,
+        "frame_after_redo": None,
+        "issues": issues,
+    }
+    if undo_ts is None or redo_ts is None:
+        return result
+    frame_before = _last_disp_frame_notes(_extract_disp_snapshots(lines, before_ts=undo_ts))
+    frame_after_undo = _last_disp_frame_notes(
+        _extract_disp_snapshots(lines, after_ts=undo_ts, before_ts=redo_ts)
+    )
+    frame_after_redo = _last_disp_frame_notes(
+        _extract_disp_snapshots(lines, after_ts=redo_ts, before_ts=redo_ts + window_us)
+    )
+    result.update(
+        frame_before_undo=frame_before,
+        frame_after_undo=frame_after_undo,
+        frame_after_redo=frame_after_redo,
+    )
+    if frame_before is not None and frame_after_undo is not None:
+        if frame_after_undo >= frame_before:
+            issues.append("display_undo_kept_the_overdub")
+    if frame_after_undo is not None and frame_after_redo is not None:
+        # The redo re-commits the pass the undo removed, so the frame must grow again. Equality
+        # across the pair means the display never dropped the rows (the `content-verify-65`
+        # regression), even when the pre/post-undo delta happened to be non-zero.
+        if frame_after_redo <= frame_after_undo:
+            issues.append("display_redo_did_not_restore_the_overdub")
+    return result
+
+
 def _verify_display_snapshots(
     lines: list[str],
     *,
@@ -3045,6 +3120,10 @@ def _verify_display_snapshots(
     if transport_stop_ts is not None and not transport_ok:
         issues.append("display_empty_after_transport_stop")
 
+    undo_redo_display = _verify_undo_redo_display(lines, window_us=window_us)
+    for issue in undo_redo_display.get("issues", []):
+        issues.append(str(issue))
+
     return {
         "overdub_stop_ts": overdub_stop_ts,
         "transport_stop_ts": transport_stop_ts,
@@ -3052,6 +3131,7 @@ def _verify_display_snapshots(
         "snapshots_after_transport_stop": snapshots_after_transport_stop[-5:],
         "overdub_ok": overdub_ok,
         "transport_ok": transport_ok,
+        "undo_redo": undo_redo_display,
         "issues": issues,
     }
 
@@ -6562,6 +6642,14 @@ def run() -> int:
                         f"state={row.get('state')} frame={row.get('frame_notes')} "
                         f"epoch={row.get('epoch_events')} visual={row.get('visual_notes')} "
                         f"buffer={row.get('buffer_events')}"
+                    )
+                undo_redo_display = display_verification.get("undo_redo")
+                if isinstance(undo_redo_display, dict) and undo_redo_display.get("undo_ts") is not None:
+                    print(
+                        "    DISP across undo/redo: "
+                        f"before={undo_redo_display.get('frame_before_undo')} "
+                        f"after_undo={undo_redo_display.get('frame_after_undo')} "
+                        f"after_redo={undo_redo_display.get('frame_after_redo')}"
                     )
             verify_mode = serial_verification.get("verification_mode")
             if verify_mode == "runtime_human_log":

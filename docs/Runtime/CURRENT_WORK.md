@@ -2741,6 +2741,43 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the 5.8 undo/redo fix made playback correct but left the OLED painting the undone
+overdub; fixed (`immutable-loop-snapshot-passes` 5.8a).** The regression is the display half of the
+same defect family, and it was *introduced into view* by 5.8: once playback correctly stops emitting
+the disabled pass, the display is the only tier still holding it.
+
+Root cause (device `captures/content-verify-65`, the DEC-071 shape with the recipe's undo/redo):
+`Loop::retainCapturePreviewAtSeal` keeps the just-sealed pass's closed rows in
+`sealedCapturePreviewNotes_` as a display bridge, and `sealedCapturePreviewIsCovered()` proves the
+bridge may be released by testing each row against the **committed** `visualCache`. A global undo of
+an `OverdubPassAdded` entry disables the pass through `Loop::setCapturePassState`, which removes its
+rows from the committed representation — so coverage can never hold again and
+`releaseSealedCapturePreviewIfCovered()` never releases. `applyDrawSourceOverlays` unions the
+uncovered sealed rows into every frame, and the OLED therefore kept painting the removed overdub
+forever. The telemetry is exact: `DFRAME` 194 before `Undo` → **193** after, `DISP` `frame=193`
+against `visual=180` for the whole window, and the redo leaves it at 193 because it never left;
+`VCACHE,slice_clean notes,180` is the record-only committed cache and the extra **13** rows are the
+sealed handoff (`194 = 181 + 13` before, `193 = 180 + 13` after). `resetPassTimeline` already names
+this hazard and clears the handoff; `setCapturePassState` is the same state change reached from the
+undo/redo path and was the one that missed it.
+
+Fix (`src/Loop/LoopCapture.cpp`): when a record or overdub pass transitions to
+`CapturePassState::Disabled`, call the existing `clearSealedCapturePreview()` hook before
+`notifyCommittedContentChanged()`. Enabling a pass does not clear it — the preceding undo has
+already released the bridge, and the re-enabled rows resolve from the committed pass set.
+
+Evidence. New native fixture
+`test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff`
+(`test_loop_take_survival`): it drives the real undid/redone frame through the host twin of the
+draw-source gather and asserts the disabled pass's note is gone after the undo and present again
+after the redo; it fails without the fix (`TEST_ASSERT_FALSE(loop.hasSealedCapturePreview())`,
+`Expected FALSE Was TRUE`). Full native **2,240 cases / 1 skipped / 0 failures** (was 2,239);
+`pio run -e teensy41-capture-serial` SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488
+/ **locals 6,400** (unchanged). Device gate owed: rerun the DEC-071 shape + undo/redo and read the
+OLED frame drop the overdub on `Undo` and restore it on `Redo`. The base runner's display check only
+asserts a non-empty frame after the overdub stop, so this needs either an added `DISP` frame-count
+clause across the undo/redo or the investigation-diag build's `DIAG,draw_src,layers` rows.
+
 **2026-09-18 — successor change 5.9 + 5.11 CLOSED, and the defect they found is fixed
 (`immutable-loop-snapshot-passes` 5.8).** The user report was concrete: *the overdub wrap creates a second pass
 which the display shows but which is not audible, and the GUS is missing its entry.* Two independent holes left

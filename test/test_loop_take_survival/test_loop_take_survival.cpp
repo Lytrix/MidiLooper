@@ -4163,6 +4163,58 @@ uint32_t previewComposeMatchHost(const NoteUtils::DisplayNoteVec& compose,
   return 0u;
 }
 
+/// Regression (2026-09-18, `content-verify-65`): a global undo of an overdub entry disables the
+/// committed pass. The sealed capture handoff bridges that pass's rows into the frame while the
+/// committed tiers have not consumed them, and disabling the pass removes those rows from the
+/// committed representation, so `sealedCapturePreviewIsCovered()` can never hold again --
+/// `applyDrawSourceOverlays` unioned the removed rows into every frame and the OLED kept painting
+/// the undone overdub (record-only cache 180 + sealed 13 = frame 193; redo left it at 193 because
+/// it never left). A pass-state change must drop the handoff so the pass-resolved committed frame
+/// is the authority again.
+void test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  recordLinearNote(loop, 0, 40, 60);
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  const NoteId overdubNoteId = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_NOT_EQUAL(kInvalidNoteId, overdubNoteId);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(624, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 624));
+  const PassId overdubPassId = loop.lastCommittedPassId();
+  TEST_ASSERT_NOT_EQUAL(kInvalidPassId, overdubPassId);
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_FALSE(loop.sealedCapturePreviewIsCovered());
+
+  loop.rebuildVisualCacheFromPasses();
+  NoteUtils::DisplayNoteVec frame;
+  gatherDrawSourceDisplayNotes(loop, 0, 1, 0, 0, 127, frame);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(frame, overdubNoteId));
+
+  // Undo: the pass is disabled, so its rows leave the committed representation. The sealed handoff
+  // must not survive as a display-only copy of the removed pass.
+  TEST_ASSERT_TRUE(loop.setCapturePassState(overdubPassId, CapturePassState::Disabled));
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+  loop.refreshVisualCacheAfterPassStateChange();
+  frame.clear();
+  gatherDrawSourceDisplayNotes(loop, 0, 1, 0, 0, 127, frame);
+  TEST_ASSERT_NULL(findDisplayNoteById(frame, overdubNoteId));
+
+  // Redo: the pass returns and the frame resolves it from the committed pass set, not the bridge.
+  TEST_ASSERT_TRUE(loop.setCapturePassState(overdubPassId, CapturePassState::Active));
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+  loop.refreshVisualCacheAfterPassStateChange();
+  frame.clear();
+  gatherDrawSourceDisplayNotes(loop, 0, 1, 0, 0, 127, frame);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(frame, overdubNoteId));
+}
+
 void seedPublishedRecordGridHost(Loop& loop, uint32_t bars) {
   loop.loopLengthTicks = Config::TICKS_PER_BAR * bars;
   loop.beginCapture(CapturePhase::Record);
@@ -6514,6 +6566,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_bounded_session_close_rejects_a_changed_session);
   RUN_TEST(test_seal_retains_capture_rows_until_snapshot_covers_revision);
   RUN_TEST(test_retain_at_seal_merges_uncovered_laps);
+  RUN_TEST(test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff);
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
   RUN_TEST(test_seal_retention_excludes_open_capture_holds);
   RUN_TEST(test_overlay_rejected_slice_does_not_claim_playback_coverage);

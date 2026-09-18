@@ -174,6 +174,13 @@ uint16_t Loop::reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences
 }
 
 bool Loop::setCapturePassState(PassId id, CapturePassState state) {
+  // Disabling a pass removes its rows from the committed representation, so the sealed capture
+  // handoff can never be proven covered again (`sealedCapturePreviewIsCovered` reads the committed
+  // cache) and `releaseSealedCapturePreviewIfCovered` would keep it forever. That is the same
+  // hazard `resetPassTimeline` names; here it is reached from an undo/redo of a record or overdub
+  // entry, which left the removed overdub painted on the OLED (`content-verify-65`) because
+  // `applyDrawSourceOverlays` unions the uncovered sealed rows into every frame. Drop the handoff
+  // with the pass state; the pass refresh rebuilds the committed representation from `passes`.
   if (passes.hasRecordPass() && passes.recordPass.id == id) {
     if (passes.recordPass.state == state) {
       return true;
@@ -182,6 +189,9 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
     LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
+    if (state == CapturePassState::Disabled) {
+      clearSealedCapturePreview();
+    }
     notifyCommittedContentChanged();
     return true;
   }
@@ -196,6 +206,9 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
     LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
+    if (state == CapturePassState::Disabled) {
+      clearSealedCapturePreview();
+    }
     notifyCommittedContentChanged();
     return true;
   }
