@@ -2741,6 +2741,18 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — ACTIVE IMPLEMENTATION SCOPE: `runtime-code-tidyup` phases P1–P6 on
+`refactor/runtime-code-tidyup` (stacked on this branch at `4aacd18e`).** A code-tidying review of the
+56 files this branch added found dead code the branch itself superseded, one resumable-worker pattern
+re-expressed thirteen times, two vocabularies for one concept (`view`/`window`, `normalized*` for
+**merge**), and no enforced formatting. The change is a behavior-preserving refactor: `skip_specs: true`,
+no ownership movement, no persisted/wire/format change, and no HITL gate — see
+[`PREFLIGHT.md`](../../openspec/changes/runtime-code-tidyup/PREFLIGHT.md) for the trigger assessment and
+the save-path judgment call. Order: P1 dead code and dead artifacts → P2 constants and enums → P3
+de-duplication into existing owners → P4 naming convergence → P5 three gated file splits → P6 formatting
+and documentation. Gate per phase: `pio test -e native`; plus the firmware build and RAM1 line for
+P1–P5. Everything below this entry is **queued, not started**, and is not part of this scope.
+
 **2026-09-18 — the next architectural target is WORKING-SET OWNERSHIP, not more per-slot trimming
 (`runtime-working-set-ownership`, requested as a `DEC-###`).** The record-arm exit reported on
 `captures/session_20260918_171613.log` is diagnosed (`immutable-loop-snapshot-passes` 5.13: an

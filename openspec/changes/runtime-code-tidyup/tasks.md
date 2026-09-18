@@ -10,20 +10,33 @@ record why — do not reach for HITL.
 
 ## 1. Preflight, scope and baselines (no code change)
 
-- [ ] 1.1 Search `docs/DECISION_LOG.md` (with the `grep` tool, never a full read) for the topics this change touches —
+- [x] 1.1 Search `docs/DECISION_LOG.md` (with the `grep` tool, never a full read) for the topics this change touches —
   RC-MEM, DEC-057/063/067/068/072, the undo trim rails, the D8 read-site sweep, instrumentation gating — and record each
   hit that constrains a phase. Verify by writing `openspec/changes/runtime-code-tidyup/PREFLIGHT.md` containing the
   owner/change/test summary, the cited `DEC-###` list, and the explicit statement that no formal trigger fires
   (`docs/ARCHITECTURE_REASSESSMENT.md` lists "Refactor with no ownership movement" as not a trigger).
-- [ ] 1.2 Confirm from [`docs/Authority/DELIVERY_RULES.md`](../../../docs/Authority/DELIVERY_RULES.md) verification
+  Done: five constraining decisions recorded (DEC-072 staged-pass receipt, DEC-068 `ownsLiveSession`,
+  DEC-067 admission predicate, DEC-063 trim rails + cursor boundedness, DEC-057 byte identity) plus the
+  `SESSION_CAPTURE_SNAPSHOT_IDLE` acceptance note and `include/Globals.h:86,88` for the trim values.
+- [x] 1.2 Confirm from [`docs/Authority/DELIVERY_RULES.md`](../../../docs/Authority/DELIVERY_RULES.md) verification
   matrix that a behavior-preserving refactor carries no HITL gate, and cite the clause in `PREFLIGHT.md`. Verify: the
   citation names the matrix row that exempts this change.
-- [ ] 1.3 Update `docs/Runtime/CURRENT_WORK.md` § Now implementing to name `runtime-code-tidyup` phases P1–P6 as the
+  Done: lines 127–147 cited. Only `Native unit tests` and `Firmware build` are unconditional; every HITL row is
+  qualified by behavior coupling. The `Persistence … deferred save HITL when touching save path` row is
+  **nominally** triggered by task 2.9 and is surfaced in `PREFLIGHT.md` with its byte-identity argument rather
+  than silently waived — the user can override.
+- [x] 1.3 Update `docs/Runtime/CURRENT_WORK.md` § Now implementing to name `runtime-code-tidyup` phases P1–P6 as the
   implementation scope. Verify: the section names this change and no other work, and `git diff` shows only that section
   changed.
-- [ ] 1.4 Re-measure and record the four baseline gates in `PREFLIGHT.md`: `pio test -e native` case/pass counts, `pio run -e teensy41-capture-serial`
+  Done with one interpretation recorded: the section already carried the `runtime-working-set-ownership` target
+  (commit `4aacd18e`). It is retained below the new entry and explicitly marked **queued, not started**, so the
+  *active* scope is unambiguous without erasing the prior decision context. `git diff` is confined to the
+  section head (+12 lines).
+- [x] 1.4 Re-measure and record the four baseline gates in `PREFLIGHT.md`: `pio test -e native` case/pass counts, `pio run -e teensy41-capture-serial`
   RAM1 line (`variables`/`code`/`padding`/`free for local variables`), `openspec validate runtime-code-tidyup --strict`.
   Verify: all four values present and dated.
+  Done: native 2,262 cases / 1 skipped / 2,261 passed (00:01:12); RAM1 `variables 96128, code 392344,
+  padding 872, free for local variables 34944`; `openspec validate --strict` valid; linker budget row added.
 
 ## 2. P1 — remove dead code and dead artifacts
 
