@@ -583,7 +583,7 @@ The three splits reduce the files that carried a mixed responsibility: `RuntimeP
 - [x] 7.3 Add `.editorconfig` and a `.clang-format` derived from the incumbent style; accept the config only if
   `clang-format --dry-run` over the added files reports only the drifts 7.1/7.2 already fixed — otherwise ship
   `.editorconfig` only and record why (design § D9). Verify: the dry-run output is recorded in the change directory.
-- [ ] 7.4 Move the session journal out of `openspec/changes/resumable-midi-boundary-playback-maintenance/tasks.md` (20 checkboxes in 1,126 lines, with single prose lines up to 5,543 characters)
+- [x] 7.4 Move the session journal out of `openspec/changes/resumable-midi-boundary-playback-maintenance/tasks.md` (20 checkboxes in 1,126 lines, with single prose lines up to 5,543 characters)
   into `docs/Runtime/CURRENT_WORK.md`, leaving `tasks.md` a checklist; cut the 131 measured duplicated long sentences
   across `CONTINUOUS-CAPTURE-OWNERSHIP.md` ↔ `FOCUSED-STOP-HITL.md` (61), `FOCUSED-STOP-HITL.md` ↔ `tasks.md` (35) and
   `design.md` ↔ the others (30) by citing instead. Verify: `tasks.md` has one task per line under 200 characters; the
@@ -625,6 +625,36 @@ and the drift is the incumbent's deliberate line packing, which clang-format spl
 ships `.editorconfig` only — UTF-8, LF, final newline, whitespace trim, 2-space C/C++ and shell, 4-space Python,
 `*.md` trim off because Markdown hard breaks are two trailing spaces. Command, candidates, counts and a representative
 diff are recorded in [`CLANG-FORMAT-DRYRUN.md`](CLANG-FORMAT-DRYRUN.md).
+
+**7.4 — the base change's journal is relocated and the duplicated HITL evidence is cited.**
+
+*Journal relocation.* `openspec/changes/resumable-midi-boundary-playback-maintenance/tasks.md` drops from 1,126 lines to
+65: the twenty task lines are now headlines of ≤196 characters, each with a reference link to a `Task N.N` heading in
+`docs/Runtime/CURRENT_WORK.md#resumable-midi-boundary-playback-maintenance--relocated-task-journal`. The relocation is
+**verbatim** — the open-item-status table, every task's full text, and the journal (which starts at what was line 590,
+not 807: everything after the last checkbox is journal) were moved, not rewritten, and each task's text was checked to
+appear unchanged in the destination. The appendix sits at the end of `CURRENT_WORK.md` § Historical base work
+(7,442 → 8,637 lines). Nothing was dropped: every original line of ≥60 characters is present in either the new checklist
+or the appendix, except the twenty checkbox wrappers that became `Task N.N` headings.
+
+*Duplication cut.* The measured overlap was localised rather than spread: `CONTINUOUS-CAPTURE-OWNERSHIP.md` §
+"2026-09-16 authorized track 5 / slot 1 hardware checkpoint" was **197 of 197** long lines verbatim-identical to the
+identically-named section of `FOCUSED-STOP-HITL.md`, while all twenty other sections of the ownership doc had **zero**
+overlap. That 262-line body is now a citation to the HITL owner, keeping only the two facts the ownership doc owns (the
+authorized upload and scratch location, and that no other slot was cleared). Long-sentence overlap (≥120 characters,
+code spans and links normalised) before → after:
+
+| Pair | Before | After |
+|---|---|---|
+| `CONTINUOUS-CAPTURE-OWNERSHIP.md` ↔ `FOCUSED-STOP-HITL.md` | 34 | **0** |
+| `FOCUSED-STOP-HITL.md` ↔ base `tasks.md` | 21 | **0** |
+| `design.md` ↔ `FOCUSED-STOP-HITL.md` | 8 | 8 |
+| `design.md` ↔ `CONTINUOUS-CAPTURE-OWNERSHIP.md` / base `tasks.md` | 0 / 8 | **0 / 0** |
+
+The eight remaining `design.md` ↔ HITL sentences are one-line design statements quoted in the HITL narrative; each is
+load-bearing in both docs, so they are left rather than forcing a citation into a paragraph. The verify clauses are met:
+every task line is under 200 characters, the overlap drops in all three named pairings, and the relocated paragraphs are
+reachable at their `Task N.N` anchors in `CURRENT_WORK.md` from every checklist line.
 
 ## 8. Closeout
 
