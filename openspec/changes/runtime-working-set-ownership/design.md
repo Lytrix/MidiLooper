@@ -53,6 +53,7 @@ below is not complete if it violates one, and any invariant without an enforceme
 | 28 | **Reuse before invention**; duplication is a recorded failure mode | S4c.2, S4e.4, S0.6 |
 | 29 | **One owner per concept**; a second authority for the same concept is a defect | Revision 12 (F5); S0.1 |
 | 30 | **Retrofit opportunistically**; never big-bang a timing-path owner | S0.6 non-goal |
+| 31 | **No user operation is ever refused such that a second attempt is required.** A request that cannot complete immediately is **latched** and self-serviced when its resources free -- never dropped back on the user | product requirement; spec "a request is never refused to the user"; S4f |
 
 Vocabulary for 1-14 is governed in [`docs/Authority/NAMING.md`](../../../docs/Authority/NAMING.md) under
 **Playhead-scheduled MVCC** and **Pipeline**.

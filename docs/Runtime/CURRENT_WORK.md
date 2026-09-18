@@ -2812,6 +2812,20 @@ neither with behaviour change.
 RC-MEM-2's outstanding item and §5.13's three fixes are demoted to safeguards (G.1-G.3) under it. RC-MEM-2 and
 RC-MEM-5 are **not** reverted -- they bought headroom and removed dead reservation.
 
+**2026-09-18 — F3 REOPENED as a defect: the capacity-denied stop is the reason this change exists (DEC-076 item 9).**
+The user's product rule is now invariant 31 and task stage S4f: *"I never want a denied stop or a user to need to
+press twice."* `TrackOverdubLifecycle.cpp` currently answers a stop it cannot finalize at once with
+`successor_stop_denied_capacity` + `reentryDecision("deny", ...)`, keeps the interval recording, and its own comment
+states the consequence -- *"A later stop request is admitted once the predecessor retires"*. That re-press is the
+defect, not the contract. There is no latch today: `hasPendingDeferredOverdubStop()` reflects an *admitted* job, not
+a remembered request. Required: latch the request (destination, requested tick, interval generation) and self-service
+it when `captureStopOwner` / the overdub transfer / the canonical output / the session-exit handoff free, counting
+those as **retries**, and apply the same rule to record/overdub start, slot and track switching and undo/redo. The
+latch is one small state per live interval -- there is one live capture at a time -- so it is **not** a stored stopped
+interval and needs none of the ring capacity the descriptor-ring finding correctly denied. Acceptance is S7.4f:
+one press completes the stop. Open read: whether the transport re-issues a denied stop on its own or needs a fresh
+button edge (`TrackPlaybackWindowBuild.cpp:480`, `TrackOverdubLifecycle.cpp:1631`).
+
 **2026-09-18 — 5.12 FIXED: the second overdub no longer erases the first from the display (`immutable-loop-snapshot-
 passes` 5.12).** The sealed capture handoff was the only carrier of a closed overdub's rows while the committed cache
 could not account for them, and `openOverdubSession` cleared it, so starting the second overdub took the first

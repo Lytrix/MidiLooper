@@ -158,7 +158,14 @@ pool that supports on the order of **four** resident bundles — and the arm cha
    immutable state, resolved by interval projection, materialized incrementally against a playhead deadline,
    with epoch-leased working sets — and its stage shape is a **Pipeline of role-owned stages** with declared cost
    and deadline ([NAMING.md](Authority/NAMING.md)).
-9. **Thirty invariants are binding** on the owning change (scaling, ownership, immutability, continuity, failure,
+9. **No user operation is ever refused such that a second attempt is required.** A stop, record/overdub start,
+   switch or undo/redo that cannot complete at the instant it is requested is **latched** (destination,
+   requested tick, interval generation) and self-serviced when its resources free, with the denials counted as
+   retries rather than returned to the user. This is the product reason the change exists: a capacity denial
+   that the user must re-issue (`successor_stop_denied_capacity`, *"a later stop request is admitted once the
+   predecessor retires"*) is the defect, not the contract. The latch needs no new capacity -- it is one small
+   state per live interval, not a stored stopped interval -- so the descriptor-ring finding stands.
+10. **Thirty-one invariants are binding** on the owning change (scaling, ownership, immutability, continuity, failure,
    evidence, method), each with its enforcement point; a task that violates one is not complete and an invariant
    with no enforcement point is recorded as a gap.
 

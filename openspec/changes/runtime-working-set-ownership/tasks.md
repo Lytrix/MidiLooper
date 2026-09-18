@@ -236,6 +236,21 @@ visual detail windows are bounded optimisations on top, never a precondition for
       the existing renderer; mutation invalidates; cap and eviction hold under library growth.
 - [ ] S4e gates: envelope and window appear as budget terms; no new renderer or validity counter introduced.
 
+## S4f — no user-visible denial (the reason this change exists)
+
+- [ ] S4f.1 **Latch a request that cannot complete at once** (destination, requested tick, interval generation)
+      and self-service it when the resources free, completing at the correct boundary with no second press.
+- [ ] S4f.2 Apply the same rule to record/overdub start, slot/track switching and undo/redo.
+- [ ] S4f.3 Make the retries observable: `finalization_lease_stop_denied` counts **retries**, and the diagnostic
+      names the holding resource; the pre-fix counterfactual is `successor_stop_denied_capacity` +
+      `reentryDecision("deny", ...)`.
+- [ ] S4f.4 Prove no new capacity is implied: the latch is one small state per live interval, not a stored
+      stopped interval, so the descriptor-ring finding is unchanged.
+- [ ] S4f.5 Native fixture: stop requested while the predecessor finalizes -> latched -> predecessor retires ->
+      stop completes, with exactly one request issued and the denials counted as retries.
+- [ ] S4f gates: the latency from request to completion is bounded and reported; no user-visible denial remains
+      in the diagnostic vocabulary for capacity reasons.
+
 ## S5 — demote inactive slots' derived state
 
 - [ ] S5.1 Drop the published snapshot root and whole-loop `VisualCache` for a slot leaving the active
@@ -294,6 +309,10 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
 - [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
       evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
+- [ ] S7.4f **Single-press acceptance (the product reason)**: in the reentry shape, issue the stop **once** while
+      the predecessor finalizes and require the stop to complete after the predecessor retires with no second
+      request -- measured as one request issued, the latch observable, and the retries counted. Repeat for a
+      record/overdub start, a switch and an undo/redo under momentary resource pressure.
 - [ ] S7.4e **Cold-undo acceptance**: A active, create OD1 and OD2, undo depth > 0 -> switch to B so A is cold
       and its snapshot-backed roots disappear (snapshot slab live bytes drop) while compact descriptors remain
       -> switch back to A and its current state plays exactly -> Undo A reconstructs the expected historical
