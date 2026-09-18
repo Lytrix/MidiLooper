@@ -1,5 +1,31 @@
 # Project state (execution context)
 
+**2026-09-18 RC recorded: the snapshot publication boundary has no memory admission, so a full PSRAM pool resets the
+device instead of parking the publication (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: the
+stress run crashed a few bars past the overdub wrap, overdubbing an existing overdub. Device
+[`session_20260918_101615`](../../captures/session_20260918_101615.log) is not a fault -- there is no crash record
+(`boot_reset,crash=0` on the next boot, and `abort()` raises no `CrashReport`); the reset follows
+`[ExternalMemoryFirstAllocator] FATAL: both external memory and internal heap are exhausted!` and
+`#CAPTURE_RECONNECT`. `Overdub wrap committed @ tick 18432` at 114.519 s, and then for six seconds the pool's `<=32K`
+class gains **one 32768-byte snapshot slab per second** (96 -> 102 blocks) while the internal heap falls
+**108 -> 72 -> 36 -> 0 KB**; the pool then refuses `bytes=32768` (119.465 s, the exact `snapshotSlabOpen` request) and
+`bytes=8224`, and `ExternalMemoryFirstAllocator::allocate` calls `abort()`. The overdub session itself did not leak:
+pool live is pinned at 8201-8203 KB for the whole 45 s before the wrap against the boot's reported `pool=8182 KB`,
+because a 12-bar record sits on top of the loaded workspace's reference root (~1.5-1.7 MB of slabs installed by the
+boot load) plus the prewarmed view sets (~0.9 MB, 715 KB of it `TagViewPrewarm`). The control is DEC-073's own RC1
+device run ([`rc1-coalescing-device`](../../captures/rc1-coalescing-device/session_20260918_100646.log)), which shows
+the same ~8-slab post-wrap burst and then settles with 0 `FATAL` -- so the ~256 KB cost is by design and the defect is
+that this boundary neither admits nor parks. No persistence ran in the crashing boot (15 `PERS` lines, all boot-time,
+none after the wrap; the deferred save needs an overdub stop that never came), so the in-tree RC2/DEC-074 gate is not
+involved. Three RCs are recorded in the owning change and cross-referenced from
+`successor-capture-reentry-unguarding` 5.9: **RC-PUB-1** wire the dead `OperationKind::SnapshotReserve` admission into
+the publication start (point-of-use probe; on denial start nothing and leave the work pending with the previous root
+selected); **RC-PUB-2** park `LoopSnapshotFailureReason::Allocation` like `MembershipCapacity` instead of retrying the
+fragment forever (each retry copies the fragment's `LoopSnapshotChangeSet` onto the internal heap, and the
+freeze-failure branch is not even counted); **RC-PUB-3** remove `SnapshotSlabAllocator`'s fatal `abort()` backstop.
+The steady-state footprint half stays with the memory-pressure / DEC-065 track ("idle occupancy leaves no headroom").
+No code changed in this entry.
+
 **2026-09-18 RC1 LANDED: a published snapshot root carries its committed-pass coverage, and "current" can no longer
 lie (DEC-073, `successor-capture-reentry-unguarding` 5.9).** The post-reboot overdub loss was the publisher stamping a
 candidate built for an older committed-pass state with the *current* `playbackRevision`: the session-exit publish and
