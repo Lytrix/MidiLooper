@@ -123,7 +123,7 @@ struct LoopSnapshotEvent {
 using LoopSnapshotNoteRef = std::shared_ptr<const LoopSnapshotNote>;
 using LoopSnapshotEventRef = std::shared_ptr<const LoopSnapshotEvent>;
 
-// Child ownership slots are mutable solely for final-reference retirement.
+// Child ownership slots are mutable solely for final-reference release.
 // Published/shared nodes remain immutable; release only clears exclusive nodes.
 template <typename Reference>
 struct SnapshotMembership {
@@ -234,9 +234,9 @@ struct SnapshotWrapJournalFragment {
 /// Complete immutable effective-state root after construction is frozen.
 class LoopSnapshot {
  public:
-  /// Owner-local final-reference retirement; drain before destroying during active
+  /// Owner-local final-reference release; drain before destroying during active
   /// transport. No semantic reader or weak-reference resurrection may acquire the
-  /// retired root. Shared descendants remain untouched. Fixed depth, no allocation.
+  /// released root. Shared descendants remain untouched. Fixed depth, no allocation.
   class ReleaseCursor {
    public:
     ReleaseCursor() = default;

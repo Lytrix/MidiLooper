@@ -2935,7 +2935,7 @@ past `DisplayWindowUtils::kMaxDetailedWindowBars` -- exactly where the windowed 
 `Track::prewarmPlaybackForSlot` passes that answer into
 `LoopPlaybackRuntime::prewarmViews(capacity, fullTakeAdmissible)` ->
 `RuntimePlaybackViewSet::prewarm(reserveWholeTake)`. The three rolling views and both capture stagings are always
-reserved (the windowed lanes and capture admission need them); the two bridges, their two immutable bases and the
+reserved (the three rolling windows and capture admission need them); the two bridges, their two immutable bases and the
 prepared pair are reserved only when a whole-take view can actually be published. `wholeTakeReserved` makes the
 refusal explicit instead of incidental: `beginCandidateBridge`/`selectCandidateBridge` deny before touching bridge
 storage, `publishStoppedOracleView(const RuntimeCompanionPasses&, ...)` and
@@ -2948,7 +2948,7 @@ Dead reservation removed: 2 bridges x 2048 x 90 B + 2 bases x 2048 x 35 B = **51
 2048-row buffer (~59 KB) = **~558 KB per armed long-loop slot**. `fixedExternalBytes()` now reports only the
 reserved part, so that figure is the slot's real reservation. Deliberately *not* claimed as reclaimable: the three
 views (215,040 B), the capture staging (118,784 B) and the companion/canonical owners (~450 KB) -- those are not view
-bundles and the windowed lanes and deferred stop path still require them.
+bundles and the three rolling windows and deferred stop path still require them.
 
 Evidence: native `test_playback_prewarm` 177/177, including four new fixtures -- the predicate flipping exactly at
 the threshold; a windowed-only slot having `capacity() == 0` for both bridges and both bases, no prepared pair, and
