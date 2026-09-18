@@ -1246,6 +1246,28 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       sealed rows -- each with one owner and one release rule, so `openOverdubSession` moves the current set to
       display-only instead of either clearing it or hiding it behind a predicate that every consumer must remember to
       apply. The device evidence and the failing-first fixture stand; the design does not.
+      **Second attempt 2026-09-18: the split itself is proven safe; the remaining piece is frame ordering.**
+      Implemented as a genuine second representation (`retiredSealedDisplayNotes_` +
+      `retiredSealedDisplayRevision_`) with `retireSealedCapturePreviewForDisplay()` called from
+      `openOverdubSession`, coverage/release on the same membership rule as the live handoff, and clearing on
+      pass-disable and full reset so the 5.8a guarantee holds. **All 139 pre-existing fixtures stayed green,
+      including the four that broke under the session-tag attempt** -- the risky half (keeping the four consuming
+      paths on the current session alone) is therefore settled: four consumers read `sealedCapturePreviewNotes_`
+      and only the frame reads the retired tier.
+      What is *not* yet right is where the retired rows are unioned. The new fixture still finds the first overdub
+      missing from the frame, and the reason is ordering rather than ownership: the committed prefix is **replaced**
+      by `shouldRetainUnpublishedVisualCacheOverStaleGather`'s `candidate.assign(loop.visualCache.notes...)` when an
+      unpublished cache must be retained over a stale gather (`DisplayNoteWindowGather.cpp:748-754`), and with
+      `visual=0` -- exactly the device state -- that assign clobbers any union performed before it. In the host
+      mirror the re-application happens in `applyDrawSourceDisplayOverlays`, which **has no production
+      counterpart** (it exists only in `test/test_loop_take_survival/test_loop_take_survival.cpp:4249`), so the
+      production ordering has to be established in `DisplayManager::resolveDisplayNotesByDrawSource` before the
+      union is complete. Two further inputs want the retired tier counted as uncovered sealed rows:
+      `shouldRetainUnpublishedVisualCacheOverStaleGather`'s last argument and
+      `shouldUnionSealedCapturePreviewForDrawSource`'s gate, both of which currently report the *live* handoff only.
+      Reverted again rather than shipped unproven: not because the split is wrong, but because the union has to be
+      placed after the retain-assign *in production*, and that ordering must be read out of the real assembly path
+      first. Device evidence, the ownership design and the 139/139 result all stand.
       **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
