@@ -173,27 +173,74 @@ late cleanup from A -> must NOT release or mutate generation 18
 Each owner kind (capture stop job, deferred stop commit, undo/redo root, prepared playback handover)
 declares liveness explicitly; a release whose generation does not match is a rejected no-op, reported.
 
-## Revision 4 — undo history at cold needs an explicit policy
+## Revision 4 — cold undo policy: hot roots compact to logical descriptors (DECIDED)
 
-Undo/redo roots can keep snapshot residency alive after the runtime is released, so
+Undo/redo roots can keep snapshot residency alive after the runtime is released, so `60 cold slots x several
+descriptor-backed roots` defeats the law even with the playback runtime released. Dropping undo on demotion
+would solve memory but break a live session's expectation (record an overdub, switch away, switch back, and
+Undo no longer works) -- and the persistence contract already accepts zero undo depth after reboot, so the
+compromise is unnecessary.
+
+**Decision: two-tier undo.**
+
+| Tier | Contents |
+|---|---|
+| **Hot** (active / prepared slot) | `HotUndoEntry`: before/after snapshot or root refs allowed, immediate undo/redo, normal bounded hot depth |
+| **Cold** (slot left the active set) | `ColdUndoEntry`: committed pass-selection identity, required edit/macro identity, revision/generation metadata. **No `shared_ptr<LoopSnapshot>`, no snapshot-slab ownership.** |
+
+On demotion, hot entries are **compacted** to cold descriptors and every undo/redo root belonging **only** to
+that slot is released. On reactivation, the stack is **not** eagerly reconstructed: only the slot's *current*
+musical state is prepared for playback, and historical states stay compact until an Undo/Redo actually requests
+one -- which reconstructs or selects that historical state **off-clock** and then publishes a fresh runtime
+root/window. So the invariant is:
+
+> **Undo history scales with logical history metadata, not with immutable snapshot representation size.**
+
+**Global bounds (compact descriptors are not unbounded either).** Two limits are pinned: a **per-slot cold
+undo depth** and a **device-wide cold-undo byte budget**. Under pressure the **oldest cold undo entries** are
+evicted first. The eviction priority, most-protected first:
 
 ```
-60 cold slots x multiple undo snapshot roots
+current musical state        never evicted by undo pressure
+dirty / unpersisted canonical  never evicted
+active hot undo              preferred
+recent cold undo             retained within budget
+oldest cold undo             first pressure victim
 ```
 
-can defeat the law even with the playback runtime released. Candidate policies:
+That finally gives `overUndoMemoryPressure` something meaningful to manage (RC-MEM-3) without using undo
+trimming to hide other memory problems.
 
-| # | Policy | Consequence |
-|---|---|---|
-| A | Cold slots retain undo; undo roots count against a **separately bounded global history budget** | Undo fidelity preserved; needs its own budget and admission |
-| B | Demotion **compacts undo to lightweight pass identities** | Cheapest memory; loses inter-pass undo granularity while cold |
-| C | Demotion **seals/drops runtime undo history** | Simple and predictable; cold slots have no undo until reload |
-| D | Undo history is **evictable and reconstructible** | Best of both, most work; needs a reconstruction path |
+**Redo has an explicit rule.** Redo history is preserved compactly too, and **cold demotion alone does not
+invalidate it** -- otherwise merely browsing away from a slot would change editing semantics. Redo is
+invalidated by a **new committed edit or capture**, as normal.
 
-Note the existing persistence contract already yields zero undo depth after load, so C or B may be
-acceptable -- but that is a **product-behaviour decision**, and the plan must not claim flat cold-slot
-memory until it is pinned (open decision 1). The owning files are `src/TrackUndo.cpp` and
-`src/PassReclaim.cpp`; `GlobalUndoStack` retention is already the subject of RC-MEM-3.
+**A cold descriptor describes authority, not a cached root.** It must not carry a snapshot pointer, a slab id
+or a `playbackRevision` as its claim to be authoritative. It carries enough to *reproduce* the logical selected
+state -- the committed pass identity/set, pass ordering or selection revision, the note-edit commit identity
+where applicable, and the capture/session generation needed for validation. The exact field set needs an audit
+of `TrackUndo` (S5.2a); the principle is:
+
+> **A cold undo entry says which canonical state to select or reconstruct, not which runtime snapshot object
+> to resurrect.**
+
+This aligns with DEC-073: a reconstructed root acquires a **truthful** `coveredPassRevision`, and the old
+runtime root is never treated as authority.
+
+**Failure rule (prepare then commit).** If reconstruction cannot be admitted because memory is temporarily
+unavailable:
+
+```
+Undo request -> remains unapplied
+             -> current musical state unchanged
+             -> explicit `undo_resource_denied`
+```
+
+The cold descriptor is **never consumed or popped before reconstruction succeeds**. This is the same
+prepare-then-commit pattern the rest of the change uses.
+
+**Not preserved:** runtime undo history is not persisted; load continues with **undo depth zero** unless that
+is deliberately changed later.
 
 ## Revision 5 — S1's scaling assertion must be RED first
 

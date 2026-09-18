@@ -51,8 +51,15 @@ visual detail windows are bounded optimisations on top, never a precondition for
       rapid punch-stop/start/stop).
 - [ ] S0.2 `DEC` invariant: lease identity is `slot + generation + role`; leases transfer and release by
       identity; a generation-mismatched release is a rejected, reported no-op.
-- [ ] S0.3 Pin the **cold undo policy** (open decision 1) from the four candidates in `design.md`, as a
-      product decision with its user-visible consequence recorded. Required before any flat-cold-memory claim.
+- [ ] S0.3 **DECIDED -- two-tier cold undo** (recorded in `design.md` Revision 4): hot slots may hold
+      snapshot-backed undo roots; cold slots hold only compact logical descriptors (no `LoopSnapshot` ref, no
+      slab ownership) under a per-slot depth and a device-wide byte budget, evicting oldest-cold-first;
+      reactivation rebuilds only the current state; a cold undo reconstructs off-clock and commits only after
+      successful preparation (`undo_resource_denied` otherwise, descriptor intact); redo survives demotion and
+      is invalidated only by a new committed edit/capture. Runtime undo history is not persisted.
+- [ ] S0.3a Record the eviction priority: current musical state and dirty canonical content are never evicted by
+      undo pressure; active hot undo is preferred; recent cold undo is retained within budget; oldest cold undo
+      is the first victim. This is the input `overUndoMemoryPressure` (RC-MEM-3) should manage.
 - [ ] S0.4 Record that **canonical residency is a separate gated phase** (S6) with its own `DEC`
       amendment, and that the cold contract is descriptor-based.
 - [ ] S0.6 Record the **resumable work-item contract** as a convention plus `DEC` (Revision 16): shared
@@ -231,7 +238,17 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S5.1 Drop the published snapshot root and whole-loop `VisualCache` for a slot leaving the active
       set. Reactivation derives **only the bounded runtime representation the active consumer needs**; a
       full published root only where an authority requires one (open decision 5).
-- [ ] S5.2 Apply the S0.3 cold undo policy.
+- [ ] S5.2a **Audit `TrackUndo`** and pin the exact field set of a reconstructible cold descriptor (committed
+      pass identity/set, pass ordering or selection revision, note-edit commit identity, capture/session
+      generation for validation). The descriptor must describe **authority**, never a cached root.
+- [ ] S5.2b **Implement two-tier compaction**: demote hot entries to cold descriptors, release undo/redo roots
+      belonging only to that slot, and never release a root a live deferred owner still holds.
+- [ ] S5.2c **Implement off-clock reconstruction**: undo/redo on a cold-derived entry reconstructs or selects the
+      historical state, publishes a fresh runtime representation with a truthful `coveredPassRevision`, and
+      commits only after preparation succeeds; on refusal report `undo_resource_denied` and leave the descriptor
+      unconsumed.
+- [ ] S5.2d **Bound cold undo**: per-slot depth plus a device-wide byte budget with oldest-cold-first eviction,
+      and prove the priority order (current state and dirty canonical never evicted).
 - [ ] S5.3 Native fixture: demote then re-activate, assert identical playback content and that
       re-derivation is not on a timing-critical edge.
 - [ ] S5.4 Device: snapshot slab bytes track the active set, not the recorded library.
@@ -274,6 +291,14 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
 - [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
       evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
+- [ ] S7.4e **Cold-undo acceptance**: A active, create OD1 and OD2, undo depth > 0 -> switch to B so A is cold
+      and its snapshot-backed roots disappear (snapshot slab live bytes drop) while compact descriptors remain
+      -> switch back to A and its current state plays exactly -> Undo A reconstructs the expected historical
+      pass selection/content off-clock -> Redo A restores the exact current state. Then 60 cold slots with
+      retained compact undo history must stay within the configured global budget with no per-slot
+      `LoopSnapshot` roots resident. Also: demotion with a job-owned root does not release it; stale-generation
+      cleanup cannot remove a newer slot's reconstructed state; a new edit after reactivation clears redo; and
+      save/reboot restores undo depth zero.
 - [ ] S7.4d **Visual switch acceptance**: switch display across a 60+ slot library and require immediate visual
       feedback from the envelope, no full whole-loop rebuild on switch, no stale envelope after a mutation, and
       the visual byte cap respected.

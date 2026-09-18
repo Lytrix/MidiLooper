@@ -170,7 +170,15 @@ re-derived whenever a stage is added, whereas the thesis is stable. Read the sta
   `slot + generation + role`; leases transfer and release by identity, and a late cleanup from a previous
   generation cannot release or mutate storage now owned by a newer generation. This is a first-class
   invariant, not an implementation detail.
-- **Undo history gets an explicit cold policy.** Undo/redo roots can hold snapshot residency alive after
+- **Undo gets a two-tier cold policy.** Hot slots may retain snapshot-backed undo roots; cold slots retain only
+  **compact logical undo descriptors** -- no `shared_ptr<LoopSnapshot>`, no slab ownership -- under a per-slot
+  depth and a **device-wide cold-undo byte budget**, evicting the oldest cold entries first. Reactivation does
+  not rebuild the stack: only the current musical state is prepared, and a historical state is reconstructed
+  off-clock when an Undo/Redo actually asks for one, committing only after successful preparation
+  (`undo_resource_denied` otherwise, with the descriptor left intact). Redo is preserved compactly and
+  invalidated only by a new committed edit/capture, never by demotion. A descriptor says *which canonical state
+  to select or reconstruct*, never which runtime root to resurrect.
+- **Undo history gets an explicit cold policy (superseded by the two-tier policy above).** Undo/redo roots can hold snapshot residency alive after
   the runtime is released, so the plan cannot claim flat cold-slot memory until this is pinned. Candidate
   policies (see `design.md`): bounded global history budget, compaction to pass identities on demotion,
   sealing/dropping runtime undo on demotion, or evict-and-reconstruct. **This is a product-behaviour
@@ -265,8 +273,9 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
 
 ## Open decisions (TBD)
 
-1. **Undo history at cold.** Which of the four candidate policies in `design.md` applies, and if undo is
-   retained, what its global budget is. Blocking for claiming flat cold-slot memory.
+1. **The cold-undo descriptor field set.** The policy is decided (two-tier: hot roots, cold logical
+   descriptors, device-wide byte budget, oldest-cold-first eviction). Open is only the *audit* of `TrackUndo`
+   to pin exactly which fields constitute a reconstructible descriptor (S5.2a).
 2. **Bank switching to 16 MIDI channels (F4).** The UI shows 8 tracks today; the target switches between
    8-track banks. Confirm whether that UI/bank work lands here or as its own change, while this one only
    guarantees the memory law does not preclude it.
