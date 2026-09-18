@@ -55,7 +55,6 @@ class RuntimePlaybackViewFill {
              RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
   RuntimePlaybackViewFillResult step(size_t entryQuantum);
   void discard();
-  bool active() const { return destination_ != nullptr && cursor_ < sourceCount_; }
 
  private:
   RuntimePlaybackView* destination_ = nullptr;

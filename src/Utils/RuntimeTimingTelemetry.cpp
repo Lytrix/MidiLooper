@@ -743,6 +743,8 @@ void noteUsbDeviceBatchComposition(uint32_t size, uint32_t clockCount, uint32_t 
   if (size == 0) {
     return;
   }
+  // `nonClockCount` is reserved for the deferred DROID USB-host feedback split still owed
+  // by `resumable-midi-boundary-playback-maintenance` task 4.1; it is not scored yet.
   (void)nonClockCount;
   State& s = state();
   if (size > s.usbBatchMax) {

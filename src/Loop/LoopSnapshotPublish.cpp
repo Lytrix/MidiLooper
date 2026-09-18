@@ -7,7 +7,6 @@
 #include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
 #include "Utils/MemoryMonitor.h"
-#include "Utils/NoteUtils.h"
 
 #include <utility>
 #include <vector>
@@ -656,7 +655,6 @@ void discardPendingIfLoopLengthChanged(PendingSnapshotPublishBox& box, uint32_t 
   box.passChangeProgress.reset();
   box.appliedLiveRecordEventIndex = 0;
   box.appliedLiveRecordCompletedTicks = 0;
-  box.applyingCompanions = false;
 }
 
 PendingPassChangeProgress::OpenNote* findOpenPassNote(PendingPassChangeProgress& progress,
@@ -768,12 +766,6 @@ LOOP_COLD_MEM bool handoffLiveRecordProgressToCommittedPass(PendingSnapshotPubli
     return false;
   }
 
-  const uint8_t preservedOpenCount = progress.openNoteCount;
-  NoteId preservedNoteIds[kSnapshotWrapJournalMaxChanges];
-  for (uint8_t i = 0; i < preservedOpenCount; ++i) {
-    preservedNoteIds[i] = progress.openNotes[i].noteId;
-  }
-
   box.persistLiveRecordCursor();
   box.queuedPassIds.erase(box.queuedPassIds.begin());
   progress.fromCaptureStore = false;
@@ -786,16 +778,9 @@ LOOP_COLD_MEM bool handoffLiveRecordProgressToCommittedPass(PendingSnapshotPubli
   progress.includeUntil = 0;
   progress.nextEventId = parent.nextEventId();
   progress.nextCanonicalOrder = parent.nextEventId();
-
-  bool identityPreserved = !progress.fromCaptureStore && progress.passId == expectedPassId &&
-                           progress.openNoteCount == preservedOpenCount;
-  for (uint8_t i = 0; i < preservedOpenCount; ++i) {
-    if (progress.openNotes[i].noteId != preservedNoteIds[i]) {
-      identityPreserved = false;
-      break;
-    }
-  }
-  (void)identityPreserved;
+  // Pass identity and the preserved open-note set are re-established by the
+  // assignments above, so a post-hoc comparison of them cannot fail; the 128-byte
+  // scratch array that fed it is gone.
   return true;
 }
 
@@ -841,7 +826,6 @@ LOOP_COLD_MEM bool prepareLiveRecordWindow(Loop& loop, PendingSnapshotPublishBox
   loop.assignMissingNoteIdsInStoreWindow(loop.capture.store, progress.nextStoreIndex,
                                          includeUntil);
   box.constructionPassId = kInvalidPassId;
-  box.applyingCompanions = false;
   return true;
 }
 
@@ -1013,7 +997,6 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPassChangeFragmentImpl(
   loop.clearSnapshotFragmentFailureInjectionForTest();
 #endif
   box.constructionPassId = progress.passId;
-  box.applyingCompanions = false;
   return true;
 }
 
@@ -1094,7 +1077,6 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     box.construction = std::make_unique<LoopSnapshotConstruction>(parent, fragment.changes);
     box.constructionPassId = fragment.wrapPassId;
     box.wrapJournalInFlight = true;
-    box.applyingCompanions = false;
     return true;
   }
 
@@ -1136,7 +1118,6 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     box.passChangeProgress.nextCanonicalOrder = parent->nextEventId();
     CommittedEventRange::resetWindowTraversalCursor(box.passChangeProgress.cursor);
     box.constructionPassId = passId;
-    box.applyingCompanions = false;
     return startNextPassChangeFragment(loop, box, parent);
   }
 
@@ -1158,7 +1139,6 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPendingConstruction(
     }
     box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
     box.constructionPassId = kInvalidPassId;
-    box.applyingCompanions = true;
     return true;
   }
   return false;
@@ -1305,7 +1285,6 @@ LOOP_COLD_MEM __attribute__((noinline)) bool finishPendingConstruction(
   const PassId finishedPassId = box.constructionPassId;
   box.construction.reset();
   box.wrapJournalInFlight = false;
-  box.applyingCompanions = false;
   if (box.passChangeProgress.active) {
     box.persistLiveRecordCursor();
     if (box.passChangeProgress.complete()) {
@@ -1811,14 +1790,9 @@ LOOP_COLD_MEM bool Loop::liveRecordCanApplyCompletedTicks(uint32_t completedTick
   if (completedTicks == 0) {
     return false;
   }
-  if (!pendingSnapshotPublishBox_ || !pendingSnapshotPublishBox_->unpublishedCandidate) {
-    return true;
-  }
-  if (pendingSnapshotPublishBox_->sessionExitQueued) {
-    return true;
-  }
   // Stage 6C-A: capacity is extendable during live record; admission extends at
-  // prepareLiveRecordWindow / resolvePendingParent rather than rejecting here.
+  // prepareLiveRecordWindow / resolvePendingParent rather than rejecting here, so
+  // any non-zero completed length is admissible regardless of pending state.
   return true;
 }
 

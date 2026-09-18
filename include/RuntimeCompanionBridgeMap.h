@@ -40,6 +40,9 @@ class RuntimeCompanionBridgeMap {
   const uint16_t* baseRanks() const;   // UINT16_MAX for removed base rows.
   size_t size() const;
   size_t candidateCount() const { return ready(source_) ? candidateCount_ : 0; }
+  /// Native-test contract probe (no production caller): asserts the bounded
+  /// per-grain input ceiling. Span/Reconstruction/NotePairLookup keep production
+  /// readers for the same accessor; this owner has none.
   size_t lastStepInputCount() const { return lastStepInputs_; }
   void discard();
   uint64_t generation() const { return mapGeneration_; }

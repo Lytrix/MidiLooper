@@ -82,18 +82,6 @@ void logSessionExitPostStopPublish(uint32_t oldRoot, uint32_t newRoot, uint32_t 
 #endif
 
 #if SESSION_CAPTURE_INVESTIGATION_DIAG
-void logVisualCacheWindow(unsigned long nowUs, uint32_t windowUs, uint32_t reconstructUs,
-                          unsigned flatEventCount, unsigned sliceNoteCount);
-
-void logVisualCacheGatherProgress(unsigned long nowUs, unsigned eventsAppended,
-                                  unsigned totalEvents, unsigned traversalComplete,
-                                  unsigned resumed);
-
-void logVisualCacheGatherSort(unsigned long nowUs, uint32_t sortUs, unsigned eventCount);
-
-void logVisualCacheGatherEdit(unsigned long nowUs, uint32_t editUs, unsigned rowCount,
-                              unsigned eventCount);
-
 void maybeLogCommittedEventRangeDiag(const CommittedEventRangeDiagTiming& timing,
                                      const LoopPasses& passes, uint32_t reportThresholdUs);
 

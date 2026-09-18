@@ -485,8 +485,9 @@ Slot **payload** (inside epoch wrapper + **SAVE** footer) may be:
 `writeLoopPersisted` / deferred save emits LSV1. Slots saved before hydration
 stay legacy on disk until a current published root exists.
 
-**Owners:** `readLoopSnapshotBodyFormatV1` / `stepLoopSnapshotBodyFormatV1LoadParse`
-(parse only, never publish); `LoadLoopJob` commit via `applyLoadedLoopSlotBodyCommit`;
+**Owners:** `stepLoopSnapshotBodyFormatV1LoadParse` is the production parse path (parse only,
+never publish). `readLoopSnapshotBodyFormatV1` is the native-only monolithic byte oracle for the
+writer and is compiled out of firmware. `LoadLoopJob` commit via `applyLoadedLoopSlotBodyCommit`;
 deferred save LSV1 preamble/tail in `stepDeferredLoopPersist`. Boot sync load
 (`CurrentSetBootLoad`) is still legacy-only.
 

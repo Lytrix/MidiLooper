@@ -7,9 +7,14 @@
 #include <Arduino.h>
 #define LSV1_IO_MEM FLASHMEM
 #define LSV1_SAVE_STEP_MEM FLASHMEM
+// Cold, single-caller load/save builder. `noinline` keeps its body in FLASH instead of
+// letting it be inlined into an ITCM-resident parse/save function, where it costs RAM1
+// code and can tip `.text.itcm` into another 32 KB FlexRAM bank (Teensy-RAM1-Bank-Overflow).
+#define LSV1_BUILDER_MEM __attribute__((noinline, section(".flashmem")))
 #else
 #define LSV1_IO_MEM
 #define LSV1_SAVE_STEP_MEM
+#define LSV1_BUILDER_MEM
 #endif
 
 #include "Globals.h"
@@ -91,9 +96,11 @@ struct LoopSnapshotBodyFormatV1SaveWriteState {
   uint32_t pitch = 0;
   uint32_t barIndex = 0;
   uint32_t membershipPageIndex = 0;
-  uint32_t sortSwapBudget = 0;
   uint32_t writePayloadBytes = 0;
   uint32_t writePayloadOffset = 0;
+  // Kept for the documented `LoopPersist,tail_step` progress signature and line
+  // (`ei=,ni=,nr=,pb=`, see docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md);
+  // only `RootHeader` is ever assigned today, so the subphase values above are reserved.
   enum class PayloadWriteSubphase : uint8_t {
     RootHeader = 0,
     Notes = 1,
@@ -105,8 +112,6 @@ struct LoopSnapshotBodyFormatV1SaveWriteState {
   uint32_t emitIndex = 0;
   uint32_t nestedIndex = 0;
   uint32_t nestedRefIndex = 0;
-  bool sectionHeaderWritten = false;
-  bool telemetryTailEntered = false;
   uint32_t tailStepCount = 0;
   uint32_t lastTelemetrySig = 0;
   uint8_t lastTelemetryPhase = 0;
@@ -126,7 +131,6 @@ constexpr uint16_t kLsv1HeaderFlagHasPersistedLoopSnapshot = 0x0001u;
 
 constexpr size_t kLsv1BodyHeaderBytes = 8;
 constexpr size_t kLsv1LoopMetadataPayloadBytes = 32;
-constexpr size_t kLsv1LoopSnapshotRootHeaderBytes = 20;
 constexpr size_t kLsv1LoopSnapshotNoteRecordBytes = 20;
 constexpr size_t kLsv1LoopSnapshotEventRecordPrefixBytes = 8;
 constexpr size_t kLsv1LoopSnapshotEventRecordBytes =
@@ -154,14 +158,6 @@ bool checkedSizeMul(size_t count, size_t elementBytes, size_t& out) {
     return false;
   }
   out = count * elementBytes;
-  return true;
-}
-
-bool checkedSizeAdd(size_t left, size_t right, size_t& out) {
-  if (left > SIZE_MAX - right) {
-    return false;
-  }
-  out = left + right;
   return true;
 }
 
@@ -465,7 +461,7 @@ bool noteTickSane(const Lsv1GatheredNote& note, uint32_t loopLengthTicks) {
   return note.endTick < loopLengthTicks;
 }
 
-ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
+LSV1_BUILDER_MEM ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
     const Lsv1GatheredLoopSnapshotPayload& payload) {
   const ImmutableLoopSnapshotRef parent = LoopSnapshot::createEmpty(
       payload.loopId, payload.loopLengthTicks, payload.loopStartTick, payload.nextNoteId,
@@ -965,7 +961,6 @@ LSV1_SAVE_STEP_MEM bool gatherOneEventMembershipPage(const LoopSnapshot& snapsho
   }
   if (state.barIndex >= state.barCount) {
     state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortNotes;
-    state.sortSwapBudget = 0;
     return true;
   }
 
@@ -1018,7 +1013,6 @@ LSV1_SAVE_STEP_MEM bool sortNotesOneGrain(Lsv1GatheredLoopSnapshotPayload& paylo
               return left.noteId < right.noteId;
             });
   state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::SortEvents;
-  state.sortSwapBudget = 0;
   return true;
 }
 
@@ -1043,7 +1037,6 @@ LSV1_SAVE_STEP_MEM bool sortEventsOneGrain(Lsv1GatheredLoopSnapshotPayload& payl
   state.nestedIndex = 0;
   state.nestedRefIndex = 0;
   state.writePayloadOffset = 0;
-  state.sortSwapBudget = 0;
   return true;
 }
 
@@ -1280,7 +1273,6 @@ LSV1_SAVE_STEP_MEM LoopSnapshotBodyFormatV1SaveStepResult stepLoopSnapshotBodyFo
         stepResult = LoopSnapshotBodyFormatV1SaveStepResult::Failed;
         break;
       }
-      state.sectionHeaderWritten = true;
       state.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::WritePayload;
       stepResult = LoopSnapshotBodyFormatV1SaveStepResult::MoreWork;
       break;
@@ -1500,6 +1492,10 @@ bool LSV1_IO_MEM writeLoopSnapshotBodyFormatV1(const StorageIo& io,
   return true;
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native-only monolithic byte oracle. Production load goes through the stepped reader
+/// `stepLoopSnapshotBodyFormatV1LoadParse`; this reader and the test hooks at the end of
+/// the file are compiled out of the firmware image.
 bool LSV1_IO_MEM readLoopSnapshotBodyFormatV1(const uint8_t* data, size_t size,
                                               LoopSnapshotBodyFormatV1ReadResult& out) {
   out = {};
@@ -1612,7 +1608,6 @@ bool LSV1_IO_MEM readLoopSnapshotBodyFormatV1(const uint8_t* data, size_t size,
   return true;
 }
 
-#if defined(PIO_UNIT_TEST_NATIVE)
 uint32_t testRebuildSlotFromLoopContentCallCount() {
   return g_testRebuildSlotFromLoopContentCallCount;
 }

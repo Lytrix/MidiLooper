@@ -23,16 +23,12 @@
  *
  * Provides static methods to serialize the current LooperState to external memory (e.g., SD card
  * or flash) and to reload it on startup. Domain code admits stale work via admit* (e.g.
- * admitLoopPersist, admitTrackMeta, admitLoopSlotPersist) and wakes the scheduler with
+ * admitTrackMeta, admitLoopSlotPersist) and wakes the scheduler with
  * requestDeferredSaveState() at transition boundaries. PersistenceWorkQueue (internal) and
  * processDeferredSaveState() own scheduling; legacy monolithic save stages were retired (B4).
  */
 class StorageManager {
 public:
-    /// Deprecated — loopId is per-track slot index, not globally unique. Use admitLoopSlotPersist.
-    static void admitLoopPersist(LoopId loopId);
-    /// Stage 3 no-op — Loop undo history is derived from content at load (DEC-035).
-    static void admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex);
     /// Admit stale slot assignment / enable row (interim UI assignment).
     static void admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex);
     /// Admit stale track header / mute state.

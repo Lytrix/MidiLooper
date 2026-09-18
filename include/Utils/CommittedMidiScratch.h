@@ -17,7 +17,8 @@ namespace CommittedMidiScratch {
 enum class RefreshKind : uint8_t {
   Reused = 0,
   FromSnapshot = 1,
-  FromPasses = 2,
+  // Value 2 is retired (the pass-replay fallback OpenSpec 6.3.3 removed). `HoldEmpty`
+  // keeps value 3 so existing capture comparisons and logs stay meaningful.
   HoldEmpty = 3,
 };
 
