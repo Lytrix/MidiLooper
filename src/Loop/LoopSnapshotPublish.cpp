@@ -1757,6 +1757,32 @@ LOOP_COLD_MEM bool Loop::liveRecordCanApplyCompletedTicks(uint32_t completedTick
   return true;
 }
 
+namespace {
+/// Shared enumeration for a "publish everything committed" request. Returns false when the loop
+/// has nothing to publish; the caller owns the published root and pending-box policy.
+LOOP_COLD_MEM bool queueAllCommittedPassesInto(Loop& loop, PendingSnapshotPublishBox& box) {
+  if (loop.passes.hasRecordPass() && loop.passes.recordPass.state == CapturePassState::Active &&
+      !loop.passes.recordPass.committedChunkIds.empty() &&
+      loop.passes.recordPass.id != kInvalidPassId) {
+    box.queuedPassIds.push_back(loop.passes.recordPass.id);
+  }
+  for (const OverdubPass& pass : loop.passes.overdubPasses) {
+    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty() ||
+        pass.id == kInvalidPassId) {
+      continue;
+    }
+    box.queuedPassIds.push_back(pass.id);
+  }
+  for (const EditPass& edit : loop.passes.editPasses) {
+    if (edit.state == EditPassState::Active && edit.id != kInvalidEditPassId) {
+      box.companionIds.push_back(edit.id);
+    }
+  }
+  box.companionsApplied = box.companionIds.empty();
+  return !box.queuedPassIds.empty() || !box.companionIds.empty();
+}
+}  // namespace
+
 LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
   if (publishedSnapshotIsCurrent()) {
     return false;
@@ -1775,25 +1801,29 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
   box.fromLoadedPasses = true;
   box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::Queued;
   box.sessionExitReason = CommitReason::RecordStop;
-  if (passes.hasRecordPass() && passes.recordPass.state == CapturePassState::Active &&
-      !passes.recordPass.committedChunkIds.empty() &&
-      passes.recordPass.id != kInvalidPassId) {
-    box.queuedPassIds.push_back(passes.recordPass.id);
+  if (!queueAllCommittedPassesInto(*this, box)) {
+    clearPendingSnapshotPublish();
+    return false;
   }
-  for (const OverdubPass& pass : passes.overdubPasses) {
-    if (pass.state != CapturePassState::Active || pass.committedChunkIds.empty() ||
-        pass.id == kInvalidPassId) {
-      continue;
-    }
-    box.queuedPassIds.push_back(pass.id);
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
+  if (loopLengthTicks == 0 || !hasCommittedPasses()) {
+    return false;
   }
-  for (const EditPass& edit : passes.editPasses) {
-    if (edit.state == EditPassState::Active && edit.id != kInvalidEditPassId) {
-      box.companionIds.push_back(edit.id);
-    }
-  }
-  box.companionsApplied = box.companionIds.empty();
-  if (box.queuedPassIds.empty() && box.companionIds.empty()) {
+  // Deliberately does NOT clear `publishedSnapshotBox_`: the previous root stays the audible source
+  // until the replacement publishes, so an undo/redo never opens a playback gap. The idle Snapshot
+  // owner services `fromLoadedPasses == false` work while transport is live (the boot hydration lane
+  // is the one gated out by `allowLoadedSnapshotHydration`).
+  clearPendingSnapshotPublish();
+  if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+  box.sessionExitQueued = true;
+  box.fromLoadedPasses = false;
+  box.loadedHydrationPhase = LoadedSnapshotHydrationPhase::None;
+  box.sessionExitReason = CommitReason::RecordStop;
+  if (!queueAllCommittedPassesInto(*this, box)) {
     clearPendingSnapshotPublish();
     return false;
   }

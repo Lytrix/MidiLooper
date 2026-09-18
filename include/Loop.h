@@ -936,8 +936,18 @@ struct Loop {
                                             uint32_t entryId);
   /// Queue publication of every active committed pass. Explicit selected-slot
   /// hydration only — adopt/restore do not call this (`023222`). Does not
-  /// construct. Empty loops clear pending and do not queue.
+  /// construct. Empty loops clear pending and do not queue. Clears the published
+  /// root, so playback holds empty until the replacement publishes.
   bool queueLoadedSnapshotPublish();
+  /// Rebuild the published root from every active committed pass, on the normal
+  /// session-exit publication lane, **without** clearing the published root:
+  /// playback keeps the previous source until the replacement lands, so this never
+  /// produces a gap. Used after an undo/redo that changed committed passes, where
+  /// the captured before/after root may be absent (the session-exit after-attach is
+  /// asynchronous) or may not represent the resulting pass set — leaving a stale or
+  /// current-but-incomplete root that is visible on the display and silent in
+  /// playback.
+  bool requestCommittedPassesRepublish();
   /// Queue bounded wrap-journal fragments from settled pending mutations. Wrap path only.
   bool queueOverdubWrapSnapshotJournal(PassId wrapPassId);
   /// Record the `playbackRevision` a queued wrap journal will represent once complete.
