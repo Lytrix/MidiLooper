@@ -21,6 +21,7 @@ bool noteMinLengthRemoveEnabled = Config::DEFAULT_NOTE_MIN_LENGTH_REMOVE_ENABLED
 #include "../../src/Loop/LoopSnapshot.cpp"
 #include "../../src/Loop/LoopSnapshotLifetime.cpp"
 #include "../../src/Loop/LoopSnapshotPublish.cpp"
+#include "../../src/Loop/LoopSnapshotIdleTelemetry.cpp"
 #include "../../src/Loop/LoopSnapshotPlayback.cpp"
 #include "../../src/Loop/LoopOverdubSession.cpp"
 #include "../../src/LoopContentResolution.cpp"
