@@ -478,10 +478,10 @@ Each split: native suite + firmware build, then compare the RAM1 line and `_itcm
   `Loop::lastSnapshotIdle*Us`/`addSnapshotIdleEmitUs` at `:1654-1772`)
   into a `LoopSnapshot`-named TU so the linker keeps it in FLASH. Verify: firmware builds; the gated
   `#CAP,…,DIAG,snapshot_unit` output is unchanged on capture; RAM1 line unchanged or better.
-- [ ] 6.4 Record the rejected splits in `design.md` § D8.4 with the measurement that rejected them
+- [x] 6.4 Record the rejected splits in `design.md` § D8.4 with the measurement that rejected them
   (`RuntimeCompanionApply::step()`, `StorageLoopIoBodyFormatV1.cpp`, `RuntimePlaybackBridgeBuild::step()`, the four `Track*` TUs).
   Verify: each rejected split names its reason; no split was done for line count.
-- [ ] 6.5 P5 gate: full native suite plus firmware build and the recorded RAM1/`_itcm_block_count` comparison for all
+- [x] 6.5 P5 gate: full native suite plus firmware build and the recorded RAM1/`_itcm_block_count` comparison for all
   three splits. Verify: no bank crossing; `free for local variables` not reduced.
 
 ### P5 progress (2026-09-18)
@@ -555,6 +555,23 @@ Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS wi
 (`variables 96096 / code 391736 / padding 1480 / free for local variables 34976`), `_itcm_block_count` **12
 (unchanged)**, FLASH code 1,004,520 (baseline value; the P5a/P5b -8 is offset by the new TU's own section
 alignment).
+
+**6.4 — the rejected splits are recorded in `design.md` § D8.4** with the measurement behind each refusal:
+`RuntimeCompanionApply::step()` is 259 of its TU's 466 lines and owns the state its batch selectors write;
+`StorageLoopIoBodyFormatV1.cpp` is one wire format over one file-local layout table plus the five `Lsv1*` gather
+structs both directions share; `RuntimePlaybackBridgeBuild::step()` is 287 of the compile TU's 639 lines and drives
+the same `phase_`/`cursor_`/`order_` state its `begin*`/`rebindBoundary` helpers set up; and the four `Track*`
+stop/undo TUs are already one declaration owner apiece. No split in this change was done for line count.
+
+**P5 phase gate 6.5: passed.** Measured on the tree after all three splits: native **2,262 cases / 1 skipped /
+2,261 passed**; firmware SUCCESS with RAM1 `variables 96096 / code 391736 / padding 1480 / free for local variables
+34976` and FLASH `code 1004520`, i.e. the RAM1 line is byte-identical to the pre-P5 baseline and `_itcm_block_count`
+is **12 before and after**. The ELF `_etext` is `0x5fa38` in both, so no split moved a function across the
+ITCM/DTCM FlexRAM bank boundary and no bss/vector alignment edge was crossed. Each split was also gated on its own
+before the next started, so a regression is attributable to one commit.
+
+The three splits reduce the files that carried a mixed responsibility: `RuntimePlaybackView.cpp` 853 → 707,
+`RuntimePlaybackBridge.cpp` 803 → 639, `LoopSnapshotPublish.cpp` 2,319 → 2,087 lines.
 
 ## 7. P6 — formatting, docs and enforcement
 
