@@ -315,6 +315,13 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
     (void)admitOperationMemory(OperationKind::BootProbe, 0);
   }
   const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
+  // `snap=` is the *cumulative* snapshot-allocator counter, so a rising value is not by itself
+  // evidence of retention. The arena's live view is `slab_live`/`slab_unused` plus the pinning
+  // counts: a live slab holding <=1 node (`pin1`) has all of its remaining payload
+  // unreachable, which is what distinguishes "a generation retained its nodes" from "a
+  // generation stranded a mostly-empty slab". O(live slabs), and only on the once-per-second
+  // tick line.
+  const SnapshotSlabCensus slabCensus = snapshotSlabCensus();
   // Comma-separated and timestamped so a run can be reduced to a per-interval delta
   // table and correlated with the control-event log. `cls` is live KB per size class
   // (<=128B, <=1K, <=8K, <=32K, <=128K, >128K): a jump concentrated in one class names
@@ -324,6 +331,7 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
            "freed=%luKB,untracked=%lu,unknown=%lu,refused=%lu/%luB,"
            "cls=%lu/%lu/%lu/%lu/%lu/%luKB,clsn=%lu/%lu/%lu/%lu/%lu/%lu,"
            "tags=%lu/%lu/%lu/%lu/%lu/%lu/%luKB,chunks_free=%lu,snap=%luKB,"
+           "slab_live=%lu,slab_used=%luKB,slab_unused=%luKB,pin1=%lu,pin24=%lu,"
            "heap_free=%luKB,heap_min=%luKB\n"),
       static_cast<unsigned long>(micros()), phase != nullptr ? phase : "-",
       static_cast<unsigned long>(c.liveBytes / 1024),
@@ -360,6 +368,11 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
       // (the <=8 KB class) and snapshot slabs are the large <=128 KB class.
       static_cast<unsigned long>(LoopEventStore::freeChunkCount()),
       static_cast<unsigned long>(snapshotAllocByteCount() / 1024),
+      static_cast<unsigned long>(slabCensus.liveSlabs),
+      static_cast<unsigned long>(slabCensus.usedBytes / 1024),
+      static_cast<unsigned long>(slabCensus.unusedBytes / 1024),
+      static_cast<unsigned long>(slabCensus.slabsAtMostOneNode),
+      static_cast<unsigned long>(slabCensus.slabsTwoToFourNodes),
       static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
       static_cast<unsigned long>(getInternalHeapMinEverFreeBytes() / 1024));
 }
