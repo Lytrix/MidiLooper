@@ -22,16 +22,18 @@ The requirement, pinned:
 
 | Envelope | Value |
 |---|---|
-| Tracks | **16** (`NUM_TRACKS` is 8 today) |
-| Slots sounding per track | **2** |
-| Slots sounding simultaneously | **up to 32** (2 x 16), any loop length |
+| Tracks | **8** today; target **bank switching to 16 MIDI channels** (F4) |
+| Slots sounding per track | **1** today; target is slots-as-virtual-tracks, sounding together when active (F1) |
+| Slots sounding simultaneously | **N, derived** -- must not preclude 16 / 32 / 48 / 64 |
 | Slots holding the complex role (record / overdub / passes / undo / redo / display, resumable small-packet logic inside MIDI boundaries) | **exactly 1**, transferable |
 | Transport | **never stops** -- switching, record/overdub start and undo/redo happen while playing |
 
-So the resident set is **up to 32 playing leases + 1 complex lease** plus transfer overlap, and at today's
-cost that is 32 x 845 KB ~= **27 MB**, or 32 x 1.47 MB ~= **47 MB**, against ~8 MB. **Windowing is the only
-way the envelope fits**, and it must also make the cost length-independent: a 64-bar slot costs what a
-4-bar slot costs, with playback crossing window boundaries seamlessly. Consequently:
+So the resident set is **N playing leases plus the specialized roles** plus transfer overlap. Today N = 8
+(8 tracks x 1 sounding slot); the design must not cap it artificially, and at today's cost even N = 8 full
+working sets is 8 x 845 KB ~= **6.8 MB**, or 8 x 1.47 MB ~= **11.8 MB**, against ~8 MB -- so windowing is
+required at the *current* capability, not only at a future one. It must also make the cost
+length-independent: a 64-bar slot costs what a 4-bar slot costs, with playback crossing window boundaries
+seamlessly. Consequently:
 
 | Quantity | Value | Backed by |
 |---|---|---|
@@ -195,7 +197,7 @@ Consequences already folded into the proposal and spec:
 
 ## Revision 9 — role classes and cardinalities (preserving successor re-entry)
 
-A single "exactly one complex role" is incompatible with what is already landed: DEC-067 supports a
+The original "exactly one complex role" phrasing was incompatible with what is already landed: DEC-067 supports a
 **deferred/finalizing predecessor (A) alongside an independently live recording successor (B)**
 simultaneously, so the runtime cannot have one indivisible record/overdub/passes/undo/redo/display role.
 The architecture already distinguishes live capture ownership from deferred finalization ownership and
@@ -205,7 +207,7 @@ allows both concurrently; the new model must not design that away.
 |---|---|---|
 | `PlaybackWindowLease` | up to **32** (2 per track, 16 tracks) | must be small and length-independent |
 | `LiveCaptureLease` | **1** | record/overdub ingress, staging, capture stop jobs |
-| `DeferredFinalizationLease` | **1** | one finalizing predecessor alongside one live successor (rotating, see below) |
+| `DeferredFinalizationLease` | **1 admission**, queue depth 4 | jobs run in series (F3); one finalizing predecessor alongside one live successor |
 | `InteractiveLease` | **1** | edit / undo / redo / display, unless evidence requires more |
 | `TransferOverlap` | measured | explicitly budgeted, not slack |
 
@@ -261,6 +263,41 @@ This is generation identity, not "slot saved": the acknowledgement must name the
 completes for G cannot make G+1 evictable. It belongs in the S6 `DEC` amendment, and it has an adversarial
 test (dirty -> demote -> storage deliberately delayed -> pressure requests eviction -> content stays
 resident; save completes -> evictable; reload exact).
+
+## Revision 11 — windowed streaming MIDI replaces the resident-root playback assumption (F2)
+
+The budget above omitted a term and this revision adds it by removing its cause. Today a *sounding* slot
+needs a resident whole-loop root, because windowed playback is served out of one
+(`tryGatherPublishedSnapshotEventsInWindow` returns false without `publishedSnapshot()`). At ~325 KB per
+loop that is `N x 325 KB` the budget never counted -- ~2.6 MB at today's N = 8, and ~10 MB at N = 32.
+
+The resolution is not to budget it but to remove the requirement:
+
+- the published snapshot **remains the immutable checkpoint authority for undo and save** -- that is what
+  "published" must be read as;
+- **active playback resolves windows without a resident whole-loop root**, because whole loops will never
+  fit once a whole song exists;
+- consequently, windowed/streamed MIDI is a **first-class deliverable** of this change, and the budget's
+  playback term covers the *window* working set only, not a per-slot root.
+
+This also changes the character of S6: it is not merely canonical-event residency, it is the windowed
+streaming path that both canonical content and derived playback views use.
+
+## Revision 12 — the role tiers fold into `activeLoopIndex` (F5)
+
+The COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED tiers are a **view of existing
+authorities**, not a second state machine: `activeLoopIndex` (the one active slot per track),
+`CapturePhase`, and `TrackState`. A tier transition that moves `activeLoopIndex` is an ownership transfer;
+one that does not, is not. `ARCHITECTURE_RULES.md` requires one owner per concept, so the tiers must be
+derivable from those three rather than competing with them.
+
+## Revision 13 — finalization is a serialized queue, not a denial (F3)
+
+One **admission** with jobs run **in series**: `CaptureStopJobs::kCapacity = 4` is queue depth, and the
+admission guard is 1. So a stop arriving while a predecessor finalizes is **queued**, not refused, and the
+slot's stop is serviced when its turn comes; a **full queue** is the genuine denial case. The counter is
+therefore about queue depth and wait (`finalization_lease_stop_denied` should be read as queue saturation),
+not about a single lease being unavailable.
 
 ## Options considered
 

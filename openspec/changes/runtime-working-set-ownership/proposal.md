@@ -25,9 +25,9 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 
 | Envelope | Value |
 |---|---|
-| Tracks | **16** (the target envelope; `NUM_TRACKS` is 8 today -- open decision 2) |
-| Slots sounding per track | **2** |
-| Slots sounding simultaneously | therefore **up to 32** (2 x 16), **regardless of each slot's loop length** |
+| Tracks | **8** today (`NUM_TRACKS = 8`), shown as banks of 8; the target is **bank switching to 16 MIDI channels** (F4) |
+| Slots sounding per track | **1** today. The target is that slots behave as **virtual tracks** (16 MIDI channels x 8 slots) and can sound together whenever set active; a typical scenario may be 2 per track, but that is a working number, not a limit (F1) |
+| Slots sounding simultaneously | **N, derived** -- the memory law must compute the largest N the budget supports and must **not preclude 16 / 32 / 48 / 64** sounding slots |
 | Slots holding a **playback window lease** | up to **32** (2 per track) |
 | Slots holding the **live capture** role (record / overdub, resumable small-packet logic inside MIDI boundaries) | **1** |
 | Slots holding **deferred finalization** | **1** -- one *finalizing predecessor* alongside one *live successor*, **not** two simultaneously finalizing captures |
@@ -36,7 +36,7 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 | Slots that may be selected or browsed | the whole library (~60 recorded) |
 | Transport continuity | the looper **never stops playing** across track/slot switching, record/overdub start, or undo/redo, with no MIDI timing degradation |
 
-So the resident set is **up to 32 playback-window leases plus one of each specialized role**. While the specialized roles may stay large, the lease that gets multiplied 32 times is what matters, and at today's cost:
+So the resident set is **N playback-window leases plus one of each specialized role**, where N today is 8 (8 tracks x 1 slot) and the design must not bound it artificially. While the specialized roles may stay large, the lease that gets multiplied by N is what matters, and at today's cost:
 
 ```
 32 x  845 KB  ~=  27 MB
@@ -55,19 +55,20 @@ Three distinct quantities are still designed separately:
 | Quantity | Value | Backed by |
 |---|---|---|
 | **Library residency** | ~60+ recorded slots | canonical metadata + persisted content |
-| **Logical active slots** | up to 32 playback + live capture 1 + deferred finalization 1 + interactive 1 | composable leases, one per role class |
+| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture 1 + deferred finalization 1 admission (queue 4) + interactive 1 | composable leases, one per role class |
 | **Resident working-set leases** | must fit PSRAM | bounded, window-sized |
 
 The third quantity is **per class**, and the constraint is:
 
 ```
-fixed  +  32 x PlaybackWindowLease  +  LiveCaptureLease  +  DeferredFinalizationLease
+fixed  +  N x PlaybackWindowLease  +  LiveCaptureLease  +  DeferredFinalizationLease
        +  InteractiveLease  +  transfer overlap  +  reserve   <=   PSRAM budget
 ```
 
-Only `PlaybackWindowLease` is multiplied 32 times, so only it must be small; the specialized roles may stay
-large. If the measured playback lease cannot fit that sum, the plan states the achievable
-simultaneous-playback bound (`k` per track, `k < 2`) rather than claiming 2.
+Only `PlaybackWindowLease` is multiplied by N, so only it must be small; the specialized roles may stay
+large. **The plan's output is N** -- the largest sounding-slot count the budget supports, stated as a
+capability (today 8 at one slot per track; the target is that 16 / 32 / 48 / 64 are reachable by policy
+rather than blocked by memory).
 
 Brownfield context:
 [`docs/Runtime/CURRENT_WORK.md`](../../../docs/Runtime/CURRENT_WORK.md),
@@ -81,6 +82,12 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
   slot-lifetime owned. Inactive slots retain only canonical descriptors, loop/pass summary, persistence
   identity and location, and tiny browser metadata.
+- **Active playback becomes windowed/streamed; the root narrows to a checkpoint authority.** A published
+  root stays required as the **immutable checkpoint for undo and save**, but whole loops will never fit once
+  a whole song is built, so playback must resolve its windows **without a resident whole-loop root** -- today
+  it does not (`tryGatherPublishedSnapshotEventsInWindow` needs `publishedSnapshot()`), and at ~325 KB per
+  loop that is an unbudgeted `N x root` term. Making playback windowed is a first-class deliverable here,
+  not a consequence of it (F2).
 - **Role tiers, not one "active".** `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` /
   `DEFERRED`. **Plain UI selection must stay cheap**: it acquires cold metadata plus a bounded index or
   preview, never the playback/capture working set, so browsing 60 slots causes no allocation churn and
@@ -90,7 +97,8 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
   window instead of the 2048-event ceiling so a slot's cost is **independent of its loop length**, and the
   feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
 - **Role classes with explicit cardinalities, and they are transferable.** Playback window leases scale with
-  the envelope (up to 32); live capture is one; deferred finalization is one; interactive edit/undo/display is
+  the envelope (N, derived from the budget); live capture is one; deferred finalization is one admission with a
+  serialized queue; interactive edit/undo/display is
   one unless evidence requires more. A slot may hold several classes at once, and selecting another slot or
   track **transfers the relevant role quickly** without a transport stop. Classes are composable rather than
   one monolithic lease, so 32 playback slots do not each carry fields only one live operation uses.
@@ -188,7 +196,8 @@ envelope and the budget do not, as written.** Four items gate S0/S2:
 - **F3 (major)** -- the finalization cardinality of 1 is asserted without citing the existing admission
   guard (`CaptureStopJobs::kCapacity = 4`, "additional admission stays guarded"): it must be verified as
   equal to today's behaviour, not assumed, since pinning one lease may be a *reduction*.
-- **F4 (major)** -- the spec requires "up to sixteen tracks" while `NUM_TRACKS = 8` and no task changes it:
+- **F4 (major, resolved below)** -- the spec *then* required "up to sixteen tracks" while `NUM_TRACKS = 8`
+  and no task changed it:
   a requirement the change cannot satisfy.
 
 F5 (the role tiers create a second authority for "active" alongside `activeLoopIndex`/`CapturePhase`/
@@ -198,13 +207,16 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
 
 1. **Undo history at cold.** Which of the four candidate policies in `design.md` applies, and if undo is
    retained, what its global budget is. Blocking for claiming flat cold-slot memory.
-2. **16 tracks as the target.** `NUM_TRACKS` is 8 today, so the envelope implies either a config change or
-   a workstream of its own (per-track runtime structures, display, UI all scale with it). Confirm the track
-   count and whether it lands inside this change.
+2. **Bank switching to 16 MIDI channels (F4).** The UI shows 8 tracks today; the target switches between
+   8-track banks. Confirm whether that UI/bank work lands here or as its own change, while this one only
+   guarantees the memory law does not preclude it.
 3. **How deep the transfer overlap must be**, including whether a specialized role overlaps the playing set
    (its holder may also be one of the sounding slots). Finalization cardinality is decided at 1 with a
    `finalization_lease_stop_denied` counter as the evidence path to a second lease; live capture 1 and
    interactive 1 are confirmed.
+3a. **Queue depth and serialization.** One admission with jobs run in series (`CaptureStopJobs::kCapacity = 4`
+   is queue depth, F3): confirm the depth and what a *full* queue does (the denial case), and whether the
+   `finalization_lease_stop_denied` counter should instead count queue waits.
 4. **Whether a second finalization lease is ever warranted**, decided from `finalization_lease_stop_denied`
    evidence rather than reserved preemptively (the pathological shapes are very short captures and rapid
    punch-stop/start/stop).

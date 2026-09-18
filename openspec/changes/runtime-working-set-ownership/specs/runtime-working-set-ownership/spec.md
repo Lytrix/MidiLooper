@@ -35,10 +35,12 @@ and never merely because a slot is selected.
 ### Requirement: Working sets are window-sized so the two-slots-per-track envelope fits PSRAM
 Working-set capacities SHALL be derived from the resolved window rather than a whole-loop event ceiling, so
 a slot's resident cost is independent of its loop length, and the number of simultaneously resident leases
-SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served is **up to two sounding slots per track across up to sixteen tracks** -- up to
-thirty-two playback window leases -- plus one live-capture lease, one deferred-finalization lease, one
-interactive lease where present, and the measured transfer overlap. The budget is per lease class: only the
-playback term is multiplied by the envelope, so only it must be small and length-independent.
+SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served is **N sounding slots**, where the change **derives** the largest N the budget
+supports and states it as a capability. Today N is 8 (8 tracks x 1 sounding slot); the design must not
+preclude 16, 32, 48 or 64, because the target is that slots behave as virtual tracks and can sound together
+whenever set active. Also budgeted: one live-capture lease, one deferred-finalization admission with a
+serialized queue, one interactive lease where present, and the measured transfer overlap. The budget is per
+lease class: only the playback term is multiplied by N, so only it must be small and length-independent.
 
 #### Scenario: The lease budget closes
 - **WHEN** fixed overhead, canonical allowance, transient and deferred headroom, and the worst-case lease
@@ -52,10 +54,11 @@ playback term is multiplied by the envelope, so only it must be small and length
 - **THEN** their resident working sets are of comparable size
 - **AND** playback crosses window boundaries without an audible or timing discontinuity
 
-#### Scenario: Simultaneous-playback cap is stated, not hidden
-- **WHEN** window sizing cannot serve two sounding slots on each of sixteen tracks at once
-- **THEN** the achievable simultaneous-playback capability is stated as a bound (`k` slots per track)
-- **AND** it is not presented as a configurable number with no arithmetic behind it
+#### Scenario: The sounding-slot capability is derived and stated
+- **WHEN** the per-class budget is computed
+- **THEN** the largest supportable N sounding slots is derived from it and stated as a capability
+- **AND** N is limited by available PSRAM rather than by an arbitrary constant, so the count is a policy
+  choice up to that bound
 
 ### Requirement: Role transfer never requires stopping playback
 Switching track or slot, starting record or overdub, and undo/redo SHALL all be performed while transport
@@ -79,6 +82,21 @@ deferred-finalization owner.
 - **THEN** the MIDI-boundary timing evidence reports no degradation and no overflow
 - **AND** the switch path performs no working-set allocation
 
+### Requirement: Active playback resolves windows without a resident whole-loop snapshot root
+Playback SHALL resolve its windows from a windowed/streamed representation rather than requiring a resident
+whole-loop published root. The published snapshot SHALL remain the immutable checkpoint authority for undo
+and save.
+
+#### Scenario: A sounding slot needs no resident whole-loop root
+- **WHEN** a slot sounds a long loop as one of N sounding slots
+- **THEN** its playback is served from windows
+- **AND** the budget accounts for a window working set, not a per-slot whole-loop root
+
+#### Scenario: Checkpoint authority is preserved
+- **WHEN** undo or save requires an immutable state
+- **THEN** a published root is available as the checkpoint authority
+- **AND** playback does not depend on that root being resident
+
 ### Requirement: Runtime roles are separate classes with declared cardinalities
 Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred
 finalization, interactive edit/undo/display -- each with a declared cardinality, rather than as one
@@ -101,12 +119,16 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **AND** the supported concurrency is one finalizing predecessor plus one live successor, not two
   simultaneously finalizing captures
 
-#### Scenario: A stop that cannot get the finalization lease is denied non-destructively
-- **WHEN** a stop is requested while the single finalization lease is held by a predecessor that has not
+#### Scenario: A stop queues behind a finalizing predecessor
+- **WHEN** a stop is requested while the single finalization admission is held by a predecessor that has not
   finished
-- **THEN** the stop is denied and the requesting slot remains recording or overdubbing
-- **AND** the denial is counted as `finalization_lease_stop_denied` and the next stop succeeds once the lease
-  is released
+- **THEN** the stop is queued and serviced in series when the predecessor releases
+- **AND** the requesting slot remains recording or overdubbing until its stop is serviced
+
+#### Scenario: A full finalization queue is the denial case
+- **WHEN** the finalization queue is full
+- **THEN** the stop is denied non-destructively with the slot still recording/overdubbing
+- **AND** the condition is counted and reported
 
 ### Requirement: Dirty canonical generations pin residency
 Once persistence is the backing authority, canonical content SHALL be evicted only after persistence has
