@@ -1061,8 +1061,47 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         gate must be widened before it can be re-ticked.
       - **RC-MEM-5 -- the fixed boot stores are sized for the pool ceiling.** The chunk pool reserves 2,566 KB at
         boot for 131,072 event slots with no cap on loop length, and the `SESSION_CAPTURE` ring reserves 1,024 KB
-        regardless of session shape. Fix (last, structural): a windowed/streamed chunk store with a
-        capture-admission cap on representable loop length, and a capture-ring policy sized per session.
+        regardless of session shape.
+        **Measured high-water (all captures on this device, `[Memory] ext` `chunks_free` minimum per run).** The
+        worst observed occupancy of the 512-chunk pool is **167 chunks = 837 KB** (`captures/bar-anchor-08`/`-09`,
+        `chunks_free=345`); the other worst cases are 164, 158, 152, 151 and 150 chunks. So **at least 345 of 512
+        chunks (1,729 KB of the 2,566 KB reservation) have never been reached in any captured run** -- the pool is
+        ~33 % used at its observed peak. This is the largest single fixed store and the one whose release would do
+        most for the *functional* symptom below, because PSRAM-first containers fall back to `std::malloc` when the
+        pool refuses (`include/Utils/ExternalMemoryFirstAllocator.h`), so pool headroom is what keeps the internal
+        heap free.
+        **Recommended form: grow on demand, do not lower the ceiling.** Keep `POOL_CHUNK_COUNT` 512 as the
+        admission ceiling but allocate the `EventChunk` array in blocks (e.g. 64 chunks = 328 KB per block) on the
+        first id that lands in each block, so a run that peaks at 167 chunks backs ~3 blocks instead of all 8. The
+        flat id space must stay intact -- chunk ids cross `PersistenceQueue::onChunkFreed`, the committed chunk-id
+        lists and the storage I/O format -- so this is a block table plus one `chunkAt(id)` accessor behind the 31
+        `pool_[...]` sites in `src/LoopEventStore.cpp`, with `poolUsed_`/`poolLifecycle_`/`poolChunkRefCount_`
+        staying flat (512 entries of DMAMEM). `allocChunk` opens a block when it first hands out an id inside it and
+        denies as it does today when that block cannot be allocated. A lower fixed ceiling is **not** the fix: the
+        167-chunk peak is an observation, not a bound, and `initPool`'s all-or-nothing reserve is what makes
+        capture admission deterministic today.
+      - **RC-MEM-6 -- the admission gate is self-blinding once the internal-heap floor binds (found in the RC-MEM-2
+        device A/B, and this is the user-reported "cannot activate overdub on a 24-bar loop" symptom).**
+        `admitOperationMemory` denies when `heapFree < kOperationHeapFloorBytes (32 KB) + requiredBytes`
+        (`src/Utils/MemoryMonitor.cpp:266`). At the A/B's steady state the heap sat at **44 KB free** for ~100 s, so
+        `OverdubStart` (required 16 KB, floor 32 KB -> 48 KB) and `SnapshotReserve` (required 40 KB -> 72 KB) were
+        both denied while `pool_refused=0/0B`: **because the gate denies before the request ever reaches the pool,
+        the pool-refusal signal the same gate consults can never fire**, so the "pool is fine" reading and the
+        heap-floor denial coexist indefinitely (129 `op=snapshot_reserve` + 4 `op=overdub_start` denials in one
+        150 s run, `pool_refused=0/0B` throughout, `since_refusal=UINT32_MAX`). The device is at a genuine ceiling
+        (pool `live` ~8.27 MB), so the denial is not *wrong* -- but the recovery path is, and the fix direction is
+        footprint rather than gate policy: the 32 KB floor is what stands between 44 KB free and a 16 KB request.
+        Recommended: (a) treat RC-MEM-5 and RC-MEM-1R as the unblock (pool headroom stops the `std::malloc`
+        fallback that put RAM2 at 44 KB in the first place), and (b) give the gate a *measured* floor rather than an
+        absolute one -- record the heap high-water the admitted operations actually consume and derive the floor
+        from it, so the reserve is evidence-based like `companionRowHorizonBound` rather than a constant that can
+        wedge a session. Do not simply lower the constant without that measurement: the floor exists to keep the
+        `abort()`-on-exhaustion path unreachable, which is the DEC-075 defect class.
+        **Verify.** A native fixture for the pool's lazy blocks (admission still reaches any id up to 512, a denied
+        block denies the chunk instead of aborting, `freeChunkCount()` and `usedChunkCount()` unchanged, and the
+        flat-id contract across `PersistenceQueue::onChunkFreed` unchanged); and on device the 24-bar shape must show
+        `chunks_free` never reaching its old floor, `pool_refused=0` with `op=overdub_start` **admitted**, and
+        `heap_free` above the floor for the whole run.
       - **RC-CHUNK-1 (latent correctness) -- a chunk reference is released without returning the chunk.**
         `LoopEventStore::stepRewriteFromOrderedSource` calls `releaseChunkReference(retired)` with no paired
         `tryFreeChunk` (`src/LoopEventStore.cpp:549-552`), unlike every other release site (`:210-222`, `:366`,
