@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "RuntimeCompanionApply.h"
@@ -40,6 +40,9 @@ class RuntimeCompanionBridgeMap {
   const uint16_t* baseRanks() const;   // UINT16_MAX for removed base rows.
   size_t size() const;
   size_t candidateCount() const { return ready(source_) ? candidateCount_ : 0; }
+  /// Native-test contract probe (no production caller): asserts the bounded
+  /// per-grain input ceiling. Span/Reconstruction/NotePairLookup keep production
+  /// readers for the same accessor; this owner has none.
   size_t lastStepInputCount() const { return lastStepInputs_; }
   void discard();
   uint64_t generation() const { return mapGeneration_; }
@@ -68,6 +71,16 @@ class RuntimeCompanionBridgeMap {
   PlaybackViewSourceIdentity source_;
   uint64_t generation_ = 0, mapGeneration_ = 0;
   Phase phase_ = Phase::Idle;
+  /// Admission predicate: may `begin*()` be called now? This worker treats a denied run as
+  /// restartable, so Denied is admitted as well - unlike the workers whose Denied is terminal.
+  bool available() const {
+    return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied;
+  }
+  /// True when `begin*()` captured this class's own expected source identity. BridgeMap binds the
+  /// base by pointer (`baseIdentity_`) and the source by value, so both must agree.
+  bool sourceIdentityMatches() const {
+    return baseIdentity_ != nullptr && *baseIdentity_ == source_;
+  }
   bool valid() const;
   bool append(PlaybackBridgeOperation op, uint32_t origin, const MidiEvent& event, uint16_t rank);
   RuntimePlaybackOrderBuildResult deny();

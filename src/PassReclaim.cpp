@@ -81,20 +81,7 @@ bool overUndoMemoryPressure(const GlobalUndoStack& stack) {
 size_t trimGlobalUndoStackForMemory(GlobalUndoStack& stack) {
   size_t trimmed = 0;
 
-  auto shouldTrim = [&]() {
-    if (stack.entries.empty()) {
-      return false;
-    }
-    if (stack.entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
-      return true;
-    }
-    if (stack.entries.size() <= Config::MIN_UNDO_DEPTH) {
-      return false;
-    }
-    return overUndoMemoryPressure(stack);
-  };
-
-  while (shouldTrim()) {
+  while (shouldTrimGlobalUndoStackForMemory(stack)) {
     if (stack.cursor > 0) {
       stack.entries.erase(stack.entries.begin());
       --stack.cursor;

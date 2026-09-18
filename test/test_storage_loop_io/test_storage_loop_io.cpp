@@ -976,38 +976,38 @@ ImmutableLoopSnapshotRef buildLsv1RoundTripSnapshotFixture() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange wrapNote{};
-  wrapNote.kind = SnapshotChangeKind::Add;
+  wrapNote.kind = SnapshotChangeType::Add;
   wrapNote.next = {3, 5, 60, 100, Config::TICKS_PER_BAR - 48, 96};
   changes.notes.push_back(wrapNote);
 
   SnapshotNoteChange samePitch{};
-  samePitch.kind = SnapshotChangeKind::Add;
+  samePitch.kind = SnapshotChangeType::Add;
   samePitch.next = {3, 6, 60, 90, 200, 320};
   changes.notes.push_back(samePitch);
 
   SnapshotNoteChange otherPitch{};
-  otherPitch.kind = SnapshotChangeKind::Add;
+  otherPitch.kind = SnapshotChangeType::Add;
   otherPitch.next = {3, 7, 64, 80, 400, 520};
   changes.notes.push_back(otherPitch);
 
   MidiEvent noteOn = MidiEvent::NoteOn(200, 2, 60, 90);
   noteOn.noteId = 6;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {3, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(320, 2, 60);
   noteOff.noteId = 6;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {3, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent unpairedOn = MidiEvent::NoteOn(700, 2, 64, 80);
   unpairedOn.noteId = 7;
   SnapshotEventChange unpairedOnChange{};
-  unpairedOnChange.kind = SnapshotChangeKind::Add;
+  unpairedOnChange.kind = SnapshotChangeType::Add;
   unpairedOnChange.next = {3, 3, 2, unpairedOn};
   changes.events.push_back(unpairedOnChange);
 
@@ -1034,21 +1034,21 @@ ImmutableLoopSnapshotRef buildLsv1SnapshotWithNoteCount(size_t noteCount) {
     const uint8_t pitch = static_cast<uint8_t>(60u + (index % 12u));
 
     SnapshotNoteChange noteChange{};
-    noteChange.kind = SnapshotChangeKind::Add;
+    noteChange.kind = SnapshotChangeType::Add;
     noteChange.next = {3, noteId, pitch, 90, startTick, endTick};
     changes.notes.push_back(noteChange);
 
     MidiEvent noteOn = MidiEvent::NoteOn(startTick, 1, pitch, 90);
     noteOn.noteId = noteId;
     SnapshotEventChange noteOnChange{};
-    noteOnChange.kind = SnapshotChangeKind::Add;
+    noteOnChange.kind = SnapshotChangeType::Add;
     noteOnChange.next = {3, noteOnEventId, 0, noteOn};
     changes.events.push_back(noteOnChange);
 
     MidiEvent noteOff = MidiEvent::NoteOff(endTick, 1, pitch);
     noteOff.noteId = noteId;
     SnapshotEventChange noteOffChange{};
-    noteOffChange.kind = SnapshotChangeKind::Add;
+    noteOffChange.kind = SnapshotChangeType::Add;
     noteOffChange.next = {3, noteOffEventId, 1, noteOff};
     changes.events.push_back(noteOffChange);
   }

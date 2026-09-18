@@ -596,9 +596,9 @@ struct LoopPlaybackRuntime {
   bool serviceFirstRecordingBar(const Loop& loop,
                                 const PlaybackViewSourceIdentity& sourceIdentity,
                                 uint32_t ticksPerBar, size_t entryQuantum = 32);
-  RuntimePlaybackViewBuildGrain nextCoverageBuildGrain() const;
-  RuntimePlaybackViewBuildGrain stepCoverageBuildFill(size_t entryQuantum);
-  RuntimePlaybackViewBuildGrain stepCoverageBuildOrder(size_t entryQuantum);
+  RuntimePlaybackViewBuild::Grain nextCoverageBuildGrain() const;
+  RuntimePlaybackViewBuild::Grain stepCoverageBuildFill(size_t entryQuantum);
+  RuntimePlaybackViewBuild::Grain stepCoverageBuildOrder(size_t entryQuantum);
   void discardCoverageBuild();
 
   bool beginFrozenCaptureOrder(uint32_t loopLengthTicks, uint32_t frozenGeneration);

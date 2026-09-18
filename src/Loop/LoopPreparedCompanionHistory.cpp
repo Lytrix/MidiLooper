@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "Utils/MemoryMonitor.h"
 #include "Loop.h"
@@ -57,7 +57,7 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacit
   }
   const size_t snapshotCount = pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->companionIds.size() : 0;
   if (snapshotCount > limit - companionCapacity) return false;
-  if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  ensurePendingSnapshotPublishBox();
   auto& work = preparedCompanionHistory_;
   work.rowLimit = passes.editPasses.size() + companionCapacity;
   ++work.preparationGeneration;
@@ -238,9 +238,10 @@ LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t o
       work.snapshotIds.push_back(destination.id);
       ++work.row;
     } else if (work.phase == Phase::Trim) {
-      if (work.rows.size() > work.targetCount) work.rows.pop_back(); // Empty, unused companion slot.
-      if (work.rows.size() == work.targetCount)
-        work.phase = work.captureInputs ? Phase::VerifyCapture : Phase::Ready;
+      // `begin` already sized `rows` to `targetCount` (see the resize comment above),
+      // so this phase trims nothing; it exists only to advance once every demanded
+      // row has been written by the fill phases, one unit per quantum.
+      work.phase = work.captureInputs ? Phase::VerifyCapture : Phase::Ready;
     } else if (work.phase == Phase::VerifyCapture) {
       MidiEvent event; bool atEnd = false;
       if (!LoopEventStore::readSealedChunkEvent(work.captureChunks[work.captureChunk],
@@ -434,7 +435,8 @@ LOOP_COLD_MEM bool Loop::beginCollectOverdubStopUndoPasses(SessionUndoCollection
     PassIdList& passIds, EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass,
     uint64_t owner, size_t sessionExitReceiptRing) {
   const auto* receipt = preparedCompanionHistoryIds(owner);
-  if (!receipt || receipt->size() > 2048 || preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
+  if (!receipt || receipt->size() > RuntimePlaybackViewConfig::kRecordsPerBridge ||
+      preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
       preparedCompanionHistory_.revision != playbackRevision || preparedCompanionHistory_.firstId != nextPassId_) {
     return false;
   }
@@ -457,7 +459,8 @@ LOOP_COLD_MEM bool Loop::beginCollectOverdubStopUndoPasses(SessionUndoCollection
 
 LOOP_COLD_MEM uint64_t Loop::requiredSessionStopUndoCollectionGrains(
     size_t rows, size_t companions, size_t finalCompanions, size_t quantum) {
-  if (!quantum || rows > 2048 || companions > 2048 || finalCompanions > 2048 - companions)
+  constexpr size_t kLimit = RuntimePlaybackViewConfig::kRecordsPerBridge;
+  if (!quantum || rows > kLimit || companions > kLimit || finalCompanions > kLimit - companions)
     return UINT64_MAX;
   return 1 + (uint64_t(rows) * 2 + companions + finalCompanions + 2) / quantum;
 }

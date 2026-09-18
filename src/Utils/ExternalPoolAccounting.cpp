@@ -140,7 +140,6 @@ FLASHMEM void recordPoolAllocation(void* pointer, size_t bytes) {
       gShadow[slot].tag = gCurrentTag;
       gCounters.liveBytes += clamped;
       gCounters.liveBlocks += 1;
-      gCounters.trackedBlocks += 1;
       const size_t freshClass = sizeClassFor(clamped);
       gCounters.liveBytesByClass[freshClass] += clamped;
       gCounters.liveBlocksByClass[freshClass] += 1;
@@ -232,12 +231,6 @@ FLASHMEM void recordPoolRefusal(size_t bytes) {
       static_cast<unsigned long>(MemoryMonitor::getInternalHeapFreeBytes() / 1024),
       static_cast<unsigned>(gCurrentTag),
       static_cast<unsigned long>(gCounters.tagBytes[gCurrentTag] / 1024), tagVector);
-}
-
-FLASHMEM void reset() {
-  gCounters = Counters{};
-  std::memset(gShadow, 0, sizeof(gShadow));
-  gShadowReady = true;
 }
 
 }  // namespace ExternalPoolAccounting

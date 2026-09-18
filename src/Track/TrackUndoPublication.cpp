@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "TrackUndoPublication.h"
 #include "Utils/TrackMem.h"
@@ -27,7 +27,6 @@ TRACK_COLD_MEM bool TrackUndoPublication::begin(GlobalUndoStack& stack, UndoEntr
   visibleRedo_ = stack.entries.size() - stack.cursor;
   nextId_ = stack.nextEntryId;
   committedId_ = 0;
-  units_ = 0;
   phase_ = Phase::DetachRedo;
   return true;
 }
@@ -41,7 +40,6 @@ TRACK_COLD_MEM bool TrackUndoPublication::sourceCurrent() const {
 TRACK_COLD_MEM bool TrackUndoPublication::stepPrepare(size_t maximumUnits) {
   if (!sourceCurrent() || (phase_ != Phase::DetachRedo && phase_ != Phase::Ready)) return false;
   for (size_t unit = 0; unit < maximumUnits && phase_ == Phase::DetachRedo; ++unit) {
-    ++units_;
     if (stack_->entries.size() == originalCursor_) {
       phase_ = Phase::Ready;
     } else {
@@ -81,7 +79,6 @@ TRACK_COLD_MEM bool TrackUndoPublication::beginRestore() {
 TRACK_COLD_MEM bool TrackUndoPublication::stepRestore(size_t maximumUnits) {
   if (phase_ != Phase::Restore || !sourceCurrent()) return false;
   for (size_t unit = 0; unit < maximumUnits && phase_ == Phase::Restore; ++unit) {
-    ++units_;
     if (retiredRedo_.empty()) {
       // Keep the private entry intact so its reserved ID buffers and roots can
       // be reused by recovery; no prepared capture resource is discarded.
@@ -108,7 +105,6 @@ TRACK_COLD_MEM bool TrackUndoPublication::recoverPreparedEntry(UndoEntry& destin
 TRACK_COLD_MEM bool TrackUndoPublication::stepReleaseRedo(size_t maximumUnits) {
   if ((phase_ != Phase::Published && phase_ != Phase::ReleaseRedo) || !sourceCurrent()) return false;
   for (size_t unit = 0; unit < maximumUnits; ++unit) {
-    ++units_;
     if (!release_.complete()) {
       release_.step(1);
     } else if (!retiredRedo_.empty()) {
@@ -131,9 +127,7 @@ TRACK_COLD_MEM bool TrackUndoPublication::beginTrimAfterReclaim() {
 
 TRACK_COLD_MEM bool TrackUndoPublication::stepTrim(size_t maximumUnits) {
   if (phase_ != Phase::Trim) return phase_ == Phase::Complete;
-  const size_t before = trim_.completedUnits();
   const bool done = trim_.step(maximumUnits);
-  units_ += trim_.completedUnits() - before;
   if (done) phase_ = Phase::Complete;
   return done;
 }

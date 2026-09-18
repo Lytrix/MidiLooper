@@ -111,23 +111,6 @@ void StorageManager::requestUrgentEditSave() {
     urgentEditSavePending = true;
 }
 
-void StorageManager::admitLoopPersist(LoopId loopId) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)loopId;
-    return;
-#else
-    if (loopId == kInvalidLoopId) {
-        return;
-    }
-    PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, persistKeyForLoop(loopId));
-#endif
-}
-
-void StorageManager::admitLoopUndoHistory(uint8_t trackIndex, uint8_t slotIndex) {
-    (void)trackIndex;
-    (void)slotIndex;
-}
-
 void StorageManager::admitSlotMeta(uint8_t trackIndex, uint8_t slotIndex) {
 #if BYPASS_STOP_UNDO_SAVE
     (void)trackIndex;

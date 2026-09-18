@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 
@@ -34,7 +34,9 @@ class RuntimeCaptureCompanions {
              const PendingNoteChangeVec& frozenChanges);
   RuntimePlaybackOrderBuildResult step(size_t inputQuantum);
   void discard();
-  bool idle() const { return capture_ == nullptr; }
+  /// True once a capture owner is attached. This is an ownership question, not a phase one: use
+  /// `available()`-style phase checks for admission and this for "whose capture am I holding".
+  bool hasCaptureOwner() const { return capture_ != nullptr; }
   bool sourceCurrent() const { return !denied_ && sourceMatches(); }
   bool ready(uint32_t generation) const;
   bool ready(const CaptureAdmissionStaging& capture) const;
@@ -42,6 +44,8 @@ class RuntimeCaptureCompanions {
   const EditPass* data(uint32_t generation) const;
   uint64_t preparationGeneration() const { return preparationGeneration_; }
   size_t size() const { return count_; }
+  /// Native-test contract probes (no production caller): assert the prewarmed
+  /// capacity and the stability of the committed row backing store.
   size_t capacity() const { return capacity_; }
   const EditPass& row(size_t index) const { return rows_[index]; }
 

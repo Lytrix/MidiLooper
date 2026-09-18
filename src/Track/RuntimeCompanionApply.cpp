@@ -1,6 +1,7 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionApply.h"
+#include "LoopEventStore.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/NoteEditMem.h"
 #include <cstdlib>
@@ -8,14 +9,13 @@
 NOTE_EDIT_MEM RuntimeCompanionApply::RuntimeCompanionApply() = default;
 NOTE_EDIT_MEM RuntimeCompanionApply::~RuntimeCompanionApply() {
   if (provenance_ == nullptr) return;
-  if (isInExternalMemoryPool(provenance_)) extmem_free(provenance_);
-  else std::free(provenance_);
+  externalFirstFree(provenance_);
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::prewarm(size_t capacity) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
   if (!candidate_.prewarm(capacity)) return false;
   if (provenance_ != nullptr) return candidate_.capacity == capacity;
-  provenance_ = static_cast<uint32_t*>(extmem_malloc(capacity * sizeof(uint32_t)));
+  provenance_ = static_cast<uint32_t*>(externalFirstAlloc(capacity * sizeof(uint32_t)));
   if (provenance_ == nullptr) provenance_ = static_cast<uint32_t*>(std::malloc(capacity * sizeof(uint32_t)));
   return provenance_ != nullptr;
 }
@@ -25,7 +25,7 @@ NOTE_EDIT_MEM size_t RuntimeCompanionApply::requiredGrainsUpperBound(size_t capa
                       RuntimePlaybackOrderBuilder::workEntriesUpperBound(capacity);
   // Includes per-child rounding and scalar transition/action turns. This is
   // a component bound, not an extension of the production stop reservation.
-  return 1 + (work - 1) / quantum + 32 * capacity + 64;
+  return 1 + (work - 1) / quantum + 32 * capacity + 64;  // work >= 1 here
 }
 
 NOTE_EDIT_MEM void RuntimeCompanionApply::resetWork() {
@@ -40,14 +40,11 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionApply::requiredHistoryGrainsUpperBound(
     size_t capacity, size_t rows, size_t quantum) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView ||
       rows > RuntimePlaybackViewConfig::kRecordsPerBridge || quantum == 0) return UINT64_MAX;
-  if (rows == 0) return 1 + (capacity - 1) / quantum;
-  const auto ceilGrains = [quantum](uint64_t visits) -> uint64_t {
-    return visits == 0 ? 0 : 1 + (visits - 1) / quantum;
-  };
+  if (rows == 0) return RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum);
   // Successful prior Create payloads are each <= C. Charge every history row
   // and payload event to the identity scan, and a separate collapse scan.
   return (uint64_t(rows) + 1) * (requiredGrainsUpperBound(capacity, quantum) +
-      ceilGrains(uint64_t(rows) * (capacity + 1)) + ceilGrains(rows) + 8);
+      RuntimePlaybackOrderBuilder::ceilGrains(uint64_t(rows) * (capacity + 1), quantum) + RuntimePlaybackOrderBuilder::ceilGrains(rows, quantum) + 8);
 }
 NOTE_EDIT_MEM void RuntimeCompanionApply::releaseWork() {
   resetWork();
@@ -66,7 +63,7 @@ NOTE_EDIT_MEM void RuntimeCompanionApply::discard() {
   phase_ = Phase::Idle;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::sourceMatches() const {
-  return source_ != nullptr && *source_ == expected_;
+  return sourceIdentityMatches();
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::ready(const PlaybackViewSourceIdentity& source) const {
   return phase_ == Phase::Complete && sourceMatches() && source == expected_;
@@ -92,13 +89,13 @@ NOTE_EDIT_MEM void RuntimeCompanionApply::complete() {
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::begin(
     const Work& work, const MidiEvent* events, size_t count, const PlaybackViewSourceIdentity& source,
-    Kind kind, NoteId target, uint32_t newEnd, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+    Type kind, NoteId target, uint32_t newEnd, uint32_t loopLength) {
+  if (!available() ||
       !candidate_.isPrewarmed() || provenance_ == nullptr || count > candidate_.capacity ||
       (events == nullptr && count != 0) || !work.pair.available() ||
       !work.deletion.available() || !work.spans.available() ||
       !work.reconstruction.available() || !work.overlaps.available() ||
-      (kind != Kind::Delete && kind != Kind::Length)) return false;
+      (kind != Type::Delete && kind != Type::Length)) return false;
   const uintptr_t inputStart = reinterpret_cast<uintptr_t>(events);
   const uintptr_t ownStart = reinterpret_cast<uintptr_t>(candidate_.events);
   if (count != 0 && inputStart < ownStart + candidate_.capacity * sizeof(MidiEvent) &&
@@ -115,7 +112,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionApply::beginBatch(
     const Work& work, const MidiEvent* events, size_t count, const PlaybackViewSourceIdentity& source,
     const EditPass* rows, size_t rowCount, uint32_t loopLength, bool canonicalSequence) {
   if ((rows == nullptr && rowCount != 0) || rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
-  if (!begin(work, events, count, source, Kind::Delete, kInvalidNoteId, 0, loopLength)) return false;
+  if (!begin(work, events, count, source, Type::Delete, kInvalidNoteId, 0, loopLength)) return false;
   batch_ = true; canonicalSequence_ = canonicalSequence; rows_ = rows; rowCount_ = rowCount; rowCursor_ = 0; loopHint_ = loopLength;
   return true;
 }
@@ -133,9 +130,9 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionApply::requiredContinuationGrainsUpperBou
   if (!capacity || capacity > RuntimePlaybackViewConfig::kEventsPerView || !quantum ||
       historyCount > RuntimePlaybackViewConfig::kRecordsPerBridge ||
       rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge) return UINT64_MAX;
-  if (rowCount == 0) return 1 + (capacity - 1) / quantum;
+  if (rowCount == 0) return RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum);
   const uint64_t visits = uint64_t(historyCount) * (capacity + 1) + rowCount;
-  const uint64_t scan = visits ? 1 + (visits - 1) / quantum : 0;
+  const uint64_t scan = RuntimePlaybackOrderBuilder::ceilGrains(visits, quantum);
   return (uint64_t(rowCount) + 1) * (requiredGrainsUpperBound(capacity, quantum) + scan + 3);
 }
 
@@ -159,18 +156,18 @@ NOTE_EDIT_MEM bool RuntimeCompanionApply::selectBatchRow() {
     cursor_ = 0; phase_ = Phase::CreateAppend;
     return true;
   }
-  if (row.actionType == EditActionType::Delete) kind_ = Kind::Delete;
+  if (row.actionType == EditActionType::Delete) kind_ = Type::Delete;
   else if (row.actionType == EditActionType::Update && row.propertyType == EditPropertyType::Length)
-    kind_ = Kind::Length;
+    kind_ = Type::Length;
   else if (history_ && row.actionType == EditActionType::Update) {
-    if (row.propertyType == EditPropertyType::Pitch) kind_ = Kind::Pitch;
-    else if (row.propertyType == EditPropertyType::Velocity) kind_ = Kind::Velocity;
-    else if (row.propertyType == EditPropertyType::NoteRange) kind_ = Kind::NoteRange;
+    if (row.propertyType == EditPropertyType::Pitch) kind_ = Type::Pitch;
+    else if (row.propertyType == EditPropertyType::Velocity) kind_ = Type::Velocity;
+    else if (row.propertyType == EditPropertyType::NoteRange) kind_ = Type::NoteRange;
     else { complete(); return true; } // Canonical Update default is a no-op, but remains a collapse barrier.
   } else return false;
   target_ = row.targetNoteId; newEnd_ = row.endTick; loopLength_ = loopHint_;
   newStart_ = row.startTick;
-  newValue_ = kind_ == Kind::Pitch ? row.pitch : row.velocity;
+  newValue_ = kind_ == Type::Pitch ? row.pitch : row.velocity;
   if (canonicalSequence_) {
     if (target_ == kInvalidNoteId) complete();
     else {
@@ -184,7 +181,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionApply::selectBatchRow() {
 
 NOTE_EDIT_MEM bool RuntimeCompanionApply::startBatchRow() {
   if (loopLength_ == 0) { maxTick_ = 0; cursor_ = 0; phase_ = Phase::InferLength; }
-  else if (kind_ == Kind::Delete || kind_ == Kind::Pitch || kind_ == Kind::NoteRange) { if (!startDelete(target_)) return false; }
+  else if (kind_ == Type::Delete || kind_ == Type::Pitch || kind_ == Type::NoteRange) { if (!startDelete(target_)) return false; }
   else startFind(Find::Initial, target_);
   return true;
 }
@@ -223,11 +220,15 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (event.tick > maxTick_) maxTick_ = event.tick;
     }
     if (cursor_ == inputCount_) {
-      if (loopLength_ == 0) { loopLength_ = maxTick_ + 1u; if (loopLength_ < 768u) loopLength_ = 768u; }
+      // No caller-supplied length: derive from the last tick and clamp to one bar minimum.
+      if (loopLength_ == 0) {
+        loopLength_ = maxTick_ + 1u;
+        if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
+      }
       if (batch_) {
         if (rowCount_ == 0) complete();
         else phase_ = Phase::NextRow;
-      } else if (kind_ == Kind::Delete) { if (!startDelete(target_)) return deny(); }
+      } else if (kind_ == Type::Delete) { if (!startDelete(target_)) return deny(); }
       else startFind(Find::Initial, target_);
     }
   } else if (phase_ == Phase::NextRow) {
@@ -298,8 +299,10 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (tick > maxTick_) maxTick_ = tick;
     }
     if (cursor_ == candidate_.eventCount) {
-      loopLength_ = maxTick_ + 1u; if (loopLength_ < 768u) loopLength_ = 768u;
-      if (kind_ == Kind::Delete || kind_ == Kind::Pitch || kind_ == Kind::NoteRange) { if (!startDelete(target_)) return deny(); }
+      // Derive the length from the last tick, clamped to one bar minimum.
+      loopLength_ = maxTick_ + 1u;
+      if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
+      if (kind_ == Type::Delete || kind_ == Type::Pitch || kind_ == Type::NoteRange) { if (!startDelete(target_)) return deny(); }
       else startFind(Find::Initial, target_);
     }
   } else if (phase_ == Phase::Find) {
@@ -311,7 +314,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       }
     }
     if (on_ >= 0) {
-      if (kind_ == Kind::Velocity) {
+      if (kind_ == Type::Velocity) {
         candidate_.events[on_].data.noteData.velocity = newValue_;
         complete();
       } else {
@@ -373,7 +376,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
     if (result == RuntimeCompanionOverlapResult::Complete) { cursor_ = write_ = 0; phase_ = Phase::Compact; }
     else if (result == RuntimeCompanionOverlapResult::ActionReady) {
       const auto& action = overlaps_->action();
-      if (action.kind == RuntimeCompanionOverlapWalk::ActionKind::Delete) {
+      if (action.kind == RuntimeCompanionOverlapWalk::ActionType::Delete) {
         if (!startDelete(action.noteId)) return deny();
       } else { writeEnd_ = action.endTick; startFind(Find::Action, action.noteId); }
     }
@@ -383,12 +386,12 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
       deleteRows_[0] = deletion_->onIndex(); deleteRows_[1] = deletion_->offIndex(); deleteRows_[2] = deletion_->wrapOffIndex();
       deleteCursor_ = 0;
-      phase_ = kind_ == Kind::Pitch || kind_ == Kind::NoteRange ? Phase::HistoryWrite : Phase::DeleteRows;
+      phase_ = kind_ == Type::Pitch || kind_ == Type::NoteRange ? Phase::HistoryWrite : Phase::DeleteRows;
     }
   } else if (phase_ == Phase::HistoryWrite) {
     const int onIndex = deleteRows_[0], lifoOff = deleteRows_[1], wrapOff = deleteRows_[2];
     if (onIndex < 0) complete();
-    else if (kind_ == Kind::Pitch) {
+    else if (kind_ == Type::Pitch) {
       while (quantum-- != 0 && deleteCursor_ < 3) {
         const int index = deleteRows_[deleteCursor_++];
         if (index >= 0) candidate_.events[index].data.noteData.note = newValue_;
@@ -416,7 +419,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (index >= 0) candidate_.retained[index] = 0;
     }
     if (deleteCursor_ == 3) {
-      if (kind_ == Kind::Delete) { cursor_ = write_ = 0; phase_ = Phase::Compact; }
+      if (kind_ == Type::Delete) { cursor_ = write_ = 0; phase_ = Phase::Compact; }
       else resumeOverlaps();
     }
   } else if (phase_ == Phase::Compact) {
@@ -429,7 +432,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
     }
     if (cursor_ == candidate_.eventCount) {
       candidate_.eventCount = write_;
-      if (kind_ == Kind::Delete || kind_ == Kind::NoteRange) complete();
+      if (kind_ == Type::Delete || kind_ == Type::NoteRange) complete();
       else startFind(Find::Final, target_);
     }
   } else if (phase_ == Phase::Order) {

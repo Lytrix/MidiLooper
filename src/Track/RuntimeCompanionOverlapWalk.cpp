@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionOverlapWalk.h"
 #include "Utils/NoteEditMem.h"
@@ -6,7 +6,7 @@
 NOTE_EDIT_MEM bool RuntimeCompanionOverlapWalk::begin(
     const NoteUtils::DisplayNote* notes, size_t count, NoteId target, uint8_t pitch,
     uint32_t start, uint32_t newEnd, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) ||
+  if (!available() ||
       (notes == nullptr && count != 0) || target == kInvalidNoteId || loopLength == 0 ||
       count > 2 * RuntimePlaybackViewConfig::kEventsPerView) return false;
   discard();
@@ -39,7 +39,7 @@ NOTE_EDIT_MEM RuntimeCompanionOverlapResult RuntimeCompanionOverlapWalk::step(si
     const auto& note = notes_[index];
     if (note.noteId == target_ || note.note != pitch_ ||
         !NoteUtils::notesOverlap(start_, end_, note.startTick, note.endTick, loopLength_)) continue;
-    ActionKind kind = ActionKind::Delete;
+    ActionType kind = ActionType::Delete;
     const bool contained = end_ >= start_
         ? note.startTick >= start_ && note.endTick <= end_
         : note.startTick >= start_ || note.endTick <= end_;
@@ -48,12 +48,12 @@ NOTE_EDIT_MEM RuntimeCompanionOverlapResult RuntimeCompanionOverlapWalk::step(si
     } else if (note.startTick >= start_ && note.endTick > end_) {
       continue;
     } else if (note.startTick == end_ && note.endTick > end_) {
-      kind = ActionKind::Delete;
+      kind = ActionType::Delete;
     } else if (note.startTick < start_) {
-      kind = ActionKind::Shorten;
+      kind = ActionType::Shorten;
     }
-    if ((phase_ == Phase::Shorten) != (kind == ActionKind::Shorten)) continue;
-    action_ = {kind, note.noteId, kind == ActionKind::Shorten
+    if ((phase_ == Phase::Shorten) != (kind == ActionType::Shorten)) continue;
+    action_ = {kind, note.noteId, kind == ActionType::Shorten
                                   ? (start_ == 0 ? loopLength_ - 1 : start_ - 1) : 0, index};
     actionReady_ = true;
     return RuntimeCompanionOverlapResult::ActionReady;

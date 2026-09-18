@@ -68,7 +68,6 @@ void logContentResolutionDeviceGateIncomplete(const char* reason) {
   }
 }
 
-#include "Utils/InvestigationCaptureLog.h"
 TRACK_COLD_MEM bool displayNoteIdentityMatch(const NoteUtils::DisplayNote& a,
                                              const NoteUtils::DisplayNote& b) {
   return a.noteId == b.noteId && a.note == b.note && a.startTick == b.startTick &&

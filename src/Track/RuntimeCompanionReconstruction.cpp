@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionReconstruction.h"
 #include "Utils/InternalHeapFirstAllocator.h"
@@ -9,14 +9,12 @@
 NOTE_EDIT_MEM RuntimeCompanionReconstruction::RuntimeCompanionReconstruction() = default;
 NOTE_EDIT_MEM RuntimeCompanionReconstruction::~RuntimeCompanionReconstruction() {
   if (notes_ == nullptr) return;
-  if (isInExternalMemoryPool(notes_)) extmem_free(notes_);
-  else std::free(notes_);
+  externalFirstFree(notes_);
 }
 NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::prewarm(size_t capacity) {
   if (notes_ != nullptr) return capacity == capacity_;
   if (capacity == 0 || capacity > 2 * RuntimePlaybackViewConfig::kEventsPerView) return false;
-  void* memory = extmem_malloc(capacity * sizeof(NoteUtils::DisplayNote));
-  if (memory == nullptr) memory = std::malloc(capacity * sizeof(NoteUtils::DisplayNote));
+  void* memory = externalFirstAlloc(capacity * sizeof(NoteUtils::DisplayNote));
   if (memory == nullptr) return false;
   notes_ = static_cast<NoteUtils::DisplayNote*>(memory);
   for (size_t i = 0; i < capacity; ++i) new (notes_ + i) NoteUtils::DisplayNote{};
@@ -37,7 +35,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::begin(
     RuntimeCompanionSpanWalk& spans, RuntimeNotePairLookup& wrap,
     const MidiEvent* events, size_t count, uint8_t pitch, uint32_t loopLength,
     const PlaybackViewSourceIdentity& source, const uint8_t* retained) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       notes_ == nullptr) return false;
   // Do not discard a different in-flight borrowed span walk on admission failure.
   if (!spans.begin(wrap, events, count, pitch, loopLength, retained)) return false;
@@ -51,7 +49,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::begin(
   return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::sourceMatches() const {
-  return source_ != nullptr && *source_ == expected_;
+  return sourceIdentityMatches();
 }
 NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::ready(const PlaybackViewSourceIdentity& source) const {
   return phase_ == Phase::Complete && sourceMatches() && source == expected_;

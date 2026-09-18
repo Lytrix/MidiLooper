@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "RuntimePlaybackOrderBuilder.h"
@@ -61,6 +61,11 @@ class RuntimeNotePairLookup {
   Phase phase_ = Phase::Idle;
 };
 
+// This header declares two owners: `RuntimeNotePairLookup` above and `RuntimeNoteDeleteLookup`
+// below. They live in one header/TU because they share the pair-lookup contract and are always
+// used together; the file name reflects the primary owner only. Splitting them into their own TU
+// was considered and declined: a new TU defaults into ITCM unless it matches the linker flash
+// allow-list, so the move would need its own RAM1 measurement for no ownership gain.
 /// Copy-on-write Delete preparation: original source indexes only. No erase,
 /// canonical publication, or bridge publication occurs here. The shared pair
 /// lookup is exclusively borrowed until completion/discard.

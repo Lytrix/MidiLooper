@@ -1,5 +1,25 @@
 # Project state (execution context)
 
+**2026-09-18 `runtime-code-tidyup` P1–P6 is complete on `refactor/runtime-code-tidyup`** ([PR #42](https://github.com/Lytrix/MidiLooper/pull/42)
+open against `feature/resumable-midi-boundary-playback-maintenance`; both branches published to `origin`). A
+behavior-preserving review of the 56 runtime files that branch added: dead code the branch superseded, one
+resumable-worker pattern re-expressed thirteen times, two vocabularies for one concept, and no enforced
+formatting. Six phases landed, P1 dead code → P2 constants/enums → P3 de-duplication into existing owners → P4
+naming convergence → P5 three file splits → P6 formatting/docs. Final gates: native **2,262 / 1 skipped /
+2,261 passed**; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96096 / code 391736 / padding 1480 /
+free for local variables 34976`; `_itcm_block_count` **12 before and after** P5's three splits (ELF `_etext`
+`0x5fa38` both times, so no split crossed an ITCM/DTCM FlexRAM bank); `openspec validate
+runtime-code-tidyup --strict` valid. P5 split `RuntimePlaybackView.cpp` (853→707),
+`RuntimePlaybackBridge.cpp` (803→639) and `LoopSnapshotPublish.cpp` (2,319→2,087); P6 relocated the base
+change's `tasks.md` journal (1,126 lines → a 65-line checklist, detail now in
+[`CURRENT_WORK.md`](CURRENT_WORK.md#resumable-midi-boundary-playback-maintenance--relocated-task-journal)) and
+added `.editorconfig` after rejecting a derived `.clang-format` (it rewrote 2,274 lines across 45 files). The
+two recorded decisions are `DEC-076` (snapshot idle/unit probes stay on the broad `SESSION_CAPTURE` gate) and
+`DEC-077` (`window` is canonical; the `RuntimePlaybackView*` family is grandfathered). **No HITL gate applies**
+— no phase changes observable device behavior. Gates, per-phase evidence and the rejected-split record:
+[`tasks.md`](../../openspec/changes/runtime-code-tidyup/tasks.md), [`PREFLIGHT.md`](../../openspec/changes/runtime-code-tidyup/PREFLIGHT.md),
+[`design.md`](../../openspec/changes/runtime-code-tidyup/design.md) § D8.4.
+
 **2026-09-18 `DIAG,droid_queue` is off in the default capture env, and that also removed the 4 KB RAM1 snap.**
 `SESSION_CAPTURE_DROID_QUEUE=0` now sits in `[env:teensy41-capture-serial]`, with
 `teensy41-capture-serial-investigation-diag` setting `=1` as the explicit debug gate and
@@ -1864,6 +1884,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
+| **`runtime-code-tidyup`** | **P1–P6 COMPLETE on `refactor/runtime-code-tidyup`** (2026-09-18) — behavior-preserving tidy-up of the base change's 56 runtime files; native 2,262 / firmware RAM1 byte-identical / `_itcm_block_count` 12 / `validate --strict` valid; `DEC-076` + `DEC-077`; no HITL gate. [PR #42](https://github.com/Lytrix/MidiLooper/pull/42) open against `feature/resumable-midi-boundary-playback-maintenance` |
 | **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.7** SHIPPED; **6.1**–**6.4** SHIPPED (**6.4** device [`164947`](../captures/session_20260912_164947.log) 2026-09-12); next open: **4b.3**, **6.5**; §**6.6** post-closeout polish non-blocking; [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write); boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |

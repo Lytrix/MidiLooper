@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "RuntimeCompanionSpanWalk.h"
@@ -13,6 +13,9 @@ class RuntimeCompanionReconstruction {
   RuntimeCompanionReconstruction(const RuntimeCompanionReconstruction&) = delete;
   RuntimeCompanionReconstruction& operator=(const RuntimeCompanionReconstruction&) = delete;
   bool available() const { return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied; }
+  /// True when `begin*()` captured this class's own expected source identity; a bare pointer
+  /// comparison inside a compound guard hid that meaning.
+  bool sourceIdentityMatches() const { return source_ != nullptr && *source_ == expected_; }
   bool prewarm(size_t noteCapacity);
   bool begin(RuntimeCompanionSpanWalk& spans, RuntimeNotePairLookup& wrap,
              const MidiEvent* events, size_t count, uint8_t pitch, uint32_t loopLength,

@@ -294,45 +294,6 @@ IC_LOG_MEM void appendSnapshotIdleYieldLine(uint32_t remainingUs, uint32_t margi
 #endif
 
 #if SESSION_CAPTURE_INVESTIGATION_DIAG
-IC_LOG_MEM void logVisualCacheWindow(unsigned long nowUs, uint32_t windowUs,
-                                     uint32_t reconstructUs, unsigned flatEventCount,
-                                     unsigned sliceNoteCount) {
-  char line[kCaptureLineBytes];
-  snprintf(line, sizeof(line),
-           IC_LOG_FMT("#CAP,%lu,DIAG,lcr,vch,win=%lu,proj=%lu,tot=%lu,ev=%u,notes=%u"), nowUs,
-           static_cast<unsigned long>(windowUs), static_cast<unsigned long>(reconstructUs),
-           static_cast<unsigned long>(windowUs + reconstructUs), flatEventCount, sliceNoteCount);
-  queueCaptureLine(line);
-}
-
-IC_LOG_MEM void logVisualCacheGatherProgress(unsigned long nowUs, unsigned eventsAppended,
-                                             unsigned totalEvents, unsigned traversalComplete,
-                                             unsigned resumed) {
-  char line[kCaptureLineBytes];
-  snprintf(line, sizeof(line),
-           IC_LOG_FMT("#CAP,%lu,DIAG,lcr,vch,gather_progress,ev=%u,total=%u,done=%u,resume=%u"),
-           nowUs, eventsAppended, totalEvents, traversalComplete, resumed);
-  queueCaptureLine(line);
-}
-
-IC_LOG_MEM void logVisualCacheGatherSort(unsigned long nowUs, uint32_t sortUs,
-                                         unsigned eventCount) {
-  char line[kCaptureLineBytes];
-  snprintf(line, sizeof(line),
-           IC_LOG_FMT("#CAP,%lu,DIAG,lcr,vch,gather_sort,us=%lu,ev=%u"), nowUs,
-           static_cast<unsigned long>(sortUs), eventCount);
-  queueCaptureLine(line);
-}
-
-IC_LOG_MEM void logVisualCacheGatherEdit(unsigned long nowUs, uint32_t editUs, unsigned rowCount,
-                                         unsigned eventCount) {
-  char line[kCaptureLineBytes];
-  snprintf(line, sizeof(line),
-           IC_LOG_FMT("#CAP,%lu,DIAG,lcr,vch,gather_edit,us=%lu,rows=%u,ev=%u"), nowUs,
-           static_cast<unsigned long>(editUs), rowCount, eventCount);
-  queueCaptureLine(line);
-}
-
 IC_LOG_MEM void maybeLogCommittedEventRangeDiag(const CommittedEventRangeDiagTiming& timing,
                                                 const LoopPasses& passes,
                                                 uint32_t reportThresholdUs) {

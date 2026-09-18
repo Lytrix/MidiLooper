@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "LoopEventStore.h"
@@ -74,19 +74,29 @@ class RuntimeCanonicalPassInputs {
   const CurrentSource* currentSourceOwner() const { return current_ ? &*current_ : nullptr; }
   // Scratch has no semantic input while ready. The existing per-pass merge
   // fills it in the same Q-sized turns, retaining order within each pass.
-  MidiEvent* normalizedScratch() const { return raw_; }
-  RuntimeCompanionPasses::Pass* normalizedDescriptors() const { return nextOutputs_; }
-  void claimNormalizedScratch(const RuntimeCompanionPasses& owner, uint64_t generation) const {
+  MidiEvent* mergedScratch() const { return raw_; }
+  RuntimeCompanionPasses::Pass* mergedDescriptors() const { return nextOutputs_; }
+  void claimMergedScratch(const RuntimeCompanionPasses& owner, uint64_t generation) const {
     normalizedOwner_ = &owner; normalizedGeneration_ = generation;
   }
-  bool normalizedScratchMatches(const RuntimeCompanionPasses& owner, uint64_t generation) const {
+  bool mergedScratchMatches(const RuntimeCompanionPasses& owner, uint64_t generation) const {
     return normalizedOwner_ == &owner && normalizedGeneration_ == generation;
   }
-  bool adoptCommittedNormalization(const LoopPasses& passes,
+  bool adoptCommittedMerge(const LoopPasses& passes,
       const PlaybackViewSourceIdentity& source, const CurrentSource& live,
       const RuntimeCompanionPasses& resolved);
   bool idle() const { return phase_ == Phase::Idle; }
+  /// Admission predicate: may `begin*()` be called now? This worker treats a denied run as
+  /// restartable, so Denied is admitted as well - unlike the workers whose Denied is terminal.
+  bool available() const {
+    return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied;
+  }
+  /// True when `begin*()` captured this class's own expected source identity; a bare pointer
+  /// comparison inside a compound guard hid that meaning.
+  bool sourceIdentityMatches() const { return source_ != nullptr && *source_ == expected_; }
   bool captureAttached() const { return includeCapture_; }
+  /// Native-test contract probe (no production caller): asserts the ownership
+  /// transition from a borrowed capture order to owned canonical descriptors.
   bool borrowsCaptureOrder() const { return preparedCaptureOrder_.has_value(); }
   bool beginFrozen(RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
                    const LoopPasses& passes, const PlaybackViewSourceIdentity& source,

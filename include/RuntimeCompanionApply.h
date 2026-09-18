@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "RuntimeCompanionReconstruction.h"
@@ -11,7 +11,7 @@
 /// Completed output cannot alias the source of another begin on this instance.
 class RuntimeCompanionApply {
  public:
-  enum class Kind : uint8_t { Delete, Length, Pitch, Velocity, NoteRange };
+  enum class Type : uint8_t { Delete, Length, Pitch, Velocity, NoteRange };
   struct Work {
     RuntimeNotePairLookup& pair;
     RuntimeNoteDeleteLookup& deletion;
@@ -25,6 +25,9 @@ class RuntimeCompanionApply {
   RuntimeCompanionApply& operator=(const RuntimeCompanionApply&) = delete;
   bool prewarm(size_t eventCapacity);
   bool available() const { return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied; }
+  /// True when `begin*()` captured this class's own expected source identity; a bare pointer
+  /// comparison inside a compound guard hid that meaning.
+  bool sourceIdentityMatches() const { return source_ != nullptr && *source_ == expected_; }
   static size_t requiredGrainsUpperBound(size_t eventCapacity, size_t quantum);
   static uint64_t requiredHistoryGrainsUpperBound(size_t eventCapacity, size_t rowCount, size_t quantum);
   struct HistoryPrefix {
@@ -40,7 +43,7 @@ class RuntimeCompanionApply {
                   const PlaybackViewSourceIdentity& source, const EditPass* rows,
                   size_t rowCount, uint32_t loopLength, HistoryPrefix history);
   bool begin(const Work& work, const MidiEvent* events, size_t count,
-             const PlaybackViewSourceIdentity& source, Kind kind, NoteId target,
+             const PlaybackViewSourceIdentity& source, Type kind, NoteId target,
              uint32_t newEnd, uint32_t loopLength);
   /// canonicalSequence preserves the existing sequence guard: after Delete,
   /// later rows for that identity are skipped. Add ceil(R/Q)+2 to the per-row
@@ -102,7 +105,7 @@ class RuntimeCompanionApply {
   const EditPass* rowAt(size_t index) const { return selectedRows_ ? selectedRows_[index] : rows_ + index; }
   size_t rowCount_ = 0, rowCursor_ = 0;
   uint32_t loopHint_ = 0;
-  Kind kind_ = Kind::Length;
+  Type kind_ = Type::Length;
   NoteId target_ = kInvalidNoteId, findId_ = kInvalidNoteId;
   uint32_t newEnd_ = 0, writeEnd_ = 0, loopLength_ = 0, maxTick_ = 0, start_ = 0;
   uint8_t pitch_ = 0, deleteCursor_ = 0;

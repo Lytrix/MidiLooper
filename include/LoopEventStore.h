@@ -26,6 +26,11 @@ constexpr uint16_t POOL_CHUNKS_PER_BLOCK = 64;
 constexpr uint16_t POOL_BLOCK_COUNT =
     (POOL_CHUNK_COUNT + POOL_CHUNKS_PER_BLOCK - 1) / POOL_CHUNKS_PER_BLOCK;
 constexpr uint32_t BAR_TICKS = 768;
+/// Bars covered by a loop length, rounding up: a trailing partial bar counts as a bar. Zero length
+/// is zero bars. Owns the ceiling-division that was previously written out at each call site.
+constexpr uint32_t barCount(uint32_t loopLengthTicks) {
+  return (loopLengthTicks + BAR_TICKS - 1u) / BAR_TICKS;
+}
 constexpr uint32_t INTERNAL_HEAP_SAFETY_FLOOR_BYTES = 12 * 1024;
 }  // namespace LoopEventStoreConfig
 

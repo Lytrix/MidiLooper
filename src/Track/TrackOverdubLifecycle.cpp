@@ -722,7 +722,7 @@ TRACK_COLD_MEM void Track::requestDeferredOverdubStopToStopped() {
   // It cannot simply continue either. The slot's *retained* canonical tail cache -- kept across
   // punch-out by the predecessor's cleanup -- leaves `canonicalTailPhase` complete and owns the
   // companion workers, so this job cannot begin its own preparation (probe `successor-wrap-43`:
-  // `probe_before`/`probe_after` show `frozenCaptureCompanions.idle()`,
+  // `probe_before`/`probe_after` show `frozenCaptureCompanions.hasCaptureOwner() == false`,
   // `frozenCompanionPasses.idle()` and `canonicalTailPhase == Idle` all clear, while the command
   // epoch retarget itself works). Release that cache -- it is recomputable, so this costs work and
   // no content -- rebind the canonical command epoch, and let the job walk

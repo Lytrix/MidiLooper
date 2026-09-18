@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "GlobalUndoStack.h"
@@ -43,7 +43,6 @@ class TrackUndoPublication {
   UndoEntryId committedId() const { return committedId_; }
   size_t visibleUndoCount() const { return visibleUndo_; }
   size_t visibleRedoCount() const { return visibleRedo_; }
-  size_t completedUnits() const { return units_; }
   size_t trimmedCount() const { return trim_.trimmedCount(); }
  private:
   bool sourceCurrent() const;
@@ -57,7 +56,6 @@ class TrackUndoPublication {
   size_t expectedSize_ = 0;
   size_t originalCursor_ = 0;
   size_t visibleUndo_ = 0, visibleRedo_ = 0;
-  size_t units_ = 0;
   UndoEntryId nextId_ = 0, committedId_ = 0;
   Phase phase_ = Phase::Idle;
 };

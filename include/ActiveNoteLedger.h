@@ -245,3 +245,12 @@ class ActiveNoteLedger {
 #endif
   }
 };
+
+/// Identity + geometry equality for one ledger slot. Shared by the playback bridge and the
+/// window builders so a boundary comparison cannot drift between them (the same five fields
+/// decide whether a boundary still describes the same open notes).
+inline bool activeNoteEntriesMatch(const ActiveNoteLedger::Entry& a,
+                                   const ActiveNoteLedger::Entry& b) {
+  return a.channel == b.channel && a.note == b.note && a.noteId == b.noteId &&
+         a.startTick == b.startTick && a.velocity == b.velocity;
+}

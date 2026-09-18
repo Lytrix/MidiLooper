@@ -1,4 +1,4 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
@@ -9,18 +9,18 @@
 #include "RuntimePlaybackView.h"
 #include "RuntimeCompanionPasses.h"
 
-enum class RuntimePlaybackViewFillScope : uint8_t { AllSource, PlaybackCoverage, RawCoverage };
+enum class RuntimePlaybackViewFillCoverage : uint8_t { AllSource, PlaybackCoverage, RawCoverage };
 
 enum class RuntimePlaybackViewFillResult : uint8_t { Pending, Complete, Denied };
 
 struct RuntimePlaybackViewSource {
-  using SizeFn = size_t (*)(const void*);
-  using EventAtFn = const MidiEvent& (*)(const void*, size_t);
-  using GenerationFn = uint64_t (*)(const void*);
+  using SizeReader = size_t (*)(const void*);
+  using EventReader = const MidiEvent& (*)(const void*, size_t);
+  using GenerationReader = uint64_t (*)(const void*);
   const void* context = nullptr;
-  SizeFn size = nullptr;
-  EventAtFn eventAt = nullptr;
-  GenerationFn generation = nullptr;
+  SizeReader size = nullptr;
+  EventReader eventAt = nullptr;
+  GenerationReader generation = nullptr;
   size_t count = 0;
   uint64_t generationToken = 0;
 };
@@ -37,12 +37,12 @@ class RuntimePlaybackViewFill {
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
   bool begin(RuntimePlaybackView& destination, const RuntimePlaybackViewSource& source,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
   /// Construct events and provenance together from already-effective immutable
   /// pass inputs merged without new edits. Source descriptors remain stable until
   /// copy completes; the resulting view owns the origin table independently.
@@ -52,10 +52,9 @@ class RuntimePlaybackViewFill {
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
   RuntimePlaybackViewFillResult step(size_t entryQuantum);
   void discard();
-  bool active() const { return destination_ != nullptr && cursor_ < sourceCount_; }
 
  private:
   RuntimePlaybackView* destination_ = nullptr;
@@ -63,13 +62,13 @@ class RuntimePlaybackViewFill {
   uint64_t baselineGeneration_ = 0;
   PlaybackViewSourceIdentity expected_;
   const MidiEvent* source_ = nullptr;
-  RuntimePlaybackViewSource::SizeFn sourceSize_ = nullptr;
-  RuntimePlaybackViewSource::EventAtFn sourceEventAt_ = nullptr;
-  RuntimePlaybackViewSource::GenerationFn sourceGeneration_ = nullptr;
+  RuntimePlaybackViewSource::SizeReader sourceSize_ = nullptr;
+  RuntimePlaybackViewSource::EventReader sourceEventAt_ = nullptr;
+  RuntimePlaybackViewSource::GenerationReader sourceGeneration_ = nullptr;
   const void* sourceContext_ = nullptr;
   uint64_t sourceGenerationToken_ = 0;
   size_t sourceCount_ = 0;
   size_t cursor_ = 0;
   size_t copied_ = 0;
-  RuntimePlaybackViewFillScope scope_ = RuntimePlaybackViewFillScope::AllSource;
+  RuntimePlaybackViewFillCoverage scope_ = RuntimePlaybackViewFillCoverage::AllSource;
 };

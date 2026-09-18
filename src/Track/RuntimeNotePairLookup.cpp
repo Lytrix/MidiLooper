@@ -1,31 +1,28 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeNotePairLookup.h"
+#include "Utils/NoteEditMem.h"
+#include "LoopEventStore.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include <cstdlib>
 #include "Utils/NoteUtils.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define NOTE_PAIR_MEM FLASHMEM
-#else
-#define NOTE_PAIR_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define NOTE_PAIR_MEM NOTE_EDIT_MEM
 
 NOTE_PAIR_MEM RuntimeNotePairLookup::RuntimeNotePairLookup() = default;
 
 NOTE_PAIR_MEM RuntimeNotePairLookup::~RuntimeNotePairLookup() {
   if (lane_ == nullptr) return;
-  if (isInExternalMemoryPool(lane_)) extmem_free(lane_);
-  else std::free(lane_);
+  externalFirstFree(lane_);
 }
 
 NOTE_PAIR_MEM bool RuntimeNotePairLookup::prewarm(size_t capacity) {
   if (lane_ != nullptr) return capacity_ == capacity;
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
   const size_t bytes = capacity * (2 * sizeof(uint16_t) + sizeof(uint8_t));
-  void* memory = extmem_malloc(bytes);
-  if (memory == nullptr) memory = std::malloc(bytes);
+  void* memory = externalFirstAlloc(bytes);
   if (memory == nullptr) return false;
   lane_ = static_cast<uint16_t*>(memory);
   stack_ = lane_ + capacity;
@@ -49,7 +46,7 @@ NOTE_PAIR_MEM void RuntimeNotePairLookup::discard() {
 
 NOTE_PAIR_MEM bool RuntimeNotePairLookup::begin(const MidiEvent* events, size_t count,
                                                size_t targetOn, const uint8_t* retained) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) || lane_ == nullptr || events == nullptr ||
+  if (!available() || lane_ == nullptr || events == nullptr ||
       count > capacity_ || targetOn >= count || !events[targetOn].isNoteOn() ||
       (retained != nullptr && retained[targetOn] == 0)) return false;
   discard();
@@ -255,7 +252,7 @@ NOTE_PAIR_MEM RuntimePlaybackOrderBuildResult RuntimeNotePairLookup::step(size_t
 NOTE_PAIR_MEM bool RuntimeNoteDeleteLookup::begin(
     RuntimeNotePairLookup& pairLookup, const MidiEvent* events, size_t count,
     NoteId noteId, uint32_t loopLength, const uint8_t* retained) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) ||
+  if (!available() ||
       !pairLookup.available() || (events == nullptr && count != 0) ||
       count > RuntimePlaybackViewConfig::kEventsPerView)
     return false;
@@ -302,8 +299,9 @@ NOTE_PAIR_MEM RuntimePlaybackOrderBuildResult RuntimeNoteDeleteLookup::step(size
       return RuntimePlaybackOrderBuildResult::Complete;
     }
     if (loopLength_ == 0) {
+      // Derive the length from the last tick, clamped to one bar minimum.
       loopLength_ = maxTick_ + 1u;
-      if (loopLength_ < 768u) loopLength_ = 768u;
+      if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
     }
     if (!pair_->begin(events_, count_, static_cast<size_t>(on_), retained_))
       return RuntimePlaybackOrderBuildResult::Denied;

@@ -1,31 +1,27 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCaptureCompanions.h"
+#include "Utils/NoteEditMem.h"
 
 #include <cstdlib>
 #include <new>
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define CAPTURE_COMPANION_MEM FLASHMEM
-#else
-#define CAPTURE_COMPANION_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define CAPTURE_COMPANION_MEM NOTE_EDIT_MEM
 
 CAPTURE_COMPANION_MEM RuntimeCaptureCompanions::RuntimeCaptureCompanions() = default;
 
 CAPTURE_COMPANION_MEM RuntimeCaptureCompanions::~RuntimeCaptureCompanions() {
   if (rows_ == nullptr) return;
   for (size_t i = 0; i < capacity_; ++i) rows_[i].~EditPass();
-  if (isInExternalMemoryPool(rows_)) extmem_free(rows_);
-  else std::free(rows_);
+  externalFirstFree(rows_);
 }
 
 CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::prewarm(size_t capacity) {
   if (rows_ != nullptr) return capacity_ == capacity;
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
-  void* memory = extmem_malloc(capacity * sizeof(EditPass));
-  if (memory == nullptr) memory = std::malloc(capacity * sizeof(EditPass));
+  void* memory = externalFirstAlloc(capacity * sizeof(EditPass));
   if (memory == nullptr) return false;
   rows_ = static_cast<EditPass*>(memory);
   capacity_ = capacity;
@@ -49,8 +45,7 @@ CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::ensureCapacity(size_t neede
   if (needed > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
   if (rows_ != nullptr) {
     for (size_t i = 0; i < capacity_; ++i) rows_[i].~EditPass();
-    if (isInExternalMemoryPool(rows_)) extmem_free(rows_);
-    else std::free(rows_);
+    externalFirstFree(rows_);
     rows_ = nullptr;
     capacity_ = 0;
   }
