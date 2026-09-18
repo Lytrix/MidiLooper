@@ -1,0 +1,263 @@
+# Tasks — runtime-code-tidyup
+
+Scope: `docs/Runtime/CURRENT_WORK.md` § Now implementing (task 1.3 writes it before any code edit —
+`AGENTS.md` forbids implementing outside that section, and it is currently empty).
+Base: `refactor/runtime-code-tidyup` stacked on `feature/resumable-midi-boundary-playback-maintenance` at
+`4aacd18e`. Design: `design.md`. Baselines and per-phase gates: `design.md` § D10.
+
+Every phase is behavior-preserving. If a task cannot show equivalence with its gate, drop the task and
+record why — do not reach for HITL.
+
+## 1. Preflight, scope and baselines (no code change)
+
+- [ ] 1.1 Search `docs/DECISION_LOG.md` (with the `grep` tool, never a full read) for the topics this change touches —
+  RC-MEM, DEC-057/063/067/068/072, the undo trim rails, the D8 read-site sweep, instrumentation gating — and record each
+  hit that constrains a phase. Verify by writing `openspec/changes/runtime-code-tidyup/PREFLIGHT.md` containing the
+  owner/change/test summary, the cited `DEC-###` list, and the explicit statement that no formal trigger fires
+  (`docs/ARCHITECTURE_REASSESSMENT.md` lists "Refactor with no ownership movement" as not a trigger).
+- [ ] 1.2 Confirm from [`docs/Authority/DELIVERY_RULES.md`](../../../docs/Authority/DELIVERY_RULES.md) verification
+  matrix that a behavior-preserving refactor carries no HITL gate, and cite the clause in `PREFLIGHT.md`. Verify: the
+  citation names the matrix row that exempts this change.
+- [ ] 1.3 Update `docs/Runtime/CURRENT_WORK.md` § Now implementing to name `runtime-code-tidyup` phases P1–P6 as the
+  implementation scope. Verify: the section names this change and no other work, and `git diff` shows only that section
+  changed.
+- [ ] 1.4 Re-measure and record the four baseline gates in `PREFLIGHT.md`: `pio test -e native` case/pass counts, `pio run -e teensy41-capture-serial`
+  RAM1 line (`variables`/`code`/`padding`/`free for local variables`), `openspec validate runtime-code-tidyup --strict`.
+  Verify: all four values present and dated.
+
+## 2. P1 — remove dead code and dead artifacts
+
+For every deletion: prove zero references first (`grep`), delete, then run the native suite. A link error
+is a finding to investigate, not a nuisance to silence.
+
+- [ ] 2.1 Delete `Loop::clearFailureInjectionForTest()` and `Loop::completedChangeCount()`
+  (`include/LoopSnapshot.h:331,346`), each of which has exactly one repo-wide occurrence. Verify: grep returns nothing
+  and `pio test -e native` passes.
+- [ ] 2.2 Delete the four unreferenced playback-view orphans: `RuntimePlaybackViewSet::resetMetadataPreserveRetained()`,
+  `RuntimePlaybackViewLifecycle::buildIsPending()`, `hasReadySuccessor()` (`include/RuntimePlaybackView.h:332,333,419`),
+  `RuntimePlaybackViewFill::active()` (`include/RuntimePlaybackViewFill.h:58`). Verify: grep shows 0 call sites each;
+  native suite passes.
+- [ ] 2.3 Delete `RuntimeCompanionOverlapWalk::actionReady()` (`include/RuntimeCompanionOverlapWalk.h:27`),
+  `Action::sourceIndex` (`:20`, written at cpp:56 and never read) and `RuntimeCompanionSpanWalk::spanReady()`
+  (`include/RuntimeCompanionSpanWalk.h:24`). Verify: grep shows 0 read sites; native suite passes.
+- [ ] 2.4 Delete the four unreachable `InvestigationCaptureLog::logVisualCache*` emitters
+  (`include/Utils/InvestigationCaptureLog.h:85,88,92,94`; `src/Utils/InvestigationCaptureLog.cpp:297,308,318,327`) that
+  duplicate the live inline emitters in `src/Loop/LoopVisualCache.cpp:481,659,682,706`. Verify: `grep logVisualCache`
+  returns no call sites; the `vch,win=`/`gather_*` capture lines still originate from `LoopVisualCache.cpp`.
+- [ ] 2.5 Apply the design § D2 rule to the five test-only diagnostics
+  (`RuntimeCanonicalPassInputs::borrowsCaptureOrder`, `hasFrozenBinding`,
+  `RuntimeCompanionBridgeMap::lastStepInputCount`, `RuntimeCompanionOverlapWalk::lastStepInputCount`,
+  `RuntimeCaptureCompanions::capacity`/`row`)
+  and to `RuntimePlaybackBridgeCursor::emissionCursor()`: keep a probe only where a test asserts a grain/bound contract,
+  otherwise re-point the test at `data()`/`size()` and delete the accessor — test edit in the same commit. Verify:
+  native suite passes with the same case count, and each kept probe has a named contract assertion.
+- [ ] 2.6 Delete `PendingSnapshotPublishBox::applyingCompanions` (`src/Loop/LoopSnapshotBoxes.h:84`) and its seven
+  assignments in `src/Loop/LoopSnapshotPublish.cpp:659,844,1016,1097,1139,1161,1308`. Verify: grep shows writes gone and
+  no reader existed; native suite passes.
+- [ ] 2.7 Delete the inert computation in `src/Loop/LoopSnapshotPublish.cpp:790-798` (`identityPreserved` computed from just-assigned values, then `(void)`-cast)
+  and collapse `Loop::liveRecordCanApplyCompletedTicks` (`:1810-1823`) to its single guarded `return completedTicks != 0;`.
+  Verify: same return value on every input path (read the guard), native suite incl. `test_loop_take_survival` passes.
+- [ ] 2.8 Delete the unreachable `Phase::Trim` pop branch in `src/Loop/LoopPreparedCompanionHistory.cpp:240-243`
+  (the resize at `:163` makes the condition unfirable and the file's own comment says the walk was removed).
+  Verify: native suite passes; the phase's remaining transitions still reachable.
+- [ ] 2.9 Delete the vestigial LSV1 writer state in `src/StorageLoopIoBodyFormatV1.cpp`: `telemetryTailEntered`
+  (`:109`), `sectionHeaderWritten` (`:108`, written `:1283`), `sortSwapBudget` (`:94`, only ever set to 0 at `:968,1021,1046`),
+  the `PayloadWriteSubphase` enum + `payloadSubphase`/`emitIndex`/`nestedIndex`/`nestedRefIndex` cluster (`:97-107`),
+  and drop them from `loopSnapshotTailProgressSignature` (`:1130-1137`). Verify: `test_storage_loop_io` passes; the
+  body-format byte oracle (`test_storage_loop_io` round-trip) is unchanged.
+- [ ] 2.10 Delete the zero-reference symbols `checkedSizeAdd` (`src/StorageLoopIoBodyFormatV1.cpp:160`),
+  `kLsv1LoopSnapshotRootHeaderBytes` (`:129`), `kLsv1SaveOrderingFlushBatch` (`include/StorageLoopIo.h:229`) and the
+  redundant `#include "Utils/NoteUtils.h"` in `src/Loop/LoopSnapshotPublish.cpp:10`. Verify: grep returns one hit each
+  before deletion and none after; build has no new warnings.
+- [ ] 2.11 Resolve OD-4 with the user; default: wrap `readLoopSnapshotBodyFormatV1`
+  (`src/StorageLoopIoBodyFormatV1.cpp:1503-1613`, test-only, 8 call sites in `test_storage_loop_io`) in `#if defined(PIO_UNIT_TEST_NATIVE)`
+  and correct the ownership sentence in
+  [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md). Verify:
+  `test_storage_loop_io` passes and the guide no longer names it a production load owner.
+- [ ] 2.12 Delete `TrackUndoPublication::units_` + `completedUnits()` (`include/TrackUndoPublication.h:46,60` and the five writes in the cpp),
+  `MidiBatchComposition::Summary::nonClockCount` (`include/Utils/MidiBatchComposition.h:25`, increment `:61`, the `MidiHandler.cpp:226` argument and the `(void)` at `RuntimeTimingTelemetry.cpp:746`),
+  `ExternalPoolAccounting::trackedBlocks` + `reset()` and the `kTagCount 18 → 17` phantom slot
+  (`include/Utils/ExternalPoolAccounting.h:47,72,131`) — **keep** `tagBlocks`, which is read by the decrement guard at
+  cpp:182 — and `CommittedMidiScratch::RefreshKind::FromPasses` (`include/Utils/CommittedMidiScratch.h:20`). Verify:
+  grep proof per symbol; `test_pool_budget`, `test_midi_dispatch_order`, `test_runtime_timing_telemetry` pass.
+- [ ] 2.13 Delete `InvestigationAllocProbe::recordClockPulseEntry` + its accessors and read the existing
+  `RuntimeTimingTelemetry::noteClockPulse` counter instead (`ClockManager.cpp:186` vs `:189`). Keep the probe's
+  span/project/intervalTimer counters, which have no telemetry equivalent. Verify: `test_clock_transport_master` and
+  `test_runtime_timing_telemetry` pass; one pulse source remains.
+- [ ] 2.14 Delete `StorageManager::admitLoopUndoHistory()` (pure no-op body, 0 callers) and `admitLoopPersist()` (0 callers, annotated `/// Deprecated` by this branch)
+  from `include/StorageManager.h` and `src/StorageManager/PersistenceAdmit.cpp`. Verify: grep shows decl+def only
+  before, none after; firmware builds.
+- [ ] 2.15 Remove the dead artifacts with `git rm`: `openspec/changes/resumable-midi-boundary-playback-maintenance.zip`
+  (247 KB duplicate of a tracked directory, contains `__MACOSX/` entries, already stale — missing `ARCHITECTURE-REVIEW.md`),
+  `companion_pair_order_repro.cpp`, `create_history_order_repro.cpp`, and the two `.patch` files that apply neither
+  forward nor reverse. Verify: `git ls-files | grep -E '\.zip$'` is empty; the two repro *intents* are already
+  represented in the tree (`src/EditManager/EditApply.cpp` equal-tick `stable_partition`) or recorded in `design.md`.
+- [ ] 2.16 Remove the duplicate `#include "Utils/InvestigationCaptureLog.h"` inside the anonymous namespace in
+  `src/Track/TrackDeferredMaintenance.cpp:71` (namespace opens at `:36`). Verify: one include remains at `:19`; firmware
+  builds.
+- [ ] 2.17 P1 gate: run the full native suite and the firmware build, and record the removed-symbol census plus the new
+  RAM1 line in `PREFLIGHT.md`. Verify: native 2,262-case baseline still passes; RAM1 `code` unchanged or lower;
+  `padding` not reduced into a bank edge.
+
+## 3. P2 — name the constants and enums
+
+Values never change in this phase — only their definition site and name.
+
+- [ ] 3.1 Link the duplicated membership envelope: add `static_assert(kLsv1MaxMembershipRefsPerBar == kSnapshotMembershipMaxRefsPerBar)`
+  (or define one from the other) between `src/StorageLoopIoBodyFormatV1.cpp:138` and `include/LoopSnapshot.h:43`.
+  Verify: compiles; the assert fires if either value is edited.
+- [ ] 3.2 Replace the raw `2048` bounds in `src/Loop/LoopPreparedCompanionHistory.cpp:437,460` with
+  `RuntimePlaybackViewConfig::kRecordsPerBridge` (already used at `:23`) and confirm intent with the
+  `LoopOverdubSession.cpp` twins before touching them. Verify: native suite passes; grep shows no raw `2048` in that
+  file.
+- [ ] 3.3 Replace the `768u` minimum-loop-length literals (`src/Track/RuntimeCompanionApply.cpp:226,301`, `src/Track/RuntimeNotePairLookup.cpp:306`)
+  with `LoopEventStoreConfig::BAR_TICKS` **only after** confirming minimum length is exactly one bar; if the semantics
+  differ, add a named `kMinimumLoopLengthTicks` instead. Verify: compiles; native suite passes; the chosen name states
+  the semantic in a comment.
+- [ ] 3.4 Name the bit fields: closure `flags` (`include/RuntimePlaybackView.h:163-165` and its 13 uses in `src/Track/RuntimePlaybackBridge.cpp`)
+  → named `kAffected/kOriginalOffFound/kInherited` or a scoped enum; bridge cycle masks (`1/2/4/8`, literal `15` at `:366,429-443,604,634-644`);
+  atomic-preflight denial bits (`src/Track/TrackPreparedStopCommit.cpp:11-22,52-61,70-79`) → one `AtomicPreflightBit`
+  enum that keeps each existing value. Verify: native suite passes; grep shows no bare mask literals at those sites; bit
+  values documented per group.
+- [ ] 3.5 Give `UndoEntryReleaseCursor` (`src/Track/TrackUndoRetirement.cpp:19-64`) and `GlobalUndoStackTrimCursor`
+  (`:69-113`) private `enum class Phase : uint8_t` matching `TrackUndoPublication`'s shape, preserving `uint8_t`
+  storage. Verify: compiles with no size change for the cursors; native suite passes.
+- [ ] 3.6 Record OD-2 with the user: document whether `snapshot_unit`/snapshot-idle probes belong on the broad
+  `SESSION_CAPTURE` gate or `SESSION_CAPTURE_SNAPSHOT_IDLE`, as a `DEC` entry plus a comment at the gate in
+  `src/Loop/LoopSnapshotPublish.cpp` — **no gating change in this change**. Verify: `DEC-###` appended; the comment
+  names the decision; `git diff` shows no `#if` change.
+- [ ] 3.7 P2 gate: full native suite plus firmware build; record the RAM1 line. Verify: no literal value in the diff
+  changed (review the diff for `=` on the touched constants); suite unchanged.
+
+## 4. P3 — de-duplicate into existing owners
+
+- [ ] 4.1 Add `playbackEventKind(const MidiEvent&)` to `include/MidiEvent.h` (or to the new ordering header) and one
+  merge-order key in a header-inline `include/Utils/PlaybackEventOrder.h`; migrate the duplicated comparator
+  (`src/Track/RuntimePlaybackBridge.cpp:588-598` vs `:699-706`) and the 8 `eventKind` ternary sites in touched files.
+  Verify: `test_playback_prewarm` and `test_continuous_capture` pass with byte-identical emitted traces.
+- [ ] 4.2 Introduce one `RuntimeWorkerStepResult` and rename the five result enums per design § D4 (folding `RuntimePlaybackViewBuildGrain` into the class's `Phase`/`nextGrain()`),
+  preserving the extra `Ready` state where it carries information. Verify: compiles; every call site updated; native
+  suite passes with unchanged case count.
+- [ ] 4.3 Converge the lifecycle accessors per design § D5: `available()` as the admission-state query (replacing `idle()`/`active()` where they mean the same),
+  `lastStepInputCount()` as the grain-progress query, one source-identity shape. Verify: grep shows one spelling per
+  concept; native suite passes.
+- [ ] 4.4 Collapse the duplicated atomic-transfer bodies (`src/Track/TrackPreparedStopCommit.cpp:112-134` vs `:136-161`)
+  into one body parameterised by an undo pointer, and route `commitStopped`/`commitStoppedWithUndo`/`commitWithUndo`
+  through the same shape so the three test-only wrappers stop being the only callers of a production path. Verify:
+  `test_playback_prewarm` stop/undo cases pass; `commitStopped*` has either a production caller or is removed.
+- [ ] 4.5 Add inline `externalFirstAlloc(size_t)` / `externalFirstFree(void*)` to
+  `include/Utils/InternalHeapFirstAllocator.h` and migrate the 16 sites across the eight companion TUs, preserving
+  extmem→malloc order and free routing. Verify: `test_pending_note_change`, `test_loop_take_survival`,
+  `test_playback_prewarm` pass; no new out-of-line symbol (size check).
+- [ ] 4.6 Extract the admission guard (10 sites) and source-identity guard (5 sites) into one owner per design § D3/§
+  D4. Verify: native suite passes; **re-measure RAM1** because member layout of by-value `TrackPlaybackRuntime` members
+  may change; revert if a bank edge moves.
+- [ ] 4.7 Promote the existing ceiling-grain lambda to one `constexpr ceilGrains(...)` on
+  `include/RuntimePlaybackOrderBuilder.h` and give the per-phase slack terms names — **values unchanged**. Verify: grep
+  shows the two local lambdas gone and no slack literal re-valued in the diff; native suite passes.
+- [ ] 4.8 Add `activeNoteEntriesMatch(...)` to `include/ActiveNoteLedger.h` and use it in all four sites
+  (`src/Track/RuntimePlaybackView.cpp:40,362-363`, `src/Track/RuntimePlaybackBridge.cpp:310-311,408-409`). Verify: the
+  anonymous-namespace copy is deleted; native suite passes.
+- [ ] 4.9 Extract one `installRetainedCurrentView(views, sourceIndex, requireRawPrepared)` for `installPreparedCurrent`
+  / `replaceRetainedWithReady` (`src/Track/RuntimePlaybackView.cpp:541-557` vs `:559-575`). Verify:
+  `test_playback_prewarm` lifecycle cases pass.
+- [ ] 4.10 Extract the duplicated event-membership page comparator in `src/Loop/LoopSnapshot.cpp:1131-1142` vs
+  `:1240-1251` — comparator only; do **not** template the bar-apply stage machines (design § D8.4). Verify:
+  `test_loop_event_store` and `test_loop_take_survival` pass byte-identically.
+- [ ] 4.11 Extract one `shouldTrimGlobalUndoStackForMemory(...)` predicate into `include/PassReclaim.h` used by both
+  `src/PassReclaim.cpp:84-116` and `src/Track/TrackUndoRetirement.cpp:85-86`, with a comment recording that the two
+  agree on reachable cases today and why `cursor == 0` stays as written. Verify: `test_pool_budget` and
+  `test_global_undo_stack_persistence` pass; no policy value changed.
+- [ ] 4.12 Consolidate the 12 `*_MEM` aliases this branch added into aliases of the canonical owners
+  (`NOTE_EDIT_MEM`/`LOOP_COLD_MEM`/`TRACK_COLD_MEM`) instead of independent `FLASHMEM` definitions; do not rename the
+  legacy ones. Verify: firmware builds; the RAM1 line is unchanged; each TU still documents its cold rationale in one
+  line.
+- [ ] 4.13 Replace the four unique-id append/contains copies, the seven `make_unique<…Box>()` sites (private `ensurePendingSnapshotPublishBox()`),
+  and the seven bar-count ceil-div copies with one named helper each, adopted on touch. Verify: native suite passes;
+  helpers are inline/constexpr so no new symbols.
+- [ ] 4.14 P3 gate: full native suite plus the differential/oracle fixtures (`test_playback_prewarm`, `test_continuous_capture`, `test_loop_take_survival`, `test_storage_loop_io`)
+  and a firmware build; record the RAM1 line. Verify: byte-identical traces/inventories and unchanged case count.
+
+## 5. P4 — converge naming on the authority (record the decision first)
+
+- [ ] 5.1 Author the `DEC-###` for OD-1 (`view` vs `window`) with explicit user approval, and add the one-clause note to
+  `docs/Authority/NAMING.md`; **no rename in this change**. Verify: `DEC-###` appended, NAMING clause present, and
+  `grep` shows no `Runtime*View*` symbol renamed.
+- [ ] 5.2 Rename `normalized*` → `merged*` (NAMING's term for the merged working view) **only** in files P1–P3 already
+  touched: `include/RuntimeCanonicalPassInputs.h:77-85`, `include/RuntimeCompanionPasses.h:47-50` and the
+  `adoptCommittedNormalization` call site. Verify: native suite passes; `normalize` no longer names a merged buffer.
+- [ ] 5.3 Rename the four `*Kind` enums to `*Type` (`SnapshotChangeKind`, `RuntimeCompanionApply::Kind`, `ActionKind`, `RefreshKind`)
+  per NAMING rule 6. Verify: compiles; no other `Kind` enum introduced; native suite passes.
+- [ ] 5.4 Fix abbreviations and scope-collisions in touched files: `SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader`;
+  `RuntimePlaybackViewFillScope` → `…FillCoverage`; the prohibited "lane" comment at
+  `include/RuntimePlaybackView.h:405`. Verify: grep shows the old spellings gone from touched files only.
+- [ ] 5.5 Fix ownership-attribution naming with comments/renames, not moves: note the declaring headers at the top of
+  `src/Track/TrackUndoRetirement.cpp` (or rename the TU to its declaring owners), give `RuntimeNoteDeleteLookup` its own
+  TU/prefix per NAMING's file-per-owner rule, and align `retire`/`release` prose on the identifier's verb. Verify: each
+  file's name or header comment matches what it defines; native suite passes.
+- [ ] 5.6 Record OD-3 as a comment: either wire `playheadPhaseTick` in the note-side `applySoonestBar`
+  (`src/Loop/LoopSnapshot.cpp:897-898`) or rename it to state that ascending source order is intentional and delete the
+  `(void)` cast. **No ordering change** without its own change and HITL evidence. Verify: the `(void)` cast is gone, the
+  comment states the contract, native suite passes.
+- [ ] 5.7 P4 gate: full native suite; `grep` audit showing no deprecated name survives in the touched files. Verify:
+  suite unchanged; diff contains no file touched *only* by a rename.
+
+## 6. P5 — split the three files with real ownership seams
+
+Each split: native suite + firmware build, then compare the RAM1 line and `_itcm_block_count`
+(`linker/imxrt1062_t41_lcr.ld`). A split that crosses a bank is reverted and recorded as rejected.
+
+- [ ] 6.1 Move `CaptureAdmissionStaging` (`src/Track/RuntimePlaybackView.cpp:377-522`) and `CaptureNoteReservation`
+  (`include/RuntimePlaybackView.h:242-298`) into a new TU/header; keep the capacities owned where the DEC attribution
+  table puts them, and state in the task log whether the new TU name matches the linker's flash allow-list or every
+  function carries a marker (design § D8.2). Verify: native suite passes; RAM1 line and `_itcm_block_count` unchanged or
+  better.
+- [ ] 6.2 Move the bridge read side (`RuntimePlaybackBridgeCursor` `src/Track/RuntimePlaybackBridge.cpp:659-732`, `RuntimePlaybackBridgeStream` `:734-812`)
+  into its own TU; leave `insertionFirst/peek/advance` unmarked exactly as today. Verify: `test_playback_prewarm` bridge
+  cases pass; RAM1 line unchanged or better.
+- [ ] 6.3 Move the `SESSION_CAPTURE` idle-telemetry block out of `src/Loop/LoopSnapshotPublish.cpp`
+  (the `:15-98` block, `snapshotFailureReasonName`/`emitSnapshotFragmentFailure`, and the 15
+  `Loop::lastSnapshotIdle*Us`/`addSnapshotIdleEmitUs` at `:1654-1772`)
+  into a `LoopSnapshot`-named TU so the linker keeps it in FLASH. Verify: firmware builds; the gated
+  `#CAP,…,DIAG,snapshot_unit` output is unchanged on capture; RAM1 line unchanged or better.
+- [ ] 6.4 Record the rejected splits in `design.md` § D8.4 with the measurement that rejected them
+  (`RuntimeCompanionApply::step()`, `StorageLoopIoBodyFormatV1.cpp`, `RuntimePlaybackBridgeBuild::step()`, the four `Track*` TUs).
+  Verify: each rejected split names its reason; no split was done for line count.
+- [ ] 6.5 P5 gate: full native suite plus firmware build and the recorded RAM1/`_itcm_block_count` comparison for all
+  three splits. Verify: no bank crossing; `free for local variables` not reduced.
+
+## 7. P6 — formatting, docs and enforcement
+
+- [ ] 7.1 Normalize the copyright header to the repo baseline (`//  Copyright (c)  <year> Lytrix (Eelke Jager)`) across
+  the 56 files this branch added, which currently use three forms (31 single-space, 17 double-space, 8 mixed). Verify:
+  `head -1` over the added files yields one form; no other line changed.
+- [ ] 7.2 Strip trailing whitespace from the 24 added files that carry it. Verify: `grep -c '[ \t]$'` is zero for each;
+  diff is whitespace-only.
+- [ ] 7.3 Add `.editorconfig` and a `.clang-format` derived from the incumbent style; accept the config only if
+  `clang-format --dry-run` over the added files reports only the drifts 7.1/7.2 already fixed — otherwise ship
+  `.editorconfig` only and record why (design § D9). Verify: the dry-run output is recorded in the change directory.
+- [ ] 7.4 Move the session journal out of `openspec/changes/resumable-midi-boundary-playback-maintenance/tasks.md` (20 checkboxes in 1,126 lines, with single prose lines up to 5,543 characters)
+  into `docs/Runtime/CURRENT_WORK.md`, leaving `tasks.md` a checklist; cut the 131 measured duplicated long sentences
+  across `CONTINUOUS-CAPTURE-OWNERSHIP.md` ↔ `FOCUSED-STOP-HITL.md` (61), `FOCUSED-STOP-HITL.md` ↔ `tasks.md` (35) and
+  `design.md` ↔ the others (30) by citing instead. Verify: `tasks.md` has one task per line under 200 characters; the
+  sentence-overlap count drops; every removed paragraph is reachable by citation from `CURRENT_WORK.md`.
+- [ ] 7.5 P6 gate: `openspec validate runtime-code-tidyup --strict` passes and no firmware/test run is needed because
+  the phase is text-only. Verify: validate output recorded.
+
+## 8. Closeout
+
+- [ ] 8.1 Update `docs/Runtime/CURRENT_WORK.md` and `docs/Runtime/PROJECT_STATE.md` to reflect the completed tidy-up and
+  remove it from § Now implementing. Verify: neither doc still describes the removed symbols or the old gate/name;
+  `DOCUMENTATION_CLOSEOUT` checklist satisfied.
+- [ ] 8.2 Update [`docs/DELIVERABLE_TRACKING.md`](../../../docs/DELIVERABLE_TRACKING.md) with the maintainability
+  deliverable. Verify: a row names this change and its gates.
+- [ ] 8.3 Append the `DEC-###` entries required by this change (OD-1 naming, OD-2 instrumentation gating, plus any `ARCHITECTURE_RULES` requirement found in task 1.1).
+  Verify: each entry cites the decision, the consequence and the rejected alternative.
+- [ ] 8.4 Run [`docs/Templates/SESSION_CLOSEOUT.md`](../../../docs/Templates/SESSION_CLOSEOUT.md) because design and
+  exclusions were discussed, and record the outcome. Verify: the template's fields are filled in the change directory or
+  the log.
+- [ ] 8.5 Confirm the final gates together — full native suite, firmware build with the RAM1 line, `openspec validate --strict`
+  — and record all three in `PREFLIGHT.md`. Verify: green before any archive step.
+- [ ] 8.6 **Ask** before opening the PR (no auto-PR per `AGENTS.md`): `refactor/runtime-code-tidyup` → the base chosen
+  by OD-5 (default: `feature/resumable-midi-boundary-playback-maintenance`). Verify: the PR lists the phase commits and
+  states that no behavior, format or persisted layout changed.
