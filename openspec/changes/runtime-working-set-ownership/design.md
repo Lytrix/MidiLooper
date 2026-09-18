@@ -332,6 +332,46 @@ window size a *tunable with three coupled effects* rather than a constant:
 The window size must therefore be **configurable and swept**, not hard-coded to bars, and S2/S4c must find the
 smallest size that still meets the deadline under load.
 
+## Revision 14 — a bounded standby tier, prepared against a known deadline
+
+Because the playhead's position and each loop's start tick are known, **the next arrival time of every tick is
+knowable**. That converts preparation from an urgent boundary task into a **scheduled one with a deadline**:
+after a recording/overdub stop (or any mutation), the affected ticks have a known next-arrival, and slots that
+are merely *candidates* to be switched to have an even looser deadline. This is the scheduling input the
+readiness contract (Revision 11) needs, and it reuses the deferred idle-owner machinery.
+
+The artefact is a **standby excerpt per candidate slot**: a small, pre-resolved, **immutable** window, so that
+
+- a queued switch has the inbound slot's immutable state ready **by construction**, which is what makes
+  1/16- or 1/32-beat switching reachable at all;
+- a stop can leave a slot immediately playable from standby rather than waiting on a publication;
+- rule (a) remains the fallback for the residual misses.
+
+**Sizing (playback footprint ~35 B/event: `MidiEvent` 20 + order 2 + phase 4 + mergeScratch 2 + retained 1 +
+passOrigin 4 + canonicalRank 2):**
+
+| Density | 1/4-bar window | 1-bar window | 2-bar window |
+|---|---|---|---|
+| typical (~72 events/bar) | 0.6 KB/slot -- 60 slots **37 KB** | 2.5 KB/slot -- **148 KB** | 4.9 KB/slot -- **295 KB** |
+| representable ceiling (4,096 refs/bar) | 35 KB/slot -- **2.1 MB** | 140 KB/slot -- **8.4 MB** | 280 KB/slot -- **16.8 MB** |
+
+(128 slot-channels is roughly double the 60-slot column.)
+
+**Therefore standby is a capped, budgeted tier, not a free optimisation:**
+
+- it appears in the budget as its own term: `fixed + standby + N x P + C + D + I + overlap + reserve <= budget`;
+- it is **byte-capped with eviction** (LRU or an explicit candidate set: next-up plus recently used). "All
+  slots on standby" is a *policy outcome the cap permits*, not a guarantee -- at the ceiling density it is
+  unaffordable at 1-bar windows and affordable only at sub-bar windows, which is another reason the window
+  sweep (S2.6) gates this;
+- it is **immutable**: a mutation covering its ticks invalidates it, and the slot falls back to rule (a) until
+  it is re-prepared;
+- it must be **derivable without loading a whole loop**, which for cold slots depends on S6's descriptor-based
+  rehydration -- so an all-slots standby is a post-S6 capability, while a candidates-only standby is reachable
+  earlier;
+- it is a **deliberate, bounded exception** to "inactive slots retain descriptors only". The cap is what keeps
+  the scaling law; without it, standby silently becomes the per-slot residency this change exists to remove.
+
 ## Revision 12 — the role tiers fold into `activeLoopIndex` (F5)
 
 The COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED tiers are a **view of existing

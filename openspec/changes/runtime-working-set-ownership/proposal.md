@@ -82,6 +82,16 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
   slot-lifetime owned. Inactive slots retain only canonical descriptors, loop/pass summary, persistence
   identity and location, and tiny browser metadata.
+- **A bounded standby tier, scheduled against a deadline you already know.** When a recording stops, the
+  loop's start tick is known, so the playhead's next arrival at every tick of that loop is known -- and the
+  same is true after any mutation. Preparation can therefore be scheduled against a **known deadline** (up to a
+  full loop away) instead of being urgent at the switch, and the existing deferred idle machinery is what runs
+  it. The reusable artefact is a **small per-slot standby excerpt**: a pre-resolved, immutable window held for
+  slots that may be switched to, so activation and queued switching need no preparation at the boundary.
+  Sizing is real but not free: at the observed density (~72 events/bar, ~35 B/event) a 1-bar standby costs
+  ~2.5 KB/slot (~148 KB for 60 slots), while at the representable ceiling (4,096 refs/bar) the same 1-bar
+  window costs ~140 KB/slot (~8.4 MB for 60) -- so the tier is **byte-capped with eviction**, never
+  "all slots unconditionally", and the window sweep decides how much of the library can be on standby.
 - **Window size becomes configurable and must be swept.** Windows are bar-based today (2-bar merged playback
   window = 1,536 ticks), but **queued slot switching quantised at 1/16 or 1/32 beat for jamming** needs the
   inbound slot's immutable state ready at a ~16-31 ms boundary (12 and 6 ticks at 192 PPQN). Window size
