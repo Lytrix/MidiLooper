@@ -25,7 +25,7 @@ NOTE_EDIT_MEM size_t RuntimeCompanionApply::requiredGrainsUpperBound(size_t capa
                       RuntimePlaybackOrderBuilder::workEntriesUpperBound(capacity);
   // Includes per-child rounding and scalar transition/action turns. This is
   // a component bound, not an extension of the production stop reservation.
-  return 1 + (work - 1) / quantum + 32 * capacity + 64;
+  return 1 + (work - 1) / quantum + 32 * capacity + 64;  // work >= 1 here
 }
 
 NOTE_EDIT_MEM void RuntimeCompanionApply::resetWork() {
@@ -40,14 +40,11 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionApply::requiredHistoryGrainsUpperBound(
     size_t capacity, size_t rows, size_t quantum) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView ||
       rows > RuntimePlaybackViewConfig::kRecordsPerBridge || quantum == 0) return UINT64_MAX;
-  if (rows == 0) return 1 + (capacity - 1) / quantum;
-  const auto ceilGrains = [quantum](uint64_t visits) -> uint64_t {
-    return visits == 0 ? 0 : 1 + (visits - 1) / quantum;
-  };
+  if (rows == 0) return RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum);
   // Successful prior Create payloads are each <= C. Charge every history row
   // and payload event to the identity scan, and a separate collapse scan.
   return (uint64_t(rows) + 1) * (requiredGrainsUpperBound(capacity, quantum) +
-      ceilGrains(uint64_t(rows) * (capacity + 1)) + ceilGrains(rows) + 8);
+      RuntimePlaybackOrderBuilder::ceilGrains(uint64_t(rows) * (capacity + 1), quantum) + RuntimePlaybackOrderBuilder::ceilGrains(rows, quantum) + 8);
 }
 NOTE_EDIT_MEM void RuntimeCompanionApply::releaseWork() {
   resetWork();
@@ -133,9 +130,9 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionApply::requiredContinuationGrainsUpperBou
   if (!capacity || capacity > RuntimePlaybackViewConfig::kEventsPerView || !quantum ||
       historyCount > RuntimePlaybackViewConfig::kRecordsPerBridge ||
       rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge) return UINT64_MAX;
-  if (rowCount == 0) return 1 + (capacity - 1) / quantum;
+  if (rowCount == 0) return RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum);
   const uint64_t visits = uint64_t(historyCount) * (capacity + 1) + rowCount;
-  const uint64_t scan = visits ? 1 + (visits - 1) / quantum : 0;
+  const uint64_t scan = RuntimePlaybackOrderBuilder::ceilGrains(visits, quantum);
   return (uint64_t(rowCount) + 1) * (requiredGrainsUpperBound(capacity, quantum) + scan + 3);
 }
 

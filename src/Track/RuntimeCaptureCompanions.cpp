@@ -1,16 +1,14 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCaptureCompanions.h"
+#include "Utils/NoteEditMem.h"
 
 #include <cstdlib>
 #include <new>
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define CAPTURE_COMPANION_MEM FLASHMEM
-#else
-#define CAPTURE_COMPANION_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define CAPTURE_COMPANION_MEM NOTE_EDIT_MEM
 
 CAPTURE_COMPANION_MEM RuntimeCaptureCompanions::RuntimeCaptureCompanions() = default;
 

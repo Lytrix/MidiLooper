@@ -53,11 +53,9 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredGrainsUpperBound(
     size_t capacity, size_t passes, size_t rows, size_t quantum) {
   const auto history = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows, quantum);
   if (history == UINT64_MAX || passes > capacity) return UINT64_MAX;
-  const auto ceilGrains = [quantum](size_t visits) -> uint64_t {
-    return visits == 0 ? 0 : 1 + (visits - 1) / quantum;
-  };
   return 1 + uint64_t(passes) * ((rows ? history : 0) +
-      ceilGrains(capacity + LoopEventStoreConfig::POOL_CHUNK_COUNT) + ceilGrains(capacity) + 3);
+      RuntimePlaybackOrderBuilder::ceilGrains(capacity + LoopEventStoreConfig::POOL_CHUNK_COUNT, quantum) +
+          RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) + 3);
 }
 NOTE_EDIT_MEM void RuntimeCanonicalPassInputs::discard() {
   ++generation_; normalizedOwner_ = nullptr; releaseApply(); read_.discard(); work_.reset(); apply_ = nullptr;
@@ -202,15 +200,18 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpper
     size_t capacity, size_t rows, size_t quantum) {
   const auto history = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows, quantum);
   if (history == UINT64_MAX) return UINT64_MAX;
+  // `+ 4` is this bound's fixed slack: the per-pass setup/transition turns the merge adds around
+  // the entry grains. It participates in the upper bound, so measure before changing it.
   return RuntimePlaybackOrderBuilder::requiredGrains(capacity, quantum) +
-      2 * (1 + (capacity - 1) / quantum) +
+      2 * RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) +
       (rows ? history : 0) + 4;
 }
 NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredPreparedFrozenTailGrainsUpperBound(
     size_t capacity, size_t rows, size_t quantum) {
   const auto history = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows, quantum);
   if (history == UINT64_MAX) return UINT64_MAX;
-  return 3 * (1 + (capacity - 1) / quantum) + (rows ? history : 0) + 4;
+  // Same fixed `+ 4` slack as the full bound above (tail setup/transition turns).
+  return 3 * RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) + (rows ? history : 0) + 4;
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::appendFrozenOverdub(
     const FrozenSource& live, const PreparedCaptureOrder* preparedOrder) {
@@ -261,7 +262,7 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredSelectedGrainsUpperBo
   const auto preparation = requiredGrainsUpperBound(capacity, capacity, rows, quantum);
   if (preparation == UINT64_MAX) return UINT64_MAX;
   const uint64_t visits = uint64_t(capacity) * (capacity + 1) + rows;
-  return preparation + (visits ? 1 + (visits - 1) / quantum : 0) + capacity + 4;
+  return preparation + RuntimePlaybackOrderBuilder::ceilGrains(visits, quantum) + capacity + 4;
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::ready() const { return phase_ == Phase::Complete && valid(); }
 NOTE_EDIT_MEM const CaptureAdmissionStaging* RuntimeCanonicalPassInputs::frozenCapture() const {

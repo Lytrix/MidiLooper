@@ -2,15 +2,13 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackViewBuild.h"
+#include "Utils/NoteEditMem.h"
 
 #include <limits>
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define RUNTIME_PLAYBACK_VIEW_BUILD_MEM FLASHMEM
-#else
-#define RUNTIME_PLAYBACK_VIEW_BUILD_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define RUNTIME_PLAYBACK_VIEW_BUILD_MEM NOTE_EDIT_MEM
 
 RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,

@@ -1,14 +1,12 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimePlaybackBridge.h"
+#include "Utils/NoteEditMem.h"
 #include "Utils/PlaybackEventOrder.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define PLAYBACK_BRIDGE_MAINTENANCE_MEM FLASHMEM
-#else
-#define PLAYBACK_BRIDGE_MAINTENANCE_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define PLAYBACK_BRIDGE_MAINTENANCE_MEM NOTE_EDIT_MEM
 
 namespace {
 bool matchesOpenNote(const MidiEvent& event, const ActiveNoteLedger::Entry& open) {
