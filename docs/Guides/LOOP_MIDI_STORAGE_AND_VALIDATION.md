@@ -395,6 +395,25 @@ NOTE_EDIT **32nd** hide floor (D16) applies to overlap **edit** only. Capture **
 | Undo 1 | Disable last overdub pass | 1 entry (cursor) |
 | Undo 2 | Disable record pass → empty slot | 0 entries (cursor) |
 
+Each overdub **session** pushes exactly one **OverdubPassAdded**, whatever number of laps it committed, so two overdub sessions leave three entries (record + session 1 + session 2) and one undo removes a whole session — never just its last pass.
+
+### Overdub-session entry contents
+
+- **One entry, every pass.** `Loop::collectOverdubSessionUndoPasses` collects the session's sealed wrap passes; the stop pass is appended. `UndoEntry::passIds` carries them all (legacy/STK2 rows carry a single `passId`). `applyUndoEntry` iterates `appendOverdubCapturePassIds` and disables each one, and refuses the whole entry if any id is missing — so an incomplete list must never be published.
+- **The deferred route reads its own session-exit receipt.** `Loop::captureSessionExitTail` swaps the interval's wrap identities out of the shared loop into its own receipt at stop admission (DEC-068), so a successor opens a clean session. The deferred undo collection must therefore source `Loop::SessionUndoCollection` from `job.admission.sessionExitReceiptRing` (`sessionExitReceiptByRingIndex`), not from the now-empty `overdubSessionPassIds_`. The bound `receiptIdentity` also replaces the live `overdubSessionUndoGeneration_` guard: a successor opening its session must not deny the predecessor's own collection.
+- **The tail capture happens only after admission is committed.** `Track::beginDeferredOverdubStop` must not call `captureSessionExitTail` before the causal-base, credit, raw-range and freeze checks that can still deny it: a denial would leave the synchronous fallback (`pushOverdubSessionOnStop`) reading an emptied live session and recording only the final pass.
+
+### Protected publication capacity (invariant)
+
+`Track::prewarmProtectedUndo` reserves `kUndoStackProtectedCapacity` (`GlobalUndoStack.h`, 32) in `GlobalUndoStack::entries` so that `TrackUndoPublication` never has to grow the stack at its atomic publish — `begin` rejects a transaction whose `cursor` has reached `capacity`, and `publishAtCommit` is non-fallible.
+
+**Any rebuild of `GlobalUndoStack::entries` must preserve that reserve.** `TrackUndo::eraseUndoEntriesForSlot` filters the stack into a local vector and move-assigns it; the move takes the local's buffer, so a rebuild smaller than the reserve (a record stop on a cleared slot leaves it nearly empty) silently drops the capacity. Consequences: `begin` rejects, `stepDeferredUndoPublication` treats that as "nothing to publish", and the stop still commits its pass through the non-undo path. The user-visible result is a stack that stops growing (undo stays at depth 2 after two overdub sessions) and an undo that falls through to the previous entry. `repositionGlobalUndoStackTipForSlot` uses `clear()` + `push_back`, which keeps the capacity and is safe; keep future rebuilds on that pattern or re-reserve explicitly.
+
+### Deferred commit display and diagnostics
+
+- The deferred terminal commit (`TrackPreparedStopCommit::commitPreparedStop` / `commitPreparedStopped` and the transport-stop recovery paths) must call `Loop::markAffectedDisplayCacheRanges` for the committed pass plus the interval's prepared companion ids — the same marking the synchronous stop does. `notifyCommittedContentChanged` only sets `visualCacheDirty` and leaves `dirtyBars` as the previous rebuild left it; after a `slice_clean` that set is empty, so `rebuildVisualCacheIdleSlice` takes its `slice_nodirty` early return and clears the flag **without rebuilding**, serving pre-commit notes until something else marks bars.
+- Session-capture diagnostics: `#CAP,DIAG,gus,slot,kind,passId,passIds_n[,src=deferred]` at entry build, `#CAP,DIAG,gus,publish_begin,ok,phase,cursor,size,cap,passId,passIds_n` at `TrackUndoPublication::begin`, and `#CAP,DIAG,gus,drain,idle,cursor,size` when the transaction returns to Idle. A `cap` below `kUndoStackProtectedCapacity` means a rebuild dropped the reserve; `ok=0` means no entry was published for that stop.
+
 `beginOverdubSession` commits pending note-edit actions when entering overdub while editing; it does **not** call **closeNoteEditPass** or push capture-pass undo. In-edit overdub stop folds capture into **NoteEditSession.store** and pushes one **E:** entry (live capture **`redoEditRows`**); no **OverdubPassAdded** until edit exit.
 
 **Wrap finalize (record/overdub stop):** `Loop::finalizeCaptureWrapWindowAtStop` is the single owner for wrap-window synthetic note-offs on **capture.store** — used by **`sealCapture`** (normal stop) and **`Track::handleNoteEditFold`** (in-edit overdub stop) before merge into **NoteEditSession.store**. **`foldLiveCaptureIntoNoteEditSession`** merges only; it does not run a second wrap pass.
