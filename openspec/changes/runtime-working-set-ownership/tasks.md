@@ -116,15 +116,22 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
       active-interval overflow) across repeated switches.
 
-## S4c — windowed/streamed playback (prerequisite for the envelope, from F2)
+## S4c — immutable readiness at re-entry (prerequisite for the envelope, from F2)
 
-- [ ] S4c.1 Make active playback resolve windows **without** a resident whole-loop published root, while the
-      root remains the immutable checkpoint authority for undo and save.
-- [ ] S4c.2 Establish the windowed/streamed source for both canonical content and derived playback views, so
-      a sounding slot's resident cost is a window working set.
-- [ ] S4c.3 Native fixture: N sounding slots with no per-slot resident root; and undo/save still obtain an
-      immutable checkpoint.
-- [ ] S4c gates: budget shows no `N x root` term; existing playback content parity preserved.
+- [ ] S4c.1 Change the **publication unit** from whole-loop to interval/window with a **readiness deadline**:
+      an update covering tick T must be immutable before the playhead returns to T.
+- [ ] S4c.2 **Reuse inventory, then reuse**: enumerate what the existing resumable deferred publication path
+      already provides -- snapshot construction / journal, `stepPendingSnapshotPublish`, the wrap journal, the
+      deferred idle-owner scheduling (`MidiServiceDrain`), the sliced capture-stop jobs -- and record what, if
+      anything, must be added. Adding a second incremental-publication system is a failure mode, not a plan.
+- [ ] S4c.3 Decide and record the **missed-deadline rule** (previous immutable generation authoritative for
+      that pass / span held / deadline extended) with its user-visible consequence.
+- [ ] S4c.4 Narrow the published root to the **checkpoint authority for undo and save**, removing the
+      playback dependency on a resident whole-loop root.
+- [ ] S4c.5 Native fixtures: an update is immutable before the playhead returns; playback never consumes an
+      in-progress representation; the resident immutable set is interval-bounded, not whole-loop; a missed
+      deadline follows the recorded rule; undo/save still obtain a checkpoint.
+- [ ] S4c gates: the budget shows no `N x whole-root` term; existing playback content parity preserved.
 
 ## S5 — demote inactive slots' derived state
 

@@ -82,12 +82,16 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
   slot-lifetime owned. Inactive slots retain only canonical descriptors, loop/pass summary, persistence
   identity and location, and tiny browser metadata.
-- **Active playback becomes windowed/streamed; the root narrows to a checkpoint authority.** A published
-  root stays required as the **immutable checkpoint for undo and save**, but whole loops will never fit once
-  a whole song is built, so playback must resolve its windows **without a resident whole-loop root** -- today
-  it does not (`tryGatherPublishedSnapshotEventsInWindow` needs `publishedSnapshot()`), and at ~325 KB per
-  loop that is an unbudgeted `N x root` term. Making playback windowed is a first-class deliverable here,
-  not a consequence of it (F2).
+- **The immutable-readiness guarantee becomes per-tick, not per-loop (F2, refined).** The invariant is:
+  *after a recording, overdub or edit changes content at a tick, an updated **immutable** state must be ready
+  by the time the current tick moves over that tick again.* Playback stays stable precisely because it is
+  **only ever allowed to consume immutable events**. Today that immutable state is forced to be a whole loop,
+  which conflicts with available memory -- and the codebase already carries a lot of machinery that bridges
+  the gap as **resumable small deferred work inside MIDI boundaries**, which this change **reuses** rather
+  than replaces. So a published root narrows to the **checkpoint authority for undo and save**, while the
+  *playback* authority becomes the resident window/interval set, bounded by the lookahead and the affected
+  intervals rather than by N whole loops. Removing the `N x whole-root` term is therefore a change of
+  **unit and deadline**, not a new streaming subsystem.
 - **Role tiers, not one "active".** `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` /
   `DEFERRED`. **Plain UI selection must stay cheap**: it acquires cold metadata plus a bounded index or
   preview, never the playback/capture working set, so browsing 60 slots causes no allocation churn and
