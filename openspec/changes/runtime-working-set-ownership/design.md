@@ -264,24 +264,42 @@ completes for G cannot make G+1 evictable. It belongs in the S6 `DEC` amendment,
 test (dirty -> demote -> storage deliberately delayed -> pressure requests eviction -> content stays
 resident; save completes -> evictable; reload exact).
 
-## Revision 11 — windowed streaming MIDI replaces the resident-root playback assumption (F2)
+## Revision 11 — immutable readiness at re-entry, not whole-loop publication (F2, refined)
 
-The budget above omitted a term and this revision adds it by removing its cause. Today a *sounding* slot
-needs a resident whole-loop root, because windowed playback is served out of one
-(`tryGatherPublishedSnapshotEventsInWindow` returns false without `publishedSnapshot()`). At ~325 KB per
-loop that is `N x 325 KB` the budget never counted -- ~2.6 MB at today's N = 8, and ~10 MB at N = 32.
+The requirement is not "streaming" as such. It is a **readiness deadline on an immutable representation**,
+and this is the form that must be designed against:
 
-The resolution is not to budget it but to remove the requirement:
+> **After a recording, overdub or edit changes content at a tick, an updated immutable state must be ready by
+> the time the current tick moves over that tick again.** Playback may only ever consume immutable events --
+> that is *why* the immutable state exists, and it is what keeps MIDI output stable.
 
-- the published snapshot **remains the immutable checkpoint authority for undo and save** -- that is what
-  "published" must be read as;
-- **active playback resolves windows without a resident whole-loop root**, because whole loops will never
-  fit once a whole song exists;
-- consequently, windowed/streamed MIDI is a **first-class deliverable** of this change, and the budget's
-  playback term covers the *window* working set only, not a per-slot root.
+Two consequences follow, and they are the memory answer:
 
-This also changes the character of S6: it is not merely canonical-event residency, it is the windowed
-streaming path that both canonical content and derived playback views use.
+1. **The unit of authority becomes an interval/window with a deadline**, not the whole loop. Readiness is owed
+   per affected region before the playhead returns to it, so the resident set is bounded by the **lookahead
+   plus the affected intervals**. That is what removes the unbudgeted `N x whole-root` term (~325 KB per
+   loop, ~2.6 MB at today's N = 8) instead of merely paying it. A published root survives only as the
+   **immutable checkpoint authority for undo and save**.
+2. **The existing resumable deferred machinery is the mechanism, not new work.** The codebase already
+   produces exactly this kind of update in slices across service turns inside MIDI boundaries: the snapshot
+   construction/journal path (`LoopSnapshotConstruction`, `stepPendingSnapshotPublish`, the wrap journal),
+   the deferred idle-owner scheduling (`MidiServiceDrain`), and the sliced capture-stop jobs. That machinery
+   was built so a *whole-loop* unit would fit; **this change alters its unit and gives it a deadline** rather
+   than adding a parallel streaming subsystem. Avoiding a second incremental-publication path is an explicit
+   goal (S4c.2).
+
+**Missed-deadline rule (must be decided, not assumed).** An update can miss its deadline -- an edit just
+behind the playhead, or a heavily loaded service turn. Playback must still see only immutable events, so the
+candidate behaviours are:
+
+| # | Rule | User-visible consequence |
+|---|---|---|
+| a | The **previous immutable generation stays authoritative for that pass**; the new one takes effect on the next pass | The change is heard one pass later; consistent with the existing coverage/currency rules (`publishedSnapshotIsCurrent`, the DEC-073 coverage contract) |
+| b | The affected span is **held/suppressed** for that pass | A gap or a held note for one pass |
+| c | The **deadline is extended** by deferring the pass | Timing is disturbed, which the never-stop goal forbids |
+
+(a) is the least surprising and matches today's stale-root behaviour; it should be chosen explicitly, because
+it defines what the user hears when they edit just behind the playhead.
 
 ## Revision 12 — the role tiers fold into `activeLoopIndex` (F5)
 

@@ -82,20 +82,42 @@ deferred-finalization owner.
 - **THEN** the MIDI-boundary timing evidence reports no degradation and no overflow
 - **AND** the switch path performs no working-set allocation
 
-### Requirement: Active playback resolves windows without a resident whole-loop snapshot root
-Playback SHALL resolve its windows from a windowed/streamed representation rather than requiring a resident
-whole-loop published root. The published snapshot SHALL remain the immutable checkpoint authority for undo
-and save.
+### Requirement: Immutable readiness is owed per affected tick before the playhead returns to it
+After a recording, overdub or edit changes content at a tick, an updated immutable representation covering
+that tick SHALL be available by the time the current tick moves over that tick again. Playback SHALL consume
+only immutable events, and SHALL NOT require a resident whole-loop immutable root.
 
-#### Scenario: A sounding slot needs no resident whole-loop root
-- **WHEN** a slot sounds a long loop as one of N sounding slots
-- **THEN** its playback is served from windows
-- **AND** the budget accounts for a window working set, not a per-slot whole-loop root
+#### Scenario: An update is immutable before the playhead returns
+- **WHEN** content at tick T changes while the playhead is elsewhere in the loop
+- **THEN** an immutable representation covering T is ready before the playhead reaches T again
+- **AND** playback consumes only that immutable representation
 
-#### Scenario: Checkpoint authority is preserved
+#### Scenario: Playback never reads a partially updated representation
+- **WHEN** an update covering a tick is still being produced as resumable deferred work
+- **THEN** playback uses an immutable generation rather than the in-progress one
+- **AND** no torn or partially applied state reaches the MIDI output
+
+#### Scenario: The readiness unit is an interval, not a whole loop
+- **WHEN** a sounding slot needs playback for a long loop
+- **THEN** its resident immutable working set is bounded by the lookahead and the affected intervals
+- **AND** it does not require a whole-loop root to be resident
+
+#### Scenario: Checkpoint authority is preserved without being resident
 - **WHEN** undo or save requires an immutable state
-- **THEN** a published root is available as the checkpoint authority
-- **AND** playback does not depend on that root being resident
+- **THEN** the checkpoint authority is available
+- **AND** playback does not depend on a whole-loop root being resident
+
+#### Scenario: Existing deferred publication machinery is reused
+- **WHEN** the readiness mechanism is implemented
+- **THEN** it reuses the existing resumable deferred publication path rather than adding a second
+  incremental-publication system
+- **AND** what could not be reused is recorded explicitly
+
+#### Scenario: Missed-deadline behaviour is defined
+- **WHEN** an update is not ready when the playhead reaches its tick
+- **THEN** the recorded rule applies (the previous immutable generation stays authoritative for that pass,
+  the span is held, or the deadline is extended)
+- **AND** the user-visible consequence of that rule is documented rather than incidental
 
 ### Requirement: Runtime roles are separate classes with declared cardinalities
 Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred
