@@ -1227,7 +1227,26 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       one. `openOverdubSession` then stops clearing unconditionally and releases only when covered
       (`releaseSealedCapturePreviewIfCovered`), so the `001647` wrap cannot recur because the previous session's rows
       are never consumable by the new session.
-      **Verify (native, and it must fail without the session tag).** Seal a first overdub, leave the committed cache
+      **Attempted 2026-09-18: the session tag is NOT sufficient, and the attempt was reverted.** Implemented exactly as
+      designed above (field stamped in `retainCapturePreviewAtSeal`, reset in `clearSealedCapturePreview`,
+      `openOverdubSession` releasing on coverage, and the session predicate added to the two consumption sites).
+      The new fixture passed and the §5.8a sibling stayed green, but **four previously pinned display invariants
+      broke**:
+      - `test_retain_at_seal_merges_uncovered_laps` -- Expected 1 Was 2. The retained previous-session rows make the
+        *next* seal merge laps that the `120321` discipline requires to be replaced.
+      - `test_draw_source_open_hold_grows_to_playhead_after_occupy_hide` -- Expected FALSE Was TRUE (the
+        occupy/hold path).
+      - `test_draw_source_retains_unpublished_visual_cache_over_stale_gather_214900` -- Expected 65 Was 56.
+      - `test_draw_source_od2_clean_adopt_keeps_linear_tail` -- Expected TRUE Was FALSE.
+      That is the real shape of the defect: the sealed handoff is read by **five** distinct consumers -- display
+      union, lap merge at seal, occupy/hold, draw-source gather reuse, and the od2 clean adopt -- and *four* of them
+      must keep seeing "current session only", while exactly *one* (the frame) must see both sessions' rows. Tagging
+      one set and filtering each consumer is therefore the wrong seam; the fix is structural: **split the handoff
+      into two representations** -- the display-only retained rows of the previous session, and the current session's
+      sealed rows -- each with one owner and one release rule, so `openOverdubSession` moves the current set to
+      display-only instead of either clearing it or hiding it behind a predicate that every consumer must remember to
+      apply. The device evidence and the failing-first fixture stand; the design does not.
+      **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
       (the `001647` guard). Then assert it also leaves the frame once a resolve covers it.
