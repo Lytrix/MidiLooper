@@ -3967,6 +3967,16 @@ def _build_serial_verification(
             deferred_persist_large_loop_bounds_issues(deferred_persist_large_loop_bounds)
         )
     issues.extend(midi_boundary_timing_issues(midi_boundary_timing))
+    # RC-MEM-7: Tier-A text displaced by newer Tier-A text is the ring's documented behaviour at
+    # long run length -- the newest timing windows are kept -- so it degrades the trace rather
+    # than invalidating the session. Surface it as an advisory so a reader can down-weight the
+    # timing verdict instead of reading a clean pass, and keep it out of `issues` on purpose.
+    if midi_boundary_timing.get("tier_a_degraded"):
+        timing_warnings.append(
+            "capture_tier_a_evicted:{}".format(
+                int(midi_boundary_timing.get("tier_a_evicted_count", 0) or 0)
+            )
+        )
     if not record_stop_ram2_floor.get("phase_disabled", True):
         if record_stop_ram2_floor.get("record_stop_row_missing", False):
             issues.append("record_stop_ram2_heap_missing")

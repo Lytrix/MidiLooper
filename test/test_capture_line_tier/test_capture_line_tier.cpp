@@ -301,6 +301,34 @@ void test_malformed_lines_are_not_tier_a() {
   TEST_ASSERT_FALSE(CaptureLineTier::isTierALine("#CAP,6701437"));
 }
 
+void test_full_ring_displacement_stays_non_fatal_for_tier_a() {
+  // RC-MEM-7: Tier-A text displaced by newer Tier-A text is the ring's documented behaviour and
+  // must NOT be reported as a session-invalidating overflow; only critical loss is fatal.
+  TEST_ASSERT_TRUE(CaptureLineTier::evictionKindFor(/*headIsTierAText=*/false,
+                                                    /*headIsCriticalText=*/false) ==
+                   CaptureLineTier::EvictionKind::TimingShed);
+  TEST_ASSERT_TRUE(CaptureLineTier::evictionKindFor(true, false) ==
+                   CaptureLineTier::EvictionKind::TierAText);
+  TEST_ASSERT_TRUE(CaptureLineTier::evictionKindFor(false, true) ==
+                   CaptureLineTier::EvictionKind::CriticalText);
+  // A critical head is critical even though it is also Tier-A.
+  TEST_ASSERT_TRUE(CaptureLineTier::evictionKindFor(true, true) ==
+                   CaptureLineTier::EvictionKind::CriticalText);
+}
+
+void test_tier_a_and_critical_are_only_displaced_by_their_own_kind() {
+  // Ordinary diagnostics can never evict the evidence a timing verdict is computed from.
+  TEST_ASSERT_FALSE(CaptureLineTier::incomingMayDisplace(false, false, /*headTierA=*/true, false));
+  TEST_ASSERT_FALSE(CaptureLineTier::incomingMayDisplace(false, false, false, /*headCritical=*/true));
+  TEST_ASSERT_FALSE(CaptureLineTier::incomingMayDisplace(true, false, false, true));
+  // Tier-A may displace Tier-A, critical may displace critical, anything may displace plain
+  // diagnostics.
+  TEST_ASSERT_TRUE(CaptureLineTier::incomingMayDisplace(true, false, true, false));
+  TEST_ASSERT_TRUE(CaptureLineTier::incomingMayDisplace(true, true, false, true));
+  TEST_ASSERT_TRUE(CaptureLineTier::incomingMayDisplace(false, false, false, false));
+  TEST_ASSERT_TRUE(CaptureLineTier::incomingMayDisplace(true, false, false, false));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_tag_is_the_field_after_micros);
@@ -314,5 +342,7 @@ int main() {
   RUN_TEST(test_tag_parse_survives_a_wide_micros_field);
   RUN_TEST(test_tag_starts_with_matches_led_mo_diag);
   RUN_TEST(test_malformed_lines_are_not_tier_a);
+  RUN_TEST(test_full_ring_displacement_stays_non_fatal_for_tier_a);
+  RUN_TEST(test_tier_a_and_critical_are_only_displaced_by_their_own_kind);
   return UNITY_END();
 }

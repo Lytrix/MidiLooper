@@ -41,6 +41,35 @@ inline bool isCriticalLine(const char* line) {
   return tagStartsWith(line, "ODUB,stop,bridge_begin,");
 }
 
+/// What a full capture ring must displace.
+///
+/// These are three observably different losses and they must not be conflated by the host:
+/// routine timing shed; Tier-A text displaced by newer Tier-A text (the ring's documented
+/// behaviour that keeps the newest timing windows, so the session stays usable); and critical
+/// text loss, which cannot legitimately happen because critical may only be displaced by
+/// critical. Only the last one invalidates a capture. Header-only so the host tests pin the
+/// truth table without Arduino.
+enum class EvictionKind : uint8_t { TimingShed, TierAText, CriticalText };
+
+/// Classify the record at the ring head, which is the one a full ring would displace.
+inline EvictionKind evictionKindFor(bool headIsTierAText, bool headIsCriticalText) {
+  if (headIsCriticalText) {
+    return EvictionKind::CriticalText;
+  }
+  if (headIsTierAText) {
+    return EvictionKind::TierAText;
+  }
+  return EvictionKind::TimingShed;
+}
+
+/// Whether an incoming line may displace the head record. Tier-A may only be displaced by Tier-A
+/// and critical only by critical, so ordinary diagnostics can never evict the evidence a timing
+/// verdict is computed from; a denied append is reported as timing shed instead.
+inline bool incomingMayDisplace(bool incomingTierA, bool incomingCritical, bool headTierA,
+                                bool headCritical) {
+  return !((!incomingTierA && headTierA) || (!incomingCritical && headCritical));
+}
+
 /**
  * Transport state, persistence, record stage, session header, visual cache coverage, and
  * timing telemetry lines.
