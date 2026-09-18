@@ -670,7 +670,7 @@ reachable at their `Task N.N` anchors in `CURRENT_WORK.md` from every checklist 
   the log.
 - [x] 8.5 Confirm the final gates together — full native suite, firmware build with the RAM1 line, `openspec validate --strict`
   — and record all three in `PREFLIGHT.md`. Verify: green before any archive step.
-- [ ] 8.6 **Ask** before opening the PR (no auto-PR per `AGENTS.md`): `refactor/runtime-code-tidyup` → the base chosen
+- [x] 8.6 **Ask** before opening the PR (no auto-PR per `AGENTS.md`): `refactor/runtime-code-tidyup` → the base chosen
   by OD-5 (default: `feature/resumable-midi-boundary-playback-maintenance`). Verify: the PR lists the phase commits and
   states that no behavior, format or persisted layout changed.
 
@@ -699,4 +699,7 @@ trailing-space decision, and the localised duplication that made a 131-sentence 
 with RAM1 `variables 96096 / code 391736 / padding 1480 / free for local variables 34976` and `_itcm_block_count` 12;
 `openspec validate runtime-code-tidyup --strict` valid. Raw output is in `PREFLIGHT.md` § Final gates.
 
-**8.6 is deliberately open** — the PR is not opened without the user's choice of base (OD-5).
+**8.6 opened** after asking: **[PR #42](https://github.com/Lytrix/MidiLooper/pull/42)** —
+`refactor/runtime-code-tidyup` → `feature/resumable-midi-boundary-playback-maintenance` (the OD-5 default; both
+branches were published to `origin` for it, the base branch having been local-only). The PR body lists the phase
+commits and states that no behavior, format or persisted layout changed.

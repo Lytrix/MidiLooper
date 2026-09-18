@@ -2741,8 +2741,8 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**2026-09-18 — `runtime-code-tidyup` P1–P6 COMPLETE on `refactor/runtime-code-tidyup` (stacked on this
-branch at `4aacd18e`; only the 8.6 PR decision is owed).** The behavior-preserving tidying of the 56
+**2026-09-18 — `runtime-code-tidyup` P1–P6 COMPLETE on `refactor/runtime-code-tidyup`; [PR #42](https://github.com/Lytrix/MidiLooper/pull/42)
+open against `feature/resumable-midi-boundary-playback-maintenance`.** The behavior-preserving tidying of the 56
 runtime files this branch added landed as P1 dead code and dead artifacts → P2 constants and enums → P3
 de-duplication into existing owners → P4 naming convergence → P5 three file splits → P6 formatting and
 docs. Final gates: native **2,262 / 1 skipped / 2,261 passed**; `teensy41-capture-serial` SUCCESS with

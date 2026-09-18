@@ -61,7 +61,7 @@
 
 - **Overdub companion admission + STOPPED first-paint (§36, Aug 2026):** clock-path gather copy-only; source-span prewarm after `boot_commit`; STOPPED undo/switch keep `visualCache.notes` and budget idle gather. Device PASS [`165107`](../captures/session_20260821_165107.log), [`183229`](../captures/session_20260821_183229.log). Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §35–§36. Later: wrap-append bound, 5 s idle attribution (§37).
 
-**Complete on `refactor/runtime-code-tidyup` — merge owed** (stacked on `feature/resumable-midi-boundary-playback-maintenance`):
+**Complete on `refactor/runtime-code-tidyup` — [PR #42](https://github.com/Lytrix/MidiLooper/pull/42) open against `feature/resumable-midi-boundary-playback-maintenance`:**
 
 - **Runtime-code tidy-up (`runtime-code-tidyup`, Sep 2026) — maintainability deliverable:** behavior-preserving
   review of the 56 runtime files the base change added — dead code the branch itself superseded, thirteen

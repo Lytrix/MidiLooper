@@ -1,7 +1,7 @@
 # Project state (execution context)
 
-**2026-09-18 `runtime-code-tidyup` P1–P6 is complete on `refactor/runtime-code-tidyup`** (stacked on
-`feature/resumable-midi-boundary-playback-maintenance` at `4aacd18e`; only the 8.6 PR decision is owed). A
+**2026-09-18 `runtime-code-tidyup` P1–P6 is complete on `refactor/runtime-code-tidyup`** ([PR #42](https://github.com/Lytrix/MidiLooper/pull/42)
+open against `feature/resumable-midi-boundary-playback-maintenance`; both branches published to `origin`). A
 behavior-preserving review of the 56 runtime files that branch added: dead code the branch superseded, one
 resumable-worker pattern re-expressed thirteen times, two vocabularies for one concept, and no enforced
 formatting. Six phases landed, P1 dead code → P2 constants/enums → P3 de-duplication into existing owners → P4
@@ -1884,7 +1884,7 @@ and are not implementation scope here.
 
 | Change | Focus |
 |--------|--------|
-| **`runtime-code-tidyup`** | **P1–P6 COMPLETE on `refactor/runtime-code-tidyup`** (2026-09-18) — behavior-preserving tidy-up of the base change's 56 runtime files; native 2,262 / firmware RAM1 byte-identical / `_itcm_block_count` 12 / `validate --strict` valid; `DEC-076` + `DEC-077`; no HITL gate. Only the 8.6 PR decision is owed |
+| **`runtime-code-tidyup`** | **P1–P6 COMPLETE on `refactor/runtime-code-tidyup`** (2026-09-18) — behavior-preserving tidy-up of the base change's 56 runtime files; native 2,262 / firmware RAM1 byte-identical / `_itcm_block_count` 12 / `validate --strict` valid; `DEC-076` + `DEC-077`; no HITL gate. [PR #42](https://github.com/Lytrix/MidiLooper/pull/42) open against `feature/resumable-midi-boundary-playback-maintenance` |
 | **`immutable-loop-snapshot-passes`** | Phase 2 publication complete; 3.5/3.6 and 4.1–**4.6** closed; **5.1**–**5.7** SHIPPED; **6.1**–**6.4** SHIPPED (**6.4** device [`164947`](../captures/session_20260912_164947.log) 2026-09-12); next open: **4b.3**, **6.5**; §**6.6** post-closeout polish non-blocking; [DEC-057](../DECISION_LOG.md#dec-057--loopsnapshot-body-format-version-1-lsv1-dual-write); boot sync load still legacy; snapshot nodes pack into 32 KB slabs (`DEC-048`) |
 | `loop-content-resolution` | Historical base prototype; maintained-LCR continuation not pursued on this branch |
 | `loop-effective-event-source` | Historical base context; no new LCR work on this branch |
