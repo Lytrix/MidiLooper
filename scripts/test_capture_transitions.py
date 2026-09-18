@@ -609,6 +609,24 @@ class UndoRedoDisplayOracleTests(unittest.TestCase):
         self.assertEqual(176, result["frame_before_undo"])
         self.assertEqual([], result["issues"])
 
+    def test_multiple_cycles_bound_the_post_redo_sample(self) -> None:
+        # `undo_redo_cycles > 1`: the next undo lands inside the 8 s window, and sampling it as the
+        # post-redo frame reports a false redo failure (`gus-undo-06` ran three cycles).
+        lines = [
+            "#CAP,70000000,DISP,0,PLAYING,6912,176,176,176,176,1\r\n",
+            "[77.949] [DEBUG] Undo applied: kind=1 undo_count=1",
+            "#CAP,78000000,DISP,0,PLAYING,6912,144,144,144,144,1\r\n",
+            "[81.094] [DEBUG] Redo applied: kind=1 redo_count=0",
+            "#CAP,82000000,DISP,0,PLAYING,6912,176,176,176,176,1\r\n",
+            "[87.666] [DEBUG] Undo applied: kind=1 undo_count=1",
+            "#CAP,88000000,DISP,0,PLAYING,6912,144,144,144,144,1\r\n",
+            "[91.081] [DEBUG] Redo applied: kind=1 redo_count=0",
+            "#CAP,92000000,DISP,0,PLAYING,6912,176,176,176,176,1\r\n",
+        ]
+        result = _verify_undo_redo_display(lines)
+        self.assertEqual(176, result["frame_after_redo"])
+        self.assertEqual([], result["issues"])
+
 
 if __name__ == "__main__":
     unittest.main()

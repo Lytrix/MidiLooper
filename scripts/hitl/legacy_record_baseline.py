@@ -3056,8 +3056,14 @@ def _verify_undo_redo_display(
     frame_after_undo = _last_disp_frame_notes(
         _extract_disp_snapshots(lines, after_ts=undo_ts, before_ts=redo_ts)
     )
+    # With `undo_redo_cycles > 1` the next undo lands inside the window; stop the post-redo sample at
+    # it so the comparison is still undo -> redo (`gus-undo-06` ran three cycles).
+    next_undo_ts = _first_marker_ts(lines, "Undo applied", after_ts=redo_ts)
+    redo_window_end = redo_ts + window_us
+    if next_undo_ts is not None and next_undo_ts < redo_window_end:
+        redo_window_end = next_undo_ts
     frame_after_redo = _last_disp_frame_notes(
-        _extract_disp_snapshots(lines, after_ts=redo_ts, before_ts=redo_ts + window_us)
+        _extract_disp_snapshots(lines, after_ts=redo_ts, before_ts=redo_window_end)
     )
     result.update(
         frame_before_undo=frame_before,
