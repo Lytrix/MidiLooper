@@ -119,6 +119,14 @@ interval generation) and **self-serviced** when the resources free, completing a
 second press**. The same rule applies to record/overdub start, slot/track switching and undo/redo: a request is
 never refused to the user, it is accepted and completed as soon as it can be.
 
+**The re-drive mechanism already exists -- it just does not cover a denial.** `hasPendingDeferredOverdubStop()`
+guards both redirect points (`stopOverdubbingToStopped`, `invalidatePlaybackMergedMidiEvents`), and each re-issues
+`requestDeferredOverdubStopToStopped()` for an already-**admitted** job. Neither the transport nor the invalidation
+path re-issues a **denied** request, because a denial stores nothing: the guard is false and the request is gone. So
+S4f is an extension of the existing pending-stop latch to cover the pre-admission request, not a new mechanism --
+the service point that already re-drives pending jobs is the natural place to drive a latched request, which is why
+the fix is small.
+
 **Why the latch fits the capacity finding.** A latched request is **one small piece of state per live interval**
 -- and there is one live capture interval at a time -- not a stored stopped interval. It therefore needs none of
 the storage the ring cannot provide, and it does not reintroduce the queue model that was correctly rejected.
