@@ -683,21 +683,56 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackBridgeLifecycle::publishCandi
   candidate = selected == 0 ? 1 : 0;
 }
 
-RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserveWholeTake) {
-  if (prewarmed && (!reserveWholeTake || wholeTakeReserved)) {
-    // Already at or above the requested reservation: a whole-take slot satisfies a windowed
-    // request, and there is nothing left to do for the reverse.
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::releaseWholeTakeViews() {
+  if (!wholeTakeReserved) {
     return true;
   }
-  const bool firstPrewarm = !prewarmed;
-  if (firstPrewarm) {
-    for (RuntimePlaybackView& view : views) {
-      if (!view.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) {
-        for (RuntimePlaybackView& allocated : views) {
-          allocated.storage.release();
-        }
-        return false;
+  if (bridgeLifecycle.selected != RuntimePlaybackBridgeLifecycle::kNoBridge) {
+    // The selected bridge is the authoritative representation right now; releasing its
+    // backing would be a use-after-free, so this stays reserved.
+    return false;
+  }
+  for (RuntimePlaybackView& base : bridgeBases) {
+    base.resetMetadata();
+    base.storage.release();
+  }
+  for (FixedPlaybackBridgeStorage& bridge : bridges) {
+    bridge.resetMetadata();
+    bridge.release();
+  }
+  bridgeLifecycle.reset();
+  wholeTakeReserved = false;
+  return true;
+}
+
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserveWholeTake) {
+  if (prewarmed) {
+    if (!reserveWholeTake) {
+      // Windowed-only request on an already-prewarmed slot: the loop is now known to be long,
+      // so the whole-take reservation is dead and must be returned rather than held for the
+      // session. A record arm on an empty slot could not know the length; this is where it
+      // becomes known.
+      return releaseWholeTakeViews();
+    }
+    if (wholeTakeReserved) {
+      return true;
+    }
+    // Whole-take upgrade for a loop that has since become short. Reachable only from a cold
+    // capture-admission boundary (record arm / overdub start), which may allocate.
+    for (auto& base : bridgeBases)
+      if (!base.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) return false;
+    for (FixedPlaybackBridgeStorage& bridge : bridges) {
+      if (!bridge.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge)) return false;
+    }
+    wholeTakeReserved = true;
+    return true;
+  }
+  for (RuntimePlaybackView& view : views) {
+    if (!view.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) {
+      for (RuntimePlaybackView& allocated : views) {
+        allocated.storage.release();
       }
+      return false;
     }
   }
   // RC-MEM-2: the bridges and their immutable bases exist only to publish a whole-take view
@@ -706,13 +741,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserve
   // authoritative, so it is not reserved. `wholeTakeReserved` makes the refusal explicit:
   // `beginCandidateBridge` denies before any bridge storage is touched, and the stopped-oracle
   // publishers check it too, so nothing depends on the buffers being absent by accident.
-  //
-  // The upgrade path stays live because a slot admitted windowed-only (a long loop) can be
-  // armed later for a loop that has since become short; record arm and overdub start are cold
-  // capture-admission boundaries that are allowed to allocate, which is exactly where this is
-  // reached. `FixedPlaybackBridgeStorage::prewarm` is idempotent, so a retry after a partial
-  // allocation is safe.
-  if (reserveWholeTake && !wholeTakeReserved) {
+  if (reserveWholeTake) {
     for (auto& base : bridgeBases)
       if (!base.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) return false;
     for (FixedPlaybackBridgeStorage& bridge : bridges) {
@@ -728,21 +757,19 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserve
     }
     wholeTakeReserved = true;
   }
-  if (firstPrewarm) {
-    if (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm()) {
-      for (RuntimePlaybackView& allocated : views) {
-        allocated.storage.release();
-      }
-      for (FixedPlaybackBridgeStorage& allocated : bridges) {
-        allocated.release();
-      }
-      liveCaptureStaging().storage.release();
-      frozenCaptureStaging().storage.release();
-      return false;
+  if (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm()) {
+    for (RuntimePlaybackView& allocated : views) {
+      allocated.storage.release();
     }
-    resetMetadata();
-    prewarmed = true;
+    for (FixedPlaybackBridgeStorage& allocated : bridges) {
+      allocated.release();
+    }
+    liveCaptureStaging().storage.release();
+    frozenCaptureStaging().storage.release();
+    return false;
   }
+  resetMetadata();
+  prewarmed = true;
   return true;
 }
 

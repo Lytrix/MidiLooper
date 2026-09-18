@@ -155,6 +155,50 @@ void test_full_take_admissibility_follows_the_windowed_policy() {
   TEST_ASSERT_TRUE(loop.fullTakePlaybackViewAdmissible());
 }
 
+void test_whole_take_reservation_is_released_once_the_loop_is_known_long() {
+  // A record arm on an EMPTY slot has no length yet, so the whole-take bundle is legitimately
+  // reserved. Once the loop is known to be long (the next cold admission, e.g. overdub start)
+  // the reservation must be returned rather than held for the session -- otherwise the
+  // 715 KB would stay for the whole session even though nothing can publish into it.
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
+  TEST_ASSERT_TRUE(set.wholeTakeViewsReserved());
+  const size_t wholeTakeBytes = set.fixedExternalBytes();
+  TEST_ASSERT_TRUE(runtime.preparedPairStorage.isPrewarmed());
+
+  TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,
+                                       /*fullTakeAdmissible=*/false));
+  TEST_ASSERT_FALSE(set.wholeTakeViewsReserved());
+  TEST_ASSERT_TRUE(set.fixedExternalBytes() < wholeTakeBytes);
+  for (uint8_t i = 0; i < RuntimePlaybackViewConfig::kBridgeCount; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(0, set.bridges[i].capacity);
+    TEST_ASSERT_EQUAL_UINT32(0, set.bridgeBases[i].storage.capacity);
+  }
+  TEST_ASSERT_FALSE(runtime.preparedPairStorage.isPrewarmed());
+  TEST_ASSERT_FALSE(set.beginCandidateBridge());
+  // The windowed views and both stagings survive the release.
+  for (uint8_t i = 0; i < RuntimePlaybackViewConfig::kViewCount; ++i) {
+    TEST_ASSERT_EQUAL_UINT32(RuntimePlaybackViewConfig::kEventsPerView,
+                             set.views[i].storage.capacity);
+  }
+  TEST_ASSERT_TRUE(set.captureStagingsPrewarmed());
+}
+
+void test_release_refuses_while_a_bridge_is_selected() {
+  // The selected bridge is the live authoritative representation; releasing its backing
+  // would be a use-after-free, so the release must be refused until it is deselected.
+  LoopPlaybackRuntime runtime;
+  TEST_ASSERT_TRUE(runtime.prewarmViews());
+  RuntimePlaybackViewSet& set = *runtime.viewSetIfPrewarmed();
+  set.bridgeLifecycle.selected = 0;
+  TEST_ASSERT_FALSE(set.releaseWholeTakeViews());
+  TEST_ASSERT_TRUE(set.wholeTakeViewsReserved());
+  set.bridgeLifecycle.reset();
+  TEST_ASSERT_TRUE(set.releaseWholeTakeViews());
+  TEST_ASSERT_FALSE(set.wholeTakeViewsReserved());
+}
+
 void test_windowed_only_slot_reserves_no_whole_take_representation() {
   // RC-MEM-2: a loop that can never publish a full-take view (every full-take publisher
   // requires an exactly full-loop coverage interval) must reserve only what the windowed lanes
@@ -6653,6 +6697,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_session_exit_receipt_ring_is_fifo_and_not_serialized);
   RUN_TEST(test_prepared_companion_history_is_job_qualified);
   RUN_TEST(test_full_take_admissibility_follows_the_windowed_policy);
+  RUN_TEST(test_whole_take_reservation_is_released_once_the_loop_is_known_long);
+  RUN_TEST(test_release_refuses_while_a_bridge_is_selected);
   RUN_TEST(test_windowed_only_slot_reserves_no_whole_take_representation);
   RUN_TEST(test_windowed_only_slot_refuses_the_whole_take_publishers);
   RUN_TEST(test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission);

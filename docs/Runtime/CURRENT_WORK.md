@@ -2771,11 +2771,31 @@ the threshold; a windowed-only slot having `capacity() == 0` for both bridges an
 stopped-oracle overload (the **windowed** publisher) still publishes a partial coverage; and an in-place upgrade
 re-arming bridges and pair without resetting admitted staging. Full native **2,256 cases / 1 skipped / 0 failures**;
 `teensy41-capture-serial` SUCCESS with RAM1 byte-identical to the census state (`variables 96,064 / code 392,152 /
-padding 1,064 / locals free 35,008`), i.e. the change is cold-path code and cost no FlexRAM bank. **Owed (device):**
-the before/after 24-bar measurement -- boot/load PSRAM, arm delta, per-slot tagged view bytes, stop-window
-allocations, playback-order hot rebuild count, MIDI gap and final content equivalence. Still out of scope and
-recorded in 5.11: deriving the per-window capacity (2048) from the resolved window, and prewarming only the armed
-slot instead of every enabled slot.
+padding 1,064 / locals free 35,008`), i.e. the change is cold-path code and cost no FlexRAM bank.
+
+*Release path added in the same change.* A record arm on an **empty** slot has `loopLengthTicks == 0`, so
+`fullTakePlaybackViewAdmissible()` is legitimately true and the bundle is reserved; `prewarmViews(..., false)` at a
+later cold admission now **releases** it instead of keeping it for the session --
+`RuntimePlaybackViewSet::releaseWholeTakeViews()` returns the bridge/base backing (refusing while a bridge is
+selected, since that bridge is the authoritative representation) and the prepared pair is cleared. So the 715 KB is
+not held for the whole session after a record that turned out long.
+
+*Device A/B (clean worktree `c0aadc0f` census-only vs `5ba7d109` census+RC-MEM-2; 24-bar record + 24-bar overdub,
+track 5 slot 1, base preset).* `before`: arm delta +1,372 KB with `tags=91/715/148/0/7/0/58KB`, then exhaustion --
+`[InternalHeapFirstAllocator] FATAL` at 104 s, `live=8374KB, heap_free=16KB`, `#MEM_EXT_REFUSED bytes=23040`.
+`after`: the same 715 KB reservation, 0 `FATAL`, 0 refusals, heap floor 44 KB -- **not** attributed to this RC, since
+the reservation was identical in both legs and the difference is workspace-state variance. The release itself could
+not be measured in this shape and the reason is recorded: the follow-up cold admission that would trigger it (the
+overdub start on the now-24-bar loop) was denied on the **internal-heap floor first**
+(`#MEM_DENIED,op=overdub_start,reason=heap_low,need=16384B,heap_free=44KB`, 4 times against 129
+`op=snapshot_reserve` denials), so `prewarmViews(..., false)` was never reached. A shape whose long-loop cold
+admission succeeds is owed to measure `tag2 ViewPrewarm` 715 -> ~215 KB; fixing that heap floor is a separate RC, and
+it now binds *before* pool pressure does -- the opposite of the original crash.
+
+The same run settled 5.10's question on hardware: `slab_used` 2,453-2,857 KB of a 2,496-2,912 KB payload
+(`slab_unused` 42-54 KB, `pin1` 0-1) for the entire session, i.e. the arena is ~98 % packed with essentially no
+pinning. Still out of scope: deriving the per-window capacity (2048) from the resolved window, and prewarming only
+the armed slot instead of every enabled slot.
 
 **2026-09-18 — the snapshot slab arena is instrumented, and its "reclaim ~3 MB" premise is measured to be FALSE
 (`immutable-loop-snapshot-passes` 5.10/5.11).** The user's question was why live memory is far larger than the loop
