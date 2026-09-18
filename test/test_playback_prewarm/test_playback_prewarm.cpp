@@ -201,7 +201,7 @@ void test_release_refuses_while_a_bridge_is_selected() {
 
 void test_windowed_only_slot_reserves_no_whole_take_representation() {
   // RC-MEM-2: a loop that can never publish a full-take view (every full-take publisher
-  // requires an exactly full-loop coverage interval) must reserve only what the windowed lanes
+  // requires an exactly full-loop coverage interval) must reserve only what the three rolling windows
   // and capture admission actually use: the three rolling views and both capture stagings.
   LoopPlaybackRuntime runtime;
   TEST_ASSERT_TRUE(runtime.prewarmViews(RuntimePlaybackViewConfig::kRecordsPerBridge,

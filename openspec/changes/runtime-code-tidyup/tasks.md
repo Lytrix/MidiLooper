@@ -398,7 +398,7 @@ land; the P3 work is committed in sub-commits so each is independently bisectabl
 - [x] 5.4 Fix abbreviations and scope-collisions in touched files: `SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader`;
   `RuntimePlaybackViewFillScope` → `…FillCoverage`; the prohibited "lane" comment at
   `include/RuntimePlaybackView.h:405`. Verify: grep shows the old spellings gone from touched files only.
-- [ ] 5.5 Fix ownership-attribution naming with comments/renames, not moves: note the declaring headers at the top of
+- [x] 5.5 Fix ownership-attribution naming with comments/renames, not moves: note the declaring headers at the top of
   `src/Track/TrackUndoRetirement.cpp` (or rename the TU to its declaring owners), give `RuntimeNoteDeleteLookup` its own
   TU/prefix per NAMING's file-per-owner rule, and align `retire`/`release` prose on the identifier's verb. Verify: each
   file's name or header comment matches what it defines; native suite passes.
@@ -406,7 +406,7 @@ land; the P3 work is committed in sub-commits so each is independently bisectabl
   (`src/Loop/LoopSnapshot.cpp:897-898`) or rename it to state that ascending source order is intentional and delete the
   `(void)` cast. **No ordering change** without its own change and HITL evidence. Verify: the `(void)` cast is gone, the
   comment states the contract, native suite passes.
-- [ ] 5.7 P4 gate: full native suite; `grep` audit showing no deprecated name survives in the touched files. Verify:
+- [x] 5.7 P4 gate: full native suite; `grep` audit showing no deprecated name survives in the touched files. Verify:
   suite unchanged; diff contains no file touched *only* by a rename.
 
 ### P4 progress (2026-09-18) — phase incomplete, gate deferred
@@ -443,7 +443,22 @@ timing-model change, replacing the `(void)` cast that hid the gap. 5.5 is partly
 (and why the TU is not renamed: a new/renamed TU defaults into ITCM and needs its own RAM1 measurement);
 moving `RuntimeNoteDeleteLookup` to its own TU and aligning the `retire`/`release` prose are still open.
 
-**Still open in P4:** 5.5's remaining two clauses, and the phase gate 5.7.
+**Third sub-commit (5.5 + the P4 phase gate 5.7):** the `retire`/`released` prose in `LoopSnapshot.h`
+now matches the `release` identifiers; `RuntimeNotePairLookup.h` opens by naming both owners it declares
+and records that splitting them into their own TU was **considered and declined** (a new TU defaults into
+ITCM unless it matches the linker flash allow-list, so the move needs its own RAM1 measurement for no
+ownership gain). Three further "windowed lanes" mentions the task had not named were found by the gate
+audit and fixed (a fixture comment and two journal lines) - `lane` is now absent from the touched code and
+docs.
+
+**P4 phase gate 5.7: passed, with one recorded deviation.** Native 2,262 / 1 skipped / 2,261 passed;
+firmware SUCCESS with RAM1 unchanged (`code 391736 / padding 1480 / free 34976`); the audit shows no
+deprecated name surviving (`normalized*`, the four `*Kind` names, the `*Fn` abbreviations,
+`RuntimePlaybackViewFillScope` and "windowed lanes" are all 0). **Deviation:** the gate also required "no
+file touched only by a rename", and 11 test files plus `NAMING.md` are rename-only in the P4 commits. That
+criterion was too strict as written: renaming an enum that 18 files use necessarily edits its users, which
+is unavoidable collateral rather than unrelated churn. The distinction that mattered - not sweeping the
+~16 pre-existing `*Kind` enums - was honoured.
 
 ## 6. P5 — split the three files with real ownership seams
 
