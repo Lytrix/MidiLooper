@@ -315,6 +315,38 @@ The seven other repo-wide bar-count sites are outside this change's added code a
 touch-and-adopt pass rather than a sweep. Sub-phase gate: native 2,262 / 1 skipped / 2,261 passed;
 firmware SUCCESS, RAM1 `code 391736 / padding 1480 / free 34976` (-576 code, same bank, more slack).
 
+### P3 remaining tasks: two premise corrections found by measurement (2026-09-18)
+
+Before starting 4.2 and 4.3 I measured their blast radius and checked their premises. Both are wrong as
+written, so neither was attempted; the phase gate 4.14 stays open.
+
+**4.2 — the shared result enum is a ~930-site, type-aware rename.** Reference counts:
+`RuntimePlaybackOrderBuildResult` **800** (240 production, 560 test), `RuntimePlaybackViewBuildGrain` 75,
+`RuntimeCompanionSpanResult` 30, `RuntimePlaybackViewFillResult` 28, `RuntimeCompanionOverlapResult` 26.
+The enumerator rename cannot be done with a text sweep: `::Pending` (419), `::Complete` (358) and
+`::Denied` (343) are shared with many other enums in the repo, so every site needs type-aware rewriting.
+The functional gain is vocabulary consistency only, and the diff would touch most test files. The design's
+own rejected alternative ("rename only, keeping five names") exists precisely because this trade is
+unattractive, and NAMING.md forbids rename-only churn. Recommendation: keep the two small wins
+(`RuntimePlaybackViewBuildGrain` folding into `Phase`/`nextGrain()`, 75 sites) and leave the 800-site
+rename to touch-and-adopt, or drop 4.2 from this change.
+
+**4.3 — the three "synonym" accessors are three different predicates, not three names for one concept.**
+Measured definitions:
+- `available()` (5 classes: NotePairLookup, NoteDeleteLookup, SpanWalk, Reconstruction, OverlapWalk,
+  CompanionApply) = `phase_ == Idle || phase_ == Complete [|| phase_ == Denied]` — "may `begin()`".
+- `idle()` (CanonicalPassInputs, CompanionPasses) = `phase_ == Phase::Idle` — strictly the Idle stage.
+- `active()` (PlaybackOrderBuilder, ViewBuild) = `phase_ != Idle && phase_ != Complete` — a grain is in
+  flight, i.e. close to the **negation** of `available()`.
+- `RuntimeCaptureCompanions::idle()` = `capture_ == nullptr` — no capture owner attached; a different
+  concept again.
+
+Converging these onto one name would change behaviour at call sites (a `Complete` builder is `available()`
+but not `idle()`; a mid-grain builder is `active()` but not `available()`). Design D5 assumed they were
+synonyms; that assumption does not hold. Recommendation: **drop 4.3's rename**, and instead fix the one
+genuine naming defect — `RuntimeCaptureCompanions::idle()` should state the ownership question it answers
+(e.g. `hasCaptureOwner()`), which is a clarity fix with no semantic change.
+
 **Still open in P3:** 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle accessor vocabulary), 4.4
 (atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), and the phase
 gate 4.14. The phase gate stays unchecked until they
