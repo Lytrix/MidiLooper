@@ -329,20 +329,64 @@ owner still requires it. Owner liveness SHALL be an explicit predicate per owner
 - **THEN** every part of that lease returns to the pool
 - **AND** no part remains reserved for the inactive slot
 
-### Requirement: Undo history residency is governed by an explicit cold policy
-The behaviour of undo/redo history when a slot goes cold SHALL be an explicit, recorded policy, so that
-snapshot roots cannot keep cold slots resident against the scaling law.
+### Requirement: Undo is two-tier -- hot roots, cold logical descriptors
+Hot slots MAY retain snapshot-backed undo/redo roots within a bounded hot depth. On cold demotion, entries
+SHALL be compacted to logical descriptors that carry no `LoopSnapshot` reference and own no snapshot slab, and
+every undo/redo root belonging only to that slot SHALL be released.
 
-#### Scenario: Cold undo cannot defeat the scaling law
-- **WHEN** a slot goes cold with undo history
-- **THEN** its undo residency is bounded by the declared policy (a global history budget, compaction to
-  pass identities, sealing on demotion, or eviction with reconstruction)
-- **AND** cold-slot memory remains flat as the library grows
+#### Scenario: Compaction on demotion releases snapshot residency
+- **WHEN** a slot with undo history leaves the active set
+- **THEN** its snapshot-backed undo roots are released once no active or deferred owner requires them
+- **AND** it retains compact descriptors describing the same logical history
 
-#### Scenario: The policy is a product decision, recorded
-- **WHEN** the cold undo policy is chosen
-- **THEN** the choice and its user-visible consequence are recorded as a decision
-- **AND** it is not introduced as a side effect of memory cleanup
+#### Scenario: Reactivation does not eagerly rebuild the stack
+- **WHEN** a cold slot becomes active again
+- **THEN** only its current musical state is prepared for playback
+- **AND** historical states remain compact until an undo or redo requests one
+
+#### Scenario: Undo of a cold-derived entry reconstructs off-clock
+- **WHEN** undo is requested on a state held only as a cold descriptor
+- **THEN** the historical state is reconstructed or selected off-clock and then published
+- **AND** the reconstructed root carries a truthful `coveredPassRevision` (DEC-073) rather than inheriting the
+  superseded root's authority
+
+#### Scenario: A descriptor describes authority, not a cached root
+- **WHEN** a cold undo descriptor is created
+- **THEN** it identifies the canonical state to select or reconstruct (committed pass identity/set, pass
+  ordering or selection revision, note-edit commit identity where applicable, capture/session generation)
+- **AND** it holds no snapshot pointer, slab identity or revision stamp as a claim to be authoritative
+
+### Requirement: Cold undo is globally bounded and redo survives demotion
+Cold undo SHALL be bounded by a per-slot depth and a device-wide byte budget, with the oldest cold entries
+evicted first. Redo history SHALL be preserved compactly across demotion and invalidated only by a new
+committed edit or capture.
+
+#### Scenario: The oldest cold undo is the pressure victim
+- **WHEN** cold-undo residency exceeds the device-wide budget
+- **THEN** the oldest cold undo entries are evicted first
+- **AND** the current musical state, dirty canonical content and active hot undo are never evicted by undo
+  pressure
+
+#### Scenario: Demotion does not change editing semantics
+- **WHEN** a slot is demoted and later re-activated
+- **THEN** its redo history is still available
+- **AND** redo is invalidated only when a new edit or capture commits
+
+#### Scenario: Reconstruction failure leaves state unchanged
+- **WHEN** reconstruction of a cold undo state cannot be admitted for memory reasons
+- **THEN** the undo remains unapplied, the current musical state is unchanged, and the failure is reported as
+  `undo_resource_denied`
+- **AND** the cold descriptor is not consumed, so the same undo can succeed later
+
+#### Scenario: A job-owned root is not released by demotion
+- **WHEN** a slot is demoted while a deferred owner still holds an undo root it owns
+- **THEN** that root is not released
+- **AND** it is released when that owner retires
+
+#### Scenario: Undo history is not persisted
+- **WHEN** the device is saved and rebooted
+- **THEN** the restored slot has undo depth zero
+- **AND** cold descriptors are not part of the persisted contract
 
 ### Requirement: Inactive slots do not retain whole-loop derived state
 An inactive slot SHALL NOT retain a published snapshot root or a whole-loop visual cache. Reactivation

@@ -145,11 +145,19 @@ pool that supports on the order of **four** resident bundles — and the arm cha
    discards accepted input.
 6. **The looper never stops playing.** Switching track/slot, record/overdub and undo/redo happen while playing,
    with the inbound role provisioned before the outbound is released and no allocation at the switch.
-7. **Vocabulary is part of the decision.** The whole setup is **Playhead-scheduled MVCC** — multi-version
+7. **Cold undo is two-tier.** Hot slots may retain snapshot-backed undo/redo roots; cold slots retain only
+   **compact logical descriptors** -- no `LoopSnapshot` reference, no slab ownership -- under a per-slot depth
+   and a **device-wide cold-undo byte budget**, evicting the oldest cold entries first. Reactivation prepares
+   only the current musical state; a cold undo reconstructs off-clock and commits only after successful
+   preparation (`undo_resource_denied` otherwise, descriptor left intact). Redo survives demotion and is
+   invalidated only by a new committed edit or capture. A descriptor says which canonical state to select or
+   reconstruct, never which runtime root to resurrect; a reconstructed root gets a truthful
+   `coveredPassRevision` (DEC-073). Runtime undo history is not persisted.
+8. **Vocabulary is part of the decision.** The whole setup is **Playhead-scheduled MVCC** — multi-version
    immutable state, resolved by interval projection, materialized incrementally against a playhead deadline,
    with epoch-leased working sets — and its stage shape is a **Pipeline of role-owned stages** with declared cost
    and deadline ([NAMING.md](Authority/NAMING.md)).
-8. **Thirty invariants are binding** on the owning change (scaling, ownership, immutability, continuity, failure,
+9. **Thirty invariants are binding** on the owning change (scaling, ownership, immutability, continuity, failure,
    evidence, method), each with its enforcement point; a task that violates one is not complete and an invariant
    with no enforcement point is recorded as a gap.
 
@@ -174,8 +182,9 @@ though it also carries readiness, standby, visual and canonical-residency stages
 **thesis** that justifies the change, while **Playhead-scheduled MVCC** names the architecture the stages build.
 Its `proposal.md` § Name and scope states this, so the id is not re-derived when a stage is added.
 
-**Not decided here.** The 16-track / bank-switching scope; the transfer-overlap depth; the **cold undo policy**
-(required before any flat-cold-memory claim); the canonical residency policy; the default window size; whether a
+**Not decided here.** The 16-track / bank-switching scope; the transfer-overlap depth; the exact cold-undo
+descriptor field set (the policy itself is decided above; only the `TrackUndo` audit remains); the canonical
+residency policy; the default window size; whether a
 second finalization lease is ever warranted (evidence path: a `finalization_lease_stop_denied` counter); and
 which existing owners are retrofitted to the uniform work-item contract (opportunistic, its own change —
 a big-bang retrofit of nine timing-path owners is explicitly rejected).
