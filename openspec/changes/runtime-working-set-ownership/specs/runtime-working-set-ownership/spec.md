@@ -38,8 +38,8 @@ a slot's resident cost is independent of its loop length, and the number of simu
 SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served is **N sounding slots**, where the change **derives** the largest N the budget
 supports and states it as a capability. Today N is 8 (8 tracks x 1 sounding slot); the design must not
 preclude 16, 32, 48 or 64, because the target is that slots behave as virtual tracks and can sound together
-whenever set active. Also budgeted: one live-capture lease, one deferred-finalization admission with a
-serialized queue, one interactive lease where present, and the measured transfer overlap. The budget is per
+whenever set active. Also budgeted: one live-capture lease, one deferred-finalization role whose second concurrent stop is denied
+non-destructively, one interactive lease where present, and the measured transfer overlap. The budget is per
 lease class: only the playback term is multiplied by N, so only it must be small and length-independent.
 
 #### Scenario: The lease budget closes
@@ -49,8 +49,8 @@ lease class: only the playback term is multiplied by N, so only it must be small
 - **AND** the derivation is recorded as the basis for the active cap
 
 #### Scenario: Loop length does not change the resident cost
-- **WHEN** two slots of very different loop lengths (for example four bars and sixty-four bars) are
-  sounding on the same track
+- **WHEN** sounding slots of very different loop lengths (for example four bars and sixty-four bars) are
+  active -- at today's supported topology, across tracks
 - **THEN** their resident working sets are of comparable size
 - **AND** playback crosses window boundaries without an audible or timing discontinuity
 
@@ -221,7 +221,7 @@ finalization, interactive edit/undo/display -- each with a declared cardinality,
 monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 
 #### Scenario: A playback lease carries no capture or deferred resources
-- **WHEN** a slot is sounding as one of up to two playback slots on its track
+- **WHEN** a slot is sounding as one of the playback slots (today at most one per track)
 - **THEN** its playback window lease carries no capture staging, stop-job, companion-history or
   deferred-finalization capacity
 - **AND** those resources are held only by the role that needs them
@@ -237,16 +237,17 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **AND** the supported concurrency is one finalizing predecessor plus one live successor, not two
   simultaneously finalizing captures
 
-#### Scenario: A stop queues behind a finalizing predecessor
-- **WHEN** a stop is requested while the single finalization admission is held by a predecessor that has not
-  finished
-- **THEN** the stop is queued and serviced in series when the predecessor releases
-- **AND** the requesting slot remains recording or overdubbing until its stop is serviced
+#### Scenario: A stop denied while the finalizer is occupied is non-destructive
+- **WHEN** a stop is requested while the single finalization role is held by a predecessor that has not finished
+- **THEN** the stop is denied with no partial stop, and the requesting slot remains recording or overdubbing
+- **AND** the denial is counted (`finalization_lease_stop_denied`) and the next stop succeeds once the role frees
 
-#### Scenario: A full finalization queue is the denial case
-- **WHEN** the finalization queue is full
-- **THEN** the stop is denied non-destructively with the slot still recording/overdubbing
-- **AND** the condition is counted and reported
+#### Scenario: The descriptor ring does not imply concurrent finalization
+- **WHEN** finalization capacity is reasoned about
+- **THEN** `CaptureStopJobs::kCapacity` is treated as descriptor-ring depth, not as proof that several stopped
+  intervals can be retained
+- **AND** concurrent finalization is only claimed once a capacity/ownership decision shows where each
+  interval's sealed raw range, pending closures, staged pass, session receipt and canonical transfer state live
 
 ### Requirement: Dirty canonical generations pin residency
 Once persistence is the backing authority, canonical content SHALL be evicted only after persistence has

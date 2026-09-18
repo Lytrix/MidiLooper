@@ -13,13 +13,30 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 [`design.md`](design.md) § Invariants — a task that violates one is not complete, and an invariant with no
 enforcement point is a gap to record rather than a note to skip.
 
+## Execution boundary (phases)
+
+This change is an **umbrella roadmap**, not one implementation RC. Phases, each with its own device gate before
+the next begins:
+
+| Phase | Stages | Gate |
+|---|---|---|
+| **A** | S0-S2 | the runtime memory law is *proved*: whole-root residency removed from active playback (S2.9), P/C/D/I measured, N derived |
+| **B** | S3-S5 | lease ownership, recycling, stale-generation protection, inactive derived-state demotion |
+| **C** | S4d, S4e, S2.6 quantisation | bounded caches and fine switching behave as the library grows |
+| **D** | S6 | persistence-backed canonical residency + dirty-generation pinning (own DEC amendment) |
+| **E** | S7 | large-library scaling and continuity acceptance |
+
+**Standby is optional.** The base 60-slot requirement must be satisfied by the law alone; standby excerpts and
+visual detail windows are bounded optimisations on top, never a precondition for usability.
+
 ## S0 — pin the memory law (decisions before code)
 
 > **Findings resolved 2026-09-18 ([`FALSIFICATION.md`](FALSIFICATION.md) records the answers):** F1 -- the
 > envelope is **N derived**, today 8 tracks x 1 slot, and must not preclude 16/32/48/64 (slots-as-virtual-tracks
 > is a future requirement). F2 -- active playback must become **windowed/streamed**; the root narrows to the
-> undo/save checkpoint authority. F3 -- finalization is **one admission with a serialized queue** (depth 4),
-> not a denial. F4 -- 8 tracks today with **bank switching to 16 MIDI channels** as the target. F5 -- tiers
+> undo/save checkpoint authority. F3 -- finalization is **one role**; a second stop while it is occupied is
+> **denied non-destructively** (DEC-067), and the descriptor-ring depth is not evidence of multi-finalizer
+> storage. F4 -- 8 tracks today with **bank switching to 16 MIDI channels** as the target. F5 -- tiers
 > fold into `activeLoopIndex`/`CapturePhase`/`TrackState`. F6 -- resolved by S2 + G.2.
 
 - [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
@@ -43,9 +60,10 @@ enforcement point is a gap to record rather than a note to skip.
       existing admission/accounting enums, non-destructive failure. Explicitly *not* a framework: header-only
       vocabulary, concrete owner types, no vtables, no allocation. Retrofit is opportunistic and belongs in its
       own change, not here.
-- [ ] S0.5 Confirm the **track count** for the envelope (16 in the requirement; `NUM_TRACKS` is 8 today) and
-      whether that lands inside this change or as its own workstream, and record the **transfer-overlap
-      depth** the pool must cover.
+- [ ] S0.5 **Pin the topology** (do not leave it open): **8 tracks are implemented by this change**; 16-channel
+      bank switching and multi-slot-per-track playback are **future capabilities this memory law must not
+      preclude**. No task here implements them, and no acceptance test claims them. Record the
+      **transfer-overlap depth** the pool must cover.
 - [ ] S0 gates: decisions recorded; no code change.
 
 ## S1 — characterize the current scaling (measurement only)
@@ -79,8 +97,10 @@ enforcement point is a gap to record rather than a note to skip.
       headroom toward 16/32/48/64.
 - [ ] S2.4 Show what N the budget supports and record it as a capability, with the arithmetic; note the shapes
       that need a smaller P to reach 32 or 64 sounding slots.
-- [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
-      resident working sets, and playback crosses window boundaries with no timing discontinuity.
+- [ ] S2.5 Prove length-independence **at today's supported topology**: sounding slots of very different loop
+      lengths (across tracks, since today is one sounding slot per track) have comparable resident working sets,
+      and playback crosses window boundaries with no timing discontinuity. Multi-slot-per-track playback is a
+      future capability; test the budget projection toward it, do not claim it.
 - [ ] S2.8 **Visual sizing**: size the per-bar envelope (bytes/bar/slot, whole library) and the rendered
       detail window at typical density (~36 notes/bar, `DisplayNote` = 16 B) and at the representable ceiling
       (~2,048 notes/bar), and derive the visual byte cap and eviction policy alongside S2.6/S2.7.
@@ -95,6 +115,21 @@ enforcement point is a gap to record rather than a note to skip.
       and feeds the derived N from S2.3.
 - [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
       playback-prewarm fixtures still green.
+
+- [ ] S2.9 **GATE -- decouple active playback from whole-loop snapshot residency.** Until this passes, `N x P`
+      is not the real memory law, because an unaccounted whole-loop root would still sit behind every sounding
+      slot:
+      - define the immutable **PlaybackWindowGeneration** authority, and let playback consume only that bounded
+        immutable generation;
+      - keep `publishedSnapshot` as the **checkpoint authority** for undo/save where required;
+      - no whole-loop snapshot root may be required *merely because a slot sounds*;
+      - on a preparation miss the **previous immutable window stays valid** for that pass (the pinned
+        one-pass-late rule, S4c.3);
+      - prove the chain mutation -> deadline -> publication -> playhead consumption;
+      - measure snapshot-root bytes **separately from P** and demonstrate that adding sounding slots adds no
+        whole-loop roots.
+      S2.3's N arithmetic is **not accepted** until this gate passes. It is the prerequisite half of S4c, which
+      continues into the reuse inventory and the broader readiness machinery.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
@@ -115,10 +150,11 @@ enforcement point is a gap to record rather than a note to skip.
 - [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
-- [ ] S4.5 **Finalization serialization**: one admission with a queue (depth `CaptureStopJobs::kCapacity`);
-      native fixture for A-stops-and-finalizes / B-records / A-releases / B-stops-and-takes-the-lease, and for
-      a stop queued behind a finalizing predecessor (slot stays recording until serviced) plus the full-queue
-      denial case. Emit the queue-depth/wait counter.
+- [ ] S4.5 **Finalization denial**: one finalizer; native fixture for A-stops-and-finalizes / B-records /
+      A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — denied with no
+      partial stop, B still recording/overdubbing, next stop succeeding after the role frees. Emit
+      `finalization_lease_stop_denied`. Do **not** build a queue: `CaptureStopJobs::kCapacity` is descriptor
+      depth, and concurrent finalization needs its own capacity/ownership decision first.
 - [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
       rising and falling with activation/deactivation.
 
@@ -244,7 +280,8 @@ enforcement point is a gap to record rather than a note to skip.
       boundary, no torn or held output, and the MIDI-boundary timing evidence clean. Record the quantisation
       that is actually achievable under load.
 - [ ] S7.5 **Continuity acceptance**: with transport playing, switch track and slot repeatedly while up to
-      two slots per track sound, start record/overdub, and run undo/redo -- the transport never stops and
+      today's supported topology (8 tracks x one sounding slot) sound, start record/overdub, and run undo/redo --
+      the transport never stops and
       the MIDI-boundary timing verifier reports no degradation on any switch.
 - [ ] S7 gates: all prior gates plus S7.1-S7.4 recorded with numbers.
 
