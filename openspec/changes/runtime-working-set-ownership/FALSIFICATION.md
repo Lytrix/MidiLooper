@@ -6,7 +6,7 @@
 |---|---|
 | F1 | **Confirmed.** Only single-slot playback exists. Multiple simultaneous slots is a *future* requirement: the end state is that slots behave as **virtual tracks** (target **16 MIDI channels x 8 slots**), playable together whenever set active. Today the working envelope is **8 tracks x 1 sounding slot**; a typical scenario may be 2 per track, but that is a working number, not a limit. The memory law must therefore **derive** the maximum sounding count the budget supports and **not preclude 16/32/48/64**. |
 | F2 | **Confirmed and refined.** The real contract is a **readiness deadline on immutability**: after a recording/overdub/edit changes content at a tick, an updated *immutable* state must be ready by the time the current tick moves over that tick again, because playback may only consume immutable events. Forcing that state to be a **whole loop** conflicts with memory; the fix is to change the **unit (interval/window) and give it a deadline**, reusing the resumable small deferred publication machinery already built for this. A published root narrows to the **immutable checkpoint authority for undo/save**. Missed deadlines use the **previous immutable generation for that pass** (rule (a), chosen), and the window size becomes configurable and swept -- bar-based today, toward 1/16 beat (12 ticks) and 1/32 beat (6 ticks) so that queued slot switching at jam quantisation is reachable. |
-| F3 | **REOPENED AS A DEFECT (user requirement 2026-09-18): the deny-and-re-press behaviour is the defect this change exists to remove.** One live capture plus one _active_ finalizer is the right capacity model, but a stop refused on capacity must be **latched and self-serviced**, never dropped back on the user: `TrackOverdubLifecycle.cpp` currently reports `successor_stop_denied_capacity` and `reentryDecision("deny", ...)`, keeps the interval recording, and its comment says *"A later stop request is admitted once the predecessor retires"* -- i.e. the user must press again. That is not an accepted contract; the descriptor-ring reasoning below still holds (the ring cannot store stopped intervals), but a **latched request is one small piece of state, not a stored interval**, so the latch needs no new capacity. Acceptance is a single press completing the stop, possibly after the predecessor retires. |
+| F3 | **REOPENED AS A DEFECT (user requirement 2026-09-18): a busy owner must not reject an interaction.** One live capture plus one _active_ finalizer is the right capacity model, but a stop refused on capacity must be **accepted and scheduled**, never dropped back on the user: `TrackOverdubLifecycle.cpp` currently reports `successor_stop_denied_capacity` and `reentryDecision("deny", ...)`, keeps the interval recording, and its comment says *"A later stop request is admitted once the predecessor retires"* -- i.e. the user must press again. Acceptance is unconditional; *when* the stop executes is the pipeline's decision. The descriptor-ring reasoning still holds (the ring cannot store stopped intervals), but an accepted request is one small piece of state, not a stored interval, so it needs no new capacity. Acceptance is a single press completing the stop, possibly after the predecessor retires. |
 | F4 | **Scope clarified.** The UI shows the first **8 tracks** today and that is what is built against; the end state is **bank switching across 8-track banks** to run **16 MIDI channels**. Requirements are therefore demonstrated at 8 tracks while not precluding 16. |
 | F5 | **Agreed.** The role tiers fold into `activeLoopIndex` (+ `CapturePhase` / `TrackState`) rather than forming a second authority. |
 | F6 | **Resolved by S2 + G.2** (windowed sizing and non-destructive admission): the acceptance becomes diagnostic once the windowed path and the non-destructive denial contract exist. |
@@ -95,7 +95,7 @@ itself windowed/streamed for active playback — which is a *snapshot-residency*
 canonical-residency change S6 covers, and therefore belongs in S2's scope or in its own gated phase. As
 written, the budget is incomplete by roughly an order of magnitude in the case it exists to serve.
 
-## F3 — REOPENED: the capacity denial must be latched, not returned to the user
+## F3 — REOPENED: a busy owner must delay the interaction, never reject it
 
 **Original claim attacked.** "`DeferredFinalizationLease` x 1 ... preserves DEC-067 successor re-entry", with the
 cardinality asserted while citing only `CaptureStopJobs::kCapacity = 4`.
@@ -114,18 +114,19 @@ consequence is not.** Today a capacity-denied stop is dropped (`successor_stop_d
 `reentryDecision("deny", ...)`) and the interval keeps recording until the user asks again. There is **no latch**:
 `hasPendingDeferredOverdubStop()` reflects an *admitted* job, not a remembered request.
 
-**Required behaviour.** A stop that cannot complete at once is **latched** (destination, requested tick,
-interval generation) and **self-serviced** when the resources free, completing at the correct boundary with **no
-second press**. The same rule applies to record/overdub start, slot/track switching and undo/redo: a request is
-never refused to the user, it is accepted and completed as soon as it can be.
+**Required behaviour.** The interaction is **accepted unconditionally**; *when* it executes is the pipeline's
+decision, resolved against the playhead deadline and the earliest valid interval boundary. A stop that cannot
+complete at once is accepted, scheduled (destination, requested tick, interval generation) and executed when the
+owner frees, with **no second press**. The same rule covers record/overdub start, slot and track switching and
+undo/redo: a busy owner delays, it never rejects.
 
-**The re-drive mechanism already exists -- it just does not cover a denial.** `hasPendingDeferredOverdubStop()`
+**The re-drive mechanism already exists -- it just does not cover a busy owner.** `hasPendingDeferredOverdubStop()`
 guards both redirect points (`stopOverdubbingToStopped`, `invalidatePlaybackMergedMidiEvents`), and each re-issues
 `requestDeferredOverdubStopToStopped()` for an already-**admitted** job. Neither the transport nor the invalidation
 path re-issues a **denied** request, because a denial stores nothing: the guard is false and the request is gone. So
 S4f is an extension of the existing pending-stop latch to cover the pre-admission request, not a new mechanism --
-the service point that already re-drives pending jobs is the natural place to drive a latched request, which is why
-the fix is small.
+the service point that already re-drives pending jobs is the natural place to drive an accepted-but-not-yet-executed
+request, which is why the fix is small.
 
 **Why the latch fits the capacity finding.** A latched request is **one small piece of state per live interval**
 -- and there is one live capture interval at a time -- not a stored stopped interval. It therefore needs none of

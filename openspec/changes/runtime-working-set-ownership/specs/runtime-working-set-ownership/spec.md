@@ -215,48 +215,72 @@ from measurement because it trades resident bytes, achievable switch quantisatio
 - **THEN** the smallest size that still meets the readiness deadline under load is recorded
 - **AND** the resulting publication load is reported alongside the resident-bytes and granularity effects
 
-### Requirement: A request is never refused to the user
-A stop, record/overdub start, switch or undo/redo that cannot complete at the instant it is requested SHALL be
-**latched** and completed by the system when its resources free. It SHALL NOT be returned to the user as a
-denial requiring a second attempt.
+### Requirement: Every user interaction is accepted
+Every user interaction -- stop, record/overdub start, slot or track switch, undo/redo -- SHALL be **accepted** when
+it is made. Acceptance SHALL NOT depend on whether the owning resources are free at that instant. **When** the
+interaction executes SHALL be decided by the playhead-scheduled MVCC pipeline, by resolving it against the playhead
+deadline and the earliest valid interval boundary. A busy owner SHALL delay execution; it SHALL NOT refuse the
+interaction, and the user SHALL NOT be required to re-issue it.
 
-#### Scenario: A single stop press completes
-- **WHEN** a stop is requested while the finalization resources are busy
-- **THEN** the request is latched, the interval's state is preserved, and the stop completes when the resources
-  free, at the correct boundary
-- **AND** the user does not have to issue the stop again
+#### Scenario: Acceptance is unconditional
+- **WHEN** an interaction is made while the owner it needs is busy
+- **THEN** the interaction is accepted immediately
+- **AND** it is scheduled to execute at the earliest valid interval boundary rather than rejected
 
-#### Scenario: Latching needs no stored interval
-- **WHEN** a request is latched
-- **THEN** it holds only the request's identity (destination, requested tick, interval generation)
+#### Scenario: Execution timing is the pipeline's decision
+- **WHEN** an accepted interaction cannot execute at the tick it was made
+- **THEN** the playhead-scheduled MVCC pipeline resolves when it executes, against the playhead deadline and the
+  interval boundary
+- **AND** the user's request is not re-read at that point; the accepted request is what executes
+
+#### Scenario: A busy owner delays but never rejects
+- **WHEN** the finalization resources are busy (`finalizer_busy`, `transfer_denied`, `canonical_output_busy`,
+  session-exit handoff)
+- **THEN** these are **scheduling states**, not user-visible denials
+- **AND** the interaction executes when the owner frees, with no second attempt by the user
+
+#### Scenario: A scheduled interaction needs no stored interval
+- **WHEN** an accepted interaction waits for its boundary
+- **THEN** it holds only its own identity (destination, requested tick, interval generation)
 - **AND** it does not retain a stopped interval's sealed raw range, staged pass, session receipt or canonical
   transfer state, so no new capacity is required
 
-#### Scenario: Retries are observable
-- **WHEN** a latched request completes after one or more resource denials
-- **THEN** the denials are counted and reported as retries, not as a user-facing denial
-- **AND** the diagnostic names the resource that held the request (`finalizer_busy`, `transfer_denied`,
-  `canonical_output_busy`, session-exit handoff)
+#### Scenario: Deferrals are observable as scheduling, not refusal
+- **WHEN** an accepted interaction executes after one or more busy-owner states
+- **THEN** the waits are counted and reported as scheduling latencies, attributed to the holding owner
+- **AND** no capacity-driven user-visible denial exists in the diagnostic vocabulary
 
-#### Scenario: The rule covers every user operation
-- **WHEN** a record/overdub start, a slot or track switch, or an undo/redo cannot complete immediately
-- **THEN** the same latch-and-self-service rule applies
-- **AND** no user operation requires a second attempt because a resource was momentarily unavailable
+#### Scenario: Inapplicable interactions are not refusals
+- **WHEN** an interaction has nothing to act on (an undo with no history, a switch to the already-selected slot)
+- **THEN** it is an empty operation, not a resource-driven refusal
+- **AND** it does not violate this requirement
 
-### Requirement: Finalization preserves the existing directional admission contract
-The change SHALL preserve the existing deferred-finalization admission contract (DEC-067) rather than define a
-new one: one **active** finalizer, with a second stop denied non-destructively by the single-instance
-finalization resources and re-issued by the stop edge when they free. The descriptor ring SHALL be treated as
-descriptor depth whose tail must be free, so pending stop intervals are never stacked.
+#### Scenario: A hard bound serializes, never refuses
+- **WHEN** the accepted interactions reach a hard descriptor bound
+- **THEN** they are serialized by the pipeline in order
+- **AND** the bound limits how many deferred intervals exist concurrently, never whether the user's interaction
+  is accepted
 
-#### Scenario: The preserved contract is what ships
+### Requirement: Finalization preserves the single-active-finalizer capacity contract
+The change SHALL preserve DEC-067's capacity model -- one **active** finalizer, with the single-instance
+finalization resources bounding ordinary concurrency -- while removing the user-visible refusal that model used to
+produce. A stop meeting a busy owner SHALL be accepted and scheduled, and SHALL execute when the owner frees
+without the user re-issuing it. The descriptor ring SHALL be treated as descriptor depth whose tail must be free,
+so pending stop *intervals* are never stacked.
+
+#### Scenario: The capacity model is preserved, the refusal is removed
 - **WHEN** the change is implemented
-- **THEN** no new finalization mechanism, queue or arbitration is introduced
-- **AND** the finalization behaviour asserted by the spec is the behaviour already in the tree, verified by
-  stage-name evidence (`finalizer_busy`, `transfer_denied`, `canonical_output_busy`, session-exit handoff,
-  `queue_full`) rather than by a new rule. The ordinary denials (`finalizer_busy`, `transfer_denied`,
-  `canonical_output_busy`, session-exit handoff) are expected during normal reentry; `queue_full` is
-  exceptional descriptor exhaustion, not a normal wait
+- **THEN** one active finalizer and the single-instance resources still bound ordinary concurrency, and no queue
+  of stopped intervals or new arbitration is introduced
+- **AND** the busy-owner states (`finalizer_busy`, `transfer_denied`, `canonical_output_busy`, session-exit
+  handoff) delay an accepted interaction instead of refusing it, verified by stage-name evidence
+- **AND** `queue_full` remains exceptional descriptor exhaustion (a descriptor-lifetime defect), not a normal wait
+
+#### Scenario: The fix extends the existing re-drive path
+- **WHEN** an interaction is accepted while an owner is busy
+- **THEN** it is carried by the existing pending-stop re-drive path (`hasPendingDeferredOverdubStop()` /
+  `requestDeferredOverdubStopToStopped()`), extended to cover the accepted-but-not-yet-executed request
+- **AND** no second finalization mechanism is introduced
 
 ### Requirement: Runtime roles are separate classes with declared cardinalities
 Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred

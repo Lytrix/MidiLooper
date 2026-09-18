@@ -92,16 +92,17 @@ re-derived whenever a stage is added, whereas the thesis is stable. Read the sta
 
 ## The product requirement this exists for
 
-> **No denied stop, and no user pressing twice.** A stop, a record/overdub start, a switch or an undo that cannot
-> complete at the instant it is requested must be **latched and completed by the system** when its resources free
-> -- it must never be dropped back on the user as a denial they have to re-issue.
+> **Every user interaction is accepted.** A stop, a record/overdub start, a slot or track switch, an undo -- each
+> is accepted the moment it is made. **When** it executes is the pipeline's decision: the playhead-scheduled MVCC
+> pipeline resolves it against the playhead deadline and the earliest valid interval boundary. A busy owner may
+> *delay* execution; it must never *reject* the interaction, and the user must never re-issue it.
 
-Today it *is* dropped. `TrackOverdubLifecycle.cpp` denies a stop when the finalization resources are busy
+Today a busy owner rejects. `TrackOverdubLifecycle.cpp` denies a stop when the finalization resources are busy
 (`successor_stop_denied_capacity`, `reentryDecision("deny", ...)`), keeps the interval recording, and its own
-comment states the consequence: *"A later stop request is admitted once the predecessor retires."* That re-press
-is the defect this change removes (see `FALSIFICATION.md` F3). The architectural work below is what makes it
-removable: role-owned, window-sized, pre-provisioned working sets are exactly what lets a request be accepted
-and completed instead of refused.
+comment states the consequence: *"A later stop request is admitted once the predecessor retires."* The re-press is
+the defect this change removes (see `FALSIFICATION.md` F3). The architectural work below is what makes acceptance
+unconditional: role-owned, window-sized, pre-provisioned working sets are what let an *accepted* interaction be
+scheduled and executed instead of refused.
 
 ## What Changes
 
