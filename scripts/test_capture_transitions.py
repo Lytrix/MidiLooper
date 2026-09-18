@@ -594,6 +594,21 @@ class UndoRedoDisplayOracleTests(unittest.TestCase):
         self.assertIsNone(result["undo_ts"])
         self.assertEqual([], result["issues"])
 
+    def test_pre_undo_ramp_uses_the_steady_peak(self) -> None:
+        # Several sessions: the frame is still ramping when the undo lands. The last row
+        # understates the content the undo must remove (`gus-undo-04`: 144 last vs 176 steady).
+        lines = [
+            "#CAP,70000000,DISP,0,PLAYING,6912,144,120,144,144,1\r\n",
+            "#CAP,71000000,DISP,0,PLAYING,6912,176,176,176,176,1\r\n",
+            "[77.844] [DEBUG] Undo applied: kind=1 undo_count=1",
+            "#CAP,78000000,DISP,0,PLAYING,6912,160,160,160,160,1\r\n",
+            "[81.062] [DEBUG] Redo applied: kind=1 redo_count=0",
+            "#CAP,82000000,DISP,0,PLAYING,6912,176,176,176,176,1\r\n",
+        ]
+        result = _verify_undo_redo_display(lines)
+        self.assertEqual(176, result["frame_before_undo"])
+        self.assertEqual([], result["issues"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2808,6 +2808,15 @@ overdub, the redo restores it), with `stored overdub span 64/63 count_ok/span_ok
 still shows a one-pass entry, capture the `DIAG,gus` row's `src` (`deferred` = the collection path;
 absent = the synchronous fallback) and `MIDI: Undo (entries=…)`.
 
+Oracle robustness in the same stretch: a two-overdub run (`captures/gus-undo-04`, `entries=3`,
+`passIds_n=0` for each single-pass session, correctly a legacy `passId`-only entry) showed the
+pre-undo frame still ramping (`DISP across undo/redo: before=144 after_undo=160 after_redo=176`), so
+`_verify_undo_redo_display` produced a spurious `display_undo_kept_the_overdub`. The pre-undo sample
+is now the **steady peak** of the window rather than its last row; replayed on runs `-01`/`-03`/`-04`
+all three pass, and `scripts/test_capture_transitions.py` is 47/47. That run's base report is also
+`persistence_stage_missing:result` — the deferred save did not finish inside the harness window, the
+same timing artifact as `display-undo-01`.
+
 **2026-09-18 — the 5.8 undo/redo fix made playback correct but left the OLED painting the undone
 overdub; fixed (`immutable-loop-snapshot-passes` 5.8a).** The regression is the display half of the
 same defect family, and it was *introduced into view* by 5.8: once playback correctly stops emitting
