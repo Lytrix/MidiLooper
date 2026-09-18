@@ -301,18 +301,12 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     DENY_REENTRY_RESOURCE();
     return false;
   }
-  // DEC-068: take this interval's own session-exit tail now, while the shared session state is
-  // still this interval's. A successor may start before this job retires, and it opens a
-  // session of its own; this receipt is the only record of *our* session identities. The ring
-  // was checked above (`canHandoffSessionExitSnapshot`), so this is a require, not a probe.
-  const CommitReason sessionExitReason =
-      destination == PendingStopDestination::Playing ? CommitReason::OverdubStop
-                                                     : CommitReason::OverdubStopToStopped;
-  const size_t sessionExitReceiptRing = loop.captureSessionExitTail(sessionExitReason);
-  if (sessionExitReceiptRing == Loop::kInvalidSessionExitReceipt) {
-    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_tail_denied");
-    return false;
-  }
+  // DEC-068: this interval's own session-exit tail is taken below, once admission is committed.
+  // It must NOT be taken here: the causal-base, credit, raw-range and freeze checks below can
+  // still deny admission, and swapping the session identities into a receipt for an admission
+  // that never happened leaves the synchronous fallback (`stopOverdubbing` ->
+  // `commitCaptureForStop` -> `pushOverdubSessionOnStop`) reading an empty live session -- it then
+  // records only the final pass, and one undo removes a partial overdub.
   // This admission just proved that no job owns the slot's finalization resources, so the
   // frozen order/rewrite builders still carry the *retired* interval's binding. Clear it
   // here: this interval's CanonicalOrder phase binds them for its own frozen rows, and
@@ -430,6 +424,18 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   job.admission.destination = destination;
   job.owner = &loop;
   runtime->captureStopOwner = &job.admission;
+  // DEC-068: admission is now committed and no fallible step remains, so take this interval's own
+  // session-exit tail. The shared session state is still this interval's (the successor's window
+  // opens below), and this receipt is the only record of our identities once it swaps them out.
+  const CommitReason sessionExitReason =
+      destination == PendingStopDestination::Playing ? CommitReason::OverdubStop
+                                                     : CommitReason::OverdubStopToStopped;
+  const size_t sessionExitReceiptRing = loop.captureSessionExitTail(sessionExitReason);
+  if (sessionExitReceiptRing == Loop::kInvalidSessionExitReceipt) {
+    // `canHandoffSessionExitSnapshot` admitted the ring above, so this is unexpected; the
+    // deferred commit falls back to the legacy one-shot handoff when the ring is invalid.
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "session_exit_tail_denied");
+  }
   // DEC-067: the predecessor now owns the frozen role and the live role is clean, so a
   // successor interval may start even though this job is still pending. The human log line
   // is the *timely* edge for the HITL probe (`#CAP` DIAG rows queue behind the deferred
