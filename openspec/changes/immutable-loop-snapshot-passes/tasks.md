@@ -1268,6 +1268,35 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       Reverted again rather than shipped unproven: not because the split is wrong, but because the union has to be
       placed after the retain-assign *in production*, and that ordering must be read out of the real assembly path
       first. Device evidence, the ownership design and the 139/139 result all stand.
+      **ANSWERED 2026-09-18: keep the current production logic and add the union there -- no production version of
+      the host helper is needed.** `DisplayManager::resolveDisplayNotesByDrawSource` already has the production
+      counterpart, `applyDrawSourceOverlays` (`src/DisplayManager/DisplayNoteWindowGather.cpp:318`), and it is called
+      **last** in every branch -- `:721` (incremental reuse), `:734` (sliding prefix) and `:775` (full rebuild) --
+      while the clobbering retain-assign
+      (`shouldRetainUnpublishedVisualCacheOverStaleGather` -> `candidate.assign(loop.visualCache.notes...)`) sits at
+      `:748-754` inside the full-rebuild branch, i.e. *before* `:775`. So the correct place for the retired-tier union
+      is inside `applyDrawSourceOverlays`, which fixes all three branches at once and runs after the assign. The
+      earlier two inline unions (at `:159` and `:328`) were the wrong place precisely because they run before that
+      assign and are discarded -- confirmed on device by the frame losing the first overdub while `visual` was 0. The
+      host helper `applyDrawSourceDisplayOverlays` is not a missing production function: it is the test mirror
+      (`test/test_loop_take_survival/test_loop_take_survival.cpp:4249`) and only needs the same tier added so it does
+      not drift.
+      **Third attempt result (reverted, two follow-ups pinned).** With the split applied plus the union moved into
+      `applyDrawSourceOverlays` (and mirrored), the 5.12 frame assertion **passes** -- the first overdub stays painted
+      after the second session starts -- and the surviving failures are exactly two, each a concrete next question:
+      1. `test_second_overdub_keeps_the_first_overdub_on_the_display`'s release half: `retiredSealedDisplayCovered()`
+         is false after `rebuildVisualCacheFromPasses()`. Coverage compares
+         `visualCache.builtFromRevision` against the seal-time revision, and `rebuildVisualCacheFromPasses` stamps
+         `builtFromRevision = rebuildGatherRevision` (`src/Loop/LoopVisualCache.cpp:857`, cf. `:543`). The retired
+         tier must use the same revision basis the live handoff uses, or it can never be proven covered and would
+         accumulate -- so establish what revision that rebuild stamps before choosing the release rule.
+      2. `test_draw_source_od2_clean_adopt_keeps_linear_tail` flips (`Expected FALSE Was TRUE`) once the mirror
+         unions the retired tier. That single pin decides the design: either it encodes the *clear* behaviour and is
+         therefore stale in the same way 5.12 is (retired rows legitimately keep the tail), or the od2 clean-adopt
+         path must be excluded from the retired union. This must be answered before the union can land, because od2
+         is one of the four historical regressions the split exists to protect.
+      Reverted a third time; suite back to 139/139. The ownership design, the correct union site, the device evidence
+      and the two remaining questions are all settled -- what is left is (1) and (2), both narrow.
       **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
