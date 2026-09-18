@@ -21,6 +21,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       product decision with its user-visible consequence recorded. Required before any flat-cold-memory claim.
 - [ ] S0.4 Record that **canonical residency is a separate gated phase** (S6) with its own `DEC`
       amendment, and that the cold contract is descriptor-based.
+- [ ] S0.5 Confirm the **track count** for the envelope (16 in the requirement; `NUM_TRACKS` is 8 today) and
+      whether that lands inside this change or as its own workstream, and record the **transfer-overlap
+      depth** the pool must cover.
 - [ ] S0 gates: decisions recorded; no code change.
 
 ## S1 — characterize the current scaling (measurement only)
@@ -46,11 +49,14 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       (views, companion owners, canonical pass inputs, reconstruction, prepared pair). This is the
       promotion of RC-MEM-2's outstanding item.
 - [ ] S2.2 Measure the resulting worst-case lease size.
-- [ ] S2.3 Compute the feasible active cap from the PSRAM arithmetic in `design.md` (fixed overhead +
-      canonical allowance + `N` x worst-case lease + transient/deferred headroom <= safe budget) and
-      record the derivation as the basis for `N`.
-- [ ] S2.4 State the simultaneous-playback capability as a bound, or show that the full product envelope
-      (16 x 2) fits.
+- [ ] S2.3 Compute the feasible cap from the PSRAM arithmetic in `design.md` (fixed overhead + canonical
+      allowance + `N` x worst-case lease + transfer overlap + transient/deferred headroom <= safe budget).
+      The envelope to serve is **up to 32 sounding leases (2 per track x 16 tracks) plus overlap**, which
+      needs roughly **100-125 KB per lease** against ~845 KB today.
+- [ ] S2.4 Either show the envelope fits, or state the achievable simultaneous-playback capability as a
+      bound (`k` slots per track, `k < 2`) with the arithmetic behind it.
+- [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
+      resident working sets, and playback crosses window boundaries with no timing discontinuity.
 - [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
       playback-prewarm fixtures still green.
 
@@ -75,6 +81,18 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       reported rather than resolved by allocating.
 - [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
       rising and falling with activation/deactivation.
+
+## S4b — role transfer (the never-stop requirement)
+
+- [ ] S4b.1 Transfer the single complex role (record / overdub / passes / undo/redo / display, resumable
+      small-packet logic inside MIDI boundaries) to a newly selected slot or track without a transport stop.
+- [ ] S4b.2 Pre-provision the inbound role before releasing the outbound one, with the overlap bounded and
+      accounted in the S2 budget; the switch point performs no allocation.
+- [ ] S4b.3 Land the switch on a MIDI boundary; the switch is a cold admission boundary by construction.
+- [ ] S4b.4 Native fixture: switch roles across tracks/slots while playing and assert the inbound holder
+      serves record/overdub/passes/undo/redo/display with no stop and no allocation at the switch.
+- [ ] S4b gates: S4 gates plus the MIDI-boundary timing evidence (`overflow_free`, `call_site_gate_ok`, no
+      active-interval overflow) across repeated switches.
 
 ## S5 — demote inactive slots' derived state
 
@@ -112,6 +130,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S7.3 Re-run the reported reproducer on the large library: arm a track, external clock + MIDI notes,
       and require it to reach `RECORDING`; also arm-and-play internally.
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
+- [ ] S7.5 **Continuity acceptance**: with transport playing, switch track and slot repeatedly while up to
+      two slots per track sound, start record/overdub, and run undo/redo -- the transport never stops and
+      the MIDI-boundary timing verifier reports no degradation on any switch.
 - [ ] S7 gates: all prior gates plus S7.1-S7.4 recorded with numbers.
 
 ## Safeguards (valuable, not the strategy)
