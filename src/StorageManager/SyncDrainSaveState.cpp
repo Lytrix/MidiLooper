@@ -48,7 +48,15 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
             break;
         }
 
-        maybeAdmitFinalizeWorkspaceAfterDrain();
+        // Terminal when a save is owed but no work item can carry it: the queue cannot admit the
+        // finalize, so `hasPersistenceWorkPending()` is true on `pending` alone and no iteration can
+        // change that. Fail fast with the cause instead of burning the whole stuck budget -- the
+        // 2026-09-18 wedge reported `stuck after 33 iterations (max 33, expected ~1 slice steps,
+        // ~0 SD bytes)` and refused CLEAR with no clue which of the two states it was.
+        if (!maybeAdmitFinalizeWorkspaceAfterDrain()) {
+            failureReason = SyncDrainFailureReason::AdmissionRefused;
+            break;
+        }
         const SyncDrainProgressSnapshot beforeProgress = lastProgress;
         StorageManager::processDeferredSaveState(state);
         yield();
@@ -72,7 +80,23 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
 #if defined(SESSION_CAPTURE)
         const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
 #endif
-        if (failureReason == SyncDrainFailureReason::Stuck) {
+        if (failureReason == SyncDrainFailureReason::AdmissionRefused) {
+            const SyncDrainProgressSnapshot admissionProgress = captureSyncDrainProgressSnapshot();
+            // PROGMEM: a plain literal here is RAM1-resident `.rodata`, and this tree sits on the
+            // FlexRAM bank boundary.
+            Serial.printf_P(
+                PSTR("[StorageManager] ERROR: Persistence drain has no admittable work "
+                     "(pending=%u queue=%u writing=%u active=%u steps=%u)\n"),
+                storageSession.currentWorkspaceSave.pending ? 1u : 0u,
+                static_cast<unsigned>(admissionProgress.workQueueDepth),
+                static_cast<unsigned>(admissionProgress.writingWorkItems),
+                admissionProgress.workItemActive ? 1u : 0u, static_cast<unsigned>(steps));
+#if defined(SESSION_CAPTURE)
+            SC_PERSIST_DRAIN_FAIL("admission_refused", steps, 0, admissionProgress.workQueueDepth,
+                                  admissionProgress.chunkQueueDepth, drainBudget.expectedSliceSteps,
+                                  drainBudget.estimatedSdPayloadBytes);
+#endif
+        } else if (failureReason == SyncDrainFailureReason::Stuck) {
             Serial.printf(
                 "[StorageManager] ERROR: Persistence drain stuck after %u iterations "
                 "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",

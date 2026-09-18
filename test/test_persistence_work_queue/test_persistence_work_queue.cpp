@@ -211,6 +211,68 @@ void test_try_get_writing_item_reports_active_writer() {
   TEST_ASSERT_TRUE(persistWorkItemsEqual(observed, item));
 }
 
+/// A `Persisted` entry is terminal, `LoopPersist` is keyed by `LoopId` (fresh for each new loop), and
+/// no path ever returns an entry to `NotScheduled` -- so one clear/record cycle permanently consumes
+/// one of the 256 slots. Exhausting the table must not make every later admission fail: the workspace
+/// finalize is the item that clears `currentWorkspaceSave.pending`, and with nothing admittable the
+/// blocking drain has nothing to step and refuses the save (2026-09-18:
+/// `Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)`).
+void test_exhausted_entry_table_still_admits_the_finalize() {
+  resetQueue();
+  for (uint32_t i = 0; i < kMaxWorkEntries; ++i) {
+    const PersistKey key = persistKeyForLoop(static_cast<LoopId>(100 + i));
+    TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, key));
+    PersistWorkItem item{};
+    TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(item));
+    PersistenceWorkQueue::markItemPersisted(item);
+  }
+  TEST_ASSERT_EQUAL(0u, PersistenceWorkQueue::queueDepth());
+  TEST_ASSERT_EQUAL(0u, PersistenceWorkQueue::writingWorkItemCount());
+
+  TEST_ASSERT_TRUE(
+      PersistenceWorkQueue::admitWork(PersistWorkType::FinalizeWorkspace, persistKeySingleton()));
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistWorkState::Queued),
+                    static_cast<int>(PersistenceWorkQueue::workState(
+                        PersistWorkType::FinalizeWorkspace, persistKeySingleton())));
+}
+
+/// The reclaim that keeps the table admittable must take only terminal entries: a Queued or Writing
+/// item still owes an SD write, so stealing its slot would drop that work. Which tombstone it takes
+/// is not observable (a reclaimed key is re-admitted as a fresh entry), so the assertions below name
+/// the expected victims only because entries are allocated in index order.
+void test_full_table_reclaims_a_tombstone_and_never_a_queued_item() {
+  resetQueue();
+  const LoopId oldestLoopId = 1;
+  for (uint32_t i = 0; i < kMaxWorkEntries; ++i) {
+    const PersistKey key = persistKeyForLoop(static_cast<LoopId>(oldestLoopId + i));
+    TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, key));
+    PersistWorkItem item{};
+    TEST_ASSERT_TRUE(PersistenceWorkQueue::beginWriteQueuedItem(item));
+    PersistenceWorkQueue::markItemPersisted(item);
+  }
+
+  // The table is full. This admission gets a reclaimed tombstone and stays Queued ...
+  const PersistKey protectedKey = persistKeyForTrack(3);
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::TrackMeta, protectedKey));
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistWorkState::NotScheduled),
+                    static_cast<int>(PersistenceWorkQueue::workState(PersistWorkType::LoopPersist,
+                                                                     persistKeyForLoop(oldestLoopId))));
+
+  // ... so the next one must reclaim a different tombstone, not the Queued entry above.
+  const PersistKey freshKey = persistKeyForLoop(9000);
+  TEST_ASSERT_TRUE(PersistenceWorkQueue::admitWork(PersistWorkType::LoopPersist, freshKey));
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistWorkState::Queued),
+                    static_cast<int>(PersistenceWorkQueue::workState(PersistWorkType::LoopPersist,
+                                                                     freshKey)));
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistWorkState::Queued),
+                    static_cast<int>(PersistenceWorkQueue::workState(PersistWorkType::TrackMeta,
+                                                                     protectedKey)));
+  TEST_ASSERT_EQUAL(static_cast<int>(PersistWorkState::NotScheduled),
+                    static_cast<int>(PersistenceWorkQueue::workState(
+                        PersistWorkType::LoopPersist, persistKeyForLoop(oldestLoopId + 1))));
+  TEST_ASSERT_EQUAL(2u, PersistenceWorkQueue::queueDepth());
+}
+
 void test_loop_undo_history_slot_key_is_distinct_per_track() {
   resetQueue();
   const PersistKey trackFiveSlotZero = persistKeyForSlot(5, 0);
@@ -235,6 +297,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_writing_work_item_count_tracks_active_writer);
   RUN_TEST(test_loop_persist_slot_key_differs_from_loop_id_key);
   RUN_TEST(test_loop_persist_slot_key_is_distinct_per_track);
+  RUN_TEST(test_exhausted_entry_table_still_admits_the_finalize);
+  RUN_TEST(test_full_table_reclaims_a_tombstone_and_never_a_queued_item);
   RUN_TEST(test_loop_undo_history_slot_key_is_distinct_per_track);
   RUN_TEST(test_recover_orphaned_writing_item_requeues_at_head);
   RUN_TEST(test_recover_orphaned_writing_unblocks_begin_write);

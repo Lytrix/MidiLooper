@@ -446,15 +446,18 @@ STORAGE_PERSIST_MEM bool resolvePersistKeyToTrackSlot(const PersistKey& key, uin
   return false;
 }
 
-STORAGE_PERSIST_MEM void maybeAdmitFinalizeWorkspaceAfterDrain() {
+STORAGE_PERSIST_MEM bool maybeAdmitFinalizeWorkspaceAfterDrain() {
   if (PersistenceWorkQueue::queueDepth() > 0 || PersistenceWorkQueue::writingWorkItemCount() > 0 ||
       storageSession.persistenceWorkItem.itemActive) {
-    return;
+    return true;
   }
   if (!storageSession.currentWorkspaceSave.pending) {
-    return;
+    return false;
   }
-  PersistenceWorkQueue::admitWork(PersistWorkType::FinalizeWorkspace, persistKeySingleton());
+  // Checked, not discarded: a refused admission here is the one state in which an owed save has
+  // nothing to step, and the blocking drain must fail fast on it rather than spin. See
+  // `reclaimTerminalEntry` for the fixed-table exhaustion that used to make this permanent.
+  return PersistenceWorkQueue::admitWork(PersistWorkType::FinalizeWorkspace, persistKeySingleton());
 }
 
 STORAGE_PERSIST_MEM void resetPersistenceWorkItemJobState() {
