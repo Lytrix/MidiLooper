@@ -2754,11 +2754,17 @@ captured a coalesced publication (`snapshot_unit publish` at 153.941 s) that enc
 state — the loaded body root resolves to **48** rows and playback is missing the 24-39 overdub range.
 `writeLoopPersisted` / the gather require neither `publishedSnapshotIsCurrent()` nor
 `!hasPendingSnapshotPublish()`, and the loader installs the body root as current with no reconcile
-(the boot hydration lane is gated off). Fix options recorded: (a) gate the LSV1 body
-gather/admission on a current root with a bounded re-admit (fall back to the legacy body if it never
-becomes current), or (b) fix the publication coalescing so a published root always represents the
-latest committed-pass set. **The owner rejected load-time rebuilds (option (c)); do not implement
-that.** The stale uncommitted edit that had marked 5.9 closed and ticked 6.1 was reverted.
+(the boot hydration lane is gated off). Concrete mechanism: the session-exit publish calls
+`storePublishedSnapshot(box.unpublishedCandidate)` with the default revision, stamping the candidate
+with the **current** `playbackRevision` regardless of which committed-pass state it was built from,
+so `publishedSnapshotIsCurrent()` cannot lie-proof "content covered that revision"; and the queue
+accounting (`q`/`a`) advanced `4 → 0` / `0 → 5` while the published candidate still resolved to the
+undo-shaped 48 rows. **Recommended fix (owner call): (b) publisher coalescing/coverage correctness
+FIRST, then (a) a persistence safety gate; do NOT implement load-time reconciliation.** (b) pins
+*queue consumption and candidate coverage advance together*, with a carried `coveredPassRevision` so
+"current" means content-equivalent to the committed-pass authority. Acceptance adds: immediately
+before save admission the selected root and `PassesResolve` must already agree. The stale uncommitted
+edit that had marked 5.9 closed and ticked 6.1 was reverted.
 
 **2026-09-18 — the undo stack silently lost its publication capacity, so a second overdub stopped
 adding a GUS level; fixed (`successor-capture-reentry-unguarding` 8.3).** The user report: *the undo
