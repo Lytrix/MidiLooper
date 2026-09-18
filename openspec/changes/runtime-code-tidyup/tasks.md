@@ -588,7 +588,7 @@ The three splits reduce the files that carried a mixed responsibility: `RuntimeP
   across `CONTINUOUS-CAPTURE-OWNERSHIP.md` ↔ `FOCUSED-STOP-HITL.md` (61), `FOCUSED-STOP-HITL.md` ↔ `tasks.md` (35) and
   `design.md` ↔ the others (30) by citing instead. Verify: `tasks.md` has one task per line under 200 characters; the
   sentence-overlap count drops; every removed paragraph is reachable by citation from `CURRENT_WORK.md`.
-- [ ] 7.5 P6 gate: `openspec validate runtime-code-tidyup --strict` passes and no firmware/test run is needed because
+- [x] 7.5 P6 gate: `openspec validate runtime-code-tidyup --strict` passes and no firmware/test run is needed because
   the phase is text-only. Verify: validate output recorded.
 
 ### P6 progress (2026-09-18)
