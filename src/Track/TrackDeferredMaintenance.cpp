@@ -1006,8 +1006,15 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
           isRecording(), isPlaying(), isOverdubbing(), havePublishedSnapshot,
           snapshotLoop.hasInFlightSnapshotConstruction(), visualCacheNeedsFirstPaint,
           hasWrapJournal, snapshotPending) &&
+      // A *queued* publication must be startable on an in-session turn. Without this the clause
+      // below admitted only live-record progress, an already-running construction, or a wrap
+      // journal -- so a session-exit publication that was queued with neither (a non-wrapping
+      // overdub stop, or the undo/redo rebuild requested by `requestCommittedPassesRepublish`)
+      // never started, leaving the previous root selected: the committed pass stayed visible on the
+      // display and silent in playback. The per-turn reserve/yield budgets below still bound the
+      // work each turn does.
       (liveRecordPastFirstBar || snapshotLoop.hasInFlightSnapshotConstruction() ||
-       hasWrapJournal);
+       hasWrapJournal || snapshotLoop.pendingSnapshotSessionExitQueued());
   const bool snapshotEligible =
       snapshotPending && snapshotIdleAllowed &&
       !(snapshotLoop.pendingSnapshotFromLoadedPasses() &&

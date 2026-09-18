@@ -153,10 +153,24 @@ TRACK_COLD_MEM void applyPublishedSnapshotSelect(Loop& loop, const UndoEntry& en
         undo ? entry.beforePublishedSnapshot : entry.afterPublishedSnapshot;
     if (ref) {
         TrackUndo::selectPublishedSnapshotForEntry(loop, ref);
-        return;
-    }
-    if (!undo && entry.kind == UndoEntryKind::ClearSlot) {
+    } else if (!undo && entry.kind == UndoEntryKind::ClearSlot) {
         TrackUndo::selectPublishedSnapshotForEntry(loop, {});
+    }
+    // OpenSpec 5.9 / `immutable-loop-snapshot-passes` 5.8: an undo or redo of a record/overdub entry
+    // must leave a published root that *represents the resulting committed passes*. The captured
+    // before/after root is only an optimisation: the session-exit after-attach (Pin A) is
+    // asynchronous, so a redo whose after-root never landed kept the pre-undo root selected. The
+    // entry's pass restore has already bumped `playbackRevision`, so that root is stale, and the
+    // stale-root overlay has no unpublished receipt left to fold the redone passes back in -- the
+    // overdub wrap pass (and the stop pass) stayed visible on the display and silent in playback
+    // (device `content-verify-60`: the playback window was 384 rows against 576 effective after
+    // `Redo` at 81.67 s; `content-verify-63`/`-64` show the wrap pass displayed but not emitted).
+    // Requeue a full rebuild from the committed passes on the normal publication lane, which the
+    // idle Snapshot owner services while transport is live, and which keeps the previous root
+    // audible until the replacement lands.
+    if (entry.kind == UndoEntryKind::RecordPassAdded ||
+        entry.kind == UndoEntryKind::OverdubPassAdded) {
+        (void)loop.requestCommittedPassesRepublish();
     }
 }
 
