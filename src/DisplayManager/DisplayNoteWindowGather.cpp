@@ -336,6 +336,18 @@ DISP_CAPTURE_MEM void applyDrawSourceOverlays(const Loop& loop, uint32_t firstBa
             }
         }
     }
+    if (loop.retiredSealedDisplayNeededForFrame()) {
+        for (const NoteUtils::DisplayNote& retiredRow : loop.retiredSealedDisplayNotes()) {
+            for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+                if (!previewNoteIntersectsBar(retiredRow, bar, loopLength)) {
+                    continue;
+                }
+                DisplayWindowUtils::upsertDisplayNoteAtPitchStartFrom(out, committedEnd, retiredRow,
+                                                                     captureActive);
+                break;
+            }
+        }
+    }
     // Between overdub passes, capture has been closed while the session still
     // owns its preview rows. Keep composing that tier until session close;
     // otherwise a current snapshot alone can erase the just-recorded row.

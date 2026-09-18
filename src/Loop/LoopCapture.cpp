@@ -191,6 +191,7 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
     if (state == CapturePassState::Disabled) {
       clearSealedCapturePreview();
+      clearRetiredSealedDisplayNotes();
     }
     notifyCommittedContentChanged();
     return true;
@@ -208,6 +209,7 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     LoopContentResolution::restampPreparedPlaybackRevision(playbackRevision);
     if (state == CapturePassState::Disabled) {
       clearSealedCapturePreview();
+      clearRetiredSealedDisplayNotes();
     }
     notifyCommittedContentChanged();
     return true;
@@ -1550,6 +1552,72 @@ LOOP_COLD_MEM bool Loop::sealedCapturePreviewIsCovered() const {
     }
   }
   return true;
+}
+
+LOOP_COLD_MEM bool Loop::retiredSealedDisplayCovered() const {
+  if (retiredSealedDisplayNotes_.empty()) {
+    return true;
+  }
+  if (visualCacheDirty || visualCache.builtFromRevision < retiredSealedDisplayRevision_) {
+    return false;
+  }
+  for (const NoteUtils::DisplayNote& row : retiredSealedDisplayNotes_) {
+    if (!DisplayWindowUtils::sealedCapturePreviewRowCoveredByVisualCache(
+            row.noteId, row.note, row.startTick, row.endTick, visualCache.notes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::retiredSealedDisplayNeededForFrame() const {
+  if (retiredSealedDisplayNotes_.empty()) {
+    return false;
+  }
+  if (visualCacheDirty) {
+    // The cache cannot be trusted to represent anything yet, so the retired rows are the frame.
+    return true;
+  }
+  for (const NoteUtils::DisplayNote& row : retiredSealedDisplayNotes_) {
+    bool represented = false;
+    for (const NoteUtils::DisplayNote& committed : visualCache.notes) {
+      if (committed.note == row.note && committed.startTick == row.startTick) {
+        represented = true;
+        break;
+      }
+    }
+    if (!represented) {
+      // Nothing authoritative holds this identity, so the retired row is still the only source.
+      return true;
+    }
+  }
+  return false;
+}
+
+LOOP_COLD_MEM void Loop::releaseRetiredSealedDisplayIfCovered() {
+  if (retiredSealedDisplayNotes_.empty() || !retiredSealedDisplayCovered()) {
+    return;
+  }
+  clearRetiredSealedDisplayNotes();
+}
+
+LOOP_COLD_MEM void Loop::clearRetiredSealedDisplayNotes() {
+  retiredSealedDisplayNotes_.clear();
+  retiredSealedDisplayRevision_ = 0;
+}
+
+LOOP_COLD_MEM void Loop::retireSealedCapturePreviewForDisplay() {
+  if (sealedCapturePreviewNotes_.empty()) {
+    return;
+  }
+  for (const NoteUtils::DisplayNote& row : sealedCapturePreviewNotes_) {
+    DisplayWindowUtils::upsertDisplayNoteAtPitchStart(retiredSealedDisplayNotes_, row);
+  }
+  if (retiredSealedDisplayRevision_ == 0 ||
+      sealedCapturePreviewRevision_ < retiredSealedDisplayRevision_) {
+    retiredSealedDisplayRevision_ = sealedCapturePreviewRevision_;
+  }
+  clearSealedCapturePreview();
 }
 
 LOOP_COLD_MEM void Loop::releaseSealedCapturePreviewIfCovered() {

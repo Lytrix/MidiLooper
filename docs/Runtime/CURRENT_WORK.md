@@ -2741,6 +2741,41 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — 5.12 FIXED: the second overdub no longer erases the first from the display (`immutable-loop-snapshot-
+passes` 5.12).** The sealed capture handoff was the only carrier of a closed overdub's rows while the committed cache
+could not account for them, and `openOverdubSession` cleared it, so starting the second overdub took the first
+overdub off the OLED until a resolve ran -- the user's "it removes the entire previous overdub from the display; it
+returns at the end". It could not simply be left in place: the same handoff feeds lap merge at seal, occupy/hold,
+draw-source gather reuse and the od2 clean adopt, and four of those five consumers must keep seeing the current
+session alone (the `001647`, `120321`, `214900` and od2 regressions are exactly that lesson). So the fix is a second,
+**display-only** representation.
+
+The instrumented run settled the one distinction that had blocked four earlier attempts: gating the display union on
+"not covered" is wrong, because exact-span coverage can never hold for a row the clean-adopt rule *replaced*
+(`010217`). The probe (a deliberately failing assertion encoding the state, since PlatformIO captures native test
+stdout so `printf` is not a channel) returned 262 = 0x106 for od2: retired tier populated with exactly 1 row, cache
+clean, and `retiredSealedDisplayCovered()` false -- the retired wrap-shaped successor (`pitch 39, 2976 -> 2784`)
+against the committed linear variant (`2976 -> 3055`) of the same identity.
+
+Final design, two predicates answering two different questions:
+- `retiredSealedDisplayNeededForFrame()` -- the display gate: true while the cache is dirty, or while any retired
+  row's *identity* (`note` + `startTick`) is represented nowhere in the committed cache. Identity rather than span, so
+  a superseded or already-present row stops being painted.
+- `retiredSealedDisplayCovered()` -- the release rule, unchanged (exact membership), called from the maintenance
+  point via `releaseRetiredSealedDisplayIfCovered()`.
+
+The union sits in `applyDrawSourceOverlays` -- the production counterpart of the host helper, called last in all three
+branches of `resolveDisplayNotesByDrawSource`, after the `shouldRetainUnpublishedVisualCacheOverStaleGather` assign
+that would otherwise clobber it -- and is mirrored in the test helper. Retire happens at session **close**
+(`closeOverdubSession` and the stepped close's `Phase::Finish`), while `openOverdubSession` keeps clearing the live
+handoff exactly as before, so the `001647` guard holds by construction; pass-disable clears both tiers (the 5.8a
+guarantee) and `resetPassTimeline` clears both.
+
+Evidence: `test_loop_take_survival` **140/140**, including the new
+`test_second_overdub_keeps_the_first_overdub_on_the_display` and all four historical guards; full native **2,262 cases
+/ 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 unchanged at `variables 96,128 /
+code 392,344 / padding 872 / locals free 34,944`. Device gate owed on the 24-bar two-overdub shape.
+
 **2026-09-18 — RC-MEM-7 landed: the capture ring degrades instead of invalidating, so a long run no longer aborts on
 ring capacity (`immutable-loop-snapshot-passes` 5.11).** The ring's own policy is that Tier-A text may only be
 displaced by newer Tier-A text and that this "keeps the newest windows and cannot wedge the ring", but both that
