@@ -37,10 +37,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void releaseExternalMemoryFirst(void* memory) {
   }
 }
 
-bool ledgerEntryEquals(const ActiveNoteLedger::Entry& a, const ActiveNoteLedger::Entry& b) {  return a.channel == b.channel && a.note == b.note && a.noteId == b.noteId &&
-         a.startTick == b.startTick && a.velocity == b.velocity;
-}
-
 }  // namespace
 
 bool PlaybackCoverageInterval::contains(uint32_t phase) const {
@@ -82,7 +78,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool LedgerBoundarySummary::matches(const ActiveN
   size_t index = 0;
   bool same = true;
   ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry& entry) {
-    if (index >= count || !ledgerEntryEquals(openNotes[index], entry)) {
+    if (index >= count || !activeNoteEntriesMatch(openNotes[index], entry)) {
       same = false;
     }
     ++index;
@@ -359,8 +355,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool FixedPlaybackBridgeStorage::matchesAffectedL
     while (index < ledgerBoundary.count && !relevant(ledgerBoundary.openNotes[index])) ++index;
     if (index == ledgerBoundary.count) { same = false; return; }
     const auto& old = ledgerBoundary.openNotes[index++];
-    same = same && old.channel == entry.channel && old.note == entry.note &&
-        old.noteId == entry.noteId && old.startTick == entry.startTick && old.velocity == entry.velocity;
+    same = same && activeNoteEntriesMatch(old, entry);
   });
   while (index < ledgerBoundary.count && !relevant(ledgerBoundary.openNotes[index])) ++index;
   return same && index == ledgerBoundary.count;
@@ -538,6 +533,18 @@ bool RuntimePlaybackViewLifecycle::retainCurrent(
   return true;
 }
 
+void RuntimePlaybackViewLifecycle::installRetainedCurrentView(
+    std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
+    uint8_t previousAnchor) {
+  current = ready;
+  retained = current;
+  views[current].published = false;
+  ready = kNoView;
+  build = previousAnchor;
+  idle = kNoView;
+  views[build].resetMetadata();
+}
+
 bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
     std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
   if (current >= views.size() || ready >= views.size() || current == ready ||
@@ -545,14 +552,7 @@ bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
       retained != kNoView) {
     return false;
   }
-  const uint8_t oldCurrent = current;
-  current = ready;
-  views[current].published = false;
-  retained = current;
-  ready = kNoView;
-  build = oldCurrent;
-  idle = kNoView;
-  views[build].resetMetadata();
+  installRetainedCurrentView(views, current);
   return true;
 }
 
@@ -563,14 +563,7 @@ bool RuntimePlaybackViewLifecycle::replaceRetainedWithReady(
       !views[ready].complete || !views[ready].rawCoveragePrepared) {
     return false;
   }
-  const uint8_t oldCurrent = retained;
-  current = ready;
-  retained = current;
-  views[current].published = false;
-  ready = kNoView;
-  build = oldCurrent;
-  idle = kNoView;
-  views[build].resetMetadata();
+  installRetainedCurrentView(views, retained);
   return true;
 }
 

@@ -8,14 +8,12 @@
 NOTE_EDIT_MEM RuntimeCompanionSpanWalk::RuntimeCompanionSpanWalk() = default;
 NOTE_EDIT_MEM RuntimeCompanionSpanWalk::~RuntimeCompanionSpanWalk() {
   if (flags_ == nullptr) return;
-  if (isInExternalMemoryPool(flags_)) extmem_free(flags_);
-  else std::free(flags_);
+  externalFirstFree(flags_);
 }
 NOTE_EDIT_MEM bool RuntimeCompanionSpanWalk::prewarm(size_t capacity) {
   if (flags_ != nullptr) return capacity == capacity_;
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
-  flags_ = static_cast<uint8_t*>(extmem_malloc(capacity));
-  if (flags_ == nullptr) flags_ = static_cast<uint8_t*>(std::malloc(capacity));
+  flags_ = static_cast<uint8_t*>(externalFirstAlloc(capacity));
   if (flags_ == nullptr) return false;
   capacity_ = capacity;
   return true;

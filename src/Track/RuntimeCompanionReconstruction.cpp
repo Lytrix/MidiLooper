@@ -9,14 +9,12 @@
 NOTE_EDIT_MEM RuntimeCompanionReconstruction::RuntimeCompanionReconstruction() = default;
 NOTE_EDIT_MEM RuntimeCompanionReconstruction::~RuntimeCompanionReconstruction() {
   if (notes_ == nullptr) return;
-  if (isInExternalMemoryPool(notes_)) extmem_free(notes_);
-  else std::free(notes_);
+  externalFirstFree(notes_);
 }
 NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::prewarm(size_t capacity) {
   if (notes_ != nullptr) return capacity == capacity_;
   if (capacity == 0 || capacity > 2 * RuntimePlaybackViewConfig::kEventsPerView) return false;
-  void* memory = extmem_malloc(capacity * sizeof(NoteUtils::DisplayNote));
-  if (memory == nullptr) memory = std::malloc(capacity * sizeof(NoteUtils::DisplayNote));
+  void* memory = externalFirstAlloc(capacity * sizeof(NoteUtils::DisplayNote));
   if (memory == nullptr) return false;
   notes_ = static_cast<NoteUtils::DisplayNote*>(memory);
   for (size_t i = 0; i < capacity; ++i) new (notes_ + i) NoteUtils::DisplayNote{};

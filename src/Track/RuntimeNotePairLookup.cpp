@@ -17,16 +17,14 @@ NOTE_PAIR_MEM RuntimeNotePairLookup::RuntimeNotePairLookup() = default;
 
 NOTE_PAIR_MEM RuntimeNotePairLookup::~RuntimeNotePairLookup() {
   if (lane_ == nullptr) return;
-  if (isInExternalMemoryPool(lane_)) extmem_free(lane_);
-  else std::free(lane_);
+  externalFirstFree(lane_);
 }
 
 NOTE_PAIR_MEM bool RuntimeNotePairLookup::prewarm(size_t capacity) {
   if (lane_ != nullptr) return capacity_ == capacity;
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
   const size_t bytes = capacity * (2 * sizeof(uint16_t) + sizeof(uint8_t));
-  void* memory = extmem_malloc(bytes);
-  if (memory == nullptr) memory = std::malloc(bytes);
+  void* memory = externalFirstAlloc(bytes);
   if (memory == nullptr) return false;
   lane_ = static_cast<uint16_t*>(memory);
   stack_ = lane_ + capacity;

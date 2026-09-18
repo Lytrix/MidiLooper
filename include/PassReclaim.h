@@ -69,6 +69,23 @@ void collectReferencedPasses(const GlobalUndoStack& stack, PassReferenceSet& out
 
 bool overUndoMemoryPressure(const GlobalUndoStack& stack);
 
+/// The undo-trim rails, owned here so the batch trimmer and the bounded
+/// `GlobalUndoStackTrimCursor` cannot drift apart: an empty stack never trims, the absolute rail
+/// trims unconditionally, the minimum depth protects a shallow stack, and otherwise memory
+/// pressure decides (DEC-063). Callers keep their own cursor/compaction policy.
+inline bool shouldTrimGlobalUndoStackForMemory(const GlobalUndoStack& stack) {
+  if (stack.entries.empty()) {
+    return false;
+  }
+  if (stack.entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES) {
+    return true;
+  }
+  if (stack.entries.size() <= Config::MIN_UNDO_DEPTH) {
+    return false;
+  }
+  return overUndoMemoryPressure(stack);
+}
+
 /// Trim global undo entries under depth/pressure rails. Prefers dropping entries before
 /// cursor (undo history) so the redo branch at cursor..end stays intact when cursor > 0.
 size_t trimGlobalUndoStackForMemory(GlobalUndoStack& stack);

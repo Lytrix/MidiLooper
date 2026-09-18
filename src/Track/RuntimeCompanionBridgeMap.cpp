@@ -31,15 +31,6 @@ NOTE_EDIT_MEM bool sameCompanionInputEvent(const MidiEvent& a, const MidiEvent& 
     default: return true; // Remaining MIDI types have no payload.
   }
 }
-NOTE_EDIT_MEM void* companionMapAllocate(size_t bytes) {
-  void* result = extmem_malloc(bytes);
-  return result != nullptr ? result : std::malloc(bytes);
-}
-NOTE_EDIT_MEM void companionMapFree(void* memory) {
-  if (memory == nullptr) return;
-  if (isInExternalMemoryPool(memory)) extmem_free(memory);
-  else std::free(memory);
-}
 }
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::inputEventsMatch(const MidiEvent& a, const MidiEvent& b) {
   return sameCompanionInputEvent(a, b);
@@ -47,8 +38,8 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::inputEventsMatch(const MidiEvent& 
 NOTE_EDIT_MEM RuntimeCompanionBridgeMap::~RuntimeCompanionBridgeMap() {
   if (records_ != nullptr)
     for (size_t i = 0; i < capacity_; ++i) records_[i].~PlaybackBridgeRecord();
-  companionMapFree(records_); companionMapFree(recordRanks_); companionMapFree(baseRanks_);
-  companionMapFree(baseIndex_);
+  externalFirstFree(records_); externalFirstFree(recordRanks_); externalFirstFree(baseRanks_);
+  externalFirstFree(baseIndex_);
 }
 NOTE_EDIT_MEM uint64_t RuntimeCompanionBridgeMap::requiredPerPassGrainsUpperBound(
     size_t baseCount, size_t candidateCount, size_t quantum) {
@@ -65,12 +56,12 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionBridgeMap::requiredPerPassGrainsUpperBoun
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::prewarm(size_t capacity) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
   if (capacity_ != 0) return capacity == capacity_;
-  auto* records = static_cast<PlaybackBridgeRecord*>(companionMapAllocate(capacity * sizeof(PlaybackBridgeRecord)));
-  auto* ranks = static_cast<uint16_t*>(companionMapAllocate(capacity * sizeof(uint16_t)));
-  auto* baseRanks = static_cast<uint16_t*>(companionMapAllocate(capacity * sizeof(uint16_t)));
-  auto* baseIndex = static_cast<uint16_t*>(companionMapAllocate(capacity * sizeof(uint16_t)));
+  auto* records = static_cast<PlaybackBridgeRecord*>(externalFirstAlloc(capacity * sizeof(PlaybackBridgeRecord)));
+  auto* ranks = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
+  auto* baseRanks = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
+  auto* baseIndex = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
   if (records == nullptr || ranks == nullptr || baseRanks == nullptr || baseIndex == nullptr) {
-    companionMapFree(records); companionMapFree(ranks); companionMapFree(baseRanks); companionMapFree(baseIndex); return false;
+    externalFirstFree(records); externalFirstFree(ranks); externalFirstFree(baseRanks); externalFirstFree(baseIndex); return false;
   }
   for (size_t i = 0; i < capacity; ++i) new (&records[i]) PlaybackBridgeRecord();
   records_ = records; recordRanks_ = ranks; baseRanks_ = baseRanks; capacity_ = capacity;

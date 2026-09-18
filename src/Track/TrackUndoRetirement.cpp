@@ -83,8 +83,7 @@ TRACK_COLD_MEM bool GlobalUndoStackTrimCursor::step(size_t maximumUnits) {
     auto& entries = stack_->entries;
     switch (phase_) {
       case Phase::Decide: {
-        const bool trim = entries.size() > Config::ABSOLUTE_MAX_UNDO_ENTRIES ||
-            (entries.size() > Config::MIN_UNDO_DEPTH && overUndoMemoryPressure(*stack_));
+        const bool trim = shouldTrimGlobalUndoStackForMemory(*stack_);
         if (!trim) {
           stack_ = nullptr;
           break;

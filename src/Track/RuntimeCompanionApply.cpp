@@ -9,14 +9,13 @@
 NOTE_EDIT_MEM RuntimeCompanionApply::RuntimeCompanionApply() = default;
 NOTE_EDIT_MEM RuntimeCompanionApply::~RuntimeCompanionApply() {
   if (provenance_ == nullptr) return;
-  if (isInExternalMemoryPool(provenance_)) extmem_free(provenance_);
-  else std::free(provenance_);
+  externalFirstFree(provenance_);
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::prewarm(size_t capacity) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
   if (!candidate_.prewarm(capacity)) return false;
   if (provenance_ != nullptr) return candidate_.capacity == capacity;
-  provenance_ = static_cast<uint32_t*>(extmem_malloc(capacity * sizeof(uint32_t)));
+  provenance_ = static_cast<uint32_t*>(externalFirstAlloc(capacity * sizeof(uint32_t)));
   if (provenance_ == nullptr) provenance_ = static_cast<uint32_t*>(std::malloc(capacity * sizeof(uint32_t)));
   return provenance_ != nullptr;
 }

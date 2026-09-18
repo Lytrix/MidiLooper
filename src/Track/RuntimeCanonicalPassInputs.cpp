@@ -7,40 +7,31 @@
 #include <new>
 
 namespace {
-NOTE_EDIT_MEM void* canonicalInputAllocate(size_t bytes) {
-  void* memory = extmem_malloc(bytes);
-  return memory != nullptr ? memory : std::malloc(bytes);
-}
-NOTE_EDIT_MEM void canonicalInputFree(void* memory) {
-  if (memory == nullptr) return;
-  if (isInExternalMemoryPool(memory)) extmem_free(memory);
-  else std::free(memory);
-}
 }
 NOTE_EDIT_MEM RuntimeCanonicalPassInputs::RuntimeCanonicalPassInputs() = default;
 NOTE_EDIT_MEM RuntimeCanonicalPassInputs::~RuntimeCanonicalPassInputs() {
   // Explicit runtime discard handles live borrowed workers; destruction must
   // not dereference a worker that may already have been destroyed.
   for (size_t i = 0; i < capacity_; ++i) { raw_[i].~MidiEvent(); effective_[i].~MidiEvent(); }
-  canonicalInputFree(raw_); canonicalInputFree(effective_); canonicalInputFree(outputs_); canonicalInputFree(nextOutputs_);
-  canonicalInputFree(selectedPasses_); canonicalInputFree(selectedHistory_);
-  canonicalInputFree(captureOrder_); canonicalInputFree(captureScratch_);
+  externalFirstFree(raw_); externalFirstFree(effective_); externalFirstFree(outputs_); externalFirstFree(nextOutputs_);
+  externalFirstFree(selectedPasses_); externalFirstFree(selectedHistory_);
+  externalFirstFree(captureOrder_); externalFirstFree(captureScratch_);
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::prewarm(size_t capacity) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
   if (capacity_) return capacity_ == capacity;
-  auto* raw = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
-  auto* effective = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
-  auto* outputs = static_cast<RuntimeCompanionPasses::Pass*>(canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
-  auto* nextOutputs = static_cast<RuntimeCompanionPasses::Pass*>(canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
-  auto* selected = static_cast<SealedPass*>(canonicalInputAllocate(capacity * sizeof(SealedPass)));
-  auto* history = static_cast<const EditPass**>(canonicalInputAllocate(RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*)));
-  auto* order = static_cast<uint16_t*>(canonicalInputAllocate(capacity * sizeof(uint16_t)));
-  auto* scratch = static_cast<uint16_t*>(canonicalInputAllocate(capacity * sizeof(uint16_t)));
+  auto* raw = static_cast<MidiEvent*>(externalFirstAlloc(capacity * sizeof(MidiEvent)));
+  auto* effective = static_cast<MidiEvent*>(externalFirstAlloc(capacity * sizeof(MidiEvent)));
+  auto* outputs = static_cast<RuntimeCompanionPasses::Pass*>(externalFirstAlloc(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+  auto* nextOutputs = static_cast<RuntimeCompanionPasses::Pass*>(externalFirstAlloc(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+  auto* selected = static_cast<SealedPass*>(externalFirstAlloc(capacity * sizeof(SealedPass)));
+  auto* history = static_cast<const EditPass**>(externalFirstAlloc(RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*)));
+  auto* order = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
+  auto* scratch = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
   if (!raw || !effective || !outputs || !nextOutputs || !selected || !history || !order || !scratch) {
-    canonicalInputFree(raw); canonicalInputFree(effective); canonicalInputFree(outputs); canonicalInputFree(nextOutputs);
-    canonicalInputFree(selected); canonicalInputFree(history);
-    canonicalInputFree(order); canonicalInputFree(scratch); return false;
+    externalFirstFree(raw); externalFirstFree(effective); externalFirstFree(outputs); externalFirstFree(nextOutputs);
+    externalFirstFree(selected); externalFirstFree(history);
+    externalFirstFree(order); externalFirstFree(scratch); return false;
   }
   for (size_t i = 0; i < capacity; ++i) {
     new (&raw[i]) MidiEvent(); new (&effective[i]) MidiEvent();
