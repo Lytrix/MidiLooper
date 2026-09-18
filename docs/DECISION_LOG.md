@@ -125,8 +125,11 @@ pool that supports on the order of **four** resident bundles — and the arm cha
    asserted.**
 2. **Role classes and cardinalities.** `PlaybackWindowLease` **N, derived** (8 today: 8 tracks x 1 sounding slot;
    must not preclude 16/32/48/64), `LiveCaptureLease` 1, `DeferredFinalizationLease` **1 admission with a
-   role whose second concurrent stop is **denied non-destructively** (DEC-067 behaviour, device-verified); the
-   descriptor ring's depth is *not* evidence of multi-finalizer storage,
+   role whose second concurrent stop is **denied non-destructively** (DEC-067 behaviour, device-verified). The
+   bound is the single-instance finalization resources (`captureStopOwner`, overdub transfer admission,
+   canonical capture output, session-exit handoff), not the ring: admission requires a **free tail descriptor**,
+   so pending stops are never stacked and `queue_full` is a distinct exhaustion denial. A denied stop is not
+   queued or auto-serviced -- it is re-issued by the stop edge.
    `InteractiveLease` 1, and an explicitly budgeted transfer overlap. The budget is
    `fixed + N x P + C + D + I + overlap + reserve <= budget`, so only the term multiplied by N must be small.
 3. **Immutable readiness is owed per affected tick.** After a recording, overdub or edit changes content at a

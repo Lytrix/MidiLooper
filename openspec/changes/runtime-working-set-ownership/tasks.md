@@ -153,8 +153,13 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S4.5 **Finalization denial**: one finalizer; native fixture for A-stops-and-finalizes / B-records /
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — denied with no
       partial stop, B still recording/overdubbing, next stop succeeding after the role frees. Emit
-      `finalization_lease_stop_denied`. Do **not** build a queue: `CaptureStopJobs::kCapacity` is descriptor
-      depth, and concurrent finalization needs its own capacity/ownership decision first.
+      `finalization_lease_stop_denied`. Assert the **denial stage names** as the evidence (`finalizer_busy`,
+      `transfer_denied`, `canonical_output_busy`, session-exit handoff, and `queue_full` as the distinct
+      exhaustion case) so the mechanism is observable rather than inferred. Prove the stop is **not
+      auto-serviced**: the denied attempt produced no descriptor and no partial stop, and only a re-issued stop
+      after the resource frees is admitted. Do **not** build a queue: the ring's tail must be free before
+      admission, so it cannot stack pending stops, and concurrent finalization needs its own capacity/ownership
+      decision first.
 - [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
       rising and falling with activation/deactivation.
 
