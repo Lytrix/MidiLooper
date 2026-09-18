@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-076](#dec-076--runtime-working-sets-are-role-owned-and-memory-scales-with-active-roles) | 2026-09-18 | Runtime working sets are role-owned and memory scales with active roles (**Playhead-scheduled MVCC**) | **Accepted — design authority recorded; implementation staged (S0-S7), nothing built yet.** Governs `runtime-working-set-ownership` |
 | [DEC-075](#dec-075--the-snapshot-publication-boundary-admits-memory-per-construction-turn-and-parks-on-allocation-failure) | 2026-09-18 | The snapshot publication boundary admits memory per construction turn and parks on allocation failure | Accepted — implemented; native 2249 / 1 skipped / 0 failures, RAM1 unchanged; device gate owed |
 | [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented and device-verified (settled LSV1 save path, `q=0` publishes, post-reboot `storage_matches_effective`); native reproducer red→green; RAM1 allowance restored |
 | [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 landed as DEC-074 |
@@ -87,7 +88,91 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-076 -->
+<!-- Append new entries below (newest first). Next ID: DEC-077 -->
+
+## DEC-076 — Runtime working sets are role-owned and memory scales with active roles
+
+**Date:** 2026-09-18
+**Status:** **Accepted — design authority recorded; implementation not started** (staged S0–S7). This entry fixes
+the law and the vocabulary; it does not claim shipped code.
+**Owner:** `TrackPlaybackRuntime` / `LoopPlaybackRuntime` working sets, `Loop` derived state, the deferred
+publication owners, `DebugSessionCapture` evidence, and the display owners named in the migration stages.
+**Follows:** DEC-073 (coverage-based currency), DEC-074 (settled-root LSV1 admission), DEC-075 (publication
+admission + parking), DEC-067/DEC-068/DEC-072 (successor reentry and interval-owned staged passes — the
+concurrency this decision must not design away). Supersedes the *strategy framing* of
+`immutable-loop-snapshot-passes` RC-MEM-2 (its landed part stands) and reclassifies its §5.13 arm failure as a
+symptom.
+
+**Question (user, 2026-09-18).** The target is roughly **60 recorded slots at up to 64 bars**. After the memory
+fixes, arming a track still exits arm on a loaded workspace. Is the arm failure the problem, or is something
+structural?
+
+**Diagnosis.** The arm failure is a symptom. The scaling law is wrong: runtime working sets and whole-loop
+derived state are owned **per recorded slot, for the slot's lifetime**. Measured: 64 slots exist (8 tracks x 8);
+one admitted slot's tagged runtime total is **~1.47 MB** and its arm prewarm chain **~845 KB**; whole-loop derived
+state is **~325 KB per loop** (83 snapshot slabs, ~2.6 MB, for a loaded workspace); the resident event store holds
+**~28** sixty-four-bar loops at the observed density (131,072-event ceiling / ~4,600 events). Against an **~8 MB**
+pool that supports on the order of **four** resident bundles — and the arm chain fails at
+`#MEM_EXT_REFUSED,bytes=65536,tag=12` (`TagCompanionReconstruction`) once earlier arms have accumulated.
+
+**Decision.**
+
+1. **Working sets are role-owned, not slot-owned.** Derived runtime views, capture companion storage and bounded
+   canonical working content belong to an **active runtime role**. Inactive slots retain descriptors, bounded
+   metadata and a capped envelope only. Working sets are **window-sized** so a slot's resident cost does not
+   depend on its loop length, leased on activation/admission under identity `owner + generation + role`, reused
+   across slots, and released when no live owner remains. **Capacity is derived from measurement, never
+   asserted.**
+2. **Role classes and cardinalities.** `PlaybackWindowLease` **N, derived** (8 today: 8 tracks x 1 sounding slot;
+   must not preclude 16/32/48/64), `LiveCaptureLease` 1, `DeferredFinalizationLease` **1 admission with a
+   serialized queue** (`CaptureStopJobs::kCapacity` = queue depth; a full queue is the denial case),
+   `InteractiveLease` 1, and an explicitly budgeted transfer overlap. The budget is
+   `fixed + N x P + C + D + I + overlap + reserve <= budget`, so only the term multiplied by N must be small.
+3. **Immutable readiness is owed per affected tick.** After a recording, overdub or edit changes content at a
+   tick, an updated **immutable** state must be ready by the time the playhead moves over that tick again,
+   because playback may only consume immutable events. A **missed deadline keeps the previous version
+   authoritative for that pass** — never torn, never held silent, never deferred in a way that disturbs timing.
+   This changes the publication **unit and deadline**, and it **reuses** the resumable deferred publication
+   machinery already built for the purpose rather than adding a second incremental-publication system.
+4. **A published root is the checkpoint authority, not the playback authority.** Undo and save require an
+   immutable checkpoint; playback resolves windows and must not require a resident whole-loop root.
+5. **Durability gates eviction.** Content is evictable only after persistence durably acknowledges **that exact
+   canonical generation**. Dirty content pins residency; persistence failure or delay reduces capacity and never
+   discards accepted input.
+6. **The looper never stops playing.** Switching track/slot, record/overdub and undo/redo happen while playing,
+   with the inbound role provisioned before the outbound is released and no allocation at the switch.
+7. **Vocabulary is part of the decision.** The whole setup is **Playhead-scheduled MVCC** — multi-version
+   immutable state, resolved by interval projection, materialized incrementally against a playhead deadline,
+   with epoch-leased working sets — and its stage shape is a **Pipeline of role-owned stages** with declared cost
+   and deadline ([NAMING.md](Authority/NAMING.md)).
+8. **Thirty invariants are binding** on the owning change (scaling, ownership, immutability, continuity, failure,
+   evidence, method), each with its enforcement point; a task that violates one is not complete and an invariant
+   with no enforcement point is recorded as a gap.
+
+**Consequences.**
+
+- `ARCHITECTURE_RULES.md` § Ownership rules states the law and its two corollaries: a capacity claim that scales
+  with recorded-slot count is a **defect**, and a second authority for "which slot is active" is a **defect**
+  (`activeLoopIndex` owns it).
+- `Architecture/IntervalProjection.md` carries the readiness contract and the **window-size tunable** (bar-based
+  today; 1/16 beat = 12 ticks, 1/32 beat = 6 ticks at 192 PPQN, i.e. 31 ms and 16 ms at 120 BPM), with the three
+  coupled effects: resident bytes, achievable switch granularity, publication load.
+- New change `openspec/changes/runtime-working-set-ownership/` (stages S0–S7) with a
+  [`FALSIFICATION.md`](../openspec/changes/runtime-working-set-ownership/FALSIFICATION.md) review: the envelope
+  is **N derived** (not 2 per track), the unbudgeted per-sounding-slot root term is removed rather than budgeted,
+  finalization is a queue, and 8 tracks today with bank switching to 16 MIDI channels as the target.
+- Instrumentation change `openspec/changes/capture-tier-a-budget-profiles/` keeps a 15–20 minute session inside
+  the 1 MiB capture ring; the measurements above depend on it.
+- The arm-exit fix (`immutable-loop-snapshot-passes` §5.13) stays as a safeguard only.
+
+**Not decided here.** The 16-track / bank-switching scope; the transfer-overlap depth; the **cold undo policy**
+(required before any flat-cold-memory claim); the canonical residency policy; the default window size; whether a
+second finalization lease is ever warranted (evidence path: a `finalization_lease_stop_denied` counter); and
+which existing owners are retrofitted to the uniform work-item contract (opportunistic, its own change —
+a big-bang retrofit of nine timing-path owners is explicitly rejected).
+
+---
+
 
 ## DEC-075 — The snapshot publication boundary admits memory per construction turn and parks on allocation failure
 
