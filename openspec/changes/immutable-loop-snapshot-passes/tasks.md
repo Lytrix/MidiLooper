@@ -637,7 +637,7 @@ closed for `DisplayResolveLiveCapture`.
         [`012230`](../../../captures/host_midi_automation_baseline_20260912_012230.json)).
       - Plan:
         [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
-      - **5.7.6 IMPLEMENTED AND NATIVE-VERIFIED, THEN REVERTED 2026-09-18: a full work-entry table must not block the workspace finalize.** Fix `12fdf38d`, revert `d3290020`; cherry-pick `12fdf38d` after the RAM1 headroom below lands.
+      - **5.7.6 SHIPPED 2026-09-18 (after the RAM1 bank reduction): a full work-entry table must not block the workspace finalize.** Fix `12fdf38d`, reverted `d3290020` while it could not be flashed, re-landed `0a036c63` on top of the linker change `ea9918ac`.
         Second stall class in the same owner: the table is **monotonic** -- no path ever returns an entry to
         `NotScheduled`, and `LoopPersist` is keyed by `LoopId`, which is fresh for every new loop, so each
         clear/record cycle permanently consumes one of the 256 slots. Once exhausted, `admitWork` fails for
@@ -666,28 +666,26 @@ closed for `DisplayResolveLiveCapture`.
           `test_full_table_reclaims_a_tombstone_and_never_a_queued_item` in `test_persistence_work_queue`;
           both fail on the pre-fix behaviour (verified by disabling the reclaim) and pass after; suite 15/15,
           full native **2252 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS.
-        - **Reverted because it cannot be flashed: it costs 4 KB of DTCM and that alone hangs the boot.**
-          `variables 91,968 -> 96,064` (`locals free 6,336 -> 2,240`); on device the fix build hung during the boot
-          workspace load (`captures/drain-fix-01`/`-02`: 19-21 serial lines, stopping at `BOOT,scan,start` with no
-          `scan,t0`, no `Memory]` ticks, no `#CAP`; USB enumerated, no crash record). Controls: the pre-fix firmware
-          booted and streamed **1136 rows in 20 s** with the same SD state, and a **semantically neutral edit**
-          (`volatile int probe = 0; (void)probe;`) to either `PersistenceWorkQueue.cpp` or
-          `SyncDrainSaveState.cpp` gives the same 96,064 / 2,240 and the same hang (**105 rows in 35 s, no
-          `BOOT,load,ok`**) with none of this fix's logic -- the hang is the 4 KB, not the fix. The growth adds no
-          symbol: the two builds' full symbol tables are byte-identical and the sections grow by padding (`.data`
-          +1,024, `.bss` +3,072); it survives removing every new literal (the diagnostic is PROGMEM) and every new
-          struct field, and a clean build reproduces it. The tree sits on a knife-edge where a few bytes of code
-          flips one 4,096-byte DTCM alignment unit.
-        - **Unblocking it needs ITCM, not DTCM.** `code + padding = 425,984` is exactly 13 ITCM banks, so DTCM gets
-          3 banks (98,304 B) and `variables` 91,968 leaves 6,336. No movable DTCM remains: every symbol >= 128 B is
-          Teensy core/USB (`enumbuf`, `_VectorsRam`, `endpoint_queue_head`, `uframe_bandwidth`, the
-          `rx_transfer`/`isr_table_*` tables, `MIDIserial`), newlib/libstdc++ (`__malloc_av_`, `__prime_list`,
-          `__atexit0`, `__global_locale`, `__sf`, `_ctype_`, `__mprec_tens`, `__sincosf_table`,
-          `digital_pin_to_info_PGM`) or the two hot app objects the rule forbids moving (`midiHandler` 5,568,
-          `trackManager` 3,656); the app's large state is already `DMAMEM` (`storageSession`, `displayManager`).
-          **Moving ~32 KB of cold code to FLASH drops `code + padding` below 393,216 and frees a whole 32 KB DTCM
-          bank**, which would absorb this snap. Until that lands, edits to those two TUs flip the snap and hang the
-          boot, so they are effectively frozen.
+        - **First blocked, then unblocked by the RAM1 bank reduction.** The fix reads `variables 91,968 -> 96,064`
+          and at 13 ITCM banks that left `locals free` 2,240, which **hung the device boot** during the workspace
+          load (`captures/drain-fix-01`/`-02`: 19-21 serial lines, stopping at `BOOT,scan,start`, no `Memory]`
+          ticks, no `#CAP`, USB enumerated, no crash record). Controls proved the 4 KB and not the logic: the
+          pre-fix firmware booted and streamed **1136 rows in 20 s** with the same SD state, and a **semantically
+          neutral edit** (`volatile int probe = 0; (void)probe;`) to either `PersistenceWorkQueue.cpp` or
+          `SyncDrainSaveState.cpp` gave the same 96,064 / 2,240 and the same hang (**105 rows in 35 s, no
+          `BOOT,load,ok`**) with none of this fix's logic. The growth adds no symbol (the two builds' full symbol
+          tables are byte-identical; the sections grow by padding) and survives removing every new literal and
+          struct field, so it is the documented no-symbol-hint alignment snap.
+        - **Unblocked by `ea9918ac` (linker bank reduction).** No movable DTCM was left, so the lever was ITCM:
+          `linker/imxrt1062_t41_lcr.ld` now routes ten cold TUs (LoadLoopJob, CurrentSetBootLoad, RevisionCommit,
+          CurrentWorkspaceStorage, RevisionLoad, LoopInternalColdHelpers, SetBrowserRead, StorageManagerHitlSerial,
+          DebugSessionCapture, NoteEditSessionUndoStack) to FLASH. `code + padding` 425,984 -> 393,216 = **13 -> 12
+          ITCM banks**, and `free for local variables` 6,336 -> **39,104**; with this fix re-landed on top,
+          `variables 96,064` still leaves **35,008**. Device: `captures/drain-fix-03` boots (`BOOT,load,ok`,
+          1,023 rows in 30 s) and its clear precondition is **satisfied** (`Clear completed (serial log)`), with
+          **0 `Persistence drain stuck`**, 0 `admission_refused`, 0 `FATAL`, 0 `#MEM_EXT_REFUSED` and **12
+          `PERS,work`** rows (the wedged runs had 0). Note `padding` is now only 1,256 B, so the next ~1.2 KB of
+          new ITCM code crosses back; taking the next bank means moving another ~32 KB of cold code.
 
 ## 6. Compatibility retirement and closeout
 

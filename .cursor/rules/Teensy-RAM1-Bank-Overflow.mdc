@@ -53,7 +53,11 @@ Example (fixed the -1888 case by freeing 9472 bytes):
 DMAMEM DisplayManager displayManager;  // was: DisplayManager displayManager;
 ```
 
-**Freeing ITCM (code) rarely helps:** `FLASHMEM` only recovers a DTCM bank if it drops `(C + P)` below the next lower 32768 multiple. If code is only a few KB into a bank, small `FLASHMEM` moves do nothing — chase DTCM instead.
+**Freeing ITCM (code) rarely helps — unless you move a whole bank's worth.** `FLASHMEM` only recovers a DTCM bank if it drops `(C + P)` below the next lower 32768 multiple. If code is only a few KB into a bank, small `FLASHMEM` moves do nothing. But a *bulk* move does work, and it is the only lever left once every movable DTCM global is already `DMAMEM`: [`linker/imxrt1062_t41_lcr.ld`](../../linker/imxrt1062_t41_lcr.ld) routes named object files' `.text` / `.text.*` into `.text.code` (FLASH). Measured 2026-09-18: routing ten cold TUs (storage / boot / telemetry / undo / browser-read — none in the MIDI tick, the capture append, or playback serving) took `code + padding` 425,984 -> 393,216, i.e. **13 -> 12 ITCM banks**, and returned a full 32,768 bytes to `free for local variables` (6,336 -> 39,104). Three things to know before repeating it:
+
+- A TU's `size -t` text figure overstates what moves: after `--gc-sections` only ~20-30 % of it was actually resident in ITCM. Measure by rebuilding, and iterate — one round may only shrink `padding`.
+- `padding` is the slack to the next bank. `padding` is 1,256 after that move, so the next ~1.2 KB of new ITCM code crosses back and costs a whole bank; take the next bank deliberately by moving another ~32 KB of cold code.
+- The boot path, not the linker, is what fails. At 13 banks with `variables` at 96,064 the stack had 2,240 bytes and the boot-load overran it **silently** — no crash record, USB still enumerated, serial stopping at `BOOT,scan,start`. A semantically neutral edit reproduced it, so here "a few bytes of new code" can cost 4 KB of DTCM.
 
 **A new capture format string can cost 4 KB of the local allowance.** Adding two
 `DebugSessionCapture` emitters with ~90-character format strings (`emitCapPrintf`) moved
