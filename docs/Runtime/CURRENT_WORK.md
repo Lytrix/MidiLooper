@@ -2741,6 +2741,42 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — successor change 5.9 + 5.11 CLOSED, and the defect they found is fixed
+(`immutable-loop-snapshot-passes` 5.8).** The user report was concrete: *the overdub wrap creates a second pass
+which the display shows but which is not audible, and the GUS is missing its entry.* Two independent holes left
+the published root not representing the committed passes (the display resolves from `passes`, playback from the
+root):
+
+1. **Undo/redo** — `TrackUndo::applyPublishedSnapshotSelect` selected `undo ? before : after` and did nothing
+   else. The session-exit after-attach (Pin A) is asynchronous, so a redo whose after-root never landed kept the
+   pre-undo root; the entry's pass restore then bumped `playbackRevision`, making that root stale, and the
+   stale-root overlay has no unpublished receipt left to fold the passes back in. Live capture (MIDI only, no
+   serial open, so no reset — not save/load): `playback_build` eventCount **384 → 576 → 384 after `Undo` → still
+   384 after `Redo`** against 576 effective.
+2. **Eligibility** — `Track::processDeferredIdleMaintenance` admitted snapshot idle work only for
+   `liveRecordPastFirstBar || hasInFlightSnapshotConstruction() || hasWrapJournal`, so a publication *queued*
+   with none of those (a non-wrapping overdub stop, or the undo/redo rebuild) never started. This is the half
+   that explains a plain **stop → play again** losing the last pass.
+
+Fix (commit `31933183`): new `Loop::requestCommittedPassesRepublish()` publishes every active committed pass on
+the **normal** session-exit lane (the boot hydration lane is gated out in-session by the deliberate
+`allowLoadedSnapshotHydration` stub) and **does not clear the published root**, so the previous source stays
+audible until the replacement lands; `applyPublishedSnapshotSelect` calls it after **both** an undo and a redo of
+a `RecordPassAdded`/`OverdubPassAdded` entry; the eligibility clause now also admits
+`pendingSnapshotSessionExitQueued()`; the shared enumeration is factored into `queueAllCommittedPassesInto`.
+
+**Device gate closed:** `captures/content-verify-65` (DEC-071 shape with the recipe's undo/redo; git `31933183`
+clean, firmware `f82ee9b9…`, acceptance build) is a clean base **PASS**, and
+`captures/content-verify-65-playback/content-review.json` is **`result: PASS`** — `storage_matches_effective:
+true` (record 384 + overdub 157 + 35 == effective 576), **all five cycles `inventory_equal: true`,
+`exact_order: true`, 0 missing, 0 extra**, `max_bar_refs: 72`, `capacity_path_exercised: false` (parity proof,
+not a capacity re-stress). Same run: 0 `companion path stalled`, 0 `raw pass only`, 0 `RING,overflow`, 0 `FATAL`,
+0 `MEM_DENIED`, deferred save `ok`. Full native **2,239 / 1 skipped / 0 failures**; `teensy41-capture-serial`
+SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488 / **locals 6,400**. **Owed follow-ups:** the
+native redo-requeue fixture (recorded in 5.8), and the load-time reconcile for loops already saved with a stale
+root (the fix applies to new activity only).
+
+
 **2026-09-18 — successor 5.9 RUN ON DEVICE and it FAILS: a committed overdub pass never reaches the MIDI
 output.** The DEC-071 multi-pass shape was created on the flashed tree (`content-verify-58`: record 8 bars /
 overdub 8 bars from bar 3, track 4 slot 1, `teensy41-capture-serial`), and the base run is a clean **PASS**:
