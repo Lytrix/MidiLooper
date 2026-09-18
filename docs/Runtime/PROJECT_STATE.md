@@ -1,5 +1,15 @@
 # Project state (execution context)
 
+**2026-09-18 RC recorded for the post-reboot overdub loss (`successor-capture-reentry-unguarding` 5.9).** User report:
+after reboot the second overdub isn't loaded. Device `captures/gus-sanity-01` + `captures/reboot-01-playback`: the
+committed passes are complete (effective 142 rows; both overdub passes present after load), but the deferred save's
+LSV1 tail gathered a coalesced published root that encodes the **undo** state — the loaded body root resolves to 48
+display rows vs 57 before the reboot, and playback misses the 24-39 overdub range. The save requires neither
+`publishedSnapshotIsCurrent()` nor `!hasPendingSnapshotPublish()`, and the loader installs the body root as current
+with no reconcile (the boot hydration lane is gated off). Fix options (a) bounded save gate on a current root and
+(b) publication-coalescing completeness are in the 5.9 RC; **load-time rebuilds are rejected by the owner**. The
+stale uncommitted edit that had marked 5.9 closed / ticked 6.1 was reverted.
+
 **2026-09-18 the undo stack now keeps its protected publication capacity (`successor-capture-reentry-unguarding` 8.3).**
 User report: the undo stayed at 2 instead of 3 after two overdub sessions, and the next undo fell through to the
 first overdub. `TrackUndo::eraseUndoEntriesForSlot` move-assigns a filtered rebuild, which took the smaller
