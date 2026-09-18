@@ -161,7 +161,11 @@ void resetDeferredSaveJobState();
 void resetMidPassChunkPersistState();
 void resetPersistenceWorkItemJobState();
 bool stepPersistenceWorkItem(const LooperState& state);
-void maybeAdmitFinalizeWorkspaceAfterDrain();
+/// Admit the workspace finalize when the queue has drained and a save is still owed. Returns true
+/// when a work item is available to step (already queued/writing/active, or just admitted), false
+/// when an owed save has no work item that can carry it -- which the blocking drain treats as
+/// terminal instead of spinning its stuck budget on a state that cannot change.
+bool maybeAdmitFinalizeWorkspaceAfterDrain();
 bool resolvePersistKeyToTrackSlot(const PersistKey& key, uint8_t& trackIndexOut,
                                   uint8_t& slotIndexOut);
 SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot();
