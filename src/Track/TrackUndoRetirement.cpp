@@ -1,5 +1,12 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
+//
+// Despite the `Track*` file prefix, this TU implements types declared by two other owners:
+// `UndoEntryReleaseCursor` (declared in `GlobalUndoStack.h`) and `GlobalUndoStackTrimCursor`
+// (declared in `PassReclaim.h`). "Retirement" is the DEC-063 term for the act, so the bodies live
+// here together, but a reader looking for the declarations should start at those headers. The file
+// is not renamed to match them because a new/renamed TU defaults into ITCM (see
+// `linker/imxrt1062_t41_lcr.ld`), which needs its own RAM1 measurement.
 #include "GlobalUndoStack.h"
 #include "PassReclaim.h"
 #include "Utils/TrackMem.h"

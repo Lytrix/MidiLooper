@@ -3332,7 +3332,7 @@ ImmutableLoopSnapshotRef snapshotWithAddedNote(const ImmutableLoopSnapshotRef& p
                                                uint32_t endTick) {
   LoopSnapshotChangeSet addA;
   SnapshotNoteChange add{};
-  add.kind = SnapshotChangeKind::Add;
+  add.kind = SnapshotChangeType::Add;
   add.next.loopId = parent->loopId();
   add.next.noteId = noteId;
   add.next.pitch = pitch;
@@ -4494,7 +4494,7 @@ void test_wrap_journal_keeps_hide_when_parent_lacks_note() {
   LoopSnapshotChangeSet journal = *queued;
   bool keptIdentityDelete = false;
   for (const SnapshotNoteChange& change : journal.notes) {
-    if (change.kind == SnapshotChangeKind::Remove && change.next.noteId == 999 &&
+    if (change.kind == SnapshotChangeType::Remove && change.next.noteId == 999 &&
         !change.previous) {
       keptIdentityDelete = true;
     }

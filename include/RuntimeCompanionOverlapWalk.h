@@ -12,9 +12,9 @@ enum class RuntimeCompanionOverlapResult : uint8_t { Pending, ActionReady, Compl
 /// publication are not performed here.
 class RuntimeCompanionOverlapWalk {
  public:
-  enum class ActionKind : uint8_t { Shorten, Delete };
+  enum class ActionType : uint8_t { Shorten, Delete };
   struct Action {
-    ActionKind kind = ActionKind::Shorten;
+    ActionType kind = ActionType::Shorten;
     NoteId noteId = kInvalidNoteId;
     uint32_t endTick = 0;
     /// Native-test contract probe (no production reader): the source index the

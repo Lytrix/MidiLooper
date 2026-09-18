@@ -773,16 +773,16 @@ struct LoopSnapshotNoteBarApply {
   bool begin(LoopSnapshot& snapshot, const SnapshotNoteChange& incoming,
              std::shared_ptr<SnapshotSpanRoot>& constructionSpanRoot) {
     const bool hasPrevious = static_cast<bool>(incoming.previous);
-    if (incoming.kind == SnapshotChangeKind::Add && hasPrevious) {
+    if (incoming.kind == SnapshotChangeType::Add && hasPrevious) {
       return false;
     }
-    if (incoming.kind != SnapshotChangeKind::Add && !hasPrevious) {
+    if (incoming.kind != SnapshotChangeType::Add && !hasPrevious) {
       return false;
     }
     if (incoming.previous && incoming.previous->loopId != snapshot.loopId_) {
       return false;
     }
-    if (incoming.kind != SnapshotChangeKind::Remove &&
+    if (incoming.kind != SnapshotChangeType::Remove &&
         (incoming.next.loopId != snapshot.loopId_ ||
          incoming.next.noteId == kInvalidNoteId ||
          incoming.next.pitch >= kLoopSnapshotPitchCount)) {
@@ -790,7 +790,7 @@ struct LoopSnapshotNoteBarApply {
     }
     if (incoming.previous &&
         (incoming.previous->noteId == kInvalidNoteId ||
-         (incoming.kind == SnapshotChangeKind::Replace &&
+         (incoming.kind == SnapshotChangeType::Replace &&
           incoming.previous->noteId != incoming.next.noteId))) {
       return false;
     }
@@ -809,7 +809,7 @@ struct LoopSnapshotNoteBarApply {
     if (incoming.previous) {
       oldCursor.beginNote(*incoming.previous, snapshot.loopLengthTicks_);
     }
-    if (incoming.kind != SnapshotChangeKind::Remove) {
+    if (incoming.kind != SnapshotChangeType::Remove) {
       nextCursor.beginNote(incoming.next, snapshot.loopLengthTicks_);
       nextReference = allocateConstSnapshotShared<LoopSnapshotNote>(incoming.next);
       if (!nextReference) {
@@ -899,15 +899,19 @@ struct LoopSnapshotNoteBarApply {
     currentPageCount = 0;
     currentBarRemovesPreviousReference = false;
     barStage = BarStage::Select;
-    if (done() && change.kind != SnapshotChangeKind::Remove &&
+    if (done() && change.kind != SnapshotChangeType::Remove &&
         change.next.noteId >= snapshot.nextNoteId_) {
       snapshot.nextNoteId_ = change.next.noteId + 1;
     }
     return true;
   }
 
-  bool applySoonestBar(LoopSnapshot& snapshot, uint32_t playheadPhaseTick) {
-    (void)playheadPhaseTick;
+  // Note-side twin of the event path's `applySoonestBar` below. This one applies bars in ascending
+  // source order and does not consult the playhead; ordering them by playhead would change the
+  // membership order the snapshot publishes, so it is a timing-model change deferred to its own
+  // change with its own evidence (`runtime-code-tidyup` OD-3). The parameter stays in the signature
+  // to match the twin and is left unnamed here so the intent is explicit.
+  bool applySoonestBar(LoopSnapshot& snapshot, uint32_t /*playheadPhaseTick*/) {
     if (!currentBarActive) {
       uint32_t barIndex = 0;
       if (oldCursor.takeNextBar(barIndex)) {
@@ -919,7 +923,7 @@ struct LoopSnapshotNoteBarApply {
       }
       if (nextCursor.takeNextBar(barIndex)) {
         currentBarActive = true;
-        if (!beginCurrentBar(barIndex, change.kind != SnapshotChangeKind::Remove, true,
+        if (!beginCurrentBar(barIndex, change.kind != SnapshotChangeType::Remove, true,
                              false)) {
           return false;
         }
@@ -1022,16 +1026,16 @@ struct LoopSnapshotEventBarApply {
   bool begin(LoopSnapshot& snapshot, const SnapshotEventChange& incoming,
              std::shared_ptr<SnapshotEventRoot>& constructionEventRoot) {
     const bool hasPrevious = static_cast<bool>(incoming.previous);
-    if (incoming.kind == SnapshotChangeKind::Add && hasPrevious) {
+    if (incoming.kind == SnapshotChangeType::Add && hasPrevious) {
       return false;
     }
-    if (incoming.kind != SnapshotChangeKind::Add && !hasPrevious) {
+    if (incoming.kind != SnapshotChangeType::Add && !hasPrevious) {
       return false;
     }
     if (incoming.previous && incoming.previous->loopId != snapshot.loopId_) {
       return false;
     }
-    if (incoming.kind != SnapshotChangeKind::Remove &&
+    if (incoming.kind != SnapshotChangeType::Remove &&
         (incoming.next.loopId != snapshot.loopId_ ||
          incoming.next.eventId == kInvalidEventId ||
          incoming.next.value.tick >= snapshot.loopLengthTicks_)) {
@@ -1039,7 +1043,7 @@ struct LoopSnapshotEventBarApply {
     }
     if (incoming.previous &&
         (incoming.previous->eventId == kInvalidEventId ||
-         (incoming.kind == SnapshotChangeKind::Replace &&
+         (incoming.kind == SnapshotChangeType::Replace &&
           incoming.previous->eventId != incoming.next.eventId))) {
       return false;
     }
@@ -1048,11 +1052,11 @@ struct LoopSnapshotEventBarApply {
     oldBar = incoming.previous
                  ? incoming.previous->value.tick / Config::TICKS_PER_BAR
                  : 0;
-    nextBar = incoming.kind == SnapshotChangeKind::Remove
+    nextBar = incoming.kind == SnapshotChangeType::Remove
                   ? oldBar
                   : incoming.next.value.tick / Config::TICKS_PER_BAR;
     removeOld = static_cast<bool>(incoming.previous);
-    addNext = incoming.kind != SnapshotChangeKind::Remove;
+    addNext = incoming.kind != SnapshotChangeType::Remove;
     if (removeOld) {
       remainingBars.push_back(oldBar);
     }
@@ -1160,7 +1164,7 @@ struct LoopSnapshotEventBarApply {
     currentPageCount = 0;
     currentBarRemovesPreviousReference = false;
     barStage = BarStage::Select;
-    if (done() && change.kind != SnapshotChangeKind::Remove &&
+    if (done() && change.kind != SnapshotChangeType::Remove &&
         change.next.eventId >= snapshot.nextEventId_) {
       snapshot.nextEventId_ = change.next.eventId + 1;
     }
@@ -1301,8 +1305,8 @@ LOOP_COLD_MEM bool LoopSnapshotConstruction::applyNextBar(
   }
   if (nextChangeIndex_ < changes_.notes.size()) {
     SnapshotNoteChange incoming = changes_.notes[nextChangeIndex_];
-    if ((incoming.kind == SnapshotChangeKind::Remove ||
-         incoming.kind == SnapshotChangeKind::Replace) &&
+    if ((incoming.kind == SnapshotChangeType::Remove ||
+         incoming.kind == SnapshotChangeType::Replace) &&
         !incoming.previous) {
       incoming.previous = candidate_.findNote(incoming.next.noteId, incoming.next.pitch);
       if (!incoming.previous) {

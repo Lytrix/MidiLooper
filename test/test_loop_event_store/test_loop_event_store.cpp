@@ -410,7 +410,7 @@ std::shared_ptr<const LoopSnapshot> buildSnapshotForTests(
 SnapshotNoteChange addSnapshotNote(NoteId noteId, uint8_t pitch,
                                    uint32_t startTick, uint32_t endTick) {
   SnapshotNoteChange change{};
-  change.kind = SnapshotChangeKind::Add;
+  change.kind = SnapshotChangeType::Add;
   change.next.loopId = 7;
   change.next.noteId = noteId;
   change.next.pitch = pitch;
@@ -425,7 +425,7 @@ void test_snapshot_replaces_note_and_shares_unchanged_membership() {
   initialChanges.notes.push_back(addSnapshotNote(41, 60, 100, 900));
   initialChanges.notes.push_back(addSnapshotNote(42, 62, 100, 200));
   SnapshotEventChange initialEvent{};
-  initialEvent.kind = SnapshotChangeKind::Add;
+  initialEvent.kind = SnapshotChangeType::Add;
   initialEvent.next.loopId = 7;
   initialEvent.next.eventId = 9;
   initialEvent.next.canonicalOrder = 1;
@@ -437,7 +437,7 @@ void test_snapshot_replaces_note_and_shares_unchanged_membership() {
   const auto unchangedEventMembership = parent->eventMembership(0);
 
   SnapshotNoteChange replacement{};
-  replacement.kind = SnapshotChangeKind::Replace;
+  replacement.kind = SnapshotChangeType::Replace;
   replacement.previous = oldNote;
   replacement.next = *oldNote;
   replacement.next.startTick = 900;
@@ -537,7 +537,7 @@ void test_snapshot_with_loop_length_shares_membership() {
 void test_snapshot_event_index_preserves_canonical_order() {
   LoopSnapshotChangeSet changes;
   SnapshotEventChange later{};
-  later.kind = SnapshotChangeKind::Add;
+  later.kind = SnapshotChangeType::Add;
   later.next.loopId = 7;
   later.next.eventId = 2;
   later.next.canonicalOrder = 20;
@@ -577,7 +577,7 @@ void test_snapshot_replaces_pitch_and_clears_old_membership() {
   initialChanges.notes.push_back(addSnapshotNote(41, 60, 100, 200));
   const auto parent = buildSnapshotForTests(initialChanges);
   SnapshotNoteChange replacement{};
-  replacement.kind = SnapshotChangeKind::Replace;
+  replacement.kind = SnapshotChangeType::Replace;
   replacement.previous = parent->findNote(41, 60);
   replacement.next = *replacement.previous;
   replacement.next.pitch = 67;
@@ -659,7 +659,7 @@ void test_snapshot_hide_removes_same_note_id() {
   initialChanges.notes.push_back(addSnapshotNote(44, 60, 100, 400));
   const auto parent = buildSnapshotForTests(initialChanges);
   SnapshotNoteChange hide{};
-  hide.kind = SnapshotChangeKind::Remove;
+  hide.kind = SnapshotChangeType::Remove;
   hide.previous = parent->findNote(44, 60);
   LoopSnapshotChangeSet changes;
   changes.notes.push_back(hide);
@@ -682,7 +682,7 @@ void test_snapshot_one_bar_node_count_and_unchanged_membership_share() {
   }
   for (uint8_t index = 0; index < 32; ++index) {
     SnapshotEventChange event{};
-    event.kind = SnapshotChangeKind::Add;
+    event.kind = SnapshotChangeType::Add;
     event.next.loopId = 7;
     event.next.eventId = static_cast<EventId>(1 + index);
     event.next.canonicalOrder = static_cast<uint32_t>(1 + index);
@@ -710,7 +710,7 @@ void test_snapshot_one_bar_node_count_and_unchanged_membership_share() {
   const auto unchangedMembership = parent->noteMembership(41, 0);
   TEST_ASSERT_NOT_NULL(unchangedMembership.get());
   SnapshotNoteChange replacement{};
-  replacement.kind = SnapshotChangeKind::Replace;
+  replacement.kind = SnapshotChangeType::Replace;
   replacement.previous = parent->findNote(100, 40);
   replacement.next = *replacement.previous;
   replacement.next.endTick = 40;
@@ -918,7 +918,7 @@ void test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves() {
     }
     changes.notes.push_back(addSnapshotNote(41, 62, 33 * 768, 33 * 768 + 100));
     SnapshotEventChange event{};
-    event.kind = SnapshotChangeKind::Add;
+    event.kind = SnapshotChangeType::Add;
     event.next.loopId = 7;
     event.next.eventId = 9;
     event.next.value = MidiEvent::ControlChange(33 * 768, 1, 7, 64);

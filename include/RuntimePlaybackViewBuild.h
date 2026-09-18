@@ -22,17 +22,17 @@ class RuntimePlaybackViewBuild {
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::PlaybackCoverage);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::PlaybackCoverage);
   bool begin(RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
   bool begin(RuntimePlaybackView& destination, const RuntimePlaybackViewSource& source,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
 
   Grain nextGrain() const;
   Grain stepFill(size_t entryQuantum);

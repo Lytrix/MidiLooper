@@ -187,7 +187,7 @@ struct SnapshotEventRoot {
   SnapshotBarPageDirectory<LoopSnapshotEventRef> pages;
 };
 
-enum class SnapshotChangeKind : uint8_t {
+enum class SnapshotChangeType : uint8_t {
   Add,
   Replace,
   Remove,
@@ -196,14 +196,14 @@ enum class SnapshotChangeKind : uint8_t {
 /// Existing semantic owners provide the previous reference and the settled next
 /// value. Snapshot construction does not recompute overlap or pairing.
 struct SnapshotNoteChange {
-  SnapshotChangeKind kind = SnapshotChangeKind::Add;
+  SnapshotChangeType kind = SnapshotChangeType::Add;
   LoopSnapshotNoteRef previous;
   LoopSnapshotNote next;
 };
 
 /// Existing event-stream order is carried into the indexed event view.
 struct SnapshotEventChange {
-  SnapshotChangeKind kind = SnapshotChangeKind::Add;
+  SnapshotChangeType kind = SnapshotChangeType::Add;
   LoopSnapshotEventRef previous;
   LoopSnapshotEvent next;
 };

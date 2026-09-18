@@ -9,7 +9,7 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
-    RuntimePlaybackViewFillScope scope) {
+    RuntimePlaybackViewFillCoverage scope) {
   if (destination_ != nullptr || destination.published) return false;
   baseline_ = nullptr;
   destination_ = nullptr;
@@ -23,12 +23,12 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   cursor_ = 0;
   copied_ = 0;
   scope_ = scope;
-  const bool validCoverage = scope == RuntimePlaybackViewFillScope::RawCoverage
+  const bool validCoverage = scope == RuntimePlaybackViewFillCoverage::RawCoverage
       ? coverage.loopLengthTicks == 0 && coverage.lengthTicks > 0 &&
         coverage.startPhase <= UINT32_MAX - (coverage.lengthTicks - 1)
       : coverage.isValid();
   if (!destination.storage.isPrewarmed() || !validCoverage ||
-      (scope == RuntimePlaybackViewFillScope::AllSource && sourceCount > destination.storage.capacity) ||
+      (scope == RuntimePlaybackViewFillCoverage::AllSource && sourceCount > destination.storage.capacity) ||
       (sourceCount != 0 && source == nullptr)) {
     return false;
   }
@@ -36,7 +36,7 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
   expected_ = sourceIdentity;
   destination.source = sourceIdentity;
   destination.coverage = coverage;
-  destination.rawCoveragePrepared = scope == RuntimePlaybackViewFillScope::RawCoverage;
+  destination.rawCoveragePrepared = scope == RuntimePlaybackViewFillCoverage::RawCoverage;
   destination.cursorAnchor = cursorAnchor;
   destination.ledgerBoundary = ledgerBoundary;
   destination_ = &destination;
@@ -52,7 +52,7 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackView& destination, const RuntimePlaybackViewSource& source,
     const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
-    const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
+    const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillCoverage scope) {
   if (source.context == nullptr || source.size == nullptr || source.eventAt == nullptr ||
       (source.generation != nullptr && source.generation(source.context) != source.generationToken)) {
     return false;
@@ -71,11 +71,11 @@ NOTE_EDIT_MEM bool RuntimePlaybackViewFill::begin(
     RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
-    RuntimePlaybackViewFillScope scope) {
+    RuntimePlaybackViewFillCoverage scope) {
   if (!baseline.uneditedBaseline(sourceIdentity) || destination.passOrigins == nullptr ||
       destination.canonicalRanks == nullptr || baseline.size() > UINT16_MAX ||
-      scope == RuntimePlaybackViewFillScope::RawCoverage ||
-      (scope == RuntimePlaybackViewFillScope::AllSource &&
+      scope == RuntimePlaybackViewFillCoverage::RawCoverage ||
+      (scope == RuntimePlaybackViewFillCoverage::AllSource &&
        coverage.lengthTicks != coverage.loopLengthTicks)) return false;
   if (!begin(destination, baseline.data(), baseline.size(), sourceIdentity, coverage,
              cursorAnchor, ledgerBoundary, scope)) return false;
@@ -101,8 +101,8 @@ NOTE_EDIT_MEM RuntimePlaybackViewFillResult RuntimePlaybackViewFill::step(size_t
   while (remaining > 0 && cursor_ < sourceCount_) {
     const MidiEvent& event = sourceEventAt_ != nullptr
         ? sourceEventAt_(sourceContext_, cursor_) : source_[cursor_];
-    const bool retain = scope_ == RuntimePlaybackViewFillScope::AllSource ||
-        (scope_ == RuntimePlaybackViewFillScope::RawCoverage
+    const bool retain = scope_ == RuntimePlaybackViewFillCoverage::AllSource ||
+        (scope_ == RuntimePlaybackViewFillCoverage::RawCoverage
           ? event.tick >= destination_->coverage.startPhase &&
             event.tick - destination_->coverage.startPhase < destination_->coverage.lengthTicks
           : destination_->coverage.contains(IntervalProjection::playbackEventPhase(

@@ -1128,7 +1128,7 @@ void test_session_rows_fallback_uses_opened_snapshot_span_note_ids() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -1140,21 +1140,21 @@ void test_session_rows_fallback_uses_opened_snapshot_span_note_ids() {
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
   onlyStoreOn.noteId = 64;
   SnapshotEventChange onlyStoreOnChange{};
-  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.kind = SnapshotChangeType::Add;
   onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
   changes.events.push_back(onlyStoreOnChange);
 
@@ -1254,7 +1254,7 @@ void test_first_kind_boundary_opened_snapshot_entry_restores_without_clone() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -1266,14 +1266,14 @@ void test_first_kind_boundary_opened_snapshot_entry_restores_without_clone() {
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
