@@ -93,10 +93,18 @@ class GlobalUndoStackTrimCursor {
   size_t trimmedCount() const { return trimmed_; }
   size_t completedUnits() const { return units_; }
  private:
+  /// Decide -> drain one entry -> move survivors. `Decide` re-runs after each removed entry so
+  /// pressure feedback selects the next candidate (DEC-063: checked only after complete entry
+  /// release and compaction), so do not renumber.
+  enum class Phase : uint8_t {
+    Decide = 0,
+    ReleaseEntry = 1,
+    CompactSurvivors = 2,
+  };
   GlobalUndoStack* stack_ = nullptr;
   UndoEntryReleaseCursor release_;
   size_t shift_ = 0;
   size_t trimmed_ = 0;
   size_t units_ = 0;
-  uint8_t phase_ = 0;
+  Phase phase_ = Phase::Decide;
 };

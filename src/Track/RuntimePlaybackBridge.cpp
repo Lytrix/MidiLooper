@@ -328,7 +328,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeBuild::touchesOpenNote
   for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
     const auto& open = bridge_->ledgerBoundary.openNotes[i];
     if (matchesOpenNote(event, open)) {
-      if (mark) bridge_->heldClosures[i].flags |= 1;
+      if (mark) bridge_->heldClosures[i].flags |= PlaybackHeldNoteClosure::kAffected;
       found = true;
     }
   }
@@ -411,7 +411,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
           auto& closure = bridge_->heldClosures[index];
           closure = *previous;
           closure.relativeTick -= elapsed;
-          closure.flags |= 4;
+          closure.flags |= PlaybackHeldNoteClosure::kInherited;
           bridge_->markAffected(closure.originalOff);
           bridge_->protectsOpenNotes = true;
           break;
@@ -426,12 +426,12 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
       if (cursor_ < base_->storage.eventCount || cursor_ < bridge_->canonicalRankCount) {
         const size_t index = cursor_++;
         if (index < bridge_->canonicalRankCount) {
-          uint8_t mask = 15;
+          uint8_t mask = PlaybackBridgeCycleMask::kAll;
           if (predecessor_ && inheritMasks_) {
             mask = predecessor_->canonicalCycleMasks[index];
             const uint32_t age = bridge_->cursorAnchor.projectionCycle - predecessor_->cursorAnchor.projectionCycle;
-            mask = age >= 3 ? ((mask & 8) ? 15 : 0)
-                : uint8_t((mask >> age) | ((mask & 8) ? (15u << (4-age)) : 0)) & 15;
+            mask = age >= 3 ? ((mask & PlaybackBridgeCycleMask::kSteady) ? PlaybackBridgeCycleMask::kAll : 0)
+                : uint8_t((mask >> age) | ((mask & PlaybackBridgeCycleMask::kSteady) ? (PlaybackBridgeCycleMask::kAll << (4-age)) : 0)) & PlaybackBridgeCycleMask::kAll;
           }
           bridge_->canonicalCycleMasks[index] = mask;
         }
@@ -497,7 +497,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         const size_t i = cursor_++;
         --quantum;
         const auto& closure = bridge_->heldClosures[i];
-        if (!(closure.flags & 4) || !base_->coverage.contains(closure.originalOff.tick % base_->coverage.loopLengthTicks))
+        if (!(closure.flags & PlaybackHeldNoteClosure::kInherited) || !base_->coverage.contains(closure.originalOff.tick % base_->coverage.loopLengthTicks))
           continue;
         const size_t index = bridge_->insertions.eventCount;
         if (!bridge_->insertions.append(closure.originalOff)) return deny();
@@ -520,10 +520,10 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         if (!event.isNoteOn() && !event.isNoteOff()) continue;
         const uint32_t phase = event.tick % base_->coverage.loopLengthTicks;
         for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
-          if (!(bridge_->heldClosures[i].flags & 1) ||
+          if (!(bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kAffected) ||
               !(inserted ? insertionMatches(index, i) : matchesOpenNote(event, bridge_->ledgerBoundary.openNotes[i])))
             continue;
-          if (!inserted && event.isNoteOff() && !(bridge_->heldClosures[i].flags & 4)) {
+          if (!inserted && event.isNoteOff() && !(bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kInherited)) {
             const uint64_t time = uint64_t(phase) + (phase < bridge_->preparedAdmissionPhase ? base_->coverage.loopLengthTicks : 0);
             if (time < bridge_->heldClosures[i].relativeTick) {
               bridge_->heldClosures[i].relativeTick = time;
@@ -531,9 +531,9 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
               bridge_->heldClosures[i].rank = bridge_->baseRanks[index];
               closureIndex_[i] = static_cast<uint16_t>(index);
             }
-            bridge_->heldClosures[i].flags |= 2;
+            bridge_->heldClosures[i].flags |= PlaybackHeldNoteClosure::kOriginalOffFound;
           }
-          if (rebinding_ && inserted && (bridge_->heldClosures[i].flags & 4) &&
+          if (rebinding_ && inserted && (bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kInherited) &&
               bridge_->insertionProvenance[index] >= bridge_->baseCapacity + recordCount_ &&
               event.tick == bridge_->heldClosures[i].originalOff.tick &&
               event.noteId == bridge_->heldClosures[i].originalOff.noteId) {
@@ -547,10 +547,10 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
       }
       bridge_->hasRetainedClosure = true;
       for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
-        if (bridge_->heldClosures[i].flags == 1) bridge_->hasRetainedClosure = false;
-        if (rebinding_ && (bridge_->heldClosures[i].flags & 4) && closureIndex_[i] == UINT16_MAX)
+        if (bridge_->heldClosures[i].flags == PlaybackHeldNoteClosure::kAffected) bridge_->hasRetainedClosure = false;
+        if (rebinding_ && (bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kInherited) && closureIndex_[i] == UINT16_MAX)
           bridge_->hasRetainedClosure = false;
-        if ((bridge_->heldClosures[i].flags & 1) && bridge_->heldClosures[i].relativeTick < base_->coverage.loopLengthTicks &&
+        if ((bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kAffected) && bridge_->heldClosures[i].relativeTick < base_->coverage.loopLengthTicks &&
             bridge_->heldClosures[i].relativeTick < bridge_->retainedClosurePhaseLimit)
           bridge_->retainedClosurePhaseLimit = bridge_->heldClosures[i].relativeTick;
       }
@@ -601,14 +601,14 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         if (inserted && !rebinding_) bridge_->insertions.mergeScratch[insertionCursor_-1] = index;
         --quantum;
         const auto& event = inserted ? bridge_->insertions.events[index] : base_->storage.events[index];
-        uint8_t mask = inserted ? 15 : bridge_->baseRetained[index];
+        uint8_t mask = inserted ? PlaybackBridgeCycleMask::kAll : bridge_->baseRetained[index];
         if (inserted && bridge_->insertionProvenance[index] >= bridge_->baseCapacity + recordCount_)
           mask = 0; // Copied original Offs are enabled only by their live closure.
         if (predecessor_ && inheritMasks_ && !inserted) mask &= bridge_->canonicalCycleMasks[base_->canonicalRanks[index]];
         uint8_t closureMask = 0;
         if (bridge_->hasRetainedClosure && (!predecessor_ || !inheritMasks_ || inserted) && (event.isNoteOn() || event.isNoteOff())) {
           for (size_t i = 0; i < bridge_->ledgerBoundary.count; ++i) {
-            if (!(bridge_->heldClosures[i].flags & 1) ||
+            if (!(bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kAffected) ||
                 !(inserted ? insertionMatches(index, i) : matchesOpenNote(event, bridge_->ledgerBoundary.openNotes[i]))) continue;
             // Ordered traversal pairs each Off with its preceding canonical
             // On, including repeated NoteIds and pairs that cross phase zero.
@@ -617,7 +617,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
             mask &= effectiveMask(event, i);
             if (closureIndex_[i] == (inserted ? bridge_->baseCapacity + index : index)) {
               closureMask |= 1u << (bridge_->heldClosures[i].relativeTick / base_->coverage.loopLengthTicks);
-              if (inserted && (bridge_->heldClosures[i].flags & 4)) mask = 0;
+              if (inserted && (bridge_->heldClosures[i].flags & PlaybackHeldNoteClosure::kInherited)) mask = 0;
             }
           }
         }
@@ -631,17 +631,17 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         }
         if (inserted) {
           bridge_->insertionCycleMask[index] = mask;
-          if (mask & 1) bridge_->currentCycleInsertionOrder[bridge_->currentCycleInsertionCount++] = index;
-          if (mask & 2) bridge_->nextCycleInsertionOrder[bridge_->nextCycleInsertionCount++] = index;
-          if (mask & 4) bridge_->secondCycleInsertionOrder[bridge_->secondCycleInsertionCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kCurrent) bridge_->currentCycleInsertionOrder[bridge_->currentCycleInsertionCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kNext) bridge_->nextCycleInsertionOrder[bridge_->nextCycleInsertionCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kSecond) bridge_->secondCycleInsertionOrder[bridge_->secondCycleInsertionCount++] = index;
           // Compact only already-read order slots. Closure-only inserts must
           // disappear from steady playback rather than repeat each loop.
-          if (mask & 8) bridge_->insertions.order[bridge_->steadyInsertionCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kSteady) bridge_->insertions.order[bridge_->steadyInsertionCount++] = index;
         } else {
-          if (mask & 1) bridge_->baseOrder[bridge_->baseEventCount++] = index;
-          if (mask & 2) bridge_->nextCycleBaseOrder[bridge_->nextCycleBaseEventCount++] = index;
-          if (mask & 4) bridge_->secondCycleBaseOrder[bridge_->secondCycleBaseEventCount++] = index;
-          if (mask & 8) bridge_->steadyBaseOrder[bridge_->steadyBaseEventCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kCurrent) bridge_->baseOrder[bridge_->baseEventCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kNext) bridge_->nextCycleBaseOrder[bridge_->nextCycleBaseEventCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kSecond) bridge_->secondCycleBaseOrder[bridge_->secondCycleBaseEventCount++] = index;
+          if (mask & PlaybackBridgeCycleMask::kSteady) bridge_->steadyBaseOrder[bridge_->steadyBaseEventCount++] = index;
         }
         continue;
       }

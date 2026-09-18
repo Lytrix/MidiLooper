@@ -435,7 +435,8 @@ LOOP_COLD_MEM bool Loop::beginCollectOverdubStopUndoPasses(SessionUndoCollection
     PassIdList& passIds, EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass,
     uint64_t owner, size_t sessionExitReceiptRing) {
   const auto* receipt = preparedCompanionHistoryIds(owner);
-  if (!receipt || receipt->size() > 2048 || preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
+  if (!receipt || receipt->size() > RuntimePlaybackViewConfig::kRecordsPerBridge ||
+      preparedCompanionHistory_.storageGeneration != canonicalStorageGeneration ||
       preparedCompanionHistory_.revision != playbackRevision || preparedCompanionHistory_.firstId != nextPassId_) {
     return false;
   }
@@ -458,7 +459,8 @@ LOOP_COLD_MEM bool Loop::beginCollectOverdubStopUndoPasses(SessionUndoCollection
 
 LOOP_COLD_MEM uint64_t Loop::requiredSessionStopUndoCollectionGrains(
     size_t rows, size_t companions, size_t finalCompanions, size_t quantum) {
-  if (!quantum || rows > 2048 || companions > 2048 || finalCompanions > 2048 - companions)
+  constexpr size_t kLimit = RuntimePlaybackViewConfig::kRecordsPerBridge;
+  if (!quantum || rows > kLimit || companions > kLimit || finalCompanions > kLimit - companions)
     return UINT64_MAX;
   return 1 + (uint64_t(rows) * 2 + companions + finalCompanions + 2) / quantum;
 }

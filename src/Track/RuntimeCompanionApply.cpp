@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionApply.h"
+#include "LoopEventStore.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include "Utils/NoteEditMem.h"
 #include <cstdlib>
@@ -223,7 +224,11 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (event.tick > maxTick_) maxTick_ = event.tick;
     }
     if (cursor_ == inputCount_) {
-      if (loopLength_ == 0) { loopLength_ = maxTick_ + 1u; if (loopLength_ < 768u) loopLength_ = 768u; }
+      // No caller-supplied length: derive from the last tick and clamp to one bar minimum.
+      if (loopLength_ == 0) {
+        loopLength_ = maxTick_ + 1u;
+        if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
+      }
       if (batch_) {
         if (rowCount_ == 0) complete();
         else phase_ = Phase::NextRow;
@@ -298,7 +303,9 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (tick > maxTick_) maxTick_ = tick;
     }
     if (cursor_ == candidate_.eventCount) {
-      loopLength_ = maxTick_ + 1u; if (loopLength_ < 768u) loopLength_ = 768u;
+      // Derive the length from the last tick, clamped to one bar minimum.
+      loopLength_ = maxTick_ + 1u;
+      if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
       if (kind_ == Kind::Delete || kind_ == Kind::Pitch || kind_ == Kind::NoteRange) { if (!startDelete(target_)) return deny(); }
       else startFind(Find::Initial, target_);
     }
