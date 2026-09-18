@@ -1,5 +1,16 @@
 # Project state (execution context)
 
+**2026-09-18 the undo stack now keeps its protected publication capacity (`successor-capture-reentry-unguarding` 8.3).**
+User report: the undo stayed at 2 instead of 3 after two overdub sessions, and the next undo fell through to the
+first overdub. `TrackUndo::eraseUndoEntriesForSlot` move-assigns a filtered rebuild, which took the smaller
+local buffer and dropped the `prewarmProtectedUndo` reserve; `TrackUndoPublication::begin` then rejected at
+`cursor >= capacity` and the stop silently committed without a GUS entry (device diagnostic before the fix:
+`cap=4`). Fix `433fea68` re-reserves `kUndoStackProtectedCapacity` (constant moved to `GlobalUndoStack.h`);
+`DIAG,gus,publish_begin` / `DIAG,gus,drain` added. New native fixture fails without the fix; full native
+**2,244 / 1 skipped / 0 failures**, RAM1 locals 6,400. Device gate via the skill's canonical `base` preset,
+`captures/gus-sanity-01`, **`Result: PASS`**: `MIDI: Undo (entries=3)`, `publish_begin cap=32` for both
+sessions, `passIds_n=2,src=deferred` per entry, `DISP across undo/redo: 56 → 48 → 57`.
+
 **2026-09-18 the deferred stop now marks the committed pass's display bars (`successor-capture-reentry-unguarding`
 8.2).** User report: the second overdub vanished from the OLED after its stop and came back at the loop wrap. The
 deferred terminal commit only called `notifyCommittedContentChanged` → `markPassDerivedStale`, which leaves

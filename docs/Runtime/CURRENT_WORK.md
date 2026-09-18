@@ -2741,6 +2741,36 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the undo stack silently lost its publication capacity, so a second overdub stopped
+adding a GUS level; fixed (`successor-capture-reentry-unguarding` 8.3).** The user report: *the undo
+does not get to +3, it stays on 2; after stop I cannot undo/redo this overdub a second time, it
+undoes the first overdub.*
+
+Root cause: `TrackUndo::eraseUndoEntriesForSlot` filters the stack into a local vector and
+move-assigns it. The move takes the local's buffer, so a rebuild smaller than the protected prewarm
+(a record stop on a cleared slot leaves it nearly empty) dropped the stack's reserved capacity.
+`prewarmProtectedUndo` reserves `kUndoStackProtectedCapacity` (32) exactly so the deferred
+publication never has to grow the stack at its atomic publish; with the reserve gone,
+`TrackUndoPublication::begin` rejected at `cursor >= capacity`, and a stop whose entry was rejected
+still committed its pass. The device diagnostic added in `stepDeferredUndoPublication` caught it
+directly: `DIAG,gus,publish_begin,ok=1,phase=1,cursor=2,size=2,cap=4` (`gus-undo-07`).
+
+Fix (`433fea68`): re-reserve the rebuilt vector to `kUndoStackProtectedCapacity` before the
+move-assign; the constant moved to `GlobalUndoStack.h` so `prewarmProtectedUndo` and the rebuild
+share one value. `stepDeferredUndoPublication` / `stepProtectedUndoDrain` also emit session-capture
+`DIAG,gus,publish_begin` / `DIAG,gus,drain` rows.
+
+Evidence. New native fixture `test_erase_preserves_the_protected_publication_capacity` (mirror of the
+rebuild in `test_global_undo_slot_scope`) fails without the fix; full native **2,244 cases / 1
+skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 locals **6,400** unchanged.
+Device gate via the skill's canonical entry point (`host_midi_hitl.py run --preset base`, two overdub
+sessions + recipe undo/redo), `captures/gus-sanity-01`, **`Result: PASS`**: `MIDI: Undo (entries=3)`
+— the depth the report expected — `DIAG,gus,publish_begin,…,cap=32` for both sessions (was 4),
+`DIAG,gus,…,passIds_n=2,src=deferred` per entry, and `DISP across undo/redo: 56 → 48 → 57`.
+The 8-bar/4-bar variant of the recipe is currently unreliable on the host MIDI path (`MIDI in
+messages 0`, record sealing at ~475 ticks across `-08`..`-11`), which is why the canonical 2+2 preset
+is the gate here.
+
 **2026-09-18 — the deferred stop left the display serving pre-commit notes; fixed
 (`successor-capture-reentry-unguarding` 8.2).** The user report: *the second overdub disappeared on the
 display after overdub stop to playing, and reappeared at the loop wrap.*
