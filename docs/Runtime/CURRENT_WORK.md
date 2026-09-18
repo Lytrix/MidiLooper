@@ -2741,6 +2741,41 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — RC recorded for the post-wrap device reset: the publication boundary neither admits memory nor parks
+an allocation failure (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: *the stress run crashed a
+few bars after the overdub wrap, overdubbing the existing overdub*. `captures/session_20260918_101615.log` is memory
+exhaustion, not a fault: `boot_reset,crash=0` on the next boot, then
+`[ExternalMemoryFirstAllocator] FATAL: both external memory and internal heap are exhausted!` and
+`#CAPTURE_RECONNECT`. Sequence: `Overdub wrap committed @ tick 18432` at 114.519 s; then the pool's `<=32K` class
+gains one 32768-byte block per second (96 -> 102 blocks) while the internal heap goes 108 -> 72 -> 36 -> 0 KB; the
+pool refuses `bytes=32768` at 119.465 s and then `bytes=8224`; `abort()`. Attribution: 32768 is `kSnapshotSlabBytes`
+and exactly `snapshotSlabOpen`'s `extmem_malloc` request (`sizeClassFor(32768)` is class 3), and nothing else in the
+tree allocates 32 KB blocks in a repeating pattern. The overdub did not leak -- `live` is flat at 8201-8203 KB for
+the 45 s before the wrap while the boot reports `pool=8182 KB` -- so the wrap publication simply reached an
+already-full pool on a 12-bar record over a loaded ~1.5-1.7 MB workspace root. Control:
+`captures/rc1-coalescing-device` (the DEC-073 RC1 run) shows the same ~8-slab post-wrap burst, then settles with
+0 `FATAL` and completes its LSV1 `loop_snapshot_tail`, which makes the ~256 KB cost design rather than a leak. Not
+RC2: that boot ran no persistence at all (15 `PERS` lines, all boot-time `GlobalMeta`/`FinalizeWorkspace`; the
+deferred save is only requested at overdub stop, which never came). RCs recorded in the owning change and
+cross-referenced from `successor-capture-reentry-unguarding` 5.9:
+- **RC-PUB-1 (primary)** -- `MemoryMonitor::OperationKind::SnapshotReserve` is dead code (zero call sites; that boot
+  logged one `#MEM_ADMIT`, the boot probe, and zero `#MEM_DENIED`) and `kSnapshotIdleReserveYieldEnabled` is parked
+  false, so `stepPendingSnapshotPublish` runs ungated while OVERDUBBING. Admit at `startNextPendingConstruction` and
+  again before the freeze, using the point-of-use probe form (`CompanionHistoryReserve`'s pattern, where the probe is
+  the authority) sized to one slab plus the fragment working set; on denial start nothing and leave the work pending.
+- **RC-PUB-2** -- `noteFragmentIncorporationFailure` parks only `LoopSnapshotFailureReason::MembershipCapacity`; an
+  `Allocation` failure retries the exact fragment forever, and the freeze-failure branch in
+  `stepPendingSnapshotPublish` does not count a failure at all. Each retry copies the fragment's
+  `LoopSnapshotChangeSet` (a default-allocator vector, i.e. internal heap) into a fresh `LoopSnapshotConstruction`,
+  which is what drains the heap into `abort()`. Park `Allocation` too, and count the freeze branch.
+- **RC-PUB-3** -- `SnapshotSlabAllocator::allocate` still calls `abort()` when `snapshotSlabAllocate` returns null;
+  route it to the existing non-fatal failed-construction path.
+Verify: rerun the shape (loaded workspace, 12-bar record, live overdub past the wrap) and require 0 `FATAL`,
+0 `#MEM_EXT_REFUSED` and a live device, with either a completed wrap publication or a parked one (previous root
+selected, `hasPendingSnapshotPublish()` true) and no `snapshot_fragment,fail` storm; plus a native injected-slab
+`Allocation` failure asserting park-then-complete. The steady-state footprint half stays with the memory-pressure /
+DEC-065 track above ("idle occupancy leaves no headroom"). No code changed.
+
 **2026-09-18 — RC1 landed: snapshot currency is committed-pass coverage, not a revision stamp (DEC-073).**
 The RC above is now fixed for the publisher. `PublishedSnapshotBox`/`PendingSnapshotPublishBox` carry
 `coveredPassRevision`; `Loop::publishedSnapshotIsCurrent()` is `coveredPassRevision == committedPassRevision()`
