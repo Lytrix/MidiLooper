@@ -875,3 +875,161 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         clean `pio run -t upload` cleared it: `captures/rcpub-gate-05` logs
         `Clear completed (serial log); precondition satisfied`. That liveness hole is a **persistence-owner defect**
         and is not fixed here (see the CURRENT_WORK entry for 2026-09-18).
+
+## 5.10 Snapshot slab memory is live content, not reclaimable slack (2026-09-18)
+
+- [ ] 5.10 Attribute the snapshot arena's `<=32K` class before changing its allocator. **Status: premise
+      falsified by measurement; re-aimed.** The plan was a generation-local arena that would return ~3 MB of
+      "mostly-empty slabs stranded by interleaved generations". The capture's own counters show the slabs are
+      ~99.5 % full of live nodes, so that ~3 MB is snapshot *content*, and no allocator reclamation can return it.
+      The instrument that proves this (live slab count, used/unused bytes, `pin1`/`pin24` pinning counts) is
+      implemented and wired into the once-per-second `[Memory] ext` tick line, replacing the misleading cumulative
+      `snap=` reading; the arena change itself is **not** implemented, because it would cost a rewrite and return
+      at most the ~14 % slack plus whatever churn strands.
+      **Counter-evidence (device, `captures/ab24-nogate/session_20260918_142527.log`).** The six
+      `#CAP,...,DIAG,snapshot_alloc,nodes=,bytes=,slabs=` rows -- one per completed freeze -- give the arena's
+      cumulative shape, and they are the data the audit's ~3 MB estimate was missing: at 12.60 s
+      `nodes=16,798, bytes=2,205,184, slabs=78`. `bytes` is `sum(sizeof(Type))` (`snapshotAllocRecord`,
+      `src/Loop/LoopSnapshot.cpp`). Compiling the node types with the device toolchain gives
+      `SnapshotMembership<Ref>` = **140 B** (16 reference slots + count + `next`), `SnapshotBarPage<Ref>` = 256 B
+      (32 membership slots), `SnapshotSpanRoot` = 1,024 B (128 pitch directories), `SnapshotPitchDirectory` and
+      `SnapshotEventRoot` = 12 B, `LoopSnapshotNote` = 20 B, `LoopSnapshotEvent` = 32 B, `LoopSnapshot` = 36 B.
+      Average `sizeof` is therefore 131.3 B, i.e. the population is dominated by 140 B membership pages. Real
+      footprint is `sum(sizeof)` plus one `allocate_shared` control block per node (~20 B), i.e. ~2.54 MB against
+      78 x 32,736 B = 2.553 MB of payload capacity: **99.5 % packed**. There is no stranded slack to reclaim, and
+      `alloc=13,371 KB` against `freed=5,087 KB` shows the existing `liveCount == 0` slab release already returns
+      whole slabs during churn; what remains live is referenced content.
+      **What the bytes actually are.** ~2.6 MB of the class is the loaded workspace's published snapshots (83 slabs
+      at 16.3 s, before any record) and ~448 KB is the 24-bar record (83 -> 97 slabs, **18.7 KB per completed
+      bar**). The record creep is the live-record lane republishing a full-content snapshot once per completed bar
+      (`liveRecordCompletedTicks`, `src/Track/TrackDeferredMaintenance.cpp:994-1003`), and each generation's own new
+      pages stay live because the newest root shares its predecessors' subtrees by design. At ~152 B per node and
+      ~3 nodes per event that is ~450 B of immutable snapshot per MIDI event, on top of the chunk pool that already
+      holds the same events.
+      **Re-aimed target (RC-MEM-1R).** The lever is node count per reference, not the allocator: (a) the 140 B
+      membership page with 16 slots is the dominant node and path-copy churn creates a fresh chain per changed
+      bar/list, so refs-per-page is the number to raise or the page to shrink; (b) the per-completed-bar whole-loop
+      republication is what makes a record grow, so the live-record publication should carry only the window the
+      display/playback actually resolves; (c) the chunk pool and the snapshot hold the same content twice. A narrow
+      win *inside* 5.10's original scope is therefore bounded at ~150 KB for a 24-bar loop (the record lane's churn
+      above its own content), not 3 MB -- so it must not be sold as the footprint fix.
+      **Invariant (still binding, as a guard).** *A snapshot root or candidate generation must not retain physical
+      slab memory solely because its nodes were interleaved with nodes owned by unrelated surviving generations. When
+      that generation becomes unreachable, its reclaimable backing must be returned deterministically.* It holds
+      today by construction (`liveCount`, whole-slab release) and must be preserved by any representation change;
+      `pin1`/`pin24` is its regression signal -- a rising `pin1` means slabs are being kept alive by one node each,
+      which is the state that would justify the arena work after all.
+      **Structural sharing stays the design blocker** for that work if it is ever needed: path copying lets a
+      successor root reference predecessor-created nodes, so a literal one-private-arena-per-root scheme would
+      release backing a live successor still points at; the form would be epoch-owned slab groups with explicit
+      shared references, and never more aggressive hole scanning in the existing bump allocator.
+      **Verify (unchanged acceptance list, now a regression guard rather than a 3 MB fix).**
+      1. Repeated candidate construction does not ratchet slab live bytes upward indefinitely.
+      2. Discarded candidates return their generation-local backing.
+      3. Replacing a published root does not free slabs still reachable from undo/redo or wrap ownership.
+      4. Trimming an undo entry releases its root's arena when no other owner references it.
+      5. Snapshot publication content stays byte/content equivalent.
+      6. No new allocation happens on the timing-critical MIDI path.
+      7. The existing snapshot failure/retry and stale-parent rules (DEC-073, DEC-075) stay unchanged.
+      The acceptance metric is the **slope**, not the peak: report `slab_live`, `slab_unused`, `pin1` and `clsn3`
+      per second across the 24-bar record and the wrap, and require a plateau rather than a ramp.
+      **Implemented in this task (instrument only).** `SnapshotSlabCensus` + `snapshotSlabCensus()`
+      (`include/LoopSnapshot.h`, `src/Loop/LoopSnapshot.cpp`): a doubly-linked live-slab registry inside the 32 KB
+      slab header (no RAM1 cost, O(1) unlink so retiring a slab stays cheap on the MIDI edge), and live
+      count / used / unused / `pin1` / `pin24` / full / partial. Emitted in the `[Memory] ext` tick line and in the
+      `DIAG,snapshot_alloc` row. `snap=` keeps its historical cumulative meaning and is now labelled next to the
+      live numbers so the two cannot be confused again.
+      **Observed creep, for the record.** Across the plain RECORD in that capture the `<=32K` class grew 83 -> 97
+      live blocks at one 32 KB slab per ~2 s while `chunks_free` (380-383) and every other size class stayed
+      constant; `live` ratcheted to 8,283 KB against a reported `pool=8182 KB`, the internal heap fell
+      80 -> 44 -> 8 KB in two steps, and the pool began refusing `bytes=32768` (`snapshotSlabOpen`'s request) --
+      the reported overdub-start denial and, without DEC-075's gate, the original abort.
+
+## 5.11 The total-length / retention inventory still resident in the runtime (2026-09-18)
+
+- [ ] 5.11 Track, as named RCs, the memory owners that are still sized by the whole loop rather than by a resolved
+      window, so the windowed/queued intent is enforced instead of assumed. 5.10 landed as its instrument (the live
+      slab census) after its reclamation premise was falsified; the RCs below are recorded with their bytes, their
+      growth law and their reclamation condition so each can be taken on its own evidence.
+      **Measured budget at the denial (device `captures/ab24-nogate/session_20260918_142527.log`, pool `live`
+      8,283 KB against a reported `pool=8182 KB`).** Untagged 6,858 KB: snapshot slab arena **~3,022 KB** (class 3,
+      97 blocks); `LoopEventStore` chunk pool **2,566 KB** (512 x `sizeof(EventChunk)` 5,132 B = 131,072 event
+      slots, one boot `extmem_malloc`; `sizeof(MidiEvent)` = 20 and `sizeof(EventChunk)` = 5,132 verified by
+      compiling the constants with the device toolchain); `DebugSessionCapture` ring **1,024 KB**
+      (`kCaptureRingBytes` = 1024*1024, allocated unconditionally by `ensureCaptureRingAllocated`); remainder
+      ~250 KB (LSV1 save gather vectors, SD/parse staging, work queue, loop objects). Tagged **1,465 KB -- all of it
+      for one active slot**: ViewPrewarm 715, CaptureStaging 148, CanonicalPassInputs 144, CompanionPasses 96,
+      CaptureStopJobs 87, BridgeMap 68, Apply 66, Reconstruction 64, PlaybackOrder 58, PairLookup 10,
+      TransferHorizon 7, Spans 2. The ViewPrewarm tag is one slot's fixed whole-take bundle:
+      `RuntimePlaybackViewSet::fixedExternalBytes()` is 727,040 B (5 views x 2048 x 35 B + 2 bridges x 2048 x 90 B),
+      and `RuntimeCanonicalPassInputs::prewarm(2048)` is exactly 147,456 B over 8 arrays, which is the figure
+      `ExecutionBounds.md` already records.
+      - **RC-MEM-2 -- per-slot bundles are sized by the representable ceiling, not by the window.** `kEventsPerView`
+        and `kRecordsPerBridge` are 2048 (`include/RuntimePlaybackView.h:19-22`), so an armed slot reserves ~1.16 MB
+        whether or not the loop has content for it. Device evidence that this is reservation rather than use: the
+        prepared-pair and stopped-oracle publishers require `coverage.lengthTicks == loopLengthTicks`
+        (`src/Track/TrackPlaybackWindowBuild.cpp:625-630`, `src/Track/TrackPlaybackRuntime.cpp:620-625`, `:648-653`),
+        so on a 24-bar loop **no** fixed view is ever published and playback instead takes the 2-bar merged window
+        (`src/Track/TrackPlaybackHotPath.cpp:273-291`). Fix: derive capacity from the resolved window with an
+        explicit admission denial on overflow, and prewarm the armed slot only, lazily, rather than every enabled
+        slot at boot.
+      - **RC-MEM-3 -- undo trimming cannot see pool pressure.** `overUndoMemoryPressure` (`src/PassReclaim.cpp:67-79`)
+        trims only on `freeChunkCount() <= PassConfig::CHUNK_RESERVE` or internal heap
+        `< Config::HEAP_RESERVE_BYTES`; pool slab bytes are never consulted, and its third clause is unreachable in
+        effect because the immediately preceding disjunction already returned true for the same two conditions, so
+        `PREFERRED_UNDO_DEPTH` (documented in `docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md` and
+        `openspec/specs/undo-memory-trim/spec.md`) never influences anything. That matters because
+        `GlobalUndoStack::entries` retain one to two published roots per entry, which is what keeps older
+        generations' slabs alive. Fix: consult the O(1) pool counters (live bytes / live slab count), and either
+        implement the depth arm or delete the constant and its doc claims.
+      - **RC-MEM-4 -- the compatibility pass replay was not retired, it moved.** `LoopPasses::materializeToEventVector`
+        is still linked and still called in production (`src/Track/TrackOverdubLifecycle.cpp:184`), and
+        `LoopContentResolution::resolveDisplayNotes/resolveWindow/resolveState(const LoopPasses&, ...)`
+        (`src/LoopContentResolution.cpp:1675`, `:1059`, `:1092`) still replay every pass chunk list into display, the
+        visual cache and the **overdub overlap source**. On a 24-bar loop the largest single whole-loop path is
+        `rebuildOverdubSourceSpanCache`'s passes fallback at ~116 KB peak (`src/Loop/LoopCapture.cpp:1105-1134`),
+        reachable from the record-arm path and from the MIDI note-off path
+        (`src/Loop/LoopPendingNoteChange.cpp:477-480`), because `overdubSourceSpanCacheReady()` requires the
+        full-loop flag (`src/Loop/LoopCapture.cpp:1022-1032`) so a windowed fill can never satisfy readiness. Fix:
+        migrate each of these callers and then remove the replay entry points, correcting
+        `docs/Authority/Architecture/DerivedViews.md:141-146`, which claims `materializeToEventVector` survives only
+        as an oracle. Note the §6.1 gate that was supposed to prove this is marked `[x]` but **fails 2 of 14 tests at
+        HEAD** (`scripts/test_compatibility_consumer_inventory.py`:
+        `test_materialize_to_event_vector_only_in_machinery_owners`,
+        `test_session_exit_gap_predicate_only_in_visual_hold_owners`), and it never scans the
+        `LoopContentResolution::*(const LoopPasses&, ...)` overloads where the replay actually lives now -- so the
+        gate must be widened before it can be re-ticked.
+      - **RC-MEM-5 -- the fixed boot stores are sized for the pool ceiling.** The chunk pool reserves 2,566 KB at
+        boot for 131,072 event slots with no cap on loop length, and the `SESSION_CAPTURE` ring reserves 1,024 KB
+        regardless of session shape. Fix (last, structural): a windowed/streamed chunk store with a
+        capture-admission cap on representable loop length, and a capture-ring policy sized per session.
+      - **RC-CHUNK-1 (latent correctness) -- a chunk reference is released without returning the chunk.**
+        `LoopEventStore::stepRewriteFromOrderedSource` calls `releaseChunkReference(retired)` with no paired
+        `tryFreeChunk` (`src/LoopEventStore.cpp:549-552`), unlike every other release site (`:210-222`, `:366`,
+        `:659`, `:706`, `:1289`); the refcount reaches 0 while `poolUsed_` stays true, so the chunk is never
+        reusable and is still counted by `usedChunkCount()`. Latent today because the production stop path uses the
+        copy variant (`src/Track/TrackOverdubLifecycle.cpp:902`). Fix: pair the call, and add a fixture that drives
+        the rewrite path and asserts `freeChunkCount()` returns to its pre-rewrite value.
+      - **RC-CHUNK-2 (latent correctness) -- committed chunk ids are copied without retaining.**
+        `LoopEventStore::tryAssignCommittedChunkIds` (`src/LoopEventStore.cpp:243-267`) builds `dest` from raw ids
+        without `retainChunkReference`, so the name says copy while the semantics are transfer; a caller that later
+        releases `dest` can drop a chunk another owner still references. Not reachable today because the sole caller
+        only `clear()`s its destination (`src/Track/TrackDeferredMaintenance.cpp:1282-1291`). Fix: retain on assign
+        (or rename and document the transfer), with a fixture that asserts the refcount is unchanged across the call.
+      - **Unbounded without any recorded bound** (same scan, tracked here so they are not rediscovered):
+        `PendingSnapshotPublishBox::journaledPassIds`/`appliedPassIds` have no erase anywhere and are only reset with
+        the whole box; `Loop::pendingNoteChanges_` and its `Track::CaptureStopJob::pendingChanges` mirror have no cap
+        and the job mirror is never cleared at retirement (`src/Track/TrackOverdubLifecycle.cpp:1175-1205`);
+        `VisualCache::markBarDirty` resizes to `bar + 1` with no ceiling (`include/VisualCache.h:102-107`).
+      - **Dead bounded alternatives to revive or delete** (all verified caller-less in `src/` + `test/`):
+        `Loop::advanceFallbackGatherSession` -- the budgeted fallback gather -- has no call site and its
+        `eventBudget` argument is never read inside `rebuildVisualCacheIdleSlice`, so the idle lane runs the
+        whole-loop `resolveDisplayNotes(passes, ...)` at `src/Loop/LoopVisualCache.cpp:436` instead of the budget
+        `DerivedViews.md:195` documents; `TrackManager::prewarmSelectedDisplayVisualCache`,
+        `DisplayManager::resolveDisplayNotesCommitted`, `DisplayManager::resolveDisplayNotesLiveCapture`,
+        `TickIndex::commitLoopPasses`, `Track::getMidiEventCount` / `Loop::liveEventCount` and
+        `EditManager::materializedLoopEventsForNoteEditFocus` are likewise unreachable, so `DerivedViews.md:93`,
+        `DerivedViews.md:193` and `docs/Authority/Architecture/Display.md:36` describe paths that no longer run.
+      - **Doc corrections owed with RC-MEM-4/-MEM-5.** `DerivedViews.md:93`, `:141-146`, `:193`, `:195`,
+        `Display.md:36`, and `ExecutionBounds.md`'s fallback-gather row (which documents a 96/192/768-event budget on
+        a function nothing calls) all describe behaviour the tree does not have.

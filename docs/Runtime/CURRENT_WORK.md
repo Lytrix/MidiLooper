@@ -2741,6 +2741,61 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the snapshot slab arena is instrumented, and its "reclaim ~3 MB" premise is measured to be FALSE
+(`immutable-loop-snapshot-passes` 5.10/5.11).** The user's question was why live memory is far larger than the loop
+data and grows on its own when the architecture's intent is to resolve short windows and queues instead of whole
+loops. Answer: **the bytes are live content, not reclaimable allocator slack** — so the generation-local arena that
+was going to be Step 1 would have cost a rewrite and returned almost nothing. Only the *instrument* landed.
+
+*The measurement that falsified the plan.* The six `#CAP,...,DIAG,snapshot_alloc,nodes=,bytes=,slabs=` rows in
+`captures/ab24-nogate/session_20260918_142527.log` (one per completed freeze) give `nodes=16,798, bytes=2,205,184,
+slabs=78` at 12.60 s, where `bytes` is `sum(sizeof(Type))`. Compiling the node types with the device toolchain gives
+`SnapshotMembership<Ref>` = **140 B** (16 reference slots), `SnapshotBarPage<Ref>` = 256 B (32 slots),
+`SnapshotSpanRoot` = 1,024 B (128 pitch directories), `SnapshotPitchDirectory`/`SnapshotEventRoot` = 12 B,
+`LoopSnapshotNote` = 20 B, `LoopSnapshotEvent` = 32 B, `LoopSnapshot` = 36 B -- so the 131.3 B average `sizeof` is
+the 140 B membership page. Adding one `allocate_shared` control block per node (~20 B) gives ~2.54 MB against
+78 x 32,736 B = 2.553 MB of payload capacity: **99.5 % packed**. `alloc=13,371 KB` against `freed=5,087 KB` confirms
+the existing `liveCount == 0` slab release already returns whole slabs during churn; the residual live set is
+referenced snapshot content. The `<=32K` class is therefore *not* "mostly-empty slabs stranded by interleaved
+generations", which is what the audit assumed when it called this the largest single win.
+
+*What the ~3 MB actually is.* ~2.6 MB is the loaded workspace's published snapshots (83 slabs at 16.3 s, before any
+record) and ~448 KB is the 24-bar record (83 -> 97 slabs, **18.7 KB per completed bar**). The record creep is the
+live-record lane republishing a full-content snapshot once per completed bar (`liveRecordCompletedTicks`,
+`src/Track/TrackDeferredMaintenance.cpp:994-1003`), where each generation's own new pages stay live because the
+newest root shares its predecessors' subtrees by design. At ~152 B per node and ~3 nodes per event that is ~450 B of
+immutable snapshot per MIDI event, on top of the chunk pool holding the same events.
+
+*Instrument implemented.* `SnapshotSlabCensus` + `snapshotSlabCensus()` (`include/LoopSnapshot.h`,
+`src/Loop/LoopSnapshot.cpp`): a doubly-linked live-slab registry in the 32 KB slab header (no RAM1 cost, O(1) unlink
+so a retiring slab stays cheap on the MIDI edge), reporting live slabs, used/unused bytes and the pinning counts
+(`pin1`/`pin24`). It is emitted in the once-per-second `[Memory] ext` tick line and in the `DIAG,snapshot_alloc` row,
+next to the historical cumulative `snap=` so the two can no longer be confused -- the earlier reading of `snap` as a
+live figure is what overstated the arena. `pin1` is the regression signal for the invariant that a generation must
+not be pinned by one surviving node.
+
+*Re-aimed target.* The lever is node count per reference, not the allocator: the 140 B membership page with 16 slots
+is the dominant node and path-copy churn builds a fresh chain per changed bar/list (raise refs-per-page or shrink the
+page); the per-completed-bar whole-loop republication is what makes a record grow (carry only the resolved window);
+and the chunk pool plus the snapshot hold the same content twice. A narrow win inside the original scope -- windowing
+the live-record publication -- is bounded at ~150 KB for a 24-bar loop, not 3 MB, and must not be sold as the
+footprint fix.
+
+*Also recorded as RCs (5.11).* RC-MEM-2 per-slot bundles at the 2048 ceiling (~1.16 MB/slot) with the measured
+evidence that a 24-bar loop never publishes a fixed view at all, because the publisher requires
+`coverage.lengthTicks == loopLengthTicks` and playback therefore takes the 2-bar merged window; RC-MEM-3
+`overUndoMemoryPressure` cannot see pool pressure and its `PREFERRED_UNDO_DEPTH` arm is unreachable in effect;
+RC-MEM-4 the compatibility replay moved to `LoopContentResolution::resolveDisplayNotes/resolveWindow/resolveState(
+const LoopPasses&, ...)` and to `LoopPasses::materializeToEventVector`, and the §6.1 gate that was supposed to prove
+it is marked `[x]` but **fails 2 of 14 tests at HEAD** and never scans those overloads; RC-MEM-5 the fixed boot
+stores; RC-CHUNK-1 `stepRewriteFromOrderedSource` releases a chunk reference without `tryFreeChunk`, so the chunk is
+never returned to the pool; RC-CHUNK-2 `tryAssignCommittedChunkIds` copies ids without `retainChunkReference`.
+Verified caller-less and therefore describing paths that no longer run: `advanceFallbackGatherSession` (the budgeted
+fallback gather, whose `eventBudget` is unread), `prewarmSelectedDisplayVisualCache`, `resolveDisplayNotesCommitted`,
+`resolveDisplayNotesLiveCapture`, `commitLoopPasses`, `liveEventCount`, `materializedLoopEventsForNoteEditFocus` --
+so `DerivedViews.md:93/141-146/193/195` and `Display.md:36` owe corrections. Device SD state is user data; no
+quarantine, delete or rename was performed.
+
 **2026-09-18 — the post-wrap device reset is fixed at the publication boundary (DEC-075,
 `immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** The RC below is implemented; the footprint is untouched.
 `Loop::stepPendingSnapshotPublish` now admits every turn that could start, step or freeze a candidate through

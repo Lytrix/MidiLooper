@@ -55,6 +55,37 @@ uint32_t snapshotAllocSlabCount();
 void emitSnapshotAllocCounters();
 void emitSnapshotAllocFailure(const char* site, size_t bytes);
 
+/// Live-slab census, for attributing the arena's *slope* rather than its peak.
+///
+/// `snapshotAllocByteCount()`/`snapshotAllocSlabCount()` are cumulative: they only ever
+/// increment, so a rising `snap=` in a `[Memory] ext` line is not by itself evidence of
+/// retention. Deciding whether the arena creeps because slabs are genuinely retained or
+/// because a retiring generation strands mostly-empty slabs needs the two quantities the
+/// cumulative counters cannot express: how many slabs are live, and how much of each live
+/// slab is unreachable. This is O(live slabs) and diagnostic-only -- the allocator's free
+/// authority stays `SnapshotSlab::liveCount`, so reading this can never change a decision.
+struct SnapshotSlabCensus {
+  /// Slabs currently held by the arena (opened and not yet returned to the pool).
+  uint32_t liveSlabs = 0;
+  /// `liveSlabs * kSnapshotSlabBytes`.
+  uint32_t liveSlabBytes = 0;
+  /// Sum of each live slab's bump high-water, i.e. the bytes any node ever used.
+  uint32_t usedBytes = 0;
+  /// `liveSlabBytes - usedBytes`: payload inside live slabs that no node ever used.
+  uint32_t unusedBytes = 0;
+  /// Live slabs holding at most one node -- the pinning signature. A slab here is retained
+  /// by a single node while its remaining payload is unreachable.
+  uint32_t slabsAtMostOneNode = 0;
+  /// Live slabs holding 2..4 nodes.
+  uint32_t slabsTwoToFourNodes = 0;
+  /// Live slabs with >4 nodes whose payload is at least three quarters used.
+  uint32_t slabsMostlyFull = 0;
+  /// The remainder: >4 nodes, less than three quarters used.
+  uint32_t slabsPartiallyUsed = 0;
+};
+
+SnapshotSlabCensus snapshotSlabCensus();
+
 /// Loaded adopt/restore publication on `PendingSnapshotPublishBox`.
 /// Session-exit work stays `None`.
 enum class LoadedSnapshotHydrationPhase : uint8_t {

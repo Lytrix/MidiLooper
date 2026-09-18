@@ -33,10 +33,17 @@ namespace {
 struct SnapshotSlab {
   uint32_t liveCount = 0;
   uint32_t used = 0;
+  /// Live-slab registry links. They sit in the slab's own 32 KB header, so the census costs
+  /// no RAM1, and the list is doubly linked so retiring a slab stays O(1) on the MIDI edge.
+  SnapshotSlab* nextLive = nullptr;
+  SnapshotSlab* prevLive = nullptr;
 };
 
 constexpr size_t kSnapshotSlabAlign = 8;
 constexpr size_t kSnapshotSlabPrefixBytes = sizeof(SnapshotSlab*);
+constexpr size_t kSnapshotSlabHeaderBytes =
+    (sizeof(SnapshotSlab) + (kSnapshotSlabAlign - 1)) & ~(kSnapshotSlabAlign - 1);
+constexpr size_t kSnapshotSlabPayloadCapacity = kSnapshotSlabBytes - kSnapshotSlabHeaderBytes;
 
 #if SNAPSHOT_ALLOC_COUNTERS
 uint32_t g_snapshotAllocNodes = 0;
@@ -45,6 +52,10 @@ uint32_t g_snapshotAllocSlabs = 0;
 #endif
 
 SnapshotSlab* g_currentSnapshotSlab = nullptr;
+/// Head of the live-slab registry the census walks. Maintained unconditionally (two pointer
+/// writes per open/free) so the diagnostic works in builds without `SNAPSHOT_ALLOC_COUNTERS`.
+SnapshotSlab* g_liveSlabHead = nullptr;
+uint32_t g_liveSlabCount = 0;
 
 LOOP_SNAPSHOT_COLD_MEM size_t alignSnapshotSlabOffset(size_t offset) {
   return (offset + (kSnapshotSlabAlign - 1)) & ~(kSnapshotSlabAlign - 1);
@@ -74,6 +85,36 @@ LOOP_SNAPSHOT_COLD_MEM void snapshotSlabFree(void* pointer) {
 #endif
 }
 
+LOOP_SNAPSHOT_COLD_MEM void registerLiveSlab(SnapshotSlab* slab) {
+  slab->prevLive = nullptr;
+  slab->nextLive = g_liveSlabHead;
+  if (g_liveSlabHead != nullptr) {
+    g_liveSlabHead->prevLive = slab;
+  }
+  g_liveSlabHead = slab;
+  ++g_liveSlabCount;
+}
+
+LOOP_SNAPSHOT_COLD_MEM void unregisterLiveSlab(SnapshotSlab* slab) {
+  if (slab->prevLive != nullptr) {
+    slab->prevLive->nextLive = slab->nextLive;
+  } else if (g_liveSlabHead == slab) {
+    g_liveSlabHead = slab->nextLive;
+  } else {
+    // Never registered (or already unregistered): the registry must not lose a count it
+    // does not own.
+    return;
+  }
+  if (slab->nextLive != nullptr) {
+    slab->nextLive->prevLive = slab->prevLive;
+  }
+  slab->nextLive = nullptr;
+  slab->prevLive = nullptr;
+  if (g_liveSlabCount > 0) {
+    --g_liveSlabCount;
+  }
+}
+
 LOOP_SNAPSHOT_COLD_MEM SnapshotSlab* snapshotSlabOpen() {
   void* memory = snapshotSlabMalloc(kSnapshotSlabBytes);
   if (memory == nullptr) {
@@ -82,6 +123,7 @@ LOOP_SNAPSHOT_COLD_MEM SnapshotSlab* snapshotSlabOpen() {
   }
   auto* slab = new (memory) SnapshotSlab();
   g_currentSnapshotSlab = slab;
+  registerLiveSlab(slab);
 #if SNAPSHOT_ALLOC_COUNTERS
   ++g_snapshotAllocSlabs;
 #endif
@@ -141,6 +183,7 @@ LOOP_SNAPSHOT_COLD_MEM void snapshotSlabDeallocate(void* pointer) {
   if (g_currentSnapshotSlab == slab) {
     g_currentSnapshotSlab = nullptr;
   }
+  unregisterLiveSlab(slab);
   slab->~SnapshotSlab();
   snapshotSlabFree(slab);
 }
@@ -1370,15 +1413,49 @@ uint32_t snapshotAllocSlabCount() {
 #endif
 }
 
+SnapshotSlabCensus snapshotSlabCensus() {
+  SnapshotSlabCensus census{};
+  for (SnapshotSlab* slab = g_liveSlabHead; slab != nullptr; slab = slab->nextLive) {
+    ++census.liveSlabs;
+    census.liveSlabBytes += static_cast<uint32_t>(kSnapshotSlabBytes);
+    const uint32_t used = slab->used <= kSnapshotSlabPayloadCapacity
+                              ? slab->used
+                              : static_cast<uint32_t>(kSnapshotSlabPayloadCapacity);
+    census.usedBytes += used;
+    if (slab->liveCount <= 1) {
+      ++census.slabsAtMostOneNode;
+    } else if (slab->liveCount <= 4) {
+      ++census.slabsTwoToFourNodes;
+    } else if (static_cast<size_t>(used) * 4 >= kSnapshotSlabPayloadCapacity * 3) {
+      ++census.slabsMostlyFull;
+    } else {
+      ++census.slabsPartiallyUsed;
+    }
+  }
+  census.unusedBytes =
+      census.liveSlabBytes >= census.usedBytes ? census.liveSlabBytes - census.usedBytes : 0;
+  return census;
+}
+
 void emitSnapshotAllocCounters() {
 #if defined(SESSION_CAPTURE)
-  char line[160];
+  const SnapshotSlabCensus census = snapshotSlabCensus();
+  char line[240];
   snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,snapshot_alloc,nodes=%lu,bytes=%lu,slabs=%lu",
+           "#CAP,%lu,DIAG,snapshot_alloc,nodes=%lu,bytes=%lu,slabs=%lu,live=%lu,"
+           "live_kb=%lu,used_kb=%lu,unused_kb=%lu,pin1=%lu,pin24=%lu,full=%lu,part=%lu",
            static_cast<unsigned long>(micros()),
            static_cast<unsigned long>(snapshotAllocNodeCount()),
            static_cast<unsigned long>(snapshotAllocByteCount()),
-           static_cast<unsigned long>(snapshotAllocSlabCount()));
+           static_cast<unsigned long>(snapshotAllocSlabCount()),
+           static_cast<unsigned long>(census.liveSlabs),
+           static_cast<unsigned long>(census.liveSlabBytes / 1024),
+           static_cast<unsigned long>(census.usedBytes / 1024),
+           static_cast<unsigned long>(census.unusedBytes / 1024),
+           static_cast<unsigned long>(census.slabsAtMostOneNode),
+           static_cast<unsigned long>(census.slabsTwoToFourNodes),
+           static_cast<unsigned long>(census.slabsMostlyFull),
+           static_cast<unsigned long>(census.slabsPartiallyUsed));
   DebugSessionCapture::appendCaptureTextLine(line);
 #else
   (void)0;
