@@ -414,6 +414,12 @@ law; the *window* is the part that must be capped.
 
 ## Revision 16 — one contract for resumable work items (the owners already agree)
 
+**Canonical term.** The whole setup this change builds toward is governed in
+[`docs/Authority/NAMING.md`](../../../docs/Authority/NAMING.md) as **Playhead-scheduled MVCC** — multi-version
+immutable state, resolved by interval projection, materialized incrementally against a playhead deadline, with
+epoch-leased working sets — and its stage shape as a **Pipeline of role-owned stages** with declared cost and
+deadline. Use those terms rather than new synonyms.
+
 The observation is correct and the evidence is in the tree: many small owners already look like the same
 service, and they converged **without** a shared contract.
 

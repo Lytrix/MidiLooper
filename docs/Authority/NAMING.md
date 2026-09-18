@@ -83,7 +83,34 @@ Some words recur because they name real concepts. **Do not eliminate them** — 
 
 Use when describing a formal multi-stage processing algorithm where each stage has an **independent responsibility** and stages may run asynchronously or across budget slices.
 
+A **Pipeline of role-owned stages** is the shape used for resumable work: each stage is owned by a **role**, declares its **cost** and its **deadline**, and reports a shared terminal result — **Pending**, **Complete**, **Denied** — under **non-destructive failure** (a denial leaves no partial authority and preserves the owner's state). Do **not** reach for a framework, virtual dispatch or message passing to get it: indirection costs ITCM/RAM1 on this target, where a single non-trivial constructor has already cost a 32 KB FlexRAM bank. The owners keep concrete types and preallocated state, and are aligned only when next touched.
+
 Do **not** use because several functions execute sequentially in one call stack. Synchronous deterministic algorithms are **Resolution**, not Pipeline.
+
+### Playhead-scheduled MVCC
+
+Use **Playhead-scheduled MVCC** for the whole runtime architecture that serves musical content to playback from multi-version immutable state:
+
+> **Playhead-scheduled MVCC** — multi-version immutable state, resolved by interval projection, materialized incrementally against a **playhead deadline**, with **epoch-leased working sets**.
+
+Every part of that sentence is already a governed term; compose them rather than inventing synonyms.
+
+| Part | Governed term |
+|------|---------------|
+| Immutable version of the effective content | **Snapshot** / **LoopSnapshot** |
+| Which part of the timeline is relevant | **interval projection** / **playback window** ([IntervalProjection.md](Architecture/IntervalProjection.md)) |
+| Incremental production, sliced inside MIDI boundaries | **Pipeline** (of role-owned stages), **Deferred** / **Pending** / **Scheduled**, **Queue** |
+| What orders materialization | the **playhead** — the next arrival of an affected tick *is* the deadline (**playhead deadline**) |
+| Bounded resident state | **working set**, leased per **role** and reclaimed by **epoch** (generation) |
+| Where the bytes live | **internal heap** / **external memory pool** |
+
+**Readiness is the contract.** After a recording, overdub or edit changes content at a tick, an updated immutable state must be ready by the time the playhead moves over that tick again. A missed deadline keeps the **previous** version authoritative for that pass: a read is never torn, never held silent, and never deferred in a way that disturbs timing. Playback consumes immutable versions only — that is why the versions exist.
+
+Use **epoch-leased working set** for bounded resident state held by a **role** and reclaimed when its generation is unreachable. Identity is `owner + generation + role`; release is by identity, and a generation-mismatched release is a **rejected, reported no-op** so a late cleanup cannot touch recycled storage. Capacity is **derived** from measurement, never asserted, and every resident store declares its class, cardinality, cap and eviction policy.
+
+Do **not** use **service**, **microservice**, **module**, or **API** as an architectural noun for these owners: there is no message passing, no serialization and no dynamic dispatch between them. They are preallocated, role-owned stages invoked cooperatively inside budget slices. Do not use **cache** unqualified for a working set — name the tier (**standby**, **window**, **envelope**) and its cap. Do not use **lease** for anything that is not role-owned and generation-qualified.
+
+Owning design: `openspec/changes/runtime-working-set-ownership/`.
 
 ### Snapshot
 
