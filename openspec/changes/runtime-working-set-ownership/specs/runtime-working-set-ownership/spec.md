@@ -215,6 +215,34 @@ from measurement because it trades resident bytes, achievable switch quantisatio
 - **THEN** the smallest size that still meets the readiness deadline under load is recorded
 - **AND** the resulting publication load is reported alongside the resident-bytes and granularity effects
 
+### Requirement: A request is never refused to the user
+A stop, record/overdub start, switch or undo/redo that cannot complete at the instant it is requested SHALL be
+**latched** and completed by the system when its resources free. It SHALL NOT be returned to the user as a
+denial requiring a second attempt.
+
+#### Scenario: A single stop press completes
+- **WHEN** a stop is requested while the finalization resources are busy
+- **THEN** the request is latched, the interval's state is preserved, and the stop completes when the resources
+  free, at the correct boundary
+- **AND** the user does not have to issue the stop again
+
+#### Scenario: Latching needs no stored interval
+- **WHEN** a request is latched
+- **THEN** it holds only the request's identity (destination, requested tick, interval generation)
+- **AND** it does not retain a stopped interval's sealed raw range, staged pass, session receipt or canonical
+  transfer state, so no new capacity is required
+
+#### Scenario: Retries are observable
+- **WHEN** a latched request completes after one or more resource denials
+- **THEN** the denials are counted and reported as retries, not as a user-facing denial
+- **AND** the diagnostic names the resource that held the request (`finalizer_busy`, `transfer_denied`,
+  `canonical_output_busy`, session-exit handoff)
+
+#### Scenario: The rule covers every user operation
+- **WHEN** a record/overdub start, a slot or track switch, or an undo/redo cannot complete immediately
+- **THEN** the same latch-and-self-service rule applies
+- **AND** no user operation requires a second attempt because a resource was momentarily unavailable
+
 ### Requirement: Finalization preserves the existing directional admission contract
 The change SHALL preserve the existing deferred-finalization admission contract (DEC-067) rather than define a
 new one: one **active** finalizer, with a second stop denied non-destructively by the single-instance

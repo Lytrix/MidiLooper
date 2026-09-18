@@ -90,6 +90,19 @@ is **Playhead-scheduled MVCC** ([`docs/Authority/NAMING.md`](../../../docs/Autho
 This split is deliberate (decided 2026-09-18): a change id that named the architecture noun would have to be
 re-derived whenever a stage is added, whereas the thesis is stable. Read the stage list in `tasks.md` for scope.
 
+## The product requirement this exists for
+
+> **No denied stop, and no user pressing twice.** A stop, a record/overdub start, a switch or an undo that cannot
+> complete at the instant it is requested must be **latched and completed by the system** when its resources free
+> -- it must never be dropped back on the user as a denial they have to re-issue.
+
+Today it *is* dropped. `TrackOverdubLifecycle.cpp` denies a stop when the finalization resources are busy
+(`successor_stop_denied_capacity`, `reentryDecision("deny", ...)`), keeps the interval recording, and its own
+comment states the consequence: *"A later stop request is admitted once the predecessor retires."* That re-press
+is the defect this change removes (see `FALSIFICATION.md` F3). The architectural work below is what makes it
+removable: role-owned, window-sized, pre-provisioned working sets are exactly what lets a request be accepted
+and completed instead of refused.
+
 ## What Changes
 
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not

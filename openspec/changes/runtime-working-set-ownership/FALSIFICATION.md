@@ -6,7 +6,7 @@
 |---|---|
 | F1 | **Confirmed.** Only single-slot playback exists. Multiple simultaneous slots is a *future* requirement: the end state is that slots behave as **virtual tracks** (target **16 MIDI channels x 8 slots**), playable together whenever set active. Today the working envelope is **8 tracks x 1 sounding slot**; a typical scenario may be 2 per track, but that is a working number, not a limit. The memory law must therefore **derive** the maximum sounding count the budget supports and **not preclude 16/32/48/64**. |
 | F2 | **Confirmed and refined.** The real contract is a **readiness deadline on immutability**: after a recording/overdub/edit changes content at a tick, an updated *immutable* state must be ready by the time the current tick moves over that tick again, because playback may only consume immutable events. Forcing that state to be a **whole loop** conflicts with memory; the fix is to change the **unit (interval/window) and give it a deadline**, reusing the resumable small deferred publication machinery already built for this. A published root narrows to the **immutable checkpoint authority for undo/save**. Missed deadlines use the **previous immutable generation for that pass** (rule (a), chosen), and the window size becomes configurable and swept -- bar-based today, toward 1/16 beat (12 ticks) and 1/32 beat (6 ticks) so that queued slot switching at jam quantisation is reachable. |
-| F3 | **Closed, not a defect -- the existing directional admission already is the required logic** (no finalization change in scope). One live capture plus **one _active_** deferred finalizer -- enforced by single-instance resources (`captureStopOwner`, the overdub transfer admission, the canonical capture output, the session-exit handoff), not by ring depth: a second `STOP` while the finalizer is occupied is **denied non-destructively** with a named stage, no descriptor taken, the slot staying recording/overdubbing, and a stop re-issued by the stop edge admitted only once the resource frees -- **may** succeed, since the other single-instance resources are re-checked at that later instant. `CaptureStopJobs::kCapacity = 4` is a descriptor ring and **does not prove** that four stopped capture intervals can be retained -- descriptor capacity already exceeded physical frozen/finalization-role capacity once, so B's sealed raw range, pending closures, staged pass, session receipt and canonical transfer state have no proven home while A finalizes. Adopting a queue model is a separate capacity/ownership change. |
+| F3 | **REOPENED AS A DEFECT (user requirement 2026-09-18): the deny-and-re-press behaviour is the defect this change exists to remove.** One live capture plus one _active_ finalizer is the right capacity model, but a stop refused on capacity must be **latched and self-serviced**, never dropped back on the user: `TrackOverdubLifecycle.cpp` currently reports `successor_stop_denied_capacity` and `reentryDecision("deny", ...)`, keeps the interval recording, and its comment says *"A later stop request is admitted once the predecessor retires"* -- i.e. the user must press again. That is not an accepted contract; the descriptor-ring reasoning below still holds (the ring cannot store stopped intervals), but a **latched request is one small piece of state, not a stored interval**, so the latch needs no new capacity. Acceptance is a single press completing the stop, possibly after the predecessor retires. |
 | F4 | **Scope clarified.** The UI shows the first **8 tracks** today and that is what is built against; the end state is **bank switching across 8-track banks** to run **16 MIDI channels**. Requirements are therefore demonstrated at 8 tracks while not precluding 16. |
 | F5 | **Agreed.** The role tiers fold into `activeLoopIndex` (+ `CapturePhase` / `TrackState`) rather than forming a second authority. |
 | F6 | **Resolved by S2 + G.2** (windowed sizing and non-destructive admission): the acceptance becomes diagnostic once the windowed path and the non-destructive denial contract exist. |
@@ -95,40 +95,37 @@ itself windowed/streamed for active playback — which is a *snapshot-residency*
 canonical-residency change S6 covers, and therefore belongs in S2's scope or in its own gated phase. As
 written, the budget is incomplete by roughly an order of magnitude in the case it exists to serve.
 
-## F3 — CLOSED, NOT A DEFECT: the existing finalization contract already is the required logic
+## F3 — REOPENED: the capacity denial must be latched, not returned to the user
 
-**Claim attacked.** "`DeferredFinalizationLease` x 1 ... preserves DEC-067 successor re-entry", and one
-finalization lease is sufficient.
+**Original claim attacked.** "`DeferredFinalizationLease` x 1 ... preserves DEC-067 successor re-entry", with the
+cardinality asserted while citing only `CaptureStopJobs::kCapacity = 4`.
 
-**Origin of the finding.** The plan asserted the cardinality while citing only
-`CaptureStopJobs::kCapacity = 4` and its comment *"Additional admission stays guarded until session isolation"*
-(`include/Track.h:598-604`), which left two readings open: a single admission, or up to four stored stop
-intervals. My own first reading took the second and produced the (now reverted) "serialized queue" resolution.
+**What the trace established (and still holds).** The ring is a descriptor ring whose tail must be free, so it
+cannot store a second stopped interval; the ordinary bound is the shared single-instance finalization resources
+(`captureStopOwner`, the overdub transfer admission, the canonical capture output, the session-exit handoff),
+each producing a named, non-destructive denial that takes no descriptor. A queue of stopped *intervals* would be
+a separate capacity/ownership change, because each stored interval needs its sealed raw range, pending
+closures, staged pass, session receipt and canonical transfer state -- and there is no proven home for four of
+those sets.
 
-**Verification (traced 2026-09-18 in `Track::beginDeferredOverdubStop`).** The existing logic is already the
-right contract, and the bound is the **shared single-instance resources**, not the ring:
+**What makes it a defect (user requirement, 2026-09-18).** *"I never want a denied stop or a user to need to
+press twice. That's the entire reason to do this openspec."* The capacity model is fine; **the user-visible
+consequence is not.** Today a capacity-denied stop is dropped (`successor_stop_denied_capacity`,
+`reentryDecision("deny", ...)`) and the interval keeps recording until the user asks again. There is **no latch**:
+`hasPendingDeferredOverdubStop()` reflects an *admitted* job, not a remembered request.
 
-- admission takes a descriptor only when the **tail descriptor is free** (`captureStopJobTail()` requires
-  `count < kCapacity`, and the caller requires empty `pendingNotes`), so pending stop intervals are never
-  stacked; `queue_full` is **exceptional descriptor exhaustion**, not an ordinary wait, and reaching it signals a
-  descriptor-lifetime defect rather than capacity pressure (*"never ordinary finalization latency"*);
-- each subsequent check is an explicit **non-destructive denial that takes no descriptor** and leaves the
-  interval as the live recording interval: `finalizer_busy` (`captureStopOwner != nullptr`), `transfer_denied`
-  (no active overdub transfer admission), `canonical_output_busy` (canonical capture output not admitted), and
-  the session-exit handoff check;
-- the dual-role split is what allows the useful concurrency: a **start** needs the *live* role and a **stop**
-  needs the *frozen* role, so a successor records normally while its predecessor finalizes, and it is the
-  successor's **own stop** that waits;
-- a denied stop is **not queued and not auto-serviced** -- it is re-issued by the stop edge (device evidence
-  `successor-reentry-25`: B's stop refused, then admitted after A's finalization released).
+**Required behaviour.** A stop that cannot complete at once is **latched** (destination, requested tick,
+interval generation) and **self-serviced** when the resources free, completing at the correct boundary with **no
+second press**. The same rule applies to record/overdub start, slot/track switching and undo/redo: a request is
+never refused to the user, it is accepted and completed as soon as it can be.
 
-**Consequence for the plan.** **No finalization logic change is in scope.** The change *preserves* the existing
-directional admission contract (DEC-067); the spec requirement states preservation rather than defining a new
-rule, and `S4.5` is verification and observability only: assert the denial stage names, prove no descriptor was
-taken and no partial stop occurred, and count `finalization_lease_stop_denied`. Building a queue would be a
-separate capacity/ownership change that must first show where each stopped interval's sealed raw range, pending
-closures, staged pass, session receipt and canonical transfer state live while a predecessor finalizes -- the
-distinction F3 originally demanded, now recorded rather than assumed.
+**Why the latch fits the capacity finding.** A latched request is **one small piece of state per live interval**
+-- and there is one live capture interval at a time -- not a stored stopped interval. It therefore needs none of
+the storage the ring cannot provide, and it does not reintroduce the queue model that was correctly rejected.
+
+**Acceptance.** One press. The stop completes (possibly after the predecessor retires), the user never re-issues,
+and the retry path is observable (`finalization_lease_stop_denied` becomes a **retry** counter, not a
+user-facing denial). The pre-fix counterfactual is the existing `successor_stop_denied_capacity` row.
 
 ## F4 — MAJOR: the spec contains a requirement this change cannot satisfy
 
