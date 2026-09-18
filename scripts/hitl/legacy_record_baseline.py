@@ -3011,6 +3011,23 @@ def _last_disp_frame_notes(rows: list[dict[str, object]]) -> Optional[int]:
     return None
 
 
+def _peak_disp_frame_notes(rows: list[dict[str, object]]) -> Optional[int]:
+    """Steady pre-undo frame: the largest published frame in the window.
+
+    A single overdub session settles to one frame, but after several sessions (or a slow compose)
+    the frame in the window can still be ramping up, so the last row understates the content the
+    undo must remove (`gus-undo-04`: 144 last vs 176 steady before the undo).
+    """
+    peak: Optional[int] = None
+    for row in rows:
+        if int(row["published"]) != 1:
+            continue
+        frame_notes = int(row["frame_notes"])
+        if frame_notes > 0 and (peak is None or frame_notes > peak):
+            peak = frame_notes
+    return peak
+
+
 def _verify_undo_redo_display(
     lines: list[str], *, window_us: int = 8_000_000
 ) -> dict[str, object]:
@@ -3035,7 +3052,7 @@ def _verify_undo_redo_display(
     }
     if undo_ts is None or redo_ts is None:
         return result
-    frame_before = _last_disp_frame_notes(_extract_disp_snapshots(lines, before_ts=undo_ts))
+    frame_before = _peak_disp_frame_notes(_extract_disp_snapshots(lines, before_ts=undo_ts))
     frame_after_undo = _last_disp_frame_notes(
         _extract_disp_snapshots(lines, after_ts=undo_ts, before_ts=redo_ts)
     )
