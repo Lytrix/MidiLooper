@@ -2759,8 +2759,22 @@ The change: derived runtime views and capture companion storage become **owned b
 inactive slots retaining only canonical/persistence state and bounded metadata; working sets are acquired on
 activation, reused across slots, and released when no live playback/capture/deferred owner remains. Acceptance is
 a **measured scaling curve** -- load 60+ long slots, activate A, activate B, deactivate A, activate C -- required
-to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. Staged S1..S6 in
-`openspec/changes/runtime-working-set-ownership/tasks.md`; S1 is measurement only, with no behaviour change.
+to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. **Revised after review (APPROVE WITH REVISIONS).** The law change alone is not sufficient: at the product
+envelope (16 tracks x 2 active slots) today's per-slot cost is 32 x 845 KB ~= 27 MB, or 32 x 1.47 MB ~= 47 MB
+against ~8 MB, so the window-derived lease sizing (RC-MEM-2's outstanding item) is **promoted from safeguard to
+prerequisite S2** -- the resident-lease budget must close (~100-125 KB per lease if all 32 logical active slots
+are to sound) or the simultaneous-playback cap must be stated as a bound. Three quantities are now separated:
+library residency (~60 slots), logical active slots (the product envelope), and resident working-set leases
+(must fit PSRAM). Role tiers replace one "active": COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED,
+with **selection staying cheap** so browsing 60 slots causes no lease churn. Leases are
+**generation-qualified** (`slot + generation + role`) so late cleanup from a released slot cannot touch
+recycled storage. The **cold undo policy** is pinned as a product decision before any flat-cold-memory claim.
+S1's scaling assertion is a **red characterisation** that must fail today, and its device leg records the slope
+to the current failure point (the resident store holds only ~28 sixty-four-bar loops) rather than an
+unreachable 60-slot baseline. Canonical residency is a **separate gated phase** with its own DEC amendment, and
+the cold contract is descriptor-based rather than chunk-reference-based. Staged S0..S7 in
+`openspec/changes/runtime-working-set-ownership/tasks.md`; S0 is decisions only and S1 is measurement only,
+neither with behaviour change.
 RC-MEM-2's outstanding item and §5.13's three fixes are demoted to safeguards (G.1-G.3) under it. RC-MEM-2 and
 RC-MEM-5 are **not** reverted -- they bought headroom and removed dead reservation.
 
