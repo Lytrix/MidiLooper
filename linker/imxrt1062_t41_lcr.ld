@@ -57,6 +57,23 @@ SECTIONS
 		*PianoRollDraw*.o(.text .text.*)
 		*NoteEditFocusDisplayProjection*.o(.text .text.*)
 		*NoteEditFocusLinearSpan*.o(.text .text.*)
+		/* Boot/load and SD-bundle serialization only -- never the MIDI tick, the
+		   capture append, or playback serving. These six TUs carry no COLD/FLASH
+		   macro, so all of their code defaulted to ITCM: moving them frees two
+		   flexRAM ITCM banks (72 KB measured), which hands DTCM the banks back as
+		   stack headroom. Without it the tree sat one 4 KB alignment unit from
+		   `locals free` 2,240, where a few bytes of new code hung the boot load
+		   (2026-09-18). `_itcm_block_count` drops 13 -> 11. */
+		*LoadLoopJob*.o(.text .text.*)
+		*CurrentSetBootLoad*.o(.text .text.*)
+		*RevisionCommit*.o(.text .text.*)
+		*CurrentWorkspaceStorage*.o(.text .text.*)
+		*RevisionLoad*.o(.text .text.*)
+		*LoopInternalColdHelpers*.o(.text .text.*)
+		*SetBrowserRead*.o(.text .text.*)
+		*StorageManagerHitlSerial*.o(.text .text.*)
+		*DebugSessionCapture*.o(.text .text.*)
+		*NoteEditSessionUndoStack*.o(.text .text.*)
 		. = ALIGN(4);
 		KEEP(*(.init))
 		__preinit_array_start = .;
