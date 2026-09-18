@@ -238,9 +238,10 @@ LOOP_COLD_MEM bool Loop::stepPreparedCompanionHistory(size_t quantum, uint64_t o
       work.snapshotIds.push_back(destination.id);
       ++work.row;
     } else if (work.phase == Phase::Trim) {
-      if (work.rows.size() > work.targetCount) work.rows.pop_back(); // Empty, unused companion slot.
-      if (work.rows.size() == work.targetCount)
-        work.phase = work.captureInputs ? Phase::VerifyCapture : Phase::Ready;
+      // `begin` already sized `rows` to `targetCount` (see the resize comment above),
+      // so this phase trims nothing; it exists only to advance once every demanded
+      // row has been written by the fill phases, one unit per quantum.
+      work.phase = work.captureInputs ? Phase::VerifyCapture : Phase::Ready;
     } else if (work.phase == Phase::VerifyCapture) {
       MidiEvent event; bool atEnd = false;
       if (!LoopEventStore::readSealedChunkEvent(work.captureChunks[work.captureChunk],

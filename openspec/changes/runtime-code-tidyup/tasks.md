@@ -43,74 +43,115 @@ record why — do not reach for HITL.
 For every deletion: prove zero references first (`grep`), delete, then run the native suite. A link error
 is a finding to investigate, not a nuisance to silence.
 
-- [ ] 2.1 Delete `Loop::clearFailureInjectionForTest()` and `Loop::completedChangeCount()`
+- [x] 2.1 Delete `Loop::clearFailureInjectionForTest()` and `Loop::completedChangeCount()`
   (`include/LoopSnapshot.h:331,346`), each of which has exactly one repo-wide occurrence. Verify: grep returns nothing
   and `pio test -e native` passes.
-- [ ] 2.2 Delete the four unreferenced playback-view orphans: `RuntimePlaybackViewSet::resetMetadataPreserveRetained()`,
+- [x] 2.2 Delete the four unreferenced playback-view orphans: `RuntimePlaybackViewSet::resetMetadataPreserveRetained()`,
   `RuntimePlaybackViewLifecycle::buildIsPending()`, `hasReadySuccessor()` (`include/RuntimePlaybackView.h:332,333,419`),
   `RuntimePlaybackViewFill::active()` (`include/RuntimePlaybackViewFill.h:58`). Verify: grep shows 0 call sites each;
   native suite passes.
-- [ ] 2.3 Delete `RuntimeCompanionOverlapWalk::actionReady()` (`include/RuntimeCompanionOverlapWalk.h:27`),
+- [x] 2.3 Delete `RuntimeCompanionOverlapWalk::actionReady()` (`include/RuntimeCompanionOverlapWalk.h:27`),
   `Action::sourceIndex` (`:20`, written at cpp:56 and never read) and `RuntimeCompanionSpanWalk::spanReady()`
   (`include/RuntimeCompanionSpanWalk.h:24`). Verify: grep shows 0 read sites; native suite passes.
-- [ ] 2.4 Delete the four unreachable `InvestigationCaptureLog::logVisualCache*` emitters
+- [x] 2.4 Delete the four unreachable `InvestigationCaptureLog::logVisualCache*` emitters
   (`include/Utils/InvestigationCaptureLog.h:85,88,92,94`; `src/Utils/InvestigationCaptureLog.cpp:297,308,318,327`) that
   duplicate the live inline emitters in `src/Loop/LoopVisualCache.cpp:481,659,682,706`. Verify: `grep logVisualCache`
   returns no call sites; the `vch,win=`/`gather_*` capture lines still originate from `LoopVisualCache.cpp`.
-- [ ] 2.5 Apply the design § D2 rule to the five test-only diagnostics
+- [x] 2.5 Apply the design § D2 rule to the five test-only diagnostics
   (`RuntimeCanonicalPassInputs::borrowsCaptureOrder`, `hasFrozenBinding`,
   `RuntimeCompanionBridgeMap::lastStepInputCount`, `RuntimeCompanionOverlapWalk::lastStepInputCount`,
   `RuntimeCaptureCompanions::capacity`/`row`)
   and to `RuntimePlaybackBridgeCursor::emissionCursor()`: keep a probe only where a test asserts a grain/bound contract,
   otherwise re-point the test at `data()`/`size()` and delete the accessor — test edit in the same commit. Verify:
   native suite passes with the same case count, and each kept probe has a named contract assertion.
-- [ ] 2.6 Delete `PendingSnapshotPublishBox::applyingCompanions` (`src/Loop/LoopSnapshotBoxes.h:84`) and its seven
+- [x] 2.6 Delete `PendingSnapshotPublishBox::applyingCompanions` (`src/Loop/LoopSnapshotBoxes.h:84`) and its seven
   assignments in `src/Loop/LoopSnapshotPublish.cpp:659,844,1016,1097,1139,1161,1308`. Verify: grep shows writes gone and
   no reader existed; native suite passes.
-- [ ] 2.7 Delete the inert computation in `src/Loop/LoopSnapshotPublish.cpp:790-798` (`identityPreserved` computed from just-assigned values, then `(void)`-cast)
+- [x] 2.7 Delete the inert computation in `src/Loop/LoopSnapshotPublish.cpp:790-798` (`identityPreserved` computed from just-assigned values, then `(void)`-cast)
   and collapse `Loop::liveRecordCanApplyCompletedTicks` (`:1810-1823`) to its single guarded `return completedTicks != 0;`.
   Verify: same return value on every input path (read the guard), native suite incl. `test_loop_take_survival` passes.
-- [ ] 2.8 Delete the unreachable `Phase::Trim` pop branch in `src/Loop/LoopPreparedCompanionHistory.cpp:240-243`
+- [x] 2.8 Delete the unreachable `Phase::Trim` pop branch in `src/Loop/LoopPreparedCompanionHistory.cpp:240-243`
   (the resize at `:163` makes the condition unfirable and the file's own comment says the walk was removed).
   Verify: native suite passes; the phase's remaining transitions still reachable.
-- [ ] 2.9 Delete the vestigial LSV1 writer state in `src/StorageLoopIoBodyFormatV1.cpp`: `telemetryTailEntered`
+- [x] 2.9 Delete the vestigial LSV1 writer state in `src/StorageLoopIoBodyFormatV1.cpp`: `telemetryTailEntered`
   (`:109`), `sectionHeaderWritten` (`:108`, written `:1283`), `sortSwapBudget` (`:94`, only ever set to 0 at `:968,1021,1046`),
   the `PayloadWriteSubphase` enum + `payloadSubphase`/`emitIndex`/`nestedIndex`/`nestedRefIndex` cluster (`:97-107`),
   and drop them from `loopSnapshotTailProgressSignature` (`:1130-1137`). Verify: `test_storage_loop_io` passes; the
   body-format byte oracle (`test_storage_loop_io` round-trip) is unchanged.
-- [ ] 2.10 Delete the zero-reference symbols `checkedSizeAdd` (`src/StorageLoopIoBodyFormatV1.cpp:160`),
+- [x] 2.10 Delete the zero-reference symbols `checkedSizeAdd` (`src/StorageLoopIoBodyFormatV1.cpp:160`),
   `kLsv1LoopSnapshotRootHeaderBytes` (`:129`), `kLsv1SaveOrderingFlushBatch` (`include/StorageLoopIo.h:229`) and the
   redundant `#include "Utils/NoteUtils.h"` in `src/Loop/LoopSnapshotPublish.cpp:10`. Verify: grep returns one hit each
   before deletion and none after; build has no new warnings.
-- [ ] 2.11 Resolve OD-4 with the user; default: wrap `readLoopSnapshotBodyFormatV1`
+- [x] 2.11 Resolve OD-4 with the user; default: wrap `readLoopSnapshotBodyFormatV1`
   (`src/StorageLoopIoBodyFormatV1.cpp:1503-1613`, test-only, 8 call sites in `test_storage_loop_io`) in `#if defined(PIO_UNIT_TEST_NATIVE)`
   and correct the ownership sentence in
   [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](../../../docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md). Verify:
   `test_storage_loop_io` passes and the guide no longer names it a production load owner.
-- [ ] 2.12 Delete `TrackUndoPublication::units_` + `completedUnits()` (`include/TrackUndoPublication.h:46,60` and the five writes in the cpp),
+- [x] 2.12 Delete `TrackUndoPublication::units_` + `completedUnits()` (`include/TrackUndoPublication.h:46,60` and the five writes in the cpp),
   `MidiBatchComposition::Summary::nonClockCount` (`include/Utils/MidiBatchComposition.h:25`, increment `:61`, the `MidiHandler.cpp:226` argument and the `(void)` at `RuntimeTimingTelemetry.cpp:746`),
   `ExternalPoolAccounting::trackedBlocks` + `reset()` and the `kTagCount 18 → 17` phantom slot
   (`include/Utils/ExternalPoolAccounting.h:47,72,131`) — **keep** `tagBlocks`, which is read by the decrement guard at
   cpp:182 — and `CommittedMidiScratch::RefreshKind::FromPasses` (`include/Utils/CommittedMidiScratch.h:20`). Verify:
   grep proof per symbol; `test_pool_budget`, `test_midi_dispatch_order`, `test_runtime_timing_telemetry` pass.
-- [ ] 2.13 Delete `InvestigationAllocProbe::recordClockPulseEntry` + its accessors and read the existing
+- [x] 2.13 Delete `InvestigationAllocProbe::recordClockPulseEntry` + its accessors and read the existing
   `RuntimeTimingTelemetry::noteClockPulse` counter instead (`ClockManager.cpp:186` vs `:189`). Keep the probe's
   span/project/intervalTimer counters, which have no telemetry equivalent. Verify: `test_clock_transport_master` and
   `test_runtime_timing_telemetry` pass; one pulse source remains.
-- [ ] 2.14 Delete `StorageManager::admitLoopUndoHistory()` (pure no-op body, 0 callers) and `admitLoopPersist()` (0 callers, annotated `/// Deprecated` by this branch)
+- [x] 2.14 Delete `StorageManager::admitLoopUndoHistory()` (pure no-op body, 0 callers) and `admitLoopPersist()` (0 callers, annotated `/// Deprecated` by this branch)
   from `include/StorageManager.h` and `src/StorageManager/PersistenceAdmit.cpp`. Verify: grep shows decl+def only
   before, none after; firmware builds.
-- [ ] 2.15 Remove the dead artifacts with `git rm`: `openspec/changes/resumable-midi-boundary-playback-maintenance.zip`
+- [x] 2.15 Remove the dead artifacts with `git rm`: `openspec/changes/resumable-midi-boundary-playback-maintenance.zip`
   (247 KB duplicate of a tracked directory, contains `__MACOSX/` entries, already stale — missing `ARCHITECTURE-REVIEW.md`),
   `companion_pair_order_repro.cpp`, `create_history_order_repro.cpp`, and the two `.patch` files that apply neither
   forward nor reverse. Verify: `git ls-files | grep -E '\.zip$'` is empty; the two repro *intents* are already
   represented in the tree (`src/EditManager/EditApply.cpp` equal-tick `stable_partition`) or recorded in `design.md`.
-- [ ] 2.16 Remove the duplicate `#include "Utils/InvestigationCaptureLog.h"` inside the anonymous namespace in
+- [x] 2.16 Remove the duplicate `#include "Utils/InvestigationCaptureLog.h"` inside the anonymous namespace in
   `src/Track/TrackDeferredMaintenance.cpp:71` (namespace opens at `:36`). Verify: one include remains at `:19`; firmware
   builds.
-- [ ] 2.17 P1 gate: run the full native suite and the firmware build, and record the removed-symbol census plus the new
+- [x] 2.17 P1 gate: run the full native suite and the firmware build, and record the removed-symbol census plus the new
   RAM1 line in `PREFLIGHT.md`. Verify: native 2,262-case baseline still passes; RAM1 `code` unchanged or lower;
   `padding` not reduced into a bank edge.
+
+### P1 outcome (2026-09-18)
+
+Gate: `pio test -e native` **2,262 cases / 1 skipped / 2,261 passed**; firmware build SUCCESS with
+RAM1 `variables 96096 / code 392248 / padding 968 / free for local variables 34976` and FLASH
+`code 1007552` — every figure better than the recorded baseline (96128 / 392344 / 872 / 34944 / 1009608).
+
+Removed: 4 orphan accessors, 1 orphan field, 4 unreachable emitters, 7 write-only assignments, 3 dead
+LSV1 writer scalars, 1 inert verification block plus its 128-byte stack array, 1 degenerate branch,
+3 zero-reference symbols, 1 redundant include, 1 duplicate include inside an anonymous namespace,
+1 dead counter, 1 dead accessor, 1 dead no-op admission, 1 deprecated admission, 1 retired enumerator,
+and the committed 247 KB zip plus four scratch artifacts.
+
+Six review claims were corrected by verification while applying the tasks:
+
+- `RuntimeCompanionOverlapWalk::Action::sourceIndex` is a **test-asserted contract**, not dead. It was
+  deleted first, `test_edit_apply` failed to build (3 assertions), and it was restored marked as test
+  surface. The original conclusion came from a `head`-truncated grep — full greps are now used.
+- `MidiBatchComposition::Summary::nonClockCount` is asserted by `test_midi_dispatch_order.cpp:70,86`.
+  The *field* stays; the *telemetry parameter* is a reserved slot for the deferred DROID/USB-host
+  feedback split (`resumable-midi-boundary-playback-maintenance` task 4.1), so it is documented rather
+  than removed (a removal would churn an 11-site macro API for no behaviour gain).
+- `PayloadWriteSubphase` / `emitIndex` / `nestedIndex` / `nestedRefIndex` feed the documented
+  `LoopPersist,tail_step` line and its progress signature
+  (`docs/Plans/deferred_persist_lsv1_edittail_slice_bugfix.md`). Removing them would change a
+  documented diagnostic, so they are kept and now commented.
+- `InvestigationAllocProbe::clockPulseEntries` is **not** a duplicate of
+  `RuntimeTimingTelemetry::clockPulses`: the former is monotonic since boot and sampled as a delta by
+  the length-path probe, the latter is reset per reporting window (`RuntimeTimingTelemetry.cpp:384`).
+  Kept and documented.
+- `Phase::Trim` **is** reachable — it is assigned at `LoopPreparedCompanionHistory.cpp:226` and its
+  transition is essential. Only the unreachable `pop_back()` was removed.
+- `ExternalPoolAccounting::tagBlocks` is read (the decrement guard at cpp:182); only `trackedBlocks`
+  was write-only. `kTagCount` stays 18 so the printed `tags=` vector length is unchanged.
+
+**RAM1 bank note (found by this phase's gate and fixed in it).** Gating the test-only reader changed
+inlining: `.text.itcm` grew **+976 bytes**, crossed the 32 KB boundary, and dropped
+`free for local variables` from 34,944 to **2,208** — the exact state `Teensy-RAM1-Bank-Overflow.mdc`
+records as a *silent* boot overrun. Fixed by marking `buildLoopSnapshotFromValidatedPayload`
+`noinline` + `.flashmem` via a new `LSV1_BUILDER_MEM` in `src/StorageLoopIoBodyFormatV1.cpp`, which
+returned the bank. Measured by stashing the phase and diffing `size -A` sections, not by guessing.
 
 ## 3. P2 — name the constants and enums
 

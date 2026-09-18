@@ -42,6 +42,8 @@ class RuntimeCaptureCompanions {
   const EditPass* data(uint32_t generation) const;
   uint64_t preparationGeneration() const { return preparationGeneration_; }
   size_t size() const { return count_; }
+  /// Native-test contract probes (no production caller): assert the prewarmed
+  /// capacity and the stability of the committed row backing store.
   size_t capacity() const { return capacity_; }
   const EditPass& row(size_t index) const { return rows_[index]; }
 

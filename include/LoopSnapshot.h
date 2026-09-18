@@ -328,7 +328,6 @@ class LoopSnapshotConstruction {
   }
   bool failed() const { return failed_; }
   LoopSnapshotFailureReason failureReason() const { return failureReason_; }
-  size_t completedChangeCount() const { return nextChangeIndex_; }
   size_t completedUnitCount() const { return completedUnits_; }
   size_t totalChangeCount() const { return changes_.notes.size() + changes_.events.size(); }
 
@@ -342,10 +341,6 @@ class LoopSnapshotConstruction {
       size_t units, LoopSnapshotFailureReason reason = LoopSnapshotFailureReason::Injected) {
     failAfterUnits_ = units;
     injectedReason_ = reason;
-  }
-  void clearFailureInjectionForTest() {
-    failAfterUnits_ = kNoFailureInjection;
-    injectedReason_ = LoopSnapshotFailureReason::Injected;
   }
 #endif
 

@@ -329,8 +329,6 @@ struct RuntimePlaybackViewLifecycle {
   bool publishCompletedBuildAsReady(
       std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
       PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
-  bool buildIsPending() const { return build != kNoView; }
-  bool hasReadySuccessor() const { return ready != kNoView; }
 };
 
 /// Selected and candidate bridges have independent fixed buffers.  Beginning a
@@ -414,9 +412,6 @@ struct RuntimePlaybackViewSet {
   /// selected, because that bridge is the live authoritative representation.
   bool releaseWholeTakeViews();
   void resetMetadata();
-  // Invalidate ordinary candidates while retaining the non-audible first-record
-  // return view and its source identity. Used by cache refresh during capture.
-  void resetMetadataPreserveRetained();
   /// Preserve exactly one view across a metadata reset and make it the current
   /// view, leaving the other two as build/idle. `keep` must be a valid view index.
   void resetMetadataPreserveView(uint8_t keep);

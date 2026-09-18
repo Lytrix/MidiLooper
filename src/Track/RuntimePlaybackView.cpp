@@ -789,10 +789,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadata() {
   bridgeLifecycle.reset();
 }
 
-RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadataPreserveRetained() {
-  resetMetadataPreserveView(lifecycle.retained);
-}
-
 RUNTIME_PLAYBACK_VIEW_COLD_MEM uint8_t RuntimePlaybackViewSet::firstRecordReturnWindowIndex() const {
   if (lifecycle.current < views.size() && views[lifecycle.current].firstRecordReturnWindow) {
     return lifecycle.current;

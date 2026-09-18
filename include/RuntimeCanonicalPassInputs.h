@@ -87,6 +87,8 @@ class RuntimeCanonicalPassInputs {
       const RuntimeCompanionPasses& resolved);
   bool idle() const { return phase_ == Phase::Idle; }
   bool captureAttached() const { return includeCapture_; }
+  /// Native-test contract probe (no production caller): asserts the ownership
+  /// transition from a borrowed capture order to owned canonical descriptors.
   bool borrowsCaptureOrder() const { return preparedCaptureOrder_.has_value(); }
   bool beginFrozen(RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
                    const LoopPasses& passes, const PlaybackViewSourceIdentity& source,

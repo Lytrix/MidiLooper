@@ -81,7 +81,6 @@ struct PendingSnapshotPublishBox {
   bool fromLoadedPasses = false;
   LoadedSnapshotHydrationPhase loadedHydrationPhase = LoadedSnapshotHydrationPhase::None;
   bool companionsApplied = false;
-  bool applyingCompanions = false;
   bool wrapJournalInFlight = false;
   CommitReason sessionExitReason = CommitReason::RecordStop;
   /// Runtime-only GUS entry id for deferred after-root attach (OpenSpec 5.1
