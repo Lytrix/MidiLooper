@@ -19,30 +19,6 @@ struct OrderedSnapshotEvent {
   MidiEvent value{};
 };
 
-void appendUniquePassId(std::vector<PassId>& ids, PassId id) {
-  if (id == kInvalidPassId) {
-    return;
-  }
-  for (const PassId existing : ids) {
-    if (existing == id) {
-      return;
-    }
-  }
-  ids.push_back(id);
-}
-
-void appendUniqueEditPassId(EditPassIdList& ids, EditPassId id) {
-  if (id == kInvalidEditPassId) {
-    return;
-  }
-  for (const EditPassId existing : ids) {
-    if (existing == id) {
-      return;
-    }
-  }
-  ids.push_back(id);
-}
-
 bool isRecordPassId(const LoopPasses& passes, PassId id) {
   return passes.hasRecordPass() && passes.recordPass.id == id;
 }
@@ -200,27 +176,27 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     for (size_t i = 0; i < overdubSessionCursor_ && i < overdubSessionPassIds_.size(); ++i) {
       const PassId passId = overdubSessionPassIds_[i];
       if (!isRecordPassId(passes, passId)) {
-        appendUniquePassId(unpublishedPassIds, passId);
+        appendUniqueId(unpublishedPassIds, passId, kInvalidPassId);
       }
     }
     if (!isRecordPassId(passes, lastCommittedPassId_)) {
-      appendUniquePassId(unpublishedPassIds, lastCommittedPassId_);
+      appendUniqueId(unpublishedPassIds, lastCommittedPassId_, kInvalidPassId);
     }
   }
   if (pendingSnapshotPublishBox_) {
     const PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
     for (const PassId passId : box.queuedPassIds) {
       if (!isRecordPassId(passes, passId)) {
-        appendUniquePassId(unpublishedPassIds, passId);
+        appendUniqueId(unpublishedPassIds, passId, kInvalidPassId);
       }
     }
     for (const PassId passId : box.appliedPassIds) {
       if (!isRecordPassId(passes, passId)) {
-        appendUniquePassId(unpublishedPassIds, passId);
+        appendUniqueId(unpublishedPassIds, passId, kInvalidPassId);
       }
     }
     if (!isRecordPassId(passes, box.constructionPassId)) {
-      appendUniquePassId(unpublishedPassIds, box.constructionPassId);
+      appendUniqueId(unpublishedPassIds, box.constructionPassId, kInvalidPassId);
     }
     // A wrapped pass is tracked as a wrap journal, not as a queued pass: the wrap
     // commit journals it (`queueOverdubWrapSnapshotJournal`) and the stop's session-exit
@@ -233,12 +209,12 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     // bars, overdub starting at bar 3; pass 1 inaudible, the wrapped tail audible).
     for (const PassId passId : box.journaledPassIds) {
       if (!isRecordPassId(passes, passId)) {
-        appendUniquePassId(unpublishedPassIds, passId);
+        appendUniqueId(unpublishedPassIds, passId, kInvalidPassId);
       }
     }
     for (const SnapshotWrapJournalFragment& journal : box.queuedWrapJournals) {
       if (!isRecordPassId(passes, journal.wrapPassId)) {
-        appendUniquePassId(unpublishedPassIds, journal.wrapPassId);
+        appendUniqueId(unpublishedPassIds, journal.wrapPassId, kInvalidPassId);
       }
     }
   }
@@ -250,10 +226,10 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     const SessionExitSnapshotHandoff* receipt = sessionExitReceiptAt(receiptIndex);
     if (receipt == nullptr) continue;
     for (const PassId id : receipt->passIds) {
-      if (!isRecordPassId(passes, id)) appendUniquePassId(unpublishedPassIds, id);
+      if (!isRecordPassId(passes, id)) appendUniqueId(unpublishedPassIds, id, kInvalidPassId);
     }
     if (!isRecordPassId(passes, receipt->lastPassId))
-      appendUniquePassId(unpublishedPassIds, receipt->lastPassId);
+      appendUniqueId(unpublishedPassIds, receipt->lastPassId, kInvalidPassId);
   }
 
   std::vector<const CommittedChunkIdList*> unpublishedLists;
@@ -273,13 +249,13 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     for (size_t i = 0; i < overdubSessionCursor_ && i < overdubSessionCompanionIds_.size();
          ++i) {
       for (const EditPassId companionId : overdubSessionCompanionIds_[i]) {
-        appendUniqueEditPassId(unpublishedCompanionIds, companionId);
+        appendUniqueId(unpublishedCompanionIds, companionId, kInvalidEditPassId);
       }
     }
   }
   if (pendingSnapshotPublishBox_) {
     for (const EditPassId companionId : pendingSnapshotPublishBox_->companionIds) {
-      appendUniqueEditPassId(unpublishedCompanionIds, companionId);
+      appendUniqueId(unpublishedCompanionIds, companionId, kInvalidEditPassId);
     }
   }
 
@@ -289,7 +265,7 @@ LOOP_COLD_MEM bool Loop::tryGatherPublishedSnapshotEventsInWindow(
     const size_t rows = std::min(receipt->companionRowCount, receipt->companionIds.size());
     for (size_t i = 0; i < rows; ++i) {
       for (const EditPassId id : receipt->companionIds[i])
-        appendUniqueEditPassId(unpublishedCompanionIds, id);
+        appendUniqueId(unpublishedCompanionIds, id, kInvalidEditPassId);
     }
   }
 

@@ -92,6 +92,12 @@ LOOP_COLD_MEM void Loop::clearPublishedSnapshot() {
   clearPendingSnapshotPublish();
 }
 
+LOOP_COLD_MEM void Loop::ensurePendingSnapshotPublishBox() {
+  if (!pendingSnapshotPublishBox_) {
+    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  }
+}
+
 LOOP_COLD_MEM void Loop::clearPendingSnapshotPublish() {
   ++pendingSnapshotCompanionGeneration_;
   if (pendingSnapshotPublishBox_ && preparedCompanionHistory_.companionCapacity != 0) {

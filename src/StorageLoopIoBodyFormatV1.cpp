@@ -203,7 +203,7 @@ bool gatherLoopSnapshotPayload(const LoopSnapshot& snapshot,
   }
 
   const uint32_t barCount =
-      (loopLengthTicks + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+      LoopEventStoreConfig::barCount(loopLengthTicks);
   std::map<NoteId, Lsv1GatheredNote> notesById;
   std::map<EventId, Lsv1GatheredEvent> eventsById;
 
@@ -1187,7 +1187,7 @@ LSV1_SAVE_STEP_MEM void beginLoopSnapshotBodyFormatV1SaveGatherImpl(
     scratch.writeState.barCount = 0;
   } else {
     scratch.writeState.barCount =
-        (scratch.payload.loopLengthTicks + Config::TICKS_PER_BAR - 1u) / Config::TICKS_PER_BAR;
+        LoopEventStoreConfig::barCount(scratch.payload.loopLengthTicks);
   }
   scratch.writeState.phase = LoopSnapshotBodyFormatV1SaveWriteState::Phase::GatherNotePage;
 #if defined(SESSION_CAPTURE)

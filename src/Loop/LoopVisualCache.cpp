@@ -34,10 +34,8 @@
 namespace {
 
 uint32_t totalVisualBarsForLoop(uint32_t loopLengthTicks) {
-  if (loopLengthTicks == 0) {
-    return 0;
-  }
-  return (loopLengthTicks + Config::TICKS_PER_BAR - 1) / Config::TICKS_PER_BAR;
+  // `barCount` already maps zero ticks to zero bars.
+  return LoopEventStoreConfig::barCount(loopLengthTicks);
 }
 
 bool containsEditPassId(const EditPassIdList& ids, EditPassId id) {
