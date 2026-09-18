@@ -2741,6 +2741,42 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the GUS recorded only the last pass of an overdub session, so one undo removed a
+partial overdub; fixed (`successor-capture-reentry-unguarding` 8.1, DEC-068 follow-up).** The user
+report: *the GUS is setup wrong — it undoes the last wrapped overdub pass, not the entire overdub
+session (all overdub passes)*.
+
+Root cause, localised with a deferred-stop reproducer: `Loop::captureSessionExitTail` runs at the
+deferred stop **admission** and swaps this interval's wrap identities out of the shared loop
+(`overdubSessionPassIds_` / `overdubSessionCompanionIds_`) into its own session-exit receipt, so a
+successor opens a clean session (DEC-068). The deferred **undo** collection, however, read the live
+session lists at its later `UndoCollection` phase — by then they are empty and may belong to a
+successor — so `collectOverdubSessionUndoPasses` contributed nothing and the entry carried only the
+final pass appended by `includeFinalPass`. The native reproducer showed it directly:
+`limit=0 passCount=1 entryPassIds=0`, i.e. the wrap pass was never in the entry, and
+`appendOverdubCapturePassIds` therefore returned one id.
+
+Fix: the deferred Pass/Companions phases now read the interval's own **session-exit receipt**.
+`Loop::SessionUndoCollection` gains index-aligned receipt source pointers plus the bound
+`receiptIdentity`, which also replaces the live `overdubSessionUndoGeneration_` guard in
+`stepCollectOverdubSessionUndoPasses` / `collectedOverdubSessionUndoPassesCurrent` (a successor
+opening its session must not deny the predecessor's own collection).
+`beginCollectOverdubSessionUndoPasses` takes an optional receipt source;
+`beginCollectOverdubStopUndoPasses` takes the receipt ring index (default
+`kInvalidSessionExitReceipt` keeps the live-session source for existing callers); and
+`Track::stepDeferredUndoCollection` passes `job.admission.sessionExitReceiptRing`. The deferred route
+also now emits the same `#CAP,DIAG,gus,…` row as the synchronous route (with `src=deferred`), so the
+entry's pass count is device-visible.
+
+Evidence. New native fixture `test_deferred_stop_undo_entry_carries_every_session_pass`
+(`test_continuous_capture`) drives a wrapping overdub through the deferred stop and asserts the
+published entry carries the wrap pass and the final pass, and that `appendOverdubCapturePassIds`
+yields both; it fails without the fix (`Expected 2 Was 0`). `test_continuous_capture` 75/75; full
+native **2,241 cases / 1 skipped / 0 failures** (was 2,240); `pio run -e teensy41-capture-serial`
+SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488 / **locals 6,400** unchanged.
+Device gate pending (awaiting a board that enumerates; the previous session's board dropped off USB
+and needs a PROGRAM-button reconnect).
+
 **2026-09-18 — the 5.8 undo/redo fix made playback correct but left the OLED painting the undone
 overdub; fixed (`immutable-loop-snapshot-passes` 5.8a).** The regression is the display half of the
 same defect family, and it was *introduced into view* by 5.8: once playback correctly stops emitting
