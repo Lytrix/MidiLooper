@@ -13,10 +13,6 @@ enum class SyncDrainFailureReason : uint8_t {
   None = 0,
   Stuck,
   ExceededSliceBudget,
-  /// A save was owed (`currentWorkspaceSave.pending`) but no work item could be admitted to carry
-  /// it, so the drain has nothing to step. Terminal and immediate: spinning the full stuck budget
-  /// on a state that cannot change only hides the cause. See `admitWork`'s fixed-table exhaustion.
-  AdmissionRefused,
 };
 
 /// Upper-bound sync drain budget derived from queued SD work (not a fixed step cap).
