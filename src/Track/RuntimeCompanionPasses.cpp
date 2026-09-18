@@ -69,7 +69,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::valid() const {
   return sourceIdentityMatches() &&
          (!inputOwner_ || (inputOwner_->generation() == inputGeneration_ && inputOwner_->ready() &&
-                          inputOwner_->normalizedScratchMatches(*this, generation_))) &&
+                          inputOwner_->mergedScratchMatches(*this, generation_))) &&
          (!rowOwner_ || (rowOwner_->preparationGeneration() == rowGeneration_ &&
                         inputOwner_ && inputOwner_->frozenCapture() &&
                         rowOwner_->ready(*inputOwner_->frozenCapture()))) &&
@@ -82,7 +82,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
   if (!inputs.ready() || inputs.loopLength() != loopLength) return false;
   if (!begin(apply, work, inputs.data(), inputs.passCount(), rows, rowCount, source, loopLength)) return false;
   inputOwner_ = &inputs; inputGeneration_ = inputs.generation();
-  inputs.claimNormalizedScratch(*this, generation_); return true;
+  inputs.claimMergedScratch(*this, generation_); return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::ready(const PlaybackViewSourceIdentity& source) const {
   return phase_ == Phase::Complete && valid() && source == expected_;
@@ -100,10 +100,10 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
   if (!begin(apply, work, inputs, rows.data(capture->frozenGeneration), rows.size(), source, loopLength)) return false;
   rowOwner_ = &rows; rowGeneration_ = rows.preparationGeneration(); return true;
 }
-NOTE_EDIT_MEM bool RuntimeCompanionPasses::normalizationMatches(
+NOTE_EDIT_MEM bool RuntimeCompanionPasses::mergedMatches(
     const RuntimeCanonicalPassInputs& inputs, const PlaybackViewSourceIdentity& committed) const {
   return phase_ == Phase::Complete && inputOwner_ == &inputs &&
-      inputGeneration_ == inputs.generation() && inputs.normalizedScratchMatches(*this, generation_) &&
+      inputGeneration_ == inputs.generation() && inputs.mergedScratchMatches(*this, generation_) &&
       expected_.playbackRevision == committed.playbackRevision &&
       expected_.sourceGeneration == committed.sourceGeneration;
 }
@@ -136,8 +136,8 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionPasses::step(size_
     }
     if (rowCount_ == 0) {
       if (input.count > capacity_ - count_) return deny();
-      if (inputOwner_) inputOwner_->normalizedDescriptors()[pass_] =
-          {inputOwner_->normalizedScratch() + count_, input.count};
+      if (inputOwner_) inputOwner_->mergedDescriptors()[pass_] =
+          {inputOwner_->mergedScratch() + count_, input.count};
       left_ = right_ = output_ = 0; phase_ = Phase::Merge;
       return RuntimePlaybackOrderBuildResult::Pending;
     }
@@ -152,8 +152,8 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionPasses::step(size_
     if (result == RuntimePlaybackOrderBuildResult::Denied) return deny();
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
       if (apply_->size() > capacity_ - count_) return deny();
-      if (inputOwner_) inputOwner_->normalizedDescriptors()[pass_] =
-          {inputOwner_->normalizedScratch() + count_, apply_->size()};
+      if (inputOwner_) inputOwner_->mergedDescriptors()[pass_] =
+          {inputOwner_->mergedScratch() + count_, apply_->size()};
       left_ = right_ = output_ = 0; phase_ = Phase::Merge;
     }
   } else if (phase_ == Phase::Merge) {
@@ -171,7 +171,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionPasses::step(size_
         origins_[1-current_][output_] = origins_[current_][left_++];
       } else {
         events_[1-current_][output_] = addition[right_];
-        if (inputOwner_) inputOwner_->normalizedScratch()[count_ + right_] = addition[right_];
+        if (inputOwner_) inputOwner_->mergedScratch()[count_ + right_] = addition[right_];
         const uint32_t origin = provenance ? provenance[right_] : static_cast<uint32_t>(right_);
         ++right_;
         origins_[1-current_][output_] = {static_cast<uint16_t>(pass_),

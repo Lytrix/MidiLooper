@@ -1779,10 +1779,10 @@ void test_normalization_scratch_receipt_rejects_superseded_builder() {
   auto result = RuntimePlaybackOrderBuildResult::Pending;
   for (unsigned i = 0; i < 100 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = second.step(1);
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
-  TEST_ASSERT_FALSE(first.normalizationMatches(runtime.canonicalPassInputs, source));
-  TEST_ASSERT_TRUE(second.normalizationMatches(runtime.canonicalPassInputs, source));
+  TEST_ASSERT_FALSE(first.mergedMatches(runtime.canonicalPassInputs, source));
+  TEST_ASSERT_TRUE(second.mergedMatches(runtime.canonicalPassInputs, source));
   second.discard();
-  TEST_ASSERT_FALSE(second.normalizationMatches(runtime.canonicalPassInputs, source));
+  TEST_ASSERT_FALSE(second.mergedMatches(runtime.canonicalPassInputs, source));
 }
 
 void test_continuous_prefix_reuses_snapshot_identity_refresh() {
@@ -3178,7 +3178,7 @@ void test_track_prepared_stop_publishes_matching_canonical_and_audible_sources()
     loop.openOverdubSession(100);
     TEST_ASSERT_TRUE(loop.prewarmSessionExitSnapshotHandoff());
     stop.historyRecycleOwner = nullptr;
-    const size_t retainedNormalizedPasses = runtime.frozenCompanionPasses.normalizedPassCount();
+    const size_t retainedNormalizedPasses = runtime.frozenCompanionPasses.mergedPassCount();
     TEST_ASSERT_TRUE(TrackPreparedStopCommit::completeDeferredCleanup(loop, runtime, stop, stopCleanupPreview, true));
     TEST_ASSERT_EQUAL_UINT32(retainedNormalizedPasses, runtime.canonicalPassInputs.completedPassCount());
     TEST_ASSERT_FALSE(runtime.canonicalPassInputs.captureAttached());

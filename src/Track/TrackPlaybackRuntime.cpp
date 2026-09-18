@@ -908,7 +908,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::retainCommittedCanonic
   const auto live = *owner;
   const auto previous = canonicalPrefixSource;
   canonicalPrefixSource = source;
-  if (!canonicalPassInputs.adoptCommittedNormalization(loop.passes, canonicalPrefixSource,
+  if (!canonicalPassInputs.adoptCommittedMerge(loop.passes, canonicalPrefixSource,
                                                       live, frozenCompanionPasses)) {
     canonicalPrefixSource = previous; return false;
   }

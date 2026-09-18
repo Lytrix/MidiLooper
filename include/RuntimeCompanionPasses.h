@@ -52,10 +52,10 @@ class RuntimeCompanionPasses {
   size_t size() const;
   // A completed result may be adopted only by its original canonical owner
   // after the matching source transaction committed. No stale data() access.
-  bool normalizationMatches(const RuntimeCanonicalPassInputs& inputs,
+  bool mergedMatches(const RuntimeCanonicalPassInputs& inputs,
                             const PlaybackViewSourceIdentity& committed) const;
-  size_t normalizedEventCount() const { return count_; }
-  size_t normalizedPassCount() const { return passCount_; }
+  size_t mergedEventCount() const { return count_; }
+  size_t mergedPassCount() const { return passCount_; }
   void discard();
   uint64_t generation() const { return generation_; }
   const MidiEvent* inputEvent(Origin origin) const;

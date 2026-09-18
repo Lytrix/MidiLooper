@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-077](#dec-077--window-is-the-canonical-name-for-the-playback-derived-representation) | 2026-09-18 | **window** is the canonical name for the playback derived representation | Accepted — recorded by `runtime-code-tidyup` task 5.1 (OD-1); no rename |
 | [DEC-076](#dec-076--snapshot-idleunit-instrumentation-stays-on-the-broad-session_capture-gate) | 2026-09-18 | Snapshot idle/unit instrumentation stays on the broad `SESSION_CAPTURE` gate | Accepted — recorded by `runtime-code-tidyup`; gate unchanged |
 | [DEC-075](#dec-075--the-snapshot-publication-boundary-admits-memory-per-construction-turn-and-parks-on-allocation-failure) | 2026-09-18 | The snapshot publication boundary admits memory per construction turn and parks on allocation failure | Accepted — implemented; native 2249 / 1 skipped / 0 failures, RAM1 unchanged; device gate owed |
 | [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented and device-verified (settled LSV1 save path, `q=0` publishes, post-reboot `storage_matches_effective`); native reproducer red→green; RAM1 allowance restored |
@@ -89,6 +90,32 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ---
 
 <!-- Append new entries below (newest first). Next ID: DEC-076 -->
+
+## DEC-077 — `window` is the canonical name for the playback derived representation
+
+**Date:** 2026-09-18
+**Status:** Accepted — user decision, recorded by [`runtime-code-tidyup`](changes/runtime-code-tidyup/proposal.md)
+task 5.1 (OD-1). **No rename in this change.**
+**Owner:** the playback derived representation and its consumers - `include/RuntimePlaybackView.h`
+(`RuntimePlaybackView*`, `FixedPlaybackEventStorage`, `RuntimePlaybackViewConfig`), `RuntimePlaybackBridge*`,
+`RuntimePlaybackOrderBuilder`, and the windowed gather in `src/Loop/LoopSnapshotPlayback.cpp`.
+
+**Context.** NAMING.md lists `view` under the words to avoid in new names, while the playback subsystem
+added ~25 `*View*` identifiers on `feature/resumable-midi-boundary-playback-maintenance` and used "window"
+~20 times for the same object. The tie-breaker was that `RuntimePlaybackView` already appears in DEC-067's
+capacity table, so a rename would be a rename-only commit, which the naming authority forbids.
+
+**Decision.** **`window` is canonical** for this representation; `view` is not a synonym to be extended.
+Existing `RuntimePlaybackView*` names are grandfathered and converge on touch; new names say **window**, or
+name the specific concept (`FixedPlaybackEventStorage`, `PlaybackCoverageInterval`) rather than minting
+another `*View`. A NAMING.md clause records this and the two consequences.
+
+**Alternatives rejected.** (a) Declare `view` established and bless the family - leaves the authority
+contradicting its own avoid-list. (b) Rename the family to `*Window*` in this change - a rename-only sweep
+across ~25 identifiers and ~200 references, forbidden by § Migration policy and with no behaviour gain.
+
+**Consequence.** `runtime-code-tidyup` renames nothing for this decision; the clause prevents further
+`*View` drift, and any future touch of these files may converge the names it is already editing.
 
 ## DEC-076 — Snapshot idle/unit instrumentation stays on the broad `SESSION_CAPTURE` gate
 
