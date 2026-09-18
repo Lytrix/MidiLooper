@@ -2790,6 +2790,24 @@ redo=0`, transport STOPPED at the stop press), so it is not evidence either way.
 stored-verification oracle to the pre-undo window so the redo's re-verification drain cannot fail the
 base run, and (for the base PASS) the record's stop-time quantisation slop (8 vs 9 bars).
 
+**Follow-up gap, fixed in `c380c030`.** The user reported the symptom again — *the undo only shows 1
+while there should be 2; undo removes the notes from the display but they are still audible* — which
+is the same partial-undone shape from a path the receipt-sourced collection never sees.
+`beginDeferredOverdubStop` took `captureSessionExitTail` **before** the causal-base, credit,
+raw-range and freeze checks that can still deny admission. When one denied, `stopOverdubbing` fell
+back to the synchronous commit, whose `pushOverdubSessionOnStop` read the now-empty live session and
+recorded only the final pass. The tail capture now runs once admission is committed (just before
+`Reentry window open`, so a successor still cannot observe the shared session); an invalid ring is no
+longer a post-transfer denial — it logs `session_exit_tail_denied` and the deferred commit uses the
+legacy one-shot handoff. Device `captures/gus-undo-03` (managed `base`, firmware `7708d605…` from
+`c380c030`, git clean) is a clean **`Result: PASS`** — **`MIDI: Undo (entries=2)`** (the depth the
+report expected), `#CAP,65963077,DIAG,gus,slot,kind=1,passId=3,passIds_n=2,src=deferred`, and
+**`DISP across undo/redo: before=194 after_undo=128 after_redo=192`** (one undo removes the whole
+overdub, the redo restores it), with `stored overdub span 64/63 count_ok/span_ok/bars_ok` and 0
+`RING,overflow`. Full native 2,241 / 1 skipped / 0 failures; RAM1 locals 6,400 unchanged. If a run
+still shows a one-pass entry, capture the `DIAG,gus` row's `src` (`deferred` = the collection path;
+absent = the synchronous fallback) and `MIDI: Undo (entries=…)`.
+
 **2026-09-18 — the 5.8 undo/redo fix made playback correct but left the OLED painting the undone
 overdub; fixed (`immutable-loop-snapshot-passes` 5.8a).** The regression is the display half of the
 same defect family, and it was *introduced into view* by 5.8: once playback correctly stops emitting
