@@ -109,36 +109,6 @@ uint16_t allocateEntryIndex(QueueState& state) {
   return kInvalidEntryIndex;
 }
 
-/// Reclaim a terminal entry so a full table can still accept new work.
-///
-/// A `Persisted` entry is a tombstone: `markItemPersisted` is its only writer, no production code
-/// reads it (`workState` has no consumers), and `visitScheduledWorkItems` deliberately skips it. Its
-/// one remaining use is `admitWork`'s re-queue shortcut, and a fresh admission reproduces that
-/// exactly -- the entry is re-created from the same `(type, key)`. Reclaiming a tombstone is
-/// therefore lossless, while leaving it costs admission for every later key.
-///
-/// Why it matters: no path ever returns an entry to `NotScheduled`, and `LoopPersist` is keyed by
-/// `LoopId`, which is fresh for each new loop, so one clear/record cycle permanently consumes one of
-/// the 256 slots. Once the table is exhausted, `admitWork` fails for every key -- including
-/// `FinalizeWorkspace` -- while `currentWorkspaceSave.pending` stays set, so the blocking `saveState`
-/// drain has nothing to step, spins its whole stuck budget and fails
-/// (`Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)`,
-/// 2026-09-18), and the firmware refuses CLEAR for the rest of that device generation.
-///
-/// Any tombstone will do, so this takes the first: adding an admission-order field to pick the
-/// oldest cost 1 KB of `QueueState` and snapped 4 KB off the RAM1 local allowance, and the choice
-/// cannot be observed -- a reclaimed key is re-admitted as a fresh entry either way.
-uint16_t reclaimTerminalEntry(QueueState& state) {
-  for (uint16_t i = 0; i < kMaxWorkEntries; ++i) {
-    if (state.entries[i].state == PersistWorkState::Persisted) {
-      state.entries[i].state = PersistWorkState::NotScheduled;
-      state.entries[i].item = PersistWorkItem{};
-      return i;
-    }
-  }
-  return kInvalidEntryIndex;
-}
-
 uint16_t countQueued(const QueueState& state) {
   uint16_t count = 0;
   for (uint16_t i = 0; i < kMaxWorkEntries; ++i) {
@@ -243,12 +213,6 @@ bool admitWork(PersistWorkType type, PersistKey key) {
   }
 
   entryIndex = allocateEntryIndex(*state);
-  if (entryIndex == kInvalidEntryIndex) {
-    // The fixed table is monotonic (no entry is ever freed), so a long session can exhaust it. A
-    // terminal tombstone is the only entry safe to reclaim; without this every later admission --
-    // finalize included -- fails while a save is owed. See `reclaimTerminalEntry`.
-    entryIndex = reclaimTerminalEntry(*state);
-  }
   if (entryIndex == kInvalidEntryIndex) {
     return false;
   }
