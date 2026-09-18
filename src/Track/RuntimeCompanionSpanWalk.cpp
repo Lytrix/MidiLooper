@@ -34,7 +34,7 @@ NOTE_EDIT_MEM void RuntimeCompanionSpanWalk::discard() {
 NOTE_EDIT_MEM bool RuntimeCompanionSpanWalk::begin(
     RuntimeNotePairLookup& wrapLookup, const MidiEvent* events, size_t count,
     uint8_t pitch, uint32_t loopLength, const uint8_t* retainedRows) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) || flags_ == nullptr ||
+  if (!available() || flags_ == nullptr ||
       !wrapLookup.available() || count > capacity_ || (events == nullptr && count != 0) ||
       loopLength == 0 || loopLength > INT32_MAX || pitch >= 128) return false;
   discard();

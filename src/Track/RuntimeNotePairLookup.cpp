@@ -46,7 +46,7 @@ NOTE_PAIR_MEM void RuntimeNotePairLookup::discard() {
 
 NOTE_PAIR_MEM bool RuntimeNotePairLookup::begin(const MidiEvent* events, size_t count,
                                                size_t targetOn, const uint8_t* retained) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) || lane_ == nullptr || events == nullptr ||
+  if (!available() || lane_ == nullptr || events == nullptr ||
       count > capacity_ || targetOn >= count || !events[targetOn].isNoteOn() ||
       (retained != nullptr && retained[targetOn] == 0)) return false;
   discard();
@@ -252,7 +252,7 @@ NOTE_PAIR_MEM RuntimePlaybackOrderBuildResult RuntimeNotePairLookup::step(size_t
 NOTE_PAIR_MEM bool RuntimeNoteDeleteLookup::begin(
     RuntimeNotePairLookup& pairLookup, const MidiEvent* events, size_t count,
     NoteId noteId, uint32_t loopLength, const uint8_t* retained) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) ||
+  if (!available() ||
       !pairLookup.available() || (events == nullptr && count != 0) ||
       count > RuntimePlaybackViewConfig::kEventsPerView)
     return false;

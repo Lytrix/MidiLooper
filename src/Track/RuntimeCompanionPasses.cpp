@@ -58,7 +58,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
     RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
     const Pass* passes, size_t passCount, const EditPass* rows, size_t rowCount,
     const PlaybackViewSourceIdentity& source, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       capacity_ == 0 || !apply.available() || (passes == nullptr && passCount != 0) ||
       passCount > RuntimePlaybackViewConfig::kEventsPerView || (rows == nullptr && rowCount != 0) ||
       rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge || loopLength == 0) return false;
@@ -67,7 +67,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
   phase_ = passCount == 0 ? Phase::Complete : Phase::Start; return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::valid() const {
-  return source_ != nullptr && *source_ == expected_ &&
+  return sourceIdentityMatches() &&
          (!inputOwner_ || (inputOwner_->generation() == inputGeneration_ && inputOwner_->ready() &&
                           inputOwner_->normalizedScratchMatches(*this, generation_))) &&
          (!rowOwner_ || (rowOwner_->preparationGeneration() == rowGeneration_ &&

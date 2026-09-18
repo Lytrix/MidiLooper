@@ -68,7 +68,7 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::begin(
     RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
     const SealedPass* passes, size_t passCount, const EditPass* history, size_t rowCount,
     const PlaybackViewSourceIdentity& source, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       !capacity_ || passCount > capacity_ || (!passes && passCount) ||
       (!history && rowCount) || rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge ||
       !apply.available() || !loopLength) return false;
@@ -78,7 +78,7 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::begin(
   return true;
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::valid(bool checkCommandEpoch) const {
-  return source_ && *source_ == expected_ &&
+  return sourceIdentityMatches() &&
       (!preparedCaptureOrder_ || preparedCaptureOrder_->storageGeneration == preparedCaptureOrderGeneration_) &&
       (!current_ || (current_->playbackRevision == expected_.playbackRevision &&
                      current_->sourceGeneration == expected_.sourceGeneration &&

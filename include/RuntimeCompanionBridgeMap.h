@@ -71,6 +71,16 @@ class RuntimeCompanionBridgeMap {
   PlaybackViewSourceIdentity source_;
   uint64_t generation_ = 0, mapGeneration_ = 0;
   Phase phase_ = Phase::Idle;
+  /// Admission predicate: may `begin*()` be called now? This worker treats a denied run as
+  /// restartable, so Denied is admitted as well - unlike the workers whose Denied is terminal.
+  bool available() const {
+    return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied;
+  }
+  /// True when `begin*()` captured this class's own expected source identity. BridgeMap binds the
+  /// base by pointer (`baseIdentity_`) and the source by value, so both must agree.
+  bool sourceIdentityMatches() const {
+    return baseIdentity_ != nullptr && *baseIdentity_ == source_;
+  }
   bool valid() const;
   bool append(PlaybackBridgeOperation op, uint32_t origin, const MidiEvent& event, uint16_t rank);
   RuntimePlaybackOrderBuildResult deny();
