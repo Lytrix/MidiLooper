@@ -2741,6 +2741,37 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the fixed boot stores are now measured, and the overdub-start denial behind "cannot activate overdub
+on a 24-bar loop" is diagnosed (`immutable-loop-snapshot-passes` 5.11, RC-MEM-5/-MEM-6).** Two measurements re-rank
+the remaining work, both taken before changing anything.
+
+*The chunk pool is ~33 % used at its observed peak.* Across every capture on this device the `[Memory] ext`
+`chunks_free` minimum is **345** (`captures/bar-anchor-08`/`-09`), i.e. the worst observed occupancy of the
+512-chunk pool is **167 chunks = 837 KB** of a **2,566 KB** reservation; the next worst are 164, 158, 152, 151 and
+150. So at least **1,729 KB of the pool has never been reached in any captured run**. Recorded as RC-MEM-5 with the
+recommended form: **grow on demand, do not lower the ceiling** -- keep `POOL_CHUNK_COUNT` 512 as the admission
+ceiling and allocate the `EventChunk` array in blocks (64 chunks = 328 KB) on the first id that lands in each block,
+so a 167-chunk peak backs ~3 blocks instead of 8. The flat id space must stay intact (chunk ids cross
+`PersistenceQueue::onChunkFreed`, the committed chunk-id lists and the storage I/O format), so this is a block table
+plus one `chunkAt(id)` accessor behind the 31 `pool_[...]` sites in `src/LoopEventStore.cpp`, with the
+`poolUsed_`/`poolLifecycle_`/`poolChunkRefCount_` arrays staying flat. A lower fixed ceiling is explicitly *not* the
+fix: 167 is an observation, not a bound.
+
+*The admission gate is self-blinding once the heap floor binds.* Found in the RC-MEM-2 A/B and recorded as
+RC-MEM-6: at the steady state the internal heap sat at **44 KB free for ~100 s**, so `OverdubStart` (required 16 KB
++ 32 KB floor = 48 KB) and `SnapshotReserve` (40 KB + 32 KB = 72 KB) were denied while `pool_refused=0/0B`
+throughout (129 + 4 denials in one 150 s run, `since_refusal=UINT32_MAX`). **Because the gate denies before the
+request reaches the pool, the pool-refusal signal the same gate consults can never fire**, so "pool is fine" and the
+heap-floor denial coexist indefinitely. The device is at a genuine ceiling (pool `live` ~8.27 MB), so the denial is
+not wrong; the recovery path is. Fix direction is footprint, not gate policy: RC-MEM-5 and RC-MEM-1R are the unblock
+(pool headroom stops the `ExternalMemoryFirstAllocator` -> `std::malloc` fallback that put RAM2 at 44 KB), plus giving
+the gate a *measured* floor derived from the heap high-water admitted operations actually consume -- the same
+evidence-based shape as `companionRowHorizonBound` -- rather than a constant that can wedge a session. Lowering the
+constant without that measurement is not acceptable: it exists to keep the `abort()`-on-exhaustion path unreachable
+(DEC-075's defect class).
+
+Both are recorded, not implemented; the next change is a choice between them.
+
 **2026-09-18 — RC-MEM-2 landed: a long-loop slot no longer reserves the whole-take playback bundle it can never
 publish (`immutable-loop-snapshot-passes` 5.11).** The invariant is now enforced by one owner answer rather than
 implied by two independent decisions: *a playback-view owner may reserve capacity only for a representation that can
