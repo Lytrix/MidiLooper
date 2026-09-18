@@ -4093,7 +4093,7 @@ struct PerPassBridgeFixture {
     TEST_ASSERT_TRUE(base.prewarm(2048));
     RuntimePlaybackViewFill fill;
     TEST_ASSERT_TRUE(fill.begin(base, preparation, baselineSource, coverage, {}, {},
-                                RuntimePlaybackViewFillScope::PlaybackCoverage));
+                                RuntimePlaybackViewFillCoverage::PlaybackCoverage));
     auto fillResult = RuntimePlaybackViewFillResult::Pending;
     for (size_t turn = 0; turn < 4096 && fillResult == RuntimePlaybackViewFillResult::Pending; ++turn)
       fillResult = fill.step(1);
@@ -6031,7 +6031,7 @@ void test_shared_window_fill_filters_before_capacity_and_preserves_loop_end_orde
   RuntimePlaybackView view; TEST_ASSERT_TRUE(view.prewarm(3));
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(view, events, 5, {1, 1, nullptr}, {0, 768, 1536}, {}, {},
-                              RuntimePlaybackViewFillScope::PlaybackCoverage));
+                              RuntimePlaybackViewFillCoverage::PlaybackCoverage));
   for (unsigned i = 0; i < 5; ++i) {
     TEST_ASSERT_FALSE(view.complete);
     const auto next = build.stepFill(1);
@@ -6053,7 +6053,7 @@ void test_shared_window_fill_scans_wide_source_with_bounded_quantum() {
   RuntimePlaybackView view; TEST_ASSERT_TRUE(view.prewarm(2));
   RuntimePlaybackViewFill fill;
   TEST_ASSERT_TRUE(fill.begin(view, source.data(), source.size(), {1, 1, nullptr},
-      {0, 768, 1536}, {}, {}, RuntimePlaybackViewFillScope::PlaybackCoverage));
+      {0, 768, 1536}, {}, {}, RuntimePlaybackViewFillCoverage::PlaybackCoverage));
   for (unsigned i = 0; i < 2048; ++i) {
     TEST_ASSERT_EQUAL(RuntimePlaybackViewFillResult::Pending, fill.step(32));
     TEST_ASSERT_EQUAL_UINT32(0, view.storage.eventCount);
@@ -6072,14 +6072,14 @@ void test_shared_window_fill_wraps_coverage_and_denies_matching_overflow() {
   RuntimePlaybackView view; TEST_ASSERT_TRUE(view.prewarm(2));
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(view, events, 4, {1, 1, nullptr}, {1400, 272, 1536}, {}, {},
-                              RuntimePlaybackViewFillScope::PlaybackCoverage));
+                              RuntimePlaybackViewFillCoverage::PlaybackCoverage));
   TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Denied, build.stepFill(4));
   TEST_ASSERT_FALSE(view.sourceFilled); TEST_ASSERT_FALSE(view.complete); TEST_ASSERT_FALSE(view.published);
   TEST_ASSERT_EQUAL_UINT32(2, view.storage.eventCount);
   // The owner can discard the denied candidate and prepare a different window.
   build.discard();
   TEST_ASSERT_TRUE(build.begin(view, events, 4, {2, 2, nullptr}, {768, 768, 1536}, {}, {},
-                              RuntimePlaybackViewFillScope::PlaybackCoverage));
+                              RuntimePlaybackViewFillCoverage::PlaybackCoverage));
   build.stepFill(4);
   while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
   TEST_ASSERT_TRUE(view.complete);
@@ -6090,7 +6090,7 @@ static void buildSharedTestBar(RuntimePlaybackView& view, uint32_t bar) {
   const MidiEvent event = MidiEvent::NoteOn(bar * 768 + 32, 1, 60, 90);
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(view, &event, 1, {1, 1, nullptr},
-      {bar * 768, 768, 16 * 768}, {}, {}, RuntimePlaybackViewFillScope::PlaybackCoverage));
+      {bar * 768, 768, 16 * 768}, {}, {}, RuntimePlaybackViewFillCoverage::PlaybackCoverage));
   build.stepFill(1);
   while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
   TEST_ASSERT_TRUE(view.complete);
@@ -6406,7 +6406,7 @@ void test_shared_raw_window_binds_final_geometry_without_modulo_or_reordering() 
   TEST_ASSERT_TRUE(view.prewarm(4)); TEST_ASSERT_TRUE(oracle.prewarm(4));
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(view, source, 4, {1, 1, nullptr}, {0, 768, 0}, {}, {},
-                              RuntimePlaybackViewFillScope::RawCoverage));
+                              RuntimePlaybackViewFillCoverage::RawCoverage));
   TEST_ASSERT_FALSE(view.bindRawCoverage(1536));
   build.stepFill(4);
   while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
@@ -6420,7 +6420,7 @@ void test_shared_raw_window_binds_final_geometry_without_modulo_or_reordering() 
   TEST_ASSERT_EQUAL_PTR(events, view.storage.events);
   RuntimePlaybackViewBuild reference;
   TEST_ASSERT_TRUE(reference.begin(oracle, source, 4, {1, 1, nullptr}, {0, 768, 1536}, {}, {},
-                                  RuntimePlaybackViewFillScope::PlaybackCoverage));
+                                  RuntimePlaybackViewFillCoverage::PlaybackCoverage));
   reference.stepFill(4);
   while (reference.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) reference.stepOrder(1);
   TEST_ASSERT_EQUAL_UINT32(3, view.storage.eventCount);
@@ -6438,7 +6438,7 @@ void test_shared_raw_window_cannot_become_audible_before_binding() {
   auto& ready = set.views[life.ready];
   RuntimePlaybackViewBuild build;
   TEST_ASSERT_TRUE(build.begin(ready, nullptr, 0, {1, 1, nullptr}, {0, 768, 0}, {}, {},
-                              RuntimePlaybackViewFillScope::RawCoverage));
+                              RuntimePlaybackViewFillCoverage::RawCoverage));
   TEST_ASSERT_EQUAL(RuntimePlaybackViewBuild::Grain::Complete, build.stepFill(1));
   TEST_ASSERT_TRUE(ready.complete);
   TEST_ASSERT_FALSE(set.handoffReadyCoverage());
@@ -6453,7 +6453,7 @@ void test_shared_raw_preparation_rotates_then_returns_only_after_final_binding()
     const MidiEvent event = MidiEvent::NoteOn(bar * 768 + 32, 1, 60, 90);
     RuntimePlaybackViewBuild build;
     TEST_ASSERT_TRUE(build.begin(set.views[index], &event, 1, {1, 1, nullptr},
-        {bar * 768, 768, 0}, {}, {}, RuntimePlaybackViewFillScope::RawCoverage));
+        {bar * 768, 768, 0}, {}, {}, RuntimePlaybackViewFillCoverage::RawCoverage));
     build.stepFill(1);
     while (build.nextGrain() == RuntimePlaybackViewBuild::Grain::Order) build.stepOrder(1);
     TEST_ASSERT_TRUE(set.views[index].complete);

@@ -393,16 +393,16 @@ land; the P3 work is committed in sub-commits so each is independently bisectabl
 - [x] 5.2 Rename `normalized*` → `merged*` (NAMING's term for the merged working view) **only** in files P1–P3 already
   touched: `include/RuntimeCanonicalPassInputs.h:77-85`, `include/RuntimeCompanionPasses.h:47-50` and the
   `adoptCommittedNormalization` call site. Verify: native suite passes; `normalize` no longer names a merged buffer.
-- [ ] 5.3 Rename the four `*Kind` enums to `*Type` (`SnapshotChangeKind`, `RuntimeCompanionApply::Kind`, `ActionKind`, `RefreshKind`)
+- [x] 5.3 Rename the four `*Kind` enums to `*Type` (`SnapshotChangeKind`, `RuntimeCompanionApply::Kind`, `ActionKind`, `RefreshKind`)
   per NAMING rule 6. Verify: compiles; no other `Kind` enum introduced; native suite passes.
-- [ ] 5.4 Fix abbreviations and scope-collisions in touched files: `SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader`;
+- [x] 5.4 Fix abbreviations and scope-collisions in touched files: `SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader`;
   `RuntimePlaybackViewFillScope` → `…FillCoverage`; the prohibited "lane" comment at
   `include/RuntimePlaybackView.h:405`. Verify: grep shows the old spellings gone from touched files only.
 - [ ] 5.5 Fix ownership-attribution naming with comments/renames, not moves: note the declaring headers at the top of
   `src/Track/TrackUndoRetirement.cpp` (or rename the TU to its declaring owners), give `RuntimeNoteDeleteLookup` its own
   TU/prefix per NAMING's file-per-owner rule, and align `retire`/`release` prose on the identifier's verb. Verify: each
   file's name or header comment matches what it defines; native suite passes.
-- [ ] 5.6 Record OD-3 as a comment: either wire `playheadPhaseTick` in the note-side `applySoonestBar`
+- [x] 5.6 Record OD-3 as a comment: either wire `playheadPhaseTick` in the note-side `applySoonestBar`
   (`src/Loop/LoopSnapshot.cpp:897-898`) or rename it to state that ascending source order is intentional and delete the
   `(void)` cast. **No ordering change** without its own change and HITL evidence. Verify: the `(void)` cast is gone, the
   comment states the contract, native suite passes.
@@ -431,10 +431,19 @@ bar granule).
 Sub-phase gate: native 2,262 / 1 skipped / 2,261 passed; firmware SUCCESS with RAM1 unchanged
 (`code 391736 / padding 1480 / free 34976`).
 
-**Still open in P4:** 5.3 (`*Kind` → `*Type`: `SnapshotChangeKind` 101 refs,
-`RuntimeCompanionApply::Kind` 47, `RefreshKind` 14, `ActionKind` 11), the rest of 5.4
-(`SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader`, `RuntimePlaybackViewFillScope` → `…FillCoverage`),
-5.5 (ownership-attribution naming), 5.6 (OD-3 note-side `applySoonestBar`), and the phase gate 5.7.
+**Second sub-commit (5.3, 5.4, 5.6, part of 5.5):** `*Kind` → `*Type` for the four enums this change
+added (147 token renames plus 27 bare `Kind` uses in the Apply pair); the ~16 **pre-existing** `*Kind`
+enums (`PendingNoteChangeKind` 236 refs, `UndoEntryKind` 192, `NoteEditKind` 164, …) were deliberately
+**not** swept — touching them is the repo-wide rename churn NAMING forbids, so they converge on touch.
+`SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader` and `RuntimePlaybackViewFillScope` →
+`RuntimePlaybackViewFillCoverage` (51 sites). OD-3 is documented in place: the note-side
+`applySoonestBar` now leaves the parameter unnamed with a comment saying its ordering is a deferred
+timing-model change, replacing the `(void)` cast that hid the gap. 5.5 is partly done: the
+`TrackUndoRetirement.cpp` misattribution is fixed with a header comment naming its two declaring headers
+(and why the TU is not renamed: a new/renamed TU defaults into ITCM and needs its own RAM1 measurement);
+moving `RuntimeNoteDeleteLookup` to its own TU and aligning the `retire`/`release` prose are still open.
+
+**Still open in P4:** 5.5's remaining two clauses, and the phase gate 5.7.
 
 ## 6. P5 — split the three files with real ownership seams
 

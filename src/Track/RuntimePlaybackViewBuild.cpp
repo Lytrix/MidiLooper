@@ -14,7 +14,7 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
-    RuntimePlaybackViewFillScope scope) {
+    RuntimePlaybackViewFillCoverage scope) {
   destination_ = nullptr;
   phase_ = Grain::Denied;
   if (!fill_.begin(destination, baseline, sourceIdentity, coverage, cursorAnchor,
@@ -28,7 +28,7 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
     const PlaybackViewSourceIdentity& sourceIdentity, const PlaybackCoverageInterval& coverage,
     const EmissionCursor& cursorAnchor, const LedgerBoundarySummary& ledgerBoundary,
-    RuntimePlaybackViewFillScope scope) {
+    RuntimePlaybackViewFillCoverage scope) {
   destination_ = nullptr;
   phase_ = Grain::Denied;
   if (!fill_.begin(destination, source, sourceCount, sourceIdentity, coverage, cursorAnchor,
@@ -44,7 +44,7 @@ RUNTIME_PLAYBACK_VIEW_BUILD_MEM bool RuntimePlaybackViewBuild::begin(
     RuntimePlaybackView& destination, const RuntimePlaybackViewSource& source,
     const PlaybackViewSourceIdentity& sourceIdentity,
     const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
-    const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillScope scope) {
+    const LedgerBoundarySummary& ledgerBoundary, RuntimePlaybackViewFillCoverage scope) {
   destination_ = nullptr;
   phase_ = Grain::Denied;
   if (!fill_.begin(destination, source, sourceIdentity, coverage, cursorAnchor,

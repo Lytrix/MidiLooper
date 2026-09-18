@@ -153,7 +153,7 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
       return false;
     }
     SnapshotNoteChange change{};
-    change.kind = SnapshotChangeKind::Remove;
+    change.kind = SnapshotChangeType::Remove;
     change.next.loopId = loopId;
     change.next.noteId = row.targetNoteId;
     change.next.pitch = row.pitch;
@@ -178,7 +178,7 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
       return false;
     }
     SnapshotNoteChange change{};
-    change.kind = SnapshotChangeKind::Add;
+    change.kind = SnapshotChangeType::Add;
     change.next = next;
     changes.notes.push_back(change);
     return true;
@@ -192,14 +192,14 @@ LOOP_COLD_MEM bool appendEditRowChange(const LoopSnapshot& parent, const EditPas
         row.targetNoteId == kInvalidNoteId) {
       continue;
     }
-    if (existing.kind == SnapshotChangeKind::Replace ||
-        existing.kind == SnapshotChangeKind::Add) {
+    if (existing.kind == SnapshotChangeType::Replace ||
+        existing.kind == SnapshotChangeType::Add) {
       earlierSameNote = &existing;
     }
   }
 
   SnapshotNoteChange change{};
-  change.kind = SnapshotChangeKind::Replace;
+  change.kind = SnapshotChangeType::Replace;
   if (earlierSameNote != nullptr) {
     // Prior row in this close set already replaced the note (Pitch then
     // NoteRange). Construction finds that candidate; do not restart from parent.
@@ -399,7 +399,7 @@ void appendPairedNoteEventChanges(const LoopSnapshot& parent, const PendingNoteC
     if (const auto previousOn =
             findPairedNoteEvent(parent, change.noteId, previousStart, true)) {
       SnapshotEventChange eventChange{};
-      eventChange.kind = SnapshotChangeKind::Remove;
+      eventChange.kind = SnapshotChangeType::Remove;
       eventChange.previous = previousOn;
       changes.events.push_back(eventChange);
     }
@@ -408,7 +408,7 @@ void appendPairedNoteEventChanges(const LoopSnapshot& parent, const PendingNoteC
     if (const auto previousOff =
             findPairedNoteEvent(parent, change.noteId, previousOffTick, false)) {
       SnapshotEventChange eventChange{};
-      eventChange.kind = SnapshotChangeKind::Remove;
+      eventChange.kind = SnapshotChangeType::Remove;
       eventChange.previous = previousOff;
       changes.events.push_back(eventChange);
     }
@@ -417,13 +417,13 @@ void appendPairedNoteEventChanges(const LoopSnapshot& parent, const PendingNoteC
     SnapshotEventChange onChange =
         makeNoteEvent(change.startTick, change.channel, change.pitch, change.velocity,
                       change.noteId, true);
-    onChange.kind = SnapshotChangeKind::Add;
+    onChange.kind = SnapshotChangeType::Add;
     changes.events.push_back(onChange);
     const uint32_t offTick =
         change.endTick < loopLengthTicks ? change.endTick : loopLengthTicks - 1;
     SnapshotEventChange offChange =
         makeNoteEvent(offTick, change.channel, change.pitch, 0, change.noteId, false);
-    offChange.kind = SnapshotChangeKind::Add;
+    offChange.kind = SnapshotChangeType::Add;
     changes.events.push_back(offChange);
   }
 }
@@ -446,7 +446,7 @@ LOOP_COLD_MEM void appendCompanionEventChanges(const LoopSnapshot& parent, LoopI
     }
     if (superseded) continue;
     PendingNoteChange eventChange{};
-    eventChange.kind = note.kind == SnapshotChangeKind::Remove
+    eventChange.kind = note.kind == SnapshotChangeType::Remove
                            ? PendingNoteChangeKind::Hide : PendingNoteChangeKind::Shorten;
     eventChange.noteId = note.next.noteId;
     eventChange.pitch = note.next.pitch;
@@ -455,11 +455,11 @@ LOOP_COLD_MEM void appendCompanionEventChanges(const LoopSnapshot& parent, LoopI
     eventChange.endTick = note.next.endTick;
     eventChange.channel = 1;
     const auto previous = parent.findNote(note.next.noteId, note.next.pitch);
-    if (!previous && note.kind == SnapshotChangeKind::Replace) {
+    if (!previous && note.kind == SnapshotChangeType::Replace) {
       bool createdInBatch = false;
       for (size_t j = 0; j < i; ++j) {
         if (changes.notes[j].next.noteId == note.next.noteId &&
-            changes.notes[j].kind == SnapshotChangeKind::Add) createdInBatch = true;
+            changes.notes[j].kind == SnapshotChangeType::Add) createdInBatch = true;
       }
       // A stale Modify row cannot invent MIDI events when note construction
       // skips its missing target. A preceding Create in this batch can.
@@ -488,12 +488,12 @@ void appendPendingNoteChange(const LoopSnapshot& parent, const PendingNoteChange
   noteChange.next.startTick = change.startTick;
   noteChange.next.endTick = change.endTick;
   if (change.kind == PendingNoteChangeKind::Add) {
-    noteChange.kind = SnapshotChangeKind::Add;
+    noteChange.kind = SnapshotChangeType::Add;
   } else if (change.kind == PendingNoteChangeKind::Hide) {
-    noteChange.kind = SnapshotChangeKind::Remove;
+    noteChange.kind = SnapshotChangeType::Remove;
     noteChange.previous = parent.findNote(change.noteId, change.pitch);
   } else {
-    noteChange.kind = SnapshotChangeKind::Replace;
+    noteChange.kind = SnapshotChangeType::Replace;
     noteChange.previous = parent.findNote(change.noteId, change.pitch);
     if (noteChange.previous) {
       noteChange.next = *noteChange.previous;
@@ -524,7 +524,7 @@ void appendWrapNonNoteEvents(const Loop& loop, const LoopSnapshot& parent, PassI
       continue;
     }
     SnapshotEventChange change{};
-    change.kind = SnapshotChangeKind::Add;
+    change.kind = SnapshotChangeType::Add;
     change.next.loopId = loop.loopId;
     change.next.eventId = nextEventId++;
     change.next.canonicalOrder = nextCanonicalOrder++;
@@ -717,7 +717,7 @@ bool appendOpenNoteChange(const PendingPassChangeProgress::OpenNote& open, LoopI
     return false;
   }
   SnapshotNoteChange change{};
-  change.kind = SnapshotChangeKind::Add;
+  change.kind = SnapshotChangeType::Add;
   change.next.loopId = loopId;
   change.next.noteId = open.noteId;
   change.next.pitch = open.pitch;
@@ -916,7 +916,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
     }
     if (addEvent) {
       SnapshotEventChange eventChange{};
-      eventChange.kind = SnapshotChangeKind::Add;
+      eventChange.kind = SnapshotChangeType::Add;
       eventChange.next.loopId = loop.loopId;
       eventChange.next.eventId = progress.nextEventId++;
       eventChange.next.canonicalOrder = progress.nextCanonicalOrder++;
@@ -1345,7 +1345,7 @@ LOOP_COLD_MEM bool Loop::queueOverdubWrapSnapshotJournal(PassId wrapPassId) {
       if (noteChange.previous) {
         addedBars += estimateNoteAffectedBars(*noteChange.previous, parent->loopLengthTicks());
       }
-      if (noteChange.kind != SnapshotChangeKind::Remove) {
+      if (noteChange.kind != SnapshotChangeType::Remove) {
         addedBars += estimateNoteAffectedBars(noteChange.next, parent->loopLengthTicks());
       }
     }

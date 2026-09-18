@@ -14,7 +14,7 @@ class Loop;
 /// `Track` owns the scratch buffer and stamps; `Loop` owns snapshot copy.
 namespace CommittedMidiScratch {
 
-enum class RefreshKind : uint8_t {
+enum class RefreshType : uint8_t {
   Reused = 0,
   FromSnapshot = 1,
   // Value 2 is retired (the pass-replay fallback OpenSpec 6.3.3 removed). `HoldEmpty`
@@ -42,7 +42,7 @@ inline void invalidate(MidiEventVec& scratch, uint32_t& scratchRevision,
 /// hold empty (OpenSpec 6.3.3 — no pass-replay fallback). Fill uses one
 /// publication observation for copy + stamp. Match uses the current published
 /// identity for this call.
-RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
+RefreshType refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
                     const void*& scratchIdentity, Loop& loop);
 
 }  // namespace CommittedMidiScratch

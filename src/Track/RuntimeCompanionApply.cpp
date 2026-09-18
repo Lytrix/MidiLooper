@@ -89,13 +89,13 @@ NOTE_EDIT_MEM void RuntimeCompanionApply::complete() {
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::begin(
     const Work& work, const MidiEvent* events, size_t count, const PlaybackViewSourceIdentity& source,
-    Kind kind, NoteId target, uint32_t newEnd, uint32_t loopLength) {
+    Type kind, NoteId target, uint32_t newEnd, uint32_t loopLength) {
   if (!available() ||
       !candidate_.isPrewarmed() || provenance_ == nullptr || count > candidate_.capacity ||
       (events == nullptr && count != 0) || !work.pair.available() ||
       !work.deletion.available() || !work.spans.available() ||
       !work.reconstruction.available() || !work.overlaps.available() ||
-      (kind != Kind::Delete && kind != Kind::Length)) return false;
+      (kind != Type::Delete && kind != Type::Length)) return false;
   const uintptr_t inputStart = reinterpret_cast<uintptr_t>(events);
   const uintptr_t ownStart = reinterpret_cast<uintptr_t>(candidate_.events);
   if (count != 0 && inputStart < ownStart + candidate_.capacity * sizeof(MidiEvent) &&
@@ -112,7 +112,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionApply::beginBatch(
     const Work& work, const MidiEvent* events, size_t count, const PlaybackViewSourceIdentity& source,
     const EditPass* rows, size_t rowCount, uint32_t loopLength, bool canonicalSequence) {
   if ((rows == nullptr && rowCount != 0) || rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
-  if (!begin(work, events, count, source, Kind::Delete, kInvalidNoteId, 0, loopLength)) return false;
+  if (!begin(work, events, count, source, Type::Delete, kInvalidNoteId, 0, loopLength)) return false;
   batch_ = true; canonicalSequence_ = canonicalSequence; rows_ = rows; rowCount_ = rowCount; rowCursor_ = 0; loopHint_ = loopLength;
   return true;
 }
@@ -156,18 +156,18 @@ NOTE_EDIT_MEM bool RuntimeCompanionApply::selectBatchRow() {
     cursor_ = 0; phase_ = Phase::CreateAppend;
     return true;
   }
-  if (row.actionType == EditActionType::Delete) kind_ = Kind::Delete;
+  if (row.actionType == EditActionType::Delete) kind_ = Type::Delete;
   else if (row.actionType == EditActionType::Update && row.propertyType == EditPropertyType::Length)
-    kind_ = Kind::Length;
+    kind_ = Type::Length;
   else if (history_ && row.actionType == EditActionType::Update) {
-    if (row.propertyType == EditPropertyType::Pitch) kind_ = Kind::Pitch;
-    else if (row.propertyType == EditPropertyType::Velocity) kind_ = Kind::Velocity;
-    else if (row.propertyType == EditPropertyType::NoteRange) kind_ = Kind::NoteRange;
+    if (row.propertyType == EditPropertyType::Pitch) kind_ = Type::Pitch;
+    else if (row.propertyType == EditPropertyType::Velocity) kind_ = Type::Velocity;
+    else if (row.propertyType == EditPropertyType::NoteRange) kind_ = Type::NoteRange;
     else { complete(); return true; } // Canonical Update default is a no-op, but remains a collapse barrier.
   } else return false;
   target_ = row.targetNoteId; newEnd_ = row.endTick; loopLength_ = loopHint_;
   newStart_ = row.startTick;
-  newValue_ = kind_ == Kind::Pitch ? row.pitch : row.velocity;
+  newValue_ = kind_ == Type::Pitch ? row.pitch : row.velocity;
   if (canonicalSequence_) {
     if (target_ == kInvalidNoteId) complete();
     else {
@@ -181,7 +181,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionApply::selectBatchRow() {
 
 NOTE_EDIT_MEM bool RuntimeCompanionApply::startBatchRow() {
   if (loopLength_ == 0) { maxTick_ = 0; cursor_ = 0; phase_ = Phase::InferLength; }
-  else if (kind_ == Kind::Delete || kind_ == Kind::Pitch || kind_ == Kind::NoteRange) { if (!startDelete(target_)) return false; }
+  else if (kind_ == Type::Delete || kind_ == Type::Pitch || kind_ == Type::NoteRange) { if (!startDelete(target_)) return false; }
   else startFind(Find::Initial, target_);
   return true;
 }
@@ -228,7 +228,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (batch_) {
         if (rowCount_ == 0) complete();
         else phase_ = Phase::NextRow;
-      } else if (kind_ == Kind::Delete) { if (!startDelete(target_)) return deny(); }
+      } else if (kind_ == Type::Delete) { if (!startDelete(target_)) return deny(); }
       else startFind(Find::Initial, target_);
     }
   } else if (phase_ == Phase::NextRow) {
@@ -302,7 +302,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       // Derive the length from the last tick, clamped to one bar minimum.
       loopLength_ = maxTick_ + 1u;
       if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
-      if (kind_ == Kind::Delete || kind_ == Kind::Pitch || kind_ == Kind::NoteRange) { if (!startDelete(target_)) return deny(); }
+      if (kind_ == Type::Delete || kind_ == Type::Pitch || kind_ == Type::NoteRange) { if (!startDelete(target_)) return deny(); }
       else startFind(Find::Initial, target_);
     }
   } else if (phase_ == Phase::Find) {
@@ -314,7 +314,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       }
     }
     if (on_ >= 0) {
-      if (kind_ == Kind::Velocity) {
+      if (kind_ == Type::Velocity) {
         candidate_.events[on_].data.noteData.velocity = newValue_;
         complete();
       } else {
@@ -376,7 +376,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
     if (result == RuntimeCompanionOverlapResult::Complete) { cursor_ = write_ = 0; phase_ = Phase::Compact; }
     else if (result == RuntimeCompanionOverlapResult::ActionReady) {
       const auto& action = overlaps_->action();
-      if (action.kind == RuntimeCompanionOverlapWalk::ActionKind::Delete) {
+      if (action.kind == RuntimeCompanionOverlapWalk::ActionType::Delete) {
         if (!startDelete(action.noteId)) return deny();
       } else { writeEnd_ = action.endTick; startFind(Find::Action, action.noteId); }
     }
@@ -386,12 +386,12 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
       deleteRows_[0] = deletion_->onIndex(); deleteRows_[1] = deletion_->offIndex(); deleteRows_[2] = deletion_->wrapOffIndex();
       deleteCursor_ = 0;
-      phase_ = kind_ == Kind::Pitch || kind_ == Kind::NoteRange ? Phase::HistoryWrite : Phase::DeleteRows;
+      phase_ = kind_ == Type::Pitch || kind_ == Type::NoteRange ? Phase::HistoryWrite : Phase::DeleteRows;
     }
   } else if (phase_ == Phase::HistoryWrite) {
     const int onIndex = deleteRows_[0], lifoOff = deleteRows_[1], wrapOff = deleteRows_[2];
     if (onIndex < 0) complete();
-    else if (kind_ == Kind::Pitch) {
+    else if (kind_ == Type::Pitch) {
       while (quantum-- != 0 && deleteCursor_ < 3) {
         const int index = deleteRows_[deleteCursor_++];
         if (index >= 0) candidate_.events[index].data.noteData.note = newValue_;
@@ -419,7 +419,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
       if (index >= 0) candidate_.retained[index] = 0;
     }
     if (deleteCursor_ == 3) {
-      if (kind_ == Kind::Delete) { cursor_ = write_ = 0; phase_ = Phase::Compact; }
+      if (kind_ == Type::Delete) { cursor_ = write_ = 0; phase_ = Phase::Compact; }
       else resumeOverlaps();
     }
   } else if (phase_ == Phase::Compact) {
@@ -432,7 +432,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionApply::step(size_t
     }
     if (cursor_ == candidate_.eventCount) {
       candidate_.eventCount = write_;
-      if (kind_ == Kind::Delete || kind_ == Kind::NoteRange) complete();
+      if (kind_ == Type::Delete || kind_ == Type::NoteRange) complete();
       else startFind(Find::Final, target_);
     }
   } else if (phase_ == Phase::Order) {

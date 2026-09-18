@@ -477,7 +477,7 @@ LSV1_BUILDER_MEM ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
   LoopSnapshotChangeSet changes;
   for (const Lsv1GatheredNote& note : payload.notes) {
     SnapshotNoteChange change{};
-    change.kind = SnapshotChangeKind::Add;
+    change.kind = SnapshotChangeType::Add;
     change.next.loopId = payload.loopId;
     change.next.noteId = note.noteId;
     change.next.pitch = note.pitch;
@@ -488,7 +488,7 @@ LSV1_BUILDER_MEM ImmutableLoopSnapshotRef buildLoopSnapshotFromValidatedPayload(
   }
   for (const Lsv1GatheredEvent& event : payload.events) {
     SnapshotEventChange change{};
-    change.kind = SnapshotChangeKind::Add;
+    change.kind = SnapshotChangeType::Add;
     change.next.loopId = payload.loopId;
     change.next.eventId = event.eventId;
     change.next.canonicalOrder = event.canonicalOrder;

@@ -1568,7 +1568,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceBridgeWindow(
   const PlaybackCoverageInterval coverage{phase, std::min(width, length - phase), length};
   const EmissionCursor anchor{cycle, phase, 0, 0, bridge.source.sourceGeneration};
   if (!bridgeWindowBuild.begin(set->views[destination], bridgeWindowSource.source(), bridge.source,
-      coverage, anchor, bridge.ledgerBoundary, RuntimePlaybackViewFillScope::PlaybackCoverage)) return false;
+      coverage, anchor, bridge.ledgerBoundary, RuntimePlaybackViewFillCoverage::PlaybackCoverage)) return false;
   bridgeWindowBuildIndex = destination;
   return true;
 }
@@ -1585,7 +1585,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginCoverageBuild(
   }
   RuntimePlaybackView& destination = set->views[set->lifecycle.build];
   return viewBuild.begin(destination, source, sourceCount, sourceIdentity, coverage, cursorAnchor,
-                         ledgerBoundary, RuntimePlaybackViewFillScope::PlaybackCoverage);
+                         ledgerBoundary, RuntimePlaybackViewFillCoverage::PlaybackCoverage);
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingBar(
@@ -1619,7 +1619,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prepareFirstRecordingB
   const PlaybackCoverageInterval coverage{0, ticksPerBar, 0};
   if (!viewBuild.begin(destination, nullptr, 0, PlaybackViewSourceIdentity{}, coverage,
                        EmissionCursor{}, LedgerBoundarySummary{},
-                       RuntimePlaybackViewFillScope::RawCoverage)) {
+                       RuntimePlaybackViewFillCoverage::RawCoverage)) {
     firstRecordingBarDenial_ = "fill_admission_denied";
     return false;
   }
@@ -1760,7 +1760,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::serviceFirstRecordingB
     const PlaybackCoverageInterval coverage{0, ticksPerBar, 0};
     if (!viewBuild.begin(set->views[set->lifecycle.build], source, sourceIdentity, coverage,
                          EmissionCursor{}, LedgerBoundarySummary{},
-                         RuntimePlaybackViewFillScope::RawCoverage)) return false;
+                         RuntimePlaybackViewFillCoverage::RawCoverage)) return false;
   }
   const RuntimePlaybackViewBuild::Grain grain = viewBuild.nextGrain();
   if (grain == RuntimePlaybackViewBuild::Grain::Fill) {
