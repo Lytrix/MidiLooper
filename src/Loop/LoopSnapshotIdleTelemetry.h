@@ -1,4 +1,4 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // Shared surface of the snapshot idle/unit telemetry whose implementation lives in

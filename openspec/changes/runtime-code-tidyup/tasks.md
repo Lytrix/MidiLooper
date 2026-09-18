@@ -575,10 +575,10 @@ The three splits reduce the files that carried a mixed responsibility: `RuntimeP
 
 ## 7. P6 — formatting, docs and enforcement
 
-- [ ] 7.1 Normalize the copyright header to the repo baseline (`//  Copyright (c)  <year> Lytrix (Eelke Jager)`) across
+- [x] 7.1 Normalize the copyright header to the repo baseline (`//  Copyright (c)  <year> Lytrix (Eelke Jager)`) across
   the 56 files this branch added, which currently use three forms (31 single-space, 17 double-space, 8 mixed). Verify:
   `head -1` over the added files yields one form; no other line changed.
-- [ ] 7.2 Strip trailing whitespace from the 24 added files that carry it. Verify: `grep -c '[ \t]$'` is zero for each;
+- [x] 7.2 Strip trailing whitespace from the 24 added files that carry it. Verify: `grep -c '[ \t]$'` is zero for each;
   diff is whitespace-only.
 - [ ] 7.3 Add `.editorconfig` and a `.clang-format` derived from the incumbent style; accept the config only if
   `clang-format --dry-run` over the added files reports only the drifts 7.1/7.2 already fixed — otherwise ship
@@ -590,6 +590,30 @@ The three splits reduce the files that carried a mixed responsibility: `RuntimeP
   sentence-overlap count drops; every removed paragraph is reachable by citation from `CURRENT_WORK.md`.
 - [ ] 7.5 P6 gate: `openspec validate runtime-code-tidyup --strict` passes and no firmware/test run is needed because
   the phase is text-only. Verify: validate output recorded.
+
+### P6 progress (2026-09-18)
+
+**The added-file set is 61, not 56.** The 56 are the runtime files `proposal.md` § Why names (25 headers under
+`include/`, plus `src/Loop/Loop*`, `src/StorageLoopIoBodyFormatV1.cpp`,
+`src/StorageManager/PersistedLoopSnapshotRelease.cpp`, `src/Track/Runtime*`/`TrackPrepared*`/`TrackUndo*`, and
+`src/Utils/{CommittedMidiScratch,ExternalPoolAccounting,InvestigationAllocProbe,InvestigationCaptureLog}.cpp`).
+This change added five more of the same kind — `include/Utils/PlaybackEventOrder.h` (P3) and the four files P5 split out
+— so 7.1/7.2 were applied over all 61.
+
+**7.1 — copyright headers normalized.** The three forms measured over the 61 files were
+`// Copyright (c) 2026 …` (32), `//  Copyright (c)  2025 …` (18, already the baseline) and
+`//  Copyright (c) 2026 …` (11); the task's 31/17/8 split came from a slightly different bucketing of the same three
+forms. All 61 now read `//  Copyright (c)  <year> Lytrix (Eelke Jager)`, matching the repo-wide dominant form (461 of
+549 `src/`+`include/`+`test/`+`lib/` files). 43 files changed, one line each, year preserved; the diff contains no
+non-copyright line.
+
+**7.2 — no trailing whitespace to strip; the 24-file figure was a false positive.** Measured over the same 61 files,
+`[[:blank:]]+$` matches **0** files and `[[:blank:]]+$` matches **0** lines, at both the branch tip and the
+`feature/resumable-midi-boundary-playback-maintenance` tip. The proposal's "24 of its 56 new files" is what the
+faulty character class `[ \t]$` produces: it matches a literal `t`, and 28 of the 61 files contain a line ending in
+`t`. The 120 branch-added Markdown files that *do* carry trailing blanks are intentional two-space hard breaks and are
+left alone (`.editorconfig` does not trim `*.md`). Task's verify clause is therefore satisfied with zero edits; the
+corrected check is recorded here because the task's own `grep -c '[ \t]$'` would have reported false positives.
 
 ## 8. Closeout
 
