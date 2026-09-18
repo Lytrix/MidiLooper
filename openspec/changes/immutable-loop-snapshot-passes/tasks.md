@@ -637,6 +637,57 @@ closed for `DisplayResolveLiveCapture`.
         [`012230`](../../../captures/host_midi_automation_baseline_20260912_012230.json)).
       - Plan:
         [`immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md`](../../../docs/Plans/immutable_loop_snapshot_5_7_persistence_work_queue_stall_hardening_refinement.md).
+      - **5.7.6 IMPLEMENTED AND NATIVE-VERIFIED, THEN REVERTED 2026-09-18: a full work-entry table must not block the workspace finalize.** Fix `12fdf38d`, revert `d3290020`; cherry-pick `12fdf38d` after the RAM1 headroom below lands.
+        Second stall class in the same owner: the table is **monotonic** -- no path ever returns an entry to
+        `NotScheduled`, and `LoopPersist` is keyed by `LoopId`, which is fresh for every new loop, so each
+        clear/record cycle permanently consumes one of the 256 slots. Once exhausted, `admitWork` fails for
+        *every* key including `FinalizeWorkspace` while `currentWorkspaceSave.pending` stays set, so
+        `hasPersistenceWorkPending()` is true on `pending` alone with nothing to step: the blocking `saveState`
+        drain spins its whole stuck budget, and the firmware refuses CLEAR for the rest of that device generation
+        (`Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)`, runs
+        `captures/rcpub-gate-01`/`-02`; a clean upload cleared it, `captures/rcpub-gate-05` logs
+        `Clear completed`). The state was pinned by arithmetic before any code change: `SyncDrainBudget.cpp:66`
+        sets `finalizeSliceSteps` only when `pending && queueDepth == 0 && writingWorkItemCount == 0 &&
+        !itemActive`, so `expectedSliceSteps = 1` with 0 SD bytes means `pending` alone, and
+        `maxSliceSteps = 1*3/2 + 32 = 33` / `maxStuckIterations = min(64, 33) = 33` match the log exactly.
+        Eliminated: PSRAM exhaustion (`refused=0/0B`, 1.6 MB free) and the transport-flush deferral
+        (`deferDispatchUntilMs` is only ever written 0; `deferWorkspaceSaveDispatchDuringPlayback` has no
+        callers). Zero `PERS` rows in the wedged runs against 13 `PERS,work` in a working run of the same
+        capture configuration placed it in admission, not in the finalize slice.
+        - Fix: `admitWork` reclaims a `Persisted` entry when no slot is free (a tombstone is lossless --
+          `markItemPersisted` is its only writer, `workState` has no production consumers,
+          `visitScheduledWorkItems` skips it, and a fresh admission reproduces its one use from the same
+          `(type, key)`); `Queued`/`Writing` entries are never touched. `maybeAdmitFinalizeWorkspaceAfterDrain`
+          returns whether a work item is available instead of discarding `admitWork`'s result, and
+          `drainPersistenceWorkBlocking` fails fast with `SyncDrainFailureReason::AdmissionRefused` and a
+          PROGMEM diagnostic naming `pending`/`queue`/`writing`/`active` rather than burning 33 no-op
+          iterations on a state that cannot change.
+        - Native: `test_exhausted_entry_table_still_admits_the_finalize` and
+          `test_full_table_reclaims_a_tombstone_and_never_a_queued_item` in `test_persistence_work_queue`;
+          both fail on the pre-fix behaviour (verified by disabling the reclaim) and pass after; suite 15/15,
+          full native **2252 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS.
+        - **Reverted because it cannot be flashed: it costs 4 KB of DTCM and that alone hangs the boot.**
+          `variables 91,968 -> 96,064` (`locals free 6,336 -> 2,240`); on device the fix build hung during the boot
+          workspace load (`captures/drain-fix-01`/`-02`: 19-21 serial lines, stopping at `BOOT,scan,start` with no
+          `scan,t0`, no `Memory]` ticks, no `#CAP`; USB enumerated, no crash record). Controls: the pre-fix firmware
+          booted and streamed **1136 rows in 20 s** with the same SD state, and a **semantically neutral edit**
+          (`volatile int probe = 0; (void)probe;`) to either `PersistenceWorkQueue.cpp` or
+          `SyncDrainSaveState.cpp` gives the same 96,064 / 2,240 and the same hang (**105 rows in 35 s, no
+          `BOOT,load,ok`**) with none of this fix's logic -- the hang is the 4 KB, not the fix. The growth adds no
+          symbol: the two builds' full symbol tables are byte-identical and the sections grow by padding (`.data`
+          +1,024, `.bss` +3,072); it survives removing every new literal (the diagnostic is PROGMEM) and every new
+          struct field, and a clean build reproduces it. The tree sits on a knife-edge where a few bytes of code
+          flips one 4,096-byte DTCM alignment unit.
+        - **Unblocking it needs ITCM, not DTCM.** `code + padding = 425,984` is exactly 13 ITCM banks, so DTCM gets
+          3 banks (98,304 B) and `variables` 91,968 leaves 6,336. No movable DTCM remains: every symbol >= 128 B is
+          Teensy core/USB (`enumbuf`, `_VectorsRam`, `endpoint_queue_head`, `uframe_bandwidth`, the
+          `rx_transfer`/`isr_table_*` tables, `MIDIserial`), newlib/libstdc++ (`__malloc_av_`, `__prime_list`,
+          `__atexit0`, `__global_locale`, `__sf`, `_ctype_`, `__mprec_tens`, `__sincosf_table`,
+          `digital_pin_to_info_PGM`) or the two hot app objects the rule forbids moving (`midiHandler` 5,568,
+          `trackManager` 3,656); the app's large state is already `DMAMEM` (`storageSession`, `displayManager`).
+          **Moving ~32 KB of cold code to FLASH drops `code + padding` below 393,216 and frees a whole 32 KB DTCM
+          bank**, which would absorb this snap. Until that lands, edits to those two TUs flip the snap and hang the
+          boot, so they are effectively frozen.
 
 ## 6. Compatibility retirement and closeout
 
