@@ -74,6 +74,11 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       that need a smaller P to reach 32 or 64 sounding slots.
 - [ ] S2.5 Prove length-independence: two slots of very different loop lengths on one track have comparable
       resident working sets, and playback crosses window boundaries with no timing discontinuity.
+- [ ] S2.6 **Window-size sweep**: make the readiness window configurable (pixels of size: resident bytes,
+      switch granularity, publication load) and sweep from bar-based (1,536-tick merged window today) down
+      toward **1/32 beat = 6 ticks** (1/16 beat = 12 ticks at 192 PPQN). Record the smallest window that still
+      meets the readiness deadline under load; that number bounds the achievable queued-switch quantisation
+      and feeds the derived N from S2.3.
 - [ ] S2 gates: S1 gates plus the lease-size measurement and the cap derivation recorded; existing
       playback-prewarm fixtures still green.
 
@@ -124,8 +129,9 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
       already provides -- snapshot construction / journal, `stepPendingSnapshotPublish`, the wrap journal, the
       deferred idle-owner scheduling (`MidiServiceDrain`), the sliced capture-stop jobs -- and record what, if
       anything, must be added. Adding a second incremental-publication system is a failure mode, not a plan.
-- [ ] S4c.3 Decide and record the **missed-deadline rule** (previous immutable generation authoritative for
-      that pass / span held / deadline extended) with its user-visible consequence.
+- [ ] S4c.3 **DECIDED: rule (a)** -- the previous immutable generation stays authoritative for that pass and
+      the new one takes effect on the next pass; never torn, never held, never timing-deferred. The
+      user-visible consequence (an edit just behind the playhead is heard one pass later) is recorded.
 - [ ] S4c.4 Narrow the published root to the **checkpoint authority for undo and save**, removing the
       playback dependency on a resident whole-loop root.
 - [ ] S4c.5 Native fixtures: an update is immutable before the playhead returns; playback never consumes an
@@ -181,6 +187,10 @@ Every task: no allocation on a timing-critical edge; re-read the RAM1 line (~870
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
 - [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
       evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
+- [ ] S7.4b **Fine-quantisation switch acceptance**: with transport playing and slots sounding, queue a slot
+      switch at 1/16 beat and at 1/32 beat; require the inbound slot's immutable state to be ready at the
+      boundary, no torn or held output, and the MIDI-boundary timing evidence clean. Record the quantisation
+      that is actually achievable under load.
 - [ ] S7.5 **Continuity acceptance**: with transport playing, switch track and slot repeatedly while up to
       two slots per track sound, start record/overdub, and run undo/redo -- the transport never stops and
       the MIDI-boundary timing verifier reports no degradation on any switch.

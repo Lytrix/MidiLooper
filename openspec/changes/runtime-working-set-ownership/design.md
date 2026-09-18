@@ -292,14 +292,45 @@ Two consequences follow, and they are the memory answer:
 behind the playhead, or a heavily loaded service turn. Playback must still see only immutable events, so the
 candidate behaviours are:
 
-| # | Rule | User-visible consequence |
+| # | Rule | User-visible consequence | Verdict |
+|---|---|---|---|
 |---|---|---|
-| a | The **previous immutable generation stays authoritative for that pass**; the new one takes effect on the next pass | The change is heard one pass later; consistent with the existing coverage/currency rules (`publishedSnapshotIsCurrent`, the DEC-073 coverage contract) |
-| b | The affected span is **held/suppressed** for that pass | A gap or a held note for one pass |
-| c | The **deadline is extended** by deferring the pass | Timing is disturbed, which the never-stop goal forbids |
+| a | The **previous immutable generation stays authoritative for that pass**; the new one takes effect on the next pass | The change is heard one pass later; consistent with the existing coverage/currency rules (`publishedSnapshotIsCurrent`, the DEC-073 coverage contract) | **CHOSEN** |
+| b | The affected span is **held/suppressed** for that pass | A gap or a held note for one pass | rejected: audible hole |
+| c | The **deadline is extended** by deferring the pass | Timing is disturbed | rejected: the never-stop goal forbids it |
 
-(a) is the least surprising and matches today's stale-root behaviour; it should be chosen explicitly, because
-it defines what the user hears when they edit just behind the playhead.
+**Decision: (a).** Playback always consumes an immutable generation; a missed deadline means the previous
+generation remains authoritative until the next pass, so a read is never torn and timing is never disturbed.
+The user-visible consequence is explicit: **an edit made just behind the playhead is heard one pass later.**
+
+### Window size is a tunable, and it trades three things
+
+Today the windows are **bar-based** (the merged playback window is 2 bars = 1,536 ticks, and the detailed
+display window is capped at 16 bars). The forward requirement -- **queued slot switching quantised at 1/32 or
+1/16 beat for jamming** -- pushes toward much shorter windows. At `INTERNAL_PPQN = 192` and
+`QUARTERS_PER_BAR = 4` (`TICKS_PER_BAR = 768`, 192 ticks per beat):
+
+| Granularity | Ticks | At 120 BPM |
+|---|---|---|
+| 1 bar (today's unit) | 768 | 2,000 ms |
+| 1/4 beat (16th note) | 48 | 125 ms |
+| 1/8 beat (32nd note) | 24 | 62 ms |
+| **1/16 beat** | **12** | **31 ms** |
+| **1/32 beat** | **6** | **16 ms** |
+
+So the readiness deadline for a jammed switch is on the order of **16-31 ms**, which is what makes the
+window size a *tunable with three coupled effects* rather than a constant:
+
+1. **Resident bytes** -- smaller windows shrink the per-slot immutable set, which is what raises N (F1's
+   "how crazy can someone get").
+2. **Switch granularity** -- smaller windows are what make 1/16 or 1/32 beat quantisation possible at all,
+   because the switch needs the inbound slot's immutable state ready by the boundary.
+3. **Publication load** -- smaller windows mean more boundary crossings and more frequent incremental work, so
+   the deadline gets tighter exactly as the work gets more frequent. This is the term that can fail, and it is
+   why the size must be **measured** rather than assumed.
+
+The window size must therefore be **configurable and swept**, not hard-coded to bars, and S2/S4c must find the
+smallest size that still meets the deadline under load.
 
 ## Revision 12 — the role tiers fold into `activeLoopIndex` (F5)
 
