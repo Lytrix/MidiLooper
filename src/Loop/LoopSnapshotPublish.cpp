@@ -5,6 +5,7 @@
 
 #include "CommittedEventRange.h"
 #include "LoopSnapshotBoxes.h"
+#include "LoopSnapshotIdleTelemetry.h"
 #include "Utils/LoopMem.h"
 #include "Utils/MemoryMonitor.h"
 
@@ -12,92 +13,7 @@
 #include <vector>
 
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
-#include "Utils/DebugSessionCapture.h"
 #include "Utils/InvestigationCaptureLog.h"
-
-#include <cstdio>
-#endif
-
-// Snapshot idle/unit instrumentation is deliberately gated on the broad `SESSION_CAPTURE` flag, not
-// on `SESSION_CAPTURE_SNAPSHOT_IDLE`: the probes must be available in any capture build without
-// changing the env of a running session, and their volume is bounded by the step-report interval and
-// the phase/stall/signature conditions below. DEC-076 records the decision; the reader stays narrow.
-#if defined(SESSION_CAPTURE)
-#include <cstdint>
-
-struct SnapshotIdleChildTimes {
-  uint32_t startUs = 0;
-  uint32_t passChangeUs = 0;
-  uint32_t stepUs = 0;
-  uint32_t finishUs = 0;
-  uint32_t publishUs = 0;
-  uint32_t probeUs = 0;
-  uint32_t enqueueUs = 0;
-  uint32_t discardUs = 0;
-  uint32_t emitUs = 0;
-  uint32_t refillUs = 0;
-  uint32_t eventScanUs = 0;
-  uint32_t noteLookupUs = 0;
-  uint32_t changeBuildUs = 0;
-  uint32_t constructUs = 0;
-};
-
-static SnapshotIdleChildTimes s_lastSnapshotIdleChildren;
-
-struct SnapshotIdleChildAdd {
-  uint32_t& field;
-  uint32_t startUs;
-  explicit SnapshotIdleChildAdd(uint32_t& target) : field(target), startUs(micros()) {}
-  ~SnapshotIdleChildAdd() { field += micros() - startUs; }
-};
-
-static void resetSnapshotIdleChildTimes() {
-  s_lastSnapshotIdleChildren = SnapshotIdleChildTimes{};
-  const uint32_t probeA = micros();
-  const uint32_t probeB = micros();
-  s_lastSnapshotIdleChildren.probeUs = probeB - probeA;
-}
-#endif
-
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-LOOP_COLD_MEM __attribute__((noinline)) void emitSnapshotUnitCapture(
-    const Loop& loop, const char* kind, uint32_t heapBefore) {
-  const uint32_t heapAfter = MemoryMonitor::getInternalHeapFreeBytes();
-  char line[192];
-  snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,snapshot_unit,kind=%s,ph=%u,ld=%u,p=%u,q=%lu,a=%lu,"
-           "if=%u,hb=%lu,ha=%lu,psram=%lu,n=%lu,b=%lu,s=%lu",
-           static_cast<unsigned long>(micros()), kind != nullptr ? kind : "none",
-           static_cast<unsigned>(loop.loadedSnapshotHydrationPhase()),
-           loop.pendingSnapshotFromLoadedPasses() ? 1u : 0u,
-           loop.hasPendingSnapshotPublish() ? 1u : 0u,
-           static_cast<unsigned long>(loop.pendingSnapshotQueuedPassCount()),
-           static_cast<unsigned long>(loop.pendingSnapshotAppliedPassCount()),
-           loop.hasInFlightSnapshotConstruction() ? 1u : 0u,
-           static_cast<unsigned long>(heapBefore),
-           static_cast<unsigned long>(heapAfter),
-           static_cast<unsigned long>(DebugSessionCapture::kUnsampledHeapBytes),
-           static_cast<unsigned long>(snapshotAllocNodeCount()),
-           static_cast<unsigned long>(snapshotAllocByteCount()),
-           static_cast<unsigned long>(snapshotAllocSlabCount()));
-  DebugSessionCapture::appendCaptureTextLine(line);
-}
-
-// `step` dominates snapshot_unit volume (`033502`: 4,991 of 5,134 lines) while
-// start / finish / publish are the rare decisive events. Report steps on an interval
-// so a construction that stops advancing is still visible without one line per unit.
-constexpr uint32_t kSnapshotUnitStepReportIntervalMs = 25u;
-
-LOOP_COLD_MEM __attribute__((noinline)) void emitSnapshotUnitStepCapture(const Loop& loop,
-                                                                        uint32_t heapBefore) {
-  static uint32_t sLastStepReportMs = 0;
-  const uint32_t nowMs = millis();
-  if (sLastStepReportMs != 0 && (nowMs - sLastStepReportMs) < kSnapshotUnitStepReportIntervalMs) {
-    return;
-  }
-  sLastStepReportMs = nowMs;
-  emitSnapshotUnitCapture(loop, "step", heapBefore);
-}
 #endif
 
 namespace {
@@ -857,7 +773,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
     bool skipParentNoteLookup) {
   {
 #if defined(SESSION_CAPTURE)
-    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.refillUs);
+    SnapshotIdleChildAdd timed(snapshotIdleChildTimes.refillUs);
 #endif
     refillPassChangeBatch(loop, progress);
   }
@@ -866,7 +782,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
     bool addEvent = false;
     {
 #if defined(SESSION_CAPTURE)
-      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.eventScanUs);
+      SnapshotIdleChildAdd timed(snapshotIdleChildTimes.eventScanUs);
 #endif
       addEvent = skipParentNoteLookup ? true : !eventAlreadyInSnapshot(parent, event);
     }
@@ -875,13 +791,13 @@ LOOP_COLD_MEM __attribute__((noinline)) bool appendNextPassChangeFragment(
     if (isNoteEvent && event.noteId != kInvalidNoteId && !progress.fromCaptureStore &&
         !skipParentNoteLookup) {
 #if defined(SESSION_CAPTURE)
-      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.noteLookupUs);
+      SnapshotIdleChildAdd timed(snapshotIdleChildTimes.noteLookupUs);
 #endif
       parentHasNote = static_cast<bool>(
           parent.findNoteAtPitch(event.noteId, event.data.noteData.note));
     }
 #if defined(SESSION_CAPTURE)
-    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.changeBuildUs);
+    SnapshotIdleChildAdd timed(snapshotIdleChildTimes.changeBuildUs);
 #endif
     PendingPassChangeProgress::OpenNote prospective{};
     PendingPassChangeProgress::OpenNote* existing = nullptr;
@@ -982,7 +898,7 @@ LOOP_COLD_MEM __attribute__((noinline)) bool startNextPassChangeFragmentImpl(
   }
   {
 #if defined(SESSION_CAPTURE)
-    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.constructUs);
+    SnapshotIdleChildAdd timed(snapshotIdleChildTimes.constructUs);
 #endif
     box.construction = std::make_unique<LoopSnapshotConstruction>(parent, changes);
   }
@@ -999,7 +915,7 @@ LOOP_COLD_MEM bool startNextPassChangeFragment(Loop& loop, PendingSnapshotPublis
                                                const ImmutableLoopSnapshotRef& parent) {
 #if defined(SESSION_CAPTURE)
   if (!box.passChangeProgress.fromCaptureStore) {
-    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.passChangeUs);
+    SnapshotIdleChildAdd timed(snapshotIdleChildTimes.passChangeUs);
     return startNextPassChangeFragmentImpl(loop, box, parent);
   }
 #endif
@@ -1197,34 +1113,6 @@ LOOP_COLD_MEM bool admitSnapshotPublicationTurn(PendingSnapshotPublishBox& box) 
   box.consecutiveFragmentFailures = 0;
   return true;
 }
-
-const char* snapshotFailureReasonName(LoopSnapshotFailureReason reason) {
-  switch (reason) {
-    case LoopSnapshotFailureReason::MembershipCapacity:
-      return "membership_capacity";
-    case LoopSnapshotFailureReason::Allocation:
-      return "allocation";
-    case LoopSnapshotFailureReason::Injected:
-      return "injected";
-    default:
-      return "none";
-  }
-}
-
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
-LOOP_COLD_MEM void emitSnapshotFragmentFailure(const PendingSnapshotPublishBox& box,
-                                               LoopSnapshotFailureReason reason) {
-  char line[176];
-  snprintf(line, sizeof(line),
-           "#CAP,%lu,DIAG,snapshot_fragment,fail,reason=%s,n=%u,pass=%u,next=%u,blocked=%u",
-           static_cast<unsigned long>(micros()), snapshotFailureReasonName(reason),
-           static_cast<unsigned>(box.consecutiveFragmentFailures),
-           static_cast<unsigned>(box.constructionPassId),
-           static_cast<unsigned>(box.passChangeProgress.nextEventId),
-           box.fragmentBlocked ? 1u : 0u);
-  DebugSessionCapture::appendCaptureTextLine(line);
-}
-#endif
 
 void noteFragmentIncorporationFailure(LoopSnapshotFailureReason reason,
                                       PendingSnapshotPublishBox& box) {
@@ -1617,126 +1505,6 @@ LOOP_COLD_MEM uint32_t Loop::pendingSnapshotCandidateLengthTicks() const {
   return 0;
 }
 
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleStartUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.startUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdlePassChangeUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.passChangeUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleStepUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.stepUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleFinishUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.finishUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdlePublishUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.publishUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleProbeUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.probeUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEnqueueUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.enqueueUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleDiscardUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.discardUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEmitUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.emitUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleRefillUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.refillUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleEventScanUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.eventScanUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleNoteLookupUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.noteLookupUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleChangeBuildUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.changeBuildUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM uint32_t Loop::lastSnapshotIdleConstructUs() const {
-#if defined(SESSION_CAPTURE)
-  return s_lastSnapshotIdleChildren.constructUs;
-#else
-  return 0;
-#endif
-}
-
-LOOP_COLD_MEM void Loop::addSnapshotIdleEmitUs(uint32_t durationUs) {
-#if defined(SESSION_CAPTURE)
-  s_lastSnapshotIdleChildren.emitUs += durationUs;
-#else
-  (void)durationUs;
-#endif
-}
-
 LOOP_COLD_MEM uint32_t Loop::liveRecordAppliedCompletedTicks() const {
   return pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->appliedLiveRecordCompletedTicks
                                     : 0;
@@ -2087,13 +1855,13 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
   {
 #if defined(SESSION_CAPTURE)
-    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.discardUs);
+    SnapshotIdleChildAdd timed(snapshotIdleChildTimes.discardUs);
 #endif
     discardPendingIfLoopLengthChanged(box, loopLengthTicks);
   }
   if (allowStartConstruction) {
 #if defined(SESSION_CAPTURE)
-    SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.enqueueUs);
+    SnapshotIdleChildAdd timed(snapshotIdleChildTimes.enqueueUs);
 #endif
     enqueueLiveOverdubPasses();
   }
@@ -2121,7 +1889,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #endif
       {
 #if defined(SESSION_CAPTURE)
-        SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.startUs);
+        SnapshotIdleChildAdd timed(snapshotIdleChildTimes.startUs);
 #endif
         started = allowStartConstruction &&
                   startNextPendingConstruction(*this, box, liveRecordCompletedTicks);
@@ -2149,7 +1917,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #endif
     {
 #if defined(SESSION_CAPTURE)
-      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.stepUs);
+      SnapshotIdleChildAdd timed(snapshotIdleChildTimes.stepUs);
 #endif
       box.construction->step(remaining, playheadPhaseTick);
     }
@@ -2205,7 +1973,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #endif
     {
 #if defined(SESSION_CAPTURE)
-      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.finishUs);
+      SnapshotIdleChildAdd timed(snapshotIdleChildTimes.finishUs);
 #endif
       finished = finishPendingConstruction(box);
     }
@@ -2230,7 +1998,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
     if (wrapping && fragmentIndex + 1 == fragmentCount && wrapTargetRevision != 0 &&
         box.unpublishedCandidate && !remainingWrapPublishWork(box)) {
 #if defined(SESSION_CAPTURE)
-      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
+      SnapshotIdleChildAdd timed(snapshotIdleChildTimes.publishUs);
 #endif
       // DEC-073: a wrap candidate carries its own target revision as coverage, so it publishes as
       // an intermediate root when the live revision has already moved past the wrap seal.
@@ -2252,7 +2020,7 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
 #endif
     {
 #if defined(SESSION_CAPTURE)
-      SnapshotIdleChildAdd timed(s_lastSnapshotIdleChildren.publishUs);
+      SnapshotIdleChildAdd timed(snapshotIdleChildTimes.publishUs);
 #endif
 #if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_SNAPSHOT_IDLE
       const uint32_t oldRoot = publishedSnapshotRevision();

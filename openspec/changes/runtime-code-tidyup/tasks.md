@@ -473,7 +473,7 @@ Each split: native suite + firmware build, then compare the RAM1 line and `_itcm
 - [x] 6.2 Move the bridge read side (`RuntimePlaybackBridgeCursor` `src/Track/RuntimePlaybackBridge.cpp:659-732`, `RuntimePlaybackBridgeStream` `:734-812`)
   into its own TU; leave `insertionFirst/peek/advance` unmarked exactly as today. Verify: `test_playback_prewarm` bridge
   cases pass; RAM1 line unchanged or better.
-- [ ] 6.3 Move the `SESSION_CAPTURE` idle-telemetry block out of `src/Loop/LoopSnapshotPublish.cpp`
+- [x] 6.3 Move the `SESSION_CAPTURE` idle-telemetry block out of `src/Loop/LoopSnapshotPublish.cpp`
   (the `:15-98` block, `snapshotFailureReasonName`/`emitSnapshotFragmentFailure`, and the 15
   `Loop::lastSnapshotIdle*Us`/`addSnapshotIdleEmitUs` at `:1654-1772`)
   into a `LoopSnapshot`-named TU so the linker keeps it in FLASH. Verify: firmware builds; the gated
@@ -526,6 +526,35 @@ bridge TU by path, so both gained the new include.
 Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS with RAM1 byte-identical
 (`variables 96096 / code 391736 / padding 1480 / free for local variables 34976`), `_itcm_block_count` **12
 (unchanged)**, FLASH code 1,004,512 (unchanged).
+
+**6.3 — snapshot idle/unit telemetry moves to `src/Loop/LoopSnapshotIdleTelemetry.{h,cpp}`.** The five pieces named by
+the task leave `LoopSnapshotPublish.cpp`, which drops from 2,319 to 2,087 lines: the `SnapshotIdleChildTimes`
+accumulator, its scoped `SnapshotIdleChildAdd`, `resetSnapshotIdleChildTimes`, `emitSnapshotUnitCapture` +
+`emitSnapshotUnitStepCapture`, `snapshotFailureReasonName` + `emitSnapshotFragmentFailure`, and the fourteen
+`Loop::lastSnapshotIdle*Us` accessors plus `Loop::addSnapshotIdleEmitUs`. The publish TU keeps the thirteen
+`SnapshotIdleChildAdd` call sites, so the accumulator moved to the new header as an `inline` instance
+(`snapshotIdleChildTimes`) shared by both TUs; the old `s_`-prefixed file static became that variable, and the
+fifteen call sites were renamed with it. `DebugSessionCapture.h` and `<cstdio>` left the publish TU's include list
+because the telemetry TU is their only remaining user.
+
+D8.2 placement, stated before editing: the new TU name **matches** the linker flash allow-list
+(`*LoopSnapshot*.o(.text .text.*)`), which is the arm of the rule this split needs — the publish TU's own code was
+already routed to FLASH by object name, so naming the telemetry TU `LoopSnapshotIdleTelemetry` keeps every moved
+function in FLASH without adding a marker. `Loop`'s accessors stay `LOOP_COLD_MEM` as they were. Verified in the
+linked ELF: `emitSnapshotUnitCapture` `0x6002bb7c`, `emitSnapshotUnitStepCapture` `0x6002bc24`,
+`emitSnapshotFragmentFailure` `0x6002bc54`, `Loop::lastSnapshotIdleStartUs` `0x6002bcac`,
+`Loop::addSnapshotIdleEmitUs` `0x6002bd54`, `resetSnapshotIdleChildTimes` `0x60083004` — all in the FLASH window,
+none in ITCM (`0x0…`). `test/test_support/LoopCaptureTestDeps.cpp` includes the publish TU by path, so it gained the
+new include.
+
+The two emitted format strings and their field order are byte-identical to the pre-split code; design D10 requires no
+HITL run for a phase that changes no observable behavior, so no capture session was run and the parity argument is the
+verbatim move rather than a device diff.
+
+Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS with RAM1 byte-identical
+(`variables 96096 / code 391736 / padding 1480 / free for local variables 34976`), `_itcm_block_count` **12
+(unchanged)**, FLASH code 1,004,520 (baseline value; the P5a/P5b -8 is offset by the new TU's own section
+alignment).
 
 ## 7. P6 — formatting, docs and enforcement
 
