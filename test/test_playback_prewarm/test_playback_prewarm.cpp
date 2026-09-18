@@ -17,6 +17,7 @@
 #include "../../src/Track/RuntimeCaptureStaging.cpp"
 #include "../../src/Track/RuntimePlaybackOrderBuilder.cpp"
 #include "../../src/Track/RuntimePlaybackBridge.cpp"
+#include "../../src/Track/RuntimePlaybackBridgeRead.cpp"
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"
 #include "../../src/Loop/LoopPreparedCompanionHistory.cpp"
 #include "../../src/Track/RuntimeNotePairLookup.cpp"

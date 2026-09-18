@@ -470,7 +470,7 @@ Each split: native suite + firmware build, then compare the RAM1 line and `_itcm
   table puts them, and state in the task log whether the new TU name matches the linker's flash allow-list or every
   function carries a marker (design § D8.2). Verify: native suite passes; RAM1 line and `_itcm_block_count` unchanged or
   better.
-- [ ] 6.2 Move the bridge read side (`RuntimePlaybackBridgeCursor` `src/Track/RuntimePlaybackBridge.cpp:659-732`, `RuntimePlaybackBridgeStream` `:734-812`)
+- [x] 6.2 Move the bridge read side (`RuntimePlaybackBridgeCursor` `src/Track/RuntimePlaybackBridge.cpp:659-732`, `RuntimePlaybackBridgeStream` `:734-812`)
   into its own TU; leave `insertionFirst/peek/advance` unmarked exactly as today. Verify: `test_playback_prewarm` bridge
   cases pass; RAM1 line unchanged or better.
 - [ ] 6.3 Move the `SESSION_CAPTURE` idle-telemetry block out of `src/Loop/LoopSnapshotPublish.cpp`
@@ -509,6 +509,23 @@ confirmed.
 Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS with RAM1 byte-identical
 (`variables 96096 / code 391736 / padding 1480 / free for local variables 34976`), `_itcm_block_count` **12
 (unchanged)**, FLASH code 1,004,512 (-8).
+
+**6.2 — bridge read side moves to `src/Track/RuntimePlaybackBridgeRead.cpp`.** The two read classes
+(`RuntimePlaybackBridgeCursor`, `RuntimePlaybackBridgeStream`) plus the file-local `afterPhase` binary search leave
+`RuntimePlaybackBridge.cpp`, which drops from 803 to 639 lines. `afterPhase` was used only by the read side, so it
+moves with it instead of being shared or duplicated; the compile side (capture fill and ranked build) keeps its own
+anonymous `matchesOpenNote`. It also gains the explicit `<algorithm>` include its `std::max` use relied on
+transitively before this split.
+
+D8.2 placement, stated before editing: the new TU is off the linker flash allow-list and keeps the existing per-function
+markers — `selectAfterPhase`/`matches`/`reset`/`stream`/`source`/`acknowledgeThroughPhase` keep
+`PLAYBACK_BRIDGE_MAINTENANCE_MEM` (still an alias of `NOTE_EDIT_MEM`), while `insertionFirst`/`peek`/`advance` stay
+unmarked in the ITCM default, as the task requires. `test_playback_prewarm` and `test_continuous_capture` include the
+bridge TU by path, so both gained the new include.
+
+Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS with RAM1 byte-identical
+(`variables 96096 / code 391736 / padding 1480 / free for local variables 34976`), `_itcm_block_count` **12
+(unchanged)**, FLASH code 1,004,512 (unchanged).
 
 ## 7. P6 — formatting, docs and enforcement
 
