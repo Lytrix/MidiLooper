@@ -159,10 +159,13 @@ visual detail windows are bounded optimisations on top, never a precondition for
       reported rather than resolved by allocating.
 - [ ] S4.5 **Finalization denial (verification only -- no mechanism change)**: preserve the existing contract; native fixture for A-stops-and-finalizes / B-records /
       A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — denied with no
-      partial stop, B still recording/overdubbing, next stop succeeding after the role frees. Emit
+      partial stop, B still recording/overdubbing, and a subsequent stop request admitted only after the role
+      frees (not an unconditional promise -- the other single-instance resources are re-checked then too). Emit
       `finalization_lease_stop_denied`. Assert the **denial stage names** as the evidence (`finalizer_busy`,
-      `transfer_denied`, `canonical_output_busy`, session-exit handoff, and `queue_full` as the distinct
-      exhaustion case) so the mechanism is observable rather than inferred. Prove the stop is **not
+      `transfer_denied`, `canonical_output_busy`, session-exit handoff as the ordinary directional-capacity
+      denials, and `queue_full` as the **exceptional descriptor-exhaustion** case, kept categorically separate
+      so an ordinary finalization wait is never blamed on it) so the mechanism is observable rather than
+      inferred. Prove the stop is **not
       auto-serviced**: the denied attempt produced no descriptor and no partial stop, and only a re-issued stop
       after the resource frees is admitted. Do **not** build a queue: the ring's tail must be free before
       admission, so it cannot stack pending stops, and concurrent finalization needs its own capacity/ownership

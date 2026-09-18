@@ -129,7 +129,8 @@ pool that supports on the order of **four** resident bundles — and the arm cha
    bound is the single-instance finalization resources (`captureStopOwner`, overdub transfer admission,
    canonical capture output, session-exit handoff), not the ring: admission requires a **free tail descriptor**,
    so pending stops are never stacked and `queue_full` is a distinct exhaustion denial. A denied stop is not
-   queued or auto-serviced -- it is re-issued by the stop edge.
+   queued or auto-serviced -- it is re-issued by the stop edge and **may** then be admitted, subject to the
+   other single-instance resources being free at that later instant.
    `InteractiveLease` 1, and an explicitly budgeted transfer overlap. The budget is
    `fixed + N x P + C + D + I + overlap + reserve <= budget`, so only the term multiplied by N must be small.
 3. **Immutable readiness is owed per affected tick.** After a recording, overdub or edit changes content at a
