@@ -32,10 +32,12 @@ and never merely because a slot is selected.
 - **THEN** a bounded working-set lease is acquired before it is used
 - **AND** the acquisition happens where allocation is permitted, not on a timing-critical edge
 
-### Requirement: Working sets are window-sized so the active envelope fits PSRAM
-Working-set capacities SHALL be derived from the resolved window rather than a whole-loop event ceiling,
-and the number of simultaneously resident leases SHALL be an execution bound computed from PSRAM
-arithmetic, not a policy guess.
+### Requirement: Working sets are window-sized so the two-slots-per-track envelope fits PSRAM
+Working-set capacities SHALL be derived from the resolved window rather than a whole-loop event ceiling, so
+a slot's resident cost is independent of its loop length, and the number of simultaneously resident leases
+SHALL be an execution bound computed from PSRAM arithmetic, not a policy guess. The envelope to be served
+is **up to two sounding slots per track across up to sixteen tracks** -- up to thirty-two sounding leases --
+plus the overlap a transfer requires.
 
 #### Scenario: The lease budget closes
 - **WHEN** fixed overhead, canonical allowance, transient and deferred headroom, and the worst-case lease
@@ -43,10 +45,37 @@ arithmetic, not a policy guess.
 - **THEN** the total fits the safe PSRAM budget
 - **AND** the derivation is recorded as the basis for the active cap
 
+#### Scenario: Loop length does not change the resident cost
+- **WHEN** two slots of very different loop lengths (for example four bars and sixty-four bars) are
+  sounding on the same track
+- **THEN** their resident working sets are of comparable size
+- **AND** playback crosses window boundaries without an audible or timing discontinuity
+
 #### Scenario: Simultaneous-playback cap is stated, not hidden
-- **WHEN** window sizing cannot serve every logical active slot of the product envelope at once
-- **THEN** the actual simultaneous-playback capability is stated as a bound
+- **WHEN** window sizing cannot serve two sounding slots on each of sixteen tracks at once
+- **THEN** the achievable simultaneous-playback capability is stated as a bound (`k` slots per track)
 - **AND** it is not presented as a configurable number with no arithmetic behind it
+
+### Requirement: Role transfer never requires stopping playback
+Switching track or slot, starting record or overdub, and undo/redo SHALL all be performed while transport
+continues, without MIDI timing degradation. The single complex role -- the resumable small-packet logic
+inside MIDI boundaries that serves record, overdub, passes, undo/redo and display -- SHALL transfer to the
+newly selected slot or track, and the switch SHALL be allocation-free at the point of transfer.
+
+#### Scenario: Switching while playing does not stop transport
+- **WHEN** a different track or slot is selected while playback is running
+- **THEN** transport continues and playback does not stop
+- **AND** the inbound role is provisioned before the outbound role is released
+
+#### Scenario: Complex role transfers rather than being rebuilt
+- **WHEN** the complex role moves to another slot or track
+- **THEN** the resumable boundary logic is transferred to the new holder
+- **AND** the new holder can serve record, overdub, passes, undo/redo and display without a stop
+
+#### Scenario: No timing degradation across a switch
+- **WHEN** track/slot switching, record/overdub start, and undo/redo are exercised while playing
+- **THEN** the MIDI-boundary timing evidence reports no degradation and no overflow
+- **AND** the switch path performs no working-set allocation
 
 ### Requirement: Working-set leases are generation-qualified
 A lease SHALL be identified by slot, generation and role, and SHALL be transferred and released by that

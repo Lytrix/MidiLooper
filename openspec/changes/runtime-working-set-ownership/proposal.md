@@ -21,27 +21,40 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 
 **The law must change from `recorded slots x whole-loop state` to `active roles x bounded window`.**
 
-**But the law change alone is not sufficient, and this review changed the plan.** Moving from
-`recorded slots` to `active slots` still multiplies today's per-slot cost by the product envelope
-(16 tracks x 2 active slots):
+**The envelope has to be pinned, and this revision pins it.** The requirement is:
+
+| Envelope | Value |
+|---|---|
+| Tracks | **16** (the target envelope; `NUM_TRACKS` is 8 today -- open decision 2) |
+| Slots sounding per track | **2** |
+| Slots sounding simultaneously | therefore **up to 32** (2 x 16), **regardless of each slot's loop length** |
+| Slots holding the complex role -- record / overdub / passes / undo / redo / display, resolved by the resumable small-packet logic inside MIDI boundaries | **exactly 1**, transferable to another slot/track quickly |
+| Slots that may be selected or browsed | the whole library (~60 recorded) |
+| Transport continuity | the looper **never stops playing** across track/slot switching, record/overdub start, or undo/redo, with no MIDI timing degradation |
+
+So the resident set is **up to 32 playing leases + 1 complex lease**, and at today's per-slot cost that is
 
 ```
 32 x  845 KB  ~=  27 MB
 32 x 1.47 MB  ~=  47 MB
 ```
 
-against ~8 MB PSRAM. So **window-derived working-set sizing is a prerequisite of the role-pool
-architecture, not a safeguard**: the lease must be small enough that the resident set fits. Three
-distinct quantities must be designed separately:
+against ~8 MB PSRAM. **Window sizing is therefore a prerequisite, not a safeguard** -- it is the only thing
+that makes the 2-slot-per-track envelope both length-independent and small enough to fit. It exists so a
+64-bar slot costs what a 4-bar slot costs, with playback crossing window boundaries seamlessly.
+
+Three distinct quantities are still designed separately:
 
 | Quantity | Value | Backed by |
 |---|---|---|
 | **Library residency** | ~60+ recorded slots | canonical metadata + persisted content |
-| **Logical active slots** | product envelope, e.g. 16 x 2 | roles/tiers -- not all necessarily resident |
+| **Logical active slots** | **up to 32 sounding (2 x 16) + 1 complex** | window-sized leases; roles/tiers |
 | **Resident working-set leases** | must fit PSRAM | bounded, window-sized |
 
-If window sizing cannot make the third serve all 32 logical active slots, the plan must **state the
-actual simultaneous-playback cap** rather than hide it behind a "configured N".
+The third quantity must serve that envelope **including the transfer overlap**: 32 leases plus overlap out of
+a few MB means roughly **100-125 KB per lease**, against ~845 KB today. Window sizing must reach that order
+or the plan must state the achievable simultaneous-playback capability as a bound instead of claiming 2 per
+track.
 
 Brownfield context:
 [`docs/Runtime/CURRENT_WORK.md`](../../../docs/Runtime/CURRENT_WORK.md),
@@ -61,8 +74,16 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
   selection latency does not depend on memory. "About to sound", arm, or an explicit preload is the cold
   admission boundary.
 - **Window-derived lease sizing is on the critical path.** Capacities are derived from the resolved
-  window instead of the 2048-event ceiling, and the feasible active cap `N` is computed from PSRAM
-  arithmetic rather than chosen as a policy guess.
+  window instead of the 2048-event ceiling so a slot's cost is **independent of its loop length**, and the
+  feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
+- **One complex-role holder, and it is transferable.** Exactly one slot holds the complex role -- the
+  resumable small-packet logic that serves record, overdub, passes, undo/redo and display inside MIDI
+  boundaries. Selecting another slot or track **transfers that role quickly**, and switching must not
+  require a transport stop.
+- **The looper never stops playing.** Track/slot switching, record/overdub start and undo/redo all happen
+  while playback continues, so the pool must **pre-provision the inbound role before releasing the
+  outbound one**, the switch itself must be allocation-free, and it must land on a MIDI boundary. The
+  transfer overlap is what the transient headroom in the budget exists for.
 - **Generation-qualified leases.** The unit is a `WorkingSetLease` whose identity is
   `slot + generation + role`; leases transfer and release by identity, and a late cleanup from a previous
   generation cannot release or mutate storage now owned by a newer generation. This is a first-class
@@ -131,10 +152,14 @@ prerequisite S2, and reclassifies §5.13 as a symptom.
 
 1. **Undo history at cold.** Which of the four candidate policies in `design.md` applies, and if undo is
    retained, what its global budget is. Blocking for claiming flat cold-slot memory.
-2. **The active cap `N` and its arithmetic.** Derived from S2's measured lease size; must be stated as a
-   capability bound (how many slots can sound at once) rather than a configured number.
-3. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
-4. **Canonical residency policy** (fixed cap, LRU over the active set, or derived from loop length) and
+2. **16 tracks as the target.** `NUM_TRACKS` is 8 today, so the envelope implies either a config change or
+   a workstream of its own (per-track runtime structures, display, UI all scale with it). Confirm the track
+   count and whether it lands inside this change.
+3. **How deep the transfer overlap must be.** How many roles may be simultaneously resident during a
+   switch, and whether the complex role overlaps the playing set (its holder may also be one of the two
+   sounding slots).
+4. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
+5. **Canonical residency policy** (fixed cap, LRU over the active set, or derived from loop length) and
    whether it needs a length cap at capture admission.
-5. **Whether any authority genuinely requires a full published root** for an active long loop, or whether
+6. **Whether any authority genuinely requires a full published root** for an active long loop, or whether
    the bounded runtime representation suffices everywhere.

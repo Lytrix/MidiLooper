@@ -16,18 +16,22 @@ The requested decision, **including the revisions from review**:
 An ownership move of this size needs the transfer protocol in `docs/Authority/ARCHITECTURE_RULES.md` and
 a `DEC-###`; the canonical-residency phase needs its own `DEC` amendment.
 
-## Revision 1 — window sizing is a prerequisite, not a safeguard
+## Revision 1 — the envelope, and why windowing is a prerequisite
 
-Changing `recorded slots` to `active slots` still multiplies today's per-slot cost by the product
-envelope (16 tracks x 2 active slots = 32):
+The requirement, pinned:
 
-```
-32 x  845 KB  ~=  27 MB
-32 x 1.47 MB  ~=  47 MB
-```
+| Envelope | Value |
+|---|---|
+| Tracks | **16** (`NUM_TRACKS` is 8 today) |
+| Slots sounding per track | **2** |
+| Slots sounding simultaneously | **up to 32** (2 x 16), any loop length |
+| Slots holding the complex role (record / overdub / passes / undo / redo / display, resumable small-packet logic inside MIDI boundaries) | **exactly 1**, transferable |
+| Transport | **never stops** -- switching, record/overdub start and undo/redo happen while playing |
 
-against ~8 MB PSRAM. So the third quantity below must be designed down before the pool ceiling is
-defined:
+So the resident set is **up to 32 playing leases + 1 complex lease** plus transfer overlap, and at today's
+cost that is 32 x 845 KB ~= **27 MB**, or 32 x 1.47 MB ~= **47 MB**, against ~8 MB. **Windowing is the only
+way the envelope fits**, and it must also make the cost length-independent: a 64-bar slot costs what a
+4-bar slot costs, with playback crossing window boundaries seamlessly. Consequently:
 
 | Quantity | Value | Backed by |
 |---|---|---|
@@ -45,11 +49,37 @@ fixed PSRAM overhead
 <= safe PSRAM budget
 ```
 
-Taking ~8 MB total, minus the ~1 MB capture ring and ~1 MB backed chunk pool, minus a canonical
-allowance and a transient reserve, leaves roughly **3-4 MB for leases**, i.e. **~100-125 KB per lease if
-all 32 logical active slots are to sound simultaneously**. The present lease is ~845 KB. Either window
-sizing reaches that order, or the plan states the *actual* simultaneous-playback cap as a capability
-bound. This turns the active cap from a policy guess into an execution bound.
+Taking ~8 MB total, minus the ~1 MB capture ring, the backed chunk pool, a canonical allowance and a
+transient reserve, leaves a few MB for leases: **32 leases plus transfer overlap means roughly 100-125 KB
+per lease**, against ~845 KB today. That is the number window sizing must reach, and it is why S2 is a
+prerequisite rather than a tidy-up. If the measured lease cannot reach that order, the honest outcome is a
+stated simultaneous-playback bound (`k` slots per track, `k < 2`) rather than a claim that the envelope is
+met.
+
+## Revision 8 — the never-stop transfer requirement
+
+The primary goal is continuity: **the looper must never be required to stop playing**, and switching
+tracks/slots, starting record/overdub, and undo/redo must not degrade MIDI timing. That makes role
+transfer a first-class mechanism rather than a consequence of the pool:
+
+```
+pre-provision inbound role   (cold boundary, allocation permitted)
+        |
+atomic switch at a MIDI boundary   (allocation-free; no transport stop)
+        |
+outbound role released only after the last live owner retires
+```
+
+- The same role -- the resumable small-packet logic already used at MIDI boundaries -- is what the
+  complex role holder runs for record/overdub/passes/undo/redo/display, so a switch **transfers the role**
+  rather than reconstructing it.
+- The switch path must perform **no allocation**: the inbound lease comes from the pool, which is why the
+  pool must be provisioned for the envelope *plus* overlap.
+- The **transfer overlap is the transient headroom** in the budget arithmetic; it is not slack.
+- A switch is a **cold admission boundary** by construction (it happens before the boundary it lands on),
+  which is what keeps it compatible with the no-allocation-on-a-timing-edge rule.
+- The existing MIDI-boundary verifier (`call_site_gate_ok`, `overflow_free`, active-interval overflow
+  check) is the acceptance instrument for "no timing degradation".
 
 ## Revision 2 — role tiers: selection must stay cheap
 
@@ -174,6 +204,11 @@ Consequences already folded into the proposal and spec:
 - **Undo-history residency** -- pinned by open decision 1 before any flat-memory claim.
 
 ## Verification
+
+**Continuity acceptance (S7):** with transport playing, switch track and slot repeatedly, start
+record and overdub, and run undo/redo -- the transport never stops, and the MIDI-boundary timing verifier
+reports no degradation (`overflow_free`, `call_site_gate_ok`, no active-interval overflow) across every
+switch.
 
 **Scaling acceptance (S7), a memory test rather than a content test:**
 

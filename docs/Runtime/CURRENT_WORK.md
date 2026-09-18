@@ -2759,11 +2759,15 @@ The change: derived runtime views and capture companion storage become **owned b
 inactive slots retaining only canonical/persistence state and bounded metadata; working sets are acquired on
 activation, reused across slots, and released when no live playback/capture/deferred owner remains. Acceptance is
 a **measured scaling curve** -- load 60+ long slots, activate A, activate B, deactivate A, activate C -- required
-to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. **Revised after review (APPROVE WITH REVISIONS).** The law change alone is not sufficient: at the product
-envelope (16 tracks x 2 active slots) today's per-slot cost is 32 x 845 KB ~= 27 MB, or 32 x 1.47 MB ~= 47 MB
-against ~8 MB, so the window-derived lease sizing (RC-MEM-2's outstanding item) is **promoted from safeguard to
-prerequisite S2** -- the resident-lease budget must close (~100-125 KB per lease if all 32 logical active slots
-are to sound) or the simultaneous-playback cap must be stated as a bound. Three quantities are now separated:
+to be flat in recorded slots and stepped in active slots, with C reusing A's capacity. **Envelope (confirmed 2026-09-18): 2 sounding slots per track across 16 tracks = up to 32 sounding leases,
+regardless of each slot's loop length; exactly 1 slot holds the complex role** (record / overdub / passes /
+undo/redo / display, resumable small-packet logic inside MIDI boundaries), transferable to another slot or track
+quickly; and **the looper must never stop playing** -- switching, record/overdub and undo/redo all happen while
+playing with no MIDI timing degradation. At today's per-slot cost the envelope is 32 x 845 KB ~= 27 MB, or
+32 x 1.47 MB ~= 47 MB, against ~8 MB, so window-derived lease sizing (RC-MEM-2's outstanding item) is
+**promoted from safeguard to prerequisite S2**: ~100-125 KB per lease, or the simultaneous-playback capability
+is stated as a bound (`k` slots per track, `k < 2`). Note `NUM_TRACKS` is 8 today, so the 16-track envelope is
+itself an open item (S0.5). Three quantities are now separated:
 library residency (~60 slots), logical active slots (the product envelope), and resident working-set leases
 (must fit PSRAM). Role tiers replace one "active": COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED,
 with **selection staying cheap** so browsing 60 slots causes no lease churn. Leases are
