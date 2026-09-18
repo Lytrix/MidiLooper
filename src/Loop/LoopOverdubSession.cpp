@@ -63,6 +63,7 @@ LOOP_COLD_MEM bool Loop::markSessionExitTailReady(size_t ringIndex, PassId lastP
 }
 
 LOOP_COLD_MEM void Loop::closeOverdubSession() {
+  retireSealedCapturePreviewForDisplay();
   ++overdubSessionUndoGeneration_;
   playheadPhaseTick = UINT32_MAX;
   currentOverdubSessionIndex_ = kUngroupedOverdubSessionIndex;
@@ -129,6 +130,7 @@ LOOP_COLD_MEM Loop::SessionClose::Phase Loop::stepCloseOverdubSession(
         overdubSessionCursor_ = 0;
         overdubSourceViewLoopLengthTicks_ = 0;
         overdubSourceViewEstablished_ = false;
+        retireSealedCapturePreviewForDisplay();
         work.phase = Phase::Complete;
         break;
       default: break;

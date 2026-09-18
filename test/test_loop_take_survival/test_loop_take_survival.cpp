@@ -4267,6 +4267,20 @@ void applyDrawSourceDisplayOverlays(const Loop& loop, uint32_t firstBar, uint32_
       }
     }
   }
+  if (loop.retiredSealedDisplayNeededForFrame()) {
+    for (const NoteUtils::DisplayNote& retiredRow : loop.retiredSealedDisplayNotes()) {
+      if (walks != nullptr) {
+        ++walks->sealedWalks;
+      }
+      for (uint32_t bar = firstBar; bar <= lastBar; ++bar) {
+        if (!previewNoteIntersectsBar(retiredRow, bar, loopLength)) {
+          continue;
+        }
+        upsertDisplayNoteAtPitchStartFrom(out, 0, retiredRow, captureActive);
+        break;
+      }
+    }
+  }
   if (!captureActive && !loop.hasOverdubSession()) {
     return;
   }
@@ -4401,6 +4415,35 @@ uint32_t previewComposeMatchHost(const NoteUtils::DisplayNoteVec& compose,
 /// the undone overdub (record-only cache 180 + sealed 13 = frame 193; redo left it at 193 because
 /// it never left). A pass-state change must drop the handoff so the pass-resolved committed frame
 /// is the authority again.
+void test_second_overdub_keeps_the_first_overdub_on_the_display() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 1536;
+  recordLinearNote(loop, 0, 40, 60);
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 64, 90)));
+  const NoteId firstOverdubNoteId = lastCaptureNoteOnId(loop);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(624, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubWrap, 624));
+  TEST_ASSERT_TRUE(loop.hasSealedCapturePreview());
+  loop.closeOverdubSession();
+  TEST_ASSERT_FALSE(loop.hasSealedCapturePreview());
+  TEST_ASSERT_TRUE(loop.hasRetiredSealedDisplayNotes());
+  loop.openOverdubSession(0, /*forceNew=*/true);
+  NoteUtils::DisplayNoteVec frame;
+  gatherDrawSourceDisplayNotes(loop, 0, 1, 0, 0, 127, frame);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(frame, firstOverdubNoteId));
+  loop.rebuildVisualCacheFromPasses();
+  loop.releaseRetiredSealedDisplayIfCovered();
+  NoteUtils::DisplayNoteVec coveredFrame;
+  gatherDrawSourceDisplayNotes(loop, 0, 1, 0, 0, 127, coveredFrame);
+  TEST_ASSERT_NOT_NULL(findDisplayNoteById(coveredFrame, firstOverdubNoteId));
+}
+
 void test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -6800,6 +6843,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_bounded_session_close_rejects_a_changed_session);
   RUN_TEST(test_seal_retains_capture_rows_until_snapshot_covers_revision);
   RUN_TEST(test_retain_at_seal_merges_uncovered_laps);
+  RUN_TEST(test_second_overdub_keeps_the_first_overdub_on_the_display);
   RUN_TEST(test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff);
   RUN_TEST(test_stale_snapshot_release_requires_visual_cache_coverage);
   RUN_TEST(test_seal_retention_excludes_open_capture_holds);

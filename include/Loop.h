@@ -201,6 +201,10 @@ struct Loop {
   /// these; display only consumes them.
   NoteUtils::DisplayNoteVec sealedCapturePreviewNotes_;
   uint32_t sealedCapturePreviewRevision_ = 0;
+  /// 5.12 display-only tier: rows retired from a closed session's sealed handoff. Read by the
+  /// frame union alone; the four consuming paths keep reading `sealedCapturePreviewNotes_`.
+  NoteUtils::DisplayNoteVec retiredSealedDisplayNotes_;
+  uint32_t retiredSealedDisplayRevision_ = 0;
   VisualCacheDelta pendingVisualDelta;
   bool visualCacheDirty = true;
   size_t materializedEventCount_ = 0;
@@ -884,6 +888,24 @@ struct Loop {
     return sealedCapturePreviewNotes_;
   }
   bool hasSealedCapturePreview() const { return !sealedCapturePreviewNotes_.empty(); }
+  const NoteUtils::DisplayNoteVec& retiredSealedDisplayNotes() const {
+    return retiredSealedDisplayNotes_;
+  }
+  bool hasRetiredSealedDisplayNotes() const { return !retiredSealedDisplayNotes_.empty(); }
+  bool retiredSealedDisplayCovered() const;
+  /// True when the frame must still paint the retired rows: at least one of them is neither covered
+  /// by nor *replaced* in the committed cache.
+  ///
+  /// This is deliberately not `!retiredSealedDisplayCovered()`. The cache proves coverage by exact
+  /// span, but the clean-adopt rule (`010217`) *replaces* a wrap-shaped successor with the linear
+  /// row for the same pitch/start, so a retired wrap row is never "covered" while the committed
+  /// side already holds the authoritative variant of that identity. Painting the retired copy would
+  /// undo the adopt (`test_draw_source_od2_clean_adopt_keeps_linear_tail`). So the display gate asks
+  /// whether the identity is represented at all, while the release rule keeps asking for coverage.
+  bool retiredSealedDisplayNeededForFrame() const;
+  void releaseRetiredSealedDisplayIfCovered();
+  void clearRetiredSealedDisplayNotes();
+  void retireSealedCapturePreviewForDisplay();
   /// Retains uncovered sealed rows, then merges this pass's closed preview before
   /// `capturePreview.clear()`. Release stays `releaseSealedCapturePreviewIfCovered`.
   void retainCapturePreviewAtSeal();

@@ -1343,6 +1343,39 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       Reverted a fifth time; suite back to 139/139. The 5.12 fix itself is one gate-condition away -- the frame union
       is in the right place, the ownership split is proven safe, and the fixture passes -- but od2 must be
       understood before that condition is chosen, because it is one of the four guards.
+      **FIXED 2026-09-18 (native; device gate owed). The instrumented run named the last distinction, and it was
+      "superseded", not "covered".** The probe (a deliberately failing assertion encoding the facts, because
+      PlatformIO captures native test stdout so `printf` is not a channel) returned **262 = 0x106** for od2:
+      `hasRetiredSealedDisplayNotes()` true, exactly **1** retired row, `visualCacheDirty` false, and
+      `retiredSealedDisplayCovered()` **false**. So od2 *does* reach a close with the wrap row in the handoff, and the
+      reason coverage fails on a clean cache is that the cache holds the **linear** variant (`pitch 39, 2976 -> 3055`)
+      of the same identity while the retired row is the **wrap-shaped successor** (`pitch 39, 2976 -> 2784`) that clean
+      adopt replaced (`010217`). Exact-span coverage can therefore never be satisfied for a superseded row, and
+      gating the union on `!covered` paints a row the adopt deliberately replaced.
+      **Final design: two predicates with two different questions.**
+      - `retiredSealedDisplayNeededForFrame()` -- the *display* gate. True while the cache is dirty, or while any
+        retired row's identity (`note` + `startTick`) is not represented in the committed cache at all. Identity, not
+        span: the committed side legitimately holds the same pitch/start with a different end. Returns false when
+        every retired row has been superseded or is present, so the frame stops painting retired copies the moment
+        the committed representation owns that identity.
+      - `retiredSealedDisplayCovered()` -- the *release* rule, unchanged (exact membership), used by
+        `releaseRetiredSealedDisplayIfCovered()` at the maintenance point.
+      The union lives in `applyDrawSourceOverlays` (last in all three branches, after the
+      `shouldRetainUnpublishedVisualCacheOverStaleGather` assign) and is mirrored in the host helper. Retire happens
+      at session **close** (`closeOverdubSession` and the stepped close's `Phase::Finish`); `openOverdubSession` keeps
+      clearing the live handoff exactly as it always has, so the `001647` wrap guard is preserved by construction.
+      Clearing both tiers on pass-disable keeps the 5.8a guarantee, and `resetPassTimeline` clears both.
+      **Evidence.** `test_loop_take_survival` **140/140** including the new
+      `test_second_overdub_keeps_the_first_overdub_on_the_display` (first overdub still painted after the second
+      session opens, and still painted once the cache accounts for it) and all four historical guards --
+      `test_retain_at_seal_merges_uncovered_laps`, `test_draw_source_open_hold_grows_to_playhead_after_occupy_hide`,
+      `test_draw_source_retains_unpublished_visual_cache_over_stale_gather_214900` and
+      `test_draw_source_od2_clean_adopt_keeps_linear_tail`. Full native **2,262 cases / 1 skipped / 0 failures**;
+      `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,128 / code 392,344 / padding 872 / locals free
+      34,944` (the retired tier's vector header plus one revision, no FlexRAM bank cost).
+      **Device gate owed:** the 24-bar two-overdub shape must show the first overdub's rows present across the second
+      `Overdubbing started` (the device signature to watch is `DISP` `frame` not dropping, and `visual` still 0 in
+      that window) instead of returning only at the end.
       **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
