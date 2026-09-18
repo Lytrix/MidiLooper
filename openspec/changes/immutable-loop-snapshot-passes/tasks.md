@@ -1321,6 +1321,28 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       Reverted a fourth time; suite back to 139/139. What is settled: the ownership design, the union site
       (`applyDrawSourceOverlays`, last in every branch), the gate shape, `5.12`'s own fix, and the fact that `od2`
       fails for a specific and nameable reason.
+      **Fifth attempt 2026-09-18: retire-at-close keeps 5.12 passing but od2 still flips -- the next step is one
+      instrumented run, not another design change.** The retire was moved from `openOverdubSession` to the two close
+      paths (`closeOverdubSession` and the stepped close's `Phase::Finish`), with `openOverdubSession` left clearing
+      exactly as it always has. The 5.12 fixture still passes, and od2 still flips, which falsifies the
+      "retire at close is the discriminator" hypothesis: od2 reaches a close (or otherwise populates the retired
+      tier) while holding the wrap-shaped successor row.
+      What is established, so the next pass starts from data rather than a guess:
+      - the only producers of the retired tier are `closeOverdubSession` and the stepped close's `Finish`, so od2
+        must be reaching one of them (directly or through the commit/publication path) with the wrap row still in
+        `sealedCapturePreviewNotes_`;
+      - the retired tier's own gate is `hasRetiredSealedDisplayNotes() && !retiredSealedDisplayCovered()`, and
+        `retiredSealedDisplayCovered()` uses `visualCache.builtFromRevision < retiredSealedDisplayRevision_` -- the
+        minimum seal revision seen -- so it is *not* automatically the same verdict the live handoff would have
+        reached for the same rows, which is the second candidate cause;
+      - the inline `printf` instrumentation added to `od2` produced no output (PlatformIO captures test stdout, and
+        the `NoteUtils::DisplayNoteVec drawn; gatherDrawSourceDisplayNotes(loop, 0, 3, ...)` block is not unique to
+        `od2`, so the first-match replacement landed elsewhere). **Use a `TEST_ASSERT` that fails with the value
+        encoded instead, or a uniquely-anchored print**, and capture: whether od2 reaches a close at all, the
+        retired rows' pitch/start/end, and `builtFromRevision` vs the retired revision.
+      Reverted a fifth time; suite back to 139/139. The 5.12 fix itself is one gate-condition away -- the frame union
+      is in the right place, the ownership split is proven safe, and the fixture passes -- but od2 must be
+      understood before that condition is chosen, because it is one of the four guards.
       **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
