@@ -216,7 +216,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
 
 ## 4. P3 — de-duplicate into existing owners
 
-- [ ] 4.1 Add `playbackEventKind(const MidiEvent&)` to `include/MidiEvent.h` (or to the new ordering header) and one
+- [x] 4.1 Add `playbackEventKind(const MidiEvent&)` to `include/MidiEvent.h` (or to the new ordering header) and one
   merge-order key in a header-inline `include/Utils/PlaybackEventOrder.h`; migrate the duplicated comparator
   (`src/Track/RuntimePlaybackBridge.cpp:588-598` vs `:699-706`) and the 8 `eventKind` ternary sites in touched files.
   Verify: `test_playback_prewarm` and `test_continuous_capture` pass with byte-identical emitted traces.
@@ -246,7 +246,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
 - [x] 4.9 Extract one `installRetainedCurrentView(views, sourceIndex, requireRawPrepared)` for `installPreparedCurrent`
   / `replaceRetainedWithReady` (`src/Track/RuntimePlaybackView.cpp:541-557` vs `:559-575`). Verify:
   `test_playback_prewarm` lifecycle cases pass.
-- [ ] 4.10 Extract the duplicated event-membership page comparator in `src/Loop/LoopSnapshot.cpp:1131-1142` vs
+- [x] 4.10 Extract the duplicated event-membership page comparator in `src/Loop/LoopSnapshot.cpp:1131-1142` vs
   `:1240-1251` — comparator only; do **not** template the bar-apply stage machines (design § D8.4). Verify:
   `test_loop_event_store` and `test_loop_take_survival` pass byte-identically.
 - [x] 4.11 Extract one `shouldTrimGlobalUndoStackForMemory(...)` predicate into `include/PassReclaim.h` used by both
@@ -280,10 +280,19 @@ Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS wi
 `variables 96096 / code 392312 / padding 904 / free for local variables 34976` — free-for-locals unchanged,
 so still the same FlexRAM bank.
 
-**Still open in P3:** 4.1 (ordering key + `eventKind` owner), 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle
-accessor vocabulary), 4.4 (atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1
-re-measure), 4.7 (`ceilGrains`), 4.10 (bar-membership comparator), 4.12 (`*_MEM` alias consolidation),
-4.13 (unique-id/box/bar-count helpers), and the phase gate 4.14. The phase gate stays unchecked until they
+**Second sub-commit:** **4.1** — `include/Utils/PlaybackEventOrder.h` now owns `eventKind` and the five-key
+merge key (`mergeKey`/`mergeKeyBefore`), and both sides of the bridge merge (the compile-side base/insertion
+merge and the consume-side `insertionFirst`) build a key instead of repeating the ternary chain, with the
+order-builder comparator using the shared `eventKind`. This is the duplication with a correctness invariant
+behind it: a compiled order that disagreed with the consumed order would drop or duplicate accepted events,
+and `test_playback_prewarm` (179) plus `test_continuous_capture` (77) confirm the byte-identical traces.
+**4.10** — one `eventMembershipPageLess` replaces the two identical event-membership page comparators in
+`LoopSnapshot.cpp`. Sub-phase gate: native 2,262 / 1 skipped / 2,261 passed; firmware SUCCESS with RAM1
+unchanged (`code 392312 / padding 904 / free 34976`) and FLASH code 1,005,544 (-2,096).
+
+**Still open in P3:** 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle accessor vocabulary), 4.4
+(atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), 4.7 (`ceilGrains`),
+4.12 (`*_MEM` alias consolidation), 4.13 (unique-id/box/bar-count helpers), and the phase gate 4.14. The phase gate stays unchecked until they
 land; the P3 work is committed in sub-commits so each is independently bisectable.
 
 ## 5. P4 — converge naming on the authority (record the decision first)

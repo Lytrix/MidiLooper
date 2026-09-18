@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackOrderBuilder.h"
+#include "Utils/PlaybackEventOrder.h"
 
 #include <algorithm>
 #include <limits>
@@ -124,8 +125,8 @@ PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::isBefore(uint16
   }
   const MidiEvent& leftEvent = storage.events[left];
   const MidiEvent& rightEvent = storage.events[right];
-  const uint8_t leftKind = leftEvent.isNoteOff() ? 0 : (leftEvent.isNoteOn() ? 1 : 2);
-  const uint8_t rightKind = rightEvent.isNoteOff() ? 0 : (rightEvent.isNoteOn() ? 1 : 2);
+  const uint8_t leftKind = PlaybackEventOrder::eventKind(leftEvent);
+  const uint8_t rightKind = PlaybackEventOrder::eventKind(rightEvent);
   if (leftKind != rightKind) {
     return leftKind < rightKind;
   }

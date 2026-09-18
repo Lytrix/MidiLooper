@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimePlaybackBridge.h"
+#include "Utils/PlaybackEventOrder.h"
 
 #if defined(__IMXRT1062__)
 #include <Arduino.h>
@@ -10,10 +11,6 @@
 #endif
 
 namespace {
-uint8_t eventKind(const MidiEvent& event) {
-  return event.isNoteOff() ? 0 : (event.isNoteOn() ? 1 : 2);
-}
-
 bool matchesOpenNote(const MidiEvent& event, const ActiveNoteLedger::Entry& open) {
   return (event.noteId != kInvalidNoteId && open.noteId == event.noteId) ||
          ((event.noteId == kInvalidNoteId || open.noteId == kInvalidNoteId) &&
@@ -589,11 +586,10 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
           const auto& r = base_->storage.events[right];
           const uint32_t lp = bridge_->insertions.phases[left];
           const uint32_t rp = base_->storage.phases[right];
-          inserted = lp != rp ? lp < rp : eventKind(l) != eventKind(r) ? eventKind(l) < eventKind(r) :
-                     l.tick != r.tick ? l.tick < r.tick :
-                     bridge_->insertionRanks[left] != bridge_->baseRanks[right]
-                       ? bridge_->insertionRanks[left] < bridge_->baseRanks[right]
-                       : bridge_->insertionProvenance[left] < right;
+          inserted = PlaybackEventOrder::mergeKeyBefore(
+              PlaybackEventOrder::mergeKey(lp, l.tick, bridge_->insertionRanks[left],
+                                           bridge_->insertionProvenance[left], l),
+              PlaybackEventOrder::mergeKey(rp, r.tick, bridge_->baseRanks[right], right, r));
         }
         const uint16_t index = inserted ? (rebinding_ ? bridge_->insertions.mergeScratch : bridge_->insertions.order)[insertionCursor_++] : (ranked_ ? bridge_->rankedBaseOrder : base_->storage.order)[cursor_++];
         if (inserted && !rebinding_) bridge_->insertions.mergeScratch[insertionCursor_-1] = index;
@@ -696,12 +692,11 @@ bool RuntimePlaybackBridgeCursor::insertionFirst() const {
   const auto& right = base_->storage.events[baseIndex];
   const uint32_t leftPhase = bridge_->insertions.phases[insertionIndex];
   const uint32_t rightPhase = base_->storage.phases[baseIndex];
-  if (leftPhase != rightPhase) return leftPhase < rightPhase;
-  if (eventKind(left) != eventKind(right)) return eventKind(left) < eventKind(right);
-  if (left.tick != right.tick) return left.tick < right.tick;
-  if (bridge_->insertionRanks[insertionIndex] != bridge_->baseRanks[baseIndex])
-    return bridge_->insertionRanks[insertionIndex] < bridge_->baseRanks[baseIndex];
-  return bridge_->insertionProvenance[insertionIndex] < baseIndex;
+  return PlaybackEventOrder::mergeKeyBefore(
+      PlaybackEventOrder::mergeKey(leftPhase, left.tick, bridge_->insertionRanks[insertionIndex],
+                                   bridge_->insertionProvenance[insertionIndex], left),
+      PlaybackEventOrder::mergeKey(rightPhase, right.tick, bridge_->baseRanks[baseIndex], baseIndex,
+                                   right));
 }
 
 const MidiEvent* RuntimePlaybackBridgeCursor::peek() const {

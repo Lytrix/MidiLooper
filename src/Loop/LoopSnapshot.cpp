@@ -29,6 +29,18 @@
 #endif
 
 namespace {
+/// Canonical order inside one event-membership page: empty slots last, then canonical order, then
+/// event id. Owned once so every bar-apply walk sorts a page identically.
+bool eventMembershipPageLess(const LoopSnapshotEventRef& left, const LoopSnapshotEventRef& right) {
+  if (!left || !right) {
+    return static_cast<bool>(left) && !right;
+  }
+  if (left->canonicalOrder != right->canonicalOrder) {
+    return left->canonicalOrder < right->canonicalOrder;
+  }
+  return left->eventId < right->eventId;
+}
+
 
 struct SnapshotSlab {
   uint32_t liveCount = 0;
@@ -1128,18 +1140,8 @@ struct LoopSnapshotEventBarApply {
     sortPage = currentMembership.get();
     if (membershipCopy.sourceWasEmpty) {
       auto* page = sortPage;
-      std::sort(page->references.begin(),
-                page->references.begin() + page->count,
-                [](const LoopSnapshotEventRef& left,
-                   const LoopSnapshotEventRef& right) {
-                  if (!left || !right) {
-                    return static_cast<bool>(left) && !right;
-                  }
-                  if (left->canonicalOrder != right->canonicalOrder) {
-                    return left->canonicalOrder < right->canonicalOrder;
-                  }
-                  return left->eventId < right->eventId;
-                });
+      std::sort(page->references.begin(), page->references.begin() + page->count,
+                eventMembershipPageLess);
       return finishCurrentBar(snapshot);
     }
     barStage = BarStage::SortMembership;
@@ -1237,18 +1239,8 @@ struct LoopSnapshotEventBarApply {
       auto* page = sortPage;
       sortPage = const_cast<SnapshotMembership<LoopSnapshotEventRef>*>(
           page->next.get());
-      std::sort(page->references.begin(),
-                page->references.begin() + page->count,
-                [](const LoopSnapshotEventRef& left,
-                   const LoopSnapshotEventRef& right) {
-                  if (!left || !right) {
-                    return static_cast<bool>(left) && !right;
-                  }
-                  if (left->canonicalOrder != right->canonicalOrder) {
-                    return left->canonicalOrder < right->canonicalOrder;
-                  }
-                  return left->eventId < right->eventId;
-                });
+      std::sort(page->references.begin(), page->references.begin() + page->count,
+                eventMembershipPageLess);
       return true;
     }
 
