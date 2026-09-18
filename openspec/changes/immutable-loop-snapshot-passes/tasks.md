@@ -1297,6 +1297,30 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
          is one of the four historical regressions the split exists to protect.
       Reverted a third time; suite back to 139/139. The ownership design, the correct union site, the device evidence
       and the two remaining questions are all settled -- what is left is (1) and (2), both narrow.
+      **Fourth attempt 2026-09-18: 5.12's own case passes; od2 isolates the last distinction.** With the split plus
+      the union inside `applyDrawSourceOverlays` gated on `hasRetiredSealedDisplayNotes() &&
+      !retiredSealedDisplayCovered()`, the new fixture **passes both halves** -- the first overdub stays painted after
+      the second session starts, and it is still painted once the cache accounts for it -- and `od2` is the single
+      remaining failure. Its cause is now exact rather than vague:
+      - `shouldUnionSealedCapturePreviewForDrawSource` ignores its session arguments entirely and is just
+        `hasSealedCapturePreview && !sealedCapturePreviewCovered` (`include/Utils/DisplayWindowUtils.h:636-645`). So
+        `od2`'s pin holds today **only because its live handoff is empty or covered** at gather time, not because of
+        any session gate.
+      - In `od2` the wrap machinery opens a session *during* the adopt, so the row retained at that seal is the
+        **wrap-shaped successor** (`pitch 39, 2976 -> 2784`) that the clean-adopt rule deliberately rejects
+        (`010217`). Retiring rows at `openOverdubSession` therefore hands the frame back a row the adopt path has
+        already decided against, and the pin flips.
+      **The distinction the fix needs is which session's rows are being retired** -- a *closed, committed* previous
+      session awaiting publication coverage (5.12) versus the *currently adopting* successor whose wrap row the
+      clean-adopt rule rejected (`od2`). "Uncovered" alone does not separate them, and `endTick < startTick` would be
+      an ad-hoc shape test rather than the real rule. The narrow, well-founded next step is to retire at **session
+      close** rather than at session open -- the stop path is where the pass is committed and the rows legitimately
+      await publication coverage -- and leave `openOverdubSession` clearing exactly as it does today, which preserves
+      all four historical guards by construction. That must be read out of the stop/close path
+      (`LoopOverdubSession.cpp` close vs `openOverdubSession`) before it is written.
+      Reverted a fourth time; suite back to 139/139. What is settled: the ownership design, the union site
+      (`applyDrawSourceOverlays`, last in every branch), the gate shape, `5.12`'s own fix, and the fact that `od2`
+      fails for a specific and nameable reason.
       **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
