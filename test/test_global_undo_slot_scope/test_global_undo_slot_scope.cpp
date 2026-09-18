@@ -42,6 +42,13 @@ size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t slotIndex,
     kept.push_back(std::move(stack.entries[i]));
   }
 
+  // Mirror of `TrackUndo::eraseUndoEntriesForSlot`: the move-assign takes `kept`'s buffer, so a
+  // rebuild smaller than the protected prewarm must re-reserve the publication capacity or a later
+  // deferred stop's `TrackUndoPublication::begin` rejects at `cursor >= capacity` and silently
+  // drops its undo entry while its pass still commits.
+  if (kept.capacity() < kUndoStackProtectedCapacity) {
+    kept.reserve(kUndoStackProtectedCapacity);
+  }
   stack.entries = std::move(kept);
   if (removedBeforeCursor > stack.cursor) {
     stack.cursor = 0;
@@ -150,6 +157,22 @@ void test_erase_clear_slot_still_prunes_other_slots() {
   TEST_ASSERT_EQUAL(1u, stack.entries.size());
   TEST_ASSERT_EQUAL(1u, stack.cursor);
   TEST_ASSERT_EQUAL(UndoEntryKind::ClearSlot, stack.entries[0].kind);
+}
+
+void test_erase_preserves_the_protected_publication_capacity() {
+  GlobalUndoStack stack;
+  stack.entries.reserve(kUndoStackProtectedCapacity);
+  TEST_ASSERT_TRUE(stack.entries.capacity() >= kUndoStackProtectedCapacity);
+  for (int i = 0; i < 3; ++i) {
+    stack.entries.push_back(makeEntry(0, UndoEntryKind::OverdubPassAdded));
+  }
+  stack.cursor = stack.entries.size();
+
+  const size_t removed = eraseUndoEntriesForSlot(stack, 0, false);
+  TEST_ASSERT_EQUAL(3u, removed);
+  TEST_ASSERT_TRUE(stack.entries.empty());
+  TEST_ASSERT_TRUE_MESSAGE(stack.entries.capacity() >= kUndoStackProtectedCapacity,
+                           "the rebuild must preserve the protected publication capacity");
 }
 
 void test_pass_undo_depth_excludes_clear_slot() {
@@ -283,6 +306,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_erase_undo_entries_for_slot_adjusts_depth);
   RUN_TEST(test_erase_preserves_clear_slot_entries);
   RUN_TEST(test_erase_clear_slot_still_prunes_other_slots);
+  RUN_TEST(test_erase_preserves_the_protected_publication_capacity);
   RUN_TEST(test_pass_undo_depth_excludes_clear_slot);
   RUN_TEST(test_stale_undo_skip_removes_tip_for_same_slot);
   RUN_TEST(test_stale_redo_skip_removes_redo_tip_for_same_slot);

@@ -47,8 +47,9 @@ constexpr uint16_t kDeferredStopPreparationQuantum = 32;
 #endif
 /// Bounded cold reservation for the protected undo publication. Deliberately far
 /// below Config::ABSOLUTE_MAX_UNDO_ENTRIES: the eager per-track 512-entry reserve
-/// broke device boot (see prewarmProtectedUndo).
-constexpr uint16_t kProtectedUndoPrewarmEntries = 32;
+/// broke device boot (see prewarmProtectedUndo). Shared with `TrackUndo`'s stack rebuilds,
+/// which must preserve it (`kUndoStackProtectedCapacity`).
+constexpr uint16_t kProtectedUndoPrewarmEntries = kUndoStackProtectedCapacity;
 /// Bounded cold reservation for one job's undo-collection output lists.
 /// `PassIdList` / `EditPassIdList` are InternalHeapFirstAllocator (EditPass.h), so
 /// reserving RuntimePlaybackViewConfig::kRecordsPerBridge (2048) for all four ring
@@ -592,7 +593,19 @@ TRACK_COLD_MEM bool Track::stepProtectedUndoDrain() {
       if (undo->stepTrim(kDeferredStopPreparationQuantum)) return (undo->finish(), true);
       return false;
     case TrackUndoPublication::Phase::Complete:
-      return (undo->finish(), true);
+      if (undo->finish()) {
+#if defined(SESSION_CAPTURE)
+        {
+          GlobalUndoStack& stack = getGlobalUndoStack();
+          char line[160];
+          snprintf(line, sizeof(line), "#CAP,%lu,DIAG,gus,drain,idle=1,cursor=%zu,size=%zu",
+                   static_cast<unsigned long>(micros()), stack.cursor, stack.entries.size());
+          DebugSessionCapture::appendCaptureTextLine(line);
+        }
+#endif
+        return true;
+      }
+      return true;
     default:
       return true;
   }
@@ -660,6 +673,20 @@ TRACK_COLD_MEM bool Track::stepDeferredUndoPublication(CaptureStopJob& job,
     // The transaction is exclusive: a predecessor must have finished draining.
     job.undoPublicationReady = undo->begin(getGlobalUndoStack(), job.undoEntry);
     (void)stop.consumeUndoCollectionGrain();
+#if defined(SESSION_CAPTURE)
+    {
+      GlobalUndoStack& stack = getGlobalUndoStack();
+      char line[224];
+      snprintf(line, sizeof(line),
+               "#CAP,%lu,DIAG,gus,publish_begin,ok=%u,phase=%u,cursor=%zu,size=%zu,cap=%zu,"
+               "passId=%lu,passIds_n=%u",
+               static_cast<unsigned long>(micros()), job.undoPublicationReady ? 1u : 0u,
+               static_cast<unsigned>(undo->phase()), stack.cursor, stack.entries.size(),
+               stack.entries.capacity(), static_cast<unsigned long>(job.undoEntry.passId),
+               static_cast<unsigned>(job.undoEntry.passIds.size()));
+      DebugSessionCapture::appendCaptureTextLine(line);
+    }
+#endif
     // A rejected begin leaves the entry intact and means "nothing to publish".
     // A successful begin still owes its prepare turns before it can publish.
     if (!job.undoPublicationReady) return true;

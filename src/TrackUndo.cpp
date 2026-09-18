@@ -200,6 +200,14 @@ TRACK_COLD_MEM size_t eraseUndoEntriesForSlot(GlobalUndoStack& stack, uint8_t sl
         kept.push_back(std::move(stack.entries[i]));
     }
 
+    // The move-assign below takes `kept`'s buffer, so a rebuild smaller than the protected prewarm
+    // (a record stop on a cleared slot leaves `kept` nearly empty) used to drop the stack's reserved
+    // capacity. A later deferred stop then had `TrackUndoPublication::begin` reject for
+    // `cursor >= capacity`: its pass still committed, but its undo entry was silently dropped -- the
+    // second overdub stopped adding a GUS level and the next undo fell through to the first one.
+    if (kept.capacity() < kUndoStackProtectedCapacity) {
+        kept.reserve(kUndoStackProtectedCapacity);
+    }
     stack.entries = std::move(kept);
     if (removedBeforeCursor > stack.cursor) {
         stack.cursor = 0;
