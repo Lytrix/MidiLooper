@@ -2834,6 +2834,17 @@ of the same build: 1,023 rows in 30 s, `BOOT,load,ok`. The run then closed on th
 crosses back to 13 banks and returns the allowance to ~7 KB; taking the next bank means moving another ~32 KB of cold
 code. Recorded in [`Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc).
 
+**2026-09-18 follow-up: `DIAG,droid_queue` is now off in the default capture env, which removed the 4 KB snap itself.**
+The literal that triggered the snap was the emitter's own format string -- `"#CAP,%lu,DIAG,droid_queue,%u,%lu,%lu\r\n"` in
+RAM1 `.rodata`. Turning the family off for the default env (`-D SESSION_CAPTURE_DROID_QUEUE=0` in
+`[env:teensy41-capture-serial]`, with `teensy41-capture-serial-investigation-diag` now setting `=1` as the explicit debug
+gate, and the acceptance env keeping its explicit `=0`) drops ~5,636 rows/run of ring pressure **and** un-snaps the
+alignment unit: with the drain fix in tree the build now reads `variables 91,968` / `code 392,152` / `padding 1,064` /
+`free for local variables` **39,104** instead of 96,064 / 35,008. So the same fix that had to be reverted at 2,240 now
+lands with the largest allowance this tree has had. This is the documented "a new capture format string can cost 4 KB"
+hazard in [`Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc), and it is why removing a
+high-volume *emitter* is a RAM1 lever as well as a ring-budget one.
+
 **2026-09-18 — RC recorded for the post-wrap device reset: the publication boundary neither admits memory nor parks
 an allocation failure (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: *the stress run crashed a
 few bars after the overdub wrap, overdubbing the existing overdub*. `captures/session_20260918_101615.log` is memory
