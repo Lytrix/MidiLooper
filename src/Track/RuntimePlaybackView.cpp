@@ -683,44 +683,66 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackBridgeLifecycle::publishCandi
   candidate = selected == 0 ? 1 : 0;
 }
 
-RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm() {
-  if (prewarmed) {
+RUNTIME_PLAYBACK_VIEW_COLD_MEM bool RuntimePlaybackViewSet::prewarm(bool reserveWholeTake) {
+  if (prewarmed && (!reserveWholeTake || wholeTakeReserved)) {
+    // Already at or above the requested reservation: a whole-take slot satisfies a windowed
+    // request, and there is nothing left to do for the reverse.
     return true;
   }
-  for (RuntimePlaybackView& view : views) {
-    if (!view.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) {
-      for (RuntimePlaybackView& allocated : views) {
-        allocated.storage.release();
+  const bool firstPrewarm = !prewarmed;
+  if (firstPrewarm) {
+    for (RuntimePlaybackView& view : views) {
+      if (!view.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) {
+        for (RuntimePlaybackView& allocated : views) {
+          allocated.storage.release();
+        }
+        return false;
       }
-      return false;
     }
   }
-  for (auto& base : bridgeBases)
-    if (!base.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) return false;
-  for (FixedPlaybackBridgeStorage& bridge : bridges) {
-    if (!bridge.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge)) {
+  // RC-MEM-2: the bridges and their immutable bases exist only to publish a whole-take view
+  // incrementally, and every full-take publisher requires an exactly full-loop coverage
+  // interval. When the owning loop cannot produce one, this capacity can never become
+  // authoritative, so it is not reserved. `wholeTakeReserved` makes the refusal explicit:
+  // `beginCandidateBridge` denies before any bridge storage is touched, and the stopped-oracle
+  // publishers check it too, so nothing depends on the buffers being absent by accident.
+  //
+  // The upgrade path stays live because a slot admitted windowed-only (a long loop) can be
+  // armed later for a loop that has since become short; record arm and overdub start are cold
+  // capture-admission boundaries that are allowed to allocate, which is exactly where this is
+  // reached. `FixedPlaybackBridgeStorage::prewarm` is idempotent, so a retry after a partial
+  // allocation is safe.
+  if (reserveWholeTake && !wholeTakeReserved) {
+    for (auto& base : bridgeBases)
+      if (!base.prewarm(RuntimePlaybackViewConfig::kEventsPerView)) return false;
+    for (FixedPlaybackBridgeStorage& bridge : bridges) {
+      if (!bridge.prewarm(RuntimePlaybackViewConfig::kRecordsPerBridge)) {
+        for (RuntimePlaybackView& allocated : views) {
+          allocated.storage.release();
+        }
+        for (FixedPlaybackBridgeStorage& allocated : bridges) {
+          allocated.release();
+        }
+        return false;
+      }
+    }
+    wholeTakeReserved = true;
+  }
+  if (firstPrewarm) {
+    if (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm()) {
       for (RuntimePlaybackView& allocated : views) {
         allocated.storage.release();
       }
       for (FixedPlaybackBridgeStorage& allocated : bridges) {
         allocated.release();
       }
+      liveCaptureStaging().storage.release();
+      frozenCaptureStaging().storage.release();
       return false;
     }
+    resetMetadata();
+    prewarmed = true;
   }
-  if (!liveCaptureStaging().prewarm() || !frozenCaptureStaging().prewarm()) {
-    for (RuntimePlaybackView& allocated : views) {
-      allocated.storage.release();
-    }
-    for (FixedPlaybackBridgeStorage& allocated : bridges) {
-      allocated.release();
-    }
-    liveCaptureStaging().storage.release();
-    frozenCaptureStaging().storage.release();
-    return false;
-  }
-  resetMetadata();
-  prewarmed = true;
   return true;
 }
 
@@ -783,22 +805,35 @@ bool RuntimePlaybackViewSet::publishCompletedBuildAsReady(PlaybackViewHandoffMod
 }
 
 bool RuntimePlaybackViewSet::beginCandidateBridge() {
+  // RC-MEM-2: a slot that reserved no whole-take representation must deny here, before
+  // `RuntimePlaybackBridgeLifecycle::beginCandidate` touches bridge storage, rather than rely
+  // on the buffers happening to be null.
+  if (!wholeTakeReserved) return false;
   return bridgeLifecycle.beginCandidate(bridges);
 }
 
 bool RuntimePlaybackViewSet::selectCandidateBridge(const EmissionCursor& earliestAffectedCursor) {
+  if (!wholeTakeReserved) return false;
   return bridgeLifecycle.selectCandidate(bridges, earliestAffectedCursor);
 }
 
 size_t RuntimePlaybackViewSet::fixedExternalBytes() const {
   constexpr size_t eventBytes = sizeof(MidiEvent) + sizeof(uint16_t) + sizeof(uint32_t) +
                                 sizeof(uint16_t) + sizeof(uint8_t);
-  return (RuntimePlaybackViewConfig::kViewCount + RuntimePlaybackViewConfig::kBridgeCount) * RuntimePlaybackViewConfig::kEventsPerView *
+  // Views and staging are always reserved; the whole-take part is reported only when it was
+  // actually admitted, so this figure is the slot's real reservation (RC-MEM-2 assertion).
+  const size_t viewBytes =
+      RuntimePlaybackViewConfig::kViewCount * RuntimePlaybackViewConfig::kEventsPerView *
+          (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
+      RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes * captureStagings.size();
+  if (!wholeTakeReserved) {
+    return viewBytes;
+  }
+  return viewBytes +
+         RuntimePlaybackViewConfig::kBridgeCount * RuntimePlaybackViewConfig::kEventsPerView *
              (eventBytes + sizeof(PlaybackPassEventOrigin) + sizeof(uint16_t)) +
          RuntimePlaybackViewConfig::kBridgeCount *
              (RuntimePlaybackViewConfig::kRecordsPerBridge * (sizeof(PlaybackBridgeRecord) + eventBytes +
                                                             2 * sizeof(uint32_t) + 3 * sizeof(uint16_t) + sizeof(uint8_t)) +
-              RuntimePlaybackViewConfig::kEventsPerView * (6 * sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint8_t))) +
-         RuntimePlaybackViewConfig::kCaptureStagingEvents * eventBytes *
-             captureStagings.size();
+              RuntimePlaybackViewConfig::kEventsPerView * (6 * sizeof(uint16_t) + sizeof(uint32_t) + 2 * sizeof(uint8_t)));
 }

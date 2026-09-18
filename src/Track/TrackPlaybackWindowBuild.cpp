@@ -505,7 +505,13 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
       // payloads are sparse does not reserve the full row horizon, while a dense loop
       // still reaches the ceiling. The clamp lives in the owner.
       ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
-      ok = runtime->prewarmViews(loop.companionRowHorizonBound()) && ok;
+      // RC-MEM-2: reserve the whole-take representation only when this loop can actually
+      // publish one. Past `kMaxDetailedWindowBars` the windowed policy is the only
+      // authoritative representation, so the bridges and the prepared pair are dead
+      // reservation; the three views and both capture stagings stay (capture admission and
+      // the live-record/handoff lanes need them).
+      ok = runtime->prewarmViews(loop.companionRowHorizonBound(),
+                                 loop.fullTakePlaybackViewAdmissible()) && ok;
       ExternalPoolAccounting::endTag();
     }
     // Boot reserves no capture staging (DEC-065). Staging is provisioned by capture

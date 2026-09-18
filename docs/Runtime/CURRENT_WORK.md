@@ -2741,6 +2741,42 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — RC-MEM-2 landed: a long-loop slot no longer reserves the whole-take playback bundle it can never
+publish (`immutable-loop-snapshot-passes` 5.11).** The invariant is now enforced by one owner answer rather than
+implied by two independent decisions: *a playback-view owner may reserve capacity only for a representation that can
+actually become authoritative for the current loop/horizon.* `Loop::fullTakePlaybackViewAdmissible()` returns false
+past `DisplayWindowUtils::kMaxDetailedWindowBars` -- exactly where the windowed policy takes over -- and
+`Track::prewarmPlaybackForSlot` passes that answer into
+`LoopPlaybackRuntime::prewarmViews(capacity, fullTakeAdmissible)` ->
+`RuntimePlaybackViewSet::prewarm(reserveWholeTake)`. The three rolling views and both capture stagings are always
+reserved (the windowed lanes and capture admission need them); the two bridges, their two immutable bases and the
+prepared pair are reserved only when a whole-take view can actually be published. `wholeTakeReserved` makes the
+refusal explicit instead of incidental: `beginCandidateBridge`/`selectCandidateBridge` deny before touching bridge
+storage, `publishStoppedOracleView(const RuntimeCompanionPasses&, ...)` and
+`publishStoppedCanonicalOracleView` check it, and the pair is skipped because its only publisher requires
+`isFullLoopMergedPlaybackWindow`. The downgrade is not irreversible: a slot admitted windowed-only upgrades in place
+at the next cold record-arm/overdub-start boundary if the loop has since become short, so the bridge prewarm stays
+reachable and admitted staging is never reset.
+
+Dead reservation removed: 2 bridges x 2048 x 90 B + 2 bases x 2048 x 35 B = **512,000 B**, plus the prepared pair's
+2048-row buffer (~59 KB) = **~558 KB per armed long-loop slot**. `fixedExternalBytes()` now reports only the
+reserved part, so that figure is the slot's real reservation. Deliberately *not* claimed as reclaimable: the three
+views (215,040 B), the capture staging (118,784 B) and the companion/canonical owners (~450 KB) -- those are not view
+bundles and the windowed lanes and deferred stop path still require them.
+
+Evidence: native `test_playback_prewarm` 177/177, including four new fixtures -- the predicate flipping exactly at
+the threshold; a windowed-only slot having `capacity() == 0` for both bridges and both bases, no prepared pair, and
+`fixedExternalBytes()` equal to the views-plus-staging arithmetic exactly; a differential proving the same
+`beginCandidateBridge()` is admitted on a whole-take slot and refused on a windowed-only one while the `MidiEvent*`
+stopped-oracle overload (the **windowed** publisher) still publishes a partial coverage; and an in-place upgrade
+re-arming bridges and pair without resetting admitted staging. Full native **2,256 cases / 1 skipped / 0 failures**;
+`teensy41-capture-serial` SUCCESS with RAM1 byte-identical to the census state (`variables 96,064 / code 392,152 /
+padding 1,064 / locals free 35,008`), i.e. the change is cold-path code and cost no FlexRAM bank. **Owed (device):**
+the before/after 24-bar measurement -- boot/load PSRAM, arm delta, per-slot tagged view bytes, stop-window
+allocations, playback-order hot rebuild count, MIDI gap and final content equivalence. Still out of scope and
+recorded in 5.11: deriving the per-window capacity (2048) from the resolved window, and prewarming only the armed
+slot instead of every enabled slot.
+
 **2026-09-18 — the snapshot slab arena is instrumented, and its "reclaim ~3 MB" premise is measured to be FALSE
 (`immutable-loop-snapshot-passes` 5.10/5.11).** The user's question was why live memory is far larger than the loop
 data and grows on its own when the architecture's intent is to resolve short windows and queues instead of whole

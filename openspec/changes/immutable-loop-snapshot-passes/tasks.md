@@ -970,9 +970,45 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         prepared-pair and stopped-oracle publishers require `coverage.lengthTicks == loopLengthTicks`
         (`src/Track/TrackPlaybackWindowBuild.cpp:625-630`, `src/Track/TrackPlaybackRuntime.cpp:620-625`, `:648-653`),
         so on a 24-bar loop **no** fixed view is ever published and playback instead takes the 2-bar merged window
-        (`src/Track/TrackPlaybackHotPath.cpp:273-291`). Fix: derive capacity from the resolved window with an
-        explicit admission denial on overflow, and prewarm the armed slot only, lazily, rather than every enabled
-        slot at boot.
+        (`src/Track/TrackPlaybackHotPath.cpp:273-291`).
+        **Invariant (landed).** *A playback-view owner may reserve capacity only for a representation that can
+        actually become authoritative for the current loop/horizon. Long-loop/windowed playback must not prewarm
+        whole-take fixed-view capacity that its publication contract can never admit.* The implementation is
+        therefore **mode-sensitive, not a global reduction of 2048**.
+        **Landed.** `Loop::fullTakePlaybackViewAdmissible()` (`include/Loop.h`) is the single owner answer -- false
+        past `DisplayWindowUtils::kMaxDetailedWindowBars`, i.e. exactly where the windowed policy takes over.
+        `RuntimePlaybackViewSet::prewarm(bool reserveWholeTake)` reserves the three rolling views and both capture
+        stagings always, and the two bridges plus their two immutable bases only when the loop can publish a
+        whole-take view; `wholeTakeReserved` then makes the refusal explicit rather than incidental --
+        `beginCandidateBridge`/`selectCandidateBridge` deny before touching bridge storage,
+        `publishStoppedOracleView(const RuntimeCompanionPasses&, ...)` and `publishStoppedCanonicalOracleView` check
+        `wholeTakeViewsReserved()`, and the prepared pair is skipped because its only publisher requires
+        `isFullLoopMergedPlaybackWindow`. `LoopPlaybackRuntime::prewarmViews(capacity, fullTakeAdmissible)` threads
+        the answer from `Track::prewarmPlaybackForSlot`, whose only production caller is the cold record-arm /
+        overdub-start admission path. The reservation is **not** an irreversible downgrade: a slot admitted
+        windowed-only upgrades in place if the loop later becomes short, which is why the bridge prewarm stays
+        reachable from that cold boundary.
+        **Size of the dead reservation.** 2 bridges x 2048 x 90 B + 2 bases x 2048 x 35 B = **512,000 B** plus the
+        prepared pair's 2048-row buffer (~59 KB) = **~558 KB per armed long-loop slot**. `fixedExternalBytes()` now
+        reports only the reserved part, so the figure is the slot's real reservation; the remaining per-slot bytes
+        (three views 215,040 B, staging 118,784 B, and the companion/canonical owners ~450 KB) are *not* view
+        bundles and are still required by the windowed lanes and the deferred stop path, so they are deliberately
+        out of scope here and must not be read as reclaimable.
+        **Verify.** Native `test_playback_prewarm`: `test_full_take_admissibility_follows_the_windowed_policy` (the
+        predicate flips exactly at the threshold), `test_windowed_only_slot_reserves_no_whole_take_representation`
+        (windowed-only slot has `capacity() == 0` for both bridges and both bases, no prepared pair, and
+        `fixedExternalBytes()` equals the views-plus-staging arithmetic exactly),
+        `test_windowed_only_slot_refuses_the_whole_take_publishers` (differential: the same `beginCandidateBridge()`
+        is admitted on a whole-take slot and refused on a windowed-only one; the canonical oracle refuses a
+        full-loop coverage; the `MidiEvent*` stopped-oracle overload, which is the *windowed* publisher, still
+        publishes a partial coverage into a prewarmed view), and
+        `test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission` (in-place upgrade re-arms the bridges and the
+        pair without resetting admitted staging). The existing 173 fixtures pin the short-loop branch unchanged.
+        **Owed (device).** The before/after measurement on the 24-bar reproducer: boot/load PSRAM, arm delta,
+        per-slot tagged view bytes, stop-window allocations, playback-order hot rebuild count, MIDI gap and final
+        content equivalence. Still out of scope: deriving the per-window *capacity* (2048) from the resolved window,
+        and prewarming only the armed slot rather than every enabled slot -- both recorded here for a follow-up,
+        since the measured win is in the whole-take multiplicity that has now landed.
       - **RC-MEM-3 -- undo trimming cannot see pool pressure.** `overUndoMemoryPressure` (`src/PassReclaim.cpp:67-79`)
         trims only on `freeChunkCount() <= PassConfig::CHUNK_RESERVE` or internal heap
         `< Config::HEAP_RESERVE_BYTES`; pool slab bytes are never consulted, and its third clause is unreachable in
