@@ -2768,15 +2768,31 @@ already released the bridge, and the re-enabled rows resolve from the committed 
 
 Evidence. New native fixture
 `test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff`
-(`test_loop_take_survival`): it drives the real undid/redone frame through the host twin of the
+(`test_loop_take_survival`): it drives the real undone/redone frame through the host twin of the
 draw-source gather and asserts the disabled pass's note is gone after the undo and present again
 after the redo; it fails without the fix (`TEST_ASSERT_FALSE(loop.hasSealedCapturePreview())`,
 `Expected FALSE Was TRUE`). Full native **2,240 cases / 1 skipped / 0 failures** (was 2,239);
 `pio run -e teensy41-capture-serial` SUCCESS with RAM1 variables 91,904 / code 425,496 / padding 488
-/ **locals 6,400** (unchanged). Device gate owed: rerun the DEC-071 shape + undo/redo and read the
-OLED frame drop the overdub on `Undo` and restore it on `Redo`. The base runner's display check only
-asserts a non-empty frame after the overdub stop, so this needs either an added `DISP` frame-count
-clause across the undo/redo or the investigation-diag build's `DIAG,draw_src,layers` rows.
+/ **locals 6,400** (unchanged).
+
+Harness, in the same commit: the base runner's display check only asserted a *non-empty* frame after
+the overdub stop, so this regression was invisible to it. New `_verify_undo_redo_display` compares the
+`DISP` frame note count before the undo, between undo and redo, and after the redo, and emits
+`display_undo_kept_the_overdub` / `display_redo_did_not_restore_the_overdub`; the redo clause is the
+discriminator (the buggy frame was 193 both before and after the redo). Run on the real buggy log
+(`content-verify-65`) it reports `frame_before_undo=194`, `frame_after_undo=193`, `frame_after_redo=193`
+and the issue, exactly as intended; `scripts/test_capture_transitions.py` 46/46.
+
+**Device gate CLOSED:** `captures/display-undo-03` (managed `base`, git `9eda0984` clean, firmware
+`47e05029…`, `teensy41-capture-serial-no-grain`, the DEC-071 shape with the recipe's undo/redo) is
+**`Result: PASS`** with `undo=1 redo=1`, 0 `RING,overflow`, `overflow_free=True`, persistence
+`result=ok` (45.5 ms), display `overdub_ok=True transport_ok=True`, and **`DISP across undo/redo:
+before=194 after_undo=179 after_redo=193`** — the frame drops the overdub on `Undo` and restores it on
+`Redo`, against the buggy `194 → 193 → 193`. (A first run, `display-undo-01`, showed the same direction
+`200 → 193 → 201` but reported `persistence_stage_missing:result` because the recipe omitted
+`--deferred-save-wait-ms 120000`; a re-run without a hard reset then came back
+`INCONCLUSIVE_CAPTURE`/`RING,overflow` off the un-drained device, and the re-flash + exact recipe
+produced `display-undo-03`. The stale-device recovery is the documented one.)
 
 **2026-09-18 — successor change 5.9 + 5.11 CLOSED, and the defect they found is fixed
 (`immutable-loop-snapshot-passes` 5.8).** The user report was concrete: *the overdub wrap creates a second pass
