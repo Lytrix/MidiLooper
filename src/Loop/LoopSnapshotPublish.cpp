@@ -6,6 +6,7 @@
 #include "CommittedEventRange.h"
 #include "LoopSnapshotBoxes.h"
 #include "Utils/LoopMem.h"
+#include "Utils/MemoryMonitor.h"
 #include "Utils/NoteUtils.h"
 
 #include <utility>
@@ -14,7 +15,6 @@
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
 #include "Utils/DebugSessionCapture.h"
 #include "Utils/InvestigationCaptureLog.h"
-#include "Utils/MemoryMonitor.h"
 
 #include <cstdio>
 #endif
@@ -1183,6 +1183,46 @@ bool remainingWrapPublishWork(const PendingSnapshotPublishBox& box) {
 /// selected instead of consuming an idle turn forever.
 constexpr uint16_t kSnapshotFragmentMaxConsecutiveFailures = 2;
 
+/// DEC-073 RC-PUB-1: internal-heap headroom one content-sized publication turn must leave beyond
+/// the admission floor -- one slab plus the fragment working set. The slab itself comes from the
+/// external pool, whose exhaustion the gate catches through the pool-refusal record; this margin
+/// is what stops a low heap from being drained by a publication turn, which is the 2026-09-18
+/// reset (`session_20260918_101615`): after the wrap commit the heap fell 108 -> 72 -> 36 -> 0 KB
+/// in three turns while the pool still served slabs, and the exhausted allocator called `abort()`.
+constexpr uint32_t kSnapshotPublicationReserveBytes = kSnapshotSlabBytes + (8u * 1024u);
+
+/// Admit one content-sized publication turn -- a construction start, step, or freeze. These are
+/// the only publication operations that allocate new snapshot nodes (32 KB pool slabs plus an
+/// internal-heap working set), so they are admitted exactly like the record/overdub boundaries.
+///
+/// A denial is not a failure: nothing is written, the previous root stays selected, and the
+/// publication stays pending. That is the state the persistence gate already understands
+/// (`hasSettledPublishedSnapshotForSave` false -> passes-authoritative body), and it is strictly
+/// better than reaching `ExternalMemoryFirstAllocator::abort()` on a full pool.
+///
+/// Admission is also the release condition for a transient allocation park (RC-PUB-2). The release
+/// requires that the park was observed under a denial, so the same admission state that let the
+/// fragment fail cannot immediately re-arm it.
+LOOP_COLD_MEM bool admitSnapshotPublicationTurn(PendingSnapshotPublishBox& box) {
+  const bool admitted = MemoryMonitor::admitOperationMemory(
+      MemoryMonitor::OperationKind::SnapshotReserve, kSnapshotPublicationReserveBytes);
+  if (!box.fragmentBlockTransient) {
+    return admitted;
+  }
+  if (!admitted) {
+    box.fragmentParkSawDenial = true;
+    return false;
+  }
+  if (!box.fragmentParkSawDenial) {
+    return false;
+  }
+  box.fragmentBlocked = false;
+  box.fragmentBlockTransient = false;
+  box.fragmentParkSawDenial = false;
+  box.consecutiveFragmentFailures = 0;
+  return true;
+}
+
 const char* snapshotFailureReasonName(LoopSnapshotFailureReason reason) {
   switch (reason) {
     case LoopSnapshotFailureReason::MembershipCapacity:
@@ -1221,12 +1261,23 @@ void noteFragmentIncorporationFailure(LoopSnapshotFailureReason reason,
 #else
   (void)reason;
 #endif
-  // Transient (allocation) and injected failures retry the exact fragment. A
-  // persistent representability failure parks publication: the previous root
-  // stays selected and the same impossible fragment is not rebuilt every turn.
-  if (reason == LoopSnapshotFailureReason::MembershipCapacity &&
-      box.consecutiveFragmentFailures >= kSnapshotFragmentMaxConsecutiveFailures) {
-    box.fragmentBlocked = true;
+  // An injected (test) failure keeps retrying the exact fragment -- the DEC-047 transaction
+  // fixture relies on the retry. A persistent representability failure parks publication for
+  // good: the previous root stays selected and the same impossible fragment is not rebuilt every
+  // turn. An allocation failure parks *transiently* (DEC-073 RC-PUB-2): it is memory pressure, so
+  // the park is released once admission has seen the pressure and admits again. Before RC-PUB-2
+  // only MembershipCapacity parked, so a full pool re-entered construction every turn -- each
+  // attempt copying the fragment's change set onto the internal heap and retrying the slab --
+  // which is what drove the heap to zero and reached `abort()` on 2026-09-18.
+  if (box.consecutiveFragmentFailures >= kSnapshotFragmentMaxConsecutiveFailures) {
+    if (reason == LoopSnapshotFailureReason::MembershipCapacity) {
+      box.fragmentBlocked = true;
+      box.fragmentBlockTransient = false;
+    } else if (reason == LoopSnapshotFailureReason::Allocation) {
+      box.fragmentBlocked = true;
+      box.fragmentBlockTransient = true;
+      box.fragmentParkSawDenial = false;
+    }
   }
 }
 
@@ -2090,6 +2141,13 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   bool steppedThisCall = false;
   bool readyToFinish = false;
   while (remaining > 0) {
+    // DEC-073 RC-PUB-1: every turn that could start, step or freeze a candidate is admitted
+    // first. A denial breaks out with nothing written, so the publication stays pending and the
+    // previous root stays selected. Publishing an already-frozen candidate happens after this
+    // loop and is deliberately not gated: it allocates no new content memory.
+    if (!admitSnapshotPublicationTurn(box)) {
+      break;
+    }
     if (!box.construction) {
       // A persistent representability failure parked publication: the previous
       // root stays selected and the same impossible fragment is not rebuilt.
@@ -2197,6 +2255,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
       // Freeze/allocation failure. The partial candidate is discarded and
       // authoritative progress is untouched (fragmentProgressValid cleared in
       // finishPendingConstruction), so the exact fragment is retried.
+      // DEC-073 RC-PUB-2: count it, so a freeze that keeps failing reaches the park bound too
+      // instead of being retried forever without ever incrementing a failure.
+      noteFragmentIncorporationFailure(LoopSnapshotFailureReason::Allocation, box);
       box.construction.reset();
       box.fragmentProgressValid = false;
       if (!box.passChangeProgress.active) {

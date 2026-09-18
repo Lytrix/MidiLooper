@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-075](#dec-075--the-snapshot-publication-boundary-admits-memory-per-construction-turn-and-parks-on-allocation-failure) | 2026-09-18 | The snapshot publication boundary admits memory per construction turn and parks on allocation failure | Accepted — implemented; native 2249 / 1 skipped / 0 failures, RAM1 unchanged; device gate owed |
 | [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented and device-verified (settled LSV1 save path, `q=0` publishes, post-reboot `storage_matches_effective`); native reproducer red→green; RAM1 allowance restored |
 | [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 landed as DEC-074 |
 | [DEC-072](#dec-072--a-staged-capture-pass-is-owned-by-its-capture-interval-not-by-the-loop-producer-slot) | 2026-09-17 | A staged capture pass is owned by its capture interval, not by the Loop producer slot | Accepted — implemented; former `REENTRY_RED` reproducer green; device PASS [`successor-ownership-06`](../captures/successor-ownership-06/session_20260917_230432.log) |
@@ -86,7 +87,89 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-075 -->
+<!-- Append new entries below (newest first). Next ID: DEC-076 -->
+
+## DEC-075 — The snapshot publication boundary admits memory per construction turn and parks on allocation failure
+
+**Date:** 2026-09-18
+**Status:** Accepted — implemented; native and firmware green, **device gate still owed**. Full native **2249 / 1
+skipped / 0 failures** (two new fixtures, below); `teensy41-capture-serial` SUCCESS with the RAM1 line byte-identical
+to DEC-074 (`variables 91,968 / code 425,560 / padding 424 / locals free 6,336`), i.e. no FlexRAM bank cost.
+**Owner:** `Loop::stepPendingSnapshotPublish` + the cold helper `admitSnapshotPublicationTurn`
+(`src/Loop/LoopSnapshotPublish.cpp`), `PendingSnapshotPublishBox::fragmentBlockTransient` /
+`fragmentParkSawDenial` and `noteFragmentIncorporationFailure` (`src/Loop/LoopSnapshotBoxes.h`,
+`src/Loop/LoopSnapshotPublish.cpp`), and the repeat-denial report bound in
+`MemoryMonitor::admitOperationMemory` (`src/Utils/MemoryMonitor.cpp`).
+**Follows:** DEC-065 (the same admission pattern at the record-arm and overdub-start boundaries), DEC-047 (the wrap
+publication is bounded per fragment), DEC-073 (coverage-based "current" is what makes a *parked* root a defined
+degraded state -- the previous root stays selected, `publishedSnapshotIsCurrent()` stays false, and the save falls to
+the passes-authoritative body instead of serialising a wrong root).
+
+**Report (user, 2026-09-18).** The device reset a few bars past the overdub wrap while overdubbing an existing
+overdub. `captures/session_20260918_101615`: **not a fault** -- no crash record (`boot_reset,crash=0` on the next
+boot, and `abort()` raises no `CrashReport`); the reset follows
+`[ExternalMemoryFirstAllocator] FATAL: both external memory and internal heap are exhausted!` and
+`#CAPTURE_RECONNECT`. `Overdub wrap committed @ tick 18432` at 114.519 s, and then for six seconds the pool's `<=32K`
+class gained **one 32768-byte snapshot slab per second** (96 -> 102 blocks) while the internal heap fell
+**108 -> 72 -> 36 -> 0 KB**; the pool then refused `bytes=32768` (119.465 s, exactly `snapshotSlabOpen`'s
+`extmem_malloc` request) and `bytes=8224`, and `abort()` fired.
+
+**Diagnosis.** The wrap publication costs ~8 slabs (~256 KB) plus an internal-heap working set *by design*: the
+DEC-073 RC1 control (`captures/rc1-coalescing-device`, wrap at 61.070 s) shows the identical post-wrap burst, then
+settles, 0 `FATAL`, and completes its LSV1 `loop_snapshot_tail`. The crashing session reached that window with no
+headroom (pool live 8201-8203 KB against a reported `pool=8182 KB`, from a 12-bar record on top of the loaded
+workspace root), because this boundary had neither of the two things every other content-sized boundary has: a
+memory admission, and a park for an allocation failure.
+
+**Decision.**
+
+1. **Admit every content-sized publication turn.** `OperationKind::SnapshotReserve` existed with an 8 KB margin and
+   was **dead code** (zero call sites; that boot logged exactly one `#MEM_ADMIT` -- the boot probe -- and zero
+   `#MEM_DENIED`). It is now called at the top of the construction loop in `stepPendingSnapshotPublish`, with
+   `kSnapshotPublicationReserveBytes = kSnapshotSlabBytes + 8 KB`, which the gate combines with its 32 KB heap floor
+   and the pool-refusal recency window. The freeze follows an admitted turn; publishing an already-frozen candidate
+   is deliberately **not** gated because it allocates no new content memory. A denial breaks out with nothing
+   written, so the publication stays pending and the previous root stays selected -- the state DEC-074's
+   `hasSettledPublishedSnapshotForSave` already handles.
+2. **Park on allocation failure (transient), release only after observed pressure.**
+   `noteFragmentIncorporationFailure` parked only `MembershipCapacity`; `Allocation` retried the exact fragment
+   forever, copying the fragment's `LoopSnapshotChangeSet` (a default-allocator vector, i.e. internal heap) into a
+   fresh `LoopSnapshotConstruction` and re-attempting the slab every turn -- which is what drained the heap. A freeze
+   failure was not counted at all. `Allocation` now parks after `kSnapshotFragmentMaxConsecutiveFailures`, and the
+   freeze branch counts through the same path. The park is **transient** and is released only once admission has
+   denied at least once and then admits again, so the same admission state that let the fragment fail cannot
+   immediately re-arm it. `Injected` (test) and representability failures keep their existing semantics.
+3. **Bound the denial diagnostic, not the decision.** This is the gate's only per-turn caller and it can stay parked
+   for as long as the pool is full, so a repeat of the same denial shape is reported at most once per second, exactly
+   as `recordPoolRefusal` already bounds its own storm. The decision stays exact on every call.
+
+**RC-PUB-3 correction (recorded, not implemented as originally worded).** The RC as first recorded said to remove
+`SnapshotSlabAllocator::allocate`'s `abort()` and route it to the non-fatal path. That is **not expressible**: the
+device builds `-fno-exceptions`, so `std::allocate_shared` has no failure channel, and a custom `shared_ptr` deleter
+would move every control block onto the internal heap (~450 KB at the observed 14k-node peaks). It is also
+**unreachable**: every snapshot allocation goes through `allocateSnapshotShared`, which pre-reserves
+`128 + align(sizeof(Type))` before `std::allocate_shared` asks for one object including its control block, so
+`Allocation` failures surface as `snapshotSlabOpen` failing *before* the allocator, which is already non-fatal
+(`allocateSnapshotShared` returns an empty ref). The abort is therefore kept as the invariant check, tagged
+distinctly (`site=slab_allocate` vs the reachable pressure site `site=slab_open`), and documented in place.
+
+**Scope boundary.** The allocator that actually aborted is the shared `ExternalMemoryFirstAllocator`, whose
+`abort()`-instead-of-deny semantics are the wider defect already recorded in `docs/Runtime/CURRENT_WORK.md`
+("`abort()` turns a transient allocation failure into an unrecoverable silent hang"). This entry stops the
+publication from *driving* it there; it does not change that shared allocator, which other owners still reach.
+
+**Evidence.** `test_publication_turn_waits_for_admitted_headroom` pins the admission: under a forced denial a
+step returns pending with the wrap journal, `publishedSnapshot()` pointer and `publishedSnapshotRevision()` all
+unchanged, no construction in flight and no failure recorded, and the same publication then completes unchanged.
+`test_allocation_failure_parks_publication_until_admission_recovers` pins the park: two injected `Allocation`
+failures park, a further admitted turn makes no attempt (the failure count cannot advance), a denial then records the
+pressure, and the next admission releases the park so the publication completes and the root becomes current.
+Both are in `test/test_loop_take_survival`. **Owed:** the device re-run of the reported shape (loaded workspace,
+12-bar record, live overdub past the wrap) requiring 0 `FATAL` / 0 `#MEM_EXT_REFUSED`, device alive, and either a
+completed wrap publication or a parked one (`hasPendingSnapshotPublish()` true, previous root selected) -- plus a
+recorded `cls`/`clsn`/`heap_free` series across the wrap. `kSnapshotPublicationReserveBytes` is the tunable if that
+run shows a healthy device parking: the control session settles at 104 KB of internal heap, and the margin requires
+72 KB (32 KB floor + 40 KB), so the intended discriminator is a device below ~72 KB.
 
 ## DEC-074 — The LSV1 body admits only a settled root; the format is pinned once and the fallback is the passes-authoritative legacy body
 

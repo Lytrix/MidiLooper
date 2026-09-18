@@ -168,6 +168,21 @@ class SnapshotSlabAllocator {
   SnapshotSlabAllocator(const SnapshotSlabAllocator<Other>&) noexcept {}
 
   Type* allocate(std::size_t count) {
+    // DEC-073 RC-PUB-3: this is a *dead* branch and it must stay one. Every snapshot allocation
+    // goes through `allocateSnapshotShared`, which pre-reserves `128 + align(sizeof(Type))` on the
+    // current slab before calling here, and `std::allocate_shared` then asks for exactly one
+    // object whose control block is ~16-24 B of that ~128 B allowance. So room is already
+    // guaranteed. The failure this would report is therefore a programming error, not memory
+    // pressure: the pressure case is `snapshotSlabOpen` failing inside `snapshotSlabAllocate`,
+    // which `allocateSnapshotShared` observes *before* reaching here and reports non-fatally by
+    // returning an empty ref -- the publisher then records
+    // `LoopSnapshotFailureReason::Allocation` and parks (DEC-073 RC-PUB-2).
+    //
+    // It cannot be converted to a null return: the device builds `-fno-exceptions`, which removes
+    // the standard allocator failure channel, and a custom `shared_ptr` deleter would move every
+    // control block onto the internal heap, which cannot hold one per snapshot node (~450 KB at
+    // the observed 14k-node peaks). The abort therefore stays as the invariant check, tagged
+    // distinctly (`slab_allocate`) from the reachable pressure site (`slab_open`).
     void* pointer = snapshotSlabAllocate(count * sizeof(Type));
     if (pointer == nullptr) {
       emitSnapshotAllocFailure("slab_allocate", count * sizeof(Type));
