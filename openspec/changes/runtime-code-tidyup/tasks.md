@@ -157,31 +157,62 @@ returned the bank. Measured by stashing the phase and diffing `size -A` sections
 
 Values never change in this phase — only their definition site and name.
 
-- [ ] 3.1 Link the duplicated membership envelope: add `static_assert(kLsv1MaxMembershipRefsPerBar == kSnapshotMembershipMaxRefsPerBar)`
+- [x] 3.1 Link the duplicated membership envelope: add `static_assert(kLsv1MaxMembershipRefsPerBar == kSnapshotMembershipMaxRefsPerBar)`
   (or define one from the other) between `src/StorageLoopIoBodyFormatV1.cpp:138` and `include/LoopSnapshot.h:43`.
   Verify: compiles; the assert fires if either value is edited.
-- [ ] 3.2 Replace the raw `2048` bounds in `src/Loop/LoopPreparedCompanionHistory.cpp:437,460` with
+- [x] 3.2 Replace the raw `2048` bounds in `src/Loop/LoopPreparedCompanionHistory.cpp:437,460` with
   `RuntimePlaybackViewConfig::kRecordsPerBridge` (already used at `:23`) and confirm intent with the
   `LoopOverdubSession.cpp` twins before touching them. Verify: native suite passes; grep shows no raw `2048` in that
   file.
-- [ ] 3.3 Replace the `768u` minimum-loop-length literals (`src/Track/RuntimeCompanionApply.cpp:226,301`, `src/Track/RuntimeNotePairLookup.cpp:306`)
+- [x] 3.3 Replace the `768u` minimum-loop-length literals (`src/Track/RuntimeCompanionApply.cpp:226,301`, `src/Track/RuntimeNotePairLookup.cpp:306`)
   with `LoopEventStoreConfig::BAR_TICKS` **only after** confirming minimum length is exactly one bar; if the semantics
   differ, add a named `kMinimumLoopLengthTicks` instead. Verify: compiles; native suite passes; the chosen name states
   the semantic in a comment.
-- [ ] 3.4 Name the bit fields: closure `flags` (`include/RuntimePlaybackView.h:163-165` and its 13 uses in `src/Track/RuntimePlaybackBridge.cpp`)
+- [x] 3.4 Name the bit fields: closure `flags` (`include/RuntimePlaybackView.h:163-165` and its 13 uses in `src/Track/RuntimePlaybackBridge.cpp`)
   → named `kAffected/kOriginalOffFound/kInherited` or a scoped enum; bridge cycle masks (`1/2/4/8`, literal `15` at `:366,429-443,604,634-644`);
   atomic-preflight denial bits (`src/Track/TrackPreparedStopCommit.cpp:11-22,52-61,70-79`) → one `AtomicPreflightBit`
   enum that keeps each existing value. Verify: native suite passes; grep shows no bare mask literals at those sites; bit
   values documented per group.
-- [ ] 3.5 Give `UndoEntryReleaseCursor` (`src/Track/TrackUndoRetirement.cpp:19-64`) and `GlobalUndoStackTrimCursor`
+- [x] 3.5 Give `UndoEntryReleaseCursor` (`src/Track/TrackUndoRetirement.cpp:19-64`) and `GlobalUndoStackTrimCursor`
   (`:69-113`) private `enum class Phase : uint8_t` matching `TrackUndoPublication`'s shape, preserving `uint8_t`
   storage. Verify: compiles with no size change for the cursors; native suite passes.
-- [ ] 3.6 Record OD-2 with the user: document whether `snapshot_unit`/snapshot-idle probes belong on the broad
+- [x] 3.6 Record OD-2 with the user: document whether `snapshot_unit`/snapshot-idle probes belong on the broad
   `SESSION_CAPTURE` gate or `SESSION_CAPTURE_SNAPSHOT_IDLE`, as a `DEC` entry plus a comment at the gate in
   `src/Loop/LoopSnapshotPublish.cpp` — **no gating change in this change**. Verify: `DEC-###` appended; the comment
   names the decision; `git diff` shows no `#if` change.
-- [ ] 3.7 P2 gate: full native suite plus firmware build; record the RAM1 line. Verify: no literal value in the diff
+- [x] 3.7 P2 gate: full native suite plus firmware build; record the RAM1 line. Verify: no literal value in the diff
   changed (review the diff for `=` on the touched constants); suite unchanged.
+
+### P2 outcome (2026-09-18)
+
+Gate: `pio test -e native` **2,262 / 1 skipped / 2,261 passed**; firmware build SUCCESS with the RAM1 line
+**identical to P1** (`variables 96096 / code 392248 / padding 968 / free for local variables 34976`,
+FLASH `code 1007632`) — this phase is FlexRAM-bank neutral, measured rather than assumed.
+
+Landed: the LSV1/in-memory membership-envelope `static_assert`; `RuntimePlaybackViewConfig::kRecordsPerBridge`
+replacing raw `2048` in both companion-row guards; `LoopEventStoreConfig::BAR_TICKS` replacing `768u` at the three
+minimum-length clamps (confirmed one-bar-floor semantics with a comment); `PlaybackHeldNoteClosure` flag constants
+plus `resolved()` rewritten over named bits (12 sites); `PlaybackBridgeCycleMask` constants for the bridge cycle
+masks including the age-rotation expression (12 sites); named `AtomicPreflightBit` / `ReservedBridgePreflightBit`
+constants for the `atomic_preflight` denial codes, with the forensic values unchanged; and a private `Phase` enum
+class for both DEC-063 retirement cursors (values preserved, `nextPhase()` helper replacing `++phase_`).
+
+Two follow-ups recorded rather than silently dropped:
+
+- The `atomic_preflight` codes are named as file-local constants in `TrackPreparedStopCommit.cpp` rather than in
+  its header: they are an implementation detail of a capture-trace encoding with no decode table in `docs/`,
+  `scripts/` or the OpenSpecs, so putting them in a public header would add API surface for no consumer.
+- `ExternalPoolAccounting::kTagCount` stays 18 (see the P1 outcome): shrinking it to the highest enumerator
+  would change the length of the printed `tags=` vector.
+
+**Gate caught a native-only masking bug.** `LoopEventStoreConfig::BAR_TICKS` compiled in the native suite because a
+test TU's include order pulled `LoopEventStore.h` in transitively, but the firmware build failed with
+`'LoopEventStoreConfig' has not been declared` in `RuntimeNotePairLookup.cpp`. Fixed by adding the explicit
+`#include "LoopEventStore.h"` to both companion TUs that use it (`RuntimeNotePairLookup.cpp`,
+`RuntimeCompanionApply.cpp`) — a reminder that the firmware build, not the native suite, proves include hygiene here.
+
+OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) with a comment at the gate in
+`LoopSnapshotPublish.cpp`; the gate itself is unchanged.
 
 ## 4. P3 — de-duplicate into existing owners
 

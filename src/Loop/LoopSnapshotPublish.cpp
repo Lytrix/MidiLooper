@@ -18,6 +18,10 @@
 #include <cstdio>
 #endif
 
+// Snapshot idle/unit instrumentation is deliberately gated on the broad `SESSION_CAPTURE` flag, not
+// on `SESSION_CAPTURE_SNAPSHOT_IDLE`: the probes must be available in any capture build without
+// changing the env of a running session, and their volume is bounded by the step-report interval and
+// the phase/stall/signature conditions below. DEC-076 records the decision; the reader stays narrow.
 #if defined(SESSION_CAPTURE)
 #include <cstdint>
 

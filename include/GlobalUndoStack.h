@@ -92,11 +92,30 @@ class UndoEntryReleaseCursor {
   bool complete() const { return !active_; }
   size_t completedUnits() const { return units_; }
  private:
+  /// One step per unit. `StepPersistedBefore`/`StepPersistedAfter` and their published
+  /// counterparts are the resumable drains; the value order is the retirement order and is
+  /// part of DEC-063's bounded-grain contract, so do not renumber.
+  enum class Phase : uint8_t {
+    BeginPersistedBefore = 0,
+    StepPersistedBefore = 1,
+    BeginPersistedAfter = 2,
+    StepPersistedAfter = 3,
+    BeginPublishedBefore = 4,
+    StepPublishedBefore = 5,
+    BeginPublishedAfter = 6,
+    StepPublishedAfter = 7,
+    DrainPassIds = 8,
+    DrainEditPassIds = 9,
+    Complete = 10,
+  };
+  static constexpr Phase nextPhase(Phase phase) {
+    return static_cast<Phase>(static_cast<uint8_t>(phase) + 1u);
+  }
   UndoEntry entry_;
   LoopSnapshot::ReleaseCursor published_;
   PersistedLoopSnapshotReleaseCursor persisted_;
   size_t units_ = 0;
-  uint8_t phase_ = 0;
+  Phase phase_ = Phase::BeginPersistedBefore;
   bool active_ = false;
 };
 

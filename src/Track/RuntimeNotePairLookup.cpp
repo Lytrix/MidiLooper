@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeNotePairLookup.h"
+#include "LoopEventStore.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include <cstdlib>
 #include "Utils/NoteUtils.h"
@@ -302,8 +303,9 @@ NOTE_PAIR_MEM RuntimePlaybackOrderBuildResult RuntimeNoteDeleteLookup::step(size
       return RuntimePlaybackOrderBuildResult::Complete;
     }
     if (loopLength_ == 0) {
+      // Derive the length from the last tick, clamped to one bar minimum.
       loopLength_ = maxTick_ + 1u;
-      if (loopLength_ < 768u) loopLength_ = 768u;
+      if (loopLength_ < LoopEventStoreConfig::BAR_TICKS) loopLength_ = LoopEventStoreConfig::BAR_TICKS;
     }
     if (!pair_->begin(events_, count_, static_cast<size_t>(on_), retained_))
       return RuntimePlaybackOrderBuildResult::Denied;

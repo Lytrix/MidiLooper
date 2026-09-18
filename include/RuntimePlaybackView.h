@@ -160,10 +160,30 @@ struct PlaybackHeldNoteClosure {
   MidiEvent originalOff{};
   uint64_t relativeTick = UINT64_MAX;
   uint32_t nextOnPhase = UINT32_MAX;
-  uint8_t flags = 0; // Affected, original Off found, inherited from a predecessor.
+  /// This closure still affects the window's ordering.
+  static constexpr uint8_t kAffected = 1;
+  /// The walk that produced this closure found the original Off.
+  static constexpr uint8_t kOriginalOffFound = 2;
+  /// Inherited from a predecessor window rather than found in this one.
+  static constexpr uint8_t kInherited = 4;
+  uint8_t flags = 0;
   uint32_t rank = 0;
-  bool resolved() const { return (flags & 3) == 3 && relativeTick != UINT64_MAX; }
+  bool resolved() const {
+    return (flags & (kAffected | kOriginalOffFound)) == (kAffected | kOriginalOffFound) &&
+           relativeTick != UINT64_MAX;
+  }
 };
+
+/// Per-bridge cycle mask: the projection cycles an entry is emitted in. Bit order is the
+/// emission order (this cycle, then the two following, then the steady stream), and `kAll`
+/// is the common "every cycle" case.
+namespace PlaybackBridgeCycleMask {
+constexpr uint8_t kCurrent = 1;
+constexpr uint8_t kNext = 2;
+constexpr uint8_t kSecond = 4;
+constexpr uint8_t kSteady = 8;
+constexpr uint8_t kAll = kCurrent | kNext | kSecond | kSteady;
+}  // namespace PlaybackBridgeCycleMask
 
 struct FixedPlaybackBridgeStorage {
   uint64_t storageGeneration = 0;

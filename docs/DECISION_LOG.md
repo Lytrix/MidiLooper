@@ -14,6 +14,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
+| [DEC-076](#dec-076--snapshot-idleunit-instrumentation-stays-on-the-broad-session_capture-gate) | 2026-09-18 | Snapshot idle/unit instrumentation stays on the broad `SESSION_CAPTURE` gate | Accepted — recorded by `runtime-code-tidyup`; gate unchanged |
 | [DEC-075](#dec-075--the-snapshot-publication-boundary-admits-memory-per-construction-turn-and-parks-on-allocation-failure) | 2026-09-18 | The snapshot publication boundary admits memory per construction turn and parks on allocation failure | Accepted — implemented; native 2249 / 1 skipped / 0 failures, RAM1 unchanged; device gate owed |
 | [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented and device-verified (settled LSV1 save path, `q=0` publishes, post-reboot `storage_matches_effective`); native reproducer red→green; RAM1 allowance restored |
 | [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 landed as DEC-074 |
@@ -88,6 +89,40 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ---
 
 <!-- Append new entries below (newest first). Next ID: DEC-076 -->
+
+## DEC-076 — Snapshot idle/unit instrumentation stays on the broad `SESSION_CAPTURE` gate
+
+**Date:** 2026-09-18
+**Status:** Accepted — recorded by [`runtime-code-tidyup`](changes/runtime-code-tidyup/proposal.md) task 3.6
+(decision OD-2). **No code change**: the compile gate is unchanged.
+**Owner:** the probe scopes and emitters in `src/Loop/LoopSnapshotPublish.cpp` (`SnapshotIdleChildAdd` scopes,
+`resetSnapshotIdleChildTimes`, `emitSnapshotUnitCapture` / `emitSnapshotUnitStepCapture`, the
+`Loop::lastSnapshotIdle*Us` accessors) and their only reader, `src/Utils/InvestigationCaptureLog.cpp`
+(`snapshotIdleTurnPerformedWork`, compiled under `SESSION_CAPTURE_INVESTIGATION_DIAG || SESSION_CAPTURE_SNAPSHOT_IDLE`).
+
+**Context.** The producer and the consumer of this family sat on different gates. The probes compile under
+`#if defined(SESSION_CAPTURE)`, which `env:teensy41-capture-serial` sets to 1; the reader compiles out unless
+`SESSION_CAPTURE_SNAPSHOT_IDLE=1`, which only `env:teensy41-capture-serial-investigation-diag` sets. So in the
+default capture env the probes ran — one `micros()` pair per scope, the accumulator, and
+`resetSnapshotIdleChildTimes()` on every publish grain — with nothing reading the result. The sibling call sites
+in `TrackDeferredMaintenance.cpp`, `DisplayCacheLifecycle.cpp` and `RuntimeTimingTelemetry.cpp` use the narrow gate.
+
+**Decision.** The probe scopes stay on the broad `SESSION_CAPTURE` gate. They are intentionally always-on in a
+capture build: `snapshot_unit` is the family that measured publish/arm cost (including the `033502` volume
+result that introduced the 25 ms step-report interval), and it must be available in a capture build without
+changing the env of a session already running. Its volume is bounded by that interval and by the
+phase/stall/signature report conditions, not by the compile gate.
+
+**Consequence.** A default `teensy41-capture-serial` build carries the probe cost and emits
+`#CAP,...,DIAG,snapshot_unit` lines; `snapshot_idle` (the reader-side line family) still requires
+`SESSION_CAPTURE_SNAPSHOT_IDLE=1`. Narrowing the producer gate is a deliberate follow-up change with its own
+capture evidence, not part of a behavior-preserving refactor.
+
+**Alternatives rejected.** (a) Narrow the producer to the `SESSION_CAPTURE_SNAPSHOT_IDLE` gate inside
+`runtime-code-tidyup` — that changes observable capture output in a change whose contract is "no observable
+behavior change". (b) Delete the cluster as dead weight — it is not dead: the accessors feed
+`InvestigationCaptureLog::snapshotIdleTurnPerformedWork`, and `snapshot_unit` is named in DEC-075's device
+evidence (`snapshot_unit`/`snapshot_fragment`/`snapshot_slab_fail`/`snapshot_alloc` all 0 on the parked path).
 
 ## DEC-075 — The snapshot publication boundary admits memory per construction turn and parks on allocation failure
 

@@ -140,6 +140,10 @@ constexpr uint8_t kLsv1MaxSectionNameLength = 64;
 constexpr uint32_t kLsv1MaxSectionPayloadBytes = 64u * 1024u * 1024u;
 constexpr uint32_t kLsv1MaxSnapshotObjects = 1'048'576u;
 constexpr uint32_t kLsv1MaxMembershipRefsPerBar = 4096u;
+// The on-disk envelope must track the in-memory one: a loader that accepted a different bound
+// would silently admit or reject content the snapshot owner considers representable.
+static_assert(kLsv1MaxMembershipRefsPerBar == kSnapshotMembershipMaxRefsPerBar,
+              "LSV1 bar-membership envelope must match kSnapshotMembershipMaxRefsPerBar");
 
 constexpr char kLsv1SectionLoopMetadata[] = "LoopMetadata";
 constexpr char kLsv1SectionPersistedLoopSnapshot[] = "PersistedLoopSnapshot";
