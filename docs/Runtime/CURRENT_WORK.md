@@ -2741,6 +2741,37 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — RC-MEM-5 landed: the chunk pool grows in blocks, and the "cannot activate overdub on a 24-bar loop"
+symptom is FIXED on device (`immutable-loop-snapshot-passes` 5.11).** `initPool` no longer reserves all 512 chunks
+(2,566 KB) at boot. The chunk array is now a lazily opened block table (`POOL_CHUNKS_PER_BLOCK = 64`,
+`POOL_BLOCK_COUNT = 8`), opened by `allocChunk` on the first id that lands in each block; the **512-chunk admission
+ceiling is unchanged** and the flat id space is untouched, because chunk ids cross `PersistenceQueue::onChunkFreed`,
+the committed chunk-id lists and the storage I/O format. Boot now backs `ceil(used chunks / 64)` blocks: at the
+observed 104-143 used chunks that is 2-3 blocks (656-984 KB) instead of 2,566 KB.
+
+Device (`captures/rcemem5-lazy-pool`, 24-bar record + 24-bar overdub, track 5 slot 1, same shape as the A/B legs):
+- **`Overdubbing started` twice** (76.582 s, 138.665 s). The fixed-pool legs managed **zero** starts against 4
+  `op=overdub_start` denials -- this is the user-reported regression, now gone.
+- `op=overdub_start` denials **0**; `snapshot_reserve` denials 129 -> **6**; **0 `FATAL`**, **0 `#MEM_EXT_REFUSED`**
+  (the fixed-pool `before` leg aborted with `[InternalHeapFirstAllocator] FATAL` at 104 s).
+- Boot pool `live` **3,837 -> 1,913 KB** (-1,924 KB).
+- The mechanism RC-MEM-6 predicted, confirmed: with the pool no longer falling back to `std::malloc`, `heap_free`
+  held **80 KB through both overdubs** (44 KB only at 162 s), so `OverdubStart`'s 48 KB requirement was admitted.
+  Peak chunk use 143/512, `chunks_free` never approached its old floor, `pin1` 0-1 and slab `unused` 30-60 KB
+  throughout (the arena remains ~98 % packed, so 5.10's re-aim stands).
+
+Native `test_pool_backs_storage_only_as_content_reaches_it` pins the block form: 0 blocks at boot, 1 block after a
+single event, 2 after crossing the boundary, ids still contiguous across it, backed bytes far below the full array,
+and `freeChunkCount() + usedChunkCount() == POOL_CHUNK_COUNT` unchanged. Full native **2,259 cases / 1 skipped /
+0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,096 / code 392,344 / padding 872 / locals
+free 34,976` (the block table is 8 pointers, +32 B, still 12 ITCM banks).
+
+**Owed in the same RC:** the `SESSION_CAPTURE` ring. This run aborted on `firmware capture ring overflow` -- the
+1 MiB `kCaptureRingBytes` can no longer hold a 24-bar two-overdub run now that both overdubs actually execute. The
+content itself was correct (`stored overdub span count=192/191`, `count_ok/span_ok/bars_ok` all true), so the ring is
+now the last fixed store and the last diagnostic limit rather than a functional one. Ring policy (size per session,
+or shed-shape rather than overflow-abort) is the remaining half of RC-MEM-5.
+
 **2026-09-18 — the fixed boot stores are now measured, and the overdub-start denial behind "cannot activate overdub
 on a 24-bar loop" is diagnosed (`immutable-loop-snapshot-passes` 5.11, RC-MEM-5/-MEM-6).** Two measurements re-rank
 the remaining work, both taken before changing anything.

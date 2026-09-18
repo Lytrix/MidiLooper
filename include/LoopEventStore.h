@@ -16,6 +16,15 @@
 namespace LoopEventStoreConfig {
 constexpr uint16_t CHUNK_CAPACITY = 256;
 constexpr uint16_t POOL_CHUNK_COUNT = 512;
+/// RC-MEM-5: the chunk array is grown in blocks of this many chunks instead of being reserved
+/// whole at boot. The id space stays flat and contiguous -- chunk ids cross
+/// `PersistenceQueue::onChunkFreed`, the committed chunk-id lists and the storage I/O format --
+/// so only the backing storage is blocked, never the identifier. The worst occupancy observed
+/// in any captured run is 167 of 512 chunks, so this keeps the 512-chunk admission ceiling
+/// while backing only what content actually reaches.
+constexpr uint16_t POOL_CHUNKS_PER_BLOCK = 64;
+constexpr uint16_t POOL_BLOCK_COUNT =
+    (POOL_CHUNK_COUNT + POOL_CHUNKS_PER_BLOCK - 1) / POOL_CHUNKS_PER_BLOCK;
 constexpr uint32_t BAR_TICKS = 768;
 constexpr uint32_t INTERNAL_HEAP_SAFETY_FLOOR_BYTES = 12 * 1024;
 }  // namespace LoopEventStoreConfig
@@ -123,6 +132,11 @@ class LoopEventStore {
 
   static uint16_t usedChunkCount();
   static uint16_t freeChunkCount();
+  /// Number of chunk blocks currently backed by storage (RC-MEM-5 diagnostic). The pool holds
+  /// `poolBackedBytes()`, not `POOL_CHUNK_COUNT * sizeof(EventChunk)`, until content reaches
+  /// the blocks -- the admission ceiling is unchanged, only the backing storage is lazy.
+  static uint16_t poolBlockCount();
+  static size_t poolBackedBytes();
   static bool canAllocChunkWithReserve();
   static bool hasInternalHeapHeadroomForNonCriticalWork(uint32_t freeHeapBytes);
   static uint32_t internalHeapSafetyFloorBytes();
@@ -310,7 +324,17 @@ class LoopEventStore {
   mutable bool barIndexDirty_ = true;
   uint32_t lastAppendedTick_ = 0;
 
-  static EventChunk* pool_;
+  /// Lazily opened blocks of the flat chunk array: block `b` backs chunk ids
+  /// [b * POOL_CHUNKS_PER_BLOCK, (b + 1) * POOL_CHUNKS_PER_BLOCK). Only `allocChunk` opens a
+  /// block, and it opens before marking the id used, so any id whose `poolUsed_[id]` is true
+  /// has an open block and `chunkSlot` is safe for it.
+  static EventChunk* poolBlocks_[LoopEventStoreConfig::POOL_BLOCK_COUNT];
+  static EventChunk* chunkBlock(uint16_t id) {
+    return poolBlocks_[id / LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK];
+  }
+  static EventChunk& chunkSlot(uint16_t id) {
+    return chunkBlock(id)[id % LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK];
+  }
   static bool poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static ChunkLifecycleState poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT];
   static uint16_t poolChunkRefCount_[LoopEventStoreConfig::POOL_CHUNK_COUNT];

@@ -1059,7 +1059,8 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         `test_session_exit_gap_predicate_only_in_visual_hold_owners`), and it never scans the
         `LoopContentResolution::*(const LoopPasses&, ...)` overloads where the replay actually lives now -- so the
         gate must be widened before it can be re-ticked.
-      - **RC-MEM-5 -- the fixed boot stores are sized for the pool ceiling.** The chunk pool reserves 2,566 KB at
+      - **RC-MEM-5 -- the fixed boot stores are sized for the pool ceiling. LANDED (chunk pool, lazy blocks);
+        capture ring still owed.** The chunk pool reserves 2,566 KB at
         boot for 131,072 event slots with no cap on loop length, and the `SESSION_CAPTURE` ring reserves 1,024 KB
         regardless of session shape.
         **Measured high-water (all captures on this device, `[Memory] ext` `chunks_free` minimum per run).** The
@@ -1102,6 +1103,25 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         flat-id contract across `PersistenceQueue::onChunkFreed` unchanged); and on device the 24-bar shape must show
         `chunks_free` never reaching its old floor, `pool_refused=0` with `op=overdub_start` **admitted**, and
         `heap_free` above the floor for the whole run.
+        **Device result 2026-09-18 (`captures/rcemem5-lazy-pool`, 24-bar record + 24-bar overdub, track 5 slot 1).**
+        The functional symptom RC-MEM-6 diagnosed is **fixed**: `Overdubbing started` twice (76.582 s, 138.665 s)
+        where the fixed-pool legs managed **zero** starts against 4 `op=overdub_start` denials; `op=overdub_start`
+        denials are now **0**, `snapshot_reserve` denials fell 129 -> **6**, and there are **0 `FATAL`** and
+        **0 `#MEM_EXT_REFUSED`** where the `before` leg aborted. Boot pool `live` fell **3,837 -> 1,913 KB**
+        (-1,924 KB) because the pool now backs `ceil(used chunks / 64)` blocks instead of all 512: at
+        `chunks_free=408` (104 chunks used) that is 2 blocks = 656 KB rather than the previous 2,566 KB, and the
+        peak observed here is 143 used chunks (3 blocks). The decisive mechanism is the one RC-MEM-6 predicted:
+        with the pool no longer falling back to `std::malloc`, `heap_free` held **80 KB through both overdubs**
+        and only dipped to 44 KB at 162 s, so `OverdubStart`'s 48 KB requirement (16 KB need + 32 KB floor) was
+        admitted -- against 44 KB and denial in the fixed-pool legs. Native `test_pool_backs_storage_only_as_
+        content_reaches_it` pins the block form (0 blocks at boot, 1 block after one event, 2 after crossing the
+        boundary, ids still contiguous across it, backed bytes far below the full array, and
+        `freeChunkCount() + usedChunkCount() == POOL_CHUNK_COUNT` unchanged).
+        **Still owed in this RC:** the `SESSION_CAPTURE` ring. The same run aborted at
+        `firmware capture ring overflow` -- the 1 MiB `kCaptureRingBytes` can no longer hold a 24-bar two-overdub
+        run now that both overdubs actually execute, so the ring is the last fixed store and the last diagnostic
+        limit (the run's content itself was fine: `stored overdub span count=192/191 count_ok/span_ok/bars_ok` all
+        true). Ring policy -- size per session, or shed-shape instead of overflow-abort -- is the remaining half.
       - **RC-CHUNK-1 (latent correctness) -- a chunk reference is released without returning the chunk.**
         `LoopEventStore::stepRewriteFromOrderedSource` calls `releaseChunkReference(retired)` with no paired
         `tryFreeChunk` (`src/LoopEventStore.cpp:549-552`), unlike every other release site (`:210-222`, `:366`,

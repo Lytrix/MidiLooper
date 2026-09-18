@@ -70,7 +70,7 @@ void extmem_free(void* ptr);
 }
 #endif
 
-EventChunk* LoopEventStore::pool_ = nullptr;
+EventChunk* LoopEventStore::poolBlocks_[LoopEventStoreConfig::POOL_BLOCK_COUNT] = {};
 #if defined(__IMXRT1062__)
 DMAMEM bool LoopEventStore::poolUsed_[LoopEventStoreConfig::POOL_CHUNK_COUNT] = {};
 DMAMEM ChunkLifecycleState LoopEventStore::poolLifecycle_[LoopEventStoreConfig::POOL_CHUNK_COUNT] =
@@ -118,13 +118,12 @@ void LoopEventStore::initPool() {
   if (poolReady_) {
     return;
   }
-  const size_t bytes =
-      static_cast<size_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT) * sizeof(EventChunk);
-  pool_ = static_cast<EventChunk*>(poolAlloc(bytes));
-  if (!pool_) {
-    return;
+  // RC-MEM-5: no boot reservation. The chunk array is opened block by block in `allocChunk`,
+  // so a run that peaks well below `POOL_CHUNK_COUNT` never backs the whole 2.5 MB array. The
+  // admission ceiling is unchanged; only the backing storage became lazy.
+  for (uint16_t block = 0; block < LoopEventStoreConfig::POOL_BLOCK_COUNT; ++block) {
+    poolBlocks_[block] = nullptr;
   }
-  std::memset(pool_, 0, bytes);
   std::memset(poolUsed_, 0, sizeof(poolUsed_));
   for (uint16_t i = 0; i < LoopEventStoreConfig::POOL_CHUNK_COUNT; ++i) {
     poolLifecycle_[i] = ChunkLifecycleState::Free;
@@ -137,10 +136,12 @@ void LoopEventStore::initPool() {
 
 void LoopEventStore::resetPoolForTests() {
   ++poolLifetime_;
-  if (pool_) {
-    poolFree(pool_);
+  for (uint16_t block = 0; block < LoopEventStoreConfig::POOL_BLOCK_COUNT; ++block) {
+    if (poolBlocks_[block] != nullptr) {
+      poolFree(poolBlocks_[block]);
+      poolBlocks_[block] = nullptr;
+    }
   }
-  pool_ = nullptr;
   poolReady_ = false;
   std::memset(poolUsed_, 0, sizeof(poolUsed_));
   std::memset(poolLifecycle_, 0, sizeof(poolLifecycle_));
@@ -148,6 +149,21 @@ void LoopEventStore::resetPoolForTests() {
   sdLoadStagingDepth_ = 0;
   ephemeralSealDepth_ = 0;
   PersistenceQueue::resetForTests();
+}
+
+uint16_t LoopEventStore::poolBlockCount() {
+  uint16_t count = 0;
+  for (uint16_t block = 0; block < LoopEventStoreConfig::POOL_BLOCK_COUNT; ++block) {
+    if (poolBlocks_[block] != nullptr) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+size_t LoopEventStore::poolBackedBytes() {
+  return static_cast<size_t>(poolBlockCount()) *
+         LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK * sizeof(EventChunk);
 }
 
 uint16_t LoopEventStore::usedChunkCount() {
@@ -331,12 +347,16 @@ bool LoopEventStore::isChunkSealed(uint16_t id) {
 }
 
 void LoopEventStore::tryFreeChunk(uint16_t id) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || poolChunkRefCount_[id] != 0) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || poolChunkRefCount_[id] != 0) {
     return;
   }
-  pool_[id].used = 0;
-  pool_[id].firstTick = 0;
-  pool_[id].lastTick = 0;
+  EventChunk* block = chunkBlock(id);
+  if (block != nullptr) {
+    EventChunk& retired = block[id % LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK];
+    retired.used = 0;
+    retired.firstTick = 0;
+    retired.lastTick = 0;
+  }
   poolUsed_[id] = false;
   poolLifecycle_[id] = ChunkLifecycleState::Free;
   PersistenceQueue::onChunkFreed(id);
@@ -346,15 +366,31 @@ uint16_t LoopEventStore::allocChunk() {
   if (!poolReady_) {
     initPool();
   }
-  if (!pool_) {
+  if (!poolReady_) {
     return UINT16_MAX;
   }
   for (uint16_t i = 0; i < LoopEventStoreConfig::POOL_CHUNK_COUNT; ++i) {
     if (!poolUsed_[i]) {
+      // RC-MEM-5: open this id's block on first use. Opening is the only allocation in the
+      // pool now, and it happens before the id is marked used, so `chunkSlot(i)` is always
+      // safe for a used id. A block that cannot be opened denies the chunk exactly as the
+      // whole-pool allocation failure used to.
+      const uint16_t blockIndex = i / LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK;
+      if (poolBlocks_[blockIndex] == nullptr) {
+        const size_t bytes =
+            static_cast<size_t>(LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK) * sizeof(EventChunk);
+        EventChunk* block = static_cast<EventChunk*>(poolAlloc(bytes));
+        if (block == nullptr) {
+          return UINT16_MAX;
+        }
+        std::memset(block, 0, bytes);
+        poolBlocks_[blockIndex] = block;
+      }
       poolUsed_[i] = true;
-      pool_[i].used = 0;
-      pool_[i].firstTick = 0;
-      pool_[i].lastTick = 0;
+      EventChunk& opened = chunkSlot(i);
+      opened.used = 0;
+      opened.firstTick = 0;
+      opened.lastTick = 0;
       poolLifecycle_[i] = ChunkLifecycleState::Recording;
       return i;
     }
@@ -367,9 +403,9 @@ void LoopEventStore::freeChunk(uint16_t id) {
   tryFreeChunk(id);
 }
 
-EventChunk& LoopEventStore::chunk(uint16_t id) { return pool_[id]; }
+EventChunk& LoopEventStore::chunk(uint16_t id) { return chunkSlot(id); }
 
-const EventChunk& LoopEventStore::chunk(uint16_t id) const { return pool_[id]; }
+const EventChunk& LoopEventStore::chunk(uint16_t id) const { return chunkSlot(id); }
 
 bool LoopEventStore::hasSealedChunks() const {
   for (uint16_t id : chunkIds_) {
@@ -392,7 +428,7 @@ bool LoopEventStore::appendToTailChunk(const MidiEvent& evt, LoopEventStoreAppen
   if (!poolReady_) {
     initPool();
   }
-  if (!pool_) {
+  if (!poolReady_) {
     if (denyOut != nullptr) {
       *denyOut = LoopEventStoreAppendDeny::PoolUnavailable;
     }
@@ -470,7 +506,7 @@ bool LoopEventStore::append(const MidiEvent& evt, LoopEventStoreAppendDeny* deny
 
 const MidiEvent& LoopEventStore::at(size_t globalIndex) const {
   static const MidiEvent kEmpty{};
-  if (!pool_ || globalIndex >= size()) {
+  if (!poolReady_ || globalIndex >= size()) {
     return kEmpty;
   }
   size_t cursor = 0;
@@ -493,7 +529,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ownsRewriteCursor(
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginRewriteFromOrderedSource(LoopEventStoreRewriteCursor& cursor,
                                                     size_t sourceCount) const {
   cursor = LoopEventStoreRewriteCursor{};
-  if (!pool_ || sourceCount > eventCount_) {
+  if (!poolReady_ || sourceCount > eventCount_) {
     return false;
   }
   cursor.owner = this;
@@ -791,29 +827,29 @@ void LoopEventStore::copyEventsTo(MidiEventVec& out) const {
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvent(uint16_t id, MidiEventVec& out) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
     return;
   }
-  const EventChunk& c = pool_[id];
+  const EventChunk& c = chunkSlot(id);
   out.reserve(out.size() + c.used);
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvent(
     uint16_t id, std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
     return;
   }
-  const EventChunk& c = pool_[id];
+  const EventChunk& c = chunkSlot(id);
   out.reserve(out.size() + c.used);
   out.insert(out.end(), c.events, c.events + c.used);
 }
 
 uint16_t LoopEventStore::chunkUsedCount(uint16_t id) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
     return 0;
   }
-  return pool_[id].used;
+  return chunkSlot(id).used;
 }
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::beginReadSealedChunks(
@@ -843,12 +879,12 @@ LoopEventStoreReadResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepReadSeale
   while (quantum && cursor.chunk_ < cursor.refCount_) {
     --quantum;
     const uint16_t id = cursor.refs_[cursor.chunk_];
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ ||
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ ||
         !poolUsed_[id] || !isChunkSealed(id)) {
       cursor.discard();
       return LoopEventStoreReadResult::Denied;
     }
-    const EventChunk& chunk = pool_[id];
+    const EventChunk& chunk = chunkSlot(id);
     if (cursor.event_ == chunk.used) {
       ++cursor.chunk_;
       cursor.event_ = 0;
@@ -869,10 +905,10 @@ LoopEventStoreReadResult LOOP_EVENT_STORE_COLD_MEM LoopEventStore::stepReadSeale
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEventRange(uint16_t id, uint32_t begin,
                                                                        uint32_t endExclusive,
                                                                        MidiEventVec& out) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
     return;
   }
-  const EventChunk& c = pool_[id];
+  const EventChunk& c = chunkSlot(id);
   if (begin >= c.used) {
     return;
   }
@@ -889,10 +925,10 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEventRange(uint16_t
 void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEventRange(
     uint16_t id, uint32_t begin, uint32_t endExclusive,
     std::vector<MidiEvent, ExternalMemoryFirstAllocator<MidiEvent>>& out) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
     return;
   }
-  const EventChunk& c = pool_[id];
+  const EventChunk& c = chunkSlot(id);
   if (begin >= c.used) {
     return;
   }
@@ -910,10 +946,10 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const Captur
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
       continue;
     }
-    extra += pool_[id].used;
+    extra += chunkSlot(id).used;
   }
   out.reserve(prevSize + extra);
   for (uint16_t id : ids) {
@@ -925,10 +961,10 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(const Commit
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
       continue;
     }
-    extra += pool_[id].used;
+    extra += chunkSlot(id).used;
   }
   out.reserve(prevSize + extra);
   for (uint16_t id : ids) {
@@ -942,10 +978,10 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
       continue;
     }
-    extra += pool_[id].used;
+    extra += chunkSlot(id).used;
   }
   out.reserve(prevSize + extra);
   for (uint16_t id : ids) {
@@ -959,10 +995,10 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(
   const size_t prevSize = out.size();
   size_t extra = 0;
   for (uint16_t id : ids) {
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
       continue;
     }
-    extra += pool_[id].used;
+    extra += chunkSlot(id).used;
   }
   out.reserve(prevSize + extra);
   for (uint16_t id : ids) {
@@ -972,10 +1008,10 @@ void LOOP_EVENT_STORE_COLD_MEM LoopEventStore::appendChunkRefEvents(
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::chunkTickSpan(uint16_t id, uint32_t& firstTick,
                                                              uint32_t& lastTick) {
-  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+  if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
     return false;
   }
-  const EventChunk& c = pool_[id];
+  const EventChunk& c = chunkSlot(id);
   if (c.used == 0) {
     return false;
   }
@@ -987,10 +1023,10 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::chunkTickSpan(uint16_t id, uint32
 size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::countEventsInChunkIds(const CaptureChunkIdList& ids) {
   size_t total = 0;
   for (uint16_t id : ids) {
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
       continue;
     }
-    total += pool_[id].used;
+    total += chunkSlot(id).used;
   }
   return total;
 }
@@ -999,10 +1035,10 @@ size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::countEventsInChunkIds(
     const CommittedChunkIdList& ids) {
   size_t total = 0;
   for (uint16_t id : ids) {
-    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !pool_ || !poolUsed_[id]) {
+    if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolReady_ || !poolUsed_[id]) {
       continue;
     }
-    total += pool_[id].used;
+    total += chunkSlot(id).used;
   }
   return total;
 }
@@ -1249,7 +1285,7 @@ void LoopEventStore::rebuildBarIndex() const {
 
 LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::assignMissingNoteIdsToNoteOnsInChunkIds(
     const uint16_t* chunkIds, size_t count, NoteIdSupplier supplier, void* ctx) {
-  if (!pool_ || chunkIds == nullptr || count == 0 || supplier == nullptr) {
+  if (!poolReady_ || chunkIds == nullptr || count == 0 || supplier == nullptr) {
     return;
   }
   for (size_t i = 0; i < count; ++i) {
@@ -1257,7 +1293,7 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::assignMissingNoteIdsToNoteOnsInCh
     if (id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id]) {
       continue;
     }
-    EventChunk& ec = pool_[id];
+    EventChunk& ec = chunkSlot(id);
     for (uint16_t j = 0; j < ec.used; ++j) {
       MidiEvent& evt = ec.events[j];
       if (evt.isNoteOn() && evt.noteId == kInvalidNoteId) {
@@ -1274,10 +1310,10 @@ LOOP_EVENT_STORE_COLD_MEM void LoopEventStore::assignMissingNoteIdsToNoteOnsInCh
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::readSealedChunkEvent(
     uint16_t id, size_t index, MidiEvent& out, bool& atEnd) {
-  if (!pool_ || id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
-      !isChunkSealed(id) || index > pool_[id].used) return false;
-  atEnd = index == pool_[id].used;
-  if (!atEnd) out = pool_[id].events[index];
+  if (!poolReady_ || id >= LoopEventStoreConfig::POOL_CHUNK_COUNT || !poolUsed_[id] ||
+      !isChunkSealed(id) || index > chunkSlot(id).used) return false;
+  atEnd = index == chunkSlot(id).used;
+  if (!atEnd) out = chunkSlot(id).events[index];
   return true;
 }
 
@@ -1302,7 +1338,7 @@ bool LoopEventStore::reserveCaptureTail() {
         chunkIds_.capacity() >= LoopEventStoreConfig::POOL_CHUNK_COUNT;
   }
   initPool();
-  if (!pool_) return false;
+  if (!poolReady_) return false;
   if (!PersistenceQueue::prewarm()) return false;
   chunkIds_.reserve(LoopEventStoreConfig::POOL_CHUNK_COUNT);
   const uint16_t id = allocChunk();
@@ -1325,8 +1361,8 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::canSealCaptureRange(
       chunkIds_.empty() || next.chunkIds_.size() != 1 || next.eventCount_ ||
       next.chunkIds_.capacity() < LoopEventStoreConfig::POOL_CHUNK_COUNT) return false;
   const uint16_t spare = next.chunkIds_.front();
-  if (!pool_ || !poolUsed_[spare] || poolChunkRefCount_[spare] != 1 ||
-      poolLifecycle_[spare] != ChunkLifecycleState::Recording || pool_[spare].used) return false;
+  if (!poolReady_ || !poolUsed_[spare] || poolChunkRefCount_[spare] != 1 ||
+      poolLifecycle_[spare] != ChunkLifecycleState::Recording || chunkSlot(spare).used) return false;
   const uint16_t tail = chunkIds_.back();
   return poolUsed_[tail] && poolChunkRefCount_[tail] == 1;
 }
@@ -1337,9 +1373,9 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::resetCaptureExtentPreservingReser
   // force a cold re-reservation from the begin-capture path.
   if (eventCount_ != 0 || chunkIds_.size() != 1) return false;
   const uint16_t id = chunkIds_.front();
-  if (capturePoolLifetime_ != poolLifetime_ || !pool_ || !poolUsed_[id] ||
+  if (capturePoolLifetime_ != poolLifetime_ || !poolReady_ || !poolUsed_[id] ||
       poolChunkRefCount_[id] != 1 || poolLifecycle_[id] != ChunkLifecycleState::Recording ||
-      pool_[id].used != 0) {
+      chunkSlot(id).used != 0) {
     return false;
   }
   barIndexDirty_ = true;
@@ -1351,7 +1387,7 @@ bool LoopEventStore::sealCaptureRange(CaptureRange& destination) {
   if (!canSealCaptureRange(destination)) return false;
   auto& next = destination.storage_;
   const uint16_t tail = chunkIds_.back();
-  destination.tailEnd_ = pool_[tail].used;
+  destination.tailEnd_ = chunkSlot(tail).used;
   destination.eventCount_ = eventCount_;
   sealChunk(tail);
   ++ownershipGeneration_;
@@ -1379,7 +1415,7 @@ bool LoopEventStore::CaptureRange::reserveTail() {
 }
 
 bool LoopEventStore::CaptureRange::ready() const {
-  return sealed_ && !releasing_ && pool_ && storage_.capturePoolLifetime_ == poolLifetime_;
+  return sealed_ && !releasing_ && poolReady_ && storage_.capturePoolLifetime_ == poolLifetime_;
 }
 
 bool LoopEventStore::CaptureRange::read(uint64_t generation, size_t chunkIndex,
@@ -1388,9 +1424,9 @@ bool LoopEventStore::CaptureRange::read(uint64_t generation, size_t chunkIndex,
   const uint16_t id = storage_.chunkIds_[chunkIndex];
   const uint16_t end = chunkIndex + 1 == storage_.chunkIds_.size()
       ? tailEnd_ : LoopEventStoreConfig::CHUNK_CAPACITY;
-  if (!poolUsed_[id] || !poolChunkRefCount_[id] || !isChunkSealed(id) || pool_[id].used != end) return false;
+  if (!poolUsed_[id] || !poolChunkRefCount_[id] || !isChunkSealed(id) || chunkSlot(id).used != end) return false;
   atEnd = eventIndex >= end;
-  if (!atEnd) out = pool_[id].events[eventIndex];
+  if (!atEnd) out = chunkSlot(id).events[eventIndex];
   return true;
 }
 
@@ -1420,7 +1456,7 @@ bool LoopEventStore::CaptureRange::releaseGrain(size_t quantum) {
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::prewarmCaptureDirectory() {
   if (capturePoolLifetime_ && capturePoolLifetime_ != poolLifetime_ && !chunkIds_.empty()) return false;
   initPool();
-  if (!pool_ || !PersistenceQueue::prewarm()) return false;
+  if (!poolReady_ || !PersistenceQueue::prewarm()) return false;
   chunkIds_.reserve(LoopEventStoreConfig::POOL_CHUNK_COUNT);
   capturePoolLifetime_ = poolLifetime_;
   barIndexDirty_ = true;
@@ -1428,7 +1464,7 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::prewarmCaptureDirectory() {
 }
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::reservedAppendReady() const {
-  return pool_ && capturePoolLifetime_ == poolLifetime_ &&
+  return poolReady_ && capturePoolLifetime_ == poolLifetime_ &&
       chunkIds_.capacity() >= LoopEventStoreConfig::POOL_CHUNK_COUNT;
 }
 
@@ -1450,7 +1486,7 @@ size_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::availableChun
 }
 
 bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::reserveChunks(size_t chunks) {
-  if (!pool_ || chunks > chunks_.size() ||
+  if (!poolReady_ || chunks > chunks_.size() ||
       (lifetime_ && lifetime_ != poolLifetime_)) return false;
   lifetime_ = poolLifetime_;
   const size_t previous = count_;
@@ -1472,9 +1508,9 @@ bool LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::reserveChunks(s
 }
 
 uint16_t LOOP_EVENT_STORE_COLD_MEM LoopEventStore::ChunkReservation::take() {
-  if (!pool_ || lifetime_ != poolLifetime_ || !count_) return UINT16_MAX;
+  if (!poolReady_ || lifetime_ != poolLifetime_ || !count_) return UINT16_MAX;
   const uint16_t id = chunks_[count_ - 1];
-  if (!poolUsed_[id] || poolChunkRefCount_[id] != 1 || pool_[id].used ||
+  if (!poolUsed_[id] || poolChunkRefCount_[id] != 1 || chunkSlot(id).used ||
       poolLifecycle_[id] != ChunkLifecycleState::Recording) return UINT16_MAX;
   --count_; // Transfer the existing reference to the output store.
   return id;
