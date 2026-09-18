@@ -1447,6 +1447,14 @@ LOOP_COLD_MEM bool Loop::hasPendingSnapshotPublish() const {
          (box == nullptr || !passAlreadyTracked(*box, lastCommittedPassId_));
 }
 
+LOOP_COLD_MEM bool Loop::hasSettledPublishedSnapshotForSave() const {
+  // DEC-073 RC2: a persisted body may embed the selected root only when the root demonstrably
+  // represents the committed passes (`publishedSnapshotIsCurrent`) and the publisher has no newer
+  // request in flight. Defined beside `hasPendingSnapshotPublish` because it calls it, and suites
+  // that link only `LoopSnapshotLifetime.cpp` must not need the publisher TU.
+  return publishedSnapshotIsCurrent() && !hasPendingSnapshotPublish();
+}
+
 LOOP_COLD_MEM bool Loop::hasInFlightSnapshotConstruction() const {
   return pendingSnapshotPublishBox_ && pendingSnapshotPublishBox_->construction;
 }

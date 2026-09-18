@@ -104,10 +104,22 @@ should be planned as one flash/session if the recipes can be combined (see their
     `max_bar_refs: 84`, 0 `RING,overflow`. The 24-row second-overdub pass that `content-verify-58` lost (28
     missing/cycle) is audible after reboot. Live parity
     (`captures/rc1-coalescing-device-playback`) is also 5/5 clean. **The fifth clause is proven; 5.9 is closed.**
-  - **Remaining (defense-in-depth, not this clause): RC2** -- the LSV1 body gather/admission gate
-    (`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()` with bounded re-admission,
-    else a passes-authoritative body).
+  - **RC2 LANDED (DEC-074, 2026-09-18):** the LSV1 body admission requires a settled root
+    (`Loop::hasSettledPublishedSnapshotForSave` = coverage-current **and** `!hasPendingSnapshotPublish()`); the
+    per-loop format is resolved once at the write's `Header` (`decideLoopPersistBodyFormat`) and pinned in
+    `CurrentWorkspaceSaveJob::loopWriteUsesLsv1`, so `EditTail`/`LoopSnapshotTail` never re-decide and a preamble
+    cannot be left without its tail; a bounded settle re-admission (`kLoopPersistSettleDeferralBound = 128` writer
+    turns, nothing written while waiting) lets a transient pending republish finish; and the passes-authoritative
+    body is the **legacy** format -- LSV1's readers reject a missing `LoopSnapshot` section
+    (`test_lsv1_rejects_missing_loop_snapshot_section`), so a rootless LSV1 body is not expressible and legacy is the
+    deliberate choice (it rebuilds via `TrackSlotFromLoopContent` on load). Native:
+    `test_write_loop_persisted_requires_a_settled_published_snapshot` (red on the pre-RC2 predicate) and
+    `test_loop_persist_body_decision_awaits_settlement_within_its_budget`; `test_storage_loop_io` 47/47; full native
+    green; `teensy41-capture-serial` SUCCESS with RAM1 locals free **6,336** (a new telemetry tag had cost 4 KB of
+    DTCM allowance through `ALIGN(4096)` churn; dropped, so the deferral is silent). **Remaining:** the RC2 device
+    save/load re-verification on the DEC-071 shape.
   **RC2 -- persistence guard (secondary).** Once RC1 holds, require the LSV1 body gather/admission to see a demonstrably settled current root (`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()`) with bounded save re-admission; when no settled root is reachable, persist a **passes-authoritative** representation. Prefer LSV1's own "body without a selected snapshot/root" encoding if it has one; use the legacy format only if LSV1 cannot express it, and make that a deliberate format/migration decision rather than an incidental one.
+  **RC3 -- the publication boundary that RC1/RC2 read from has no memory admission (2026-09-18).** Recorded in its owning change, `immutable-loop-snapshot-passes` **5.9**, as `RC-PUB-1` (wire the dead `OperationKind::SnapshotReserve` gate into the publication start; on denial, leave the work pending), `RC-PUB-2` (park `LoopSnapshotFailureReason::Allocation` instead of retrying the fragment forever) and `RC-PUB-3` (drop `SnapshotSlabAllocator`'s fatal `abort()` backstop). Evidence: `captures/session_20260918_101615.log` reset the device six seconds after `Overdub wrap committed`, with no persistence running at all. RC2's device re-verification must expect this boundary's *parked* state -- previous root selected and `hasPendingSnapshotPublish()` true, which is exactly the `AwaitSettled` input RC2 already handles -- and must not treat it as a device failure; the two fixes are complementary, not alternatives.
   **Acceptance:** immediately before save admission the selected root and `PassesResolve` must already agree -- that separates publisher correctness from persistence correctness so a persistence test cannot hide a still-broken live publisher. Then save/load keeps `passes == root` with identical display and playback (pre-reboot `DISP` 57 and the 24-39 overdub range), and a known-good LSV1 load still takes the fast path with no rebuild/reconcile.
 
   **Observability finding from the same session (blocks the base-run oracle, not the content):** the 8-bar recipe sheds the 1 MiB `#CAP` ring (`RING,shed`), and the dominant consumer is `DIAG,droid_queue` (~5.6k rows/run, `MidiHandler.cpp` `SC_DROID_FEEDBACK_QUEUE`) plus `PERS,work` (~3.5k) -- neither is dropped by `teensy41-capture-serial-no-grain` (which only drops `DIAG,stop_grain`). Four runs (`content-verify-54..57`) came back `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)`: the harness never delivered the overdub-stop press (the device log shows no `Overdubbing stopped`; the only Record/Overdub presses were the double-undo and triple-redo), so the live pass was never committed and the take collapsed to one overdub pass. The two clean runs (`content-verify-53`, `content-verify-58`) both sealed at 6912 ticks and had ~12.5k `#CAP` lines; the degraded ones sealed at 6144 with ~20.8k. A volume mitigation for `droid_queue` (sampling like `DIAG,stop_grain`, or an acceptance env) is needed before the base report can carry the four checks in a clean run again.

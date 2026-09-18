@@ -1246,8 +1246,22 @@ bool readPersistedLoopSnapshotHeader(const StorageIo& io, PersistedLoopSnapshot&
 #include "Loop.h"
 
 bool STORAGE_LOOP_IO_MEM loopUsesLoopSnapshotBodyFormatV1ForSave(const Loop& loop) {
-  const ImmutableLoopSnapshotRef snapshot = loop.publishedSnapshot();
-  return snapshot != nullptr && loop.publishedSnapshotIsCurrent();
+  return loop.hasSettledPublishedSnapshotForSave();
+}
+
+LoopPersistBodyDecision STORAGE_LOOP_IO_MEM decideLoopPersistBodyFormat(
+    const Loop& loop, bool settleBudgetRemaining) {
+  if (loop.hasSettledPublishedSnapshotForSave()) {
+    return LoopPersistBodyDecision::Lsv1SelectedRoot;
+  }
+  // A coverage-current root with a publication pending is transient: the pending work is a rebuild
+  // of the same committed state, so give the publisher a bounded chance to settle before dropping
+  // to the passes-authoritative body. A stale/uncovered root is not transient and never waits.
+  if (settleBudgetRemaining && loop.publishedSnapshotIsCurrent() &&
+      loop.hasPendingSnapshotPublish()) {
+    return LoopPersistBodyDecision::AwaitSettled;
+  }
+  return LoopPersistBodyDecision::PassesAuthoritative;
 }
 
 static bool writeLegacyLoopPersisted(const StorageIo& io, const Loop& loop) {

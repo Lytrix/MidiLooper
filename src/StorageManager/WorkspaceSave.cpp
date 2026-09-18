@@ -21,6 +21,12 @@
 
 namespace StorageManagerInternal {
 
+/// DEC-073 RC2: bounded settle re-admissions per loop body write. A coverage-current root with a
+/// publication still pending is transient (the publisher is rebuilding the same committed state on
+/// its idle lane), so the save waits for it at most this many writer turns before committing to
+/// the passes-authoritative body. The bound keeps a blocked publisher from wedging the save.
+constexpr uint8_t kLoopPersistSettleDeferralBound = 128;
+
 STORAGE_PERSIST_MEM void quarantineLegacyMonolithStorageFile() {
 #if defined(ARDUINO)
     if (!SD.exists(CurrentSetStorage::kLegacyMonolithPath)) {
@@ -78,6 +84,9 @@ STORAGE_PERSIST_MEM bool loopPersistTailWriteResumeActive(const PersistKey& key)
 STORAGE_PERSIST_MEM void resetDeferredLoopWriteState() {
     disarmLoopPersistTailWriteResume();
     storageSession.currentWorkspaceSave.loopWriteStage = DeferredLoopWriteStage::Header;
+    // DEC-073 RC2: the body-format pin and its settle allowance are per loop write.
+    storageSession.currentWorkspaceSave.loopWriteUsesLsv1 = false;
+    storageSession.currentWorkspaceSave.loopSettleDeferrals = 0;
     storageSession.currentWorkspaceSave.capturePassCursor = 0;
     storageSession.currentWorkspaceSave.chunkCursor = 0;
     storageSession.currentWorkspaceSave.midiBatch.clear();
@@ -539,13 +548,41 @@ STORAGE_PERSIST_MEM bool writeDeferredCapturePassChunk(File& file, uint16_t chun
                               storageSession.currentWorkspaceSave.midiBatch.size() * sizeof(MidiEvent), crcMode);
 }
 
+/// DEC-073 RC2: Header-stage body-format resolution. Pins `loopWriteUsesLsv1` for this loop write,
+/// or reports a bounded settle deferral (returns true with `loopDone` false and the stage
+/// unchanged). Kept out of the stage switch deliberately: growing that switch's tables moves DTCM
+/// alignment by 4 KB on this tree (see `.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc`).
+STORAGE_PERSIST_MEM bool deferUnsettledLoopPersist(const Loop& loop, bool& loopDone) {
+    const bool settleBudgetRemaining =
+        storageSession.currentWorkspaceSave.loopSettleDeferrals < kLoopPersistSettleDeferralBound;
+    const LoopPersistBodyDecision bodyDecision =
+        decideLoopPersistBodyFormat(loop, settleBudgetRemaining);
+    if (bodyDecision == LoopPersistBodyDecision::AwaitSettled) {
+        // Nothing written, stage unchanged: the work item stays active and retries on a later
+        // persistence slice while the publisher settles.
+        ++storageSession.currentWorkspaceSave.loopSettleDeferrals;
+        loopDone = false;
+        return true;
+    }
+    storageSession.currentWorkspaceSave.loopWriteUsesLsv1 =
+        bodyDecision == LoopPersistBodyDecision::Lsv1SelectedRoot;
+    return false;
+}
+
 STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, bool& loopDone,
                               LoopPersistPayloadCrc crcMode) {
     loopDone = false;
 
+    // DEC-073 RC2: resolve and pin the body format before the stage switch. Kept outside the switch
+    // deliberately: growing the switch's tables moves DTCM alignment by 4 KB on this tree.
+    if (storageSession.currentWorkspaceSave.loopWriteStage == DeferredLoopWriteStage::Header &&
+        deferUnsettledLoopPersist(loop, loopDone)) {
+        return true;
+    }
+
     switch (storageSession.currentWorkspaceSave.loopWriteStage) {
         case DeferredLoopWriteStage::Header:
-            if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
+            if (storageSession.currentWorkspaceSave.loopWriteUsesLsv1) {
                 const LoopSnapshotRef persistedOracle = loop.sharePassesSnapshot();
                 if (!persistedOracle) {
                     return false;
@@ -622,7 +659,9 @@ STORAGE_PERSIST_MEM bool stepDeferredLoopPersist(File& file, const Loop& loop, b
                                          loop.passes.loopGeometries, loop.passes.overdubPasses)) {
                 return false;
             }
-            if (loopUsesLoopSnapshotBodyFormatV1ForSave(loop)) {
+            // DEC-073 RC2: the pinned decision from this write's Header stage. Never re-evaluate:
+            // the LSV1 preamble (if any) is already on disk, so the tail must follow it.
+            if (storageSession.currentWorkspaceSave.loopWriteUsesLsv1) {
                 const ImmutableLoopSnapshotRef loopSnapshot = loop.publishedSnapshot();
                 if (!loopSnapshot) {
                     return false;

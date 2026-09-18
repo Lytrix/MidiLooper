@@ -1726,6 +1726,88 @@ void test_write_loop_persisted_stays_legacy_without_published_snapshot() {
                     probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()));
 }
 
+/// DEC-073 RC2: the LSV1 body may embed the selected root only when the publisher is *settled*.
+/// A coverage-current root with a publication still pending is not settled -- the save must take
+/// the passes-authoritative (legacy) body, which the loader rebuilds from the passes. Pre-RC2 this
+/// predicate accepted the pending root, and a mid-write committed-state change could leave an LSV1
+/// preamble on disk with no snapshot tail.
+void test_write_loop_persisted_requires_a_settled_published_snapshot() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopId = 5;
+  loop.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(100, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(200, 1, 60, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 200));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_TRUE(loopUsesLoopSnapshotBodyFormatV1ForSave(loop));
+
+  // A republish of the same committed state leaves the root coverage-current but the publisher
+  // unsettled.
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  // The pre-RC2 predicate (`snapshot && publishedSnapshotIsCurrent()`) is still true here, which is
+  // exactly what this fixture pins as insufficient.
+  TEST_ASSERT_TRUE(loop.publishedSnapshot() != nullptr && loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_FALSE_MESSAGE(loopUsesLoopSnapshotBodyFormatV1ForSave(loop),
+      "an LSV1 body may embed the selected root only when the publisher is settled");
+  TEST_ASSERT_FALSE(loop.hasSettledPublishedSnapshotForSave());
+
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopPersisted(mem.io(), loop));
+  TEST_ASSERT_EQUAL_MESSAGE(LoopSnapshotBodyFormatProbeResult::Legacy,
+                            probeLoopSnapshotBodyFormat(buffer.data(), buffer.size()),
+                            "an unsettled root must persist the passes-authoritative body");
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_TRUE(loop.hasSettledPublishedSnapshotForSave());
+  TEST_ASSERT_TRUE(loopUsesLoopSnapshotBodyFormatV1ForSave(loop));
+}
+
+/// DEC-073 RC2: the body-format decision waits for a transient pending publication only within its
+/// bounded settle allowance, then commits to the passes-authoritative body. A stale (uncovered)
+/// root is never transient, so it never waits.
+void test_loop_persist_body_decision_awaits_settlement_within_its_budget() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+
+  Loop loop;
+  loop.loopId = 6;
+  loop.loopLengthTicks = 2u * Config::TICKS_PER_BAR;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(120, 1, 62, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(220, 1, 62, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::RecordStop, 220));
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_EQUAL(LoopPersistBodyDecision::Lsv1SelectedRoot,
+                    decideLoopPersistBodyFormat(loop, false));
+
+  TEST_ASSERT_TRUE(loop.requestCommittedPassesRepublish());
+  TEST_ASSERT_EQUAL(LoopPersistBodyDecision::AwaitSettled,
+                    decideLoopPersistBodyFormat(loop, true));
+  TEST_ASSERT_EQUAL(LoopPersistBodyDecision::PassesAuthoritative,
+                    decideLoopPersistBodyFormat(loop, false));
+
+  drainPendingSnapshotPublish(loop);
+  // Once settled, even an exhausted budget resolves to the selected root.
+  TEST_ASSERT_EQUAL(LoopPersistBodyDecision::Lsv1SelectedRoot,
+                    decideLoopPersistBodyFormat(loop, false));
+
+  // An uncovered root is not transient: no budget may make the save wait for it.
+  ++loop.playbackRevision;
+  TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_EQUAL(LoopPersistBodyDecision::PassesAuthoritative,
+                    decideLoopPersistBodyFormat(loop, true));
+}
+
 void test_lsv1_rejects_duplicate_loop_snapshot_section() {
   const ImmutableLoopSnapshotRef snapshot =
       LoopSnapshot::createEmpty(1, Config::TICKS_PER_BAR, 0, 2, 2);
@@ -2084,6 +2166,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_write_loop_persisted_emits_lsv1_when_published_snapshot_current);
   RUN_TEST(test_legacy_slot_migrates_to_lsv1_after_loaded_hydration);
   RUN_TEST(test_write_loop_persisted_stays_legacy_without_published_snapshot);
+  RUN_TEST(test_write_loop_persisted_requires_a_settled_published_snapshot);
+  RUN_TEST(test_loop_persist_body_decision_awaits_settlement_within_its_budget);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
   RUN_TEST(test_lsv1_payload_byte_slice_quota_and_io_boundaries);

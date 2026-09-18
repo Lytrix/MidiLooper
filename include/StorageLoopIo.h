@@ -193,8 +193,27 @@ bool writeLoopSnapshotBodyFormatV1(const StorageIo& io,
                                      const PersistedLoopSnapshot& persistedOracle,
                                      const LoopSnapshot& loopSnapshot);
 
-/// True when save should emit LSV1 dual-write (current published root available).
+/// True when save should emit LSV1 dual-write. DEC-073 RC2: this is the *settled* admission --
+/// the published root must be coverage-current with no publication pending. An unsettled loop
+/// writes the passes-authoritative body instead (the loader rebuilds from the passes).
 bool loopUsesLoopSnapshotBodyFormatV1ForSave(const Loop& loop);
+
+/// DEC-073 RC2: the per-loop body-format decision, taken once at the start of a loop body write so
+/// the preamble and the tail cannot disagree.
+enum class LoopPersistBodyDecision : uint8_t {
+  /// The selected root is settled: write LSV1 with the embedded root.
+  Lsv1SelectedRoot = 0,
+  /// The root is coverage-current but a publication is pending and the caller still has settle
+  /// budget: write nothing yet and retry the decision on a later slice.
+  AwaitSettled = 1,
+  /// No settled root is reachable: write the passes-authoritative body.
+  PassesAuthoritative = 2,
+};
+
+/// Resolves the loop body format. `settleBudgetRemaining` is false once the caller's bounded
+/// re-admission allowance is exhausted, which forces `PassesAuthoritative` rather than waiting.
+LoopPersistBodyDecision decideLoopPersistBodyFormat(const Loop& loop,
+                                                    bool settleBudgetRemaining);
 
 /// LSV1 save preamble: body header + `LoopMetadata` + `PersistedLoopSnapshot` section frame.
 bool writeLoopSnapshotBodyFormatV1SavePreamble(const StorageIo& io,

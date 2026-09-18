@@ -159,6 +159,12 @@ struct CurrentWorkspaceSaveJob {
   uint32_t epochCrcBodyOffset = 0;
   uint32_t epochCrcBodySize = 0;
   DeferredLoopWriteStage loopWriteStage = DeferredLoopWriteStage::Header;
+  /// DEC-073 RC2: the body format resolved once at this loop write's `Header` stage. The preamble
+  /// and the snapshot tail both read this pin, so a committed-state change mid-write can never
+  /// leave an LSV1 preamble without its tail (or vice versa).
+  bool loopWriteUsesLsv1 = false;
+  /// DEC-073 RC2: bounded settle re-admissions consumed for this loop write. Reset with the stage.
+  uint8_t loopSettleDeferrals = 0;
   /// When armed, LoopPersist job recovery resumes `LoopSnapshotTail` scratch (RC-P1.3).
   PersistKey loopPersistTailResumeKey{};
   bool loopPersistTailResumeArmed = false;

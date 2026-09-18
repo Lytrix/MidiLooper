@@ -845,6 +845,11 @@ struct Loop {
   /// DEC-073: the committed-pass revision the published root was enumerated from
   /// (`kSnapshotCoverageUnset` when no root or no recorded coverage).
   uint32_t publishedSnapshotCoveredRevision() const;
+  /// DEC-073 RC2: true when the published root is a *settled* representation of the committed
+  /// passes -- coverage-current and no snapshot request still pending. This is the persistence
+  /// admission predicate: an LSV1 body may embed the selected root only when it is settled,
+  /// otherwise the save writes the passes-authoritative body and the loader rebuilds.
+  bool hasSettledPublishedSnapshotForSave() const;
   /// DEC-073: revision of the publisher's enumerable committed-pass/companion inventory. Every
   /// inventory change bumps `playbackRevision`, so this is an alias today; it is named separately
   /// because the coverage comparison is about the pass inventory, not about any content revision.

@@ -28,8 +28,16 @@ serial (the device's own log has `PERS,result,…ok` at 111.14 s). `captures/rc1
 fresh boot (`boot_reset,crash=0` at 3.0 s) and reads **`result: PASS`, `storage_matches_effective: true`,
 384 + 154 + 38 + 24 = 600 effective, all five cycles `inventory_equal: true` / `exact_order: true`, 0 missing,
 0 extra, `max_bar_refs=84`, 0 `RING,overflow`** -- the 24-row second-overdub pass that `content-verify-58` lost is
-audible after reboot. `captures/rc1-coalescing-device-playback` (live) is also 5/5 clean. **Remaining:
-RC2** (the LSV1 body gather/admission settled-root gate, else a passes-authoritative body), then 6.1/6.2/6.3.
+audible after reboot. `captures/rc1-coalescing-device-playback` (live) is also 5/5 clean. **RC2 landed (DEC-074):** the
+LSV1 body admission now requires a *settled* root (`hasSettledPublishedSnapshotForSave()`:
+coverage-current **and** no publication pending), the per-loop format is resolved once at `Header` and pinned
+(`loopWriteUsesLsv1`), and an unsettled loop writes the passes-authoritative **legacy** body -- LSV1's readers reject
+a missing `LoopSnapshot` section, so LSV1 cannot express a rootless body. A bounded settle re-admission
+(`kLoopPersistSettleDeferralBound = 128`, nothing written while waiting) lets a transient pending republish finish
+before falling back. Native: `test_storage_loop_io` 47/47 (two new fixtures, one red on the pre-RC2 predicate); full
+native green; `teensy41-capture-serial` SUCCESS with RAM1 variables 91,968 / padding 424 / **locals free 6,336**
+(the first implementation's new telemetry tag cost 4 KB of DTCM allowance via `ALIGN(4096)` churn; dropping it
+restored the figure). Remaining: the RC2 device save/load re-verification, then 6.1/6.2/6.3.
 
 **2026-09-18 RC recorded for the post-reboot overdub loss (`successor-capture-reentry-unguarding` 5.9).** User report:
 after reboot the second overdub isn't loaded. Device `captures/gus-sanity-01` + `captures/reboot-01-playback`: the

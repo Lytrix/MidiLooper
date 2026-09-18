@@ -14,7 +14,8 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 | ID | Date | Topic | Status |
 |----|------|-------|--------|
-| [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 (persistence gate) follows |
+| [DEC-074](#dec-074--the-lsv1-body-admits-only-a-settled-root-the-format-is-pinned-once-and-the-fallback-is-the-passes-authoritative-legacy-body) | 2026-09-18 | The LSV1 body admits only a settled root; the per-loop format is pinned once and the fallback is the passes-authoritative legacy body | Accepted — implemented; native reproducer flips red→green; RAM1 allowance restored to RC1's |
+| [DEC-073](#dec-073--a-published-snapshot-root-carries-the-committed-pass-coverage-it-was-built-from-current-is-coverage-not-a-revision-stamp) | 2026-09-18 | A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp | Accepted — RC1 implemented and device-verified (post-reboot playback parity, 5/5 cycles, 0 missing); full native 2246 / 1 skipped / 0 failures; RC2 landed as DEC-074 |
 | [DEC-072](#dec-072--a-staged-capture-pass-is-owned-by-its-capture-interval-not-by-the-loop-producer-slot) | 2026-09-17 | A staged capture pass is owned by its capture interval, not by the Loop producer slot | Accepted — implemented; former `REENTRY_RED` reproducer green; device PASS [`successor-ownership-06`](../captures/successor-ownership-06/session_20260917_230432.log) |
 | [DEC-070](#dec-070--a-transport-stop-retarget-must-re-route-a-mid-flight-deferred-stop-job-not-only-re-label-its-destination) | 2026-09-17 | Transport-stop retarget must re-route a mid-flight deferred stop job, not only re-label it | Accepted — implemented; native case fails without it; device PASS [`successor-wrap-40`](../captures/successor-wrap-40/session_20260917_195608.log) |
 | [DEC-069](#dec-069--the-overdub-wrap-is-a-canonical-revision-transition-and-must-not-advance-the-revision-a-pending-stop-job-owns) | 2026-09-17 | The overdub wrap must not advance the loop revision a pending deferred stop job owns | Accepted — Option A implemented; native green; device PASS [`successor-wrap-36`](../captures/successor-wrap-36/session_20260917_193344.log) |
@@ -85,7 +86,77 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-074 -->
+<!-- Append new entries below (newest first). Next ID: DEC-075 -->
+
+## DEC-074 — The LSV1 body admits only a settled root; the format is pinned once and the fallback is the passes-authoritative legacy body
+
+**Date:** 2026-09-18
+**Status:** Accepted — implemented. Native reproducer `test_write_loop_persisted_requires_a_settled_published_snapshot`
+fails on the pre-RC2 predicate and passes after; `test_storage_loop_io` 47/47; full native green; firmware builds with
+the RAM1 local allowance restored to RC1's value. Device save/load re-verification owed.
+**Owner:** `Loop::hasSettledPublishedSnapshotForSave` (`src/Loop/LoopSnapshotLifetime.cpp`),
+`loopUsesLoopSnapshotBodyFormatV1ForSave` / `decideLoopPersistBodyFormat` (`src/StorageLoopIo.cpp`,
+`include/StorageLoopIo.h`), `stepDeferredLoopPersist` / `deferUnsettledLoopPersist` and
+`CurrentWorkspaceSaveJob::loopWriteUsesLsv1` / `loopSettleDeferrals` (`src/StorageManager/WorkspaceSave.cpp`,
+`include/StorageSession.h`).
+**Follows:** DEC-073 RC1. That entry's `publishedSnapshotIsCurrent()` is coverage-based, which makes the *live*
+publisher truthful; this entry makes the *persistence* admission require a settled representation and removes the
+mid-write format flip.
+
+**Report.** DEC-073 left two persistence holes. (1) `stepDeferredLoopPersist` decided the body format **twice** — at
+`Header` and again at `EditTail` — so a committed-state change between the stages (a pass commit, or an undo/redo
+restore while the transport is idle) could flip LSV1 -> passes-authoritative *after* the LSV1 preamble was already on
+disk, leaving a body with an LSV1 preamble and no `LoopSnapshot` tail. (2) The admission did not require the
+publisher to be settled, so a coverage-current root with a publication still in flight was embedded without evidence
+that the representation was final.
+
+**Format decision (the one DEC-073 asked for).** LSV1 is **root-authoritative by contract**: both readers reject a
+body without the `LoopSnapshot` section -- `stepLoopSnapshotBodyFormatV1LoadParseImpl` fails when
+`!state.sawLoopSnapshot` (and when the `PersistedLoopSnapshot` oracle is missing while its header flag is set), and
+`test_lsv1_rejects_missing_loop_snapshot_section` pins the buffer reader's identical rejection. LSV1 therefore
+**cannot** express a "body without a selected snapshot/root". The passes-authoritative representation is the
+**legacy** body: it streams the passes oracle and the edit tail, and `applyLoadedLoopSlotBodyCommit` runs
+`TrackUndo::rebuildSlotFromLoopContent` on load, so the loop is rebuilt from its passes with no embedded root.
+Adopting a rootless LSV1 body would mean changing the loader's contract (a format/semantics change) for no functional
+gain over the rebuild the legacy body already performs. **Chosen: legacy is the passes-authoritative body.**
+
+**Decision.**
+
+1. `Loop::hasSettledPublishedSnapshotForSave()` = `publishedSnapshotIsCurrent() && !hasPendingSnapshotPublish()`:
+   the root must be coverage-current **and** the publisher must have nothing in flight.
+   `loopUsesLoopSnapshotBodyFormatV1ForSave()` (the save admission predicate, used by both the immediate and the
+   deferred writer) is exactly this.
+2. `decideLoopPersistBodyFormat(loop, settleBudgetRemaining)` returns one of three outcomes:
+   - `Lsv1SelectedRoot` when the root is settled;
+   - `AwaitSettled` when the root is coverage-current but a publication is pending **and** the caller still has
+     settle budget -- the pending work is a rebuild of the same committed state, so it is transient;
+   - `PassesAuthoritative` otherwise. A stale/uncovered root is never transient and never waits.
+3. The deferred loop write resolves the decision **once**, at `Header`, before a single byte is written, and pins it
+   in `loopWriteUsesLsv1`. `EditTail` and `LoopSnapshotTail` read the pin and never re-evaluate, so a preamble can
+   never be left without its tail. The pin and the settle counter reset with `resetDeferredLoopWriteState()`.
+4. **Bounded re-admission.** `kLoopPersistSettleDeferralBound = 128` writer turns per loop write. A deferral writes
+   nothing and leaves the stage at `Header`, so the work item stays active and retries on a later persistence slice
+   (the three `stepDeferredLoopPersist` callers already treat `!loopDone` as "keep the item"). After the bound the
+   decision becomes `PassesAuthoritative`, so a blocked publisher cannot wedge the save.
+
+**RAM1 note (measured).** The first implementation emitted a new `await_settled` persistence telemetry tag and passed
+the deferral back through an extra `bool*` parameter; the build then reported `free for local variables: 2240`
+against RC1's `6336` (RAM1 variables 91,968 -> 96,064). A symbol-size diff found no meaningful growth -- the +4 KB
+was DTCM `.data` alignment: the new string literal and the modified switch tables moved a following `ALIGN(4096)`
+boundary (the exact failure described in
+[`Teensy-RAM1-Bank-Overflow.mdc`](../../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc)). Dropping the new tag and
+the extra parameter, and moving the resolution out of the stage switch, restored
+`variables: 91968 / free for local variables: 6336` exactly. The deferral is deliberately **silent** for this
+reason; it stays bounded and transient, and the policy is covered natively.
+
+**Verification.** `test_write_loop_persisted_requires_a_settled_published_snapshot` asserts the pre-RC2 predicate is
+still true at that point (`snapshot && publishedSnapshotIsCurrent()`) and that the new admission is false, then that
+`writeLoopPersisted` emits a **legacy** body while unsettled and LSV1 once the republish settles.
+`test_loop_persist_body_decision_awaits_settlement_within_its_budget` pins `AwaitSettled` / `PassesAuthoritative` /
+`Lsv1SelectedRoot` for the budget, stale-root and settled cases. `test_storage_loop_io` 47/47; full native
+**2248 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 variables 91,968 / code 425,560 /
+padding 424 / **locals free 6,336** (FLASH code 1,007,072) -- exactly the RC1 figures. Device re-verification of
+save/load parity on the DEC-071 multi-pass shape is the remaining gate.
 
 ## DEC-073 — A published snapshot root carries the committed-pass coverage it was built from; "current" is coverage, not a revision stamp
 
@@ -169,15 +240,9 @@ and every `storePublishedSnapshot` call, and make the currency predicate coverag
 persistence runs**. Cover both a later request arriving before construction begins and one arriving while an earlier
 candidate is mid-construction (the second is the reported case).
 
-**RC2 -- persistence guard (follow-up, not this entry's scope).** Once RC1 holds, require the LSV1 body
-gather/admission to see a demonstrably settled current root
-(`coveredPassRevision == committedPassRevision && !hasPendingSnapshotPublish()`) with bounded save re-admission; when
-no settled root is reachable, persist a **passes-authoritative** representation, preferring LSV1's own
-"body without a selected snapshot/root" encoding over the legacy format, and making that a deliberate
-format/migration decision. Acceptance for the pair: immediately before save admission the selected root and
-`PassesResolve` already agree -- which separates publisher correctness from persistence correctness so a persistence
-test cannot hide a still-broken live publisher -- then save/load keeps `passes == root` with identical display and
-playback, and a known-good LSV1 load still takes the fast path with no rebuild/reconcile.
+**RC2 -- persistence guard.** Landed as its own decision, DEC-074: the LSV1 body admission now requires a settled
+root, the per-loop format is resolved once and pinned, and the passes-authoritative fallback is the legacy body
+(LSV1 is root-authoritative by its reader contract, so it cannot express a rootless body).
 
 **Rejected alternatives.**
 
