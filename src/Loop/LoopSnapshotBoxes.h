@@ -104,6 +104,13 @@ struct PendingSnapshotPublishBox {
   /// representability failure parks publication instead of retrying forever.
   uint16_t consecutiveFragmentFailures = 0;
   bool fragmentBlocked = false;
+  /// DEC-073 RC-PUB-2: this park is an *allocation* park, not a representability one. Memory
+  /// pressure clears, so a transient park is released once admission has observed the pressure
+  /// and then admits again; a representability park never is.
+  bool fragmentBlockTransient = false;
+  /// DEC-073 RC-PUB-2: set when admission denied while transiently parked. The release requires
+  /// it, so the same admission state that let the fragment fail cannot immediately re-arm it.
+  bool fragmentParkSawDenial = false;
   PassId constructionPassId = kInvalidPassId;
   size_t appliedLiveRecordEventIndex = 0;
   uint32_t appliedLiveRecordCompletedTicks = 0;

@@ -160,6 +160,12 @@ namespace {
 constexpr uint32_t kOperationHeapFloorBytes = 32u * 1024u;
 /// How recently the pool must have refused a request to count as "full right now".
 constexpr uint32_t kPoolRefusalWindowMs = 2000u;
+/// Repeat-denial report window. The gate has one per-turn caller -- the snapshot publication
+/// boundary asks on every construction turn and can stay parked for as long as the pool is full --
+/// so the same denial shape is reported at most once per window. Only the diagnostic is bounded;
+/// the decision is exact on every call, which is what a parked caller acts on. `recordPoolRefusal`
+/// bounds its own storm the same way.
+constexpr uint32_t kDenialReportWindowMs = 1000u;
 
 /// Per-operation headroom the operation must leave untouched beyond the floor.
 /// Overdub start gets the largest because 2026-09-17 showed it still requesting
@@ -274,6 +280,18 @@ FLASHMEM bool admitOperationMemory(OperationKind operation, uint32_t marginBytes
     }
     return true;
   }
+  // Bounded report, exact decision: see `kDenialReportWindowMs`.
+  const uint8_t reasonCode = reserveFailed ? 2u : (heapLow ? 1u : 0u);
+  static uint32_t lastReportMs = 0;
+  static uint32_t lastReportBytes = 0;
+  static uint8_t lastReportReason = 0;
+  if (requiredBytes == lastReportBytes && reasonCode == lastReportReason &&
+      (nowMs - lastReportMs) < kDenialReportWindowMs) {
+    return false;
+  }
+  lastReportMs = nowMs;
+  lastReportBytes = requiredBytes;
+  lastReportReason = reasonCode;
   Serial.printf_P(
       PSTR("#MEM_DENIED,%lu,op=%s,reason=%s,need=%luB,heap_free=%luKB,"
            "pool_refused=%lu/%luB,since_refusal=%lums\n"),

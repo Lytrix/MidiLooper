@@ -2741,6 +2741,31 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — the post-wrap device reset is fixed at the publication boundary (DEC-075,
+`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** The RC below is implemented; the footprint is untouched.
+`Loop::stepPendingSnapshotPublish` now admits every turn that could start, step or freeze a candidate through
+`OperationKind::SnapshotReserve` (dead code until now) with a margin of one slab plus 8 KB, and a denied turn writes
+nothing -- the publication stays pending and the previous root stays selected. An `Allocation` failure now parks the
+fragment transiently instead of rebuilding it every turn, and the park is released only after admission has denied
+while parked and then admits again; the freeze-failure branch counts through the same path. The gate's only per-turn
+caller made the repeat `#MEM_DENIED` report a flood risk, so that report is now bounded to one per second per shape
+while the decision stays exact on every call. **RC-PUB-3 was corrected rather than implemented as worded:** the slab
+allocator's `abort()` is both unreachable (`allocateSnapshotShared` pre-reserves `128 + align(sizeof(Type))` first, so
+pressure surfaces as the already-non-fatal `snapshotSlabOpen` failure) and not convertible to a null return (device
+`-fno-exceptions`; a custom deleter would put a control block per node on the internal heap), so the abort stays as
+the documented invariant check. The allocator that actually aborted is the shared `ExternalMemoryFirstAllocator`,
+whose abort-instead-of-deny semantics remain the wider defect above. Evidence: two new fixtures in
+`test_loop_take_survival` -- `test_publication_turn_waits_for_admitted_headroom` (a denied turn leaves the wrap
+journal, published root, its revision, the in-flight flag and the failure count unchanged; the same publication then
+completes) and `test_allocation_failure_parks_publication_until_admission_recovers` (park, no attempt while admitted,
+release after an observed denial, then complete and current). Full native **2249 / 1 skipped / 0 failures**;
+`teensy41-capture-serial` SUCCESS with RAM1 byte-identical to DEC-074 (`variables 91,968 / code 425,560 / padding
+424 / locals free 6,336`). **Owed before this closes:** the device re-run of the reported shape (loaded workspace,
+12-bar record, live overdub past the wrap) requiring 0 `FATAL` / 0 `#MEM_EXT_REFUSED` and a live device, with either
+a completed wrap publication or a parked one, plus a per-second `cls`/`clsn`/`heap_free` series across the wrap.
+`kSnapshotPublicationReserveBytes` (72 KB of required internal heap) is the tunable if a healthy device parks; the
+DEC-073 RC1 control settles at 104 KB.
+
 **2026-09-18 — RC recorded for the post-wrap device reset: the publication boundary neither admits memory nor parks
 an allocation failure (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: *the stress run crashed a
 few bars after the overdub wrap, overdubbing the existing overdub*. `captures/session_20260918_101615.log` is memory

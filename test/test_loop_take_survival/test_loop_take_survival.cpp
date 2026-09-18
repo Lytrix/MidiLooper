@@ -23,6 +23,7 @@
 #include "../test_support/CommittedChunkIdTestHelpers.h"
 #include "../test_support/NoteIdTestFixtures.h"
 #include "Utils/MidiServiceDrain.h"
+#include "Utils/MemoryMonitor.h"
 #include "EditPass.h"
 #include "MidiEvent.h"
 #include "PassReclaim.h"
@@ -728,6 +729,146 @@ void test_overdub_wrap_does_not_publish_global_snapshot() {
                     loop.commitCapturePass(CommitReason::OverdubWrap, 480));
   TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
   TEST_ASSERT_EQUAL(1u, loop.passes.overdubPasses.size());
+}
+
+// DEC-073 RC-PUB-1: a content-sized publication turn is admitted before it starts, steps or
+// freezes a candidate. A denied turn writes nothing, so nothing is rebuilt, the previous root
+// stays selected and the work stays pending; the same publication then completes unchanged once
+// headroom returns. Before this, the post-wrap publication of a 12-bar record ran unguarded into a
+// full pool and reset the device (`session_20260918_101615`: heap 108 -> 72 -> 36 -> 0 KB, then
+// `ExternalMemoryFirstAllocator::abort()`).
+void test_publication_turn_waits_for_admitted_headroom() {
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+  const uint32_t afterRecordRev = loop.publishedSnapshotRevision();
+
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  PendingNoteChange wrapAdd{};
+  wrapAdd.kind = PendingNoteChangeKind::Add;
+  wrapAdd.noteId = 10;
+  wrapAdd.channel = 1;
+  wrapAdd.pitch = 64;
+  wrapAdd.velocity = 90;
+  wrapAdd.startTick = 400;
+  wrapAdd.endTick = 480;
+  loop.pushPendingNoteChangeForTest(wrapAdd);
+  commitOverdubWrapLikeDevice(loop, 480, true);
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  const uint32_t journalsBefore =
+      static_cast<uint32_t>(loop.pendingSnapshotWrapJournalCount());
+  TEST_ASSERT_TRUE(journalsBefore > 0u);
+
+  // Denied: nothing starts, nothing is written, nothing is published.
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.hasPendingWrapJournal());
+  TEST_ASSERT_EQUAL_UINT32(journalsBefore,
+                           static_cast<uint32_t>(loop.pendingSnapshotWrapJournalCount()));
+  TEST_ASSERT_FALSE(loop.hasInFlightSnapshotConstruction());
+  TEST_ASSERT_EQUAL_PTR(afterRecord.get(), loop.publishedSnapshot().get());
+  TEST_ASSERT_EQUAL_UINT32(afterRecordRev, loop.publishedSnapshotRevision());
+  TEST_ASSERT_EQUAL_UINT16(0, loop.snapshotFragmentConsecutiveFailuresForTest());
+
+  // Admitted: the same publication completes with no fragment failure recorded.
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  drainWrapJournalsUntilCurrent(loop);
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_EQUAL_UINT16(0, loop.snapshotFragmentConsecutiveFailuresForTest());
+  const auto afterWrap = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterWrap.get());
+  TEST_ASSERT_TRUE(afterWrap.get() != afterRecord.get());
+  TEST_ASSERT_EQUAL(1u, afterWrap->noteMembership(60, 0)->count);
+  TEST_ASSERT_EQUAL(1u, afterWrap->noteMembership(64, 0)->count);
+  SessionMidiEventVec gathered;
+  TEST_ASSERT_TRUE(loop.tryGatherPublishedSnapshotEventsInWindow(gathered, 0, 3072));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 60));
+  TEST_ASSERT_EQUAL(1, countNoteOns(gathered, 64));
+}
+
+// DEC-073 RC-PUB-2: an allocation failure parks the fragment once the bound is reached instead of
+// rebuilding it every turn -- which is what copied the fragment's change set onto the internal heap
+// until the allocator aborted. The park is transient: admission must observe the pressure and then
+// admit again before the fragment is retried, so the same admission state that let it fail cannot
+// immediately re-arm it.
+void test_allocation_failure_parks_publication_until_admission_recovers() {
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  const auto afterRecord = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterRecord.get());
+
+  TEST_ASSERT_TRUE(loop.prewarmActiveOverdubTransferHorizon(2));
+  loop.openOverdubSession(0);
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(400, 1, 64, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(480, 1, 64, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.stagePreparedCapturePassFromActiveAdmission(
+                                        480, CommitReason::OverdubStopToStopped));
+  PreparedCapturePassTransfer transfer{};
+  TEST_ASSERT_TRUE(loop.commitPreparedCapturePassAtomic(transfer));
+  TEST_ASSERT_TRUE(loop.handoffSessionExitSnapshot(CommitReason::OverdubStopToStopped));
+  loop.completePreparedCapturePassDeferredCleanup();
+  loop.closeOverdubSession();
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+
+  // The injected failure is consumed by the next construction start, and the receipt may take the
+  // first turn, so arm it before every step.
+  size_t steps = 0;
+  while (loop.snapshotFragmentConsecutiveFailuresForTest() < 1 && steps < 32) {
+    loop.failNextSnapshotFragmentAfterUnitsForTest(0, LoopSnapshotFailureReason::Allocation);
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_EQUAL_UINT16(1, loop.snapshotFragmentConsecutiveFailuresForTest());
+  TEST_ASSERT_FALSE(loop.snapshotFragmentBlockedForTest());
+
+  steps = 0;
+  while (!loop.snapshotFragmentBlockedForTest() && steps < 32) {
+    loop.failNextSnapshotFragmentAfterUnitsForTest(0, LoopSnapshotFailureReason::Allocation);
+    loop.stepPendingSnapshotPublish(1, true);
+    ++steps;
+  }
+  TEST_ASSERT_TRUE(loop.snapshotFragmentBlockedForTest());
+  const uint16_t failuresAtPark = loop.snapshotFragmentConsecutiveFailuresForTest();
+  TEST_ASSERT_EQUAL_UINT16(2, failuresAtPark);
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+
+  // Parked while admission admits: no attempt is made, so the count cannot advance. This is the
+  // case that used to rebuild the fragment on every single turn.
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_EQUAL_UINT16(failuresAtPark, loop.snapshotFragmentConsecutiveFailuresForTest());
+  TEST_ASSERT_TRUE(loop.snapshotFragmentBlockedForTest());
+
+  // The pressure must be observed before the park is released.
+  MemoryMonitor::setNativeForcedReserveDenied(true);
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE(loop.snapshotFragmentBlockedForTest());
+
+  MemoryMonitor::setNativeForcedReserveDenied(false);
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.snapshotFragmentBlockedForTest());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const auto afterOverdub = loop.publishedSnapshot();
+  TEST_ASSERT_NOT_NULL(afterOverdub.get());
+  TEST_ASSERT_TRUE(afterOverdub.get() != afterRecord.get());
+  TEST_ASSERT_EQUAL(1u, afterOverdub->noteMembership(64, 0)->count);
 }
 
 void test_overdub_stop_publishes_successor_from_parent() {
@@ -6586,6 +6727,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_record_stop_publishes_complete_snapshot);
   RUN_TEST(test_record_wrap_note_publishes_one_reference);
   RUN_TEST(test_overdub_wrap_does_not_publish_global_snapshot);
+  RUN_TEST(test_publication_turn_waits_for_admitted_headroom);
+  RUN_TEST(test_allocation_failure_parks_publication_until_admission_recovers);
   RUN_TEST(test_overdub_stop_publishes_successor_from_parent);
   RUN_TEST(test_note_edit_close_replaces_published_note);
   RUN_TEST(test_note_edit_close_note_range_reuses_published_pitch);

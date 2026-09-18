@@ -741,7 +741,7 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
 
 ## 5.9 The publication boundary neither admits memory nor parks an allocation failure (2026-09-18)
 
-- [ ] 5.9 Give the wrap / session-exit publication boundary memory admission and failure parking, so a full PSRAM pool parks publication with the previous root selected instead of resetting the device.
+- [x] 5.9 Give the wrap / session-exit publication boundary memory admission and failure parking, so a full PSRAM pool parks publication with the previous root selected instead of resetting the device.
       **Finding (device, `captures/session_20260918_101615.log`. User report: *it crashed a few bars after the overdub wrap, overdubbing the existing overdub*).** The crash is not a fault. No crash record exists (`DIAG,boot_reset,crash=0` on the next boot; `abort()` raises no `CrashReport`), and the device reset only after `[ExternalMemoryFirstAllocator] FATAL: both external memory and internal heap are exhausted!` at 10:18:44, immediately followed by `#CAPTURE_RECONNECT`. The trigger window is the wrap publication. Uptime sequence in that boot: `Recording started @ tick 0` at 18.672 s on an 18432-tick loop, `Overdubbing started @ tick 488` at 67.800 s, **`Overdub wrap committed @ tick 18432` at 114.519 s**, and then for six seconds: `ExternalPoolAccounting`'s `<=32K` live class gains **one 32768-byte block every second** (96 -> 102 blocks), the internal heap falls **108 -> 72 -> 36 -> 0 KB** over three samples, the pool begins refusing `bytes=32768` requests (`#MEM_EXT_REFUSED` at 119.465 s; 8 logged, more unlogged because `recordPoolRefusal` reports only the first few and size changes), then `bytes=8224`, and `ExternalMemoryFirstAllocator::allocate` calls `abort()`.
       **Attribution.** The growing class *is* snapshot slab storage: `sizeClassFor(32768)` is class 3 (`ExternalPoolAccounting.h`), `kSnapshotSlabBytes = 32 * 1024` (`LoopSnapshot.h`), and 32768 is exactly `snapshotSlabOpen`'s `extmem_malloc(kSnapshotSlabBytes)` request; nothing else in the tree allocates 32 KB blocks in a repeating pattern. The overdub session itself did **not** leak: `live` is pinned at 8201-8203 KB and the `<=32K` class at 2919-2927 KB for the whole 45 s from 68.8 s to the wrap, against the boot's reported `pool=8182 KB`. The pool was already at its ceiling when the wrap committed, because a 12-bar record sits on top of the loaded workspace's reference root (~1.5-1.7 MB of slabs installed by the boot load) plus the prewarmed view sets (~0.9 MB of `<=128K` blocks, 715 KB of it tagged `TagViewPrewarm`), plus a constant ~3.6 MB `>128K` class present from boot and unattributed here.
       **Not RC2 / not this change's persistence work.** That boot ran no persistence at all: 15 `PERS` lines, all boot-time `GlobalMeta`/`FinalizeWorkspace`, none after the wrap, because the deferred save is only requested at overdub *stop* and the session never stopped. `hasSettledPublishedSnapshotForSave` is not on this path.
@@ -751,3 +751,40 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       **RC-PUB-3 -- the slab allocator still owns a fatal backstop.** `SnapshotSlabAllocator::allocate` calls `abort()` when `snapshotSlabAllocate` returns null. `allocateSnapshotShared` already returns an empty ref and the construction already carries a failure reason, so the backstop must route through that same non-fatal path rather than reset the device.
       **Verify.** Rerun the reported shape (loaded workspace, 12-bar record, live overdub past the wrap) and require 0 `FATAL`, 0 `#MEM_EXT_REFUSED`, device alive, and either a completed wrap publication or a parked one with the previous root selected and `hasPendingSnapshotPublish()` true -- and no `snapshot_fragment,fail` storm. Add a native case that injects a slab `Allocation` failure (reuse the `failAfterUnitsForTest` / `clearFailureInjectionForTest` injection point) asserting the publication parks and then completes once headroom is reported, which pins RC-PUB-2 rather than only the gate. Keep `captures/rc1-coalescing-device`'s post-wrap profile (~8 slabs, ~32 KB heap, then settle) as the acceptance baseline, and record `cls`/`clsn`/`heap_free` per second across the wrap in both runs.
       **Recorded dependency (not this change's RC).** The steady-state footprint is the other half: at the wrap the accounted pool live (8203 KB) already equalled the reported pool (8182 KB). That is the "idle occupancy leaves no headroom" item already tracked in `docs/Runtime/CURRENT_WORK.md` against the memory-pressure / DEC-065 track -- cite it there, do not re-derive it here. RC-PUB-1..3 change failure semantics only and cost no footprint; the ITCM budget makes that the right first cut (`code + padding = 425,984` sits on the FlexRAM bank boundary).
+      **Status 2026-09-18: implemented as DEC-075; native + firmware green, device gate owed.**
+      - **RC-PUB-1 landed.** `Loop::stepPendingSnapshotPublish` admits every turn that could start, step or freeze a
+        candidate, through the previously dead `OperationKind::SnapshotReserve` with
+        `kSnapshotPublicationReserveBytes = kSnapshotSlabBytes + 8 KB` (the gate adds its 32 KB heap floor and its
+        pool-refusal recency window). A denial breaks out with nothing written: the publication stays pending and the
+        previous root stays selected. Publishing an already-frozen candidate is deliberately not gated -- it allocates
+        no new content memory. Because this boundary is the gate's only per-turn caller,
+        `MemoryMonitor::admitOperationMemory` now bounds the repeat `#MEM_DENIED` *report* to one per second per shape
+        while the *decision* stays exact on every call, the same way `recordPoolRefusal` bounds its own storm.
+      - **RC-PUB-2 landed.** `noteFragmentIncorporationFailure` now parks `LoopSnapshotFailureReason::Allocation`
+        after `kSnapshotFragmentMaxConsecutiveFailures` (`MembershipCapacity` stays a permanent park, `Injected` keeps
+        retrying so the DEC-047 transaction fixture is unaffected), and the freeze-failure branch in
+        `stepPendingSnapshotPublish` counts through the same path instead of not counting at all. The park is
+        **transient**: `PendingSnapshotPublishBox::fragmentBlockTransient` is released by
+        `admitSnapshotPublicationTurn` only after `fragmentParkSawDenial` records that admission denied while parked
+        and then admitted again, so the same admission state that let the fragment fail cannot re-arm it.
+      - **RC-PUB-3 corrected, not implemented as worded.** Routing `SnapshotSlabAllocator::allocate`'s `abort()` to
+        the non-fatal path is not expressible (device `-fno-exceptions` leaves `allocate_shared` no failure channel,
+        and a custom deleter would put a control block per node on the internal heap, ~450 KB at observed peaks) and
+        is not reachable (every allocation goes through `allocateSnapshotShared`, which pre-reserves
+        `128 + align(sizeof(Type))` first, so pressure surfaces as the already-non-fatal `snapshotSlabOpen` failure).
+        The abort stays as the invariant check, tagged `site=slab_allocate` against the reachable `site=slab_open`,
+        and is documented in place. The allocator that actually aborted is the shared
+        `ExternalMemoryFirstAllocator`, whose abort-instead-of-deny semantics stay with the wider
+        `docs/Runtime/CURRENT_WORK.md` defect entry; this task stops the publication from driving it there.
+      - **Evidence.** `test_publication_turn_waits_for_admitted_headroom`: under a forced denial a step returns
+        pending with the wrap journal count, `publishedSnapshot()` pointer and `publishedSnapshotRevision()`
+        unchanged, no construction in flight, no failure recorded; the same publication then completes and the wrap
+        note is gathered. `test_allocation_failure_parks_publication_until_admission_recovers`: two injected
+        `Allocation` failures park; a further admitted turn makes no attempt (the count cannot advance); a denial
+        records the pressure; the next admission releases the park and the publication completes current. Both in
+        `test/test_loop_take_survival`; full native **2249 / 1 skipped / 0 failures**;
+        `teensy41-capture-serial` SUCCESS with RAM1 `variables 91,968 / code 425,560 / padding 424 / locals free
+        6,336` -- byte-identical to DEC-074, so no FlexRAM bank cost. Decision recorded as **DEC-075**.
+      - **Owed.** The device re-run of the reported shape (loaded workspace, 12-bar record, live overdub past the
+        wrap) requiring 0 `FATAL`, 0 `#MEM_EXT_REFUSED`, device alive, and either a completed wrap publication or a
+        parked one, with a per-second `cls`/`clsn`/`heap_free` series across the wrap.

@@ -1,5 +1,40 @@
 # Project state (execution context)
 
+**2026-09-18 the snapshot publication boundary now admits memory per construction turn and parks on allocation failure
+(DEC-075, `immutable-loop-snapshot-passes` 5.9).** The reset recorded below is fixed at its boundary rather than by
+shrinking the footprint. **RC-PUB-1:** `Loop::stepPendingSnapshotPublish` admits every turn that could start, step or
+freeze a candidate, through `OperationKind::SnapshotReserve` -- which existed with an 8 KB margin and had **zero call
+sites** -- with `kSnapshotPublicationReserveBytes = kSnapshotSlabBytes + 8 KB`, on top of the gate's 32 KB heap floor
+and its pool-refusal recency window. A denial writes nothing: the publication stays pending and the previous root
+stays selected, which is the state DEC-074's `hasSettledPublishedSnapshotForSave` already handles. Publishing an
+already-frozen candidate is deliberately not gated (it allocates no new content memory). The gate's only per-turn
+caller now bounds its repeat `#MEM_DENIED` *report* to one per second per shape while the decision stays exact on
+every call, the way `recordPoolRefusal` bounds its own storm. **RC-PUB-2:** `noteFragmentIncorporationFailure` parked
+only `MembershipCapacity`, so an `Allocation` failure rebuilt the fragment every turn -- copying its
+`LoopSnapshotChangeSet` onto the internal heap and retrying the slab -- and a freeze failure was not counted at all;
+`Allocation` now parks transiently and the freeze branch counts through the same path. The park is released only
+after admission has denied while parked and then admitted again, so the same admission state that let the fragment
+fail cannot re-arm it. `MembershipCapacity` keeps its permanent park and `Injected` keeps retrying, so the DEC-047
+transaction fixture is unaffected. **RC-PUB-3 corrected:** routing `SnapshotSlabAllocator::allocate`'s `abort()` to
+the non-fatal path is neither expressible (device `-fno-exceptions` leaves `allocate_shared` no failure channel, and
+a custom deleter would put a control block per node on the internal heap) nor reachable
+(`allocateSnapshotShared` pre-reserves `128 + align(sizeof(Type))`, so pressure surfaces as the already-non-fatal
+`snapshotSlabOpen` failure); the abort stays as the invariant check, tagged `site=slab_allocate` against the
+reachable `site=slab_open`, documented in place. The allocator that actually aborted is the shared
+`ExternalMemoryFirstAllocator`, whose abort-instead-of-deny semantics remain the wider defect recorded in
+[CURRENT_WORK.md](CURRENT_WORK.md); this fix stops the publication from driving it there. Evidence:
+`test_publication_turn_waits_for_admitted_headroom` (a denied turn leaves the wrap journal, the published root, its
+revision, the in-flight-construction flag and the failure count all unchanged, and the same publication then
+completes) and `test_allocation_failure_parks_publication_until_admission_recovers` (two injected `Allocation`
+failures park, an admitted turn makes no attempt, a denial records the pressure, the next admission releases it and
+the root becomes current), both in `test_loop_take_survival`; full native **2249 / 1 skipped / 0 failures**;
+`teensy41-capture-serial` SUCCESS with RAM1 `variables 91,968 / code 425,560 / padding 424 / locals free 6,336` --
+byte-identical to DEC-074, i.e. no FlexRAM bank cost. **Owed:** the device re-run of the reported shape (loaded
+workspace, 12-bar record, live overdub past the wrap) requiring 0 `FATAL` / 0 `#MEM_EXT_REFUSED` and a live device,
+with either a completed wrap publication or a parked one, plus a per-second `cls`/`clsn`/`heap_free` series across the
+wrap. `kSnapshotPublicationReserveBytes` is the tunable: the margin requires 72 KB of internal heap and the DEC-073
+RC1 control settles at 104 KB, so the intended discriminator is a device below ~72 KB.
+
 **2026-09-18 RC recorded: the snapshot publication boundary has no memory admission, so a full PSRAM pool resets the
 device instead of parking the publication (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: the
 stress run crashed a few bars past the overdub wrap, overdubbing an existing overdub. Device
