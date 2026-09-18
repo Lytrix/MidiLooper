@@ -2762,9 +2762,15 @@ variables 91,968 / code 425,560 / padding 424 / locals free 6,336; FLASH code 1,
 24-row second-overdub pass that `content-verify-58` lost is audible after reboot. The base run
 (`captures/rc1-coalescing-device`) shows the post-redo republish (`q=0,a=4` at 95.474 s) as the root the LSV1
 tail gathers at 99.640 s; its only report issue is `persistence_stage_missing:result`, the run window closing while
-the now-complete 600-row tail writes (device log: `PERS,result,…ok` at 111.14 s). **Remaining:** **RC2** — the LSV1
-body gather/admission must see a settled current root (`coveredPassRevision == committedPassRevision &&
-!hasPendingSnapshotPublish()`) with bounded re-admission, else persist a passes-authoritative body. Then 6.1/6.2/6.3.
+the now-complete 600-row tail writes (device log: `PERS,result,…ok` at 111.14 s). **RC2 landed (DEC-074):** the LSV1
+body admission requires a settled root (`hasSettledPublishedSnapshotForSave`: coverage-current **and** no publication
+pending); `decideLoopPersistBodyFormat` resolves the per-loop format once at `Header` and pins it
+(`loopWriteUsesLsv1`), so a preamble can no longer be left without its tail; an unsettled loop writes the
+passes-authoritative **legacy** body (LSV1's readers reject a missing `LoopSnapshot` section, so a rootless LSV1 body
+is not expressible); and a bounded settle re-admission (128 writer turns, nothing written while waiting) lets a
+transient pending republish finish first. `test_storage_loop_io` 47/47 (two fixtures; the admission one is red on the
+pre-RC2 predicate), full native green, `teensy41-capture-serial` RAM1 locals free **6,336** (a new telemetry tag had
+cost 4 KB via `ALIGN(4096)` churn; dropped). Remaining: the RC2 device save/load re-verification, then 6.1/6.2/6.3.
 
 **2026-09-18 — RC for the post-reboot overdub loss: the LSV1 body save gathers a root that can predate
 the current committed passes.** User report: *after reboot the second overdub isn't loaded (or
