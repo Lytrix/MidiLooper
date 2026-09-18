@@ -49,7 +49,7 @@ struct ElapsedTimer {
 #endif
 };
 
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
 constexpr unsigned kPreparedSourceSpanDumpLimit = 48;
 
 TRACK_COLD_MEM void logPreparedSourceSpanRow(const char* at, NoteId noteId, uint8_t pitch,
@@ -149,6 +149,9 @@ TRACK_COLD_MEM void appendPassLocalDisplayNotes(const SessionMidiEventVec& layer
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
 TRACK_COLD_MEM void logResolvedDisplayNoteMerge(const char* at, uint32_t count,
                                                 uint32_t duplicateGeometryDistinctIds) {
+  (void)count;
+  (void)duplicateGeometryDistinctIds;
+#if SESSION_CAPTURE_LCR
   if (at == nullptr || at[0] == '\0') {
     return;
   }
@@ -157,6 +160,9 @@ TRACK_COLD_MEM void logResolvedDisplayNoteMerge(const char* at, uint32_t count,
              PSTR("#CAP,%lu,DIAG,lcr,pairrows,at=%s,count=%u,dupgeom=%u"),
              static_cast<unsigned long>(micros()), at, count, duplicateGeometryDistinctIds);
   DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)at;
+#endif
 }
 #endif
 
@@ -2682,6 +2688,10 @@ TRACK_COLD_MEM bool LoopContentResolution::preparedWindowReady(uint32_t playback
 #if defined(SESSION_CAPTURE) && defined(ARDUINO)
 TRACK_COLD_MEM void logPreparedSourceSkip(const char* at, const char* reason, uint32_t passId,
                                           uint32_t liveRev, uint32_t liveLen) {
+  (void)passId;
+  (void)liveRev;
+  (void)liveLen;
+#if SESSION_CAPTURE_LCR
   if (at == nullptr || reason == nullptr) {
     return;
   }
@@ -2697,6 +2707,10 @@ TRACK_COLD_MEM void logPreparedSourceSkip(const char* at, const char* reason, ui
            static_cast<unsigned long>(sDeviceGateSession.loopLengthTicks),
            static_cast<unsigned>(sDeviceGateSession.checkpoints.spans.size()));
   DebugSessionCapture::appendCaptureTextLine(line);
+#else
+  (void)at;
+  (void)reason;
+#endif
 }
 #endif
 
@@ -2798,7 +2812,7 @@ TRACK_COLD_MEM void LoopContentResolution::publishPreparedOverdubPass(
   projectSealedCompanionsOntoCheckpoints(checkpoints, editPasses, companionIds,
                                          sDeviceGateSession.preparedCompanions);
   sDeviceGateSession.preparedPlaybackRevision = playbackRevision;
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   unsigned onCount = 0;
   for (const MidiEvent& evt : entry->events) {
     if (!evt.isNoteOn() || evt.noteId == kInvalidNoteId) {
@@ -3110,6 +3124,7 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
   uint32_t srcdropLogged = 0;
   constexpr uint32_t kMaxSrcdropLogs = 32;
   auto logSpanExclusion = [&](NoteId noteId, const char* reason) {
+#if SESSION_CAPTURE_LCR
     if (!logSpanExclusions || noteId == kInvalidNoteId || reason == nullptr) {
       return;
     }
@@ -3121,6 +3136,12 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,lcr,srcdrop,id=%u,reason=%s"),
                static_cast<unsigned long>(micros()), static_cast<unsigned>(noteId), reason);
     DebugSessionCapture::appendCaptureTextLine(line);
+#else
+    (void)logSpanExclusions;
+    (void)noteId;
+    (void)reason;
+    (void)srcdropLogged;
+#endif
   };
 #else
   (void)logSpanExclusions;
@@ -3171,7 +3192,7 @@ TRACK_COLD_MEM bool LoopContentResolution::tryCopyPreparedSpansToDisplayNotes(
     }
     appendSpan(row.note.noteId, row.note.pitch, row.startTick, row.endTick);
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   if (logSpanExclusions && srcdropLogged >= kMaxSrcdropLogs) {
     char line[96];
     snprintf_P(line, sizeof(line), PSTR("#CAP,%lu,DIAG,lcr,srcdrop,reason=truncated,limit=%u"),

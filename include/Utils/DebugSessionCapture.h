@@ -52,6 +52,18 @@
 #ifndef SESSION_CAPTURE_DROID_QUEUE
 #define SESSION_CAPTURE_DROID_QUEUE 1
 #endif
+// LoopContentResolution / capture-ledger diagnostics (`DIAG,lcr,*`). Default on. The family is
+// emitted per prepared source span, per resolution slice and per capture-ledger mismatch, so a
+// large loaded loop floods the ring: the 2026-09-18 acceptance fixture logged 12,733
+// `DIAG,lcr,srcspan` rows of 13,173 `#CAP` lines and overflowed the 1 MiB capture ring twice
+// (`captures/rc2-settle-device-b`, `RING,overflow` 44.9 MB, `overflow_free=False`), evicting the
+// note/ST rows the base-run oracle and the content-verification dump are read for. A build that
+// sets this to 0 gates the family at its emitter blocks (all lcr-only), so no other diagnostic is
+// affected and the suppressed build carries no extra code. See env
+// `teensy41-capture-serial-no-grain` (the acceptance target).
+#ifndef SESSION_CAPTURE_LCR
+#define SESSION_CAPTURE_LCR 1
+#endif
 // Investigation-only high-volume DIAG families (cer_* / lcr,vch,gather_* / seal_companion).
 // Keep off by default for responsive capture sessions; enable in dedicated targets when needed.
 #ifndef SESSION_CAPTURE_INVESTIGATION_DIAG

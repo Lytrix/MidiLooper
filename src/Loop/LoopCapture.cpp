@@ -1282,7 +1282,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   if (why == nullptr || why[0] == '\0') {
     why = "wrap";
   }
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   constexpr size_t kSrcDiagMaxIds = 48;
   NoteId beforeIds[kSrcDiagMaxIds];
   size_t beforeCount = 0;
@@ -1347,7 +1347,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   copyEffectiveCommittedEventsInRange(overdubSourceViewEvents_, windowStart, windowLength);
 #endif
   overdubSourceViewEstablished_ = true;
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   const uint32_t filterUs = micros() - filterStartUs;
   NoteId beforeRetainIds[kSrcDiagMaxIds];
   size_t beforeRetainCount = 0;
@@ -1371,7 +1371,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
   }
 #endif
   retainValidOverdubSourceViewIdentities();
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   if (logSrcWrapDiag) {
     auto sourceViewHasId = [this](NoteId id) {
       for (const NoteUtils::DisplayNote& note : overdubSourceViewNotes_) {
@@ -1431,7 +1431,7 @@ LOOP_COLD_MEM void Loop::rebuildOverdubSourceView(uint32_t playheadPhaseTick, co
     DebugSessionCapture::appendCaptureTextLine(afterLine);
   }
 #endif
-#if defined(SESSION_CAPTURE) && defined(ARDUINO)
+#if defined(SESSION_CAPTURE) && defined(ARDUINO) && SESSION_CAPTURE_LCR
   char line[256];
   snprintf_P(line, sizeof(line),
              PSTR("#CAP,%lu,DIAG,lcr,src,why=%s,from=%s,win=0,proj=%lu,tot=%lu,ev=%u,notes=%u,"

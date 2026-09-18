@@ -2805,7 +2805,12 @@ passes-authoritative **legacy** body (LSV1's readers reject a missing `LoopSnaps
 is not expressible); and a bounded settle re-admission (128 writer turns, nothing written while waiting) lets a
 transient pending republish finish first. `test_storage_loop_io` 47/47 (two fixtures; the admission one is red on the
 pre-RC2 predicate), full native green, `teensy41-capture-serial` RAM1 locals free **6,336** (a new telemetry tag had
-cost 4 KB via `ALIGN(4096)` churn; dropped). Remaining: the RC2 device save/load re-verification, then 6.1/6.2/6.3.
+cost 4 KB via `ALIGN(4096)` churn; dropped). **Device read closed 2026-09-18** (firmware `86fd8f07…`, env
+`teensy41-capture-serial-no-grain`): the save took the settled LSV1 path (`tail_gather_begin`, `LoopSnapshotTail`
+1389 steps, `q=0` publishes), 0 `RING,overflow`, 0 `FATAL`, post-reboot `storage_matches_effective: true`; the
+verify's 4 unexplained wrap rows are a setup artifact (that session was recorded at 240 BPM instead of 120, giving
+a 17-bar record for an 8-bar request). The two blocked attempts' ring overflow is fixed by
+`-D SESSION_CAPTURE_LCR=0`. Remaining: 6.1/6.2/6.3 and the owning change's RC-PUB-1..3.
 
 **2026-09-18 — RC for the post-reboot overdub loss: the LSV1 body save gathers a root that can predate
 the current committed passes.** User report: *after reboot the second overdub isn't loaded (or
