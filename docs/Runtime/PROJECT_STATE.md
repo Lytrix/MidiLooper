@@ -17,6 +17,12 @@ the `#CAP,DIAG,gus` row now (`src=deferred`). New native fixture
 partial `194 -> 179 -> 193` before the fix. The run's base report is `FAIL` only on the known record
 stop-quantisation grid artifact and the redo re-verification span window, not the GUS entry; a second attempt
 (`gus-undo-02`) was `INCONCLUSIVE_CAPTURE` (setup).
+**Follow-up fixed in `c380c030`:** the deferred admission took `captureSessionExitTail` before the checks that
+can still deny it, so a denial sent the stop to the synchronous fallback with an already-emptied live session --
+one final pass in the entry. The tail capture now runs after admission is committed. Device `captures/gus-undo-03`
+(firmware `7708d605…`, git clean) is a clean **`Result: PASS`**: **`MIDI: Undo (entries=2)`**,
+`DIAG,gus,…passIds_n=2,src=deferred`, `DISP across undo/redo: 194 -> 128 -> 192`, `stored overdub span 64/63
+count_ok/span_ok/bars_ok`, 0 `RING,overflow`.
 
 **2026-09-18 the 5.8 undo/redo fix's display half LANDED (`immutable-loop-snapshot-passes` 5.8a).** After 5.8
 made playback stop emitting a disabled pass, the OLED still painted the undone overdub: the sealed capture
