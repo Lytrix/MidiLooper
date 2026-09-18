@@ -257,7 +257,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
   (`NOTE_EDIT_MEM`/`LOOP_COLD_MEM`/`TRACK_COLD_MEM`) instead of independent `FLASHMEM` definitions; do not rename the
   legacy ones. Verify: firmware builds; the RAM1 line is unchanged; each TU still documents its cold rationale in one
   line.
-- [ ] 4.13 Replace the four unique-id append/contains copies, the seven `make_unique<…Box>()` sites (private `ensurePendingSnapshotPublishBox()`),
+- [x] 4.13 Replace the four unique-id append/contains copies, the seven `make_unique<…Box>()` sites (private `ensurePendingSnapshotPublishBox()`),
   and the seven bar-count ceil-div copies with one named helper each, adopted on touch. Verify: native suite passes;
   helpers are inline/constexpr so no new symbols.
 - [ ] 4.14 P3 gate: full native suite plus the differential/oracle fixtures (`test_playback_prewarm`, `test_continuous_capture`, `test_loop_take_survival`, `test_storage_loop_io`)
@@ -303,9 +303,21 @@ two are `noinline` + `.flashmem` by design (consolidating them to plain `FLASHME
 inline that code into ITCM callers and cost a FlexRAM bank). Sub-phase gate: native 2,262 / 1 skipped /
 2,261 passed; firmware SUCCESS with RAM1 byte-identical (`code 392312 / padding 904 / free 34976`).
 
+**Fourth sub-commit:** **4.13** — the three repeated id-list idioms become one template pair
+(`containsId`/`appendUniqueId`) on `LoopSnapshotBoxes.h`, which both the publisher and the playback view
+already include; the two near-identical playback helpers and the publisher's inline scan are gone (12 + 3
+call sites). The guarded box-creation idiom becomes `Loop::ensurePendingSnapshotPublishBox()` at its three
+sites — the four unconditional `= std::make_unique<...>()` sites are deliberate *resets* and were left
+alone, which is why this is 3 of the 7 sites the task named. The bar-count ceiling division gains an owner
+as `LoopEventStoreConfig::barCount` (the namespace that already owns `BAR_TICKS`), adopted at the two
+in-scope body-format sites and behind `totalVisualBarsForLoop`, whose redundant zero guard it subsumes.
+The seven other repo-wide bar-count sites are outside this change's added code and are left for a
+touch-and-adopt pass rather than a sweep. Sub-phase gate: native 2,262 / 1 skipped / 2,261 passed;
+firmware SUCCESS, RAM1 `code 391736 / padding 1480 / free 34976` (-576 code, same bank, more slack).
+
 **Still open in P3:** 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle accessor vocabulary), 4.4
-(atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), 4.13
-(unique-id/box/bar-count helpers), and the phase gate 4.14. The phase gate stays unchecked until they
+(atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), and the phase
+gate 4.14. The phase gate stays unchecked until they
 land; the P3 work is committed in sub-commits so each is independently bisectable.
 
 ## 5. P4 — converge naming on the authority (record the decision first)

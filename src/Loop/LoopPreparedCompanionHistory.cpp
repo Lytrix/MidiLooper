@@ -57,7 +57,7 @@ LOOP_COLD_MEM bool Loop::prewarmPreparedCompanionHistory(size_t companionCapacit
   }
   const size_t snapshotCount = pendingSnapshotPublishBox_ ? pendingSnapshotPublishBox_->companionIds.size() : 0;
   if (snapshotCount > limit - companionCapacity) return false;
-  if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  ensurePendingSnapshotPublishBox();
   auto& work = preparedCompanionHistory_;
   work.rowLimit = passes.editPasses.size() + companionCapacity;
   ++work.preparationGeneration;

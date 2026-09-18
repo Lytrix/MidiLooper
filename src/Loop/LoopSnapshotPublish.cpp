@@ -297,23 +297,14 @@ bool eventAlreadyInSnapshot(const LoopSnapshot& snapshot, const MidiEvent& event
   return false;
 }
 
-bool passIdInList(const std::vector<PassId>& passIds, PassId passId) {
-  for (const PassId id : passIds) {
-    if (id == passId) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool isCommittedOverdubPass(const Loop& loop, PassId passId) {
   bool isOverdubPass = false;
   return committedChunksForPass(loop, passId, isOverdubPass) != nullptr && isOverdubPass;
 }
 
 bool passAlreadyTracked(const PendingSnapshotPublishBox& box, PassId passId) {
-  return box.constructionPassId == passId || passIdInList(box.queuedPassIds, passId) ||
-         passIdInList(box.appliedPassIds, passId) || passIdInList(box.journaledPassIds, passId) ||
+  return box.constructionPassId == passId || containsId(box.queuedPassIds, passId) ||
+         containsId(box.appliedPassIds, passId) || containsId(box.journaledPassIds, passId) ||
          (box.passChangeProgress.active && box.passChangeProgress.passId == passId);
 }
 
@@ -1604,16 +1595,8 @@ LOOP_COLD_MEM void Loop::appendPendingSnapshotCompanionId(EditPassId id) {
   if (id == kInvalidEditPassId) {
     return;
   }
-  if (!pendingSnapshotPublishBox_) {
-    pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
-  }
-  EditPassIdList& ids = pendingSnapshotPublishBox_->companionIds;
-  for (const EditPassId existing : ids) {
-    if (existing == id) {
-      return;
-    }
-  }
-  ids.push_back(id);
+  ensurePendingSnapshotPublishBox();
+  appendUniqueId(pendingSnapshotPublishBox_->companionIds, id, kInvalidEditPassId);
 }
 
 LOOP_COLD_MEM LoadedSnapshotHydrationPhase Loop::loadedSnapshotHydrationPhase() const {
@@ -1838,7 +1821,7 @@ LOOP_COLD_MEM bool Loop::queueLoadedSnapshotPublish() {
     publishedSnapshotBox_.reset();
   }
   clearPendingSnapshotPublish();
-  if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  ensurePendingSnapshotPublishBox();
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
   box.sessionExitQueued = true;
   box.fromLoadedPasses = true;
@@ -1862,7 +1845,7 @@ LOOP_COLD_MEM bool Loop::requestCommittedPassesRepublish() {
   // owner services `fromLoadedPasses == false` work while transport is live (the boot hydration lane
   // is the one gated out by `allowLoadedSnapshotHydration`).
   clearPendingSnapshotPublish();
-  if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+  ensurePendingSnapshotPublishBox();
   PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
   box.sessionExitQueued = true;
   box.fromLoadedPasses = false;

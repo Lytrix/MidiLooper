@@ -11,6 +11,28 @@
 #include <memory>
 #include <vector>
 
+/// The id-list idioms the snapshot publisher and its playback view both need. One owner so the
+/// "invalid never enters the list" and "append only if absent" rules cannot drift between them.
+template <typename Container, typename Id>
+bool containsId(const Container& ids, Id id) {
+  for (const Id existing : ids) {
+    if (existing == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+template <typename Container, typename Id>
+void appendUniqueId(Container& ids, Id id, Id invalid) {
+  if (id == invalid) {
+    return;
+  }
+  if (!containsId(ids, id)) {
+    ids.push_back(id);
+  }
+}
+
 struct PendingPassChangeProgress {
   struct OpenNote {
     NoteId noteId = kInvalidNoteId;

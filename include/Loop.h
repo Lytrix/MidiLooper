@@ -1345,6 +1345,10 @@ struct Loop {
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
   std::unique_ptr<PublishedSnapshotBox> publishedSnapshotBox_;
   std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
+  /// Create the pending-publish box on first use. The unconditional
+  /// `pendingSnapshotPublishBox_ = std::make_unique<...>()` sites are deliberate *resets* and must not
+  /// be folded into this.
+  void ensurePendingSnapshotPublishBox();
   /// Externally allocated ring of session-exit receipts; the type stays
   /// incomplete here, so the deleter is defined beside the box definition.
   struct SessionExitReceiptsDeleter {
