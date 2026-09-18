@@ -1402,3 +1402,51 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       stops and asserts it is present from the committed cache. Device: the same two-overdub shape must show
       `visual` non-zero (or the frame unchanged across the second `Overdubbing started`) at the second start, with no
       loss of the first overdub's row count in `DISP`.
+
+## 5.13 Record arm exits because the arm prewarm chain no longer fits the pool (2026-09-18)
+
+- [ ] 5.13 Arming a track must not abort when the pool cannot satisfy the whole arm prewarm chain in one shot.
+      **User report (2026-09-18):** *after fixing the memory issues on long recordings/overdub, arming a track and
+      starting an external clock + MIDI notes exits arm so nothing can be recorded; same when arming and starting
+      playback internally.* Capture: `captures/session_20260918_171613.log`.
+      **Symptom.** Each arm is exited ~1.6 s after it is taken, consistently:
+      `Track 4 armed, waiting for clock to start recording` -> `ST,Track,STOPPED,ARMED` (1550.004 s) ->
+      `ST,Track,ARMED,STOPPED` (1551.600 s); the same for track 5 and on every retry (14 `record_start` denials in
+      the run).
+      **Cause (exact).** The arm admission is all-or-nothing and its reservation chain is ~845 KB:
+      `MemoryMonitor::admitOperationMemory(RecordStart)` fails with
+      `#MEM_DENIED,op=record_start,reason=prewarm_failed,need=0B,heap_free=36KB,pool_refused=1/65536B`, and the
+      refusal itself names the victim:
+      `#MEM_EXT_REFUSED,1550483095,bytes=65536,count=1,live=8241KB,blocks=791,heap_free=44KB,tag=12,tag_live=64KB`.
+      `tag=12` is `TagCompanionReconstruction`, whose `RuntimeCompanionReconstruction::prewarm(2 * kEventsPerView)`
+      is a single `extmem_malloc(4096 * sizeof(DisplayNote))` = **65,536 B** (`src/Track/RuntimeCompanionReconstruction.cpp`).
+      It is the last/largest request in `LoopPlaybackRuntime::prewarmViews` (tag 12 sits inside the tagged chain:
+      views, capture staging, pairLookup, spans, reconstruction, apply, bridgeMap, passes, canonicalPassInputs,
+      prepared pair), so it is where a chain that does not fit reports itself.
+      **It is exhaustion, not fragmentation.** The refusal reports `live=8241KB` against a reported pool of
+      8182 KB, and a pre-arm sample read `live=7360KB` (~822 KB free): the arm chain needs ~845 KB and only ~822 KB
+      was there. An earlier reading of this capture as fragmentation was wrong and is corrected here -- the single
+      64 KiB request is the *visible* failure, not the mechanism.
+      **Why it surfaced after the memory work.** Not because that work reduced free space -- the lazy chunk pool
+      *added* ~1.58 MB (3 blocks = 984 KB backed instead of 2,566 KB). The workspace in this session is denser than
+      the earlier A/B runs, and the per-slot arm reserves **accumulate and are never released on disarm**:
+      `tags=408/1430/296/320/8/0/58/...` shows `TagViewPrewarm` at 1,430 KB = **two** slots' bundles, plus
+      `CaptureStopJobs` 408 KB, `CaptureStaging` 320 KB, `CompanionHistory` 296 KB. The only release paths for a
+      slot's view set are `~LoopPlaybackRuntime` and `releaseWholeTakeViews()` (the RC-MEM-2 whole-take part only),
+      so every arm of a not-yet-prewarmed slot permanently deepens the pool. The memory fixes moved the binding
+      constraint off `overdub_start` (RC-MEM-6) and onto `record_start` -- the same all-or-nothing pattern, next in
+      line. The refusal also sets the pool-refusal recency window, which then denies
+      `companion_history_reserve` for the following 2 s (14 such denials here), widening the blast radius.
+      **Fix direction (not implemented).** The arm chain reserves the full 2048-event ceiling for several owners
+      regardless of content, which is the same capacity-law problem RC-MEM-2 recorded and deliberately left out of
+      scope ("derive the per-window capacity from the resolved window, and prewarm only the armed slot"). In
+      priority order: (a) make the arm chain **non-all-or-nothing** -- reserve what fits and leave the rest
+      unreserved with consumers denying rather than allocating, the same admission shape as DEC-065/DEC-075; (b)
+      derive the companion-owner capacities from the resolved window instead of the ceiling (removes the bulk of the
+      845 KB); (c) `RuntimeCompanionReconstruction`'s single 64 KiB buffer split into blocks, since it is the
+      largest single request and the one that fails. Releasing arm reserves on disarm is **not** the fix: the same
+      view set serves playback of the slot's committed content, so it cannot be freed while the slot can play.
+      **Verify.** Native: an arm whose prewarm budget is short by one owner still completes, with that owner
+      unreserved and reporting denial instead of failing the arm. Device: arm on a workspace whose pool has
+      ~800 KB free must reach RECORDING with an external clock, and repeated arming of successive slots must not
+      accumulate (`TagViewPrewarm` bounded by the armed slot count, not by arm attempts).
