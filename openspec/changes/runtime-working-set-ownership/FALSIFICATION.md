@@ -11,6 +11,12 @@
 | F5 | **Agreed.** The role tiers fold into `activeLoopIndex` (+ `CapturePhase` / `TrackState`) rather than forming a second authority. |
 | F6 | **Resolved by S2 + G.2** (windowed sizing and non-destructive admission): the acceptance becomes diagnostic once the windowed path and queue-based admission exist. |
 
+A visual-tier refinement: the display side already has most of the needed blocks -- a bar-sliced resumable
+renderer, a snapshot-identity/revision validity check, draw-source reuse keys, a per-bar overview mask, a compact
+note-count primitive, and a preload hook (`TrackManager::prewarmSelectedDisplayVisualCache`) that exists with no
+caller. The design is a compact per-bar **envelope** for every slot (~64 B/slot, so the whole library fits) plus a
+**capped** rendered detail window, reusing those blocks rather than adding a renderer.
+
 A further refinement (F2 follow-up): a **bounded standby tier** -- a small pre-resolved immutable excerpt per
 candidate slot, prepared against the *known* next arrival of the ticks it covers -- makes the readiness
 contract scheduleable rather than urgent. Its size is density-dependent (1-bar standby is ~2.5 KB/slot typical,

@@ -372,6 +372,46 @@ passOrigin 4 + canonicalRank 2):**
 - it is a **deliberate, bounded exception** to "inactive slots retain descriptors only". The cap is what keeps
   the scaling law; without it, standby silently becomes the per-slot residency this change exists to remove.
 
+## Revision 15 — a visual tier built from what already exists
+
+The visual side has the same shape of problem as the MIDI side (switch a slot, show it instantly, without
+per-slot whole-loop residency) and it is better supplied with building blocks. Inventory of what is already in
+the tree:
+
+| Building block | What it gives us |
+|---|---|
+| `rebuildVisualCacheIdleSlice` (+ `markDisplayCachesStale`, `ensureVisualCacheBuilt`) | a **resumable, bar-sliced renderer** -- the pre-render engine, already idle-scheduled |
+| `visualCache.builtFromSnapshotIdentity` / `builtFromRevision` | a **validity identity** for a rendered visual, so invalidation is free |
+| `selectDrawSourceReuseKind` / `DrawSourceGatherKey`, committed-prefix retention (`liveDisplayCommittedPrefix_`, `retainDrawSourceHandoffCommittedPrefix`) | the **frame reuse** machinery that makes a switch cheap instead of a full rebuild |
+| `overviewCaptureBandMask_` (`VisualBarVec`, one entry per bar) | an existing **per-bar mask** already used to draw the overview strip |
+| `DisplayNoteCount::countDisplayNotes` | a **compact inventory** (notes, unique ids, max-per-pitch) with no gather or reconstruct |
+| `TrackManager::prewarmSelectedDisplayVisualCache` | a **preload entry point that exists but has no caller** -- written for exactly this, currently disconnected |
+| windowed gather (`resolveDisplayNotesByDrawSource`, `kWindowedGatherMarginBars`) | bar-windowed detail resolution, already the paint path |
+
+So the design is **two levels**, mirroring the standby tier:
+
+1. **Visual envelope -- for every slot, unconditionally.** A compact per-bar activity/density mask (and
+   optionally per-pitch-band counts). At 1 byte per bar a 64-bar loop costs **64 B/slot**, so **all 64-128
+   slots cost ~8-16 KB**. This is the pre-rendered-file analogue: cheap enough to hold for the whole library,
+   which is what gives instant switch *feedback* and an overview strip without touching canonical content.
+2. **Visual window -- capped, like standby.** The rendered `DisplayNote` window for slots that are visible or
+   are switch candidates. `DisplayNote` is 16 B, so at the observed density (~36 notes/bar) a 1-bar window is
+   **~0.6 KB/slot** (~35 KB for 60 slots), while at the representable ceiling (~2,048 notes/bar) it is
+   **~32 KB/slot** (~1.9 MB for 60). Same conclusion as standby: affordable at typical density, **byte-capped
+   with eviction** at the ceiling.
+
+**Reuse rules (the point of the inventory).** Render through the existing idle-slice path rather than a new
+renderer; validate with the existing snapshot identity/revision rather than a new generation counter; invalidate
+on any mutation covering the envelope's bars and fall back to the windowed gather; and revive
+`prewarmSelectedDisplayVisualCache` as the visual analogue of the standby scheduler rather than inventing a new
+entry point. Two dead display paths (`resolveDisplayNotesCommitted`, `resolveDisplayNotesLiveCapture`) were
+already found caller-less by earlier audits -- confirm which mechanism a dev-branch "visual preload" actually
+uses before adding a third.
+
+The envelope is, like standby, a **deliberate bounded exception** to "inactive slots retain descriptors only".
+It is safe at this size precisely because 64 B/slot does not scale with loop length in a way that threatens the
+law; the *window* is the part that must be capped.
+
 ## Revision 12 — the role tiers fold into `activeLoopIndex` (F5)
 
 The COLD / SELECTED / PREPARED-ACTIVE / CAPTURE-ACTIVE / DEFERRED tiers are a **view of existing
