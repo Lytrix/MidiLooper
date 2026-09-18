@@ -237,15 +237,20 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **AND** the supported concurrency is one finalizing predecessor plus one live successor, not two
   simultaneously finalizing captures
 
-#### Scenario: A stop denied while the finalizer is occupied is non-destructive
-- **WHEN** a stop is requested while the single finalization role is held by a predecessor that has not finished
-- **THEN** the stop is denied with no partial stop, and the requesting slot remains recording or overdubbing
-- **AND** the denial is counted (`finalization_lease_stop_denied`) and the next stop succeeds once the role frees
+#### Scenario: A stop denied while the finalizer is occupied is non-destructive and is not queued
+- **WHEN** a stop is requested while a predecessor is still finalizing
+- **THEN** the stop is denied with no partial stop and no descriptor taken, and the requesting slot remains
+  recording or overdubbing
+- **AND** the denial is reported as a stage (`finalizer_busy`, or `transfer_denied` / `canonical_output_busy` /
+  session-exit handoff for the other single-instance resources)
+- **AND** the denial is **not** queued or auto-serviced: the stop is re-issued by the stop edge, and succeeds
+  once the resource frees
 
 #### Scenario: The descriptor ring does not imply concurrent finalization
 - **WHEN** finalization capacity is reasoned about
-- **THEN** `CaptureStopJobs::kCapacity` is treated as descriptor-ring depth, not as proof that several stopped
-  intervals can be retained
+- **THEN** `CaptureStopJobs::kCapacity` is treated as descriptor-ring depth whose tail must be **free** before a
+  stop is admitted, so pending stop intervals are never stacked
+- **AND** `queue_full` is an exhaustion denial, distinct from ordinary finalization latency
 - **AND** concurrent finalization is only claimed once a capacity/ownership decision shows where each
   interval's sealed raw range, pending closures, staged pass, session receipt and canonical transfer state live
 

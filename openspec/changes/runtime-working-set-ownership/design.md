@@ -551,10 +551,27 @@ STOP B while A still finalizes
   -> the next stop succeeds once the role frees
 ```
 
-`finalization_lease_stop_denied` counts those denials, and real usage decides whether one finalizer ever
-constrains normal work (very short captures and rapid punch-stop/start/stop are the constrained shapes).
-Turning this into an automatic queue is a **separate capacity/ownership change** that must first show where
-each of those per-interval states lives.
+**How it actually works (traced 2026-09-18 in `Track::beginDeferredOverdubStop`).** The bound is *not* the
+ring depth. Admission takes a descriptor only if the **tail descriptor is free** (`captureStopJobTail()` requires
+`count < kCapacity`, and the caller requires the tail's `pendingNotes` to be empty), so a pending stop is never
+stacked on an occupied interval. What actually bounds ordinary concurrency is the set of **single-instance
+finalization resources**, each an explicit non-destructive denial that takes no descriptor and leaves the
+interval as the live recording interval:
+
+| Denial stage | Condition |
+|---|---|
+| `finalizer_busy` | `runtime->captureStopOwner != nullptr` -- a predecessor is still finalizing |
+| `transfer_denied` | no active overdub transfer admission |
+| `canonical_output_busy` | canonical capture output not admitted |
+| session-exit handoff | no session-exit receipt slot available |
+| `queue_full` | no free tail descriptor -- an **exhaustion** denial, documented as "never ordinary finalization latency" |
+
+So: **one *active* finalizer**, enforced by shared resources; a denied stop is **not queued and not
+auto-serviced** -- it is re-issued by the stop edge (device evidence `successor-reentry-25`: B's stop refused,
+then admitted after A's finalization released). `finalization_lease_stop_denied` counts these denials, and real
+usage decides whether one finalizer ever constrains normal work (very short captures and rapid
+punch-stop/start/stop are the constrained shapes). A queue would be a **separate capacity/ownership change**
+that must first show where each per-interval state lives while a predecessor finalizes.
 
 ## Options considered
 
