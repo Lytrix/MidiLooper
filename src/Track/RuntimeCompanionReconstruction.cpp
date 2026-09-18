@@ -35,7 +35,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::begin(
     RuntimeCompanionSpanWalk& spans, RuntimeNotePairLookup& wrap,
     const MidiEvent* events, size_t count, uint8_t pitch, uint32_t loopLength,
     const PlaybackViewSourceIdentity& source, const uint8_t* retained) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       notes_ == nullptr) return false;
   // Do not discard a different in-flight borrowed span walk on admission failure.
   if (!spans.begin(wrap, events, count, pitch, loopLength, retained)) return false;
@@ -49,7 +49,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::begin(
   return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::sourceMatches() const {
-  return source_ != nullptr && *source_ == expected_;
+  return sourceIdentityMatches();
 }
 NOTE_EDIT_MEM bool RuntimeCompanionReconstruction::ready(const PlaybackViewSourceIdentity& source) const {
   return phase_ == Phase::Complete && sourceMatches() && source == expected_;

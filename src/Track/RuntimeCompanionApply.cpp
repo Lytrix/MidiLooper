@@ -63,7 +63,7 @@ NOTE_EDIT_MEM void RuntimeCompanionApply::discard() {
   phase_ = Phase::Idle;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::sourceMatches() const {
-  return source_ != nullptr && *source_ == expected_;
+  return sourceIdentityMatches();
 }
 NOTE_EDIT_MEM bool RuntimeCompanionApply::ready(const PlaybackViewSourceIdentity& source) const {
   return phase_ == Phase::Complete && sourceMatches() && source == expected_;
@@ -90,7 +90,7 @@ NOTE_EDIT_MEM void RuntimeCompanionApply::complete() {
 NOTE_EDIT_MEM bool RuntimeCompanionApply::begin(
     const Work& work, const MidiEvent* events, size_t count, const PlaybackViewSourceIdentity& source,
     Kind kind, NoteId target, uint32_t newEnd, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       !candidate_.isPrewarmed() || provenance_ == nullptr || count > candidate_.capacity ||
       (events == nullptr && count != 0) || !work.pair.available() ||
       !work.deletion.available() || !work.spans.available() ||

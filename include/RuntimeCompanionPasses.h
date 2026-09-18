@@ -37,6 +37,14 @@ class RuntimeCompanionPasses {
              const PlaybackViewSourceIdentity& source, uint32_t loopLength);
   RuntimePlaybackOrderBuildResult step(size_t quantum);
   bool idle() const { return phase_ == Phase::Idle; }
+  /// Admission predicate: may `begin*()` be called now? This worker treats a denied run as
+  /// restartable, so Denied is admitted as well - unlike the workers whose Denied is terminal.
+  bool available() const {
+    return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied;
+  }
+  /// True when `begin*()` captured this class's own expected source identity; a bare pointer
+  /// comparison inside a compound guard hid that meaning.
+  bool sourceIdentityMatches() const { return source_ != nullptr && *source_ == expected_; }
   bool ready(const PlaybackViewSourceIdentity& source) const;
   bool matchesOwners(const RuntimeCanonicalPassInputs& inputs, const RuntimeCaptureCompanions& rows) const;
   const MidiEvent* data() const;

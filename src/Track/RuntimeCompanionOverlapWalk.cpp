@@ -6,7 +6,7 @@
 NOTE_EDIT_MEM bool RuntimeCompanionOverlapWalk::begin(
     const NoteUtils::DisplayNote* notes, size_t count, NoteId target, uint8_t pitch,
     uint32_t start, uint32_t newEnd, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) ||
+  if (!available() ||
       (notes == nullptr && count != 0) || target == kInvalidNoteId || loopLength == 0 ||
       count > 2 * RuntimePlaybackViewConfig::kEventsPerView) return false;
   discard();

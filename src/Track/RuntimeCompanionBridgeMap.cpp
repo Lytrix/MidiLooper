@@ -78,7 +78,7 @@ NOTE_EDIT_MEM void RuntimeCompanionBridgeMap::discard() {
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::begin(
     const RuntimeCompanionApply& applied, const MidiEvent* base, size_t baseCount,
     const PlaybackViewSourceIdentity& source) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       capacity_ == 0 || baseCount > capacity_ || applied.size() > capacity_ ||
       applied.isHistoryBatch() || !applied.matchesInput(base, baseCount, source)) return false;
   discard(); applied_ = &applied; base_ = base; baseCount_ = baseCount;
@@ -89,7 +89,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::begin(
     const RuntimeCompanionPasses& prepared, const MidiEvent* base, size_t baseCount,
     const RuntimeCompanionPasses::Origin* baseOrigins,
     const PlaybackViewSourceIdentity& baseSource, const PlaybackViewSourceIdentity& preparedSource) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       capacity_ == 0 || baseCount > capacity_ || prepared.size() > capacity_ ||
       (baseCount != 0 && (base == nullptr || baseOrigins == nullptr)) || !prepared.ready(preparedSource)) return false;
   discard(); prepared_ = &prepared; base_ = base; baseCount_ = baseCount; baseOrigins_ = baseOrigins;
@@ -118,7 +118,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::valid() const {
       baseView_->coverage.loopLengthTicks != coverage_.loopLengthTicks)) return false;
   if (prepared_ != nullptr) return prepared_->generation() == generation_ &&
       prepared_->ready(preparedSource_) && prepared_->size() == candidateCount_ &&
-      baseIdentity_ != nullptr && *baseIdentity_ == source_;
+      sourceIdentityMatches();
   return applied_ != nullptr && applied_->generation() == generation_ &&
          !applied_->isHistoryBatch() && applied_->matchesInput(base_, baseCount_, source_) && applied_->size() == candidateCount_;
 }

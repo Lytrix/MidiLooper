@@ -25,6 +25,9 @@ class RuntimeCompanionApply {
   RuntimeCompanionApply& operator=(const RuntimeCompanionApply&) = delete;
   bool prewarm(size_t eventCapacity);
   bool available() const { return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied; }
+  /// True when `begin*()` captured this class's own expected source identity; a bare pointer
+  /// comparison inside a compound guard hid that meaning.
+  bool sourceIdentityMatches() const { return source_ != nullptr && *source_ == expected_; }
   static size_t requiredGrainsUpperBound(size_t eventCapacity, size_t quantum);
   static uint64_t requiredHistoryGrainsUpperBound(size_t eventCapacity, size_t rowCount, size_t quantum);
   struct HistoryPrefix {

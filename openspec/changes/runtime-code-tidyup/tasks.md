@@ -234,7 +234,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
   `include/Utils/InternalHeapFirstAllocator.h` and migrate the 16 sites across the eight companion TUs, preserving
   extmem→malloc order and free routing. Verify: `test_pending_note_change`, `test_loop_take_survival`,
   `test_playback_prewarm` pass; no new out-of-line symbol (size check).
-- [ ] 4.6 Extract the admission guard (10 sites) and source-identity guard (5 sites) into one owner per design § D3/§
+- [x] 4.6 Extract the admission guard (10 sites) and source-identity guard (5 sites) into one owner per design § D3/§
   D4. Verify: native suite passes; **re-measure RAM1** because member layout of by-value `TrackPlaybackRuntime` members
   may change; revert if a bank edge moves.
 - [x] 4.7 Promote the existing ceiling-grain lambda to one `constexpr ceilGrains(...)` on
@@ -260,7 +260,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
 - [x] 4.13 Replace the four unique-id append/contains copies, the seven `make_unique<…Box>()` sites (private `ensurePendingSnapshotPublishBox()`),
   and the seven bar-count ceil-div copies with one named helper each, adopted on touch. Verify: native suite passes;
   helpers are inline/constexpr so no new symbols.
-- [ ] 4.14 P3 gate: full native suite plus the differential/oracle fixtures (`test_playback_prewarm`, `test_continuous_capture`, `test_loop_take_survival`, `test_storage_loop_io`)
+- [x] 4.14 P3 gate: full native suite plus the differential/oracle fixtures (`test_playback_prewarm`, `test_continuous_capture`, `test_loop_take_survival`, `test_storage_loop_io`)
   and a firmware build; record the RAM1 line. Verify: byte-identical traces/inventories and unchanged case count.
 
 ### P3 progress (2026-09-18) — phase incomplete, gate deferred
@@ -362,13 +362,27 @@ checked and **dissolved**: the review counted only external callers, but `commit
 the routed production tail, not test-only wrappers. Sub-phase gate: native 2,262 / 1 skipped / 2,261
 passed; firmware SUCCESS with RAM1 unchanged (`code 391736 / padding 1480 / free 34976`).
 
-**Still open in P3:** 4.6 (admission/source guards) and the phase gate 4.14. Refined plan for 4.6, avoiding
-the layout risk the review flagged: add a per-class inline predicate for the admission check (ten sites of
-`phase_ != Idle && phase_ != Complete && phase_ != Denied`) and for the source-identity check (five sites of
-`source_ && *source_ == expected_`), **without** introducing a shared member struct — a shared
-`RuntimeWorkerSourceIdentity` would change the footprint of classes held by value in
-`TrackPlaybackRuntime`, and the naming/comparison win does not require moving the members. Measure the RAM1
-line either way before and after. The phase gate stays unchecked until they
+**Sixth sub-commit (4.6 + the P3 phase gate 4.14):** the ten admission guards become `!available()` and the
+five source-identity guards become `sourceIdentityMatches()`, with **no member-layout change** — the review's
+shared `RuntimeWorkerSourceIdentity` struct was deliberately not introduced, because it would move members of
+classes held by value in `TrackPlaybackRuntime` for a naming-only gain. `available()` gained three missing
+definitions (CanonicalPassInputs, CompanionBridgeMap, CompanionCompanionPasses) and BridgeMap's identity
+check was named from its pointer-bound `baseIdentity_` form.
+
+**The gate caught a real semantic error in this sub-commit, which is worth recording.** My first pass gave all
+ten sites the same 2-value `available()` (`Idle || Complete`). But the guards have two variants: six sites
+were `!= Idle && != Complete && != Denied` (admitting a restart from `Denied`) and four were `!= Idle &&
+!= Complete` (treating `Denied` as terminal). Collapsing the 3-value sites onto a 2-value predicate denied
+admission where the original allowed it, and `test_frozen_canonical_pipeline_bridge_matches_materialized_reference`
+plus `test_per_pass_bridge_mapping_denies_invalid_provenance_and_reuse` failed — they were found by
+`pio test -e native -f test_playback_prewarm`, not by inspection. Fixed by giving the three affected classes
+the 3-value form their original guard used, with a comment distinguishing "denied run is restartable" from
+"Denied is terminal".
+
+**P3 phase gate 4.14: closed.** Final P3 gates: native 2,262 cases / 1 skipped / 2,261 passed; firmware
+SUCCESS with RAM1 `variables 96096 / code 391736 / padding 1480 / free for local variables 34976` and FLASH
+`code 1004520`. Against the recorded baseline that is home-neutral on locals (34,976 vs 34,944), code -608,
+padding +608, and FLASH -5,088. The phase gate stays unchecked until they
 land; the P3 work is committed in sub-commits so each is independently bisectable.
 
 ## 5. P4 — converge naming on the authority (record the decision first)
