@@ -2741,6 +2741,25 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — RC for the post-reboot overdub loss: the LSV1 body save gathers a root that can predate
+the current committed passes.** User report: *after reboot the second overdub isn't loaded (or
+stored)*. Investigated on the canonical `base` run (`captures/gus-sanity-01`) plus a post-reboot
+dump/capture (`captures/reboot-01-playback`); details and the fix options are recorded as an **RC in
+`successor-capture-reentry-unguarding` task 5.9**.
+
+Short version: after the recipe's `Undo`/`Redo`, `PassesResolve` reports **57** display rows (the
+committed passes are complete — post-reboot `!CAPTURE_CONTENT` is record 94 + overdub 32 + overdub
+32 = effective 142), but the deferred save's LSV1 tail gather (`tail_gather_begin` at 154.269 s) had
+captured a coalesced publication (`snapshot_unit publish` at 153.941 s) that encodes the **undo**
+state — the loaded body root resolves to **48** rows and playback is missing the 24-39 overdub range.
+`writeLoopPersisted` / the gather require neither `publishedSnapshotIsCurrent()` nor
+`!hasPendingSnapshotPublish()`, and the loader installs the body root as current with no reconcile
+(the boot hydration lane is gated off). Fix options recorded: (a) gate the LSV1 body
+gather/admission on a current root with a bounded re-admit (fall back to the legacy body if it never
+becomes current), or (b) fix the publication coalescing so a published root always represents the
+latest committed-pass set. **The owner rejected load-time rebuilds (option (c)); do not implement
+that.** The stale uncommitted edit that had marked 5.9 closed and ticked 6.1 was reverted.
+
 **2026-09-18 — the undo stack silently lost its publication capacity, so a second overdub stopped
 adding a GUS level; fixed (`successor-capture-reentry-unguarding` 8.3).** The user report: *the undo
 does not get to +3, it stays on 2; after stop I cannot undo/redo this overdub a second time, it
