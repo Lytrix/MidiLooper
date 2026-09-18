@@ -41,7 +41,7 @@ below is not complete if it violates one, and any invariant without an enforceme
 | 16 | **No allocation and no blocking on a timing-critical edge** | existing hot-path rule; S4c.0 and S3 gates |
 | 17 | Role transfer provisions the inbound owner **before** releasing the outbound one, allocation-free at the switch | spec transfer scenario; S4b.2 |
 | 18 | Failed admission is **non-destructive**: no partial authority, state preserved, reported as wait/denial | spec non-destructive admission; G.2 |
-| 19 | Contention is **queued and serialized**; only a full queue denies | spec finalization queue scenarios; S4.5 |
+| 19 | An occupied role **denies non-destructively**; the wait is reported and the owner's state is preserved (never a silent drop, never a partial stop) | spec finalization denial scenario; S4.5 |
 | 20 | Transient pressure **parks, never aborts** | DEC-075 (landed) |
 | 21 | Budget instrumentation is **live and attributed** per owner/class, not cumulative and aggregate | slab census (landed); spec coverage-report requirement |
 | 22 | Verdicts declare required evidence; degraded evidence yields **DEGRADED, never an unconditional PASS** | spec host-verdict requirement; harness rule |
@@ -79,7 +79,7 @@ seamlessly. Consequently:
 | Quantity | Value | Backed by |
 |---|---|---|
 | Library residency | ~60+ recorded slots | canonical descriptors + persisted content |
-| Logical active slots | product envelope, e.g. 16 x 2 | role tiers (not all necessarily resident) |
+| Logical active slots | **N sounding, derived** (8 today: 8 tracks x 1) | role tiers (not all necessarily resident) |
 | Resident working-set leases | must fit PSRAM | bounded, window-sized |
 
 **The arithmetic that must close before `N` is chosen:**
@@ -107,8 +107,9 @@ fixed  +  32 x PlaybackWindowLease   (the only term multiplied 32 times)
 
 So `PlaybackWindowLease` must be small and length-independent, while the specialized extensions may remain
 sizable. S2 measures each class separately. If the playback term cannot fit the sum, the honest outcome is a
-stated simultaneous-playback bound (`k` slots per track, `k < 2`) rather than a claim that the envelope is
-met.
+derived simultaneous-playback bound rather than a claim that the envelope is met. Today is **8 tracks x 1
+sounding slot**; multi-slot-per-track playback is a future capability this law must not preclude, and the
+budget projects toward N = 16/32/48/64 rather than asserting it.
 
 ## Revision 8 — the never-stop transfer requirement
 
@@ -246,9 +247,9 @@ allows both concurrently; the new model must not design that away.
 
 | Role class | Cardinality | Notes |
 |---|---|---|
-| `PlaybackWindowLease` | up to **32** (2 per track, 16 tracks) | must be small and length-independent |
+| `PlaybackWindowLease` | up to **N** (derived; 8 today) | the term multiplied by N; must be small and length-independent |
 | `LiveCaptureLease` | **1** | record/overdub ingress, staging, capture stop jobs |
-| `DeferredFinalizationLease` | **1 admission**, queue depth 4 | jobs run in series (F3); one finalizing predecessor alongside one live successor |
+| `DeferredFinalizationLease` | **1** | one finalizing predecessor alongside one live successor; a second stop while it is occupied is **denied non-destructively** (DEC-067) |
 | `InteractiveLease` | **1** | edit / undo / redo / display, unless evidence requires more |
 | `TransferOverlap` | measured | explicitly budgeted, not slack |
 
@@ -528,13 +529,32 @@ authorities**, not a second state machine: `activeLoopIndex` (the one active slo
 one that does not, is not. `ARCHITECTURE_RULES.md` requires one owner per concept, so the tiers must be
 derivable from those three rather than competing with them.
 
-## Revision 13 — finalization is a serialized queue, not a denial (F3)
+## Revision 13 — finalization is one role; a second stop is denied non-destructively (F3, corrected)
 
-One **admission** with jobs run **in series**: `CaptureStopJobs::kCapacity = 4` is queue depth, and the
-admission guard is 1. So a stop arriving while a predecessor finalizes is **queued**, not refused, and the
-slot's stop is serviced when its turn comes; a **full queue** is the genuine denial case. The counter is
-therefore about queue depth and wait (`finalization_lease_stop_denied` should be read as queue saturation),
-not about a single lease being unavailable.
+An earlier revision of this document read `CaptureStopJobs::kCapacity = 4` as a queue that would service a
+second stop automatically. **That is reverted.** Descriptor-ring depth is not evidence of multi-finalizer
+storage: this codebase already established that descriptor capacity exceeded the physical frozen/finalization
+role capacity, so a second stopped interval has no proven home for its sealed raw range, pending closures,
+staged pass, session receipt or canonical transfer state while the first finalizer is still working.
+
+The contract is therefore the **device-proven DEC-067 directional admission**:
+
+```
+A recording/overdub -> STOP A -> A holds the one DeferredFinalizationLease
+switch to B         -> START B -> B holds LiveCaptureLease and records normally
+A finishes          -> releases the lease
+STOP B              -> B acquires it
+
+STOP B while A still finalizes
+  -> denied non-destructively, no partial stop
+  -> B remains recording/overdubbing
+  -> the next stop succeeds once the role frees
+```
+
+`finalization_lease_stop_denied` counts those denials, and real usage decides whether one finalizer ever
+constrains normal work (very short captures and rapid punch-stop/start/stop are the constrained shapes).
+Turning this into an automatic queue is a **separate capacity/ownership change** that must first show where
+each of those per-interval states lives.
 
 ## Options considered
 

@@ -28,7 +28,7 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 | Tracks | **8** today (`NUM_TRACKS = 8`), shown as banks of 8; the target is **bank switching to 16 MIDI channels** (F4) |
 | Slots sounding per track | **1** today. The target is that slots behave as **virtual tracks** (16 MIDI channels x 8 slots) and can sound together whenever set active; a typical scenario may be 2 per track, but that is a working number, not a limit (F1) |
 | Slots sounding simultaneously | **N, derived** -- the memory law must compute the largest N the budget supports and must **not preclude 16 / 32 / 48 / 64** sounding slots |
-| Slots holding a **playback window lease** | up to **32** (2 per track) |
+| Slots holding a **playback window lease** | up to **N sounding, derived from the budget** (8 today at one per track) |
 | Slots holding the **live capture** role (record / overdub, resumable small-packet logic inside MIDI boundaries) | **1** |
 | Slots holding **deferred finalization** | **1** -- one *finalizing predecessor* alongside one *live successor*, **not** two simultaneously finalizing captures |
 | Slots holding the **interactive edit / undo / display** role | **1**, unless evidence requires more |
@@ -55,7 +55,7 @@ Three distinct quantities are still designed separately:
 | Quantity | Value | Backed by |
 |---|---|---|
 | **Library residency** | ~60+ recorded slots | canonical metadata + persisted content |
-| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture 1 + deferred finalization 1 admission (queue 4) + interactive 1 | composable leases, one per role class |
+| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture 1 + deferred finalization 1 (a second stop is **denied**, not queued) + interactive 1 | composable leases, one per role class |
 | **Resident working-set leases** | must fit PSRAM | bounded, window-sized |
 
 The third quantity is **per class**, and the constraint is:
@@ -146,8 +146,8 @@ re-derived whenever a stage is added, whereas the thesis is stable. Read the sta
   window instead of the 2048-event ceiling so a slot's cost is **independent of its loop length**, and the
   feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
 - **Role classes with explicit cardinalities, and they are transferable.** Playback window leases scale with
-  the envelope (N, derived from the budget); live capture is one; deferred finalization is one admission with a
-  serialized queue; interactive edit/undo/display is
+  the envelope (N, derived from the budget); live capture is one; deferred finalization is one and a second stop
+  while it is occupied is denied non-destructively; interactive edit/undo/display is
   one unless evidence requires more. A slot may hold several classes at once, and selecting another slot or
   track **transfers the relevant role quickly** without a transport stop. Classes are composable rather than
   one monolithic lease, so 32 playback slots do not each carry fields only one live operation uses.
@@ -274,9 +274,9 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
    (its holder may also be one of the sounding slots). Finalization cardinality is decided at 1 with a
    `finalization_lease_stop_denied` counter as the evidence path to a second lease; live capture 1 and
    interactive 1 are confirmed.
-3a. **Queue depth and serialization.** One admission with jobs run in series (`CaptureStopJobs::kCapacity = 4`
-   is queue depth, F3): confirm the depth and what a *full* queue does (the denial case), and whether the
-   `finalization_lease_stop_denied` counter should instead count queue waits.
+3a. **Finalization concurrency is settled, not open.** One finalizer; a second stop is denied non-destructively
+   (DEC-067, device-verified). `CaptureStopJobs::kCapacity = 4` is a descriptor ring, not a proven multi-finalizer
+   store, so a queue model would be its own capacity/ownership change.
 4. **Whether a second finalization lease is ever warranted**, decided from `finalization_lease_stop_denied`
    evidence rather than reserved preemptively (the pathological shapes are very short captures and rapid
    punch-stop/start/stop).
