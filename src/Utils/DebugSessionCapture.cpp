@@ -67,15 +67,29 @@ struct CaptureRing {
   size_t head = 0;
   size_t tail = 0;
   size_t used = 0;
-  // Capacity eviction can remove required evidence and therefore invalidates the
-  // session.  Timing-critical shedding is different: playback deliberately
-  // discards only non-Tier-A diagnostics instead of doing USB I/O.  Keep that
-  // observable without reporting it as an evidence overflow.
+  // Two distinct losses used to share the `overflowPending` flag, and because the host treats
+  // `RING,overflow` as a session-invalidating event, a long run aborted for a loss the ring is
+  // designed to absorb. They are now separate:
+  //
+  //  * `tierADegradedPending` -- Tier-A *text* records were displaced by newer Tier-A records.
+  //    The ring's documented policy is that Tier-A may only be displaced by Tier-A and that this
+  //    keeps the newest windows, so the session stays usable; `RING,tier_a_evicted` reports it
+  //    as a degradation with counts instead of invalidating the capture. `captures/rcemem5-lazy-pool`
+  //    hit this at ~150 s of a 24-bar two-overdub run, where the 1 MiB bound is simply reachable.
+  //  * `overflowPending` -- a *critical* record was lost (critical may only be displaced by
+  //    critical, which cannot happen), so the capture really is incomplete and stays fatal.
+  //
+  // Timing-critical shedding is the third and least severe kind: playback deliberately discards
+  // only non-Tier-A diagnostics instead of doing USB I/O, and that stays observable without
+  // being reported as either kind of loss.
   bool overflowPending = false;
-  // `RING,overflow` is emitted only at a later safe USB flush. Preserve the
-  // first actual eviction timestamp so a host report does not mistake that
-  // notification point for the loss point.
+  bool tierADegradedPending = false;
+  // `RING,overflow` / `RING,tier_a_evicted` are emitted only at a later safe USB flush. Preserve
+  // the first actual eviction timestamp so a host report does not mistake that notification point
+  // for the loss point.
   uint32_t overflowFirstEvictedUs = 0;
+  uint32_t tierAFirstEvictedUs = 0;
+  uint32_t tierAEvictedCount = 0;
   uint32_t timingShedPending = 0;
 };
 
@@ -274,7 +288,9 @@ void noteTimingShed() {
   }
 }
 
-void discardOldestRecord(bool requiredEvidenceEviction) {
+/// The kind comes from `CaptureLineTier::evictionKindFor`, which the host tests pin directly
+/// (this translation unit needs Arduino, so the policy lives in the header).
+void discardOldestRecord(CaptureLineTier::EvictionKind kind) {
   if (sCaptureRing.used < sizeof(CaptureRecordHeader)) {
     sCaptureRing.head = sCaptureRing.tail;
     sCaptureRing.used = 0;
@@ -293,13 +309,23 @@ void discardOldestRecord(bool requiredEvidenceEviction) {
     return;
   }
   advanceHead(total);
-  if (requiredEvidenceEviction) {
-    sCaptureRing.overflowPending = true;
-    if (sCaptureRing.overflowFirstEvictedUs == 0) {
-      sCaptureRing.overflowFirstEvictedUs = micros();
-    }
-  } else {
-    noteTimingShed();
+  switch (kind) {
+    case CaptureLineTier::EvictionKind::TimingShed:
+      noteTimingShed();
+      break;
+    case CaptureLineTier::EvictionKind::TierAText:
+      sCaptureRing.tierADegradedPending = true;
+      ++sCaptureRing.tierAEvictedCount;
+      if (sCaptureRing.tierAFirstEvictedUs == 0) {
+        sCaptureRing.tierAFirstEvictedUs = micros();
+      }
+      break;
+    case CaptureLineTier::EvictionKind::CriticalText:
+      sCaptureRing.overflowPending = true;
+      if (sCaptureRing.overflowFirstEvictedUs == 0) {
+        sCaptureRing.overflowFirstEvictedUs = micros();
+      }
+      break;
   }
 }
 
@@ -324,15 +350,18 @@ SC_MEM_ATTR bool appendCaptureRecord(CaptureRecordType type, const void* payload
   while (sCaptureRing.used + total > sCaptureRing.capacity) {
     const bool headTierA = headRecordIsTierAText();
     const bool headCritical = headRecordIsCriticalText();
-    if ((!incomingTierA && headTierA) || (!incomingCritical && headCritical)) {
+    if (!CaptureLineTier::incomingMayDisplace(incomingTierA, incomingCritical, headTierA,
+                                              headCritical)) {
       // Preserve an actionable denial over ordinary timing telemetry.
       noteTimingShed();
       return false;
     }
     const size_t usedBefore = sCaptureRing.used;
     // A full ring may replace a non-Tier-A record without invalidating the
-    // timing/state trace.  Only loss of an existing Tier-A record is overflow.
-    discardOldestRecord(headTierA);
+    // timing/state trace.  Tier-A text may only be replaced by Tier-A text (that is what keeps
+    // the newest timing windows) and is reported as a degradation; only critical text loss
+    // invalidates the capture.
+    discardOldestRecord(CaptureLineTier::evictionKindFor(headTierA, headCritical));
     if (sCaptureRing.used == usedBefore) {
       return false;
     }
@@ -365,6 +394,29 @@ void emitOverflowNotice() {
   sCaptureRing.overflowFirstEvictedUs = 0;
   Serial.printf_P(SC_FMT("#CAP,%lu,RING,overflow,%lu\r\n"),
                   static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(firstEvictedUs));
+}
+
+/// Tier-A text records were displaced by newer Tier-A records. The ring's policy is that this
+/// is the expected behaviour of a full ring -- it keeps the newest timing windows -- so the
+/// capture stays usable and must not invalidate the session. Report it with counts so a host
+/// verdict can be down-weighted rather than discarded, and so the thinning rate is measurable
+/// (that rate is the input a Tier-A volume profile would be sized from).
+void emitTierADegradedNotice() {
+  if (!sCaptureRing.tierADegradedPending) {
+    return;
+  }
+  if (!serialWriteRoom(96)) {
+    return;  // keep pending; never block main on the degradation notice
+  }
+  const uint32_t firstEvictedUs = sCaptureRing.tierAFirstEvictedUs;
+  const uint32_t evicted = sCaptureRing.tierAEvictedCount;
+  sCaptureRing.tierADegradedPending = false;
+  sCaptureRing.tierAFirstEvictedUs = 0;
+  sCaptureRing.tierAEvictedCount = 0;
+  Serial.printf_P(SC_FMT("#CAP,%lu,RING,tier_a_evicted,%lu,first=%lu\r\n"),
+                  static_cast<unsigned long>(micros()),
+                  static_cast<unsigned long>(evicted),
                   static_cast<unsigned long>(firstEvictedUs));
 }
 
@@ -1000,6 +1052,7 @@ void flushCaptureBuffer(size_t maxRecords) {
   // Never emit capture notices via USB Serial under timing-critical budgets.
   if (maxRecords > 8) {
     emitOverflowNotice();
+    emitTierADegradedNotice();
     emitTimingShedNotice();
   }
   if (sCaptureRing.data == nullptr || sCaptureRing.used == 0) {
@@ -1007,7 +1060,10 @@ void flushCaptureBuffer(size_t maxRecords) {
   }
   // Do not inflate a timing-critical budget (e.g. PLAYING flush of 8) to 256
   // records of blocking Serial I/O. Overflow drains across later frames instead.
-  if (sCaptureRing.overflowPending && maxRecords >= 64 && maxRecords < 256) {
+  // Tier-A degradation drains hard for the same reason: every record not yet sent is one the
+  // ring may have to displace again.
+  if ((sCaptureRing.overflowPending || sCaptureRing.tierADegradedPending) && maxRecords >= 64 &&
+      maxRecords < 256) {
     maxRecords = 256;
   }
 
@@ -1023,7 +1079,8 @@ void flushCaptureBuffer(size_t maxRecords) {
         break;
       }
       const size_t usedBefore = sCaptureRing.used;
-      discardOldestRecord(false);
+      // This path breaks out on a Tier-A head above, so it only ever sheds diagnostics.
+      discardOldestRecord(CaptureLineTier::EvictionKind::TimingShed);
       if (sCaptureRing.used >= usedBefore) {
         break;
       }

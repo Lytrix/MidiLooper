@@ -1081,6 +1081,40 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         denies as it does today when that block cannot be allocated. A lower fixed ceiling is **not** the fix: the
         167-chunk peak is an observation, not a bound, and `initPool`'s all-or-nothing reserve is what makes
         capture admission deterministic today.
+      - **RC-MEM-7 -- the capture ring conflated "Tier-A thinned" with "capture invalid", so a long run aborted.
+        LANDED (degradation); Tier-A volume profile sized but not yet chosen.**
+        The ring's own policy is that Tier-A text *may only be displaced by Tier-A text* and that this "keeps the
+        newest windows and cannot wedge the ring" (`src/Utils/DebugSessionCapture.cpp`), and its 1 MiB budget is
+        explicitly a fixed PSRAM spend "rather than weakening Tier-A evidence". But both kinds of loss set one
+        `overflowPending` flag, and the host treats `RING,overflow` as session-invalidating, so the designed
+        degradation was indistinguishable from real evidence loss. `captures/rcemem5-lazy-pool` aborted at ~150 s of
+        a 24-bar two-overdub run purely on ring capacity, after the pool fix had made the run itself healthy.
+        **Fix.** `CaptureLineTier::evictionKindFor` / `incomingMayDisplace` now classify displacement in the
+        header-only tier helper (host-testable without Arduino), and the ring keeps three separate accounts:
+        `TimingShed` (routine diagnostics, unchanged), `TierAText` (degradation: `tierADegradedPending`,
+        `tierAEvictedCount`, `tierAFirstEvictedUs`, emitted as `#CAP,<us>,RING,tier_a_evicted,<count>,first=<us>`),
+        and `CriticalText` (the only fatal kind, still `RING,overflow`). Tier-A degradation also drains at the 256
+        record budget now, since every record not yet sent is one the ring may have to displace again. Because the
+        firmware emits `RING,overflow` only for critical loss, the existing fatal harness clause stops firing for
+        Tier-A thinning without being weakened; the harness parses the new notice into
+        `tier_a_evicted_count`/`tier_a_evicted_first_us`/`tier_a_degraded` and raises an **advisory**
+        (`capture_tier_a_evicted:<n>`) so a timing verdict is down-weighted rather than read as clean.
+        **Device result 2026-09-18 (`captures/rcemem7-tier-degrade`, same 24-bar record + two-overdub shape).** The
+        run no longer aborts on ring capacity: `capture_ring_overflow` is absent from the issues and the verdict is
+        now a substantive `FAIL (FIRMWARE_CONTRADICTION)` against the harness oracle instead of
+        `INCONCLUSIVE_CAPTURE`, with both overdubs stored correctly (`count=192/191` and `152/7`,
+        `count_ok/span_ok/bars_ok` all true) and `DISP overdub_ok=True transport_ok=True`. The advisory measures the
+        thinning at **`capture_tier_a_evicted:92655`** records.
+        **What that number sizes (next step, not chosen here).** ~92.7k Tier-A records beyond 1 MiB over ~162 s of
+        transport puts Tier-A at roughly **30-35 KB/s**, i.e. the 1 MiB ring covers only ~30 s of active transport;
+        no affordable ring holds a multi-hour run, so evidence *completeness* needs either a Tier-A volume profile
+        (a long-run divisor on the per-tick span families, the `DIAG,droid_queue` gate's shape) or the SD sink. Which
+        Tier-A families may be sampled is a policy decision about evidence, so it is deliberately not made here: the
+        mechanism, the measurement and the advisory that make it decidable are in place.
+        **Verify.** Native `test_capture_line_tier` pins the truth table: a Tier-A head classifies as `TierAText`
+        (non-fatal) and a critical head as `CriticalText` even though it is also Tier-A; `incomingMayDisplace`
+        refuses every case where ordinary diagnostics or non-critical lines would evict Tier-A or critical evidence.
+        Harness `test_capture_transitions.py` 48/48 and `test_baseline_canonical_args.py` 3/3 still pass.
       - **RC-MEM-6 -- the admission gate is self-blinding once the internal-heap floor binds (found in the RC-MEM-2
         device A/B, and this is the user-reported "cannot activate overdub on a 24-bar loop" symptom).**
         `admitOperationMemory` denies when `heapFree < kOperationHeapFloorBytes (32 KB) + requiredBytes`

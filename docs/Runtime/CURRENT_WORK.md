@@ -2741,6 +2741,42 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — RC-MEM-7 landed: the capture ring degrades instead of invalidating, so a long run no longer aborts on
+ring capacity (`immutable-loop-snapshot-passes` 5.11).** The ring's own policy is that Tier-A text may only be
+displaced by newer Tier-A text and that this "keeps the newest windows and cannot wedge the ring", but both that
+designed degradation and genuine evidence loss set one `overflowPending` flag, and the host treats `RING,overflow`
+as session-invalidating. So the intended behaviour was indistinguishable from real loss, and
+`captures/rcemem5-lazy-pool` aborted at ~150 s of a 24-bar two-overdub run purely on ring capacity after the pool fix
+had made the run itself healthy.
+
+`CaptureLineTier::evictionKindFor` / `incomingMayDisplace` now classify displacement in the header-only tier helper
+(host-testable without Arduino) and the ring keeps three separate accounts: `TimingShed` (routine, unchanged),
+`TierAText` (degradation, emitted as `#CAP,<us>,RING,tier_a_evicted,<count>,first=<us>`), and `CriticalText` (the only
+fatal kind, still `RING,overflow`). Tier-A degradation drains at the 256-record budget too, since every unsent record
+is one the ring may displace again. Because the firmware emits `RING,overflow` only for critical loss, the existing
+fatal harness clause stops firing for Tier-A thinning **without being weakened**; the harness parses the new notice
+into `tier_a_evicted_count`/`tier_a_evicted_first_us`/`tier_a_degraded` and raises an advisory
+(`capture_tier_a_evicted:<n>`) so a timing verdict is down-weighted rather than read as clean.
+
+Device (`captures/rcemem7-tier-degrade`, same 24-bar record + two-overdub shape): the run no longer aborts on ring
+capacity -- `capture_ring_overflow` is absent and the verdict is a substantive `FAIL (FIRMWARE_CONTRADICTION)`
+against the harness oracle instead of `INCONCLUSIVE_CAPTURE`, with both overdubs stored correctly (`count=192/191`
+and `152/7`, `count_ok/span_ok/bars_ok` all true) and `DISP overdub_ok=True transport_ok=True`. The advisory measures
+the thinning at **`capture_tier_a_evicted:92655`** records.
+
+**That number sizes the next step.** ~92.7k Tier-A records beyond 1 MiB over ~162 s of transport puts Tier-A at
+roughly **30-35 KB/s**, so the 1 MiB ring covers only ~30 s of active transport and no affordable ring holds a
+multi-hour run. Evidence *completeness* therefore needs either a Tier-A volume profile (a long-run divisor on the
+per-tick span families, the `DIAG,droid_queue` gate's shape) or the SD sink; *survivability* is what landed here.
+Which Tier-A families may be sampled is a policy call about evidence, so it is deliberately not made yet -- the
+mechanism, the measurement and the advisory that make it decidable are in place.
+
+Native `test_capture_line_tier` 13/13 (truth table: a Tier-A head is `TierAText` and non-fatal; a critical head is
+`CriticalText` even though it is also Tier-A; `incomingMayDisplace` refuses every case where ordinary diagnostics
+would evict Tier-A or critical evidence). Full native **2,261 cases / 1 skipped / 0 failures**; harness
+`test_capture_transitions.py` 48/48 and `test_baseline_canonical_args.py` 3/3; `teensy41-capture-serial` SUCCESS with
+RAM1 `variables 96,128 / code 392,344 / padding 872 / locals free 34,944` (three counters, +32 B).
+
 **2026-09-18 — RC-MEM-5 landed: the chunk pool grows in blocks, and the "cannot activate overdub on a 24-bar loop"
 symptom is FIXED on device (`immutable-loop-snapshot-passes` 5.11).** `initPool` no longer reserves all 512 chunks
 (2,566 KB) at boot. The chunk array is now a lazily opened block table (`POOL_CHUNKS_PER_BLOCK = 64`,

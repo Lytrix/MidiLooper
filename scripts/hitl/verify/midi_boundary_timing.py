@@ -113,6 +113,31 @@ def extract_overdub_stopping_segments(
     return segments, diagnostics
 
 
+def _tier_a_evictions(lines: list[str], *, start_index: int) -> tuple[int, Optional[int]]:
+    """Tier-A text records displaced by newer Tier-A text (non-fatal degradation).
+
+    The ring's policy is that Tier-A may only be displaced by Tier-A and that this keeps the
+    newest timing windows, so a full ring at long run length degrades the trace instead of
+    invalidating the session. Counts are summed and the earliest loss is kept so the verdict can
+    be down-weighted rather than discarded (RC-MEM-7).
+    """
+    total = 0
+    first: Optional[int] = None
+    for line in lines[start_index:]:
+        if "#CAP," not in line or ",RING,tier_a_evicted" not in line:
+            continue
+        fields = line.split(",")
+        if len(fields) >= 5 and fields[2] == "RING" and fields[3] == "tier_a_evicted":
+            try:
+                total += int(fields[4])
+            except ValueError:
+                continue
+            stamp = parse_cap_micros(line)
+            if stamp is not None and (first is None or stamp < first):
+                first = stamp
+    return total, first
+
+
 def _overflow_timestamps(lines: list[str], *, start_index: int) -> list[int]:
     """Return first-loss timestamps, falling back to legacy notice timestamps."""
     timestamps: list[int] = []
@@ -391,6 +416,7 @@ def summarize_midi_boundary_timing(
     start_index = phase_evidence_start_index(lines, after_index)
     intervals = extract_active_transport_intervals(lines, after_index=start_index)
     overflow_timestamps = _overflow_timestamps(lines, start_index=start_index)
+    tier_a_evicted_count, tier_a_evicted_first_us = _tier_a_evictions(lines, start_index=start_index)
     overflow_intervals: list[dict[str, object]] = []
     for interval in intervals:
         for overflow_ts in overflow_timestamps:
@@ -424,6 +450,12 @@ def summarize_midi_boundary_timing(
         "overflow_timestamps": overflow_timestamps,
         "overflow_intervals": overflow_intervals,
         "overflow_free": not overflow_timestamps,
+        # Non-fatal: Tier-A windows were thinned by newer Tier-A windows. A verdict computed
+        # over this session covers the retained windows only, so consumers should treat it as
+        # degraded rather than either clean or invalid.
+        "tier_a_evicted_count": tier_a_evicted_count,
+        "tier_a_evicted_first_us": tier_a_evicted_first_us,
+        "tier_a_degraded": tier_a_evicted_count > 0,
         "overdub_stopping_segments": [asdict(segment) for segment in stopping_segments],
         "overdub_stopping_diagnostics": stopping_diagnostics,
         "midi_input_call_sites": call_sites,
