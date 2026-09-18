@@ -238,6 +238,10 @@ visual detail windows are bounded optimisations on top, never a precondition for
 
 ## S4f — no user-visible denial (the reason this change exists)
 
+- [ ] S4f.0 Extend the **existing** pending-stop re-drive path rather than adding a mechanism: the two redirect
+      points (`stopOverdubbingToStopped`, `invalidatePlaybackMergedMidiEvents`) already re-issue
+      `requestDeferredOverdubStopToStopped()` for an admitted job, and neither covers a denial because a denial
+      stores nothing. Latch the request where the denial is produced and drive it from that same service point.
 - [ ] S4f.1 **Latch a request that cannot complete at once** (destination, requested tick, interval generation)
       and self-service it when the resources free, completing at the correct boundary with no second press.
 - [ ] S4f.2 Apply the same rule to record/overdub start, slot/track switching and undo/redo.
