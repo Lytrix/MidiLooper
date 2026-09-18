@@ -3088,6 +3088,49 @@ void test_deferred_stop_commit_marks_the_display_ranges_of_the_new_pass() {
                             "the committed pass must name the bars the rebuild may revisit");
 }
 
+/// Two overdub sessions must leave two `OverdubPassAdded` entries (plus the record's), and the top
+/// entry is the second session's. A dropped second publication leaves the depth at 2 and makes the
+/// next undo fall through to the first overdub.
+void test_two_deferred_overdub_sessions_keep_both_undo_entries() {
+  Track& track = preparePlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  GlobalUndoStack& stack = TrackCaptureStopTestAccess::undoStack(track);
+  // The record entry `pushRecordPassAdded` would leave; the fixture seeds the loop directly.
+  UndoEntry record;
+  record.kind = UndoEntryKind::RecordPassAdded;
+  record.slotIndex = 0;
+  record.loopId = loop.loopId;
+  record.passId = loop.passes.recordPass.id;
+  record.id = stack.nextEntryId++;
+  stack.entries.push_back(record);
+  stack.cursor = stack.entries.size();
+  TEST_ASSERT_TRUE_MESSAGE(stack.entries.capacity() >= 32,
+                           "the protected undo prewarm must reserve the publication capacity");
+
+  auto runSession = [&](uint32_t onTick) {
+    clockManager.assignCurrentTickSilently(onTick);
+    midiButtonActions.handleToggleRecord();
+    TEST_ASSERT_TRUE(track.isOverdubbing());
+    inputNote(60, onTick + 1, onTick + 24);
+    clockManager.assignCurrentTickSilently(onTick + 48);
+    midiButtonActions.handleToggleRecord();
+    TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+    for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i)
+      TrackCaptureStopTestAccess::step(track);
+    TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  };
+
+  runSession(96);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(2u, stack.cursor, "one session must add one entry");
+  const PassId firstOverdubPassId = loop.lastCommittedPassId();
+  runSession(200);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      3u, stack.cursor, "the second overdub session must add its own GUS entry");
+  TEST_ASSERT_EQUAL(static_cast<int>(UndoEntryKind::OverdubPassAdded),
+                    static_cast<int>(stack.entries.back().kind));
+  TEST_ASSERT_NOT_EQUAL(firstOverdubPassId, stack.entries.back().passId);
+}
+
 /// A full ring is explicit exhaustion, not finalization latency: admission is
 /// denied, performs no seal/ownership transfer, and consumes no accepted input.
 void test_full_stop_ring_denies_admission_and_preserves_accepted_capture() {
@@ -3524,6 +3567,7 @@ int main() {
   RUN_TEST(test_deferred_stop_prepares_job_owned_undo_entry);
   RUN_TEST(test_deferred_stop_commit_marks_the_display_ranges_of_the_new_pass);
   RUN_TEST(test_deferred_stop_undo_entry_carries_every_session_pass);
+  RUN_TEST(test_two_deferred_overdub_sessions_keep_both_undo_entries);
   RUN_TEST(test_stop_job_and_live_ingress_own_distinct_staging);
   RUN_TEST(test_overdub_shortens_record_pass_note_and_completes_stop);
   RUN_TEST(test_stop_copies_canonical_rows_without_mutating_sealed_raw_input);

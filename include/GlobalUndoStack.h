@@ -17,6 +17,13 @@ using UndoEntryId = uint32_t;
 /// `GlobalUndoStack::nextEntryId` starts at 1; zero never names a live entry.
 constexpr UndoEntryId kInvalidUndoEntryId = 0;
 
+/// Reserved `GlobalUndoStack::entries` capacity for the protected deferred-stop publication. The
+/// transaction must never grow the stack at its atomic publish (`TrackUndoPublication::begin`
+/// rejects a cursor that has reached capacity), so any rebuild that replaces the vector has to
+/// preserve this reserve -- otherwise a later stop silently publishes no undo entry while its pass
+/// still commits.
+constexpr size_t kUndoStackProtectedCapacity = 32;
+
 enum class UndoEntryKind : uint8_t {
   RecordPassAdded = 0,
   OverdubPassAdded = 1,
