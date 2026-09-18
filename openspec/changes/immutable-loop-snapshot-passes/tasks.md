@@ -1203,7 +1203,35 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       `VCACHE,idle_src,OverlayRejected,src,PassesResolve,root_rev,5,playback_rev,6` at 160.358 s followed by
       `DISP,0,STOPPED,18432,frame=280,visual=71,...,232` -- i.e. the rows return when a full resolve finally runs,
       which is what "it returns at the end" describes.
-      **Mechanism to prove.** The first overdub's rows are carried only by the sealed capture draw-source handoff /
+      **Mechanism CONFIRMED in code (not just inferred).** `Loop::openOverdubSession`
+      (`src/Loop/LoopOverdubSession.cpp:27-35`) calls **`clearSealedCapturePreview()`** on every new session, with a
+      comment that names the exact hazard it is avoiding: *"Record-stop may still hold sealed rows when visual has not
+      consumed that revision. Those rows describe the previous session; wrapping them into this one leaves a 336->336
+      hold beside the occupy suffix (`001647`)."* So the second overdub start deletes the previous overdub's rows from
+      their only carrier while `visual` is 0, and they cannot come back until a resolve covers them -- the user's
+      "it returns at the end". The clear is therefore **not** the bug in itself: retaining the rows unconditionally
+      reintroduces the `001647` hold, which is why the naive fix (drop the clear, or replace it with
+      `releaseSealedCapturePreviewIfCovered()`) is wrong on its own.
+      **Why it is unreachable from the committed side.** The handoff is only `sealedCapturePreviewNotes_` +
+      `sealedCapturePreviewRevision_` (`include/Loop.h:202-203`): it carries **no session identity**, so it cannot
+      express "these rows are display-only for the previous session and must not be consumed by this one". The
+      correct release discipline already exists as `Loop::releaseSealedCapturePreviewIfCovered`, which
+      `openOverdubSession` bypasses.
+      **Fix to implement (designed, not yet applied).** Tag the handoff with the overdub session that sealed it
+      (`sealedCapturePreviewSession_`, one byte, set in `retainCapturePreviewAtSeal` from
+      `currentOverdubSessionIndex_`) and split the two questions it currently answers as one: *display* keeps unioning
+      the sealed rows into the frame regardless of session, because they are real committed content
+      (`shouldUnionSealedCapturePreviewForDrawSource`, `src/Utils/DisplayWindowUtils.h:636/:649`, and its callers in
+      `DisplayNoteWindowGather.cpp`), while *consumption* -- the hold/occupy path at
+      `src/Loop/LoopPendingNoteChange.cpp:1234` and `:1268` -- only considers rows whose session equals the current
+      one. `openOverdubSession` then stops clearing unconditionally and releases only when covered
+      (`releaseSealedCapturePreviewIfCovered`), so the `001647` wrap cannot recur because the previous session's rows
+      are never consumable by the new session.
+      **Verify (native, and it must fail without the session tag).** Seal a first overdub, leave the committed cache
+      uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
+      still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
+      (the `001647` guard). Then assert it also leaves the frame once a resolve covers it.
+      **Prior mechanism note (kept for continuity).** The first overdub's rows are carried only by the sealed capture draw-source handoff /
       overlay, not by the committed `visualCache`, so whatever the second `beginCapture(Overdub)` invalidates
       (handoff, overlay set, or draw-source reuse key) takes those rows out of the frame with nothing to re-derive
       them from until a whole-loop pass resolve runs. This is the §5.8a family -- the handoff is a display bridge for
