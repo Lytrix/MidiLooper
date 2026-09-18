@@ -165,9 +165,11 @@ pool that supports on the order of **four** resident bundles — and the arm cha
    rejects the interaction. This is the product reason the change exists: a capacity denial the user must re-issue
    (`successor_stop_denied_capacity`, *"a later stop request is admitted once the predecessor retires"*) is the
    defect, not the contract. Semantically inapplicable interactions (nothing to undo, switching to the
-   already-selected slot) are empty operations, not refusals. An accepted request needs no new capacity -- it is
-   one small piece of state per live interval, not a stored stopped interval -- so the descriptor-ring finding
-   stands.
+   already-selected slot) are empty operations, not refusals. This supersedes the earlier reading of
+   `undo_resource_denied` as a user-visible denial: under invariant 31 it names the **wait**, the cold descriptor
+   is not consumed, and the accepted undo executes once reconstruction is admitted rather than being re-issued by
+   the user. An accepted request needs no new capacity -- it is one small piece of state per live interval, not a
+   stored stopped interval -- so the descriptor-ring finding stands.
 10. **Thirty-one invariants are binding** on the owning change (scaling, ownership, immutability, continuity, failure,
    evidence, method), each with its enforcement point; a task that violates one is not complete and an invariant
    with no enforcement point is recorded as a gap.

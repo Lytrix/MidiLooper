@@ -55,7 +55,7 @@ Three distinct quantities are still designed separately:
 | Quantity | Value | Backed by |
 |---|---|---|
 | **Library residency** | ~60+ recorded slots | canonical metadata + persisted content |
-| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture 1 + deferred finalization 1 (a second stop is **denied**, not queued) + interactive 1 | composable leases, one per role class |
+| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture 1 + deferred finalization 1 (a second stop is **accepted and scheduled**, never refused) + interactive 1 | composable leases, one per role class |
 | **Resident working-set leases** | must fit PSRAM | bounded, window-sized |
 
 The third quantity is **per class**, and the constraint is:
@@ -161,7 +161,7 @@ scheduled and executed instead of refused.
   feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
 - **Role classes with explicit cardinalities, and they are transferable.** Playback window leases scale with
   the envelope (N, derived from the budget); live capture is one; deferred finalization is one and a second stop
-  while it is occupied is denied non-destructively; interactive edit/undo/display is
+  while it is occupied is delayed non-destructively, not refused; interactive edit/undo/display is
   one unless evidence requires more. A slot may hold several classes at once, and selecting another slot or
   track **transfers the relevant role quickly** without a transport stop. Classes are composable rather than
   one monolithic lease, so 32 playback slots do not each carry fields only one live operation uses.
@@ -190,7 +190,7 @@ scheduled and executed instead of refused.
   depth and a **device-wide cold-undo byte budget**, evicting the oldest cold entries first. Reactivation does
   not rebuild the stack: only the current musical state is prepared, and a historical state is reconstructed
   off-clock when an Undo/Redo actually asks for one, committing only after successful preparation
-  (`undo_resource_denied` otherwise, with the descriptor left intact). Redo is preserved compactly and
+  (`undo_resource_denied` records the wait otherwise, with the descriptor left intact). Redo is preserved compactly and
   invalidated only by a new committed edit/capture, never by demotion. A descriptor says *which canonical state
   to select or reconstruct*, never which runtime root to resurrect.
 - **Undo history gets an explicit cold policy (superseded by the two-tier policy above).** Undo/redo roots can hold snapshot residency alive after
@@ -298,8 +298,8 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
    (its holder may also be one of the sounding slots). Finalization cardinality is decided at 1 with a
    `finalization_lease_stop_denied` counter as the evidence path to a second lease; live capture 1 and
    interactive 1 are confirmed.
-3a. **Finalization concurrency is settled, not open.** One finalizer; a second stop is denied non-destructively
-   (DEC-067, device-verified). `CaptureStopJobs::kCapacity = 4` is a descriptor ring, not a proven multi-finalizer
+3a. **Finalization concurrency is settled, not open.** One finalizer; a second stop is delayed non-destructively,
+   never refused (DEC-067 capacity, device-verified; invariant 31). `CaptureStopJobs::kCapacity = 4` is a descriptor ring, not a proven multi-finalizer
    store, so a queue model would be its own capacity/ownership change.
 4. **Whether a second finalization lease is ever warranted**, decided from `finalization_lease_stop_denied`
    evidence rather than reserved preemptively (the pathological shapes are very short captures and rapid
