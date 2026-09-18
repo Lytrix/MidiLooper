@@ -61,6 +61,25 @@
 
 - **Overdub companion admission + STOPPED first-paint (§36, Aug 2026):** clock-path gather copy-only; source-span prewarm after `boot_commit`; STOPPED undo/switch keep `visualCache.notes` and budget idle gather. Device PASS [`165107`](../captures/session_20260821_165107.log), [`183229`](../captures/session_20260821_183229.log). Plan: [`runtime_scheduling_owner_boundary_inventory_investigation.md`](Plans/runtime_scheduling_owner_boundary_inventory_investigation.md) §35–§36. Later: wrap-append bound, 5 s idle attribution (§37).
 
+**Complete on `refactor/runtime-code-tidyup` — merge owed** (stacked on `feature/resumable-midi-boundary-playback-maintenance`):
+
+- **Runtime-code tidy-up (`runtime-code-tidyup`, Sep 2026) — maintainability deliverable:** behavior-preserving
+  review of the 56 runtime files the base change added — dead code the branch itself superseded, thirteen
+  re-expressions of one resumable-worker pattern, two vocabularies for one concept, and no enforced formatting.
+  Six phases: P1 dead code/artifacts, P2 constants and enums, P3 de-duplication into existing owners, P4 NAMING
+  convergence, P5 three ownership-seam file splits (`RuntimePlaybackView.cpp` 853→707,
+  `RuntimePlaybackBridge.cpp` 803→639, `LoopSnapshotPublish.cpp` 2,319→2,087), P6 formatting/docs. **Gates:** native
+  **2,262 / 1 skipped / 2,261 passed**; `pio run -e teensy41-capture-serial` SUCCESS with RAM1
+  `variables 96096 / code 391736 / padding 1480 / free for local variables 34976`, `_itcm_block_count` **12**
+  unchanged across all three P5 splits (ELF `_etext` `0x5fa38` before and after); `openspec validate
+  runtime-code-tidyup --strict` valid. **No HITL gate** — no phase changes observable device behavior.
+  Decisions: [DEC-076](../docs/DECISION_LOG.md#dec-076--snapshot-idleunit-instrumentation-stays-on-the-broad-session_capture-gate)
+  (idle/unit probes stay on the broad `SESSION_CAPTURE` gate) and
+  [DEC-077](../docs/DECISION_LOG.md#dec-077--window-is-the-canonical-name-for-the-playback-derived-representation)
+  (`window` canonical; `RuntimePlaybackView*` family grandfathered). Detail:
+  [`tasks.md`](../openspec/changes/runtime-code-tidyup/tasks.md),
+  [`PREFLIGHT.md`](../openspec/changes/runtime-code-tidyup/PREFLIGHT.md), `design.md` § D8.4.
+
 **Next (persistence/runtime):** **`feature/overdub-participant-discovery`** — leftover identity HITL **PASS** [`111819`](../captures/session_20260819_111819.log); missing-open identity validity filter native **PASS** 1374/1374 HITL `n=1 a=2` open ([`overdub_occupy_missing_open_identity_bugfix.md`](Plans/overdub_occupy_missing_open_identity_bugfix.md)); occupy clock same-tick Off-before-On HITL **PASS** [`001021`](../captures/session_20260819_001021.log) ([`overdub_occupy_clock_same_tick_off_before_on_bugfix.md`](Plans/overdub_occupy_clock_same_tick_off_before_on_bugfix.md); `n=0 a=1` = 0, `n=1 a=0` = 0); parent catch-up pin [`235314`](../captures/session_20260818_235314.log) was 4; pin [`233247`](../captures/session_20260818_233247.log) was 11; interval catch-up in tree; USB `playMidiEvents` catch-up HITL **FAIL** [`214856`](../captures/session_20260818_214856.log) reverted; wrap-S HITL **PASS** [`185831`](../captures/session_20260818_185831.log); loop-head storage-0 HITL **PASS** [`203948`](../captures/session_20260818_203948.log) ([`overdub_loop_head_playback_ledger_bugfix.md`](Plans/overdub_loop_head_playback_ledger_bugfix.md)). Occupy lookup of `Entry.noteId` shipped. Stage 1 `from=span` HITL **parked**. Do not wait STOPPED for 64-bar `lcr,mat`. Phase 4 1-bar HITL **PASS** [`123803`](../captures/session_20260818_123803.log). Loop length during overdub queued. **NOTE_EDIT hydrate** queued. **Playback gather** Stage 1 hooks. Overlay track A parked.
 
 **Not in firmware** (docs may suggest otherwise):
@@ -126,6 +145,7 @@ This table is your “main vs sub deliverables” view. For most MVP items we on
 ### Deliverable Overview
 | Deliverable | Canonical code areas (from this repo) | Spec / plan docs | State |
 |---|---|---|---|
+| Runtime-code tidy-up (maintainability) | `src/Track/Runtime*` / `TrackPrepared*` / `TrackUndo*`, `src/Loop/LoopSnapshot*`, `src/StorageLoopIoBodyFormatV1.cpp`, `src/Utils/*`, `linker/imxrt1062_t41_lcr.ld` allow-list | [`runtime-code-tidyup` tasks.md](../openspec/changes/runtime-code-tidyup/tasks.md), [`PREFLIGHT.md`](../openspec/changes/runtime-code-tidyup/PREFLIGHT.md), [`CLANG-FORMAT-DRYRUN.md`](../openspec/changes/runtime-code-tidyup/CLANG-FORMAT-DRYRUN.md) | **Complete on `refactor/runtime-code-tidyup`** — P1–P6, merge owed. Gates: native 2,262 / 1 skipped / 2,261 passed; `teensy41-capture-serial` SUCCESS, RAM1 byte-identical to baseline, `_itcm_block_count` 12 unchanged; `openspec validate --strict` valid. No HITL gate |
 | MVP: Display + Button workflow to load/save sessions | `DisplayManager`, `MidiButtonActions` (session triggers), `StorageManager` + `LooperStateManager` | Needs a plan doc export for the actual UX flow | Needs spec (not found as an existing slice doc) |
 | MVP: Memory expansion (PSRAM/OSRAM) to increase undo + loop capacity (>= 11000 notes) | `TrackUndo`, `Utils/MemoryPool` / `PooledMidiEventVector`, `Track`/`Loop` MIDI event storage | No plan export exists (referenced `mvp_psram_memory_expansion.plan.md` was never exported) — `ExtMemAllocator` spillover strategy: internal RAM first, PSRAM fallback, no-PSRAM graceful degradation | Implemented: `include/Utils/ExtMemAllocator.h`, `MemoryPool.h`, `Loop.h`, `StorageManager.cpp`, `main.cpp`; unit tests in `test/test_extmem_allocator/` |
 | MVP: Display CC values + edit them using the faders | `DisplayManager` (info rendering), `NoteEditManager::handleMidiCC`, `MidiFaderManager` / `MidiFaderActions` | (Related concept) `Plans/phase-3-multi-loop.md` “cycle MIDI category note vs CC value” goal; no dedicated CC-editor slice doc found | Needs spec (UI + fader mapping still to be defined) |

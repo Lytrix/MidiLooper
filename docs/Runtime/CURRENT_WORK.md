@@ -2741,17 +2741,23 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
-**2026-09-18 — ACTIVE IMPLEMENTATION SCOPE: `runtime-code-tidyup` phases P1–P6 on
-`refactor/runtime-code-tidyup` (stacked on this branch at `4aacd18e`).** A code-tidying review of the
-56 files this branch added found dead code the branch itself superseded, one resumable-worker pattern
-re-expressed thirteen times, two vocabularies for one concept (`view`/`window`, `normalized*` for
-**merge**), and no enforced formatting. The change is a behavior-preserving refactor: `skip_specs: true`,
-no ownership movement, no persisted/wire/format change, and no HITL gate — see
-[`PREFLIGHT.md`](../../openspec/changes/runtime-code-tidyup/PREFLIGHT.md) for the trigger assessment and
-the save-path judgment call. Order: P1 dead code and dead artifacts → P2 constants and enums → P3
-de-duplication into existing owners → P4 naming convergence → P5 three gated file splits → P6 formatting
-and documentation. Gate per phase: `pio test -e native`; plus the firmware build and RAM1 line for
-P1–P5. Everything below this entry is **queued, not started**, and is not part of this scope.
+**2026-09-18 — `runtime-code-tidyup` P1–P6 COMPLETE on `refactor/runtime-code-tidyup` (stacked on this
+branch at `4aacd18e`; only the 8.6 PR decision is owed).** The behavior-preserving tidying of the 56
+runtime files this branch added landed as P1 dead code and dead artifacts → P2 constants and enums → P3
+de-duplication into existing owners → P4 naming convergence → P5 three file splits → P6 formatting and
+docs. Final gates: native **2,262 / 1 skipped / 2,261 passed**; `teensy41-capture-serial` SUCCESS with
+RAM1 `variables 96096 / code 391736 / padding 1480 / free for local variables 34976` and
+`_itcm_block_count` **12** unchanged across P5's three splits (ELF `_etext` `0x5fa38`, same as before);
+`openspec validate runtime-code-tidyup --strict` valid. Outcome: three files split along real ownership
+seams (`RuntimePlaybackView.cpp` 853→707, `RuntimePlaybackBridge.cpp` 803→639,
+`LoopSnapshotPublish.cpp` 2,319→2,087), the base change's `tasks.md` reduced from 1,126 lines to a
+65-line checklist whose journal now lives here, and `DEC-076`/`DEC-077` record the two open decisions.
+Detail and per-phase gates: [`tasks.md`](../../openspec/changes/runtime-code-tidyup/tasks.md) and
+[`PREFLIGHT.md`](../../openspec/changes/runtime-code-tidyup/PREFLIGHT.md). **No HITL gate** — no phase
+changes observable device behavior.
+
+**No other implementation scope is active.** Everything below this entry is queued, not started, and is
+not part of the completed tidy-up.
 
 **2026-09-18 — the next architectural target is WORKING-SET OWNERSHIP, not more per-slot trimming
 (`runtime-working-set-ownership`, requested as a `DEC-###`).** The record-arm exit reported on

@@ -89,7 +89,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 
 ---
 
-<!-- Append new entries below (newest first). Next ID: DEC-076 -->
+<!-- Append new entries below (newest first). Next ID: DEC-078 -->
 
 ## DEC-077 — `window` is the canonical name for the playback derived representation
 
@@ -122,9 +122,11 @@ across ~25 identifiers and ~200 references, forbidden by § Migration policy and
 **Date:** 2026-09-18
 **Status:** Accepted — recorded by [`runtime-code-tidyup`](changes/runtime-code-tidyup/proposal.md) task 3.6
 (decision OD-2). **No code change**: the compile gate is unchanged.
-**Owner:** the probe scopes and emitters in `src/Loop/LoopSnapshotPublish.cpp` (`SnapshotIdleChildAdd` scopes,
-`resetSnapshotIdleChildTimes`, `emitSnapshotUnitCapture` / `emitSnapshotUnitStepCapture`, the
-`Loop::lastSnapshotIdle*Us` accessors) and their only reader, `src/Utils/InvestigationCaptureLog.cpp`
+**Owner:** the probe scopes and emitters now owned by `src/Loop/LoopSnapshotIdleTelemetry.cpp`
+(`SnapshotIdleChildAdd` scopes, `resetSnapshotIdleChildTimes`, `emitSnapshotUnitCapture` /
+`emitSnapshotUnitStepCapture`, the `Loop::lastSnapshotIdle*Us` accessors — P5 task 6.3 moved them out of
+`src/Loop/LoopSnapshotPublish.cpp`, which keeps only the call sites) and their only reader,
+`src/Utils/InvestigationCaptureLog.cpp`
 (`snapshotIdleTurnPerformedWork`, compiled under `SESSION_CAPTURE_INVESTIGATION_DIAG || SESSION_CAPTURE_SNAPSHOT_IDLE`).
 
 **Context.** The producer and the consumer of this family sat on different gates. The probes compile under
