@@ -307,8 +307,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM bool RuntimePlaybackBridgeBuild::beginInitialWin
   for (size_t i = 0; i < bridge.ledgerBoundary.count; ++i) {
     const auto& a = bridge.ledgerBoundary.openNotes[i];
     const auto& b = context.ledgerBoundary.openNotes[i];
-    if (a.channel != b.channel || a.note != b.note || a.noteId != b.noteId ||
-        a.startTick != b.startTick || a.velocity != b.velocity) return false;
+    if (!activeNoteEntriesMatch(a, b)) return false;
   }
   if (!begin(base, bridge)) return false;
   bridge.canonicalRankCount = context.canonicalRankCount;
@@ -405,8 +404,7 @@ PLAYBACK_BRIDGE_MAINTENANCE_MEM RuntimePlaybackOrderBuildResult RuntimePlaybackB
         for (size_t i = 0; i < predecessor_->heldClosureCount; ++i) {
           const auto* previous = predecessor_->heldClosure(i);
           const auto& old = predecessor_->ledgerBoundary.openNotes[i];
-          if (!previous || open.channel != old.channel || open.note != old.note ||
-              open.noteId != old.noteId || open.startTick != old.startTick || open.velocity != old.velocity ||
+          if (!previous || !activeNoteEntriesMatch(open, old) ||
               previous->relativeTick < elapsed + bridge_->cursorAnchor.phase) continue;
           auto& closure = bridge_->heldClosures[index];
           closure = *previous;

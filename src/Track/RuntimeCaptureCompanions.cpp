@@ -17,15 +17,13 @@ CAPTURE_COMPANION_MEM RuntimeCaptureCompanions::RuntimeCaptureCompanions() = def
 CAPTURE_COMPANION_MEM RuntimeCaptureCompanions::~RuntimeCaptureCompanions() {
   if (rows_ == nullptr) return;
   for (size_t i = 0; i < capacity_; ++i) rows_[i].~EditPass();
-  if (isInExternalMemoryPool(rows_)) extmem_free(rows_);
-  else std::free(rows_);
+  externalFirstFree(rows_);
 }
 
 CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::prewarm(size_t capacity) {
   if (rows_ != nullptr) return capacity_ == capacity;
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
-  void* memory = extmem_malloc(capacity * sizeof(EditPass));
-  if (memory == nullptr) memory = std::malloc(capacity * sizeof(EditPass));
+  void* memory = externalFirstAlloc(capacity * sizeof(EditPass));
   if (memory == nullptr) return false;
   rows_ = static_cast<EditPass*>(memory);
   capacity_ = capacity;
@@ -49,8 +47,7 @@ CAPTURE_COMPANION_MEM bool RuntimeCaptureCompanions::ensureCapacity(size_t neede
   if (needed > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
   if (rows_ != nullptr) {
     for (size_t i = 0; i < capacity_; ++i) rows_[i].~EditPass();
-    if (isInExternalMemoryPool(rows_)) extmem_free(rows_);
-    else std::free(rows_);
+    externalFirstFree(rows_);
     rows_ = nullptr;
     capacity_ = 0;
   }

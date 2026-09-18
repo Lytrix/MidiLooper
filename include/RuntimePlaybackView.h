@@ -349,6 +349,13 @@ struct RuntimePlaybackViewLifecycle {
   bool publishCompletedBuildAsReady(
       std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
       PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
+ private:
+  /// Shared tail of both "promote a prepared view to current" transitions: the ready view becomes
+  /// current and retained, `previousAnchor` becomes the build slot, and the other roles clear.
+  /// The callers own their own entry guards.
+  void installRetainedCurrentView(
+      std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
+      uint8_t previousAnchor);
 };
 
 /// Selected and candidate bridges have independent fixed buffers.  Beginning a

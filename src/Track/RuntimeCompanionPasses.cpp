@@ -8,22 +8,13 @@
 #include <new>
 
 namespace {
-NOTE_EDIT_MEM void* companionPassAllocate(size_t bytes) {
-  void* memory = extmem_malloc(bytes);
-  return memory != nullptr ? memory : std::malloc(bytes);
-}
-NOTE_EDIT_MEM void companionPassFree(void* memory) {
-  if (memory == nullptr) return;
-  if (isInExternalMemoryPool(memory)) extmem_free(memory);
-  else std::free(memory);
-}
 }
 NOTE_EDIT_MEM RuntimeCompanionPasses::~RuntimeCompanionPasses() {
   // Borrowed owners need not outlive destruction; do not dereference them here.
   for (size_t buffer = 0; buffer < 2; ++buffer) {
     if (events_[buffer] != nullptr)
       for (size_t i = 0; i < capacity_; ++i) events_[buffer][i].~MidiEvent();
-    companionPassFree(events_[buffer]); companionPassFree(origins_[buffer]);
+    externalFirstFree(events_[buffer]); externalFirstFree(origins_[buffer]);
   }
 }
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::prewarm(size_t capacity) {
@@ -31,11 +22,11 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::prewarm(size_t capacity) {
   if (capacity_ != 0) return capacity == capacity_;
   MidiEvent* events[2]; Origin* origins[2];
   for (size_t i = 0; i < 2; ++i) {
-    events[i] = static_cast<MidiEvent*>(companionPassAllocate(capacity * sizeof(MidiEvent)));
-    origins[i] = static_cast<Origin*>(companionPassAllocate(capacity * sizeof(Origin)));
+    events[i] = static_cast<MidiEvent*>(externalFirstAlloc(capacity * sizeof(MidiEvent)));
+    origins[i] = static_cast<Origin*>(externalFirstAlloc(capacity * sizeof(Origin)));
   }
   if (events[0] == nullptr || events[1] == nullptr || origins[0] == nullptr || origins[1] == nullptr) {
-    for (size_t i = 0; i < 2; ++i) { companionPassFree(events[i]); companionPassFree(origins[i]); }
+    for (size_t i = 0; i < 2; ++i) { externalFirstFree(events[i]); externalFirstFree(origins[i]); }
     return false;
   }
   for (size_t buffer = 0; buffer < 2; ++buffer) {

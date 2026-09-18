@@ -230,7 +230,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
   into one body parameterised by an undo pointer, and route `commitStopped`/`commitStoppedWithUndo`/`commitWithUndo`
   through the same shape so the three test-only wrappers stop being the only callers of a production path. Verify:
   `test_playback_prewarm` stop/undo cases pass; `commitStopped*` has either a production caller or is removed.
-- [ ] 4.5 Add inline `externalFirstAlloc(size_t)` / `externalFirstFree(void*)` to
+- [x] 4.5 Add inline `externalFirstAlloc(size_t)` / `externalFirstFree(void*)` to
   `include/Utils/InternalHeapFirstAllocator.h` and migrate the 16 sites across the eight companion TUs, preserving
   extmem→malloc order and free routing. Verify: `test_pending_note_change`, `test_loop_take_survival`,
   `test_playback_prewarm` pass; no new out-of-line symbol (size check).
@@ -240,16 +240,16 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
 - [ ] 4.7 Promote the existing ceiling-grain lambda to one `constexpr ceilGrains(...)` on
   `include/RuntimePlaybackOrderBuilder.h` and give the per-phase slack terms names — **values unchanged**. Verify: grep
   shows the two local lambdas gone and no slack literal re-valued in the diff; native suite passes.
-- [ ] 4.8 Add `activeNoteEntriesMatch(...)` to `include/ActiveNoteLedger.h` and use it in all four sites
+- [x] 4.8 Add `activeNoteEntriesMatch(...)` to `include/ActiveNoteLedger.h` and use it in all four sites
   (`src/Track/RuntimePlaybackView.cpp:40,362-363`, `src/Track/RuntimePlaybackBridge.cpp:310-311,408-409`). Verify: the
   anonymous-namespace copy is deleted; native suite passes.
-- [ ] 4.9 Extract one `installRetainedCurrentView(views, sourceIndex, requireRawPrepared)` for `installPreparedCurrent`
+- [x] 4.9 Extract one `installRetainedCurrentView(views, sourceIndex, requireRawPrepared)` for `installPreparedCurrent`
   / `replaceRetainedWithReady` (`src/Track/RuntimePlaybackView.cpp:541-557` vs `:559-575`). Verify:
   `test_playback_prewarm` lifecycle cases pass.
 - [ ] 4.10 Extract the duplicated event-membership page comparator in `src/Loop/LoopSnapshot.cpp:1131-1142` vs
   `:1240-1251` — comparator only; do **not** template the bar-apply stage machines (design § D8.4). Verify:
   `test_loop_event_store` and `test_loop_take_survival` pass byte-identically.
-- [ ] 4.11 Extract one `shouldTrimGlobalUndoStackForMemory(...)` predicate into `include/PassReclaim.h` used by both
+- [x] 4.11 Extract one `shouldTrimGlobalUndoStackForMemory(...)` predicate into `include/PassReclaim.h` used by both
   `src/PassReclaim.cpp:84-116` and `src/Track/TrackUndoRetirement.cpp:85-86`, with a comment recording that the two
   agree on reachable cases today and why `cursor == 0` stays as written. Verify: `test_pool_budget` and
   `test_global_undo_stack_persistence` pass; no policy value changed.
@@ -262,6 +262,29 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
   helpers are inline/constexpr so no new symbols.
 - [ ] 4.14 P3 gate: full native suite plus the differential/oracle fixtures (`test_playback_prewarm`, `test_continuous_capture`, `test_loop_take_survival`, `test_storage_loop_io`)
   and a firmware build; record the RAM1 line. Verify: byte-identical traces/inventories and unchanged case count.
+
+### P3 progress (2026-09-18) — phase incomplete, gate deferred
+
+Landed so far, each verified green: **4.5** (the external-first allocate/free pair now lives once on
+`include/Utils/InternalHeapFirstAllocator.h` as inline `externalFirstAlloc`/`externalFirstFree`, and all
+16 sites across the eight worker TUs route through it — the three local helper pairs were deleted and the
+five inline destructor sites migrated; semantics are identical because every site already freed with the
+`else std::free(...)` form), **4.8** (one `activeNoteEntriesMatch` on `ActiveNoteLedger.h` replacing four
+copies, one of which was a local `ledgerEntryEquals` in an anonymous namespace), **4.9**
+(`installRetainedCurrentView` shared by `installPreparedCurrent` / `replaceRetainedWithReady`), **4.11**
+(one `shouldTrimGlobalUndoStackForMemory` predicate on `PassReclaim.h` used by both the batch trimmer and
+`GlobalUndoStackTrimCursor`; the cursor keeps its own compaction policy and re-decides after each entry,
+per DEC-063).
+
+Sub-phase gate: native **2,262 / 1 skipped / 2,261 passed**; firmware SUCCESS with RAM1
+`variables 96096 / code 392312 / padding 904 / free for local variables 34976` — free-for-locals unchanged,
+so still the same FlexRAM bank.
+
+**Still open in P3:** 4.1 (ordering key + `eventKind` owner), 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle
+accessor vocabulary), 4.4 (atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1
+re-measure), 4.7 (`ceilGrains`), 4.10 (bar-membership comparator), 4.12 (`*_MEM` alias consolidation),
+4.13 (unique-id/box/bar-count helpers), and the phase gate 4.14. The phase gate stays unchecked until they
+land; the P3 work is committed in sub-commits so each is independently bisectable.
 
 ## 5. P4 — converge naming on the authority (record the decision first)
 

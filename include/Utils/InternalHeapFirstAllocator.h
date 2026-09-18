@@ -39,6 +39,26 @@
   inline bool isInExternalMemoryPool(const void*) { return false; }
 #endif
 
+/**
+ * Raw-byte external-first allocate/free for the prewarmed worker buffers.
+ *
+ * Every resumable worker (`RuntimeCanonicalPassInputs`, `RuntimeCompanion*`, `RuntimeCaptureCompanions`,
+ * `RuntimeNotePairLookup`) prewarms one or more bounded buffers and must route the free back to the same
+ * pool that served it. Keeping the pair here single-sources that ordering; each worker previously wrote
+ * its own copy, where the fallback order or the free routing could drift. `inline`, so there is no new
+ * out-of-line symbol and no RAM1 cost.
+ */
+inline void* externalFirstAlloc(size_t bytes) {
+  void* memory = extmem_malloc(bytes);
+  return memory != nullptr ? memory : std::malloc(bytes);
+}
+
+inline void externalFirstFree(void* memory) {
+  if (memory == nullptr) return;
+  if (isInExternalMemoryPool(memory)) extmem_free(memory);
+  else std::free(memory);
+}
+
 template <typename T>
 class InternalHeapFirstAllocator {
  public:
