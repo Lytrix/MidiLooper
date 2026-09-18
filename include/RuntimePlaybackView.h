@@ -426,7 +426,7 @@ struct RuntimePlaybackViewSet {
 
   /// Reserve this slot's playback representation. `reserveWholeTake` must be the owning
   /// loop's `fullTakePlaybackViewAdmissible()` answer; false keeps the three rolling views
-  /// and both capture stagings (the windowed lanes and capture admission need them) and
+  /// and both capture stagings (the three rolling windows and capture admission need them) and
   /// leaves the bridges, their bases and the prepared pair unreserved.
   bool prewarm(bool reserveWholeTake = true);
   /// True when the whole-take representation was reserved and can still be published.

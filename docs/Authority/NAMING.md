@@ -299,6 +299,20 @@ Physical chunks (`LoopEventStore`) are packing, not resolution boundaries. Pass-
 
 Platform/SDK symbols that must stay unchanged behind shims are allowed (for example: `extmem_malloc`, `extmem_free`, `external_psram_size`).
 
+### Playback window (canonical) vs view
+
+Use **window** for the playback derived representation: the bounded, coverage-qualified slice of
+committed content a consumer traverses (playback window/order, `PlaybackCoverageInterval`, windowed
+gathers, `RuntimePlaybackViewConfig` capacities). **`view` is on the avoid-list** (§ Identifier
+rules 5), and `RuntimePlaybackView` is grandfathered only because DEC-067's capacity table names
+`RuntimePlaybackView.cpp` / `RuntimePlaybackBridge.cpp` as the owners of the fixed buffers; DEC-077
+pinned the choice as **window**. Consequences:
+
+- New names in this subsystem say **window**, or name their own concept directly
+  (`FixedPlaybackEventStorage`, `PlaybackCoverageInterval`) - do not introduce a new `*View` type.
+- Do **not** rename the existing `RuntimePlaybackView*` family to satisfy this clause: the renaming
+  ban (§ Migration policy) outranks the preference, so convergence happens on touch, not by sweep.
+
 ### Note edit overlap (moving note + overlap notes)
 
 | Term | Role |

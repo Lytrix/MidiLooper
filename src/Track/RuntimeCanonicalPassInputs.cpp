@@ -157,19 +157,19 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::resumeCurrentAfterAppend(
   return true;
 }
 
-NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::adoptCommittedNormalization(
+NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::adoptCommittedMerge(
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
     const CurrentSource& live, const RuntimeCompanionPasses& resolved) {
   if (!current_ || loopPasses_ != &passes || !includeCapture_ ||
-      !resolved.normalizationMatches(*this, source) ||
+      !resolved.mergedMatches(*this, source) ||
       live.playbackRevision != source.playbackRevision ||
       live.sourceGeneration != source.sourceGeneration || live.loopLengthTicks != loopLength_ ||
       &current_->playbackRevision != &live.playbackRevision ||
       &current_->sourceGeneration != &live.sourceGeneration ||
       &current_->loopLengthTicks != &live.loopLengthTicks ||
       &current_->storageGeneration != &live.storageGeneration) return false;
-  const size_t normalizedCount = resolved.normalizedEventCount();
-  const size_t normalizedPasses = resolved.normalizedPassCount();
+  const size_t normalizedCount = resolved.mergedEventCount();
+  const size_t normalizedPasses = resolved.mergedPassCount();
   ++generation_; releaseApply(); read_.discard(); captureOrderBuild_.discard();
   std::swap(raw_, effective_); std::swap(outputs_, nextOutputs_);
   count_ = normalizedCount; pass_ = normalizedPasses;

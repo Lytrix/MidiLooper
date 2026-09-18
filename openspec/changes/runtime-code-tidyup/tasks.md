@@ -387,10 +387,10 @@ land; the P3 work is committed in sub-commits so each is independently bisectabl
 
 ## 5. P4 — converge naming on the authority (record the decision first)
 
-- [ ] 5.1 Author the `DEC-###` for OD-1 (`view` vs `window`) with explicit user approval, and add the one-clause note to
+- [x] 5.1 Author the `DEC-###` for OD-1 (`view` vs `window`) with explicit user approval, and add the one-clause note to
   `docs/Authority/NAMING.md`; **no rename in this change**. Verify: `DEC-###` appended, NAMING clause present, and
   `grep` shows no `Runtime*View*` symbol renamed.
-- [ ] 5.2 Rename `normalized*` → `merged*` (NAMING's term for the merged working view) **only** in files P1–P3 already
+- [x] 5.2 Rename `normalized*` → `merged*` (NAMING's term for the merged working view) **only** in files P1–P3 already
   touched: `include/RuntimeCanonicalPassInputs.h:77-85`, `include/RuntimeCompanionPasses.h:47-50` and the
   `adoptCommittedNormalization` call site. Verify: native suite passes; `normalize` no longer names a merged buffer.
 - [ ] 5.3 Rename the four `*Kind` enums to `*Type` (`SnapshotChangeKind`, `RuntimeCompanionApply::Kind`, `ActionKind`, `RefreshKind`)
@@ -408,6 +408,33 @@ land; the P3 work is committed in sub-commits so each is independently bisectabl
   comment states the contract, native suite passes.
 - [ ] 5.7 P4 gate: full native suite; `grep` audit showing no deprecated name survives in the touched files. Verify:
   suite unchanged; diff contains no file touched *only* by a rename.
+
+### P4 progress (2026-09-18) — phase incomplete, gate deferred
+
+**5.1 — OD-1 recorded as DEC-077.** The user chose `window` as canonical for the playback derived
+representation. `DEC-077` (index row + entry, newest first) states the decision, why it could not be a
+rename (DEC-067's capacity table already names `RuntimePlaybackView.cpp`, and a rename-only sweep is
+forbidden), and the two consequences. A new NAMING.md clause **"Playback window (canonical) vs view"**
+records that new names in this subsystem say *window* (or name their own concept) and that the existing
+`RuntimePlaybackView*` family is grandfathered and converges on touch. **No symbol was renamed.**
+
+**5.2 — `normalized*` → `merged*`** in the files this change touches: 26 sites over 6 files
+(`mergedScratch`, `mergedDescriptors`, `claimMergedScratch`, `mergedScratchMatches`, `mergedEventCount`,
+`mergedPassCount`, `mergedMatches`, `adoptCommittedMerge`). `normalize` in this repo already means tick-range
+normalization, so a third name for the authority's **merge** was actively misleading. All eight target names
+were checked for collisions first (none existed).
+
+**5.4 (partial) — the forbidden metaphor is gone**: the `RuntimePlaybackView.h` comment no longer says
+"the windowed lanes"; it says "the three rolling windows" (NAMING.md forbids lane/tile/bucket/grid for the
+bar granule).
+
+Sub-phase gate: native 2,262 / 1 skipped / 2,261 passed; firmware SUCCESS with RAM1 unchanged
+(`code 391736 / padding 1480 / free 34976`).
+
+**Still open in P4:** 5.3 (`*Kind` → `*Type`: `SnapshotChangeKind` 101 refs,
+`RuntimeCompanionApply::Kind` 47, `RefreshKind` 14, `ActionKind` 11), the rest of 5.4
+(`SizeFn`/`EventAtFn`/`GenerationFn` → `…Reader`, `RuntimePlaybackViewFillScope` → `…FillCoverage`),
+5.5 (ownership-attribution naming), 5.6 (OD-3 note-side `applySoonestBar`), and the phase gate 5.7.
 
 ## 6. P5 — split the three files with real ownership seams
 
