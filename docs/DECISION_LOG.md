@@ -165,6 +165,11 @@ pool that supports on the order of **four** resident bundles — and the arm cha
   the 1 MiB capture ring; the measurements above depend on it.
 - The arm-exit fix (`immutable-loop-snapshot-passes` §5.13) stays as a safeguard only.
 
+**Naming of the owning change.** It keeps the id `runtime-working-set-ownership` (decided 2026-09-18) even
+though it also carries readiness, standby, visual and canonical-residency stages: the id names the stable
+**thesis** that justifies the change, while **Playhead-scheduled MVCC** names the architecture the stages build.
+Its `proposal.md` § Name and scope states this, so the id is not re-derived when a stage is added.
+
 **Not decided here.** The 16-track / bank-switching scope; the transfer-overlap depth; the **cold undo policy**
 (required before any flat-cold-memory claim); the canonical residency policy; the default window size; whether a
 second finalization lease is ever warranted (evidence path: a `finalization_lease_stop_denied` counter); and

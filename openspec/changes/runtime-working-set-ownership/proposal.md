@@ -77,6 +77,19 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
 `openspec/specs/lazy-slot-hydration/spec.md` (closest precedent),
 `openspec/specs/loop-event-pool-admission/spec.md` (canonical capacity).
 
+## Name and scope
+
+**The change id names the thesis, not the whole architecture.** `runtime-working-set-ownership` is the law whose
+violation justifies the change -- recorded working state must not scale with recorded-slot count -- and it is
+where the plan starts. The change also carries the stages that law forces: window-derived sizing (S2), the
+work-item contract (S0.6), role transfer (S4b), immutable readiness at re-entry (S4c), the standby tier (S4d),
+the visual tier (S4e) and persistence-backed canonical residency (S6). The architecture they collectively build
+is **Playhead-scheduled MVCC** ([`docs/Authority/NAMING.md`](../../../docs/Authority/NAMING.md)); the DEC is
+[DEC-076](../../../docs/DECISION_LOG.md).
+
+This split is deliberate (decided 2026-09-18): a change id that named the architecture noun would have to be
+re-derived whenever a stage is added, whereas the thesis is stable. Read the stage list in `tasks.md` for scope.
+
 ## What Changes
 
 - **Ownership rule.** Derived playback/capture working sets become **active-runtime-role owned**, not
