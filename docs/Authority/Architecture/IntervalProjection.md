@@ -78,6 +78,34 @@ Display is **two steps**: representation (head/tail, open tails) then interval f
 
 ---
 
+## Readiness deadline and window size
+
+Interval projection owns *which part of the timeline is relevant*. It now also carries **when** a projected
+interval must be ready, because playback may only consume immutable state.
+
+**Readiness contract.** After a recording, overdub or edit changes content at a tick, an updated immutable
+state must be ready by the time the playhead moves over that tick again. A **missed deadline keeps the previous
+version authoritative for that pass** — never torn, never held silent, never deferred in a way that disturbs
+timing. Currency is decided by coverage/identity, not by a timestamp.
+
+**Window size is a tunable, not a constant.** Bar-based windows are today's unit (a 2-bar merged playback
+window is 1,536 ticks). Finer queued slot switching — the jamming target — needs shorter windows. At
+`INTERNAL_PPQN = 192` and `QUARTERS_PER_BAR = 4` (`TICKS_PER_BAR = 768`, 192 ticks per beat):
+
+| Granularity | Ticks | At 120 BPM |
+|---|---|---|
+| 1 bar (today) | 768 | 2,000 ms |
+| 1/4 beat (16th note) | 48 | 125 ms |
+| 1/8 beat (32nd note) | 24 | 62 ms |
+| 1/16 beat | 12 | 31 ms |
+| 1/32 beat | 6 | 16 ms |
+
+Window size trades three coupled quantities: **resident bytes** (how many slots can sound), **achievable switch
+granularity**, and **publication load** (smaller windows mean more boundary crossings and more frequent work,
+tightening the deadline exactly as the work grows more frequent). It must therefore be measured, not assumed —
+see the window-size sweep in `openspec/changes/runtime-working-set-ownership/` (S2.6) and the standby sizing
+that shares its arithmetic (S2.7).
+
 ## Hot-path rules (D24)
 
 | API | Heap |

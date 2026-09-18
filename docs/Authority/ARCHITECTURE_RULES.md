@@ -38,6 +38,21 @@ Lightweight checks (PROJECT_STATE, CURRENT_WORK, skim DECISION_LOG) are **not** 
 
 ## Ownership rules
 
+### Runtime working sets are role-owned, and memory scales with active roles
+
+Derived runtime views, capture companion storage and bounded canonical working content are owned by an
+**active runtime role**, not permanently by a loop slot. Inactive slots retain descriptors, bounded metadata
+and a capped envelope only. Working sets are **window-sized** (a slot's resident cost must not depend on its
+loop length), leased on activation or admission under a generation-qualified identity, reused across slots,
+and released when no live owner remains. Capacity is derived from measurement, never asserted.
+
+The whole-setup term is **Playhead-scheduled MVCC** ([NAMING.md](../NAMING.md)); the stage shape is a
+**Pipeline of role-owned stages** with declared cost and deadline. The binding invariants and the staged plan
+live in `openspec/changes/runtime-working-set-ownership/`.
+
+Corollary: a capacity claim that scales with recorded-slot count is a defect, not a tuning problem. A second
+authority for "which slot is active" is a defect (`activeLoopIndex` owns it).
+
 Each row is the **single owner** for lifecycle and mutation of that scope. Callers request operations through the owner; they do not reach into peer internals.
 
 | Scope | Owner | Owns | Does not own |

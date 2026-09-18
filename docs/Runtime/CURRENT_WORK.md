@@ -2741,6 +2741,11 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**Related, designed not implemented: `capture-tier-a-budget-profiles`** — the instrumentation change that keeps a
+15–20 minute session inside the 1 MiB capture ring (per-family byte budgets, edge/sample/stream classes, critical
+reserve, per-family coverage, and a host rule that degraded evidence cannot pass unconditionally). It is the
+instrument this architecture's measurements depend on.
+
 **2026-09-18 — ACTIVE IMPLEMENTATION SCOPE: WORKING-SET OWNERSHIP / HEAP PRESSURE
 (`runtime-working-set-ownership`).** The overdub live-capture one-frame paint flicker is **CLOSED
 without a fix at the user's direction** ("close this bug, we have a bigger plan to solve the memory
