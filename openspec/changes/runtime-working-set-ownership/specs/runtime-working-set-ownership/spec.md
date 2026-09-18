@@ -226,7 +226,9 @@ descriptor depth whose tail must be free, so pending stop intervals are never st
 - **THEN** no new finalization mechanism, queue or arbitration is introduced
 - **AND** the finalization behaviour asserted by the spec is the behaviour already in the tree, verified by
   stage-name evidence (`finalizer_busy`, `transfer_denied`, `canonical_output_busy`, session-exit handoff,
-  `queue_full`) rather than by a new rule
+  `queue_full`) rather than by a new rule. The ordinary denials (`finalizer_busy`, `transfer_denied`,
+  `canonical_output_busy`, session-exit handoff) are expected during normal reentry; `queue_full` is
+  exceptional descriptor exhaustion, not a normal wait
 
 ### Requirement: Runtime roles are separate classes with declared cardinalities
 Working-set resources SHALL be owned as separate role classes -- playback window, live capture, deferred
@@ -263,7 +265,10 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **WHEN** finalization capacity is reasoned about
 - **THEN** `CaptureStopJobs::kCapacity` is treated as descriptor-ring depth whose tail must be **free** before a
   stop is admitted, so pending stop intervals are never stacked
-- **AND** `queue_full` is an exhaustion denial, distinct from ordinary finalization latency
+- **AND** `queue_full` is **exceptional descriptor exhaustion**, categorically separate from the ordinary
+  directional-capacity denials, never used to explain ordinary finalization wait
+- **AND** reaching `queue_full` indicates a descriptor-lifetime defect rather than capacity pressure, and is
+  reported as such
 - **AND** concurrent finalization is only claimed once a capacity/ownership decision shows where each
   interval's sealed raw range, pending closures, staged pass, session receipt and canonical transfer state live
 

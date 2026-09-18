@@ -324,7 +324,8 @@ STOP A (A still finalizing) -> START B (accepted) -> STOP B before A finishes
 ```
 
 Under the same non-destructive contract as failed admission, **B's stop is denied and B remains
-recording/overdubbing**; once A releases, the next B stop succeeds. Normal use (record for at least a few
+recording/overdubbing**; once A releases, a subsequent B stop request **may** succeed -- but only if no other
+single-instance resource is unavailable at that later instant. Normal use (record for at least a few
 seconds after a switch) will have A finished long before B stops; only very short captures and rapid
 punch-stop/start/stop sequences are constrained.
 
@@ -595,7 +596,8 @@ STOP B              -> B acquires it
 STOP B while A still finalizes
   -> denied non-destructively, no partial stop
   -> B remains recording/overdubbing
-  -> the next stop succeeds once the role frees
+  -> a subsequent stop request may succeed once the role frees
+     (still subject to the other single-instance resources)
 ```
 
 **How it actually works (traced 2026-09-18 in `Track::beginDeferredOverdubStop`).** The bound is *not* the
@@ -607,11 +609,13 @@ interval as the live recording interval:
 
 | Denial stage | Condition |
 |---|---|
+| **Ordinary directional-capacity denials** -- expected during normal reentry; each re-checked on every attempt | |
 | `finalizer_busy` | `runtime->captureStopOwner != nullptr` -- a predecessor is still finalizing |
 | `transfer_denied` | no active overdub transfer admission |
 | `canonical_output_busy` | canonical capture output not admitted |
 | session-exit handoff | no session-exit receipt slot available |
-| `queue_full` | no free tail descriptor -- an **exhaustion** denial, documented as "never ordinary finalization latency" |
+| **Exceptional denial -- not part of normal reentry** | |
+| `queue_full` | no free tail descriptor: **descriptor exhaustion**, documented as *"never ordinary finalization latency"*. It is categorically different from the denials above, must not be used to explain ordinary finalization wait, and reaching it indicates a descriptor-lifetime defect (leaked `pendingNotes`) rather than capacity pressure |
 
 So: **one *active* finalizer**, enforced by shared resources; a denied stop is **not queued and not
 auto-serviced** -- it is re-issued by the stop edge (device evidence `successor-reentry-25`: B's stop refused,

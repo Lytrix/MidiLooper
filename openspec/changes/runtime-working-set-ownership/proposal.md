@@ -157,7 +157,8 @@ re-derived whenever a stage is added, whereas the thesis is stable. Read the sta
   switch to B and `START B` -> B takes the live-capture lease and records normally while A finalizes; A
   finishes -> releases; `STOP B` -> B takes that same lease. So the supported concurrency is **one finalizing
   predecessor + one live successor**, and a `STOP B` that arrives before A releases is **denied
-  non-destructively with B still recording/overdubbing**; the next stop succeeds once the lease is free.
+  non-destructively with B still recording/overdubbing**; a subsequent stop request **may** succeed once the role
+  frees, subject to the other single-instance resources.
   Only the pathological case (very short captures, or rapid punch-stop/start/stop) is constrained. The
   initial envelope therefore does **not** pay memory for a second finalization lease: instead it counts
   `finalization_lease_stop_denied`, so a second lease can be justified by evidence if real use shows
