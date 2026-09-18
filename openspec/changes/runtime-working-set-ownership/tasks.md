@@ -35,8 +35,8 @@ visual detail windows are bounded optimisations on top, never a precondition for
 > envelope is **N derived**, today 8 tracks x 1 slot, and must not preclude 16/32/48/64 (slots-as-virtual-tracks
 > is a future requirement). F2 -- active playback must become **windowed/streamed**; the root narrows to the
 > undo/save checkpoint authority. F3 -- finalization is **one role**; a second stop while it is occupied is
-> **denied non-destructively** (DEC-067), and the descriptor-ring depth is not evidence of multi-finalizer
-> storage. F4 -- 8 tracks today with **bank switching to 16 MIDI channels** as the target. F5 -- tiers
+> **accepted and scheduled, not refused** (DEC-067 capacity + invariant 31), and the descriptor-ring depth is not
+> evidence of multi-finalizer storage. F4 -- 8 tracks today with **bank switching to 16 MIDI channels** as the target. F5 -- tiers
 > fold into `activeLoopIndex`/`CapturePhase`/`TrackState`. F6 -- resolved by S2 + G.2.
 
 - [ ] S0.1 `DEC-###`: role tiers `COLD` / `SELECTED` / `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`,
@@ -55,7 +55,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
       snapshot-backed undo roots; cold slots hold only compact logical descriptors (no `LoopSnapshot` ref, no
       slab ownership) under a per-slot depth and a device-wide byte budget, evicting oldest-cold-first;
       reactivation rebuilds only the current state; a cold undo reconstructs off-clock and commits only after
-      successful preparation (`undo_resource_denied` otherwise, descriptor intact); redo survives demotion and
+      successful preparation (`undo_resource_denied` records the wait otherwise, descriptor intact); redo survives demotion and
       is invalidated only by a new committed edit/capture. Runtime undo history is not persisted.
 - [ ] S0.3a Record the eviction priority: current musical state and dirty canonical content are never evicted by
       undo pressure; active hot undo is preferred; recent cold undo is retained within budget; oldest cold undo
@@ -157,17 +157,17 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S4.3 Reuse: activating C after A releases uses A's capacity with no net pool growth.
 - [ ] S4.4 Declared cap policy when activation is requested beyond the envelope (refuse vs queue),
       reported rather than resolved by allocating.
-- [ ] S4.5 **Finalization denial (verification only -- no mechanism change)**: preserve the existing contract; native fixture for A-stops-and-finalizes / B-records /
-      A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — denied with no
-      partial stop, B still recording/overdubbing, and a subsequent stop request admitted only after the role
-      frees (not an unconditional promise -- the other single-instance resources are re-checked then too). Emit
-      `finalization_lease_stop_denied`. Assert the **denial stage names** as the evidence (`finalizer_busy`,
-      `transfer_denied`, `canonical_output_busy`, session-exit handoff as the ordinary directional-capacity
-      denials, and `queue_full` as the **exceptional descriptor-exhaustion** case, kept categorically separate
+- [ ] S4.5 **Busy-owner finalization states (verification only -- no mechanism change)**: preserve the existing capacity contract; native fixture for A-stops-and-finalizes / B-records /
+      A-releases / B-stops-and-takes-the-lease, and for a stop arriving while A still finalizes — accepted with no
+      partial stop, B still recording/overdubbing, and the accepted stop executing once the role
+      frees (the other single-instance resources are re-checked then too). Emit
+      `finalization_lease_stop_denied`. Assert the **busy-owner state names** as the evidence (`finalizer_busy`,
+      `transfer_denied`, `canonical_output_busy`, session-exit handoff as the ordinary states, and `queue_full` as
+      the **exceptional descriptor-exhaustion** case, kept categorically separate
       so an ordinary finalization wait is never blamed on it) so the mechanism is observable rather than
-      inferred. Prove the stop is **not
-      auto-serviced**: the denied attempt produced no descriptor and no partial stop, and only a re-issued stop
-      after the resource frees is admitted. Do **not** build a queue: the ring's tail must be free before
+      inferred. Prove the stop **needs no second attempt**: the accepted request produced no descriptor and no
+      partial stop, and executes after the resource frees with the waits counted as scheduling (S4f). Do **not**
+      build a queue of stopped intervals: the ring's tail must be free before
       admission, so it cannot stack pending stops, and concurrent finalization needs its own capacity/ownership
       decision first.
 - [ ] S4 gates: S3 gates plus the reuse and stale-owner fixtures; a device run showing holder count
@@ -268,7 +268,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
       belonging only to that slot, and never release a root a live deferred owner still holds.
 - [ ] S5.2c **Implement off-clock reconstruction**: undo/redo on a cold-derived entry reconstructs or selects the
       historical state, publishes a fresh runtime representation with a truthful `coveredPassRevision`, and
-      commits only after preparation succeeds; on refusal report `undo_resource_denied` and leave the descriptor
+      commits only after preparation succeeds; while it waits report `undo_resource_denied` and leave the descriptor
       unconsumed.
 - [ ] S5.2d **Bound cold undo**: per-slot depth plus a device-wide byte budget with oldest-cold-first eviction,
       and prove the priority order (current state and dirty canonical never evicted).
@@ -312,12 +312,13 @@ visual detail windows are bounded optimisations on top, never a precondition for
 - [ ] S7.3 Re-run the reported reproducer on the large library: arm a track, external clock + MIDI notes,
       and require it to reach `RECORDING`; also arm-and-play internally.
 - [ ] S7.4 Require no `FATAL`, no `#MEM_EXT_REFUSED`, live device throughout.
-- [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if denials are frequent in normal use,
-      evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient.
+- [ ] S7.4a Review `finalization_lease_stop_denied` across S7 runs: if waits are frequent in normal use,
+      evaluate a second finalization lease from that evidence; if rare or absent, record 1 as sufficient. The
+      acceptance-to-execution latency must stay bounded either way (invariant 31).
 - [ ] S7.4f **Single-press acceptance (the product reason)**: in the reentry shape, issue the stop **once** while
       the predecessor finalizes and require the stop to complete after the predecessor retires with no second
-      request -- measured as one request issued, the latch observable, and the retries counted. Repeat for a
-      record/overdub start, a switch and an undo/redo under momentary resource pressure.
+      request -- measured as one request issued, the accepted request observable, and the waits counted. Repeat
+      for a record/overdub start, a switch and an undo/redo under momentary resource pressure.
 - [ ] S7.4e **Cold-undo acceptance**: A active, create OD1 and OD2, undo depth > 0 -> switch to B so A is cold
       and its snapshot-backed roots disappear (snapshot slab live bytes drop) while compact descriptors remain
       -> switch back to A and its current state plays exactly -> Undo A reconstructs the expected historical
@@ -346,7 +347,7 @@ visual detail windows are bounded optimisations on top, never a precondition for
 
 - [ ] G.2 `immutable-loop-snapshot-passes` §5.13: **failed admission must be non-destructive and must not
       cancel ARMED** -- derive the required set, acquire it completely, and on failure create no partial
-      authority, stay armed, and report a resource wait/denial. Partial capacity only where an owner
+      authority, stay armed, and report a resource wait. Partial capacity only where an owner
       explicitly supports a smaller bounded grant.
 - [ ] G.3 §5.13: `RuntimeCompanionReconstruction`'s single 64 KiB buffer split into blocks.
 - [ ] G.4 Explicitly **not** the fix: releasing arm reserves on disarm (the same view set serves playback

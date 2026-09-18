@@ -304,14 +304,13 @@ monolithic per-slot lease. A slot MAY hold several classes simultaneously.
 - **AND** the supported concurrency is one finalizing predecessor plus one live successor, not two
   simultaneously finalizing captures
 
-#### Scenario: A stop denied while the finalizer is occupied is non-destructive and is not queued
+#### Scenario: A stop meeting a busy finalizer is accepted, non-destructive and deferred
 - **WHEN** a stop is requested while a predecessor is still finalizing
-- **THEN** the stop is denied with no partial stop and no descriptor taken, and the requesting slot remains
+- **THEN** the stop is **accepted** with no partial stop and no descriptor taken, and the requesting slot remains
   recording or overdubbing
-- **AND** the denial is reported as a stage (`finalizer_busy`, or `transfer_denied` / `canonical_output_busy` /
-  session-exit handoff for the other single-instance resources)
-- **AND** the denial is **not** queued or auto-serviced: the stop is re-issued by the stop edge, and succeeds
-  once the resource frees
+- **AND** the busy-owner state is reported as a stage (`finalizer_busy`, or `transfer_denied` /
+  `canonical_output_busy` / session-exit handoff for the other single-instance resources)
+- **AND** the accepted stop executes once the resource frees, without the user re-issuing it
 
 #### Scenario: The descriptor ring does not imply concurrent finalization
 - **WHEN** finalization capacity is reasoned about
@@ -429,11 +428,13 @@ committed edit or capture.
 - **THEN** its redo history is still available
 - **AND** redo is invalidated only when a new edit or capture commits
 
-#### Scenario: Reconstruction failure leaves state unchanged
+#### Scenario: Reconstruction failure defers the undo, it does not discard it
 - **WHEN** reconstruction of a cold undo state cannot be admitted for memory reasons
-- **THEN** the undo remains unapplied, the current musical state is unchanged, and the failure is reported as
-  `undo_resource_denied`
-- **AND** the cold descriptor is not consumed, so the same undo can succeed later
+- **THEN** the undo is **accepted** and the current musical state is unchanged while it waits
+- **AND** the wait is reported as `undo_resource_denied` -- a scheduling state named for the resource, not a
+  user-visible refusal (invariant 31)
+- **AND** the cold descriptor is not consumed, so the accepted undo executes once preparation is admitted and
+  never requires a second attempt
 
 #### Scenario: A job-owned root is not released by demotion
 - **WHEN** a slot is demoted while a deferred owner still holds an undo root it owns

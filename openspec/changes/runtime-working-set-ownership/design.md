@@ -229,16 +229,18 @@ This aligns with DEC-073: a reconstructed root acquires a **truthful** `coveredP
 runtime root is never treated as authority.
 
 **Failure rule (prepare then commit).** If reconstruction cannot be admitted because memory is temporarily
-unavailable:
+unavailable, the undo is **accepted and deferred** (invariant 31) rather than refused:
 
 ```
-Undo request -> remains unapplied
-             -> current musical state unchanged
-             -> explicit `undo_resource_denied`
+Undo request -> accepted, scheduled
+             -> current musical state unchanged while it waits
+             -> explicit `undo_resource_denied` (names the wait, not a user-visible refusal)
 ```
 
-The cold descriptor is **never consumed or popped before reconstruction succeeds**. This is the same
-prepare-then-commit pattern the rest of the change uses.
+The cold descriptor is **never consumed or popped before reconstruction succeeds**, and the accepted undo executes
+as soon as preparation is admitted. This is the same prepare-then-commit pattern the rest of the change uses. Under
+invariant 31 the earlier reading of `undo_resource_denied` as a *user-visible denial* is superseded: the user never
+re-issues, and the code path records the wait and retries.
 
 **Not preserved:** runtime undo history is not persisted; load continues with **undo depth zero** unless that
 is deliberately changed later.
@@ -297,7 +299,7 @@ allows both concurrently; the new model must not design that away.
 |---|---|---|
 | `PlaybackWindowLease` | up to **N** (derived; 8 today) | the term multiplied by N; must be small and length-independent |
 | `LiveCaptureLease` | **1** | record/overdub ingress, staging, capture stop jobs |
-| `DeferredFinalizationLease` | **1** | one finalizing predecessor alongside one live successor; a second stop while it is occupied is **denied non-destructively** (DEC-067) |
+| `DeferredFinalizationLease` | **1** | one finalizing predecessor alongside one live successor; a second stop while it is occupied is **delayed non-destructively**, never refused (DEC-067 capacity; invariant 31) |
 | `InteractiveLease` | **1** | edit / undo / redo / display, unless evidence requires more |
 | `TransferOverlap` | measured | explicitly budgeted, not slack |
 
@@ -578,7 +580,7 @@ authorities**, not a second state machine: `activeLoopIndex` (the one active slo
 one that does not, is not. `ARCHITECTURE_RULES.md` requires one owner per concept, so the tiers must be
 derivable from those three rather than competing with them.
 
-## Revision 13 — finalization is one role; a second stop is denied non-destructively (F3, corrected)
+## Revision 13 — finalization is one role; a busy owner delays a second stop (F3, corrected)
 
 An earlier revision of this document read `CaptureStopJobs::kCapacity = 4` as a queue that would service a
 second stop automatically. **That is reverted.** Descriptor-ring depth is not evidence of multi-finalizer
@@ -586,7 +588,7 @@ storage: this codebase already established that descriptor capacity exceeded the
 role capacity, so a second stopped interval has no proven home for its sealed raw range, pending closures,
 staged pass, session receipt or canonical transfer state while the first finalizer is still working.
 
-The contract is therefore the **device-proven DEC-067 directional admission**:
+The contract is therefore the **device-proven DEC-067 capacity model with unconditional acceptance** (invariant 31):
 
 ```
 A recording/overdub -> STOP A -> A holds the one DeferredFinalizationLease
@@ -595,7 +597,7 @@ A finishes          -> releases the lease
 STOP B              -> B acquires it
 
 STOP B while A still finalizes
-  -> denied non-destructively, no partial stop
+  -> accepted, no partial stop, no descriptor taken
   -> B's stop is ACCEPTED and scheduled; B keeps recording/overdubbing
      while A finalizes (the interval stays intact)
   -> the accepted stop executes once the role frees
