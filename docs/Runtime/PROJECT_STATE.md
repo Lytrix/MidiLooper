@@ -1,5 +1,36 @@
 # Project state (execution context)
 
+**2026-09-18 the blocking `saveState` drain is fixed and device-verified, and the RAM1 tree gained a DTCM bank
+(`immutable-loop-snapshot-passes` 5.7.6; `12fdf38d` -> reverted `d3290020` -> re-landed `0a036c63` on linker change
+`ea9918ac`).** The RC recorded below this entry was a **monotonic persistence work-entry table**: no path ever returns
+an entry to `NotScheduled`, and `LoopPersist` is keyed by `LoopId`, which is fresh for every new loop, so each
+clear/record cycle permanently consumes one of the 256 slots. Once exhausted, `admitWork` refuses **every** key --
+`FinalizeWorkspace` included -- while `currentWorkspaceSave.pending` stays set, so `hasPersistenceWorkPending()` is
+true on `pending` alone with nothing to step, `stepPersistenceWorkItem` returns success on that state, and the
+blocking drain spins its stuck budget and fails (`Persistence drain stuck after 33 iterations (max 33, expected ~1
+slice steps, ~0 SD bytes)`), refusing CLEAR for the rest of that device generation. The state was pinned by
+arithmetic before any code change (`SyncDrainBudget.cpp:66` sets `finalizeSliceSteps` only when `pending &&
+queueDepth == 0 && writingWorkItemCount == 0 && !itemActive`, so `expectedSliceSteps = 1` with 0 SD bytes means
+`pending` alone; `maxSliceSteps = 1*3/2 + 32 = 33` and `maxStuckIterations = min(64, 33) = 33` match the log exactly).
+Fix: `admitWork` reclaims a `Persisted` tombstone when the table is full (lossless: nothing reads `workState`,
+`visitScheduledWorkItems` skips tombstones, and a fresh admission reproduces the re-queue shortcut), never touching
+`Queued`/`Writing`; `maybeAdmitFinalizeWorkspaceAfterDrain` reports whether work is available; the drain fails fast
+with `SyncDrainFailureReason::AdmissionRefused` and a PROGMEM diagnostic. Two native fixtures fail on the pre-fix
+behaviour (verified by disabling the reclaim) and pass after; suite 15/15, full native **2252 / 1 skipped / 0
+failures**. **The fix first had to be reverted**: it costs 4 KB of DTCM, and at 13 ITCM banks that left `locals free`
+2,240, which hung the boot load silently (`BOOT,scan,start`, no crash record). Controls proved it was the 4 KB and not
+the logic -- the pre-fix firmware booted and streamed 1136 rows with the same SD state, and a **semantically neutral
+edit** to either touched TU reproduced the same 96,064 / 2,240 and the same hang. With no movable DTCM left, the
+lever was ITCM: `linker/imxrt1062_t41_lcr.ld` now routes ten cold TUs (boot/load, SD-bundle serialization,
+telemetry, note-edit undo, set-browser read -- none in the MIDI tick, capture append or playback serving) to FLASH,
+taking `code + padding` 425,984 -> 393,216 = **13 -> 12 ITCM banks** and `free for local variables` 6,336 -> 39,104
+(with the fix re-landed, **35,008**). Device (`captures/drain-fix-03`, git `0a036c63`): clear precondition
+**satisfied**, 0 `Persistence drain stuck`, 0 `admission_refused`, 0 `FATAL`, 0 `#MEM_EXT_REFUSED`, 3,287 `#CAP` rows
+and **12 `PERS,work`** rows where the wedged runs had 0; boot probe 1,023 rows, `BOOT,load,ok`. **Caveat:** `padding`
+is now 1,256 B, so the next ~1.2 KB of new ITCM code crosses back to 13 banks (~7 KB allowance); taking the next bank
+means moving another ~32 KB of cold code. Method and failure signature recorded in
+[`Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc).
+
 **2026-09-18 the snapshot publication boundary now admits memory per construction turn and parks on allocation failure
 (DEC-075, `immutable-loop-snapshot-passes` 5.9).** The reset recorded below is fixed at its boundary rather than by
 shrinking the footprint. **RC-PUB-1:** `Loop::stepPendingSnapshotPublish` admits every turn that could start, step or
