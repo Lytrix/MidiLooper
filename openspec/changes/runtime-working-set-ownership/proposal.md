@@ -173,6 +173,27 @@ prerequisite S2, and reclassifies §5.13 as a symptom.
 
 **Read the RAM1 line on every task** (~870 B of padding before `code + padding` crosses a FlexRAM bank).
 
+## Falsification review (open)
+
+[`FALSIFICATION.md`](FALSIFICATION.md) attacks this plan against the current tree. **The thesis survives; the
+envelope and the budget do not, as written.** Four items gate S0/S2:
+
+- **F1 (critical)** -- "2 sounding slots per track" is a **missing capability**, not a memory question: a
+  track has exactly one active/sounding slot (`activeLoopIndex`; only it may be RECORDING/OVERDUBBING), and
+  no task here creates multi-slot playback. The 32x budget multiplier is therefore unearned until the
+  envelope is restated (1 per track) or the capability is added as work.
+- **F2 (major)** -- the budget omits a **mandatory per-sounding-slot published root**: windowed playback is
+  gathered *out of* the whole-loop root (`tryGatherPublishedSnapshotEventsInWindow` returns false without
+  it), ~325 KB per loop, so 32 sounding slots carry ~10 MB that no term accounts for.
+- **F3 (major)** -- the finalization cardinality of 1 is asserted without citing the existing admission
+  guard (`CaptureStopJobs::kCapacity = 4`, "additional admission stays guarded"): it must be verified as
+  equal to today's behaviour, not assumed, since pinning one lease may be a *reduction*.
+- **F4 (major)** -- the spec requires "up to sixteen tracks" while `NUM_TRACKS = 8` and no task changes it:
+  a requirement the change cannot satisfy.
+
+F5 (the role tiers create a second authority for "active" alongside `activeLoopIndex`/`CapturePhase`/
+`TrackState`) and F6 (the scaling acceptance is non-diagnostic until F1/F2 are resolved) follow.
+
 ## Open decisions (TBD)
 
 1. **Undo history at cold.** Which of the four candidate policies in `design.md` applies, and if undo is
