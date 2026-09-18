@@ -10,10 +10,13 @@ telemetry (`content-verify-65`): `DFRAME` 194 before `Undo` → **193** after, `
 (`194 = 181 + 13`, `193 = 180 + 13`). `resetPassTimeline` already cleared the handoff for this hazard; the fix
 makes `Loop::setCapturePassState` do the same when a pass becomes `Disabled`. New native fixture
 `test_disabling_a_capture_pass_releases_the_sealed_draw_source_handoff` fails without the fix; full native
-**2,240 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 locals 6,400 unchanged. **Device
-gate owed:** the DEC-071 shape + undo/redo must show the OLED frame drop the overdub on `Undo` and restore it on
-`Redo` (the base runner's display check only proves a non-empty post-stop frame, so this needs an added `DISP`
-frame-count clause or the investigation-diag `DIAG,draw_src,layers` rows).
+**2,240 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1 locals 6,400 unchanged. The base
+runner also gained `_verify_undo_redo_display`, which rejects a frame that keeps the undone overdub (it flags the
+real buggy log `194 -> 193 -> 193`; `scripts/test_capture_transitions.py` 46/46). **Device gate CLOSED:**
+`captures/display-undo-03` (managed `base`, git `9eda0984` clean, firmware `47e05029…`, DEC-071 shape + recipe
+undo/redo) is **`Result: PASS`** with `undo=1 redo=1`, 0 `RING,overflow`, `overflow_free=True`, persistence
+`result=ok`, display `overdub_ok/transport_ok=True`, and **`DISP across undo/redo: before=194 after_undo=179
+after_redo=193`** — the frame drops the overdub on `Undo` and restores it on `Redo`.
 
 **2026-09-18 successor 5.9 + 5.11 CLOSED and the defect fixed (`immutable-loop-snapshot-passes` 5.8).** The
 user's report — the overdub wrap's second pass shown on the display but not audible — had two independent
