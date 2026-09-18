@@ -95,3 +95,32 @@ Measured at change commit `7eb0d7f0` on `refactor/runtime-code-tidyup`, stacked 
 
 Baselines are re-measured and recorded per phase in the phase commit message; the final values land in
 task 8.5.
+
+## Phase gates
+
+| Phase | Gate | Result |
+|---|---|---|
+| P1 | native + firmware | recorded in tasks.md § P1 outcome |
+| P2 | native + firmware | recorded in tasks.md § P2 outcome |
+| P3 | native + differential/oracle fixtures + firmware | 2,262 / 1 skipped / 2,261 passed; RAM1 `code 391736 / padding 1480 / free 34976`, FLASH 1,004,520 |
+| P4 | native + name audit | 2,262 / 1 skipped / 2,261 passed; RAM1 unchanged |
+| P5 | native + firmware per split, RAM1/`_itcm_block_count` | 2,262 / 1 skipped / 2,261 passed; RAM1 byte-identical, `_itcm_block_count` 12 before and after, ELF `_etext` `0x5fa38` |
+| P6 | `openspec validate runtime-code-tidyup --strict` (text-only, no firmware/test run) | valid |
+
+### P6 gate (task 7.5)
+
+No firmware or test run is needed: every P6 change is text (headers, whitespace audit, `.editorconfig`, the
+`CLANG-FORMAT-DRYRUN.md` evidence file, and the base change's journal relocation). The change-owned files were
+additionally re-checked by the OpenSpec CLI after the relocation of the base change's `tasks.md`, which is the only
+non-`.md`-in-this-change surface P6 touched:
+
+```
+$ openspec validate runtime-code-tidyup --strict
+Change 'runtime-code-tidyup' is valid
+ℹ [INFO] file: skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted
+exit=0
+
+$ openspec validate resumable-midi-boundary-playback-maintenance --strict
+Change 'resumable-midi-boundary-playback-maintenance' is valid
+exit=0
+```
