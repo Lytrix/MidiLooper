@@ -1373,9 +1373,19 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       `test_draw_source_od2_clean_adopt_keeps_linear_tail`. Full native **2,262 cases / 1 skipped / 0 failures**;
       `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,128 / code 392,344 / padding 872 / locals free
       34,944` (the retired tier's vector header plus one revision, no FlexRAM bank cost).
-      **Device gate owed:** the 24-bar two-overdub shape must show the first overdub's rows present across the second
-      `Overdubbing started` (the device signature to watch is `DISP` `frame` not dropping, and `visual` still 0 in
-      that window) instead of returning only at the end.
+      **Device gate: attempted, still owed, and the blocker is now known.** `captures/rc512-display-fix` (same 24-bar
+      record + two-overdub command as the earlier legs) ran cleanly on the fix -- 0 `FATAL`, 0 `#MEM_EXT_REFUSED`, both
+      overdubs stored (`count=513/191` and `409/7`, `count_ok/span_ok/bars_ok` all true) -- and `DFRAME` shows the frame
+      holding at **418 rows** across the second `Overdubbing started` (140.2 s) where the pre-fix legs settled lower
+      (280) after their overdub window. That is suggestive but **not conclusive**, and the reason is worth recording
+      rather than glossing: the two legs did not hold an identical shape (this workspace recorded 19200 ticks = 25
+      bars, the earlier legs 18432 = 24), `DISP` is state-change driven so there are only 9-13 samples per run and
+      none inside the ±6 s window around the second start, and the harness's own display verdict on this shape is
+      `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` for **pre-existing oracle-setup gaps** (`missing_phase_boundaries`,
+      `overdub_first_note_missing`) that appear in every long-shape run in this session, pre- and post-fix. So the
+      device gate needs either a shorter shape the display oracle accepts (2+2 bars with two overdubs) or a dedicated
+      frame dump that names the first overdub's rows and compares their presence across the second start -- not
+      another run of this shape.
       **Verify (native, and it must fail without the split).** Seal a first overdub, leave the committed cache
       uncovered (`visual` empty, the device state), start a second overdub, and assert (a) the first overdub's note is
       still unioned into the draw-source frame, and (b) the second session's hold/occupy set does **not** contain it
