@@ -237,7 +237,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
 - [ ] 4.6 Extract the admission guard (10 sites) and source-identity guard (5 sites) into one owner per design § D3/§
   D4. Verify: native suite passes; **re-measure RAM1** because member layout of by-value `TrackPlaybackRuntime` members
   may change; revert if a bank edge moves.
-- [ ] 4.7 Promote the existing ceiling-grain lambda to one `constexpr ceilGrains(...)` on
+- [x] 4.7 Promote the existing ceiling-grain lambda to one `constexpr ceilGrains(...)` on
   `include/RuntimePlaybackOrderBuilder.h` and give the per-phase slack terms names — **values unchanged**. Verify: grep
   shows the two local lambdas gone and no slack literal re-valued in the diff; native suite passes.
 - [x] 4.8 Add `activeNoteEntriesMatch(...)` to `include/ActiveNoteLedger.h` and use it in all four sites
@@ -253,7 +253,7 @@ OD-2 is recorded as **DEC-076** in `docs/DECISION_LOG.md` (index row + entry) wi
   `src/PassReclaim.cpp:84-116` and `src/Track/TrackUndoRetirement.cpp:85-86`, with a comment recording that the two
   agree on reachable cases today and why `cursor == 0` stays as written. Verify: `test_pool_budget` and
   `test_global_undo_stack_persistence` pass; no policy value changed.
-- [ ] 4.12 Consolidate the 12 `*_MEM` aliases this branch added into aliases of the canonical owners
+- [x] 4.12 Consolidate the 12 `*_MEM` aliases this branch added into aliases of the canonical owners
   (`NOTE_EDIT_MEM`/`LOOP_COLD_MEM`/`TRACK_COLD_MEM`) instead of independent `FLASHMEM` definitions; do not rename the
   legacy ones. Verify: firmware builds; the RAM1 line is unchanged; each TU still documents its cold rationale in one
   line.
@@ -290,9 +290,22 @@ and `test_playback_prewarm` (179) plus `test_continuous_capture` (77) confirm th
 `LoopSnapshot.cpp`. Sub-phase gate: native 2,262 / 1 skipped / 2,261 passed; firmware SUCCESS with RAM1
 unchanged (`code 392312 / padding 904 / free 34976`) and FLASH code 1,005,544 (-2,096).
 
+**Third sub-commit:** **4.7** — `RuntimePlaybackOrderBuilder::ceilGrains` is the single owner of the
+ceiling-grain idiom; the two local lambdas are gone and 11 sites across the four worker TUs call it. Every
+migrated site was checked for a preceding `capacity == 0 -> UINT64_MAX` guard, so `1 + (count-1)/quantum`
+and the exact-ceil form are provably identical there; the fixed slack terms are documented in place (naming
+them was declined because no bound derivation is recorded anywhere and a wrong name would mislead more than
+a bare `+ 4` with a comment). **4.12** — the six remaining independent `FLASHMEM` aliases in this subsystem
+become `NOTE_EDIT_MEM` aliases, matching what the eight sibling companion TUs already did, so placement has
+one definition. `LSV1_IO_MEM`/`LSV1_SAVE_STEP_MEM`, `LOOP_SNAPSHOT_COLD_MEM` and `IC_LOG_MEM` are
+deliberately left alone: the first two have no appropriate existing owner in the storage TU, and the last
+two are `noinline` + `.flashmem` by design (consolidating them to plain `FLASHMEM` could let the compiler
+inline that code into ITCM callers and cost a FlexRAM bank). Sub-phase gate: native 2,262 / 1 skipped /
+2,261 passed; firmware SUCCESS with RAM1 byte-identical (`code 392312 / padding 904 / free 34976`).
+
 **Still open in P3:** 4.2 (`RuntimeWorkerStepResult`), 4.3 (lifecycle accessor vocabulary), 4.4
-(atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), 4.7 (`ceilGrains`),
-4.12 (`*_MEM` alias consolidation), 4.13 (unique-id/box/bar-count helpers), and the phase gate 4.14. The phase gate stays unchecked until they
+(atomic-transfer body collapse), 4.6 (admission/source guards, needs a RAM1 re-measure), 4.13
+(unique-id/box/bar-count helpers), and the phase gate 4.14. The phase gate stays unchecked until they
 land; the P3 work is committed in sub-commits so each is independently bisectable.
 
 ## 5. P4 — converge naming on the authority (record the decision first)

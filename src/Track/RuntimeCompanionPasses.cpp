@@ -41,7 +41,7 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionPasses::requiredGrainsUpperBound(
     size_t capacity, size_t passCount, size_t historyCount, size_t rowCount, size_t quantum) {
   const auto apply = RuntimeCompanionApply::requiredContinuationGrainsUpperBound(capacity, historyCount, rowCount, quantum);
   if (apply == UINT64_MAX || passCount > RuntimePlaybackViewConfig::kEventsPerView) return UINT64_MAX;
-  return 1 + uint64_t(passCount)*((rowCount ? apply : 0) + 1 + (capacity-1)/quantum + 4);
+  return 1 + uint64_t(passCount)*((rowCount ? apply : 0) + RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) + 4);
 }
 NOTE_EDIT_MEM void RuntimeCompanionPasses::releaseApply() {
   if (borrowed_ && apply_ != nullptr && apply_->generation() == applyGeneration_) apply_->discard();

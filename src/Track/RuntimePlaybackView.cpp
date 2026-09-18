@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackView.h"
+#include "Utils/NoteEditMem.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -9,12 +10,9 @@
 
 #include "Utils/InternalHeapFirstAllocator.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define RUNTIME_PLAYBACK_VIEW_COLD_MEM FLASHMEM
-#else
-#define RUNTIME_PLAYBACK_VIEW_COLD_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define RUNTIME_PLAYBACK_VIEW_COLD_MEM NOTE_EDIT_MEM
 
 namespace {
 

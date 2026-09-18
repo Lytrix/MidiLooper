@@ -1,17 +1,15 @@
 // Copyright (c) 2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeNotePairLookup.h"
+#include "Utils/NoteEditMem.h"
 #include "LoopEventStore.h"
 #include "Utils/InternalHeapFirstAllocator.h"
 #include <cstdlib>
 #include "Utils/NoteUtils.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define NOTE_PAIR_MEM FLASHMEM
-#else
-#define NOTE_PAIR_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define NOTE_PAIR_MEM NOTE_EDIT_MEM
 
 NOTE_PAIR_MEM RuntimeNotePairLookup::RuntimeNotePairLookup() = default;
 

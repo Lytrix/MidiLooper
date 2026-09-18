@@ -50,7 +50,7 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionBridgeMap::requiredPerPassGrainsUpperBoun
   for (size_t width = 1; width < baseCount; width *= 2) ++levels;
   for (size_t count = baseCount; count; count /= 2) ++searchLevels;
   const uint64_t visits = 4*b + 2*b*levels + a*(searchLevels+2);
-  return (visits ? 1 + (visits-1)/quantum : 0) + 4;
+  return RuntimePlaybackOrderBuilder::ceilGrains(visits, quantum) + 4;
 }
 
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::prewarm(size_t capacity) {

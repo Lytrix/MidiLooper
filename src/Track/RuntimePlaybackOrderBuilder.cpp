@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackOrderBuilder.h"
+#include "Utils/NoteEditMem.h"
 #include "Utils/PlaybackEventOrder.h"
 
 #include <algorithm>
@@ -9,12 +10,9 @@
 
 #include "Utils/IntervalProjection.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define PLAYBACK_ORDER_MAINTENANCE_MEM FLASHMEM
-#else
-#define PLAYBACK_ORDER_MAINTENANCE_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define PLAYBACK_ORDER_MAINTENANCE_MEM NOTE_EDIT_MEM
 
 PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::begin(RuntimePlaybackView& view, uint32_t loopLengthTicks, RuntimePlaybackOrderMode mode) {
   if (!begin(view.storage, loopLengthTicks, nullptr, mode)) {
