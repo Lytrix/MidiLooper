@@ -743,6 +743,48 @@ void test_snapshot_failed_candidate_preserves_parent() {
   TEST_ASSERT_NULL(parent->noteMembership(60, 1).get());
 }
 
+void test_pool_backs_storage_only_as_content_reaches_it() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  // RC-MEM-5: boot reserves nothing. The old initPool allocated all 512 chunks (2,566 KB) in
+  // one block, and the worst occupancy ever observed in a captured run was 167 chunks.
+  TEST_ASSERT_EQUAL_UINT16(0, LoopEventStore::poolBlockCount());
+  TEST_ASSERT_EQUAL_UINT64(0, static_cast<uint64_t>(LoopEventStore::poolBackedBytes()));
+  TEST_ASSERT_EQUAL_UINT16(LoopEventStoreConfig::POOL_CHUNK_COUNT,
+                           LoopEventStore::freeChunkCount());
+
+  LoopEventStore store;
+  // One event opens exactly one block, i.e. POOL_CHUNKS_PER_BLOCK chunks, not the whole array.
+  TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOn(0, 1, 60, 100)));
+  TEST_ASSERT_EQUAL_UINT16(1, LoopEventStore::poolBlockCount());
+  TEST_ASSERT_EQUAL_UINT64(
+      static_cast<uint64_t>(LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK) * sizeof(EventChunk),
+      static_cast<uint64_t>(LoopEventStore::poolBackedBytes()));
+
+  // Crossing a block boundary opens the next block and keeps the flat id space correct, which
+  // is the contract the committed chunk-id lists, PersistenceQueue::onChunkFreed and the
+  // storage I/O format all rely on.
+  const size_t eventsPerBlock =
+      static_cast<size_t>(LoopEventStoreConfig::POOL_CHUNKS_PER_BLOCK) *
+      LoopEventStoreConfig::CHUNK_CAPACITY;
+  for (size_t i = 1; i <= eventsPerBlock + 7; ++i) {
+    TEST_ASSERT_TRUE(store.append(
+        MidiEvent::NoteOn(static_cast<uint32_t>(i), 1, 62, 100)));
+  }
+  TEST_ASSERT_EQUAL_UINT16(2, LoopEventStore::poolBlockCount());
+  TEST_ASSERT_EQUAL_UINT32(eventsPerBlock + 8, store.size());
+  TEST_ASSERT_EQUAL_UINT32(0, store.at(0).tick);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(eventsPerBlock + 7), store.at(store.size() - 1).tick);
+
+  // The win: backed bytes stay far below the full array, and the ceiling is untouched.
+  TEST_ASSERT_TRUE(static_cast<uint64_t>(LoopEventStore::poolBackedBytes()) <
+                   static_cast<uint64_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT) *
+                       sizeof(EventChunk));
+  TEST_ASSERT_EQUAL_UINT16(LoopEventStoreConfig::POOL_CHUNK_COUNT,
+                           LoopEventStore::freeChunkCount() + LoopEventStore::usedChunkCount());
+  LoopEventStore::resetPoolForTests();
+}
+
 void test_sealed_pass_read_preserves_order_and_quantum() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -944,6 +986,7 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_snapshot_release_shared_root_is_one_unit_and_readable);
   RUN_TEST(test_snapshot_release_unique_graph_is_quantized_and_releases_all_leaves);
   RUN_TEST(test_snapshot_release_preserves_shared_descendants_during_every_grain);
+  RUN_TEST(test_pool_backs_storage_only_as_content_reaches_it);
   RUN_TEST(test_sealed_pass_read_preserves_order_and_quantum);
   RUN_TEST(test_sealed_pass_read_denies_invalid_capacity_and_stale_inputs);
   RUN_TEST(test_sealed_pass_read_empty_and_invalid_bindings);
