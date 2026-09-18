@@ -8,5 +8,6 @@
 // The global stack and Track's before-snapshot ownership change only at publication.
 namespace TrackPreparedUndo {
 bool prepareOverdubSessionEntry(Loop& loop, Loop::SessionUndoCollection& collection,
-    uint8_t slotIndex, const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry);
+    uint8_t slotIndex, const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry,
+    uint32_t beforePublishedCoverage = kSnapshotCoverageUnset);
 }

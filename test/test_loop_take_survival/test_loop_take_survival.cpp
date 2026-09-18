@@ -1361,6 +1361,95 @@ void test_queue_overdub_snapshot_waits_for_idle_steps() {
   TEST_ASSERT_EQUAL(1u, loop.publishedSnapshot()->noteMembership(64, 0)->count);
 }
 
+/// DEC-073 (RC1): "current" is committed-pass coverage, not a revision stamp. Selecting a root that
+/// was captured before the live committed-pass state must not make it current, even though the
+/// selection stamps the live revision. The request it must not satisfy is still pending.
+void assertSelectedRootIsNotCurrentUntilItsCoveragePublishes(Loop& loop) {
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasPendingSnapshotPublish(),
+      "the newer snapshot request must still be pending at this point");
+  TEST_ASSERT_FALSE_MESSAGE(loop.publishedSnapshotIsCurrent(),
+      "a root captured before the live committed-pass state must not claim current");
+}
+
+/// Commits one overdub note and queues its session-exit publication request. The request is left
+/// unconsumed so the caller decides whether the idle publisher may begin construction.
+void queueOverdubSessionExitSnapshotRequest(Loop& loop, uint32_t onTick, uint32_t offTick,
+                                            uint8_t pitch) {
+  loop.beginCapture(CapturePhase::Overdub);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(onTick, 1, pitch, 90)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(offTick, 1, pitch, 0)));
+  TEST_ASSERT_EQUAL(CommitResult::Committed,
+                    loop.commitCapturePass(CommitReason::OverdubStop, offTick));
+  TEST_ASSERT_TRUE(loop.queueSessionExitSnapshot(CommitReason::OverdubStop, {}));
+}
+
+/// DEC-073 coalescing case 1: the later request arrives before the earlier request's construction
+/// begins. The undo/redo captured-root selection is the later request in the reported window: it
+/// hands the publisher a root captured before the committed overdub pass, and the queued request
+/// must still be the authority until a root that covers it publishes.
+void test_coalesced_snapshot_request_before_construction_is_not_satisfied_early() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef rootBeforeOverdub = loop.publishedSnapshot();
+  const uint32_t coverageBeforeOverdub = loop.publishedSnapshotCoveredRevision();
+
+  // Request A: OD1 (note 64) committed, its publication queued, construction not begun.
+  queueOverdubSessionExitSnapshotRequest(loop, 400, 480, 64);
+  TEST_ASSERT_TRUE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_FALSE(loop.hasInFlightSnapshotConstruction());
+
+  // Later request: the redo's captured-root selection, captured before OD1 committed and carrying
+  // only the coverage it was captured at.
+  loop.storePublishedSnapshotForTest(rootBeforeOverdub, 0, coverageBeforeOverdub);
+  assertSelectedRootIsNotCurrentUntilItsCoveragePublishes(loop);
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_NOT_NULL_MESSAGE(loop.publishedSnapshot()->noteMembership(60, 0).get(),
+      "the settled root must keep the record pass");
+  TEST_ASSERT_NOT_NULL_MESSAGE(loop.publishedSnapshot()->noteMembership(64, 0).get(),
+      "the settled root must cover the overdub pass the pending request carried");
+}
+
+/// DEC-073 coalescing case 2 (the reported timing): the later request arrives while the earlier
+/// candidate is mid-construction. The earlier candidate may still publish -- it is a valid
+/// intermediate root -- but only for its own coverage, and the newer request must stay pending and
+/// then publish a root that covers it.
+void test_coalesced_snapshot_request_mid_construction_is_not_satisfied_early() {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop loop;
+  loop.loopId = 7;
+  loop.loopLengthTicks = 3072;
+  recordLinearNote(loop, 100, 200, 60);
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  const ImmutableLoopSnapshotRef rootBeforeOverdub = loop.publishedSnapshot();
+  const uint32_t coverageBeforeOverdub = loop.publishedSnapshotCoveredRevision();
+
+  queueOverdubSessionExitSnapshotRequest(loop, 400, 480, 64);
+  TEST_ASSERT_TRUE(loop.stepPendingSnapshotPublish(1, true));
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasInFlightSnapshotConstruction(),
+      "the first request must be mid-construction when the later request arrives");
+
+  // Later request while the candidate is mid-construction.
+  loop.storePublishedSnapshotForTest(rootBeforeOverdub, 0, coverageBeforeOverdub);
+  assertSelectedRootIsNotCurrentUntilItsCoveragePublishes(loop);
+
+  drainPendingSnapshotPublish(loop);
+  TEST_ASSERT_FALSE(loop.hasPendingSnapshotPublish());
+  TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
+  TEST_ASSERT_NOT_NULL_MESSAGE(loop.publishedSnapshot()->noteMembership(60, 0).get(),
+      "the settled root must keep the record pass");
+  TEST_ASSERT_NOT_NULL_MESSAGE(loop.publishedSnapshot()->noteMembership(64, 0).get(),
+      "the settled root must cover the overdub pass the pending request carried");
+}
+
 void test_live_record_pending_after_length_reaches_one_bar() {
   LoopEventStore::resetPoolForTests();
   LoopEventStore::initPool();
@@ -6530,6 +6619,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_empty_stop_handoff_does_not_duplicate_published_record);
   RUN_TEST(test_stop_handoff_keeps_inflight_wrap_and_final_pass_once);
   RUN_TEST(test_queue_overdub_snapshot_waits_for_idle_steps);
+  RUN_TEST(test_coalesced_snapshot_request_before_construction_is_not_satisfied_early);
+  RUN_TEST(test_coalesced_snapshot_request_mid_construction_is_not_satisfied_early);
   RUN_TEST(test_live_record_pending_after_length_reaches_one_bar);
   RUN_TEST(test_live_record_does_not_start_in_progress_bar);
   RUN_TEST(test_live_record_continues_next_completed_bar);

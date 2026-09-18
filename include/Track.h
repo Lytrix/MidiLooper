@@ -556,6 +556,8 @@ private:
     /// Moved out of the live session at admission, so a successor session's
     /// beginOverdubSession cannot rewrite this interval's undo entry baseline.
     ImmutableLoopSnapshotRef beforePublished;
+    /// DEC-073: committed-pass coverage of `beforePublished` at capture time.
+    uint32_t beforePublishedCoverage = kSnapshotCoverageUnset;
     bool hasBeforePublished = false;
     /// Causal predecessor identity: the published source this interval succeeded,
     /// resolved once at admission (punch-out) and pinned for the job's lifetime.
@@ -655,6 +657,8 @@ private:
   bool hasRecordCaptureBaselineGeometry_ = false;
   /// Published root at overdub session open (GUS OverdubPassAdded before — Pin B).
   ImmutableLoopSnapshotRef overdubSessionBeforePublished_;
+  /// DEC-073: committed-pass coverage of `overdubSessionBeforePublished_` at capture time.
+  uint32_t overdubSessionBeforePublishedCoverage_ = kSnapshotCoverageUnset;
   bool hasOverdubSessionBeforePublished_ = false;
   MidiEventVec committedMidiScratch_;
   uint32_t committedMidiScratchRevision_ = UINT32_MAX;

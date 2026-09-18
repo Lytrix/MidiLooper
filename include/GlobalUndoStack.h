@@ -52,6 +52,11 @@ struct UndoEntry {
   /// (`PersistedLoopSnapshot` compatibility DTOs). RAM-only — not in STK wire.
   ImmutableLoopSnapshotRef beforePublishedSnapshot;
   ImmutableLoopSnapshotRef afterPublishedSnapshot;
+  /// DEC-073: the committed-pass revision each retained root was captured at. Selecting an entry's
+  /// root during undo/redo stores it with this coverage, so a root from an older committed-pass
+  /// state can never be stamped current by the selection itself.
+  uint32_t beforePublishedCoverage = kSnapshotCoverageUnset;
+  uint32_t afterPublishedCoverage = kSnapshotCoverageUnset;
   UndoLoopGeometry beforeGeometry;
   UndoLoopGeometry afterGeometry;
 

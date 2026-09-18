@@ -2741,6 +2741,31 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — RC1 landed: snapshot currency is committed-pass coverage, not a revision stamp (DEC-073).**
+The RC above is now fixed for the publisher. `PublishedSnapshotBox`/`PendingSnapshotPublishBox` carry
+`coveredPassRevision`; `Loop::publishedSnapshotIsCurrent()` is `coveredPassRevision == committedPassRevision()`
+(never `box.revision == playbackRevision`); the box advances its watermark only where it actually enumerates
+(`queueSessionExitSnapshot`, both `queueAllCommittedPassesInto` callers, `enqueueLiveOverdubPasses` when it queues a
+pass), the session-exit publish passes that watermark, wrap candidates keep their explicit `targetRevision` as both
+stamp and coverage, and the undo/redo captured-root selection carries the coverage it was captured at
+(`UndoEntry::before/afterPublishedCoverage`, the job-owned and live before-roots,
+`TrackUndo::selectPublishedSnapshotForEntry(loop, ref, coverage)`). A captured ref supplied without coverage is
+conservatively not current, so a pre-redo root can no longer be re-stamped current. The two reproducers in
+`test/test_loop_take_survival` (before-construction and mid-construction coalescing) were red before and are green
+after: suite 137/137, full native **2246 / 1 skipped / 0 failures**, `teensy41-capture-serial` SUCCESS (RAM1
+variables 91,968 / code 425,560 / padding 424 / locals free 6,336; FLASH code 1,007,080). **Device read done
+2026-09-18** on the DEC-071 multi-pass shape with the recipe's undo/redo (firmware
+`teensy41-capture-serial-no-grain`, hex `f2f1d8bd…`, tree `d9eb419a` + this change):
+`captures/rc1-coalescing-reboot-playback` is a fresh boot (`boot_reset,crash=0` at 3.0 s) and reads
+**`result: PASS`, `storage_matches_effective: true`, `384 + 154 + 38 + 24 = 600` effective rows, all five cycles
+`inventory_equal: true` / `exact_order: true`, 0 missing, 0 extra, `max_bar_refs=84`, 0 `RING,overflow`** -- the
+24-row second-overdub pass that `content-verify-58` lost is audible after reboot. The base run
+(`captures/rc1-coalescing-device`) shows the post-redo republish (`q=0,a=4` at 95.474 s) as the root the LSV1
+tail gathers at 99.640 s; its only report issue is `persistence_stage_missing:result`, the run window closing while
+the now-complete 600-row tail writes (device log: `PERS,result,…ok` at 111.14 s). **Remaining:** **RC2** — the LSV1
+body gather/admission must see a settled current root (`coveredPassRevision == committedPassRevision &&
+!hasPendingSnapshotPublish()`) with bounded re-admission, else persist a passes-authoritative body. Then 6.1/6.2/6.3.
+
 **2026-09-18 — RC for the post-reboot overdub loss: the LSV1 body save gathers a root that can predate
 the current committed passes.** User report: *after reboot the second overdub isn't loaded (or
 stored)*. Investigated on the canonical `base` run (`captures/gus-sanity-01`) plus a post-reboot

@@ -135,6 +135,10 @@ TRACK_COLD_MEM ImmutableLoopSnapshotRef capturePublishedSnapshot(const Loop& loo
     return loop.publishedSnapshot();
 }
 
+TRACK_COLD_MEM uint32_t capturePublishedSnapshotCoverage(const Loop& loop) {
+    return loop.publishedSnapshotCoveredRevision();
+}
+
 TRACK_COLD_MEM void bindSessionExitAfterAttach(Loop& loop, UndoEntryId entryId) {
     if (entryId == kInvalidUndoEntryId) {
         return;
@@ -152,7 +156,11 @@ TRACK_COLD_MEM void applyPublishedSnapshotSelect(Loop& loop, const UndoEntry& en
     const ImmutableLoopSnapshotRef& ref =
         undo ? entry.beforePublishedSnapshot : entry.afterPublishedSnapshot;
     if (ref) {
-        TrackUndo::selectPublishedSnapshotForEntry(loop, ref);
+        // DEC-073: select the root *with the coverage it was captured at*. Without it the selection
+        // would re-stamp an older committed-pass state as current, which is how the redo's missing
+        // after-root left the undo-shaped root in place (device `gus-sanity-01`).
+        TrackUndo::selectPublishedSnapshotForEntry(
+            loop, ref, undo ? entry.beforePublishedCoverage : entry.afterPublishedCoverage);
     } else if (!undo && entry.kind == UndoEntryKind::ClearSlot) {
         TrackUndo::selectPublishedSnapshotForEntry(loop, {});
     }
@@ -291,6 +299,7 @@ TRACK_COLD_MEM bool applyUndoEntry(Track& track, UndoEntry& entry) {
             entry.afterSnapshot = loop.sharePassesSnapshot();
             entry.afterGeometry = captureGeometry(loop);
             entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
+            entry.afterPublishedCoverage = capturePublishedSnapshotCoverage(loop);
             if (entry.hasTrackState) {
                 entry.afterTrackState = track.getState();
             }
@@ -633,6 +642,7 @@ TRACK_COLD_MEM void TrackUndo::pushRecordPassAdded(Track& track, uint8_t slotInd
     entry.beforePublishedSnapshot = {};
     if (loop.publishedSnapshotIsCurrent()) {
         entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
+        entry.afterPublishedCoverage = capturePublishedSnapshotCoverage(loop);
     }
     if (track.hasRecordCaptureBaselineGeometry_) {
         entry.beforeGeometry = track.recordCaptureBaselineGeometry_;
@@ -682,14 +692,17 @@ TRACK_COLD_MEM void TrackUndo::pushOverdubPassAdded(Track& track, uint8_t slotIn
     Track::CaptureStopJob* stopJob = track.captureStopJobHead();
     if (stopJob != nullptr && stopJob->hasBeforePublished) {
         entry.beforePublishedSnapshot = std::move(stopJob->beforePublished);
+        entry.beforePublishedCoverage = stopJob->beforePublishedCoverage;
         stopJob->hasBeforePublished = false;
         stopJob->beforePublished = {};
     } else if (track.hasOverdubSessionBeforePublished_) {
         entry.beforePublishedSnapshot = std::move(track.overdubSessionBeforePublished_);
+        entry.beforePublishedCoverage = track.overdubSessionBeforePublishedCoverage_;
         track.hasOverdubSessionBeforePublished_ = false;
         track.overdubSessionBeforePublished_ = {};
     } else {
         entry.beforePublishedSnapshot = capturePublishedSnapshot(loop);
+        entry.beforePublishedCoverage = capturePublishedSnapshotCoverage(loop);
     }
     // after attaches when session-exit publish completes (Pin A).
     entry.afterPublishedSnapshot = {};
@@ -701,9 +714,10 @@ TRACK_COLD_MEM void TrackUndo::bindTipSessionExitUndoAttach(Track& track, Loop& 
 }
 
 TRACK_COLD_MEM void TrackUndo::selectPublishedSnapshotForEntry(Loop& loop,
-                                                               ImmutableLoopSnapshotRef ref) {
+                                                               ImmutableLoopSnapshotRef ref,
+                                                               uint32_t coveredPassRevision) {
     if (ref) {
-        loop.storePublishedSnapshot(std::move(ref));
+        loop.storePublishedSnapshot(std::move(ref), 0, coveredPassRevision);
     } else {
         loop.clearPublishedSnapshot();
     }
@@ -711,8 +725,10 @@ TRACK_COLD_MEM void TrackUndo::selectPublishedSnapshotForEntry(Loop& loop,
 
 TRACK_COLD_MEM bool TrackUndo::prepareOverdubSessionEntry(Loop& loop,
     Loop::SessionUndoCollection& collection, uint8_t slotIndex,
-    const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry) {
-    return TrackPreparedUndo::prepareOverdubSessionEntry(loop, collection, slotIndex, beforePublished, entry);
+    const ImmutableLoopSnapshotRef& beforePublished, UndoEntry& entry,
+    uint32_t beforePublishedCoverage) {
+    return TrackPreparedUndo::prepareOverdubSessionEntry(loop, collection, slotIndex, beforePublished,
+                                                         entry, beforePublishedCoverage);
 }
 
 TRACK_COLD_MEM void TrackUndo::pushOverdubSessionOnStop(Track& track, uint8_t slotIndex,
@@ -780,8 +796,11 @@ TRACK_COLD_MEM void TrackUndo::pushEditPassClosed(Track& track, uint8_t editPass
     entry.editPassType = editPassType;
     entry.editPassIds = std::move(editPassIds);
     entry.beforePublishedSnapshot = std::move(beforePublishedSnapshot);
+    // The caller captured the before-root at note-edit open, so its coverage is not derivable here;
+    // it stays unset (`kSnapshotCoverageUnset`) and the selected root is conservatively not current.
     if (loop.publishedSnapshotIsCurrent()) {
         entry.afterPublishedSnapshot = capturePublishedSnapshot(loop);
+        entry.afterPublishedCoverage = capturePublishedSnapshotCoverage(loop);
     }
     pushUndoEntry(track, std::move(entry));
 }
@@ -806,6 +825,9 @@ TRACK_COLD_MEM void TrackUndo::attachAfterPublishedSnapshot(Track& track, Loop& 
         }
         if (!entry.afterPublishedSnapshot) {
             entry.afterPublishedSnapshot = std::move(after);
+            // DEC-073: the attach fires in the same turn as the publication it names, so the
+            // loop's just-stored root coverage is this root's coverage.
+            entry.afterPublishedCoverage = loop.publishedSnapshotCoveredRevision();
         }
         return;
     }
@@ -838,6 +860,7 @@ TRACK_COLD_MEM void TrackUndo::beginOverdubSession(Track& track) {
     }
     Loop& loop = track.getActiveLoop();
     track.overdubSessionBeforePublished_ = capturePublishedSnapshot(loop);
+    track.overdubSessionBeforePublishedCoverage_ = capturePublishedSnapshotCoverage(loop);
     track.hasOverdubSessionBeforePublished_ = true;
 }
 
@@ -1173,6 +1196,7 @@ TRACK_COLD_MEM void TrackUndo::pushClearTrackSnapshot(Track& track) {
     entry.loopId = loop.loopId;
     entry.beforeSnapshot = loop.sharePassesSnapshot();
     entry.beforePublishedSnapshot = capturePublishedSnapshot(loop);
+    entry.beforePublishedCoverage = capturePublishedSnapshotCoverage(loop);
     entry.beforeGeometry = captureGeometry(loop);
     entry.beforeTrackState = track.getState();
     entry.hasTrackState = true;

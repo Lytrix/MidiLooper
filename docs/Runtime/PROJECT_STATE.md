@@ -1,5 +1,36 @@
 # Project state (execution context)
 
+**2026-09-18 RC1 LANDED: a published snapshot root carries its committed-pass coverage, and "current" can no longer
+lie (DEC-073, `successor-capture-reentry-unguarding` 5.9).** The post-reboot overdub loss was the publisher stamping a
+candidate built for an older committed-pass state with the *current* `playbackRevision`: the session-exit publish and
+the undo/redo captured-root selection both did it, so `publishedSnapshotIsCurrent()` was exactly
+`box.revision == playbackRevision` and the LSV1 save could gather an undo-shaped 48-row root while `PassesResolve` was
+57. Fix: `PublishedSnapshotBox`/`PendingSnapshotPublishBox` carry `coveredPassRevision`;
+`publishedSnapshotIsCurrent()` is `coveredPassRevision == committedPassRevision()` (the enumerable pass/companion
+inventory revision, an audited alias of `playbackRevision` today); the box sets its watermark only where it actually
+enumerates (`queueSessionExitSnapshot`, both `queueAllCommittedPassesInto` callers, `enqueueLiveOverdubPasses` when it
+queues, wrap journals via their own `targetRevision`), the session-exit publish passes that watermark, and undo/redo
+coverage travels with the retained root (`UndoEntry::before/afterPublishedCoverage`, the job- and session-owned
+before-roots, `TrackUndo::selectPublishedSnapshotForEntry(loop, ref, coverage)`). No pending-request clause sits in
+the predicate: a later request can only invalidate a root by moving the inventory, which the comparison already reads.
+Evidence: the two DEC-073 reproducers in `test_loop_take_survival`
+(`test_coalesced_snapshot_request_before_construction_is_not_satisfied_early`,
+`test_coalesced_snapshot_request_mid_construction_is_not_satisfied_early`) fail on the pre-fix tree on the same
+clause -- a root captured before the live committed-pass state claiming current -- and pass after; suite 137/137,
+full native **2246 / 1 skipped / 0 failures**, `teensy41-capture-serial` SUCCESS (RAM1 variables 91,968 / code
+425,560 / padding 424 / locals free 6,336; FLASH code 1,007,080). **Device-verified 2026-09-18:** DEC-071 multi-pass
+shape with the recipe's undo/redo on `teensy41-capture-serial-no-grain` (hex
+`f2f1d8bdfc85b30727fc667e1c548066d1debf4854fa5acae8cdae645c735f1e`, tree `d9eb419a` + this change) --
+`captures/rc1-coalescing-device` ran two overdub sessions with undo=1/redo=1 and the post-redo republish
+(`q=0,a=4` at 95.474 s) is the root the LSV1 `tail_gather_begin` at 99.640 s gathers; the base report's only issue
+is `persistence_stage_missing:result` because the now-complete 600-row tail was still writing when the run closed
+serial (the device's own log has `PERS,result,…ok` at 111.14 s). `captures/rc1-coalescing-reboot-playback` is a
+fresh boot (`boot_reset,crash=0` at 3.0 s) and reads **`result: PASS`, `storage_matches_effective: true`,
+384 + 154 + 38 + 24 = 600 effective, all five cycles `inventory_equal: true` / `exact_order: true`, 0 missing,
+0 extra, `max_bar_refs=84`, 0 `RING,overflow`** -- the 24-row second-overdub pass that `content-verify-58` lost is
+audible after reboot. `captures/rc1-coalescing-device-playback` (live) is also 5/5 clean. **Remaining:
+RC2** (the LSV1 body gather/admission settled-root gate, else a passes-authoritative body), then 6.1/6.2/6.3.
+
 **2026-09-18 RC recorded for the post-reboot overdub loss (`successor-capture-reentry-unguarding` 5.9).** User report:
 after reboot the second overdub isn't loaded. Device `captures/gus-sanity-01` + `captures/reboot-01-playback`: the
 committed passes are complete (effective 142 rows; both overdub passes present after load), but the deferred save's
