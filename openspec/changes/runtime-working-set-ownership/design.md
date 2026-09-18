@@ -53,7 +53,7 @@ below is not complete if it violates one, and any invariant without an enforceme
 | 28 | **Reuse before invention**; duplication is a recorded failure mode | S4c.2, S4e.4, S0.6 |
 | 29 | **One owner per concept**; a second authority for the same concept is a defect | Revision 12 (F5); S0.1 |
 | 30 | **Retrofit opportunistically**; never big-bang a timing-path owner | S0.6 non-goal |
-| 31 | **No user operation is ever refused such that a second attempt is required.** A request that cannot complete immediately is **latched** and self-serviced when its resources free -- never dropped back on the user | product requirement; spec "a request is never refused to the user"; S4f |
+| 31 | **Every user interaction is accepted; *when* it executes is the pipeline's decision.** No interaction (stop, record/overdub start, slot or track switch, undo/redo) is refused because an owner is momentarily busy. Execution timing is resolved by the playhead-scheduled MVCC pipeline against the playhead deadline and the earliest valid interval boundary -- a busy owner delays execution, it never rejects the request, and the user never re-issues | product requirement; spec "every user interaction is accepted"; S4f |
 
 Vocabulary for 1-14 is governed in [`docs/Authority/NAMING.md`](../../../docs/Authority/NAMING.md) under
 **Playhead-scheduled MVCC** and **Pipeline**.
@@ -596,19 +596,20 @@ STOP B              -> B acquires it
 
 STOP B while A still finalizes
   -> denied non-destructively, no partial stop
-  -> B remains recording/overdubbing
-  -> a subsequent stop request may succeed once the role frees
-     (still subject to the other single-instance resources)
+  -> B's stop is ACCEPTED and scheduled; B keeps recording/overdubbing
+     while A finalizes (the interval stays intact)
+  -> the accepted stop executes once the role frees
+     (still subject to the other single-instance resources being released)
 ```
 
 **How it actually works (traced 2026-09-18 in `Track::beginDeferredOverdubStop`).** The bound is *not* the
 ring depth. Admission takes a descriptor only if the **tail descriptor is free** (`captureStopJobTail()` requires
 `count < kCapacity`, and the caller requires the tail's `pendingNotes` to be empty), so a pending stop is never
 stacked on an occupied interval. What actually bounds ordinary concurrency is the set of **single-instance
-finalization resources**, each an explicit non-destructive denial that takes no descriptor and leaves the
-interval as the live recording interval:
+finalization resources**. These are **busy-owner states**, not user-visible refusals: the interaction is accepted
+and scheduled, the interval stays the live recording interval, and execution happens when the owner frees.
 
-| Denial stage | Condition |
+| Busy-owner state | Condition |
 |---|---|
 | **Ordinary directional-capacity denials** -- expected during normal reentry; each re-checked on every attempt | |
 | `finalizer_busy` | `runtime->captureStopOwner != nullptr` -- a predecessor is still finalizing |
@@ -618,12 +619,16 @@ interval as the live recording interval:
 | **Exceptional denial -- not part of normal reentry** | |
 | `queue_full` | no free tail descriptor: **descriptor exhaustion**, documented as *"never ordinary finalization latency"*. It is categorically different from the denials above, must not be used to explain ordinary finalization wait, and reaching it indicates a descriptor-lifetime defect (leaked `pendingNotes`) rather than capacity pressure |
 
-So: **one *active* finalizer**, enforced by shared resources; a denied stop is **not queued and not
-auto-serviced** -- it is re-issued by the stop edge (device evidence `successor-reentry-25`: B's stop refused,
-then admitted after A's finalization released). `finalization_lease_stop_denied` counts these denials, and real
-usage decides whether one finalizer ever constrains normal work (very short captures and rapid
-punch-stop/start/stop are the constrained shapes). A queue would be a **separate capacity/ownership change**
-that must first show where each per-interval state lives while a predecessor finalizes.
+So: **one *active* finalizer**, enforced by shared resources. Acceptance is unconditional (invariant 31): a stop
+that meets a busy owner is **accepted and scheduled**, and the *pipeline* decides when it executes -- the earliest
+valid interval boundary at which the owner has freed. Device evidence `successor-reentry-25` is the **counterfactual
+for the defect**: B's stop was refused and only took effect after A's finalization released, i.e. it needed the stop
+edge to come again. `finalization_lease_stop_denied` counts **waits**, attributed to the holding owner; real usage
+decides whether one finalizer ever constrains normal work (very short captures and rapid punch-stop/start/stop are
+the constrained shapes). Note what is *not* implied: an accepted request is one small piece of per-interval state,
+so this is **not** a queue of stopped intervals -- a queue would still be a **separate capacity/ownership change**
+that must first show where each stored interval's sealed raw range, pending closures, staged pass, session receipt
+and canonical transfer state live while a predecessor finalizes (four of those five sets have no proven home).
 
 ## Options considered
 

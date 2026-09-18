@@ -236,24 +236,25 @@ visual detail windows are bounded optimisations on top, never a precondition for
       the existing renderer; mutation invalidates; cap and eviction hold under library growth.
 - [ ] S4e gates: envelope and window appear as budget terms; no new renderer or validity counter introduced.
 
-## S4f — no user-visible denial (the reason this change exists)
+## S4f — accept every interaction; the pipeline decides when it executes (the reason this change exists)
 
 - [ ] S4f.0 Extend the **existing** pending-stop re-drive path rather than adding a mechanism: the two redirect
       points (`stopOverdubbingToStopped`, `invalidatePlaybackMergedMidiEvents`) already re-issue
       `requestDeferredOverdubStopToStopped()` for an admitted job, and neither covers a denial because a denial
       stores nothing. Latch the request where the denial is produced and drive it from that same service point.
-- [ ] S4f.1 **Latch a request that cannot complete at once** (destination, requested tick, interval generation)
-      and self-service it when the resources free, completing at the correct boundary with no second press.
+- [ ] S4f.1 **Accept the interaction unconditionally** and record what it is (destination, requested tick,
+      interval generation); it executes when the owner frees, at the earliest valid interval boundary, with no
+      second press.
 - [ ] S4f.2 Apply the same rule to record/overdub start, slot/track switching and undo/redo.
-- [ ] S4f.3 Make the retries observable: `finalization_lease_stop_denied` counts **retries**, and the diagnostic
-      names the holding resource; the pre-fix counterfactual is `successor_stop_denied_capacity` +
+- [ ] S4f.3 Make the waits observable as **scheduling**, not refusal: `finalization_lease_stop_denied` counts waits
+      and names the holding owner; the pre-fix counterfactual is `successor_stop_denied_capacity` +
       `reentryDecision("deny", ...)`.
 - [ ] S4f.4 Prove no new capacity is implied: the latch is one small state per live interval, not a stored
       stopped interval, so the descriptor-ring finding is unchanged.
-- [ ] S4f.5 Native fixture: stop requested while the predecessor finalizes -> latched -> predecessor retires ->
-      stop completes, with exactly one request issued and the denials counted as retries.
-- [ ] S4f gates: the latency from request to completion is bounded and reported; no user-visible denial remains
-      in the diagnostic vocabulary for capacity reasons.
+- [ ] S4f.5 Native fixture: stop requested while the predecessor finalizes -> accepted -> predecessor retires ->
+      stop completes, with exactly one request issued and the waits counted as scheduling.
+- [ ] S4f gates: the latency from acceptance to execution is bounded and reported; no capacity-driven
+      user-visible denial remains in the diagnostic vocabulary.
 
 ## S5 — demote inactive slots' derived state
 
