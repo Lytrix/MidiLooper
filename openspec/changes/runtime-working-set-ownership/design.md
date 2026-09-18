@@ -16,6 +16,47 @@ The requested decision, **including the revisions from review**:
 An ownership move of this size needs the transfer protocol in `docs/Authority/ARCHITECTURE_RULES.md` and
 a `DEC-###`; the canonical-residency phase needs its own `DEC` amendment.
 
+## Invariants (binding on this change)
+
+Distilled from the design work; the owning authority for each is cited so none of these is decorative. A task
+below is not complete if it violates one, and any invariant without an enforcement point is a gap, not a note.
+
+| # | Invariant | Enforced by |
+|---|---|---|
+| 1 | Working memory scales with **active roles and bounded windows**, never with recorded-slot count or loop length | spec "library growth does not grow working memory"; S2.3 |
+| 2 | **Loop length must not change resident cost** (64 bars ~= 4 bars) | spec length-independence scenario; S2.5 |
+| 3 | Every capacity number is an **output** of arithmetic plus measurement, never an assertion | S2.3, S2.4, S2.7, S2.8 |
+| 4 | Every resident store declares **class, cardinality, cap and eviction policy** | spec standby/visual caps; S4d.3, S4e.2 |
+| 5 | A **bounded exception** is named and capped, or it becomes the residency that was removed | spec standby and envelope requirements |
+| 6 | Identity is `owner + generation + role`; release is by identity; a mismatched release is a rejected no-op | spec generation-qualified leases; S4.2 |
+| 7 | Release requires **proof no live owner remains**; liveness is explicit per owner kind | spec release requirement; S3.2 |
+| 8 | **Selection is cheap**; only about-to-sound / arm / preload admits a working set | spec selection requirement; S3.3 |
+| 9 | Inactive state is **descriptors + bounded metadata + capped envelope** | spec inactive-slot requirement; S4e.1 |
+| 10 | Output paths consume **immutable state only** | spec "never reads a partially updated representation" |
+| 11 | Immutable readiness is owed **per affected tick, before the playhead returns to it** | spec readiness requirement |
+| 12 | A missed deadline keeps the **previous version** authoritative for that pass: never torn, held or timing-deferred | spec scenario; S4c.3 (decided) |
+| 13 | Currency is decided by **coverage/identity**, not a timestamp or a "saved" flag | DEC-073 coverage contract (`publishedSnapshotIsCurrent`) |
+| 14 | **Durability gates eviction**; dirty pins residency; persistence failure reduces capacity, never discards accepted input | spec dirty-generation requirement; S6.1a, S6.2a |
+| 15 | The looper **never stops playing** | spec role-transfer requirement; S7.5 |
+| 16 | **No allocation and no blocking on a timing-critical edge** | existing hot-path rule; S4c.0 and S3 gates |
+| 17 | Role transfer provisions the inbound owner **before** releasing the outbound one, allocation-free at the switch | spec transfer scenario; S4b.2 |
+| 18 | Failed admission is **non-destructive**: no partial authority, state preserved, reported as wait/denial | spec non-destructive admission; G.2 |
+| 19 | Contention is **queued and serialized**; only a full queue denies | spec finalization queue scenarios; S4.5 |
+| 20 | Transient pressure **parks, never aborts** | DEC-075 (landed) |
+| 21 | Budget instrumentation is **live and attributed** per owner/class, not cumulative and aggregate | slab census (landed); spec coverage-report requirement |
+| 22 | Verdicts declare required evidence; degraded evidence yields **DEGRADED, never an unconditional PASS** | spec host-verdict requirement; harness rule |
+| 23 | Degradation is **counted and named**; only unrecoverable loss is fatal | RC-MEM-7 (landed); spec scenarios |
+| 24 | Instrumentation **may not perturb what it measures** (FLASH-resident, allocation-free, deliberate drain policy) | existing capture gate |
+| 25 | **Measure before designing** -- a premise is a hypothesis until measured | S1 red characterisation |
+| 26 | **Falsify the plan against the tree before building**; an unsatisfiable requirement is a defect | FALSIFICATION.md; S0 gate |
+| 27 | Distinguish a **product target** from an existing capability; never price the former as the latter | FALSIFICATION F1; S0 envelope |
+| 28 | **Reuse before invention**; duplication is a recorded failure mode | S4c.2, S4e.4, S0.6 |
+| 29 | **One owner per concept**; a second authority for the same concept is a defect | Revision 12 (F5); S0.1 |
+| 30 | **Retrofit opportunistically**; never big-bang a timing-path owner | S0.6 non-goal |
+
+Vocabulary for 1-14 is governed in [`docs/Authority/NAMING.md`](../../../docs/Authority/NAMING.md) under
+**Playhead-scheduled MVCC** and **Pipeline**.
+
 ## Revision 1 — the envelope, and why windowing is a prerequisite
 
 The requirement, pinned:
