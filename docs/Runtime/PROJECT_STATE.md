@@ -1,5 +1,25 @@
 # Project state (execution context)
 
+**2026-09-18 `DIAG,droid_queue` is off in the default capture env, and that also removed the 4 KB RAM1 snap.**
+`SESSION_CAPTURE_DROID_QUEUE=0` now sits in `[env:teensy41-capture-serial]`, with
+`teensy41-capture-serial-investigation-diag` setting `=1` as the explicit debug gate and
+`teensy41-capture-serial-no-grain` keeping its own explicit `=0` (its contract is the acceptance contract). The family
+fires on every enqueue/coalesce of the DROID control-surface feedback path, was 5,636 rows (~310 KB) on the 2026-09-18
+eight-bar record+overdub fixture, and with the per-slice `PERS,work` trace shed the 1 MiB ring, evicting the
+`snapshot_unit`/`ST` rows the base-run oracle is read for; the counters and the `logger.log` overflow warning are
+unaffected. Two measured effects. (1) Ring budget: with only `droid_queue` off, the fixture reached **17,412** `#CAP`
+rows against 3,287 in the shed runs and got past the phase-confirmation abort, but `DIAG,lcr` was then 12,664 rows /
+~966 KB and still overflowed the ring -- so the acceptance env (which also drops `DIAG,stop_grain` and `DIAG,lcr,*`)
+is still required; there the same fixture logs **2,410 rows with no `capture_ring_overflow`**. (2) RAM1: the emitter's
+own format string was the RAM1 `.rodata` literal that triggered the 4 KB `.data`/`.bss` alignment snap chased in the
+entry below -- with the family dropped, the build reads `variables 91,968` / `code 392,152` / `padding 1,064` /
+`free for local variables` **39,104** instead of 96,064 / 35,008. So the drain fix that had to be reverted at 2,240
+now lands with the largest allowance this tree has had. This is the documented "a new capture format string can cost
+4 KB" hazard in [`Teensy-RAM1-Bank-Overflow.mdc`](../../.cursor/rules/Teensy-RAM1-Bank-Overflow.mdc), and it makes
+dropping a high-volume *emitter* both a ring-budget and a RAM1 lever. The base preset's remaining misses on this
+fixture are its setup-oracle class (a 2x-tempo run: 780 ticks/s against 384 nominal, sealing a 17-bar loop for
+`--record-bars 8`, the same artifact already recorded for the DEC-074 session), not content.
+
 **2026-09-18 the blocking `saveState` drain is fixed and device-verified, and the RAM1 tree gained a DTCM bank
 (`immutable-loop-snapshot-passes` 5.7.6; `12fdf38d` -> reverted `d3290020` -> re-landed `0a036c63` on linker change
 `ea9918ac`).** The RC recorded below this entry was a **monotonic persistence work-entry table**: no path ever returns

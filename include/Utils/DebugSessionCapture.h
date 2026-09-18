@@ -41,14 +41,17 @@
 #ifndef SESSION_CAPTURE_GRAIN
 #define SESSION_CAPTURE_GRAIN 1
 #endif
-// Deferred DROID USB-host feedback queue telemetry (`DIAG,droid_queue`). Default on. The emitter
-// fires on every enqueue/coalesce, so a HITL run that drives the control-surface LEDs logs
-// thousands of rows: the 2026-09-18 eight-bar record+overdub acceptance fixture logged 5,636 rows
-// (~310 KB) and, with the per-slice persistence trace, overflowed the 1 MiB capture ring, evicting
-// the `snapshot_unit`/`ST` rows the base-run oracle and the content-verification dump are read for.
-// A build that sets this to 0 drops the family at compile time while keeping the counters and the
-// overflow warning (`logger.log` on the prompt channel). See env `teensy41-capture-serial-no-grain`
-// (the acceptance target).
+// Deferred DROID USB-host feedback queue telemetry (`DIAG,droid_queue`). Off in the default capture
+// env (`teensy41-capture-serial` sets it to 0), on in `teensy41-capture-serial-investigation-diag`
+// as the explicit debug gate. The emitter fires on every enqueue/coalesce, so a HITL run that drives
+// the control-surface LEDs logs thousands of rows: the 2026-09-18 eight-bar record+overdub
+// acceptance fixture logged 5,636 rows (~310 KB) and, with the per-slice persistence trace,
+// overflowed the 1 MiB capture ring, evicting the `snapshot_unit`/`ST` rows the base-run oracle and
+// the content-verification dump are read for. The macro default stays 1 so a build that names no env
+// (native suites, or a bare `-D SESSION_CAPTURE=1`) keeps the family; a build that sets it to 0
+// drops it at compile time while keeping the counters and the overflow warning (`logger.log` on the
+// prompt channel). See envs `teensy41-capture-serial-no-grain` (acceptance) and
+// `teensy41-capture-serial-investigation-diag`.
 #ifndef SESSION_CAPTURE_DROID_QUEUE
 #define SESSION_CAPTURE_DROID_QUEUE 1
 #endif
