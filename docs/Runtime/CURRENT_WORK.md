@@ -2760,11 +2760,44 @@ journal, published root, its revision, the in-flight flag and the failure count 
 completes) and `test_allocation_failure_parks_publication_until_admission_recovers` (park, no attempt while admitted,
 release after an observed denial, then complete and current). Full native **2249 / 1 skipped / 0 failures**;
 `teensy41-capture-serial` SUCCESS with RAM1 byte-identical to DEC-074 (`variables 91,968 / code 425,560 / padding
-424 / locals free 6,336`). **Owed before this closes:** the device re-run of the reported shape (loaded workspace,
-12-bar record, live overdub past the wrap) requiring 0 `FATAL` / 0 `#MEM_EXT_REFUSED` and a live device, with either
-a completed wrap publication or a parked one, plus a per-second `cls`/`clsn`/`heap_free` series across the wrap.
-`kSnapshotPublicationReserveBytes` (72 KB of required internal heap) is the tunable if a healthy device parks; the
-DEC-073 RC1 control settles at 104 KB.
+424 / locals free 6,336`). **Device evidence 2026-09-18 (parked path):** `captures/rcpub-gate-05` (git `dc9a1107`
+clean, hex `7f6bd8e3…`, base preset, track 5 slot 1, TEMP stimulus `STIM-BASE-2-2-01-TEMP-A`, `--record-bars 8
+--overdub-bars 8 --overdub-start-delay-bars 2`) reports **0 `FATAL`, 0 `#MEM_EXT_REFUSED`**, a device streaming to the
+end, and **49 `#MEM_DENIED`, all `op=snapshot_reserve`, `reason=heap_low`, `need=40960B`, `heap_free=68KB`,
+`pool_refused=0/0B`** — the heap, not the pool, was binding, which is the crash's condition. The parked state is
+direct: `snapshot_unit`, `snapshot_fragment`, `snapshot_slab_fail` and `snapshot_alloc` are **all 0**, so no
+construction was started, stepped, frozen or published while denied and no incomplete prefix could become
+authoritative; `heap_free` held at 68 KB (min = median = max over 73 samples), `snap` stayed 2214 KB, and pool `live`
+went 6507 -> 7881 KB at record-arm staging then flat. The denial report is rate-bounded on device as designed (~1/s
+over the 50 s window). The crash log is the counterfactual: the same boundary without the gate drained heap 108 -> 0 KB
+and `snap` 2409 -> 2543 KB in six seconds, then `abort()`.
+**Owed before this closes:** (a) the **wrap** case specifically — this run's denials landed during `RECORDING` (the
+live-record window shares the construction path) and the harness aborted before the wrap on a 1 MiB `#CAP` ring shed
+(`Result: INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`, `second overdub transition not confirmed`), the
+`droid_queue`/volume issue already recorded above; (b) that publication **resumes and completes** once the heap
+recovers — the run ended while still denied, so resume is native-proven only; (c) RC-PUB-2's park/release has no device
+occurrence, which is the intended outcome since the gate prevents the allocation attempt that would park. The 24-bar
+repro is also out of reach: `TICKS_PER_BAR = 768` makes the crashing loop 24 bars while `--record-bars` accepts
+`[1, 2, 4, 8]`, so a faithful re-run needs that cap raised. `kSnapshotPublicationReserveBytes` (72 KB of required
+internal heap) remains the tunable if a healthy device parks; the DEC-073 RC1 control settles at 104 KB and this run
+was denied at 68 KB.
+
+**2026-09-18 — RC (persistence owner, not fixed here): the blocking `saveState` drain can spin when `pending` is set
+with an empty work queue.** Two base-preset runs (`captures/rcpub-gate-01`, `-02`) aborted at the harness's clear
+precondition with `Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)`; a clean
+`pio run -t upload` cleared it (`captures/rcpub-gate-05` logs `Clear completed`), so the shape is device *state*, not
+per-boot. `src/StorageManager/SyncDrainBudget.cpp:66` sets `finalizeSliceSteps` only when `pending &&
+queueDepth == 0 && writingWorkItemCount == 0 && !itemActive`, so `expectedSliceSteps = 1` with 0 SD bytes means
+`hasPersistenceWorkPending()` was true **solely** because `currentWorkspaceSave.pending` was set with no work item to
+step; `maxSliceSteps = 1*3/2 + 32 = 33` and `maxStuckIterations = min(64, 33) = 33` match the log exactly.
+`stepPersistenceWorkItem` returns success on exactly that state (`queueDepth == 0 && writing == 0 && !itemActive` ->
+`return true`, leaving `pending` set) and `maybeAdmitFinalizeWorkspaceAfterDrain` discards `admitWork`'s result, so the
+blocking drain can neither advance nor terminate. Eliminated as causes: PSRAM exhaustion (`refused=0/0B` with 1.6 MB
+free in the wedged run) and the transport-flush deferral (`deferDispatchUntilMs` is only ever written 0 —
+`deferWorkspaceSaveDispatchDuringPlayback` has no callers). What remains to separate with one instrumented cycle is
+whether the `FinalizeWorkspace` item is admitted-and-failing or not admitted at all; the fix is a liveness guard so an
+owed save either advances or fails fast with attribution instead of spinning. The same wedge blocks the base preset's
+clear precondition for *any* run in that device state, so it gates device work generally.
 
 **2026-09-18 — RC recorded for the post-wrap device reset: the publication boundary neither admits memory nor parks
 an allocation failure (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: *the stress run crashed a

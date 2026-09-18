@@ -92,9 +92,15 @@ Persistent record of **accepted architectural and implementation decisions**. No
 ## DEC-075 — The snapshot publication boundary admits memory per construction turn and parks on allocation failure
 
 **Date:** 2026-09-18
-**Status:** Accepted — implemented; native and firmware green, **device gate still owed**. Full native **2249 / 1
-skipped / 0 failures** (two new fixtures, below); `teensy41-capture-serial` SUCCESS with the RAM1 line byte-identical
-to DEC-074 (`variables 91,968 / code 425,560 / padding 424 / locals free 6,336`), i.e. no FlexRAM bank cost.
+**Status:** Accepted — implemented; native and firmware green; **device-verified for the parked path**. Full native
+**2249 / 1 skipped / 0 failures** (two new fixtures, below); `teensy41-capture-serial` SUCCESS with the RAM1 line
+byte-identical to DEC-074 (`variables 91,968 / code 425,560 / padding 424 / locals free 6,336`), i.e. no FlexRAM bank
+cost. Device (`captures/rcpub-gate-05`, git `dc9a1107` clean, hex `7f6bd8e3…`): **0 `FATAL`, 0 `#MEM_EXT_REFUSED`**,
+device alive, and **49 `#MEM_DENIED` all `op=snapshot_reserve`, `reason=heap_low`, `need=40960B`, `heap_free=68KB`**
+with `snapshot_unit`/`snapshot_fragment`/`snapshot_slab_fail`/`snapshot_alloc` all **0** — the boundary parked with
+nothing written and held `heap_free` at 68 KB min=median=max, `snap` unchanged, pool `live` flat, where the crash log
+went heap 108 -> 0 KB and `abort()`. The denial report rate-bound is confirmed on device (~1/s over 50 s). Remaining:
+the wrap case specifically and the resume-on-recovery path (both see "Owed" in the OpenSpec task).
 **Owner:** `Loop::stepPendingSnapshotPublish` + the cold helper `admitSnapshotPublicationTurn`
 (`src/Loop/LoopSnapshotPublish.cpp`), `PendingSnapshotPublishBox::fragmentBlockTransient` /
 `fragmentParkSawDenial` and `noteFragmentIncorporationFailure` (`src/Loop/LoopSnapshotBoxes.h`,
@@ -164,12 +170,15 @@ unchanged, no construction in flight and no failure recorded, and the same publi
 `test_allocation_failure_parks_publication_until_admission_recovers` pins the park: two injected `Allocation`
 failures park, a further admitted turn makes no attempt (the failure count cannot advance), a denial then records the
 pressure, and the next admission releases the park so the publication completes and the root becomes current.
-Both are in `test/test_loop_take_survival`. **Owed:** the device re-run of the reported shape (loaded workspace,
-12-bar record, live overdub past the wrap) requiring 0 `FATAL` / 0 `#MEM_EXT_REFUSED`, device alive, and either a
-completed wrap publication or a parked one (`hasPendingSnapshotPublish()` true, previous root selected) -- plus a
-recorded `cls`/`clsn`/`heap_free` series across the wrap. `kSnapshotPublicationReserveBytes` is the tunable if that
-run shows a healthy device parking: the control session settles at 104 KB of internal heap, and the margin requires
-72 KB (32 KB floor + 40 KB), so the intended discriminator is a device below ~72 KB.
+Both are in `test/test_loop_take_survival`. **Device run 2026-09-18 (`captures/rcpub-gate-05`)** took the parked
+branch: 0 `FATAL` / 0 `#MEM_EXT_REFUSED`, device alive, 49 `op=snapshot_reserve` denials at `heap_free=68KB`, and
+`snapshot_unit` 0 -- nothing started, stepped, frozen or published while denied -- with `heap_free` flat at 68 KB and
+`snap` unchanged. **Owed:** the wrap case specifically (that run's denials landed during `RECORDING` and the harness
+aborted before the wrap on a 1 MiB `#CAP` ring shed), and the resume-and-complete path once the heap recovers (the run
+ended while still denied; resume is native-proven only). The 24-bar repro is not reachable with `--record-bars`
+`[1, 2, 4, 8]`, so a faithful re-run needs that cap raised. `kSnapshotPublicationReserveBytes` remains the tunable if
+a healthy device parks: the margin requires 72 KB of internal heap, the DEC-073 RC1 control settles at 104 KB, and the
+device run above was denied at 68 KB -- the intended discriminator.
 
 ## DEC-074 — The LSV1 body admits only a settled root; the format is pinned once and the fallback is the passes-authoritative legacy body
 
