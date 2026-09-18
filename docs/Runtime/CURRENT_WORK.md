@@ -2828,6 +2828,10 @@ correctly denied. Acceptance is S7.4f: one press completes the stop. The open re
 already exists (`stopOverdubbingToStopped`, `invalidatePlaybackMergedMidiEvents` both re-issue
 `requestDeferredOverdubStopToStopped()`) but it only covers an already-admitted job, because a rejection stores
 nothing -- so S4f extends that latch to the accepted-but-not-yet-executed request instead of adding a mechanism.
+Per-action budgets are recorded as declared expectations to measure (S4f.6: stop overdub ~microseconds, cold
+undo/redo ~1-2 s, load loop ~seconds), and **progress presentation is deferred** (S4f.7) behind a two-part gate:
+measured latency **and** a mitigation review showing the budget cannot be met by scheduling, prewarm or windowing.
+When taken it displays an *accepted* action, never a denial and never a cue to press again.
 
 **2026-09-18 — 5.12 FIXED: the second overdub no longer erases the first from the display (`immutable-loop-snapshot-
 passes` 5.12).** The sealed capture handoff was the only carrier of a closed overdub's rows while the committed cache

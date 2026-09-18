@@ -314,3 +314,9 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
    whether the retrofit is its own change (recommended) rather than riding on the memory work.
 6. **Whether any authority genuinely requires a full published root** for an active long loop, or whether
    the bounded runtime representation suffices everywhere.
+7. **DEFERRED: progress presentation for a long-running accepted action.** Per-action execution budgets differ by
+   orders of magnitude (stop overdub ~microseconds, cold undo/redo ~1-2 s, load loop ~seconds; design Revision 17).
+   If an accepted interaction cannot execute within its expected time and the delay cannot be mitigated, the UI
+   should show the action is **being executed**. Not in this change's scope: gated on measured latency (S4f.6)
+   plus a mitigation review (S4f.7). When taken it must present an *accepted* action -- never a denial, never a cue
+   to press again -- and must not justify a widened budget.

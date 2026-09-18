@@ -632,6 +632,34 @@ so this is **not** a queue of stopped intervals -- a queue would still be a **se
 that must first show where each stored interval's sealed raw range, pending closures, staged pass, session receipt
 and canonical transfer state live while a predecessor finalizes (four of those five sets have no proven home).
 
+## Revision 17 — per-action execution budgets, and deferred progress presentation
+
+Invariant 31 separates **acceptance** (immediate, unconditional) from **execution** (scheduled by the pipeline).
+That promotes "how long from acceptance to execution" to a first-class quantity, and it differs by orders of
+magnitude per interaction class. These are **declared expectations to be measured**, not assertions:
+
+| Interaction | Expected acceptance -> execution | Why |
+|---|---|---|
+| Stop overdub | microseconds | the same service turn or the next playhead boundary -- today's common case |
+| Record / overdub start | prewarm-bound; must stay under the arm deadline | admission plus prewarm |
+| Slot / track switch | must stay under the window's switch granularity (S4b) | the never-stop requirement depends on it |
+| Undo / redo | ~1-2 s when the root is cold | reconstruction of a cold root from its descriptor |
+| Load loop | seconds | canonical/SD read plus residency establishment |
+
+Provisional: measurement (S4f.6) replaces every number above.
+
+**Deferred: progress presentation.** When an accepted interaction cannot execute within its expected time and the
+delay cannot be mitigated, the honest UI is to show that the action is **being executed** rather than leaving the
+user to infer failure. This is deliberately **deferred**, gated on both:
+
+1. the per-action acceptance -> execution latency is **measured on device** against the table above, and
+2. a **mitigation review** shows the budget cannot be met by scheduling, prewarm or windowing work.
+
+Two rules bind that later design whenever it is taken: progress presentation displays an **accepted** action, so it
+is never a denial and never a cue to press again (invariant 31); and it must never be used to justify a widened
+budget or to substitute for mitigation. It also stays off the timing-critical edges -- the display path is not the
+audio path.
+
 ## Options considered
 
 | # | Option | Verdict |

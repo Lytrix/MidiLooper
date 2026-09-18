@@ -250,6 +250,14 @@ interaction, and the user SHALL NOT be required to re-issue it.
 - **THEN** the waits are counted and reported as scheduling latencies, attributed to the holding owner
 - **AND** no capacity-driven user-visible denial exists in the diagnostic vocabulary
 
+#### Scenario: Latency is measured against a declared per-action budget
+- **WHEN** an interaction class is characterized
+- **THEN** its acceptance-to-execution latency is measured against a declared expectation (stop ~microseconds,
+  undo/redo ~1-2 s when cold, load ~seconds)
+- **AND** exceeding the expectation is a reported event, not a silent wait
+- **AND** presenting the wait in the UI is **out of scope** for this change: it is gated on that measurement plus
+  a mitigation review showing the budget cannot be met
+
 #### Scenario: Inapplicable interactions are not refusals
 - **WHEN** an interaction has nothing to act on (an undo with no history, a switch to the already-selected slot)
 - **THEN** it is an empty operation, not a resource-driven refusal

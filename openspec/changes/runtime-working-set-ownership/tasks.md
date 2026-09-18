@@ -253,6 +253,14 @@ visual detail windows are bounded optimisations on top, never a precondition for
       stopped interval, so the descriptor-ring finding is unchanged.
 - [ ] S4f.5 Native fixture: stop requested while the predecessor finalizes -> accepted -> predecessor retires ->
       stop completes, with exactly one request issued and the waits counted as scheduling.
+- [ ] S4f.6 Measure acceptance -> execution latency **per interaction class** on device against the declared
+      budgets (design Revision 17) and record the numbers: stop overdub, record/overdub start, slot/track switch,
+      cold undo/redo, load loop. Exceeding a budget is a reported event, not a silent wait.
+- [ ] S4f.7 **DEFERRED -- progress presentation.** Show that an accepted interaction is being executed when it
+      cannot meet its budget, instead of leaving the user to infer failure. **Gate: S4f.6 measured AND a
+      mitigation review shows the budget cannot be met by scheduling, prewarm or windowing.** Rules when taken: it
+      presents an *accepted* action (never a denial, never a cue to press again) and never justifies a widened
+      budget. Do not start before the gate.
 - [ ] S4f gates: the latency from acceptance to execution is bounded and reported; no capacity-driven
       user-visible denial remains in the diagnostic vocabulary.
 
