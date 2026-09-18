@@ -416,20 +416,34 @@ struct Loop {
     PassId finalPassId = kInvalidPassId;
     bool finalReceipt = false, includeFinalPass = false;
     Phase phase = Phase::Cold;
+    /// DEC-068: a deferred stop's wrap identities were swapped into its own session-exit receipt
+    /// at admission, so the Pass/Companions phases read that receipt instead of the shared live
+    /// session lists, which after reentry belong to a successor. Pointers index-aligned with the
+    /// receipt's `passIds`/`companionIds`; `receiptIdentity` also replaces the live
+    /// `overdubSessionUndoGeneration_` guard, because a successor opening its session must not
+    /// deny this interval's own identity collection.
+    const PassId* receiptPassIds = nullptr;
+    size_t receiptPassIdCount = 0;
+    const EditPassIdList* receiptCompanionRows = nullptr;
+    size_t receiptCompanionRowCount = 0;
+    const void* receiptIdentity = nullptr;
   };
   /// Caller supplies empty, pre-reserved private outputs and keeps exclusive
   /// access until completion/discard. No clearing, allocation or canonical mutation.
   bool beginCollectOverdubSessionUndoPasses(SessionUndoCollection& work,
-      PassIdList& passIds, EditPassIdList& companionIds) const;
+      PassIdList& passIds, EditPassIdList& companionIds,
+      const SessionExitSnapshotHandoff* receipt = nullptr) const;
   SessionUndoCollection::Phase stepCollectOverdubSessionUndoPasses(
       SessionUndoCollection& work, size_t quantum) const;
   bool collectedOverdubSessionUndoPassesCurrent(const SessionUndoCollection& work) const;
   static uint64_t requiredSessionUndoCollectionGrains(size_t rows, size_t companions, size_t quantum);
   /// Adds the final capture ID (unless already last) and the current prepared
   /// companion receipt. Output remains private; does not consume/recycle receipt.
+  /// `sessionExitReceiptRing` (DEC-068) selects the interval's own receipt as the
+  /// identity source; `kInvalidSessionExitReceipt` keeps the live-session source.
   bool beginCollectOverdubStopUndoPasses(SessionUndoCollection& work, PassIdList& passIds,
       EditPassIdList& companionIds, PassId finalPassId, bool includeFinalPass,
-      uint64_t owner = 0);
+      uint64_t owner = 0, size_t sessionExitReceiptRing = kInvalidSessionExitReceipt);
   static uint64_t requiredSessionStopUndoCollectionGrains(size_t rows, size_t companions,
       size_t finalCompanions, size_t quantum);
   /// Last sealed session layer still on the cursor. False when the cursor is empty.
