@@ -1004,11 +1004,35 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         publishes a partial coverage into a prewarmed view), and
         `test_windowed_slot_upgrades_to_whole_take_at_a_cold_admission` (in-place upgrade re-arms the bridges and the
         pair without resetting admitted staging). The existing 173 fixtures pin the short-loop branch unchanged.
-        **Owed (device).** The before/after measurement on the 24-bar reproducer: boot/load PSRAM, arm delta,
-        per-slot tagged view bytes, stop-window allocations, playback-order hot rebuild count, MIDI gap and final
-        content equivalence. Still out of scope: deriving the per-window *capacity* (2048) from the resolved window,
-        and prewarming only the armed slot rather than every enabled slot -- both recorded here for a follow-up,
-        since the measured win is in the whole-take multiplicity that has now landed.
+        **Device A/B 2026-09-18 (clean worktree `c0aadc0f` = census only, vs `5ba7d109` = census + RC-MEM-2;
+        24-bar record + 24-bar overdub, track 5 slot 1, base preset).** The comparison did **not** show the
+        footprint drop, and the reason is now a recorded finding rather than an assumption: a record arm on an
+        *empty* slot has `loopLengthTicks == 0`, so `fullTakePlaybackViewAdmissible()` is legitimately true and the
+        whole-take bundle is reserved (`tags=91/715/148/0/7/0/58KB`, arm delta +1,372 KB live). The follow-up cold
+        admission that would release it -- the overdub start on the now-24-bar loop -- never reached the prewarm
+        because it was **denied on the internal-heap floor first**:
+        `#MEM_DENIED,op=overdub_start,reason=heap_low,need=16384B,heap_free=44KB` (4 times, against 129
+        `op=snapshot_reserve` denials), so `prewarmViews(..., false)` was never called. The `before` leg of the same
+        shape ran the pool and heap out and aborted with `[InternalHeapFirstAllocator] FATAL` at 104 s
+        (`live=8374KB, heap_free=16KB`, `#MEM_EXT_REFUSED bytes=23040`); the `after` leg survived with 0 `FATAL`,
+        0 refusals and a 44 KB heap floor -- but the reservation was identical in both legs, so that difference is
+        run-to-run workspace variance and is **not** attributed to this RC.
+        **Release path added in the same change.** `RuntimePlaybackViewSet::releaseWholeTakeViews()` returns the
+        bridge/base backing when the loop is known long at a later cold admission (and refuses while a bridge is
+        selected, since that bridge is the authoritative representation), and `prewarmViews(..., false)` also clears
+        the prepared pair. `LoopPlaybackRuntime::prewarmViews` calls it, so the 715 KB is no longer held for the
+        whole session after a record that turned out long. **Owed (device).** A shape in which the long-loop cold
+        admission actually succeeds -- i.e. one whose overdub start is not denied by the internal-heap floor -- to
+        measure the release: expected `tag2 ViewPrewarm` 715 -> ~215 KB at that boundary. Fixing the heap floor
+        itself is a separate RC (the shortfall is the admission's 16 KB need plus its 32 KB floor against 44 KB
+        free, and it binds before pool pressure does, which is the opposite of the original crash).
+        **Also settled by the same run (this is what re-aimed 5.10).** The new census fields read
+        `slab_used=2453..2857KB` against `slab_live=78..91` slabs (2,453-2,857 KB of a 2,496-2,912 KB payload),
+        `slab_unused=42..54KB` and `pin1=0..1` for the entire session: the arena is ~98 % packed with at most one
+        slab pinned by a single node, so there is nothing to reclaim and the generation-local arena is confirmed
+        unnecessary.
+        Still out of scope: deriving the per-window *capacity* (2048) from the resolved window, and prewarming only
+        the armed slot rather than every enabled slot -- both recorded here for a follow-up.
       - **RC-MEM-3 -- undo trimming cannot see pool pressure.** `overUndoMemoryPressure` (`src/PassReclaim.cpp:67-79`)
         trims only on `freeChunkCount() <= PassConfig::CHUNK_RESERVE` or internal heap
         `< Config::HEAP_RESERVE_BYTES`; pool slab bytes are never consulted, and its third clause is unreachable in

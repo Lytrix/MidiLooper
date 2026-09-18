@@ -406,6 +406,13 @@ struct RuntimePlaybackViewSet {
   bool prewarm(bool reserveWholeTake = true);
   /// True when the whole-take representation was reserved and can still be published.
   bool wholeTakeViewsReserved() const { return wholeTakeReserved; }
+  /// Drop the whole-take representation once the owning loop can no longer publish one.
+  /// A record arm on an *empty* slot has no length yet, so `prewarm` legitimately reserves
+  /// the bundle; by the time the loop is known to be long (the next cold admission, e.g.
+  /// overdub start) the reservation must be released rather than kept for the session.
+  /// Returns true when the reservation is absent afterwards. Refuses while a bridge is
+  /// selected, because that bridge is the live authoritative representation.
+  bool releaseWholeTakeViews();
   void resetMetadata();
   // Invalidate ordinary candidates while retaining the non-audible first-record
   // return view and its source identity. Used by cache refresh during capture.

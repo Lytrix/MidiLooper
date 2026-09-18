@@ -447,7 +447,12 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmViews(
   // which requires `isFullLoopMergedPlaybackWindow`, so a slot whose loop cannot produce a
   // full-loop window can never publish a pair. Reserving its buffer would be dead
   // reservation, and admission must not report a reserve the capture path can never use.
-  if (!fullTakeAdmissible) return true;
+  if (!fullTakeAdmissible) {
+    viewSet->releaseWholeTakeViews();
+    clearPreparedPlaybackPair();
+    preparedPairStorage.release();
+    return true;
+  }
   ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagPlaybackOrder);
   const bool pairReady = prewarmPreparedPlaybackPair();
   ExternalPoolAccounting::endTag();
