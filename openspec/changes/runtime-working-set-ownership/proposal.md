@@ -30,7 +30,7 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 | Slots sounding simultaneously | therefore **up to 32** (2 x 16), **regardless of each slot's loop length** |
 | Slots holding a **playback window lease** | up to **32** (2 per track) |
 | Slots holding the **live capture** role (record / overdub, resumable small-packet logic inside MIDI boundaries) | **1** |
-| Slots holding **deferred finalization** (a predecessor finalizing while a successor records) | **1**, concurrently with live capture |
+| Slots holding **deferred finalization** | **1** -- one *finalizing predecessor* alongside one *live successor*, **not** two simultaneously finalizing captures |
 | Slots holding the **interactive edit / undo / display** role | **1**, unless evidence requires more |
 | **Transfer overlap** | measured and explicitly budgeted |
 | Slots that may be selected or browsed | the whole library (~60 recorded) |
@@ -90,12 +90,21 @@ transfer), `openspec/specs/playback-runtime-prewarm/spec.md` (the prewarm contra
   window instead of the 2048-event ceiling so a slot's cost is **independent of its loop length**, and the
   feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
 - **Role classes with explicit cardinalities, and they are transferable.** Playback window leases scale with
-  the envelope (up to 32); live capture is one; deferred finalization is one and runs **concurrently with a
-  live successor** -- the already-landed successor-re-entry capability (DEC-067), which must not be designed
-  away; interactive edit/undo/display is one unless evidence requires more. A slot may hold several classes
-  at once, and selecting another slot or track **transfers the relevant role quickly** without a transport
-  stop. Classes are composable rather than one monolithic lease, so 32 playback slots do not each carry
-  fields only one live operation uses.
+  the envelope (up to 32); live capture is one; deferred finalization is one; interactive edit/undo/display is
+  one unless evidence requires more. A slot may hold several classes at once, and selecting another slot or
+  track **transfers the relevant role quickly** without a transport stop. Classes are composable rather than
+  one monolithic lease, so 32 playback slots do not each carry fields only one live operation uses.
+- **The finalization lease rotates; a second stop waits for it.** Its sufficiency does **not** rest on the
+  Teensy having one core -- the finalization job is resumable and retains ownership across many service turns,
+  so another capture runs while it is alive. The rotation is: `STOP A` -> A takes the finalization lease;
+  switch to B and `START B` -> B takes the live-capture lease and records normally while A finalizes; A
+  finishes -> releases; `STOP B` -> B takes that same lease. So the supported concurrency is **one finalizing
+  predecessor + one live successor**, and a `STOP B` that arrives before A releases is **denied
+  non-destructively with B still recording/overdubbing**; the next stop succeeds once the lease is free.
+  Only the pathological case (very short captures, or rapid punch-stop/start/stop) is constrained. The
+  initial envelope therefore does **not** pay memory for a second finalization lease: instead it counts
+  `finalization_lease_stop_denied`, so a second lease can be justified by evidence if real use shows
+  frequent denials.
 - **The looper never stops playing.** Track/slot switching, record/overdub start and undo/redo all happen
   while playback continues, so the pool must **pre-provision the inbound role before releasing the
   outbound one**, the switch itself must be allocation-free, and it must land on a MIDI boundary. The
@@ -171,10 +180,14 @@ prerequisite S2, and reclassifies §5.13 as a symptom.
 2. **16 tracks as the target.** `NUM_TRACKS` is 8 today, so the envelope implies either a config change or
    a workstream of its own (per-track runtime structures, display, UI all scale with it). Confirm the track
    count and whether it lands inside this change.
-3. **Confirm the role cardinalities** -- live capture 1, deferred finalization 1 alongside a live successor,
-   interactive 1 -- and how deep the **transfer overlap** must be, including whether a specialized role
-   overlaps the playing set (its holder may also be one of the sounding slots).
-4. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
+3. **How deep the transfer overlap must be**, including whether a specialized role overlaps the playing set
+   (its holder may also be one of the sounding slots). Finalization cardinality is decided at 1 with a
+   `finalization_lease_stop_denied` counter as the evidence path to a second lease; live capture 1 and
+   interactive 1 are confirmed.
+4. **Whether a second finalization lease is ever warranted**, decided from `finalization_lease_stop_denied`
+   evidence rather than reserved preemptively (the pathological shapes are very short captures and rapid
+   punch-stop/start/stop).
+5. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
 5. **Canonical residency policy** (fixed cap, LRU over the active set, or derived from loop length) and
    whether it needs a length cap at capture admission.
 6. **Whether any authority genuinely requires a full published root** for an active long loop, or whether
