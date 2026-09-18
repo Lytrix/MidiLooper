@@ -1186,3 +1186,32 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
       - **Doc corrections owed with RC-MEM-4/-MEM-5.** `DerivedViews.md:93`, `:141-146`, `:193`, `:195`,
         `Display.md:36`, and `ExecutionBounds.md`'s fallback-gather row (which documents a 96/192/768-event budget on
         a function nothing calls) all describe behaviour the tree does not have.
+
+## 5.12 Starting a second overdub drops the previous overdub from the display (2026-09-18)
+
+- [ ] 5.12 Starting a second overdub must not remove the previous overdub's rows from the display. **User report
+      (2026-09-18):** *if the second overdub starts it removes the entire previous overdub from the display; it
+      returns at the end.* Reproduced in `captures/rcemem7-tier-degrade` (24-bar record + two overdubs, track 5 slot
+      1) and present in `captures/rcemem5-lazy-pool`.
+      **Signature (device).** The frame is not being served by the visual cache at all during the overdub sequence:
+      `#CAP,130257180,DISP,0,PLAYING,18432,frame=382,visual=0,...,buffer=382` and
+      `#CAP,120238530,DISP,0,OVERDUBBING,18432,frame=373,visual=0,...,buffer=373` against
+      `VCACHE,stale_all,ev,-1,notes,0,...` and `VCACHE,stale_range,...,notes,0`. So `visual=0` while
+      `frame=373/382`: every displayed row comes from the draw-source overlay / pass-resolve path, and the
+      `VCACHE` build is empty and stale for the whole sequence. The second overdub start is `Overdubbing
+      started @ tick 24386` at 139.079 s, and the frame recovers only later via
+      `VCACHE,idle_src,OverlayRejected,src,PassesResolve,root_rev,5,playback_rev,6` at 160.358 s followed by
+      `DISP,0,STOPPED,18432,frame=280,visual=71,...,232` -- i.e. the rows return when a full resolve finally runs,
+      which is what "it returns at the end" describes.
+      **Mechanism to prove.** The first overdub's rows are carried only by the sealed capture draw-source handoff /
+      overlay, not by the committed `visualCache`, so whatever the second `beginCapture(Overdub)` invalidates
+      (handoff, overlay set, or draw-source reuse key) takes those rows out of the frame with nothing to re-derive
+      them from until a whole-loop pass resolve runs. This is the §5.8a family -- the handoff is a display bridge for
+      a just-sealed pass's rows, and a state change that drops it leaves the rows unreachable -- so the fix belongs in
+      the same owner (`Loop::beginCapture` / the capture-preview handoff and `applyDrawSourceOverlays`), not in the
+      publisher.
+      **Verify.** Native: a fixture that seals a first overdub, starts a second overdub, and asserts the first
+      overdub's note is still present in the draw-source frame while `publishedSnapshotIsCurrent()` is false; then
+      stops and asserts it is present from the committed cache. Device: the same two-overdub shape must show
+      `visual` non-zero (or the frame unchanged across the second `Overdubbing started`) at the second start, with no
+      loss of the first overdub's row count in `DISP`.
