@@ -785,6 +785,44 @@ Parallel persist track (not §6.6): **RC-P2** slot-meta debt — defer
         `test/test_loop_take_survival`; full native **2249 / 1 skipped / 0 failures**;
         `teensy41-capture-serial` SUCCESS with RAM1 `variables 91,968 / code 425,560 / padding 424 / locals free
         6,336` -- byte-identical to DEC-074, so no FlexRAM bank cost. Decision recorded as **DEC-075**.
-      - **Owed.** The device re-run of the reported shape (loaded workspace, 12-bar record, live overdub past the
-        wrap) requiring 0 `FATAL`, 0 `#MEM_EXT_REFUSED`, device alive, and either a completed wrap publication or a
-        parked one, with a per-second `cls`/`clsn`/`heap_free` series across the wrap.
+      - **Device evidence 2026-09-18 (parked path): the crash class is prevented, with the boundary parking.**
+        `captures/rcpub-gate-05` (git `dc9a1107` clean, `teensy41-capture-serial`, hex `7f6bd8e3…`, metadata
+        `git_commit`/`firmware_hex_sha256` confirm the run identity; base preset, track 5 slot 1, TEMP stimulus
+        `STIM-BASE-2-2-01-TEMP-A`, `--record-bars 8 --overdub-bars 8 --overdub-start-delay-bars 2`): **0 `FATAL`, 0
+        `#MEM_EXT_REFUSED`**, device streaming to the end of the run, and **49 `#MEM_DENIED` — every one
+        `op=snapshot_reserve`, `reason=heap_low`, `need=40960B`, `heap_free=68KB`** (below the 32 KB floor + 40 KB
+        margin, with `pool_refused=0/0B`, so the heap was the binding constraint, exactly the crash's condition). The
+        denial report is rate-bounded as designed: 49 lines over 71.8 s -> 122.1 s, ~1/s, instead of one per
+        construction turn. The parked state is direct: **`snapshot_unit` 0, `snapshot_fragment` 0,
+        `snapshot_slab_fail` 0, `snapshot_alloc` 0** -- no construction was started, stepped, frozen or published
+        while denied, so no attempt was made and no incomplete prefix could become authoritative. Memory held flat:
+        `heap_free` 68 KB min = median = max over all 73 samples, `snap` 2214 KB unchanged, pool `live` 6507 -> 7881
+        KB at record-arm staging then flat. The crash log is the counterfactual: the same boundary without the gate
+        went heap 108 -> 0 KB and `snap` 2409 -> 2543 KB in six seconds, then `abort()`.
+      - **Owed (not device-proven).** (a) The **wrap** case specifically: this run's denials landed during
+        `RECORDING` (the live-record window uses the same construction path), and the harness aborted before the
+        wrap because the 1 MiB `#CAP` ring shed (`RING,` 1, `Result: INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`;
+        verdict `second overdub transition not confirmed`) -- the `droid_queue`/volume issue already recorded in
+        `docs/Runtime/CURRENT_WORK.md`. (b) That publication **resumes and completes** once the heap recovers: the run
+        ended while still denied, so the resume path is native-proven only.
+        (c) RC-PUB-2's park/release has no device occurrence, which is the intended outcome (the gate prevents the
+        allocation attempt that would park).
+      - **Harness reach limits the repro.** `TICKS_PER_BAR = 768`, so the crashing session's 18432-tick loop was **24
+        bars**, but `--record-bars` accepts only `[1, 2, 4, 8]` (`scripts/hitl/legacy_edit_baseline.py`). The
+        largest supported shape cannot reproduce the near-exhaustion window; extending the cap belongs with the
+        follow-up device run above.
+      - **Blocker hit and cleared (persistence state, not this change).** The first two attempts
+        (`captures/rcpub-gate-01`, `-02`) aborted at the harness's clear precondition with
+        `Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)`. The budget
+        arithmetic pins the state exactly: `finalizeSliceSteps` is set only when
+        `pending && queueDepth == 0 && writingWorkItemCount == 0 && !itemActive`
+        (`src/StorageManager/SyncDrainBudget.cpp:66`), so `hasPersistenceWorkPending()` was true *solely* because
+        `currentWorkspaceSave.pending` was set with no work item to step -- `stepPersistenceWorkItem` returns success
+        on that state (`queueDepth == 0 && writing == 0 && !itemActive` -> `return true`) and
+        `maybeAdmitFinalizeWorkspaceAfterDrain` discards `admitWork`'s result, so the blocking drain could neither
+        advance nor terminate. The pool never refused anything in that run (`refused=0/0B`, 1.6 MB free), so it is
+        not PSRAM exhaustion, and `deferDispatchUntilMs` is only ever written 0
+        (`deferWorkspaceSaveDispatchDuringPlayback` has no callers), so it is not the transport-flush deferral. A
+        clean `pio run -t upload` cleared it: `captures/rcpub-gate-05` logs
+        `Clear completed (serial log); precondition satisfied`. That liveness hole is a **persistence-owner defect**
+        and is not fixed here (see the CURRENT_WORK entry for 2026-09-18).

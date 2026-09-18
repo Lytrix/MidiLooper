@@ -29,11 +29,21 @@ completes) and `test_allocation_failure_parks_publication_until_admission_recove
 failures park, an admitted turn makes no attempt, a denial records the pressure, the next admission releases it and
 the root becomes current), both in `test_loop_take_survival`; full native **2249 / 1 skipped / 0 failures**;
 `teensy41-capture-serial` SUCCESS with RAM1 `variables 91,968 / code 425,560 / padding 424 / locals free 6,336` --
-byte-identical to DEC-074, i.e. no FlexRAM bank cost. **Owed:** the device re-run of the reported shape (loaded
-workspace, 12-bar record, live overdub past the wrap) requiring 0 `FATAL` / 0 `#MEM_EXT_REFUSED` and a live device,
-with either a completed wrap publication or a parked one, plus a per-second `cls`/`clsn`/`heap_free` series across the
-wrap. `kSnapshotPublicationReserveBytes` is the tunable: the margin requires 72 KB of internal heap and the DEC-073
-RC1 control settles at 104 KB, so the intended discriminator is a device below ~72 KB.
+byte-identical to DEC-074, i.e. no FlexRAM bank cost. **Device evidence 2026-09-18 (parked path,
+[`rcpub-gate-05`](../../captures/rcpub-gate-05/session_20260918_114025.log), git `dc9a1107` clean, hex `7f6bd8e3…`):
+0 `FATAL`, 0 `#MEM_EXT_REFUSED`, device alive, and 49 `#MEM_DENIED` -- every one `op=snapshot_reserve`,
+`reason=heap_low`, `need=40960B`, `heap_free=68KB`, `pool_refused=0/0B` -- while `snapshot_unit`,
+`snapshot_fragment`, `snapshot_slab_fail` and `snapshot_alloc` are all 0: the boundary parked with nothing written,
+and `heap_free` held at 68 KB (min = median = max over 73 samples) with `snap` unchanged at 2214 KB and pool `live`
+6507 -> 7881 KB then flat.** The crash log is the counterfactual (same boundary, no gate: heap 108 -> 0 KB, `snap`
+2409 -> 2543 KB, then `abort()`), and the denial report is confirmed rate-bounded on device (~1/s across the 50 s
+window). **Owed:** the wrap case specifically (that run's denials landed during `RECORDING` and the harness aborted
+before the wrap on a 1 MiB `#CAP` ring shed, `Result: INCONCLUSIVE_CAPTURE (SERIAL_INCOMPLETE)`) and the
+resume-and-complete path once the heap recovers (the run ended while still denied, so resume is native-proven only).
+`--record-bars` accepts only `[1, 2, 4, 8]` while the crashing loop was 24 bars (`TICKS_PER_BAR = 768`), so a
+faithful repro also needs that cap raised. `kSnapshotPublicationReserveBytes` remains the tunable: the margin requires
+72 KB of internal heap, the DEC-073 RC1 control settles at 104 KB, and this run was denied at 68 KB -- the intended
+discriminator.
 
 **2026-09-18 RC recorded: the snapshot publication boundary has no memory admission, so a full PSRAM pool resets the
 device instead of parking the publication (`immutable-loop-snapshot-passes` 5.9, RC-PUB-1..3).** User report: the
