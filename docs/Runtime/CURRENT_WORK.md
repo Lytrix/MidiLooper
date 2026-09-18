@@ -2741,6 +2741,21 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+**2026-09-18 — ACTIVE IMPLEMENTATION SCOPE: overdub live-capture one-frame paint flicker.** During
+OVERDUB the piano roll flashes for one frame around each incoming note (both note-on and note-off).
+Confirmed **pre-existing on this branch**, not a `runtime-code-tidyup` regression: the blink reproduces on
+the base commit `4aacd18e` (hex `7bbc5e63…`) as well as on the tidy-up build (`d3fec28c`, hex
+`21b4d320…`), and the tidy-up diff on the live-capture display path is provably behavior-preserving
+(`activeNoteEntriesMatch` field-identical to all four originals, the `Phase::Trim` pop unreachable,
+`ceilGrains` sites all guarded, P5 splits bank-neutral). Work identity and boundary:
+[`overdub_live_capture_one_frame_paint_flicker_bugfix.md`](../Plans/overdub_live_capture_one_frame_paint_flicker_bugfix.md).
+Owner is not yet named — the boundary is the `DisplayManager` paint pipeline (frame phases →
+`resolveDisplayNotes` compose → draw-source selection); the capture/snapshot/companion content owners are
+excluded, and the frame-phase machine is already ruled out (`shouldClearResolvedPaintNotesNow` only clears
+when no frame is in progress). Next: per-frame (capture-gated) compose instrumentation, reproduce with the
+registered base preset on track 6 slot 1, then name the RC and open the GitHub Bug. **No firmware change
+yet.** Everything below this entry is queued, not started, and is not part of this scope.
+
 **2026-09-18 — the next architectural target is WORKING-SET OWNERSHIP, not more per-slot trimming
 (`runtime-working-set-ownership`, requested as a `DEC-###`).** The record-arm exit reported on
 `captures/session_20260918_171613.log` is diagnosed (`immutable-loop-snapshot-passes` 5.13: an
