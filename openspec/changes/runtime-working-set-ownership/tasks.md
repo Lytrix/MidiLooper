@@ -719,7 +719,19 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       Dispatch the switch after the interval's stop binds. Replace the unconditional pending-switch clear in
       `TrackManagerTransportTick` with consumption at successful switch commit. Fixture: queued
       switch + undo + stop admission in one window → the target is never lost.
-- [ ] S4f.4 **Transport/clock epoch (B2, T2).** Record the destination and a monotonic transport epoch;
+- [ ] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
+      `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
+      field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and
+      re-verified on every env): the drive re-derives the destination from live transport state and the
+      boundary tick from the live clock and validates `(kind, slot, interval)` before acting, so a counter
+      that is never compared adds no protection and would cost RAM1. Transport history is covered by
+      **consumption plus identity validation**. **Closes only on the four paused-worker transition tests:**
+      (1) Transport Stop -> Start -- *native, green in B03*; (2) seek/reset/MIDI Start recompute the
+      boundary in the new tick domain -- *no native entry, the ClockManager entries are stubs*; (3) load/
+      replacement cannot bind an old request to replacement content -- *needs the load harness*;
+      (4) repeated retries commit exactly one stop -- *native, green in B03*. If a test reveals missing
+      history detection, implement a **consumed generation check for that specific gap**, not a general
+      epoch. **S4f.4 stays open** on transitions 2 and 3.) Original text: Record the destination and a monotonic transport epoch;
       transport stop retargets/invalidates the latch beside `suppressMidiOutputForTransportStop()`; the drive
       re-derives the destination from live transport state and the boundary from the loop phase — never from a
       stored absolute tick (MIDI Start/seek/load reset the tick domain, `ClockManager.cpp:273,315-336,362`).

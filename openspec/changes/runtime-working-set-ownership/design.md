@@ -970,6 +970,41 @@ without an implementing **owner or operation**. They are binding corrections, no
 7. **Open-items correction:** the cold-undo descriptor field set is no longer open — §9 item 2 / S5.2a fix it
    (ids + per-pass metadata; pinned canonical bytes vs descriptor bytes).
 
+## Revision 24 — S4f.4 is live timing re-derivation plus identity validation, not a stored epoch
+
+**Architect decision 2026-09-23.** Revision 21.4 required the latch's epoch to be "a **new
+TrackManager-level counter** bumped by transport stop, `resetToLoopStart`/`setCurrentTick`, load and MIDI
+Start — **not** `transportCommandEpoch`". That requirement is **withdrawn as redundant state**:
+
+- The drive already re-derives the **destination** from live transport state
+  (`clockManager.isTransportRunning()`) and the **boundary tick** from the live clock
+  (`clockManager.getCurrentTick()`); it never trusts the stored `phaseTick`. That is the property the
+  epoch existed to protect ("an absolute tick is diagnostic only").
+- An epoch that is never *compared* adds no protection, and adding a counter "for evidence only" would
+  not improve correctness while costing RAM1 in a tree that is 840 B from the next FlexRAM bank.
+- Transport **history** is covered by **consumption plus identity validation** instead: an accepted stop
+  is consumed by the admission that binds it, by the transport-stop entry that retargets or completes it,
+  or by a synchronous completion; the drive validates `(kind, slot, interval)` before acting. A stop
+  accepted before a transport stop therefore cannot later be driven with a PLAYING destination.
+
+The latch's `transportEpoch` field is therefore **removed** (latch 40 → 32 bytes; `CaptureStopJobs`
+2,736 → 2,728), and both pins were updated and re-verified.
+
+**S4f.4 — transport timing validity closes only on paused-worker transition tests**, because live state
+alone cannot distinguish "running continuously" from "stopped and restarted":
+
+1. **Transport Stop → Start** — the earlier stop cannot regain a PLAYING destination or resurrect a
+   canceled start. *(native, green: B03 transition 1)*
+2. **Seek / reset / MIDI Start** — execution recomputes the boundary in the new tick domain.
+   *(no native entry: the `ClockManager` seek/reset/MIDI-Start entries are harness stubs)*
+3. **Load / replacement** — the old request cannot bind to replacement content even when the slot number
+   is unchanged. *(needs the load harness)*
+4. **Repeated retries** — exactly one stop commits against the intended interval.
+   *(native, green: B03 transition 4)*
+
+If a test reveals missing history detection, implement a **consumed generation check for that specific
+gap** — not a general epoch. Transitions 2 and 3 stay open, so **S4f.4 is not closed**.
+
 ## Revision 19 — the two named operations (2026-09-19, focused rerun input)
 
 The second rerun closed the design gaps but left two outcomes without an operation. Both are extensions of
