@@ -216,6 +216,38 @@ public:
     /// `probeActiveLoadLoopJob`, yet it keeps its `SlotLoadSession` alive, which is what
     /// `deferredSaveBlockedByActiveSlotLoadSd()` reports. All outputs are 0/false when none is parked.
     static void probeParkedLoadLoopJob(bool& active, uint8_t& track, uint8_t& slot, uint8_t& phase);
+    /// Observation-only request/queue state (A1.8, `design.md` D6). One call answers "what is the
+    /// restore work doing right now" without a bisect: how many requests are queued, whether the
+    /// priority head can begin (and why not when it cannot), which request each job instance owns and
+    /// in which phase, and whether the deferred save is currently held back by the restore.
+    /// This is the same request/queue state the runtime already tracks; it adds no per-turn cost when
+    /// it is not called.
+    struct RestoreStateProbe {
+        uint16_t queuedCount = 0;
+        bool queueHeadPresent = false;
+        uint8_t queueHeadTrack = 255;
+        uint8_t queueHeadSlot = 255;
+        uint16_t queueHeadPriority = 0;
+        /// True when no live owner holds the head's slot, i.e. the head may begin.
+        bool queueHeadStartable = false;
+        bool activeJob = false;
+        uint8_t activeJobTrack = 255;
+        uint8_t activeJobSlot = 255;
+        uint8_t activeJobPhase = 255;
+        bool activeJobIsFocus = false;
+        bool parkedJob = false;
+        uint8_t parkedJobTrack = 255;
+        uint8_t parkedJobSlot = 255;
+        uint8_t parkedJobPhase = 255;
+        size_t activeBytesRead = 0;
+        size_t activePayloadSize = 0;
+        size_t parkedBytesRead = 0;
+        size_t parkedPayloadSize = 0;
+        /// The request the deferred save is currently waiting on, when it is waiting on one.
+        bool saveBlockedBySlotLoad = false;
+        bool saveBlockedByPostLoadHoldoff = false;
+    };
+    static void probeRestoreState(RestoreStateProbe& out);
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);

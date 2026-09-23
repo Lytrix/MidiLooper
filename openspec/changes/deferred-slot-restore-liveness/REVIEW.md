@@ -239,6 +239,28 @@ A1.7.
 - **Why it matters:** the device's `could not reconcile MidiLooper/sets/index.bin` line could not be
   separated from a normal boot, which is the ambiguity the proposal lists under observability.
 
+### A1.8 — observability (partial: probe + reconcile landed; transition lines with Packet B)
+
+- **Landed — queue/state probe.** `StorageManager::RestoreStateProbe` + `probeRestoreState` report:
+  queued count; the priority head's `(track, slot)` and **startability**; each job instance's owned
+  request with phase and read progress; and whether the deferred save is held by restore work
+  (`saveBlockedBySlotLoad`, `saveBlockedByPostLoadHoldoff`). `queueHeadStartable` is the field that
+  replaces a bisect: it is the difference between "the head is blocked on an owner" and "the queue is
+  empty".
+- **Landed — reconcile outcome mapping.** See A4.1.
+- **Native cases (default gate, observation-only):**
+  `test_restore_state_probe_reports_queue_and_job_ownership` covers four states in one case (nothing
+  queued / queued-and-startable / in-flight with payload size / live-owned blocked head), and
+  `test_restore_state_probe_reports_the_save_blocked_by_restore` asserts the probe agrees with the
+  drain's own gate predicate rather than duplicating it.
+- **Evidence:** suite **10/10** green by default; `RESTORE_LIVENESS_RED=1` → **15 cases / 4 failed**
+  (C1, C2, C4, C6 exactly); full native **2,297 / 1 skipped / 2,296 succeeded / 0 failures**;
+  capture-serial SUCCESS with RAM1 `code 392,328 / padding 888`.
+- **Open, deferred to Packet B:** the capture-tier **state-transition lines** and the `terminal` /
+  `prepare-complete-waiting` probe states. Emitting them now would require inventing the request-state
+  vocabulary that A2.1 defines, which is exactly the "do not fabricate a state" line the design draws.
+  No per-turn state line is emitted (capture-ring overflow precedent respected); the probe is on-demand.
+
 ---
 
 ## Mechanism ledger (A1.9)

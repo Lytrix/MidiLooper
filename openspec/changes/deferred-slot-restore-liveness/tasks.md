@@ -136,23 +136,29 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       payload from a byte snapshot and drives 32 further turns with no external advancement. New harness
       helpers: `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
 
-- [ ] A1.7 **[C5 — drain cannot advance the restore] desired-behavior fixture, red.** Owe a deferred save,
-      hold a `LoadLoopJob` in flight, and call the **real blocking drain** — with **no external
-      advancement of the restore between assertions**. Assert the **desired** behavior: the drain
-      terminates the restore and completes the save; and that a wait the drain must not break is reported
-      as that named reason rather than a generic stuck verdict. **Verify:** the case is red on current
-      `src/` (the drain never services the load scheduler); record the iteration count as a **diagnostic**,
-      not as the oracle.
-      → **IN PROGRESS 2026-09-23 (closure landed, fixture pending).** This path had zero native coverage,
-      so the slice first had to make the real drain linkable. `test/test_storage_drain_restore` is created
-      and registered as a hardware-boundary suite, the boundary stubs it needs are added (`PSTR`,
-      `printf_P`, `print(value, base)` + `DEC/HEX/OCT/BIN`, `File::flush`, `O_CREAT`), the 15-TU import set
-      links, and the suite runs one behaviour-free case proving that. The remaining tail
-      (`PersistenceSchema`, `RevisionPackedBlob`, `SetRevisionCatalog`, `LooperStateManager::
-      exitLoadSaveMode`) means importing the revision/catalog pack and the workspace-save job stages —
-      recorded in [`REVIEW.md`](REVIEW.md) § A1.7 as a deliberate scope decision (the contract's Packet C
-      requires native drain fixtures) rather than taken silently. **No fixture, no red evidence, and no
-      diagnostic count yet.**
+- [ ] A1.7 **[C5 — drain cannot advance the restore] characterization + native closure proof (AMENDED 2026-09-23).**
+      **Amended scope (Revision 5).** The original text required a native red fixture that calls the real
+      blocking drain with a restore in flight. Two rounds of measurement (`REVIEW.md` § A1.7) falsified
+      that as a *native* obligation: retaining the real `drainPersistenceWorkBlocking` call needs most of
+      the persistence stack **plus** the display stack (`DisplayManager`'s `_display` member drags the
+      OLED/Adafruit-GFX font chain into the native build) and the cold edit/track-manager owners — close
+      to the whole firmware, which is not a test-only closure. The task is therefore split by what can
+      carry a tight oracle:
+      **Native (this task):** the closure proof and the **pure-decision** oracles — drain budget and
+      progress accounting for restore work (`buildSyncDrainBudget` / `madeSyncDrainProgress`, extending
+      the existing `test_persistence_sync_drain_budget`), the A3.2 wait-reason classification, and the
+      A3.4 three-way caller-contract mapping. Record C5's mechanism from code with citations.
+      **Device (A3.1/A3.7):** the integration claim — that the drain *advances* a restore it waits on — is
+      verified through the A3.7 device gate with capture evidence, not by a native fixture.
+      **Verify:** the closure proof is green and the pure-decision cases are present and green; the
+      mechanism is recorded in the ledger (A1.9); the A3.1/A3.7 text names the device gate as the oracle
+      for the integration claim. No native red fixture for C5 is claimed.
+      → **PARTIAL 2026-09-23.** Closure proof landed: `test/test_storage_drain_restore` (hardware-boundary
+      suite) links the drain TU and its measured import set with the boundary stubs it needs (`PSTR`,
+      `printf_P`, `print(value,base)` + `DEC/HEX/OCT/BIN`, `File::flush`, `O_CREAT`, directory handles in
+      the SD stub, `RtcTime`/`loadSaveMode`/display-light boundary stubs), and runs one behaviour-free
+      case. C5's mechanism is recorded in the ledger. The pure-decision cases are A3.3's work.
+      **Still open:** the A3.2/A3.4 pure-decision cases (they land with their implementation tasks).
 
 - [ ] A1.8 **Observability, event-shaped (per `design.md` D6).** Add capture-tier lines: one per restore
       **state transition** (terminal or named wait) with the request identity and reason, and an on-demand
@@ -162,6 +168,22 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       request, and assert the reconcile outcome mapping; full native suite green; capture-serial build
       SUCCESS with the RAM1 line recorded. **Do not** emit a per-turn state line (capture-ring overflow
       precedent).
+      → **PARTIAL 2026-09-23 — landed:** (a) the **reconcile outcome mapping** is done and native-verified
+      with A4.1 (`SetIndexReconcileOutcome` + 4 cases in `test/test_storage_reconcile_index`, the boot site
+      logging the named outcome); (b) the **on-demand queue/state probe** is done: `StorageManager::
+      RestoreStateProbe` + `probeRestoreState` report the queued count, the priority head's identity and
+      **startability** (the field an operator needs to tell "head blocked" from "queue empty"), each job
+      instance's owned request with phase and read progress, and whether the deferred save is held back by
+      restore work. Native cases `test_restore_state_probe_reports_queue_and_job_ownership` (empty /
+      queued-startable / in-flight / blocked-head, four states in one case) and
+      `test_restore_state_probe_reports_the_save_blocked_by_restore` are **default-gate** (observation-only,
+      green on the current tree): 10/10 in the suite, full native **2,297 / 1 skipped / 0 failures**,
+      capture-serial SUCCESS with RAM1 `code 392,328 + padding 888` recorded.
+      **Still open (Packet B dependency):** the capture-tier **state-transition lines** with a reason and
+      the `terminal` / `prepare-complete-waiting` probe states. Those need Packet B's request identity,
+      named waits and terminal record (A2.1), so the lines land with A2.1/A2.2 rather than being emitted
+      with an invented state vocabulary now. The "no per-turn line" constraint is respected: the probe is
+      on-demand only.
 
 - [ ] A1.9 **Packet A review and mechanism ledger.** Record, for C1, C2, C4, C5, C6, one of: covered by a
       red desired-behavior fixture `<case>`, or withdrawn with the observation that falsified it; record
@@ -307,9 +329,24 @@ callers; corrected here, in `proposal.md`, `specs/`, and `design.md`:**
    removed from the scope statements and Packet A, since the detailed contract correctly permits waits that
    last until the external commit prerequisite is resolved.
 
+**Revision 5 (2026-09-23) — A1.7/A3.1 oracle split, from measurement rather than preference.** The
+original text made a native red fixture against the **real** blocking drain the evidence for C5 and for
+"A3.1 the drain advances the restore". Two rounds of measurement (`REVIEW.md` § A1.7) showed that
+retaining that call natively needs most of the persistence stack **plus** the display stack
+(`DisplayManager`'s `_display` member drags the OLED/Adafruit-GFX font chain in) and the cold
+edit/track-manager owners — close to the whole firmware. That is not a test-only closure, so the oracle
+moves to where it can be tight: **native** for the pure decisions (budget, progress, wait-reason
+classification, caller-contract mapping) and the **A3.7 device gate** for the integration claim that the
+drain actually advances a restore. The spec delta is unchanged; only the evidence route is. No native red
+fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases land with A3.2/A3.3/A3.4.
+
 ## 3. Packet C — the blocking drain advances the restore (D4)
 
-- [ ] A3.1 **Drain-side restore service on the real eligibility (D4, G2 finding 1).** Give the blocking
+- [ ] A3.1 **Drain-side restore service on the real eligibility (D4, G2 finding 1).** *(Oracle amended
+      2026-09-23, Revision 5 — see A1.7: the integration claim below is verified through the A3.7 device
+      gate with capture evidence, because retaining the real drain call natively needs the display stack.
+      The drain-side *decisions* it makes — admission, wait reason, budget, progress — are covered
+      natively by A3.2/A3.3/A3.4, which is where a tight oracle is available.)* Give the blocking
       drain a restore-service step that uses the existing selection/admission
       (`selectSubmittedLoadJobs` + `stepSubmittedLoadJobs`) plus one bounded advance of an admitted job,
       servicing the **active and parked** instances. The step SHALL derive its admission from the **same

@@ -512,6 +512,96 @@ void test_c6_transient_failure_is_retried_not_latched() {
   TEST_ASSERT_TRUE_MESSAGE(retry.committedAtEnd, message);
 }
 
+/// **A1.8 — the restore-state probe names the request/queue state (Packet A observability).**
+///
+/// The observable contract `design.md` D6 asks for, without a bisect: how many requests are queued,
+/// whether the priority head can begin (and its identity when it cannot), which request each job
+/// instance owns and in which phase, and whether the deferred save is held back by restore work. The
+/// named-wait vocabulary itself arrives with Packet B; this probe reports the state that exists today,
+/// which is the "waiting vs progressing vs terminated" distinction Packet B then refines.
+void test_restore_state_probe_reports_queue_and_job_ownership() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  // (1) Nothing queued, nothing in flight.
+  {
+    StorageManager::RestoreStateProbe probe{};
+    StorageManager::probeRestoreState(probe);
+    TEST_ASSERT_EQUAL_UINT16(0, probe.queuedCount);
+    TEST_ASSERT_FALSE(probe.queueHeadPresent);
+    TEST_ASSERT_FALSE(probe.activeJob);
+    TEST_ASSERT_FALSE(probe.parkedJob);
+    TEST_ASSERT_FALSE(probe.saveBlockedBySlotLoad);
+  }
+
+  // (2) A queued, startable request: the head is named and reported startable.
+  RestoreHarness::armBackgroundRestoreRequest(0, 3, 65);
+  {
+    StorageManager::RestoreStateProbe probe{};
+    StorageManager::probeRestoreState(probe);
+    TEST_ASSERT_EQUAL_UINT16(1, probe.queuedCount);
+    TEST_ASSERT_TRUE(probe.queueHeadPresent);
+    TEST_ASSERT_EQUAL_UINT8(0, probe.queueHeadTrack);
+    TEST_ASSERT_EQUAL_UINT8(3, probe.queueHeadSlot);
+    TEST_ASSERT_TRUE_MESSAGE(probe.queueHeadStartable,
+                             "a queued request on a free slot must report startable");
+  }
+
+  // (3) An in-flight job: the active instance owns the request and reports its phase and progress.
+  RestoreHarness::runSingleLoadServiceTurn();
+  {
+    StorageManager::RestoreStateProbe probe{};
+    StorageManager::probeRestoreState(probe);
+    TEST_ASSERT_TRUE_MESSAGE(probe.activeJob || probe.parkedJob,
+                             "the probe must see the request once a job instance owns it");
+    const bool ownsSlot3 =
+        (probe.activeJob && probe.activeJobTrack == 0 && probe.activeJobSlot == 3) ||
+        (probe.parkedJob && probe.parkedJobTrack == 0 && probe.parkedJobSlot == 3);
+    TEST_ASSERT_TRUE_MESSAGE(ownsSlot3, "the owning instance must name the request's (track, slot)");
+    TEST_ASSERT_TRUE_MESSAGE(probe.activePayloadSize > 0 || probe.parkedPayloadSize > 0,
+                             "an admitted job must report its payload size");
+  }
+
+  // (4) A blocked head on a slot with a live owner: named, and reported not startable.
+  RestoreHarness::resetSlotToEmpty(0, 4);
+  RestoreHarness::resetSlotToEmpty(0, 5);
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(trackManager.getSelectedTrack(),
+                                                       PendingStopDestination::Playing, 4);
+  TEST_ASSERT_FALSE(trackManager.getSelectedTrack().noLiveOwnerForSlot(4));
+  StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 4, 0));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 5, 1));
+  StorageManagerInternal::sortPendingLoopSlotRestoreQueue();
+  {
+    StorageManager::RestoreStateProbe probe{};
+    StorageManager::probeRestoreState(probe);
+    TEST_ASSERT_EQUAL_UINT16(2, probe.queuedCount);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(4, probe.queueHeadSlot,
+                                    "the live-owned entry must be the reported priority head");
+    TEST_ASSERT_FALSE_MESSAGE(probe.queueHeadStartable,
+                              "a head whose slot has a live owner must report not startable");
+  }
+}
+
+/// **A1.8 — the probe reports that the deferred save is held back by restore work.** This is the
+/// observable side of C5: the drain's own gate reads the same predicate.
+void test_restore_state_probe_reports_the_save_blocked_by_restore() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  RestoreHarness::setRuntimeTransportIdle();
+  RestoreHarness::armBackgroundRestoreRequest(0, 6, 66);
+  RestoreHarness::runSingleLoadServiceTurn();
+
+  StorageManager::RestoreStateProbe probe{};
+  StorageManager::probeRestoreState(probe);
+  const bool hasSession = StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd();
+  TEST_ASSERT_EQUAL_MESSAGE(hasSession ? 1 : 0, probe.saveBlockedBySlotLoad ? 1 : 0,
+                            "the probe and the drain's own gate must agree on the save blocker");
+}
+
 // ---------------------------------------------------------------------------
 // SD write-mode semantics (fix/sd-temp-rewrite, docs/Plans/sd_temp_write_truncation_refinement.md)
 //
@@ -607,6 +697,9 @@ int main(int, char**) {
     RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
     RUN_TEST(test_c6_transient_failure_is_retried_not_latched);
   }
+  // A1.8 — observability is default-gate: it is observation-only and passes on the current tree.
+  RUN_TEST(test_restore_state_probe_reports_queue_and_job_ownership);
+  RUN_TEST(test_restore_state_probe_reports_the_save_blocked_by_restore);
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
   RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);
