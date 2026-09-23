@@ -2791,6 +2791,26 @@ the mute lever removes the very track that needs verifying. **A formal content P
 persistence/catalog defect fixed first**; it is not reachable by capture configuration. The mute state was
 **restored** (all seven unmuted) and the transport stopped, so the device's audible state is as it was.
 
+### Round 3 — re-recording the slot does not restore a faithful capture (2026-09-23, later)
+
+The one remaining route to a formal PASS was to reproduce the conditions of the near-parity run: re-record the
+24-bar slot and capture immediately, before the set drifts. With the transport stopped and the save drained
+first (the Leg-5 prep), the re-record (`captures/rwso-24cap-r3/`) came back **degraded instead of faithful**:
+
+- `record loop length (final ticks): 19200/18432 (raw 19200)` — a **25-bar over-run** where the earlier run
+  sealed at exactly 18,432;
+- `stored overdub span (SEVT ticks): count=0/191 … count_ok=False span_ok=False bars_ok=False`, and
+  `overdub_ok=False transport_ok=False` — the harness could not see the overdub evidence at all, though the
+  firmware log does contain **two** `Overdubbing started` rows (0 `FATAL`, 0 `#MEM_EXT_REFUSED`);
+- `persistence handoff: first_missing=request result=None`, and the log carries **no** `PERS,request` /
+  `SAVE,*` markers, so the re-recorded content was **not persisted**;
+- the session log is **1,574 lines** against the faithful run's **45,909** — the capture-sparsity mode, with
+  `heap_free=80KB, heap_min=76KB`.
+
+So the device cannot currently produce a faithful, stable capture of the slot under test at all, and the
+failure mode has widened from "the verifier cannot bind two rows" to "the content creation run itself does not
+reproduce". No firmware or SD content was changed by this round; the device is left with the transport stopped.
+
 **Why a formal PASS is not claimed.** The guide's bar is `inventory_equal: true` on every cycle
 ([HITL_CONTENT_VERIFICATION.md](../../../docs/Guides/HITL_CONTENT_VERIFICATION.md)). The substantive claims that
 *are* established: the committed inventory matches the effective inventory (`storage_matches_effective: true`,
