@@ -1,5 +1,30 @@
 # Project state (execution context)
 
+**2026-09-23 round 7 — Packet A closed; A4.1 landed; the A1.7/A3.1 oracle split is now the contract.**
+
+`deferred-slot-restore-liveness` **9/36 tasks** complete (A1.1, A1.2, A1.3, A1.5, A1.6, A1.9, A1.10,
+A1.11, A4.1). Packet A's gate is **taken and green**: default suite 10/10, `RESTORE_LIVENESS_RED=1` →
+15 cases / 4 failed (exactly C1, C2, C4, C6), full native **2,297 / 1 skipped / 0 failures**,
+`teensy41-capture-serial` SUCCESS at RAM1 `code 392,328 / padding 888`.
+
+Two durable outcomes this round, both evidence-driven:
+
+1. **A4.1 — named boot reconcile outcome.** `SetIndexReconcileOutcome { Ok, Repaired, Failed }` with
+   `reconcileSetIndexOnSd` kept as the `Ok || Repaired` wrapper; the boot site logs the named outcome
+   instead of only warning on failure. New suite `test_storage_reconcile_index` 4/4 green.
+2. **Revision 5 (A1.7/A3.1 oracle split).** Measurement showed a native red fixture against the **real**
+   blocking drain needs most of the persistence stack **plus** the display stack and the cold
+   edit/track-manager owners — close to the whole firmware, so not a test-only closure. The oracle now
+   sits where it is tight: **native** for the drain's pure decisions (budget, progress, wait-reason
+   classification, caller-contract mapping) and the **A3.7 device gate** for the integration claim that
+   the drain advances a restore. The spec delta is unchanged; only the evidence route is. A1.7 stays open
+   for its pure-decision cases, which land with A3.2/A3.3/A3.4.
+
+A1.8 is partial by design: the queue/state probe and the reconcile mapping are landed and default-gate;
+the capture-tier transition lines and the `terminal` / `prepare-complete-waiting` states land with Packet
+B (A2.1), since emitting them now would invent the state vocabulary A2.1 defines. **Next: Packet B —
+background restore liveness (A2.1 identity/state separation first).**
+
 
 **2026-09-23 — `deferred-slot-restore-liveness` Packet A started: A1.1/A1.2/A1.3/A1.11 landed, no behavior change.**
 
