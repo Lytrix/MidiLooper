@@ -1805,3 +1805,38 @@ form does not work saves the next attempt the same detour.
 |---|---|
 | `test_continuous_capture` | **90/90** (sweep reverted) |
 | full native | **2,280 cases / 1 skipped / 2,279 succeeded / 0 failures** (run after the revert) |
+
+## P1 — S1.5's refusal-N: the cause cannot be distinguished natively (2026-09-23)
+
+One hypothesis for the reverted sweep's N=2 refusal was a **non-idempotent record arm** — a real defect if
+true, and one that would also mean re-granting contributed to the per-slot slope the change removes. Probed
+directly: three successive `prewarmPlaybackForSlot(0, true)` grants on an otherwise idle slot all succeed, so
+the arm is **exonerated**. The probe is kept as `test_record_arm_admission_is_repeatable`, because it also
+guards that re-granting never becomes a slope.
+
+That leaves the actual cause of the N=2 refusal unknown, and the reason is structural rather than incidental:
+
+> **`prewarmPlaybackForSlot` returns only a bool.** The reason for a refusal is emitted by
+> `MemoryMonitor::reportPrewarmAdmissionDenied` as `#MEM_DENIED`, which is a **device** diagnostic. Natively
+> the admission answers true or false and nothing more, so a refusal sweep cannot distinguish "the pool is
+> exhausted" from "some other admissibility branch declined" — which is exactly the ambiguity that made the
+> reverted number misleading in the first place.
+
+So S1.5's third clause is **not natively answerable without a new seam**. The two honest options, in the
+project's own terms:
+
+1. **A test-only reason capture at the admission boundary** — DEC-080 permits test-only adapters at
+   "clock, allocator, I/O or observation boundaries", and this is an observation boundary. It would let the
+   sweep assert *why* it refused, which is what makes the number a capacity characterisation rather than a
+   coincidence.
+2. **The device leg**, where `#MEM_DENIED` carries the reason and S1.3 already records the failure point.
+
+Neither is a native quick win, and inventing a number without the reason is the thing invariant 3 forbids. The
+recorded outcome of this round is therefore: one hypothesis eliminated with a kept regression guard, and the
+clause's real requirement (a reason-capturing seam, or the device) stated precisely.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **91/91** (+1: the arm-repeatability guard) |
