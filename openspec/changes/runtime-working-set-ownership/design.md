@@ -1100,10 +1100,15 @@ stays pending and is reported as a wait, not dropped.
   `PrepareTransfer` seal (`TrackOverdubLifecycle.cpp:941-947` → `LoopEventStore::detachChunksToCommittedChunkIds`,
   `LoopEventStore.cpp:707-753`), not on the retire path (`:1197-1205`, which only releases `pendingPass` and
   clears `owner`/`loopId`). The only `store.clear()` today is the runtime destructor
-  (`TrackPlaybackRuntime.cpp:398`), so the "drain or clear" fallback needs a **new**
-  `LoopPlaybackRuntime::clearCanonicalCaptureOutput()`; the park routes a busy owner + non-empty store to it (or
-  to `regenerateFrozenCaptureStaging`) and reports a **new named terminal (`accepted_stop_park_terminal`)** in the
+  (`TrackPlaybackRuntime.cpp:398`), so the "drain or clear" fallback lives on the **retire** route, which is the
+  only place a cleared store cannot disturb a live copy: it runs past `DeferredCleanup` and reports
+  `canonical_output_drained_at_retire`. The **park** must *not* clear: a busy owner's populated store is exactly
+  the mid-copy state S2b.4 refuses to release, so the park routes nothing and only reports the stall as a **new
+  named terminal (`accepted_stop_park_terminal`)** in the
   `include/Utils/DebugSessionCapture.h` family, alongside `canonicalFinalizationCapacityReleased` (`:233`).
+  (Corrected 2026-09-23: an earlier revision of this paragraph had the park clearing the store, which would have
+  destroyed an in-flight canonical copy and executed the stop before the owner freed -- see ARCHITECTURE-REVIEW.md
+  § P1 — S2b.6.)
   `accepted_stop_finalizer_wait` is prose-only today — the counter is new.
 - **The park is keyed on `job.slot`, not the active slot.** The ring check, `canonicalCaptureOutputAdmitted()`
   and the native assert are all scoped to the interval's slot, mirroring the guard chain at

@@ -2041,12 +2041,37 @@ than guessed at:
   (`sizeof(CaptureStopJobs) == 2728`), so whether to spend a latch byte or key the report off the existing
   `waitCount` is a deliberate choice with a placement consequence.
 
-This is left **open and precisely specified** rather than implemented under time pressure: the park is
-invariant-31 surface, and a terminal that cleared the store would silently regress S2b.4's red-proven guarantee.
-The conflict itself is resolvable by the documented authority order rather than by preference: a change's
-**spec delta is normative** and its `design.md` is explanatory, so the report-only reading governs and the
-design sentence should be corrected to describe the **retire** route. What remains is the implementation
-decision it names — the observable counter — not the semantics.
+**IMPLEMENTED 2026-09-23, report-only and red-proven.** `parkAcceptedStopForCanonicalOutput` now reports
+`accepted_stop_park_terminal` when waiting has become **stalled**: the canonical target is held by a live owner
+(a populated store the park must not clear) and the reservation cannot be acquired, so no deferred turn can admit
+the stop until that owner frees. It clears nothing, drains nothing and cancels nothing — invariant 31 and
+`spec.md:290-296` keep the accepted stop authoritative, so it still executes exactly once when the owner frees.
+
+Two implementation choices worth recording:
+
+- **No new latch field.** `PendingInteractionLatch` is size-pinned by S3.0's placement asserts
+  (`sizeof(CaptureStopJobs) == 2728`), so the report keys off the existing per-latch `waitCount` with `== 8`.
+  The count passes through the threshold once however long the wedge lasts, which is exactly "once per episode".
+- **Zero RAM1 cost.** ITCM padding is unchanged at **1,032 / 192 B above the floor**, because the park is
+  `TRACK_COLD_MEM` (FLASH-resident) — so unlike the S1.4 pin census, a diagnostic call here spends no ITCM.
+
+**The fixture is discriminating against the reading I rejected.** `test_s2b6_park_terminal_never_cancels_an_accepted_stop`
+establishes the wedge (populated store + accepted stop), drives **40** deferred turns — five times past the
+threshold — and asserts the request is still authoritative: latch intact, no job stacked, queue empty, the
+interval still live with its rows unchanged, and the store still populated. Freeing the owner then admits and
+retires it exactly once. Implementing `design.md:1104` literally (adding `store.clear()` to that branch) makes
+the fixture fail on *"the park terminal must never abandon the accepted stop"* (**1 failed / 92 succeeded**) —
+under the literal reading the stop does not stay parked at all: it proceeds by destroying the in-flight copy
+rather than waiting for the owner, which is precisely the regression S2b.4 protects. The literal sentence in
+`design.md` has been corrected accordingly.
+
+The **diagnostic line itself** is emitted only under `SESSION_CAPTURE` (the firmware capture env), so the native
+fixture evidences the normative *behaviour*; the line's compilation is carried by the firmware build, and an
+end-to-end device observation would need the wedge reproduced on hardware (not attempted).
+
+The conflict is resolved by the documented authority order rather than by preference: a change's **spec delta is
+normative** and its `design.md` is explanatory, so the report-only reading governs — and `design.md` has been
+fixed to match.
 
 ## Device session — the baseline is flashed, and boot/load residency is measured on device (2026-09-23)
 

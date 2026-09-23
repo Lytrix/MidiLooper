@@ -519,7 +519,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       the predicate are added at the call site; the predicate must also consult
       `hasPendingDeferredReconstruction()` (Rev 22.3). Fixture: A finalizing + load queued and begun for the same
       slot → no `resetLoopSlotToEmpty`, the entry is **still queued**, finalization retires, restore then happens.
-- [ ] S2b.6 **`Track::parkAcceptedStopForCanonicalOutput()` (Revision 19).**
+- [x] S2b.6 **`Track::parkAcceptedStopForCanonicalOutput()` (Revision 19).**
       **PARTIAL 2026-09-23.** `parkAcceptedStopForCanonicalOutput(slot)` re-runs that slot's
       canonical reservation on a deferred turn, reports `accepted_stop_finalizer_wait` once per
       episode, counts every wait, and never cancels the request. **Outstanding:** the retire-path
@@ -549,17 +549,20 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target` covers the "loaded slot"
       variant the task text names. Both are green in the current suite. So the fixture clause is not
       outstanding and never was.
-      **STILL OUTSTANDING: the named `accepted_stop_park_terminal`**, and it is now blocked on a
-      **design/spec conflict that must be resolved before it is implemented**: `design.md:1104` says the
-      park "routes a busy owner + non-empty store" to a new `clearCanonicalCaptureOutput()` (or
-      `regenerateFrozenCaptureStaging`) and reports the terminal, but clearing a populated store **while a
-      copy is in flight is precisely what S2b.4 forbids** -- the invariant
-      `test_s2b4_midcopy_populated_store_refuses_release` now proves by guard removal. The normative spec
-      scenario (`spec.md:290-296`) agrees with S2b.4: the terminal is a **report-only fault/escalation**,
-      the interaction "remains authoritative and executes exactly once when the owner frees", and the park
-      "never abandons the stop". So the terminal must not clear or cancel. Implementing it also needs an
-      **observable counter** (like `waitCount`) for a fixture to assert on, and `PendingInteractionLatch`
-      is size-pinned by S3.0's placement asserts, so that choice needs to be made deliberately.
+      **NAMED TERMINAL DONE 2026-09-23 — task closed.** The conflict above was resolved by the authority
+      order (a change's spec delta is normative, its `design.md` explanatory), `design.md` was corrected, and
+      `accepted_stop_park_terminal` is now **report-only**: it fires when waiting has stalled (the canonical
+      target is held by a live owner — a populated store the park must not clear — so no deferred turn can
+      admit the stop), and it clears, drains and cancels nothing. It keys off the existing per-latch
+      `waitCount` (`== 8`) rather than a new latch field, because `PendingInteractionLatch` is size-pinned by
+      S3.0's placement asserts; the count passes the threshold once per episode. **Zero RAM1 cost** — padding
+      stays 1,032 / 192 B above the floor, as the park is `TRACK_COLD_MEM`. Fixture
+      `test_s2b6_park_terminal_never_cancels_an_accepted_stop` drives 40 deferred turns past the threshold and
+      asserts the request stays authoritative (latch intact, no job, queue empty, interval live, rows and
+      store unchanged), then that freeing the owner executes it exactly once. **Discriminating against the
+      reading that was rejected:** adding `store.clear()` to that branch (design.md's literal text) fails the
+      fixture on *"the park terminal must never abandon the accepted stop"*. Recorded:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.6.
 - [ ] S2b gates: the first-slice native/build/device checks in `IMPLEMENTATION_CONTRACT.md` §1,
       using the S1 resident-library baseline plus a synthetic 60-descriptor fixture. Prove canonical
       reservation bytes flat in inactive-slot count; report canonical payload and derived bytes separately.

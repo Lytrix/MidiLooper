@@ -4114,6 +4114,66 @@ void test_s2b4_midcopy_populated_store_refuses_release() {
       "release must return every held credit to the free list");
 }
 
+/// S2b.6 (invariant 31; spec.md "A park terminal never cancels an accepted interaction"): the park's
+/// diagnostic terminal is a fault/escalation state, never an abandonment. With the canonical target
+/// held by a live owner -- a populated store, which the park must **not** clear because that is what
+/// S2b.4 forbids mid-copy -- the accepted stop waits past the terminal threshold and must still be
+/// authoritative: nothing cancelled, no second job stacked, the live interval and its rows untouched.
+/// Freeing the owner then executes it exactly once, with no second press. The diagnostic line itself
+/// is emitted only under `SESSION_CAPTURE` (the firmware capture env), so this fixture evidences the
+/// normative *behaviour*; the line's compilation is carried by the firmware build.
+void test_s2b6_park_terminal_never_cancels_an_accepted_stop() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+
+  // A live owner holds the canonical target: the store is populated, so `prewarm` must refuse and the
+  // park must leave it alone. This is the park's stalled case.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::prewarmCanonicalReservation(track, 0));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::appendCanonicalEvent(track, 0));
+  TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0));
+
+  const size_t rowsBefore = track.getActiveLoop().capture.store.size();
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  const uint64_t interval = TrackCaptureStopTestAccess::interval(track);
+
+  // Drive well past the terminal threshold. The terminal is a report; the request must survive it.
+  for (size_t turn = 0; turn < 40; ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.hasAcceptedUnexecutedInteraction(),
+                           "the park terminal must never abandon the accepted stop");
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "a stalled park must not stack a second stop job");
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_TRUE_MESSAGE(track.isOverdubbing(),
+                           "the interval stays live while the accepted stop waits");
+  TEST_ASSERT_EQUAL_UINT64(interval, TrackCaptureStopTestAccess::interval(track));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0),
+                            "the park must not clear a store a live owner holds (S2b.4)");
+  TEST_ASSERT_EQUAL(rowsBefore, track.getActiveLoop().capture.store.size());
+
+  // The owner frees: the same single request now executes, exactly once, with no second press.
+  TrackCaptureStopTestAccess::clearCanonicalOutput(track, 0);
+  for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "the parked stop must execute when the owner frees");
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "the stalled stop must still retire exactly once");
+  TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
+}
+
 /// S2b.3 boot budget evidence (invariant 34): boot consumes only the committed content, never a
 /// per-slot reservation, and leaves the pool's own reserve intact. The device-scale peak figure
 /// (a 24-bar overdub's reservation) is S1.5's device leg, not this fixture.
@@ -4448,6 +4508,7 @@ int main() {
   RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
   RUN_TEST(test_s2b4_midcopy_populated_store_refuses_release);
+  RUN_TEST(test_s2b6_park_terminal_never_cancels_an_accepted_stop);
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
