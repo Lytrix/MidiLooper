@@ -13,81 +13,18 @@
 
 namespace StorageManagerInternal {
 
-bool drainPersistenceWorkBlocking(const LooperState& state) {
-#if BYPASS_STOP_UNDO_SAVE
-    (void)state;
-    Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
-    return true;
-#else
-    HotPathTelemetry::ScopedSaveState telemetryScope;
-    Serial.println("[StorageManager] Draining persistence work queue to SD card...");
-
-    storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
-    storageSession.currentWorkspaceSave.urgentRequested = true;
-    storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
-#if defined(SESSION_CAPTURE)
-    const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
-#endif
-    storageSession.currentWorkspaceSave.pending = true;
-#if defined(SESSION_CAPTURE)
-    SC_PERSIST("request", 0, 0, 0,
-               alreadyPending ? "sync_drain_already_pending" : "sync_drain");
-#endif
-
-    storageSession.currentWorkspaceSave.lastCompletedOk = false;
-
-    const SyncDrainBudget drainBudget = buildSyncDrainBudgetForSession();
-    uint32_t steps = 0;
-    uint32_t stuckIterations = 0;
-    SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
-    SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
-
-    while (hasPersistenceWorkPending()) {
-        if (steps >= drainBudget.maxSliceSteps) {
-            failureReason = SyncDrainFailureReason::ExceededSliceBudget;
-            break;
-        }
-
-        // Terminal when a save is owed but no work item can carry it: the queue cannot admit the
-        // finalize, so `hasPersistenceWorkPending()` is true on `pending` alone and no iteration can
-        // change that. Fail fast with the cause instead of burning the whole stuck budget -- the
-        // 2026-09-18 wedge reported `stuck after 33 iterations (max 33, expected ~1 slice steps,
-        // ~0 SD bytes)` and refused CLEAR with no clue which of the two states it was.
-        if (!maybeAdmitFinalizeWorkspaceAfterDrain()) {
-            failureReason = SyncDrainFailureReason::AdmissionRefused;
-            break;
-        }
-        const SyncDrainProgressSnapshot beforeProgress = lastProgress;
-        StorageManager::processDeferredSaveState(state);
-        yield();
-        steps++;
-
-        const SyncDrainProgressSnapshot afterProgress = captureSyncDrainProgressSnapshot();
-        if (PersistenceSyncDrainBudget::madeSyncDrainProgress(beforeProgress, afterProgress)) {
-            stuckIterations = 0;
-            lastProgress = afterProgress;
-        } else {
-            ++stuckIterations;
-            if (stuckIterations >= drainBudget.maxStuckIterations) {
-                // Name the gate that stopped the drain, in the same order `processDeferredSaveState`
-                // checks them, so a blocking CLEAR reports *why* instead of the generic "stuck"
-                // (2026-09-23 device session: the gate could not be told apart from any log).
-                if (StorageManagerInternal::isCaptureRecordingForPersistence()) {
-                    failureReason = SyncDrainFailureReason::BlockedByCapture;
-                } else if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd()) {
-                    failureReason = SyncDrainFailureReason::BlockedBySlotLoad;
-                } else if (StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff()) {
-                    failureReason = SyncDrainFailureReason::BlockedByPostLoadHoldoff;
-                } else {
-                    failureReason = SyncDrainFailureReason::Stuck;
-                }
-                break;
-            }
-        }
-    }
-
-    const bool completed = !hasPersistenceWorkPending();
-    if (!completed) {
+/// A3.2 / RAM1: the drain's **terminal outcome report** is a cold path that runs once per blocking drain,
+/// so it is FLASH-resident. `padding_floor` in `scripts/ram1_budget.json` is a reviewed allowance rather
+/// than a padding value, and the drain itself is ITCM; the named-verdict work pushed this tree 48 B over
+/// the allowance, and the placement rule's remedy is to move code out of ITCM -- this is that code.
+///
+/// Extracted verbatim from `drainPersistenceWorkBlocking`'s tail: the failure report, the two
+/// post-loop failure checks, and the success report. It owns the bool result and the telemetry scope's
+/// outcome so the drain keeps a single return point.
+STORAGE_PERSIST_MEM bool finishPersistenceDrainReport(
+    SyncDrainFailureReason failureReason, uint32_t steps, uint32_t stuckIterations,
+    const SyncDrainBudget& drainBudget, HotPathTelemetry::ScopedSaveState& telemetryScope) {
+    if (failureReason != SyncDrainFailureReason::None) {
 #if defined(SESSION_CAPTURE)
         const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
 #endif
@@ -178,6 +115,88 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
     Serial.println("[StorageManager] State saved successfully (v4).");
     telemetryScope.setOk(true);
     return true;
+}
+
+bool drainPersistenceWorkBlocking(const LooperState& state) {
+#if BYPASS_STOP_UNDO_SAVE
+    (void)state;
+    Serial.println("[StorageManager] BYPASS_STOP_UNDO_SAVE: skip saveState");
+    return true;
+#else
+    HotPathTelemetry::ScopedSaveState telemetryScope;
+    Serial.println("[StorageManager] Draining persistence work queue to SD card...");
+
+    storageSession.currentWorkspaceSave.admissionHeap = UINT32_MAX;
+    storageSession.currentWorkspaceSave.urgentRequested = true;
+    storageSession.currentWorkspaceSave.deferDispatchUntilMs = 0;
+#if defined(SESSION_CAPTURE)
+    const bool alreadyPending = storageSession.currentWorkspaceSave.pending;
+#endif
+    storageSession.currentWorkspaceSave.pending = true;
+#if defined(SESSION_CAPTURE)
+    SC_PERSIST("request", 0, 0, 0,
+               alreadyPending ? "sync_drain_already_pending" : "sync_drain");
+#endif
+
+    storageSession.currentWorkspaceSave.lastCompletedOk = false;
+
+    const SyncDrainBudget drainBudget = buildSyncDrainBudgetForSession();
+    uint32_t steps = 0;
+    uint32_t stuckIterations = 0;
+    SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
+    SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
+
+    while (hasPersistenceWorkPending()) {
+        if (steps >= drainBudget.maxSliceSteps) {
+            failureReason = SyncDrainFailureReason::ExceededSliceBudget;
+            break;
+        }
+
+        // Terminal when a save is owed but no work item can carry it: the queue cannot admit the
+        // finalize, so `hasPersistenceWorkPending()` is true on `pending` alone and no iteration can
+        // change that. Fail fast with the cause instead of burning the whole stuck budget -- the
+        // 2026-09-18 wedge reported `stuck after 33 iterations (max 33, expected ~1 slice steps,
+        // ~0 SD bytes)` and refused CLEAR with no clue which of the two states it was.
+        if (!maybeAdmitFinalizeWorkspaceAfterDrain()) {
+            failureReason = SyncDrainFailureReason::AdmissionRefused;
+            break;
+        }
+        const SyncDrainProgressSnapshot beforeProgress = lastProgress;
+        StorageManager::processDeferredSaveState(state);
+        yield();
+        steps++;
+
+        const SyncDrainProgressSnapshot afterProgress = captureSyncDrainProgressSnapshot();
+        if (PersistenceSyncDrainBudget::madeSyncDrainProgress(beforeProgress, afterProgress)) {
+            stuckIterations = 0;
+            lastProgress = afterProgress;
+        } else {
+            ++stuckIterations;
+            if (stuckIterations >= drainBudget.maxStuckIterations) {
+                // Name the gate that stopped the drain, in the same order `processDeferredSaveState`
+                // checks them, so a blocking CLEAR reports *why* instead of the generic "stuck"
+                // (2026-09-23 device session: the gate could not be told apart from any log).
+                if (StorageManagerInternal::isCaptureRecordingForPersistence()) {
+                    failureReason = SyncDrainFailureReason::BlockedByCapture;
+                } else if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd()) {
+                    failureReason = SyncDrainFailureReason::BlockedBySlotLoad;
+                } else if (StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff()) {
+                    failureReason = SyncDrainFailureReason::BlockedByPostLoadHoldoff;
+                } else {
+                    failureReason = SyncDrainFailureReason::Stuck;
+                }
+                break;
+            }
+        }
+    }
+
+    // A3.2 / RAM1: the terminal report is FLASH-resident (see `finishPersistenceDrainReport`).
+    if (!hasPersistenceWorkPending()) {
+        return finishPersistenceDrainReport(SyncDrainFailureReason::None, steps, stuckIterations,
+                                           drainBudget, telemetryScope);
+    }
+    return finishPersistenceDrainReport(failureReason, steps, stuckIterations, drainBudget,
+                                       telemetryScope);
 #endif
 }
 
