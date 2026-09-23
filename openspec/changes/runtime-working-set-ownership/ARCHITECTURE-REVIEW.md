@@ -1904,3 +1904,45 @@ next, or the clause is answered on device where the load path reads from SD rath
 |---|---|
 | `test_continuous_capture` | **92/92** (+1: the horizon-necessity guard) |
 | full native | **2,282 cases / 1 skipped / 2,281 succeeded / 0 failures** |
+
+## P1 — RETRACTION: the "seal needs the transfer horizon" finding is falsified (2026-09-23)
+
+The previous section's established half is **withdrawn**, by its own bisect. One round after publishing it, the
+control case settled it:
+
+- the dense loop **with** the horizon admitted also returns `FailedValidation`, and so does a **tiny** loop
+  (4 note pairs) with the horizon admitted.
+
+So the horizon is not the discriminator and my ordering was the variable I had failed to control. What the
+bisect actually shows:
+
+**`loop.appendCaptureEvent` is not the production ingress once the arm has admitted capture staging.** The
+working harness pattern (`preparePlayingTrack`) records into an untouched slot and prewarms the arm *after*
+committing; the production path prewarms the arm first and then feeds input through `Track`'s staged ingress,
+not through `Loop::appendCaptureEvent`. My control case prewarmed the arm and *then* appended through the Loop,
+so the seal sourced a capture that did not contain those events — `FailedValidation` from the empty/detach
+branch, not from the transfer precondition.
+
+Two consequences, both recorded:
+
+1. **The "horizon is necessary" claim is retracted.** The original (a)-case failure is equally consistent with
+   the same empty/detach branch, because I never identified which of the four `FailedValidation` returns fired —
+   I inferred it from reading the code after seeing a failure that my own construction produced. The fixture and
+   its helper are reverted; nothing is claimed. This is exactly the "evidence only once the exact assertion is
+   identified" rule again, one level deeper.
+2. **The useful knowledge survives.** For this harness: a slot's content must be appended *before* the arm is
+   prewarmed, or through the staged ingress. That is the missing piece for any future dense-content fixture,
+   including S1.5's third clause, and it is why the earlier sweep's helper failed at its first commit.
+
+### Where S1.5's third clause stands
+
+Unchanged in substance and now free of a wrong intermediate claim: it needs a **staging-correct** dense-loop
+construction (append through the staged ingress, or append before prewarming), and only then can the refusal
+point be measured — or it is answered on device, where a loaded library is read from SD rather than sealed.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **91/91** (fixture and helper reverted) |
+| full native | **2,281 cases / 1 skipped / 2,280 succeeded / 0 failures** |

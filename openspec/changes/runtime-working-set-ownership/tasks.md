@@ -217,17 +217,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       this harness, and no refusal was measured. The clause is **not yet attempted with a valid construction**;
       the concrete next step is a construction that seals first -- itself a property of the capture validation
       path worth knowing. The arm-repeatability guard added at the same time is unaffected and correct.
-      **PROGRESS 2026-09-23:** the upstream blocker is now partially diagnosed. **Established and kept as a
-      guard** (`test_dense_loop_seal_requires_the_transfer_horizon`): a dense 24-bar loop fails
-      `SealOutcome::FailedValidation` when **no transfer horizon has been admitted** -- the failing branch is the
-      transfer precondition -- which is the production reason S2b.2 admits the horizon at the arm, since an
-      unsealable dense capture could never reach a stop. **Open, not guessed:** admitting the horizon first does
-      **not** make that construction seal (still `FailedValidation`), so the horizon is necessary but not
-      sufficient; halving to 1,200 events also failed, so it is not content volume either. The fixture asserts
-      only the proven half. Either diagnose the remaining seal failure next, or answer the clause on device,
-      where a *loaded* library is read from SD rather than sealed from a fresh capture. **Outstanding:** that
-      diagnosis or the device run, and the boot `live` figure against a 24-bar overdub's peak reservation
-      (~191 chunks).
+      **RETRACTED 2026-09-23.** The intermediate "a dense loop fails because the transfer horizon was not
+      admitted" finding is **withdrawn**: its own bisect showed a **tiny** loop with the horizon admitted also
+      fails `FailedValidation`, so the horizon was not the discriminator -- my construction was. The real lesson
+      is that **`loop.appendCaptureEvent` is not the production ingress once the arm has admitted capture
+      staging**: content must be appended *before* the arm is prewarmed, or through `Track`'s staged ingress. I
+      never identified which of `sealCapture`'s four `FailedValidation` returns fired, so nothing is claimed.
+      **Next step:** a staging-correct dense construction (append through the staged ingress, or append before
+      prewarming); only then can the refusal point be measured -- or answer it on device, where a loaded library
+      is read from SD rather than sealed. **Outstanding:** that construction, and the boot `live` figure against
+      a 24-bar overdub's peak reservation (~191 chunks).
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
