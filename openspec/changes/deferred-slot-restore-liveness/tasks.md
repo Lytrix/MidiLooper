@@ -62,9 +62,10 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
 - [ ] A1.2 **[C1 — transport-gated background admission] desired-behavior fixture, red.** Drive a queued
       background restore with the transport running and one track audibly playing, through the production
       admission path (the extracted `hasRealtimeDeferredIdleWork` predicate plus the load-job child
-      admission — **not** `stepSubmittedLoadJobs()` directly). Assert the **desired** outcome: the request
-      is served — its preparation advances and it reaches a terminal or a named wait (including
-      `waiting_commit_gate`) within a bounded number of turns. **Verify:** the case is **red on current
+      admission — **not** `stepSubmittedLoadJobs()` directly). Assert the **desired** outcome: while the
+      gates admit, the request's preparation advances or it reaches a terminal; and in every case it is
+      never left in neither state — within a bounded number of turns it is either served or in a **named
+      wait** (`waiting_commit_gate`, `waiting_job_capacity`). **Verify:** the case is **red on current
       `src/`** because the request is neither served nor in a named wait, and it is registered in the
       change's named exclusion set (A1.11) so the default gate stays green. Record the assertion output
       and the exclusion flag. No `src/` change in this task.
@@ -209,7 +210,7 @@ here, in `proposal.md`, `specs/`, and `design.md`:**
    `MidiButtonActions::handleClearTrack` stops only the **selected** track, while `timingCriticalTrackActive`
    is computed over **all** tracks (`isRecording() || isAudiblePlaybackActive()`), so another track playing
    leaves the runtime timing-critical. The drain now derives admission from the **same actual eligibility**
-   and, where the gate denies, preserves the request and reports the named wait (A3.1, A3.5 shape b).
+   and, where the gate denies, preserves the request and reports the named wait (A3.1, A3.7 shape b).
 2. **One waiting commit blocks every other request's preparation.** The gate is **global**:
    `hasLoadLoopJobCommitPending()` is true when either instance is `Committing`/`Cleanup`, and `main.cpp`
    then denies the **whole** load child. The preparation promise is now explicitly conditional and gains the
@@ -218,12 +219,34 @@ here, in `proposal.md`, `specs/`, and `design.md`:**
 3. **Restore work was absent from the drain's budget and progress accounting.** `SyncDrainBudgetInput` and
    `SyncDrainProgressSnapshot` carry persistence fields only, so a large restore could exhaust
    `maxSliceSteps` or look stalled while progressing. Restore terms are added to both, with a bounded
-   fresh-queue admission and named holdoff reporting (A3.3).
+   fresh-queue admission and named holdoff reporting (A3.3, A3.5).
 
 **Scope consequence, stated once and binding:** this change delivers **diagnosable preparation and named
 waits**, plus drain advancement where the gate admits. It does **not** by itself unblock CLEAR during
 another track's playback — that requires **runtime-maintenance task 3.3** (bounded commit/cleanup). O5
-(narrowing the gate per phase) is a separate, reviewed change.
+(narrowing the gate per phase) is a separate, reviewed change. A **named wait is a valid, successful
+outcome** of this change, and may last until the external prerequisite is resolved.
+
+**Revision 4 (2026-09-23) — the third review returned BLOCKED on the drain's return behavior at its
+callers; corrected here, in `proposal.md`, `specs/`, and `design.md`:**
+
+1. **A named wait still became a failed CLEAR.** `StorageManager::saveState` returns `bool`
+   (`include/StorageManager.h:56`) and has exactly two callers — `MidiButtonActions::handleClearTrack`
+   (`src/MidiButtonActions.cpp:752`) and `SavedSetIo.cpp:331` — and every `false` is treated as failure
+   (`Clear aborted: could not complete deferred save first`). A3.7 could therefore not require both a
+   named refusal and zero `Clear aborted`. **Fixed:** the drain gains a three-way **
+   completed / temporarily blocked / failed** result (D4 rule 7); `saveState` stays a `Completed`-only
+   wrapper; both callers use the detailed entry point; a blocked CLEAR **refuses, names the reason, leaves
+   the slot untouched, and leaves the save owed** (A3.4); and A3.7's criterion is **zero *unexplained*
+   aborts**, where a named refusal is expected. Retention as an accepted interaction is **O7**, not built.
+2. **The finite post-load holdoff could discard the save.** `cleanupLoadLoopJobPublish` arms a **100 ms**
+   `postLoadCommitSaveHoldoffUntilMs_` (`LoadLoopJob.cpp:479`), so even the "nothing else sounding" shape
+   could restore and then return without saving. **Fixed:** D4 rule 8 names the constant and specifies a
+   **bounded wait that services MIDI**, or the named holdoff outcome when the wait would exceed the budget
+   (A3.5).
+3. **Wording tightened:** the remaining unconditional "never starved" / "served to a terminal" phrasing is
+   removed from the scope statements and Packet A, since the detailed contract correctly permits waits that
+   last until the external commit prerequisite is resolved.
 
 ## 3. Packet C — the blocking drain advances the restore (D4)
 
@@ -255,21 +278,44 @@ another track's playback — that requires **runtime-maintenance task 3.3** (bou
       completes without a stuck report or budget exhaustion; a case asserts restore motion alone registers
       as progress; a case asserts a drain does not drain the whole restore queue; RAM1 line recorded.
 
-- [ ] A3.4 **Preserve the DEC-081 and capture behavior.** Assert in cases that audible playback is still
+- [ ] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).** Give the drain
+      a three-way result and expose it without silently changing existing callers: `saveState` keeps its
+      `bool` as a thin `Completed`-only wrapper, and both call sites
+      (`MidiButtonActions::handleClearTrack`, `SavedSetIo.cpp`'s revision-load pre-flight) use the detailed
+      entry point. On **temporarily blocked**, CLEAR SHALL refuse the operation, log the named reason,
+      leave the slot untouched, and leave the owed save owed; it SHALL NOT report success while persistence
+      is pending, and SHALL NOT reset the slot. Retention (an accepted-interaction CLEAR latch) is O7 and
+      is **not** implemented here. **Verify:** cases assert a blocked drain yields a named, non-success
+      outcome at the real CLEAR caller; **a case asserts a blocked CLEAR does not reset the slot and does
+      not clear the obligation**; a case asserts a failed outcome is distinguishable from a blocked one;
+      `SavedSetIo`'s caller honors the blocked outcome rather than treating it as failure or success.
+
+- [ ] A3.5 **The finite post-load holdoff is waited out, not aborted (D4 rule 8).** Name the holdoff
+      constant (`LoadLoopJob.cpp`'s 100 ms `postLoadCommitSaveHoldoffUntilMs_`), and let the drain wait it
+      out when `Completed` is otherwise reachable, bounded by the remaining wall-clock budget and
+      **servicing MIDI** (`midiHandler.handleMidiInput()` plus the existing yield pattern) during the wait;
+      if the wait would exceed the budget, return the named holdoff wait. **Verify:** a case where restore
+      **cleanup starts the holdoff** asserts the save still completes (not an abort with progress
+      discarded) for the "nothing else sounding" shape; a case with the holdoff pushed beyond the budget
+      asserts the named holdoff outcome; a case asserts MIDI is serviced during the wait.
+
+- [ ] A3.6 **Preserve the DEC-081 and capture behavior.** Assert in cases that audible playback is still
       not a persistence gate, that a recording track still parks the multi-frame writers, and that the
       mid-pass one-chunk flush still runs during a take. **Verify:** the named regression cases pass; no
       change to `isCaptureRecordingForPersistence` semantics.
 
-- [ ] A3.5 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on the
-      device — in both shapes: (a) nothing else sounding, and (b) **another track audibly playing**.
-      **Verify:** shape (a) completes; shape (b) either completes or is recorded as the named commit-gate
-      wait **with `runtime-maintenance 3.3` still open** — a refusal with the named reason is a valid
-      outcome here, an *unexplained* abort is not. **0** `Clear aborted` / `Persistence drain stuck`.
-      Record the capture paths. If cancellation turns out to be necessary, STOP and return to design for
-      the `DEC` (proposal TBD-3) rather than implementing it here.
+- [ ] A3.7 **Packet C device gate.** With a deferred save owed and a restore in flight, press CLEAR on the
+      device — in both shapes: (a) nothing else sounding (including a restore whose cleanup starts the
+      holdoff), and (b) **another track audibly playing**. **Verify:** shape (a) completes; shape (b)
+      either completes or is recorded as the named commit-gate wait **with `runtime-maintenance 3.3` still
+      open**. **0 *unexplained* `Clear aborted`**: a named refusal (the reported reason names the gate) is
+      an expected outcome and is not counted as an abort; an abort with no named reason, or a reset slot
+      after a blocked drain, fails the gate. **0** `Persistence drain stuck` / `drain blocked`. Record the
+      capture paths. If cancellation turns out to be necessary, STOP and return to design for the `DEC`
+      (proposal TBD-3) rather than implementing it here.
 
-- [ ] A3.6 **Packet C gate.** Full native suite green; A3.1–A3.4 cases green; RAM1 line recorded;
-      A3.5 evidence recorded for both shapes.
+- [ ] A3.8 **Packet C gate.** Full native suite green; A3.1–A3.6 cases green; RAM1 line recorded;
+      A3.7 evidence recorded for both shapes.
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
 

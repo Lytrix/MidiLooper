@@ -12,10 +12,10 @@ Two facts define what may be implemented right now:
    measurable natively), and phases B–E. The restored set is unstable across boots, so no deterministic
    single-slot capture can be produced until the defect is fixed.
 2. **New OpenSpec change `deferred-slot-restore-liveness` — PROPOSED 2026-09-23, planning complete,
-   `openspec validate` clean, two G2 adversarial contract reviews' nine findings corrected
-   (`tasks.md` Revisions 2–3), no implementation started.** It exists to unblock (1). Read its
+   `openspec validate` clean, three G2 adversarial contract reviews' ten findings corrected
+   (`tasks.md` Revisions 2–4), no implementation started.** It exists to unblock (1). Read its
    [`proposal.md`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md) and
-   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it. Four
+   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it. Five
    corrections bind any future work on it: (a) **scope** — it delivers diagnosable preparation and named
    waits plus drain advancement where the commit gate admits; it does **not** by itself unblock CLEAR
    while another track keeps playing, because that needs bounded commit/cleanup, the open clause of
@@ -24,8 +24,12 @@ Two facts define what may be implemented right now:
    so one request at commit blocks every other request's preparation (`waiting_job_capacity`), and
    queue-head skipping does not solve that; (c) the drain must derive admission from the **same all-tracks
    runtime eligibility** as the normal path (`handleClearTrack` stops only the selected track) and must
-   charge restore work in its budget and progress detection; (d) `MidiServiceDrain::admitLoadJobChild`
-   must not be relaxed here.
+   charge restore work in its budget and progress detection; (d) the drain's result is a **three-way
+   completed / temporarily blocked / failed** outcome with `saveState` kept as a `Completed`-only wrapper,
+   and a blocked CLEAR **refuses by name, leaves the slot untouched, and leaves the save owed** (retention
+   is O7, not built) — so a named refusal is an expected outcome, not a `Clear aborted`; (e) the finite
+   **100 ms post-load holdoff** is waited out within a bounded, MIDI-serviced budget or reported by name.
+   `MidiServiceDrain::admitLoadJobChild` must not be relaxed here.
    **Do not implement it without the owner starting the apply workflow.**
 
 **Scope note — landed work that is NOT tracked by an OpenSpec change.** The persistence-immediacy and SD

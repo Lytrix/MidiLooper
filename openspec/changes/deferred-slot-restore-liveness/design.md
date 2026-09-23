@@ -83,9 +83,11 @@ ownership-releasing cleanup are deliberately kept pending under active transport
 Commit-body measurement clause is still missing. **This change therefore treats bounded Commit as an
 external prerequisite**, not as something it implements:
 
-- **What this change may promise:** a request is never *lost*, never *starved*, and never *silently*
-  terminated; read/parse preparation may advance under transport; and the request reaches its apply point
-  as soon as the commit gate admits it (transport stopped, or 3.3's bounded commit landing).
+- **What this change may promise:** a request is never *lost* and never *silently* terminated; it is
+  either served, or it is in a **named wait** whose reason and expected clearing condition are reported.
+  "Served" means its preparation advanced or its terminal was reached **within the window in which the
+  gates admit** — a wait may legitimately last until the commit gate (runtime-maintenance 3.3) or the
+  job-capacity phase clears, and that is a valid, observable outcome rather than a failure.
 - **What this change must NOT promise:** that a restore physically completes while a track is
   timing-critical. That claim belongs to 3.3. A design that promised it would be falsified by the very
   gate the reviewer cited.
@@ -293,6 +295,39 @@ path is unavailable — a drain that merely watches a restore cannot cause it to
 6. **Termination.** If the restore reaches a terminal or a wait the drain cannot clear (`waiting_capture`,
    `waiting_commit_gate` under a denying gate), the drain SHALL report that named reason rather than
    spinning the stuck budget; `BlockedBySlotLoad` becomes `BlockedByRestore(<owning wait reason>)`.
+7. **The caller contract: `saveState` is a three-way outcome, and a caller may not treat a wait as
+   success (G2 finding — caller/holdoff).** `StorageManager::saveState` returns only `bool`
+   (`include/StorageManager.h:56`) and has exactly **two** callers — `MidiButtonActions::handleClearTrack`
+   (`src/MidiButtonActions.cpp:752`) and `SavedSetIo.cpp:331` (revision load's pre-flight save). Today
+   every `false` is treated as failure at both, and CLEAR emits `Clear aborted: could not complete deferred
+   save first` and returns. A named wait therefore cannot coexist with "0 `Clear aborted`" unless the
+   return value and its callers change. The contract:
+   - the drain's result is one of **`Completed`**, **`Blocked(reason)`** (a named, *temporary* wait the
+     drain could not clear within its budget), or **`Failed(reason)`** (a real failure);
+   - `saveState` keeps its `bool` as a thin wrapper (`Completed` only) so no caller silently gains new
+     semantics; a new detailed entry point exposes the three-way result, and both call sites SHALL use it;
+   - **a blocked CLEAR is an explicit refusal, not silent success and not a slot reset.** The caller SHALL
+     log the named reason, SHALL NOT reset the slot, and SHALL NOT report success while persistence is
+     pending. The owed save stays owed and is retried by the normal scheduler;
+   - **retention (an accepted-interaction CLEAR latch) is a non-goal of this change**, recorded as O7: the
+     project's accepted-interaction rule (DEC-078) is about playback interactions, and extending it to a
+     destructive slot reset needs its own decision. This change refuses and reports;
+   - therefore **A3.5's zero-`Clear aborted` criterion is corrected to zero *unexplained* aborts**: a
+     named refusal is an expected, non-failing outcome until runtime-maintenance 3.3 lands, and the
+     criterion distinguishes the two by reason.
+8. **The finite post-load holdoff: bounded wait, or reported — never an abort that discards progress.**
+   `cleanupLoadLoopJobPublish` sets `postLoadCommitSaveHoldoffUntilMs_ = millis() + 100u`
+   (`LoadLoopJob.cpp:479`), which `deferredSaveBlockedByPostLoadCommitHoldoff()` tests. Without a rule, the
+   "nothing else sounding" case can restore successfully and then return **without saving**. The contract:
+   - the holdoff is a **finite, named** interval; the drain SHALL wait it out **when `Completed` is
+     otherwise reachable**, within a declared holdoff wait budget bounded by the remaining drain wall-clock
+     budget (so `maxWallClockUs` still bounds the caller);
+   - during that wait the drain SHALL service MIDI (`midiHandler.handleMidiInput()` plus the existing
+     `yield()` pattern), again bounded, so the wait cannot starve the MIDI path;
+   - if the wait would exceed the drain budget, the drain returns `Blocked(post_load_holdoff)` rather than
+     blocking indefinitely, and the caller follows rule 7 (refuse by name);
+   - the constant SHALL be named rather than a literal, so the wait policy and the timeout are one
+     declaration.
 
 *Why:* C5. The 2026-09-23 classifier named the gate but the gate was a state the caller could not leave;
 CLEAR still aborted. Naming a wait was necessary but not sufficient.
@@ -368,7 +403,8 @@ its own validation. Numeric task ids live in `tasks.md`; the packet ids here are
   `SESSION_CAPTURE` restore-terminal lines and the queue probe.
 - **Transition oracle:** for each of C1, C2, C4, C5, C6, one acceptance fixture that drives the
   **production** entry and asserts the **desired** behavior, so it is red today and green after the fix:
-  (C1/C2) a queued background request is served to a terminal instead of starved by transport;
+  (C1/C2) a queued background request's preparation advances or it is in a named wait, instead of being
+  skipped indefinitely by transport;
   (C4) a startable request behind a non-startable head begins;
   (C5) the real blocking drain terminates the restore it waits on and completes;
   (C6) a transient failure is retried rather than latched.
@@ -408,7 +444,7 @@ its own validation. Numeric task ids live in `tasks.md`; the packet ids here are
   the observed capture lines.
 - **Exit criteria:** the spec requirements "Every queued slot restore reaches exactly one terminal
   state or a named wait", "Restore queue progress is independent of queue-head blockage", and
-  "Background restore preparation is not starved by playback" hold under test.
+  "Background restore preparation advances while the gates admit" hold under test.
 
 ### Packet C — drain advances the restore (D4)
 
@@ -501,3 +537,9 @@ change does not modify.
   waits**; it does not by itself unblock CLEAR during another track's playback. That outcome requires
   runtime-maintenance task 3.3 (bounded commit/cleanup). Recorded here so a later reader does not read the
   Packet B/C gates as promising the stronger result.
+- **O7 (non-goal; needs its own decision).** Whether a **blocked CLEAR should be retained and executed**
+  when the blocker clears (the accepted-interaction pattern of DEC-078), instead of being refused with a
+  named reason and needing a second press. DEC-078's rule was written for playback interactions; extending
+  it to a destructive slot reset changes clear's user-visible contract and its undo/restore semantics, so
+  this change refuses-and-reports and records the alternative. Overtaken when the caller contract is
+  revisited with 3.3.

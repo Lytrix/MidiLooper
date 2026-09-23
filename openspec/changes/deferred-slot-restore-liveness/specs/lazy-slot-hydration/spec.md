@@ -42,12 +42,12 @@ Focus High `LoadLoopJob` work (focused / explicitly requested slot) SHALL advanc
 - **THEN** the load request is retained
 - **AND** SD restore for that slot does not run until capture is idle
 
-#### Scenario: Background restore is not starved by playback
+#### Scenario: Background restore preparation advances while the gates admit
 
 - **WHEN** a slot with committed SD content is queued for background restore
 - **AND** the transport is running with one or more tracks audibly playing
-- **THEN** the restore request SHALL receive bounded service slices rather than being skipped indefinitely
-- **AND** its preparation SHALL advance or it SHALL be in a named wait state reported for it
+- **THEN** the restore request SHALL receive bounded service slices while the gates admit, rather than being skipped indefinitely
+- **AND** its preparation SHALL advance or it SHALL be in a named wait state reported for it (a wait may persist until the commit gate or job-capacity phase clears)
 - **AND** playback SHALL continue without requiring the transport to stop
 
 #### Scenario: Applying a prepared restore under active transport is checked at the commit boundary
@@ -243,6 +243,55 @@ reason instead of spinning its stuck budget and aborting.
 - **WHEN** the drain completes with a restore outstanding
 - **THEN** the restore request is still tracked with its identity and state
 - **AND** it was not discarded to unblock the save
+
+### Requirement: A blocking drain reports completed, temporarily blocked, or failed, and its callers honor that
+
+The blocking drain SHALL distinguish three outcomes: **completed** (the owed persistence work finished),
+**temporarily blocked** (a named wait the drain could not clear within its budget), and **failed** (a real
+failure). A caller SHALL NOT treat a temporarily blocked outcome as success, and SHALL NOT treat it as a
+slot-reset or destructive-operation license while persistence is still pending.
+
+A caller that performs a destructive operation only after a drain (CLEAR is the named case) SHALL, on a
+temporarily blocked outcome, refuse the operation, report the named reason, and leave the slot untouched;
+the owed save SHALL remain owed and be retried by the normal scheduler. On a failed outcome the caller
+SHALL report the failure with its reason. The caller SHALL NOT report success while persistence remains
+pending.
+
+The finite post-load commit holdoff SHALL be handled as a bounded wait: when completion is otherwise
+reachable, the drain SHALL wait out the holdoff within its declared budget while continuing to service
+MIDI, and if the wait would exceed the budget it SHALL return the named holdoff wait rather than blocking
+indefinitely. The holdoff duration SHALL be a single named declaration.
+
+#### Scenario: A temporarily blocked drain is not reported as success
+
+- **WHEN** the drain returns a temporarily blocked outcome with a named reason
+- **THEN** the caller reports that named reason
+- **AND** it does not report success and does not proceed with the destructive operation
+
+#### Scenario: A blocked CLEAR leaves the slot untouched
+
+- **WHEN** CLEAR's drain is temporarily blocked
+- **THEN** the selected slot is not reset
+- **AND** the owed save remains owed and is retried later
+- **AND** the refusal is reported by name, distinguishable from a real failure
+
+#### Scenario: The finite post-load holdoff is waited out rather than aborting
+
+- **WHEN** the only remaining blocker is the post-load commit holdoff and completion is otherwise reachable
+- **THEN** the drain waits it out within its budget while continuing to service MIDI
+- **AND** the save completes rather than the operation aborting
+
+#### Scenario: A holdoff longer than the budget is reported, not blocked on
+
+- **WHEN** waiting out the holdoff would exceed the drain's wall-clock budget
+- **THEN** the drain returns the named holdoff wait
+- **AND** the caller refuses the operation by name rather than blocking indefinitely
+
+#### Scenario: A failed drain is distinguishable from a blocked one
+
+- **WHEN** the drain returns a failed outcome
+- **THEN** the caller reports the failure and its reason
+- **AND** the outcome is distinguishable in the reported state from a temporarily blocked wait
 
 ### Requirement: Restore and boot-catalog state is observable
 
