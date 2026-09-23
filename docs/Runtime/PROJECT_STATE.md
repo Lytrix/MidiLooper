@@ -18,11 +18,19 @@ reports — A1.3 adds the observation-only `probeParkedLoadLoopJob`. Packet A's 
 request ownership (`served || owned`), not byte progress: `probeLoadLoopJobProgress` can read a previous
 request's leftover `bytesRead` and made C1 look green on the untouched tree.
 
-Evidence: suite default gate 8/8 green; `RESTORE_LIVENESS_RED=1` → 11 cases / 2 failed (exactly C1 and
-C2); full native **2,290 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS at
+**Update (same day, round 2).** A1.5 (C4) and A1.6 (C6) are landed and red with deterministic oracles;
+A1.7 (C5) has its real-drain link closure measured and a new hardware-boundary suite
+(`test_storage_drain_restore`) proving it links, with the remaining undefined tail recorded as a scope
+decision. Two mechanism corrections are recorded in `REVIEW.md`: C4's stall needs a head that fails the
+pop's done-test **and** `noLiveOwnerForSlot` (a committed head is skipped, not blocking), and the suite's
+`setUp` never cleared the `LoadLoopJob` instances, so an earlier fixture's parked job could own the next
+fixture's request.
+
+Evidence: suite default gate 8/8 green; `RESTORE_LIVENESS_RED=1` → **13 cases / 4 failed** (exactly C1, C2,
+C4, C6); full native **2,291 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS at
 `code 392,328 / padding 888`. Details and packet evidence:
 [`REVIEW.md`](../../openspec/changes/deferred-slot-restore-liveness/REVIEW.md). **No `src/` behavior has
-changed**; A1.5 (C4), A1.6 (C6), A1.7 (C5) and A1.8 remain, then Packet A's gate.
+changed**; A1.7 (C5) fixture, A1.8 observability and the A1.9/A1.10 Packet A gate remain.
 
 
 **2026-09-23 — restore-liveness plan correction (documentation only).**
