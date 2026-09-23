@@ -368,6 +368,12 @@ public:
   bool hasAcceptedUnexecutedInteraction() const;
   /// S4f.5: the interval is still capturing (RECORDING or OVERDUBBING).
   bool hasLiveCaptureInterval() const;
+  /// S4f.2/B06: does this track have realtime deferred work worth an idle turn? The scheduler uses this to
+  /// skip stopped tracks, and a track holding an **accepted, not-yet-executed interaction** must never be
+  /// skipped -- its drive would never be reached, which is the stopped-track reachability gap (B06). This is
+  /// also the single place a later stage adds its own eligibility term (a pending switch, a pending
+  /// reconstruction) instead of duplicating the scan in `main.cpp`.
+  bool hasRealtimeDeferredIdleWork() const;
   /// S4f.5: "a stop is in flight" -- an admitted job owns the slot's finalization resources, **or**
   /// a stop is accepted and not yet executed. The latch exists before any job does, and once S4f.3
   /// lets an accepted stop outlive a state change, `isOverdubbing()` stops being a proxy for it.

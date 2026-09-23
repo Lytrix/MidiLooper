@@ -22,8 +22,8 @@
       "itcm_bytes": 393216,
       "ram1_variables": 96128,
       "locals_free": 34944,
-      "padding": 1032,
-      "note": "Default capture/acceptance env. Padding recovered from 840 to 1,032 by the S2b.5 extraction of resetLoopSlotToEmpty to FLASH; the floor stays 840."
+      "padding": 1096,
+      "note": "Default capture/acceptance env. Padding recovered from 840 to 1,096 by the S2b.5 and S4f.2/B06 extractions to FLASH; the floor stays 840."
     },
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
     "teensy41-capture-serial-investigation-diag": "teensy41-capture-serial",

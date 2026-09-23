@@ -1527,3 +1527,45 @@ actually correct rather than the one the task text's phrasing suggested.
 
 **S2b.5's native acceptance is now met.** The task stays open only for its device gate, which the S1 resident-library
 baseline owns.
+
+## P1 — B06's eligibility decision extracted, and the predicate is now discriminating (2026-09-23)
+
+The architect's step 3: lift `main.cpp`'s scheduler eligibility into testable production code so the
+stopped-track reachability gap has a single, assertable home.
+
+### What landed
+
+- **`Track::hasRealtimeDeferredIdleWork()`** — `isRecording() || isAudiblePlaybackActive() ||
+  isStoppedRecording() || hasAcceptedUnexecutedInteraction()`. The last term is the point: a track holding an
+  **accepted, not-yet-executed** interaction must never be skipped, or its drive would never be reached.
+- **`src/main.cpp`'s `hasRealtimeIdleWork` now delegates to it**, keeping its name and both call sites
+  unchanged, so the scan has one owner and a later stage (a pending switch, a pending reconstruction) adds its
+  term in one place instead of editing the sketch.
+
+### The fixture is discriminating, not decorative
+
+`test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track` puts the track in
+**`TRACK_STOPPED`** and asserts it has no realtime deferred work, then latches an accepted interaction
+directly (through the friend surface, so no admission happens) and asserts it now does. In `STOPPED`,
+`isRecording()`, `isAudiblePlaybackActive()` and `isStoppedRecording()` are all false, so **only the latch
+term can satisfy the predicate** — the assertion cannot pass for any other reason.
+
+What this does **not** prove, and is recorded as such: that the scheduler actually reads the predicate for a
+stopped track. That is still `src/main.cpp`, which is not native-linkable; the extraction makes the *decision*
+testable, and the scheduler's use of it remains a device-observable claim.
+
+### RAM1 side effect, again positive
+
+Moving the scan out of the sketch recovered a further 64 B of ITCM: `teensy41-capture-serial`
+`padding 1,032 → **1,096**`. Across this change's S2b.5/B06 extractions the padding line has gone
+**840 → 1,096**, so the 32 B this change originally spent is more than repaid. `scripts/ram1_budget.json`
+records the new measured margin; the floor stays 840.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **88/88** (+1 eligibility case) |
+| load suite | 5/5 |
+| full native | **2,278 cases / 1 skipped / 2,277 succeeded / 0 failures** |
+| firmware + budget, both envs | SUCCESS; capture-serial padding **1,096**, plain env **9,960** |

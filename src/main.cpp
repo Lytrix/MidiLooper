@@ -37,8 +37,10 @@
 
 static MidiServiceDrain::DeferredIdleOwnerCursor sDeferredIdleOwnerCursor{};
 
+/// S4f.2/B06: the eligibility decision lives on `Track` (`hasRealtimeDeferredIdleWork`) so it is
+/// testable and so a later stage adds its term in one place rather than editing this scan.
 static bool hasRealtimeIdleWork(const Track& track) {
-  return track.isRecording() || track.isAudiblePlaybackActive() || track.isStoppedRecording();
+  return track.hasRealtimeDeferredIdleWork();
 }
 
 FLASHMEM __attribute__((noinline)) static bool anySnapshotPublicationBacklog() {

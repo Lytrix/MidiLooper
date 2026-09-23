@@ -716,7 +716,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       Clear only the matching admitted stop obligation; never clear pending switch/start continuations with
       it. The start reset runs only after the predecessor stop binds. Transport Stop retargets the live stop
       and explicitly supersedes unexecuted starts; see the complete transition contract §5.
-- [ ] S4f.2 **Drive placement and reachability (B3, B6).**
+- [ ] S4f.2 **Drive placement and reachability (B3, B6).** (**ELIGIBILITY EXTRACTED 2026-09-23.**
+      `Track::hasRealtimeDeferredIdleWork()` now owns the decision -- `isRecording() ||
+      isAudiblePlaybackActive() || isStoppedRecording() || hasAcceptedUnexecutedInteraction()` -- and
+      `src/main.cpp`'s `hasRealtimeIdleWork` delegates to it, so a later stage adds its eligibility term in one
+      place. Fixture `test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track` is
+      discriminating: in `TRACK_STOPPED` only the latch term can satisfy the predicate. **Still outstanding:**
+      the scheduler's *use* of it for a stopped track is in `src/main.cpp`, which is not native-linkable, so
+      that remains a device-observable claim; gating `processDeferredCanonicalPrefix` on the latch; and the
+      `ExecutionBounds.md` row.)
       **PARTIAL 2026-09-23.** The dispatch branch sits in `processDeferredIdleMaintenance`
       immediately after the admitted stop's grain and before the owner-specific branches, factored
       into the named production entry `Track::serviceAcceptedInteractionTurn()`; the drive is skipped
