@@ -255,7 +255,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `src/` byte-identical. Native byte figures were rejected as device numbers (native `sizeof(EventChunk)`
       is 8,208 B vs the device's 5,132 B). Full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.3 clause 2. **Still open on this task:** the
-      *device* slope to the failure point (the reboot-survival obstacle above).
+      *device* slope to the failure point. **DEVICE CENSUS TAKEN 2026-09-23 (Leg 1), and the obstacle is
+      withdrawn:** on HEAD (`26e96539`, hex `673e20ca…`) the restore walk spends **0 chunks** on committed
+      slots (`free_chunks 480 → 480`, `credits=0` on all eight rows) with the enabled set at **32** chunks
+      (was 96) and `free_chunks` pre-restore **480 of 512** (was 400). The recorded blocker — "the restored
+      scratch slot does not survive a reboot" — is **not reproducible**: the 24-bar slot restored with
+      `CAPTURE_CONTENT,…,length=18432` after a serial-open reset, so the library **can** grow and the
+      slope-to-failure sweep is now constructible (it is not run yet).
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -322,6 +328,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       the boot `live` figure against the ~191-chunk peak reservation, which is **not reproducible natively**
       because those byte terms are heap-backed off-device. Details:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.5 clause 3.
+      **DEVICE HALF PARTLY TAKEN 2026-09-23 (Leg 1/Leg 2, HEAD `26e96539` hex `673e20ca…`).** The
+      per-committed-slot reservation is **0 chunks** on hardware (the restore walk `free_chunks 480 → 480`,
+      `credits=0` on all eight rows) and the enabled set is **32** chunks against the baseline's 96;
+      `free_chunks` pre-restore is **480 of 512** against the baseline's 400. And a **24-bar overdub is
+      admitted** (`Overdubbing started` ×2, `op=overdub_start` denials **0**, `record loop length
+      18432/18432`), so no refusal occurs at the supported envelope on this device either — matching the
+      native clause-3 answer. **Still open:** the refusal **point** itself (which needs a library grown past
+      the supported envelope across boots) and the `live`-vs-191-chunk figure. See
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device session — RWSO-24CAP.
       **DEVICE BASELINE HALF RECORDED 2026-09-23** on the pinned baseline `83be2e19` (hex `a4bc37e6…040920`,
       isolated build): `#CAP,…,DIAG,capture_prewarm` shows the default enabled set costing a flat **12 chunks per
       track / 96 for 8 tracks** (`free_chunks` 512 → 416), and then **exactly 8 chunks per committed slot** — the
@@ -351,12 +366,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       floor); the red fixture failing and recorded (S1.2); the S1.1 per-owner census on device (tags 1..16);
       the S1.5/S2b.3 boot-load residency baseline on **both** revisions (8 → 0 chunks per committed slot); and
       S1.4's two clauses (undo residency ≈2,635–2,659 KB over 83–84 slabs; pinned passes 0 → 5 → 8 → 3 → 7
-      across 0 → 2 slots); and — added the same day — S1.3's **second clause**, the synthetic 60-descriptor
-      characterisation (reservation flat at 40 chunks / 205,280 B from N = 8 to N = 60, red-proven). **Not
-      satisfied, and the gate does not close without it: S1.3's device slope to the
-      failure point** — growing the library requires the restored scratch slot to survive a reboot, and it
-      does not (`Track 6 loaded state: EMPTY`, `index.bin` does not reconcile), so N cannot be raised across
-      boots. S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
+      across 0 → 2 slots); — added the same day — S1.3's **second clause**, the synthetic 60-descriptor
+      characterisation (reservation flat at 40 chunks / 205,280 B from N = 8 to N = 60, red-proven); and the
+      **RWSO-24CAP device legs** (the zero per-committed-slot reservation census, the 24-bar overdub admitted
+      with 0 denials, and the restored-slot-survives-a-reboot correction). **Not satisfied: S1.3's slope
+      *to the failure point*** — but its recorded blocker is **withdrawn** (the restored scratch slot does
+      survive a reboot, Leg 3), so the sweep is constructible and merely unrun; and a **content-verified
+      PASS**, which the pipeline run does not meet (2 unexplained missing rows in bar 0, Leg 4). S1.5's
+      refusal-N and S1.4's pass→chunk conversion also remain.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -655,8 +672,33 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       (205,280 B) at N = 8 and N = 60**, payload and the runtime directory reported **separately** (8 → 60
       chunks / 41,056 → 307,920 B; 15 → 60 directory slots / 95,160 → 380,640 B), inactive descriptors hold
       zero canonical credits and zero horizons. Red-proven against the pre-S2b.1 state. Details:
-      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.3 clause 2. **Still open on this gate:** the
-      S1.3/S1.4 device material it depends on (S1.3's device slope, S1.5's refusal-N).
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.3 clause 2.
+      **DEVICE HALF TAKEN 2026-09-23 (HEAD `26e96539`, hex `673e20ca…`).** The boot census on hardware shows
+      the per-slot **reservation** slope gone: the default enabled set costs **32 chunks** (was 96) and the
+      library restore walk goes `free_chunks 480 → 480` across all eight `(track,slot)` rows with
+      `credits=0` on every one, including the two committed library slots. `free_chunks` pre-restore is
+      **480 of 512** (was 400). Full table: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device
+      session — RWSO-24CAP, Leg 1. **Still open:** the **slope-to-failure sweep** (varying N across boots)
+      and the failure point. **Its stated blocker is corrected, not merely repeated:** the claim that the
+      restored scratch slot does not survive a reboot is **not reproducible** — after a serial-open reset the
+      dump reports `CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`, i.e. the 24-bar slot restored with its
+      exact length (Leg 3), so the library **can** grow.
+      **The 24-bar overdub itself is admitted on hardware (Leg 2):** the same run records `record loop length
+      18432/18432`, **`Overdubbing started` twice** (ticks 755 and 22,836), **`op=overdub_start` denials 0**,
+      0 `#MEM_DENIED` / `#MEM_EXT_REFUSED` / `FATAL`, SEVT `bars=24/24 count_ok/span_ok/bars_ok = true` and
+      display `overdub_ok`/`transport_ok` true — against the pre-change RC-MEM-5 leg's zero starts and 4
+      denials, so the capacity path this change must not regress does not.
+      **Not met, and this gate stays open: a content-verified PASS (Leg 4).** The pipeline run is
+      `storage_matches_effective: true` with all 24 bars dense (`per_bar_effective` 70–84,
+      `effective_rows_all = expected_note_cc_rows = 1,746`), but the verifier's single inter-anchor cycle
+      reports `inventory_equal: false` with **2 unexplained missing rows in bar 0**,
+      `[128,5,76,0]` and `[176,5,74,101]`. Neither matches a documented residual class, so per
+      [`HITL_CONTENT_VERIFICATION.md`](../../docs/Guides/HITL_CONTENT_VERIFICATION.md) the run is recorded as
+      **not verified** rather than accepted. Both events are present in the raw output in quantity (note 76
+      Off ×157, note 74 On ×264) and the first row's tick lies outside the verifier's cycle window
+      (anchor tick 144), so the leading explanation is a capture-window edge — but the second row is **left
+      open**, not explained away. `capacity_path_exercised: false` (densest bar 84 refs vs the old 256
+      ceiling), so this is a parity run, not a capacity re-stress.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 

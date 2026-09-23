@@ -2639,3 +2639,131 @@ must be reported as an *id-ceiling* result and the clause's device half left ope
 | `test_continuous_capture` | **97/97** (+2: the capacity law and the seal diagnosis) |
 | full native | **2,287 cases / 1 skipped / 2,286 succeeded / 0 failures** |
 | firmware + post-link RAM1 budget | SUCCESS, `code 392,312 / padding 904` — unchanged (`src/` untouched) |
+
+## Device session — RWSO-24CAP: the S2b/S1.5 gate on hardware, the restored library survives a reboot, and a clear-drain blocker (2026-09-23)
+
+**Run identity.** Firmware HEAD **`26e96539`** (clean tree), `teensy41-capture-serial` (RAM1
+`code 392,312 / padding 904`), `firmware.hex` sha256 **`673e20ca1a83a548…`** — recorded in both runs'
+`metadata.json` as `git_commit` / `firmware_hex_sha256`, so the evidence is pinned to a build. Device
+`/dev/cu.usbmodem154944801`, scratch slot **track 5 / slot 1** (the authorized default), MIDI channel 5.
+
+**Stimulus.** New temporary variant **`STIM-BASE-2-2-01-TEMP-RWSO-24CAP`** (not registered), forked from
+canonical `STIM-BASE-2-2-01` with a recorded reason: the canonical 2-bar recipe cannot reach the capacity
+boundary. Shape = the canonical base recipe (record + OD1 + OD2 + undo/redo) with `--record-bars 24
+--overdub-bars 24` through the legacy passthrough. Sidecar:
+`captures/rwso-24cap/stimuli/STIM-BASE-2-2-01-TEMP-RWSO-24CAP.yaml`.
+
+### Leg 1 — the per-committed-slot canonical reservation is gone at boot (S2b.3 / S1.5)
+
+From the boot census in `captures/rwso-24cap/session_20260923_201842.log` (fresh boot, `#CAP,…,DIAG,capture_prewarm`):
+
+| term | baseline `83be2e19` | HEAD `26e96539` |
+|---|---|---|
+| default enabled set (8 tracks) | 96 chunks (12/track) | **32 chunks** (4/track) |
+| per committed slot: canonical reservation | **8 chunks** (41,056 B) | **0 chunks** |
+| `free_chunks` pre-restore | 400 of 512 | **480 of 512** |
+| `free_chunks` after boot in the run | 400 | **441** |
+| transfer horizon per committed slot | 8 KB | **0** |
+
+The HEAD census has two phases. Phase 1 walks the enabled set: `512 -> 480` (32 chunks). Phase 2 is the
+**library restore walk** and is the claim: `phase=before free_chunks=480` -> eight `(track,slot)`
+rows -> `phase=after free_chunks=480`. Every row reads `full=0,ready=0,credits=0`, and two of the eight are
+non-`slot=0` committed library slots (`track=1,slot=2` and `track=4,slot=1` as the log prints them), so the
+walk genuinely visited committed slots and spent **zero** chunks on them. That is the per-slot **reservation**
+slope removed on hardware; canonical **payload** is separate and is what moves `480 -> 441`.
+
+### Leg 2 — a 24-bar overdub is admitted (S2b gate)
+
+`captures/rwso-24cap-retry2/session_20260923_202246.log`:
+
+- `record loop length (final ticks): 18432/18432 (raw 18778)` — 24 bars exactly.
+- **`Overdubbing started` twice** (ticks 755 and 22,836) with **0** `op=overdub_start` denials, 0
+  `#MEM_DENIED`, 0 `#MEM_EXT_REFUSED`, 0 `FATAL`. The pre-change RC-MEM-5 `before` leg recorded **zero**
+  starts against 4 denials, so this is the capacity path this change must not regress — and does not.
+- `stored overdub span (SEVT ticks): count=192/191 … bars=24/24 count_ok/span_ok/bars_ok = true`;
+  `overdub wrap storage: pairs=248 sevt=1164 ok=True`.
+- `persistence handoff: result=ok duration_us=46479`; `deferred persist nonblocking: loop_persist=203
+  sliced=True ok=True`; display `overdub_ok=True transport_ok=True`.
+- The base report's own verdict is `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)` — the known **host
+  setup-oracle** class, which per [CURRENT_WORK.md](../../../docs/Runtime/CURRENT_WORK.md) is not evidence
+  against the content. The content check is Leg 4.
+
+### Leg 3 — CORRECTION: the restored library DOES survive a reboot
+
+The recorded S1.3 obstacle was that growing the library is impossible because *"the restored scratch slot does
+not survive a reboot (`Track 6 loaded state: EMPTY`, `index.bin` does not reconcile)"*. **That is not
+reproducible here.** `dump_and_capture.py` opens serial with a 25 s settle, and opening serial resets the
+board, so the dump is taken *after a reboot and an SD restore*. It reports:
+
+> `CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`
+
+— the 24-bar loop, restored with its exact length, on track 5 slot 1. So **at least one scratch slot grows and
+restores across boots**, which is the prerequisite S1.3's slope sweep needs. The earlier finding was about
+track 6 and/or a different device state; it should not be generalised to "the library cannot grow".
+
+### Leg 4 — content verification: STORED and PLAYING, but NOT a verified PASS
+
+`captures/rwso-24cap-retry2-playback-2cyc/content-review.json` (two anchor recurrences, 48.001 s apart —
+exactly one 24-bar cycle at 120 BPM, so the capture really covered two cycles):
+
+- `storage_matches_effective: true`; `effective_rows_all = expected_note_cc_rows = 1,746`.
+- `per_bar_effective` is dense and even across all 24 bars (70–84 rows; `max_bar_refs` 84).
+- The verifier reports **one** inter-anchor cycle: **1,744 of 1,746 matched**, `inventory_equal: false`,
+  `residual_missing_count: 0`, `unexplained_missing_count: 2` — both in **bar 0**:
+  `[128, 5, 76, 0]` (a NoteOff) and `[176, 5, 74, 101]` (a NoteOn).
+
+Neither matches a documented residual class ([HITL_CONTENT_VERIFICATION.md](../../../docs/Guides/HITL_CONTENT_VERIFICATION.md)
+§ Expected residuals: loop-boundary terminal Off at the final tick; coincident same-pitch Offs), so per the
+guide this run is **not** `inventory_equal: true` and is recorded as **not content-verified**. Two honest
+observations bound it, without explaining it away:
+
+- the first row's tick (128) is **before** the verifier's anchor (tick 144), so it lies outside the cycle
+  window by construction;
+- **both events are present in the raw output in quantity** (note 76 Off ×157, note 74 On ×264 over the
+  capture), so this is not loss of the notes themselves.
+
+The second row is left **open** rather than classified: it is inside the window, it is not a documented
+residual, and the raw-output count does not by itself show it in *that* cycle. A clean PASS needs a re-capture
+whose cycle windows are complete at both ends, which is the follow-up.
+
+`capacity_path_exercised: false` — the densest bar is 84 refs against the old 256 ceiling, so this is a
+**parity run, not a capacity re-stress**, exactly as the guide distinguishes.
+
+### Blocker found and worked around: CLEAR cannot proceed while transport is active
+
+The first two attempts aborted at the harness's clear precondition:
+
+> `[StorageManager] ERROR: Persistence drain stuck after 33 iterations (max 33, expected ~1 slice steps, ~0 SD bytes)`
+> `[ERROR] Clear aborted: could not complete deferred save first`
+
+The mechanism, from the code and the logs:
+
+1. `StorageManager::processDeferredSaveState` **returns immediately** while
+   `isTransportActiveForPersistence()`. The blocking clear-drain (`saveState`) therefore cannot advance a
+   single grain while transport runs, spins its stuck budget and fails.
+2. The drain has **no transport-gate classification**. `maybeAdmitFinalizeWorkspaceAfterDrain()` returns
+   `true` whenever work is merely *queued*, so the loop never takes the `AdmissionRefused` fast path and
+   reports the generic `Stuck` — naming neither the transport gate nor the heap/pool state. This is a
+   **different** wedge from the 2026-09-18 tombstone exhaustion the fail-fast path was added for.
+3. The host did not step in because `_prepare_deferred_save_before_clear` saw neither save activity nor a
+   running transport: the failed log contains **zero** `PERS,*` and **zero** `SAVE,*` rows (only the
+   `DIAG,persist_save` / `DIAG,hostdrain` **timing telemetry**), so `save_active` was false; and
+   `serial_global_transport_running(lines, after_index=track_baseline_len)` cannot see a transport start that
+   precedes its anchor. The successful run's log, by contrast, carries 298 `PERS,*` and 10 `SAVE,*` rows, so
+   the marker families exist — they were absent in that window.
+
+**Workaround, and it is the device-prep step this session needed:** short-press the global transport (note 39,
+control channel 16) to stop it, leave the device idle until the owed workspace save drains, then run. The
+third attempt cleared and completed the full 24-bar run. **This is not a fix** — the drain's missing
+transport-gate classification and the host's pre-clear detection gap are a separate, pre-existing defect pair
+outside this change's scope, recorded here because they block every content HITL run on a device that boots
+with a pending workspace save.
+
+### What this session did not get
+
+- The **S1.3 slope-to-failure sweep** (N committed slots across boots). Leg 3 removes its stated blocker, so
+  the sweep is now *constructible*: record into successive scratch slots, rebooting between them, and read the
+  boot census at each N. It is not run here.
+- The **content-verified PASS** (Leg 4), which needs the cycle-window re-capture above.
+- A baseline (`83be2e19`) comparison run for the 24-bar shape; the pre-change RC-MEM-5 leg is the recorded
+  comparator and the boot census baseline is already on record, so nothing here re-derives them.
