@@ -19,6 +19,7 @@
 #include "StorageManagerInternal.h"
 
 #include "Globals.h"
+#include "Utils/DebugSessionCapture.h"
 #include <Arduino.h>
 
 namespace StorageManagerInternal {
@@ -71,6 +72,15 @@ void clearRecord(RestoreRequestRecord& record, uint32_t generation) {
     record.identityValid = false;
 }
 
+/// A1.8 (design D6): one event-shaped capture line per request transition. Reads the record so the line
+/// always agrees with the state a probe would report.
+STORAGE_PERSIST_MEM void emitRestoreRequestTransition(uint8_t trackIndex, uint8_t slotIndex,
+                                                       const RestoreRequestRecord& record) {
+    SC_RESTORE_REQUEST(trackIndex, slotIndex, record.requestGeneration, record.setEpoch,
+                       restoreRequestStateName(record.state), restoreRequestWaitName(record.wait),
+                       restoreRequestTerminalName(record.terminal));
+}
+
 }  // namespace
 
 STORAGE_PERSIST_MEM void beginRestoreRequest(uint8_t trackIndex, uint8_t slotIndex) {
@@ -86,6 +96,7 @@ STORAGE_PERSIST_MEM void beginRestoreRequest(uint8_t trackIndex, uint8_t slotInd
     clearRecord(restoreRequestRecords_[trackIndex][slotIndex],
                 restoreRequestGeneration_[trackIndex][slotIndex]);
     restoreRequestRecords_[trackIndex][slotIndex].identityValid = true;
+    emitRestoreRequestTransition(trackIndex, slotIndex, restoreRequestRecords_[trackIndex][slotIndex]);
 }
 
 STORAGE_PERSIST_MEM RestoreRequestState restoreRequestState(uint8_t trackIndex, uint8_t slotIndex) {
@@ -118,6 +129,7 @@ STORAGE_PERSIST_MEM void markRestoreRequestRunning(uint8_t trackIndex, uint8_t s
     }
     record.state = RestoreRequestState::Running;
     record.wait = RestoreRequestWait::None;
+    emitRestoreRequestTransition(trackIndex, slotIndex, record);
 }
 
 STORAGE_PERSIST_MEM void markRestoreRequestWaiting(uint8_t trackIndex, uint8_t slotIndex,
@@ -131,6 +143,7 @@ STORAGE_PERSIST_MEM void markRestoreRequestWaiting(uint8_t trackIndex, uint8_t s
     }
     record.state = RestoreRequestState::Waiting;
     record.wait = wait;
+    emitRestoreRequestTransition(trackIndex, slotIndex, record);
 }
 
 STORAGE_PERSIST_MEM bool markRestoreRequestTerminal(uint8_t trackIndex, uint8_t slotIndex,
@@ -151,6 +164,7 @@ STORAGE_PERSIST_MEM bool markRestoreRequestTerminal(uint8_t trackIndex, uint8_t 
     record.terminal = terminal;
     record.wait = RestoreRequestWait::None;
     record.terminalRecorded = true;
+    emitRestoreRequestTransition(trackIndex, slotIndex, record);
     return true;
 }
 

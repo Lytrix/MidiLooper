@@ -542,6 +542,13 @@ SC_MEM_ATTR void gesture(uint8_t channel0, uint8_t note, int pressType) {
   emitCapPrintf("#CAP,%lu,GS,%u,%u,%d\r\n", (unsigned long)micros(), channel0, note, pressType);
 }
 
+SC_MEM_ATTR void restoreRequest(uint8_t track, uint8_t slot, uint32_t requestGeneration,
+                                uint32_t setEpoch, const char* state, const char* wait,
+                                const char* terminal) {
+  emitCapPrintf("#CAP,%lu,RRQ,%u,%u,%lu,%lu,%s,%s,%s\r\n", (unsigned long)micros(), track, slot,
+                (unsigned long)requestGeneration, (unsigned long)setEpoch, state, wait, terminal);
+}
+
 SC_MEM_ATTR void stateTransition(const char* component, const char* from, const char* to) {
   emitCapPrintf("#CAP,%lu,ST,%s,%s,%s\r\n", (unsigned long)micros(), component, from, to);
 }
