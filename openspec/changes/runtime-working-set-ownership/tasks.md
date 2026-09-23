@@ -279,6 +279,18 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       refusal-N, and S1.4's canonical-pin half (which has no telemetry — see S1.1). Also recorded: the HITL
       content verdict is a **coin flip** on a host bar-probe defect, so a failed content gate is retried, never
       reinterpreted — [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § CORRECTION.
+      **Consolidated status 2026-09-23 (still OPEN).** Satisfied: full native re-verified after every
+      increment (latest **2,283 cases / 1 skipped / 2,282 succeeded / 0 failures**); `teensy41-capture-serial`
+      SUCCESS with the post-link RAM1 budget enforced (latest `code 392,312 / padding 904`, 64 B above the
+      floor); the red fixture failing and recorded (S1.2); the S1.1 per-owner census on device (tags 1..16);
+      the S1.5/S2b.3 boot-load residency baseline on **both** revisions (8 → 0 chunks per committed slot); and
+      S1.4's two clauses (undo residency ≈2,635–2,659 KB over 83–84 slabs; pinned passes 0 → 5 → 8 → 3 → 7
+      across 0 → 2 slots). **Not satisfied, and the gate does not close without it: S1.3's device slope to the
+      failure point** — growing the library requires the restored scratch slot to survive a reboot, and it
+      does not (`Track 6 loaded state: EMPTY`, `index.bin` does not reconcile), so N cannot be raised across
+      boots. S1.3's second clause (the synthetic metadata-only 60-slot characterisation) is **native and
+      unblocked**, and S2b gates additionally requires it; S1.5's refusal-N and S1.4's pass→chunk conversion
+      also remain.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
