@@ -721,10 +721,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       isAudiblePlaybackActive() || isStoppedRecording() || hasAcceptedUnexecutedInteraction()` -- and
       `src/main.cpp`'s `hasRealtimeIdleWork` delegates to it, so a later stage adds its eligibility term in one
       place. Fixture `test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track` is
-      discriminating: in `TRACK_STOPPED` only the latch term can satisfy the predicate. **Still outstanding:**
-      the scheduler's *use* of it for a stopped track is in `src/main.cpp`, which is not native-linkable, so
-      that remains a device-observable claim; gating `processDeferredCanonicalPrefix` on the latch; and the
-      `ExecutionBounds.md` row.)
+      discriminating: in `TRACK_STOPPED` only the latch term can satisfy the predicate. **ALSO DONE 2026-09-23:** `processDeferredCanonicalPrefix` now yields while an interaction is merely
+      *accepted*, not only while one is admitted, so background preparation cannot compete for the drive's
+      turn -- a strict narrowing, with **no fixture claimed** and the reason recorded (a discriminating oracle
+      would have to construct a state where the function would otherwise do real canonical work; a
+      guard-clause assertion would be non-discriminating). `ExecutionBounds.md` **row 31** declares the latch
+      drive's bound (at most one accepted-interaction grain per turn: one admission attempt plus, on refusal,
+      one replenish and one report; skipped while the ring is non-empty). **Still outstanding:** the
+      scheduler's *use* of the eligibility predicate for a stopped track is in `src/main.cpp`, which is not
+      native-linkable, so it remains a device-observable claim.)
       **PARTIAL 2026-09-23.** The dispatch branch sits in `processDeferredIdleMaintenance`
       immediately after the admitted stop's grain and before the owner-specific branches, factored
       into the named production entry `Track::serviceAcceptedInteractionTurn()`; the drive is skipped

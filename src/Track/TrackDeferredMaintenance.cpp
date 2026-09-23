@@ -854,7 +854,14 @@ TRACK_COLD_MEM void Track::emitOverdubStopDebtProbeIfArmed(const Loop& loop,
 }
 
 TRACK_COLD_MEM bool Track::processDeferredCanonicalPrefix() {
-  if ((!isPlaying() && !isOverdubbing()) || hasPendingDeferredOverdubStop() || !loopsAllocated()) return false;
+  // S4f.2: the accepted interaction's drive owns its turn, so the canonical-prefix child yields while a stop
+  // obligation is pending -- admitted (`hasPendingDeferredOverdubStop`) or merely accepted
+  // (`hasAcceptedUnexecutedInteraction`). Without the second term the two compete for the same deferred turn
+  // and the drive can be starved by background preparation.
+  if ((!isPlaying() && !isOverdubbing()) || hasPendingDeferredOverdubStop() ||
+      hasAcceptedUnexecutedInteraction() || !loopsAllocated()) {
+    return false;
+  }
   Loop& loop = getActiveLoop();
   if (MidiServiceDrain::canonicalPreparationHasPriorityWork(
       isOverdubbing(), loop.visualCacheDirty, loop.hasDeferredVisualCacheWrapAppend(),
