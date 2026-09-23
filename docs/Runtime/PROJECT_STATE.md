@@ -71,8 +71,20 @@ the earlier 2-cycle capture. **The set of tracks that actually play drifts acros
 set does**, so a formal PASS needs the persistence/catalog defect fixed first — it is not reachable by capture
 configuration. Mute state was restored and the transport stopped.
 
-**Still open:** S1.3's slope sweep and failure point (blocked by the SD catalog reconcile defect), the
-content-verified PASS (same blocker), S1.4's pass→chunk conversion, S1.5's device refusal point, and phases B–F. Full evidence and the exact citations:
+**Round 3 closed the last route to a formal content PASS.** Re-recording the 24-bar slot and capturing
+immediately — the configuration of the near-parity run — came back **degraded, not faithful**:
+`record loop length 19200/18432 (raw 19200)` (a 25-bar over-run where the earlier run sealed at exactly
+18,432), `stored overdub span count=0/191` with `overdub_ok=False transport_ok=False` (though the firmware log
+does hold two `Overdubbing started` rows, 0 `FATAL`, 0 `#MEM_EXT_REFUSED`), `persistence handoff
+first_missing=request` with **no** `PERS,request`/`SAVE,*` markers so the re-record was **not persisted**, and a
+**1,574-line** sparse session log against the faithful run's **45,909**. No firmware or SD content was changed
+by that round; the transport was left stopped. **Across rounds 1–3 the same condition held:** the persisted
+library neither stabilizes nor restores faithfully, so no deterministic single-slot capture can be produced.
+
+**Still open:** S1.3's slope sweep and failure point, the content-verified PASS, S1.4's pass→chunk conversion,
+S1.5's device refusal point, and phases B–F. **All of the device items are gated on the persistence/catalog
+defect**, which is a StorageManager/load owner outside `runtime-working-set-ownership` and should be its own
+change. Full evidence and the exact citations:
 [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § Device
 session — RWSO-24CAP. **Note:** the pre-change baseline revision remains `83be2e19`; no baseline firmware was
 flashed in this session (its census is already on record).

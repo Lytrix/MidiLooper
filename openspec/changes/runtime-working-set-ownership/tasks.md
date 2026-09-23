@@ -715,7 +715,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       track 5 contributes no notes now, though its content is dumped as present (`track=5,slot=0,length=18432`,
       all 24 bars dense) and channel 5 *did* play in the earlier 2-cycle capture. So a formal PASS needs the
       persistence/catalog defect fixed first; it is not reachable by capture configuration. Mute state was
-      restored. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device session — RWSO-24CAP, Leg 5.
+      restored. **Round 3 (2026-09-23, later) closed the last route:** re-recording the slot and capturing
+      immediately — the configuration of the near-parity run — came back **degraded**, not faithful:
+      `record loop length 19200/18432` (a 25-bar over-run), `stored overdub span count=0/191` with
+      `overdub_ok=False`, `first_missing=request` and **no** `PERS,request`/`SAVE,*` markers (so the re-record was
+      not persisted), in a **1,574-line** sparse capture against the faithful run's 45,909. See
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device session — RWSO-24CAP, Leg 6.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
