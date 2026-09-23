@@ -477,8 +477,23 @@ there was no budget authority to spend here.
    reverted rather than patched forward. That extraction is the right fix; it needs to be done as its own
    reviewed step with the build run at each move, not folded into a feature slice.
 
+**RAM1 remedy landed (same day): the report-block extraction.** `drainPersistenceWorkBlocking`'s whole
+terminal-outcome report — the failure report, the two post-loop failure checks, and the success report —
+is now `finishPersistenceDrainReport(...)`, a `STORAGE_PERSIST_MEM` helper that owns the bool result and
+the telemetry scope's outcome so the drain keeps one return point. Done as its own commit with the
+firmware build run immediately after, which is what the first attempt got wrong.
+
+**Measured effect: `code 392,344 + padding 872` → `code 391,832 + padding 1,384`** — **512 B of ITCM
+freed**, moving the tree from 32 B below the 840 floor to **544 B above** it. That is the headroom the
+A3.2 classifier needs, and it was wanted independently of A3.2: a cold once-per-drain report does not
+belong in ITCM.
+
+Behavior preserved: the drain suite (A1.7's closure proof) 1/1, load suite 26/26, full native
+**2,316 / 1 skipped / 0 failures**, firmware SUCCESS. The extraction is a pure move — the failure-reason
+branches, the two post-loop checks and the success path are byte-for-byte the same logic, only relocated.
+
 **Net for A1.7:** unchanged — still waiting on A3.2's and A3.4's pure-decision cases. No part of A3.2 is
-claimed.
+claimed *yet*; the ITCM blocker is now cleared.
 
 ---
 
