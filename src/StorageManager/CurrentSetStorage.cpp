@@ -166,6 +166,20 @@ bool ensureDirectory(const char* path) {
   return SD.mkdir(path);
 }
 
+// FLASH-resident: a file rewrite is a cold SD path, never the MIDI tick, and this tree sits on the
+// RAM1 FlexRAM bank boundary (`scripts/ram1_budget.json`).
+FLASHMEM File openForRewrite(const char* path) {
+  if (path == nullptr || path[0] == '\0') {
+    return File{};
+  }
+  // See the declaration: neither `FILE_WRITE` (append) nor `FILE_WRITE_BEGIN` (offset 0, no
+  // `O_TRUNC`) discards a leftover body, so a rewrite has to remove first to be independent of it.
+  if (SD.exists(path)) {
+    SD.remove(path);
+  }
+  return SD.open(path, FILE_WRITE);
+}
+
 bool atomicRenameTempFile(const char* tempPath, const char* finalPath) {
   if (tempPath == nullptr || finalPath == nullptr) {
     return false;

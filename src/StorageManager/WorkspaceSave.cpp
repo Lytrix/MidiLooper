@@ -179,7 +179,7 @@ STORAGE_PERSIST_MEM bool closeDeferredMetaTempForLoopWrites() {
 }
 
 STORAGE_PERSIST_MEM bool reopenDeferredMetaTempForAppend() {
-    storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+    storageSession.currentWorkspaceSave.file = CurrentSetStorage::openForRewrite(CurrentSetStorage::kCurrentMetaTempPath);
     if (!storageSession.currentWorkspaceSave.file) {
         Serial.println("[StorageManager] ERROR: Could not reopen CurrentSet meta temp for append");
         return false;
@@ -201,7 +201,7 @@ STORAGE_PERSIST_MEM bool openDeferredLoopSlotTemp(uint8_t trackIndex, uint8_t sl
                                                    slotIndex)) {
         return false;
     }
-    storageSession.currentWorkspaceSave.loopFile = SD.open(tempPath, FILE_WRITE);
+    storageSession.currentWorkspaceSave.loopFile = CurrentSetStorage::openForRewrite(tempPath);
     if (!storageSession.currentWorkspaceSave.loopFile) {
         Serial.print("[StorageManager] ERROR: Could not open loop temp file: ");
         Serial.println(tempPath);
@@ -360,7 +360,7 @@ STORAGE_PERSIST_MEM bool beginDeferredRuntimeBundleWrite(const LooperState& stat
         (void)SD.remove(CurrentSetStorage::kCurrentMetaTempPath);
     }
 
-    storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+    storageSession.currentWorkspaceSave.file = CurrentSetStorage::openForRewrite(CurrentSetStorage::kCurrentMetaTempPath);
     if (!storageSession.currentWorkspaceSave.file) {
         Serial.println("[StorageManager] ERROR: Could not open CurrentSet meta temp file");
         return false;
@@ -423,7 +423,7 @@ STORAGE_PERSIST_MEM bool beginDeferredSaveJob(const LooperState& state) {
     }
 
     closeDeferredMetaTempIfOpen();
-    storageSession.currentWorkspaceSave.file = SD.open(CurrentSetStorage::kCurrentMetaTempPath, FILE_WRITE);
+    storageSession.currentWorkspaceSave.file = CurrentSetStorage::openForRewrite(CurrentSetStorage::kCurrentMetaTempPath);
     if (!storageSession.currentWorkspaceSave.file) {
         Serial.println("[StorageManager] ERROR: Could not open CurrentSet meta temp file");
         return false;

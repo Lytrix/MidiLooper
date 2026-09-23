@@ -57,7 +57,7 @@ bool copyFileBinary(const char* sourcePath, const char* destinationPath) {
     if (!source) {
         return false;
     }
-    File destination = SD.open(destinationPath, FILE_WRITE);
+    File destination = CurrentSetStorage::openForRewrite(destinationPath);
     if (!destination) {
         source.close();
         return false;
@@ -108,7 +108,7 @@ bool copyCurrentSetMetaToSavedSet(const char* savedSetDir,
         return false;
     }
 
-    File destination = SD.open(destinationTempPath, FILE_WRITE);
+    File destination = CurrentSetStorage::openForRewrite(destinationTempPath);
     if (!destination) {
         source.close();
         return false;
@@ -168,7 +168,7 @@ bool copyCurrentSetLoopsToSavedSet(const char* savedSetDir) {
 }  // namespace
 
 bool writeSetIndexToSd(const SavedSetCatalog::SetIndex& index) {
-    File file = SD.open(CurrentSetStorage::kSetIndexTempPath, FILE_WRITE);
+    File file = CurrentSetStorage::openForRewrite(CurrentSetStorage::kSetIndexTempPath);
     if (!file) {
         return false;
     }
@@ -256,13 +256,20 @@ bool resolveSavedSetFolderNameBySequence(uint32_t sequence, char* out, size_t ou
 }
 
 bool reconcileSetIndexOnSd(SavedSetCatalog::SetIndex& index) {
-    if (!readSetIndexFromSd(index)) {
-        return false;
+    // `sets/index.bin` holds one field, `nextSequence`, and `reconcileNextSequence()` derives that
+    // from the saved-set folder scan anyway -- so an unreadable index is *recoverable metadata*, not
+    // a failure. Treating it as one (returning false here) left every later save and the boot
+    // catalog check failing forever on a file the firmware can reconstruct, which is the device's
+    // `could not reconcile MidiLooper/sets/index.bin` state. Rebuild it instead.
+    const bool indexReadable = readSetIndexFromSd(index);
+    if (!indexReadable) {
+        index = SavedSetCatalog::SetIndex{};
     }
     const uint32_t reconciled =
         SavedSetCatalog::reconcileNextSequence(index.nextSequence,
                                                scanHighestSavedSetSequenceOnSd());
-    if (reconciled != index.nextSequence || !SD.exists(CurrentSetStorage::kSetIndexPath)) {
+    if (!indexReadable || reconciled != index.nextSequence ||
+        !SD.exists(CurrentSetStorage::kSetIndexPath)) {
         index.nextSequence = reconciled;
         if (!writeSetIndexToSd(index)) {
             return false;

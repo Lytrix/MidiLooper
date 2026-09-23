@@ -4,6 +4,20 @@
 
 ## Workflow update — 2026-09-23 (working tree, no firmware delivery)
 
+**SD temp-write truncation fix (bugfix, not shipped).** A pre-existing persistence defect found by the
+`runtime-working-set-ownership` device session is fixed on `feature/runtime-working-set-ownership`:
+Teensy's `SD.open(path, FILE_WRITE)` appends and `FILE_WRITE_BEGIN` does not truncate, so a temp left by a
+failed write corrupted `sets/index.bin` and the boot catalog stopped reconciling. Fixed via
+`CurrentSetStorage::openForRewrite` at the 16 from-scratch write sites plus a self-healing
+`reconcileSetIndexOnSd`, with the native SD stub corrected and a red-proven regression test. Native
+2,289 / 1 skipped / 0 failures; device shows **0** `could not reconcile` warnings across three post-fix
+boots (against one on every pre-fix boot). Plan:
+[`Plans/sd_temp_write_truncation_refinement.md`](Plans/sd_temp_write_truncation_refinement.md).
+**Not shipped:** it is not on `dev`, and a separate managed-capture loss still blocks the content PASS
+and S1.3's slope sweep.
+
+## Workflow update — 2026-09-23 (working tree, no firmware delivery)
+
 DEC-080 strengthens [implementation readiness](Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice)
 with fixture-first execution packets and evidence-backed checkoff. The runtime-working-set-ownership
 [phase review](../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) specifies acceptance

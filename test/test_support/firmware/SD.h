@@ -17,6 +17,9 @@
 #ifndef FILE_WRITE
 #define FILE_WRITE 1
 #endif
+#ifndef FILE_WRITE_BEGIN
+#define FILE_WRITE_BEGIN 2
+#endif
 
 class File {
  public:
@@ -68,12 +71,24 @@ class SDClass {
 
   File open(const char* path, int mode) {
     auto found = files.find(path);
-    if (mode == FILE_WRITE) {
-      // Create-or-truncate, as the write path expects.
-      found = files.insert_or_assign(path, std::vector<uint8_t>{}).first;
+    if (mode == FILE_WRITE || mode == FILE_WRITE_BEGIN) {
+      // Device-faithful write modes, and the reason this emulation exists.
+      //
+      // The Teensy SD class maps `FILE_WRITE` to `O_RDWR | O_CREAT | O_AT_END` (SD.h) -- it
+      // **appends**, it does not truncate -- and `FILE_WRITE_BEGIN` to `O_RDWR | O_CREAT`, which
+      // only *starts at offset 0*: `O_TRUNC` is never set (SdFat `common/FsApiConstants.h` defines
+      // it, and `SD.h` does not pass it), so a stale tail survives as well.
+      //
+      // This stub used to create-or-truncate on `FILE_WRITE`, which is what the write path
+      // *expected* rather than what the device *does*. That single divergence hid the whole
+      // stale-temp corruption class from native coverage (see
+      // `docs/Plans/sd_temp_write_truncation_refinement.md`), so the modes are modelled here.
+      if (found == files.end()) {
+        found = files.insert_or_assign(path, std::vector<uint8_t>{}).first;
+      }
       File handle;
       handle.bytes = &found->second;
-      handle.pos = 0;
+      handle.pos = mode == FILE_WRITE ? found->second.size() : 0;
       handle.isOpen = true;
       handle.writable = true;
       return handle;

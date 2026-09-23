@@ -342,7 +342,7 @@ bool writeWorkspaceMetaFile(const WorkspaceMetaRecord& record) {
   if (!CurrentSetStorage::ensureDirectory(kCurrentRoot)) {
     return false;
   }
-  File file = SD.open(kWorkspaceMetaTempPath, FILE_WRITE);
+  File file = CurrentSetStorage::openForRewrite(kWorkspaceMetaTempPath);
   if (!file) {
     return false;
   }

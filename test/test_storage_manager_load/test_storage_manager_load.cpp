@@ -215,6 +215,84 @@ void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
   TEST_ASSERT_EQUAL_UINT16(0, StorageManagerInternal::pendingLoopSlotRestores_.count);
 }
 
+
+// ---------------------------------------------------------------------------
+// SD write-mode semantics (fix/sd-temp-rewrite, docs/Plans/sd_temp_write_truncation_refinement.md)
+//
+// The device's `SD.open(path, FILE_WRITE)` is `O_RDWR|O_CREAT|O_AT_END` -- it appends -- and
+// `FILE_WRITE_BEGIN` is `O_RDWR|O_CREAT` with no `O_TRUNC`, so it only starts at offset 0. A temp
+// file left behind by a failed write therefore corrupts the next one, which is how
+// `MidiLooper/sets/index.bin` stopped reconciling on device. The in-memory card models both modes
+// so this class is visible natively.
+// ---------------------------------------------------------------------------
+
+/// The fix: a rewrite must not inherit anything from a leftover body. This is the exact
+/// `index.bin` mechanism -- `[nextSequence:u32][SAVE token:u32]`, with the token read from the END
+/// of the file, so a surviving tail (or a stale prefix) makes the token land at the wrong offset.
+void test_sd_rewrite_does_not_inherit_a_stale_temp_body() {
+  const char* tempPath = "/MidiLooper/sets/index.bin.tmp";
+  SD.reset();
+
+  // A *failed* earlier write left the temp at a length that is not a whole record.
+  SD.writeFile(tempPath, std::vector<uint8_t>{0xAA, 0xBB, 0xCC, 0xDD, 0xEE});
+  TEST_ASSERT_EQUAL_UINT32(5, static_cast<uint32_t>(SD.files[tempPath].size()));
+
+  {
+    File file = CurrentSetStorage::openForRewrite(tempPath);
+    TEST_ASSERT_TRUE(static_cast<bool>(file));
+    const uint32_t nextSequence = 7;
+    const uint32_t token = CurrentSetStorage::kSaveFileToken;
+    TEST_ASSERT_EQUAL_UINT32(sizeof(nextSequence),
+                             static_cast<uint32_t>(file.write(
+                                 reinterpret_cast<const uint8_t*>(&nextSequence),
+                                 sizeof(nextSequence))));
+    TEST_ASSERT_EQUAL_UINT32(sizeof(token),
+                             static_cast<uint32_t>(file.write(
+                                 reinterpret_cast<const uint8_t*>(&token), sizeof(token))));
+    file.close();
+  }
+
+  // Exactly one record: no stale prefix, no stale tail. Before the fix the mode appended (or left
+  // the tail), so this failed at 13 and/or at the token check below.
+  const size_t expectedSize = sizeof(uint32_t) * 2;
+  char message[192];
+  snprintf(message, sizeof(message),
+           "a rewrite inherited the stale temp body: size=%u, expected %u",
+           static_cast<unsigned>(SD.files[tempPath].size()),
+           static_cast<unsigned>(expectedSize));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(expectedSize),
+                           static_cast<uint32_t>(SD.files[tempPath].size()));
+  TEST_ASSERT_TRUE_MESSAGE(CurrentSetStorage::verifySaveFileTokenAtPath(tempPath), message);
+
+  // And the record still reads back as the value written.
+  uint32_t readBack = 0;
+  const std::vector<uint8_t>& body = SD.files[tempPath];
+  std::memcpy(&readBack, body.data(), sizeof(readBack));
+  TEST_ASSERT_EQUAL_UINT32(7, readBack);
+}
+
+/// The other half of the contract: the deliberate `FILE_WRITE` sites are **in-place patches** of an
+/// existing file, so they must neither truncate nor append. This guards the fix from being widened
+/// into them, and pins what `FILE_WRITE` has to mean for them to work.
+void test_sd_in_place_patch_keeps_the_body_and_does_not_append() {
+  const char* metaPath = "/MidiLooper/current/temp/runtime.bundle.bin";
+  SD.reset();
+  std::vector<uint8_t> body(CurrentSetStorage::kLastActiveUnixOffset + 64, 0x5A);
+  SD.writeFile(metaPath, body);
+  const size_t sizeBefore = SD.files[metaPath].size();
+
+  TEST_ASSERT_TRUE(CurrentSetStorage::patchLastActiveUnix(metaPath, 0x11223344u));
+
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(sizeBefore),
+                           static_cast<uint32_t>(SD.files[metaPath].size()));
+  uint32_t patched = 0;
+  std::memcpy(&patched, SD.files[metaPath].data() + CurrentSetStorage::kLastActiveUnixOffset,
+              sizeof(patched));
+  TEST_ASSERT_EQUAL_UINT32(0x11223344u, patched);
+  // The byte after the patch window is untouched: an append would have moved it.
+  TEST_ASSERT_EQUAL_UINT8(0x5A, SD.files[metaPath][CurrentSetStorage::kLastActiveUnixOffset + 4]);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
@@ -222,5 +300,8 @@ int main(int, char**) {
   RUN_TEST(test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard);
   RUN_TEST(test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot);
   RUN_TEST(test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned);
+  // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
+  RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
+  RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);
   return UNITY_END();
 }
