@@ -1,5 +1,26 @@
 # Project state (execution context)
 
+**2026-09-23 round 10 — A2.2 landed: bounded background restore preparation under transport.**
+
+`deferred-slot-restore-liveness` is **10/36 checked** (A2.2 added). `canPrepareBackgroundLoadLoopNow()` +
+`backgroundJobMayBeServicedNow()` admit a bounded background **preparation** slice under active transport,
+so a queued request's open/read/parse advances while playback continues. **Commit and cleanup keep the
+pre-existing full admission** — `canRunBackgroundLoadLoopNow()` still governs applying, the commit
+stop-gate in `main.cpp` is untouched, and an unbounded commit under transport is never entered. Capture
+keeps its existing deferral (the preparation predicate returns false when a track is recording), so no
+recording behavior changed. A prepare-complete request now reports **`waiting_commit_gate`** by name.
+
+**C1 and C2 turned green and were promoted into the default gate in the same slice** (A1.11). The
+known-red set is now **C4 (A2.3) and C6 (A2.4) only**.
+
+Evidence: suite **22/22** default; `RESTORE_LIVENESS_RED=1` → 25 cases / 2 failed (C4, C6 exactly); full
+native **2,309 / 1 skipped / 2,308 succeeded / 0 failures**; `teensy41-capture-serial` SUCCESS with RAM1
+`code 392,328 / padding 888`.
+
+**Not claimed:** a restore *applying* under active transport (runtime-maintenance task 3.3), or that
+queue-head skipping resolves the global `waiting_job_capacity` blockage — that is A2.3's explicit
+non-claim and A2.2's `waiting_job_capacity` case.
+
 **2026-09-23 round 9 — A2.1's named-wait transition landed.**
 
 A request blocked by a live owner now reports **`waiting_slot_owned`** instead of sitting `queued` with no
