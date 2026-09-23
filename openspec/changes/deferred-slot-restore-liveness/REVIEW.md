@@ -325,6 +325,30 @@ A1.7.
 - **Not claimed:** that a restore applies under active transport (runtime-maintenance 3.3), or that
   queue-head skipping resolves the global `waiting_job_capacity` blockage.
 
+### A2.3 — startability-aware queue service (native verified; C4 promoted)
+
+- **Change:** `popNextStartableDeferredLoopSlotRestore` selects the first **startable** request in
+  priority order; a blocked entry stays queued with its reason, and done entries are still removed as
+  queue hygiene. `queuedRestoreMayBegin` moved into the queue TU so the selection path and the startable
+  pop share one liveness predicate rather than two copies. Both `BeginBackgroundFromQueue` sites use the
+  startable pop.
+- **Promotion (A1.11):** `test_c4_blocked_priority_head_does_not_stall_a_startable_request` **flipped
+  red→green** and moved into the default gate. The known-red set is now **C6 alone** (A2.4).
+- **New cases:** priority order is preserved among startable entries while the blocked head stays queued
+  (three pops return slots 1, 2, 3 and the head is never taken), and the A2.2/A2.3 **non-claim** is now
+  covered — with one request commit-pending the global gate leaves a second request tracked rather than
+  served, and the `waiting_job_capacity` wait exists by name.
+- **Harness fixes the cases forced:** the payload builder now releases its staging snapshot's committed
+  chunks after writing (a multi-payload fixture otherwise leaks one chunk per write and the next write
+  correctly refuses), and `resetAllTracksAndPool()` releases every slot before rebuilding the pool
+  (committed loops own chunks, so a bare pool reset does not free them). Both are test-harness
+  correctness, not production behavior.
+- **RAM1 enforced again:** the first build failed at `padding 808` (below the 840 floor) until
+  `queuedRestoreMayBegin` and the new pop were marked `STORAGE_PERSIST_MEM`; the line returned to
+  `code 392,328 / padding 888`.
+- **Evidence:** suite **25/25** default; `RESTORE_LIVENESS_RED=1` → **27 cases / 1 failed** (C6);
+  firmware SUCCESS with RAM1 `code 392,328 / padding 888`.
+
 ---
 
 ## Mechanism ledger (A1.9)

@@ -223,6 +223,55 @@ bool isFocusDeferredLoopSlotRestorePending(uint8_t focusTrack, uint8_t focusSlot
     return false;
 }
 
+/// S2b.5 / A2.1: a queued restore may only begin when no live owner holds its slot. The pop is a
+/// one-way door (`popFocusDeferredLoopSlotRestore` discards an entry whose slot it judges done, and
+/// `queueDeferredLoopSlotRestore` refuses to take it back), so a caller must check liveness before
+/// popping. Liveness is per slot: a finalizing predecessor on one slot must not block a load into
+/// another.
+STORAGE_PERSIST_MEM bool queuedRestoreMayBegin(uint8_t trackIndex, uint8_t slotIndex) {
+    if (trackIndex >= Config::NUM_TRACKS || slotIndex >= Config::MAX_LOOPS_PER_TRACK) {
+        return false;
+    }
+    return trackManager.getTrack(trackIndex).noLiveOwnerForSlot(slotIndex);
+}
+
+/// A2.3 (D3): select the **first startable request in priority order**, leaving a blocked entry queued
+/// with its reason intact.
+///
+/// `popNextDeferredLoopSlotRestore` reads only the priority head and has no track/slot filter, so a head
+/// whose slot a live owner holds stalls every entry behind it (design C4). Queue order is a *selection*
+/// order, not a gate on service: this walks the priority order and takes the first entry that may begin.
+/// Blocked entries are left exactly where they are — the request record already names their wait.
+STORAGE_PERSIST_MEM bool popNextStartableDeferredLoopSlotRestore(DeferredLoopSlotRestore& out) {
+    uint16_t index = 0;
+    while (index < pendingLoopSlotRestores_.count) {
+        const DeferredLoopSlotRestore& entry = pendingLoopSlotRestores_.entries[index];
+        const bool done =
+            loopSlotRestoreAttempted_[entry.track][entry.slot] ||
+            trackManager.getTrack(entry.track).getLoop(entry.slot).hasCommittedPasses();
+        if (done) {
+            // Satisfied requests leave the queue, as before: this is queue hygiene, not service.
+            for (uint16_t i = index + 1; i < pendingLoopSlotRestores_.count; ++i) {
+                pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
+            }
+            --pendingLoopSlotRestores_.count;
+            continue;
+        }
+        if (!queuedRestoreMayBegin(entry.track, entry.slot)) {
+            // Blocked: keep it queued with its reason and look past it.
+            ++index;
+            continue;
+        }
+        out = entry;
+        for (uint16_t i = index + 1; i < pendingLoopSlotRestores_.count; ++i) {
+            pendingLoopSlotRestores_.entries[i - 1] = pendingLoopSlotRestores_.entries[i];
+        }
+        --pendingLoopSlotRestores_.count;
+        return true;
+    }
+    return false;
+}
+
 STORAGE_PERSIST_MEM bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out) {
     while (pendingLoopSlotRestores_.count > 0) {
         const DeferredLoopSlotRestore& head = pendingLoopSlotRestores_.entries[0];

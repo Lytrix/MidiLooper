@@ -299,6 +299,10 @@ void armBackgroundRestoreHoldoff(uint32_t delayMs);
 void markLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex);
 bool isLoopSlotRestoreAttempted(uint8_t trackIndex, uint8_t slotIndex);
 bool popNextDeferredLoopSlotRestore(DeferredLoopSlotRestore& out);
+/// S2b.5 liveness predicate, shared by the selection path and the startability-aware pop.
+bool queuedRestoreMayBegin(uint8_t trackIndex, uint8_t slotIndex);
+/// A2.3 (D3): first startable request in priority order; blocked entries stay queued.
+bool popNextStartableDeferredLoopSlotRestore(DeferredLoopSlotRestore& out);
 bool popFocusDeferredLoopSlotRestore(uint8_t focusTrack, uint8_t focusSlot,
                                      DeferredLoopSlotRestore& out);
 void reprioritizeDeferredLoopSlotRestoreEntries();

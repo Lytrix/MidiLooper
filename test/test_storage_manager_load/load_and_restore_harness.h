@@ -155,8 +155,12 @@ inline bool writeEmptyCommittedPayloadToSd(uint8_t trackIndex, uint8_t slotIndex
 /// `loopLengthTicks` is fixed at 768 (one bar at the suite's 96-tick grid) and the note pair sits at
 /// ticks 8..16, well inside it.
 inline bool writePayloadWithOneNoteToSd(uint8_t trackIndex, uint8_t slotIndex, uint8_t note = 60) {
-  TEST_ASSERT_TRUE_MESSAGE(LoopEventStore::usedChunkCount() == 0,
-                           "the payload builder owns the pool: release previous fixtures first");
+  char poolMsg[160];
+  snprintf(poolMsg, sizeof(poolMsg),
+           "the payload builder needs an unowned pool: usedChunkCount=%u free=%u (track=%u slot=%u)",
+           static_cast<unsigned>(LoopEventStore::usedChunkCount()),
+           static_cast<unsigned>(LoopEventStore::freeChunkCount()), trackIndex, slotIndex);
+  TEST_ASSERT_TRUE_MESSAGE(LoopEventStore::usedChunkCount() == 0, poolMsg);
 
   LoopEventStore capture;
   TEST_ASSERT_TRUE(capture.append(MidiEvent::NoteOn(8, 1, note, 100)));
@@ -179,7 +183,12 @@ inline bool writePayloadWithOneNoteToSd(uint8_t trackIndex, uint8_t slotIndex, u
   snapshot.passes.recordPass.state = CapturePassState::Active;
   snapshot.passes.recordPass.sealedAtTick = 768;
   snapshot.passes.recordPass.committedChunkIds = committedChunkIds;
-  return writeSlotPayloadToSd(snapshot, trackIndex, slotIndex);
+  const bool written = writeSlotPayloadToSd(snapshot, trackIndex, slotIndex);
+  // The bytes are on the card, so the staging snapshot no longer needs the pool: release its committed
+  // refs here rather than leaving a fixture to remember. Without this a multi-payload fixture leaks one
+  // chunk per write and the next `writePayloadWithOneNoteToSd` correctly refuses to add more.
+  releasePersistedLoopSnapshotChunks(snapshot);
+  return written;
 }
 
 /// The queue-side half of the production path. `StorageManager::requestLoopSlotRestoreFromSd` is the
@@ -197,6 +206,23 @@ inline void resetSlotToEmpty(uint8_t trackIndex, uint8_t slotIndex) {
   trackManager.getTrack(trackIndex).ensureLoopsAllocated();
   StorageManagerInternal::resetLoopSlotToEmpty(trackManager.getTrack(trackIndex).getLoop(slotIndex),
                                                slotIndex);
+}
+
+/// Release every track's committed content, then rebuild the chunk pool. Call this **before** a fixture
+/// writes payloads: committed loops hold chunk references, so a bare `resetPoolForTests()`/`initPool()`
+/// leaves those chunks owned and the payload builder correctly refuses to add more.
+inline void resetAllTracksAndPool() {
+  for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+    Track& track = trackManager.getTrack(trackIndex);
+    if (!track.loopsAllocated()) {
+      continue;
+    }
+    for (uint8_t slotIndex = 0; slotIndex < Config::MAX_LOOPS_PER_TRACK; ++slotIndex) {
+      resetSlotToEmpty(trackIndex, slotIndex);
+    }
+  }
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
 }
 
 /// The common "a payload-bearing slot with no committed content is queued for restore" precondition,
