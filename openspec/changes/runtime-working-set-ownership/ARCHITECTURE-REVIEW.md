@@ -1078,3 +1078,36 @@ Link the suite's `TrackManager`/`Track`/`Loop` set (the same production objects 
 already links) so `queueDeferredLoopSlotRestore`'s `needsSlotLoad` guard and
 `popFocusDeferredLoopSlotRestore`'s done-test become live, then drive `beginLoadLoopJob` itself for **B04**.
 Only then is the S2b.5 call-site fix implementable against a fixture, per the architect's order.
+
+## P1 — load harness increment 2: the structural choice, and why it is not free (2026-09-23)
+
+Increment 2 needs `Track` / `TrackManager` / `Loop` linked, because
+`StorageManager::needsSlotLoad` (`StorageManager.cpp:243`) ends in
+`track.getLoop(slot).hasCommittedPasses()`. Two structures are possible, and both were **measured** by
+probing rather than estimated.
+
+### (a) Join the existing `test_continuous_capture` TU — rejected
+
+The queue was added to that suite's include list. It produced exactly three error classes:
+
+1. `CurrentSetStorage::verifySaveFileTokenAtPath` is invisible, so the suite would have to define
+   `ARDUINO 1` — and that define changes what **every** production TU included there compiles, since the
+   SD-dependent declarations across the tree sit behind `#if defined(ARDUINO)`. The suite's 87 passing
+   tests currently depend on those guards being **off**; flipping it is a boundary change to a suite that
+   is not about the load path.
+2. `off_path_deps.h` already stubs `StorageManager::hasLoopSlotPayloadOnSdInRam` and
+   `refreshLoopSlotPayloadOnSdInRam`, which the queue file now defines for real — two duplicate
+   definitions that would have to be deleted from the stub header.
+3. Those two deletions and the global define would then expose whatever else the newly-compiled guards
+   reference, an unknown cascade through 87 unrelated tests.
+
+### (b) Extract the shared harness include block — the recommended next step
+
+Move the production include set (Loop/Track/TrackManager and the stub surface) into one shared header, e.g.
+`test/test_support/track_harness.inc`, and include it from **both** `test_continuous_capture` and
+`test_storage_manager_load`. The new suite then links the load path with the Track objects it needs, the
+existing suite's boundary surface is untouched, and the include set stops being duplicated. This is the
+next increment; it is a test-infrastructure refactor, not production code.
+
+Nothing was committed from the probe: the continuous-capture TU was restored from a backup, the tree is
+clean, and it passes **87/87**.
