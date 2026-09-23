@@ -61,8 +61,12 @@ uint8_t resolveTrackIndexForPersistence(const Track& track) {
 void EditManager::onSelectedSlotChanged(Track&, uint8_t) { OFF_PATH(); }
 void EditManager::beforeSelectedSlotChange(Track&) { OFF_PATH(); }
 void DisplayManager::invalidateForSlotChange(uint8_t, uint8_t, uint8_t) { OFF_PATH(); }
+// A suite that links the real StorageManager load path (which defines these two) opts out with
+// `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`; everything else keeps the fail-closed route.
+#if !defined(HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD)
 bool StorageManager::hasLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); return false; }
 void StorageManager::refreshLoopSlotPayloadOnSdInRam(uint8_t, uint8_t) { OFF_PATH(); }
+#endif
 void StorageManager::prioritizeLoopSlotRestoreForFocus(uint8_t, uint8_t) { OFF_PATH(); }
 void StorageManager::requestWorkspaceFooterPersistWhenSafe() { OFF_PATH(); }
 void Track::silenceSlotMidiOutput(uint8_t) { OFF_PATH(); }

@@ -172,6 +172,20 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   production include block into `test/test_support/track_harness.inc` and include it from both suites --
   the load path gets its Track objects, the existing suite's boundary surface is untouched, and the include
   set stops being duplicated. The probe was fully reverted; tree clean and `test_continuous_capture` 87/87.
+- **Load harness increment 2 landed: the load path links with the full Track harness.** The earlier
+  rejected route's problem was dissolved rather than worked around. `test/test_support/track_harness.inc`
+  now holds the shared production include block **plus** the harness globals and native clock boundary,
+  extracted verbatim from `test_continuous_capture` (include order is significant, so it moved as a block)
+  and included by both suites -- so the include set stops being duplicated instead of gaining a second copy.
+  `off_path_deps.h` gained one explicit seam, `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`, so a suite linking
+  the real loop-slot-payload functions opts out of those two stubs while every other suite keeps the
+  fail-closed route; and the load suite links `MidiHandler.cpp` directly because `TrackManager`'s
+  constructor references the global handler and this suite has no second TU to carry it. Verified at each
+  move: `test_continuous_capture` **87/87** after both extractions, load suite **3/3**, full native
+  **2,275 / 1 skipped / 0 failures**, firmware + per-env budget SUCCESS. **Next: B04 itself** -- build a
+  finalizing interval on a slot, queue a restore for it, run the real selection/admission and assert the
+  entry is still queued, the Loop was not reset and the finalizer is intact; only then the S2b.5 call-site
+  fix against that red fixture.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

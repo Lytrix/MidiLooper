@@ -1111,3 +1111,41 @@ next increment; it is a test-infrastructure refactor, not production code.
 
 Nothing was committed from the probe: the continuous-capture TU was restored from a backup, the tree is
 clean, and it passes **87/87**.
+
+## P1 — load harness increment 2 landed: the load path links with the full Track harness (2026-09-23)
+
+`test/test_storage_manager_load` now links **the real load queue plus the Track/Loop/TrackManager
+objects**, against the in-memory SD card. That is the structural step increment 1 could not reach, and it
+was done by the route the earlier probe recommended rather than the one it rejected.
+
+### What landed
+
+- **`test/test_support/track_harness.inc`** — the shared production include block (Loop, the `Runtime*`
+  owners, `Track*`, `TrackManager`, `MidiButtonActions`, the undo/commit units) plus the harness globals
+  and the native clock boundary, **extracted verbatim** from `test_continuous_capture` and included by both
+  suites. Include order is significant (a `#define` for `LoopCaptureTestDeps`, and the runtime owners before
+  the objects they serve), so it moved as a block rather than being reorganised. The include set stops being
+  duplicated instead of gaining a second copy.
+- **`off_path_deps.h` gained one explicit seam**: `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`. The load suite
+  defines it because it links the real `hasLoopSlotPayloadOnSdInRam` /
+  `refreshLoopSlotPayloadOnSdInRam`; every other suite keeps the fail-closed route unchanged. This is what
+  made the earlier rejected route's duplicate-definition problem disappear instead of being worked around.
+- **`MidiHandler.cpp`** is linked by the load suite directly: `TrackManager`'s constructor references the
+  global MIDI handler, and this suite has no second TU to carry it the way
+  `test_continuous_capture/midi_input.cpp` does.
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **3/3 PASSED** (now linking the full harness) |
+| `test_continuous_capture` after the extraction | **87/87** — the extraction is behaviour-neutral, verified at each of the two moves |
+| full native | **2,275 cases / 1 skipped / 2,274 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, `variables 96,128 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,944` |
+
+### Next: B04 itself
+
+The harness can now drive the real path. **B04** is the next step and is a test of its own: build a
+finalizing interval on a slot, queue a restore for that slot, run the real selection/admission, and assert
+the entry is **still queued**, the Loop was **not** reset and the finalizer is intact — then retire and
+assert exactly one restore. Only after that fixture is red does the S2b.5 call-site fix get made against it.
