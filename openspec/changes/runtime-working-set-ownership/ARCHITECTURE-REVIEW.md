@@ -529,3 +529,30 @@ exactly-one-job + exactly-once-completion sequence.
 - Still untouched: **S2b.1/S2b.2/S2b.3** (boot/load reservation removal and its evidence),
   **S2b.4** (release + `noLiveOwnerForSlot`), **S2b.5** (load admission), **S4.0**, **S4f.3**,
   **S3.0**'s static_asserts for the remaining new members, and fixtures **B03–B07**.
+
+### Next step: S2b.1, and the two hazards that must ship with it
+
+Confirmed by reading the tree (not assumed), so the next slice does not guess:
+
+1. **The transfer horizon must be admitted at overdub start, not in the stop park.**
+   `Track::startOverdubbing` (`TrackOverdubLifecycle.cpp:1417-1448`) admits capture staging and the
+   companion rows only — it never calls `prewarmActiveOverdubTransferHorizon`. Today that is invisible
+   because every committed slot is boot-prewarmed with a horizon; once S2b.1 removes the boot
+   reservation, a loaded slot's stop fails the DEC-067 chain on `transfer_denied` forever, exactly the
+   rerun blocker in `tasks.md` S2b. That admission belongs **at the overdub start's cold point**, beside
+   the existing staging/companion grants and before any mutation — *not* in
+   `parkAcceptedStopForCanonicalOutput`. `prewarmActiveOverdubTransferHorizon` reserves
+   `passes.overdubPasses` and `prewarmedCommittedChunkIdPool_`, so calling it mid-interval from the park
+   could relocate `overdubPasses` under a borrowed reference; at the pre-mutation admission turn it is
+   the same call the record arm already makes.
+2. **S2b.1 must ship with S2b.6's retire-path invariant.** `prewarmCanonicalCaptureOutput` requires
+   `canonicalCaptureOutput.store.empty()`. The retire block clears `pendingPass`/`owner`/`loopId` and
+   advances the ring but never touches that store, so a skipped or failed route can leave it populated
+   with no ring entry. With the boot reservation present, the next `prewarmPlaybackForSlot(_, true)`
+   masks it; with the boot reservation removed, the park cannot admit and the accepted stop waits
+   forever — the exact failure mode the change exists to remove, inverted. The retire path must drain
+   the store on the committing route and clear it on a skipped route, reporting a named terminal if it
+   can do neither, **before** the boot reservation comes out.
+
+Both are recorded here rather than implemented in a hurry: a rushed S2b.1 risks a permanent stop wait on
+a device whose product rule is that a stop always completes from one press.
