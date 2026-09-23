@@ -105,6 +105,9 @@ void queueDeferredLoopSlotRestoreWithPayloadSource(uint8_t trackIndex, uint8_t s
     }
     pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
                                                                           restorePriority};
+    // A2.1: the request is born here, with its identity and its initial `queued` state. A later reader
+    // can therefore tell "queued and not yet served" from "finished".
+    beginRestoreRequest(trackIndex, slotIndex);
     if (!deferPriorityAndSort) {
         sortPendingLoopSlotRestoresByPriority();
     }
@@ -302,6 +305,7 @@ bool appendBootLoopSlotRestore(uint8_t trackIndex, uint8_t slotIndex, uint16_t r
     }
     pendingLoopSlotRestores_.entries[pendingLoopSlotRestores_.count++] = {trackIndex, slotIndex,
                                                                           restorePriority};
+    beginRestoreRequest(trackIndex, slotIndex);
     return true;
 }
 

@@ -306,6 +306,9 @@ STORAGE_PERSIST_MEM bool beginLoadLoopJob(uint8_t trackIndex, uint8_t slotIndex)
 
     loadLoopJob_.active = true;
     loadLoopJob_.phase = LoadLoopJobPhase::Reading;
+    // A2.1: the request is now being advanced by an admitted job, which is `running` -- not a
+    // fictitious wait and not a terminal.
+    markRestoreRequestRunning(trackIndex, slotIndex);
     loadLoopJob_.track = trackIndex;
     loadLoopJob_.slot = slotIndex;
     loadLoopJob_.payloadOffset = payloadOffset;
@@ -442,6 +445,10 @@ STORAGE_PERSIST_MEM SlotLoadAdvanceResult commitLoadLoopJobPublish() {
     loadLoopJob_.loadedLoopSnapshot = nullptr;
 
     markLoopCommittedChunksPersistedFromSdLoad(loop);
+    // A2.1: the payload is published, so this request has reached its `committed` terminal -- recorded
+    // once per identity (a second attempt is refused by the record itself).
+    (void)markRestoreRequestTerminal(loadLoopJob_.track, loadLoopJob_.slot,
+                                     RestoreRequestTerminal::Committed);
     (void)loadLoopJob_.session->advanceAfterPhaseWork();
 
 #if defined(PERF_TELEMETRY)

@@ -217,6 +217,65 @@ bool deferredSaveBlockedByActiveSlotLoadSd();
 bool deferredSaveBlockedByPostLoadCommitHoldoff();
 void stepWallClockFromSdCatalogSync(uint8_t maxSetsPerSlice);
 
+/// A2.1 (`design.md` D1): a restore request's lifecycle state. Queued work awaits selection; running
+/// work is advancing an admitted job through read/parse/commit/cleanup; waiting work has a named
+/// blocking reason; terminal work has exactly one recorded outcome. A service yield between runnable
+/// slices is **running**, never a fictitious wait.
+enum class RestoreRequestState : uint8_t {
+    Queued = 0,
+    Running = 1,
+    Waiting = 2,
+    Terminal = 3,
+};
+
+/// The named reasons a request may wait. A wait is never a terminal, and it never becomes one merely
+/// because it persisted for a number of turns.
+enum class RestoreRequestWait : uint8_t {
+    None = 0,
+    /// A live owner holds the slot.
+    SlotOwned = 1,
+    /// A track on that slot is recording (the SD-session exclusion).
+    Capture = 2,
+    /// The commit admission does not admit (no content-independent bound).
+    CommitGate = 3,
+    /// Another request holds the commit/cleanup phase, so the whole load child is denied this turn.
+    JobCapacity = 4,
+    /// A transient failure, within its bounded attempt count.
+    Retry = 5,
+};
+
+/// The outcomes a request may reach, exactly one per identity.
+enum class RestoreRequestTerminal : uint8_t {
+    None = 0,
+    Committed = 1,
+    Unnecessary = 2,
+    Refused = 3,
+    Superseded = 4,
+};
+
+/// Identity, state and terminal accessors for the restore request record (A2.1). The record is keyed by
+/// `(track, slot)` with the full identity stored beside the state, so a reused coordinate pair is a
+/// different request and a stale record can never be reported as the current outcome.
+void beginRestoreRequest(uint8_t trackIndex, uint8_t slotIndex);
+RestoreRequestState restoreRequestState(uint8_t trackIndex, uint8_t slotIndex);
+bool restoreRequestRecordIsCurrent(uint8_t trackIndex, uint8_t slotIndex);
+void markRestoreRequestRunning(uint8_t trackIndex, uint8_t slotIndex);
+void markRestoreRequestWaiting(uint8_t trackIndex, uint8_t slotIndex, RestoreRequestWait wait);
+/// Returns false when a terminal was already recorded for this identity (exactly-once).
+bool markRestoreRequestTerminal(uint8_t trackIndex, uint8_t slotIndex,
+                                RestoreRequestTerminal terminal);
+/// External change of the coordinates: a user CLEAR, a set change, or a different owner committing that
+/// slot. The restore path's **own** failure cleanup must NOT call this (see `waiting_retry`).
+void advanceRestoreRequestGeneration(uint8_t trackIndex, uint8_t slotIndex);
+void invalidateAllRestoreRequestsAsSuperseded();
+void noteRestoreSetEpoch(uint32_t setEpoch);
+uint32_t restoreSetEpoch();
+uint32_t restoreRequestGenerationFor(uint8_t trackIndex, uint8_t slotIndex);
+void resetAllRestoreRequestState();
+const char* restoreRequestStateName(RestoreRequestState state);
+const char* restoreRequestWaitName(RestoreRequestWait wait);
+const char* restoreRequestTerminalName(RestoreRequestTerminal terminal);
+
 struct DeferredLoopSlotRestore {
     uint8_t track = 0;
     uint8_t slot = 0;

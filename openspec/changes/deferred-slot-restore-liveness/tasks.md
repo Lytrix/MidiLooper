@@ -233,7 +233,31 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
 
 ## 2. Packet B — background restore liveness (D2, D3, D5)
 
-- [ ] A2.1 **Request identity and state separation (D1), with validated generational advance.** Introduce
+- [ ] A2.1 **Request identity and state separation (D1), with validated generational advance.**
+      → **IN PROGRESS 2026-09-23 — record, birth/committed wiring and the identity contracts are landed
+      and native-verified; the wait-state transitions and pre-publication validation remain.**
+      New TU `src/StorageManager/RestoreRequestState.cpp` (+ declarations in `StorageManagerInternal.h`)
+      provides the identity `(track, slot, requestGeneration, setEpoch)`, the `RestoreRequestState`
+      queued/running/waiting/terminal split, the five named waits, the four named terminals, and the
+      record API. **Wired into production:** the request is born `queued` at both queue-entry sites
+      (`queueDeferredLoopSlotRestoreWithPayloadSource`, `appendBootLoopSlotRestore`); `beginLoadLoopJob`
+      marks it `running`; `commitLoadLoopJobPublish` records the `committed` terminal. **18 cases / 18
+      succeeded** in the suite, including
+      `test_restore_request_state_is_driven_by_the_production_path` (queued → running → terminal through
+      the real queue and job) and the identity contracts: exactly one terminal per identity (a second is
+      refused), a reused `(track, slot)` is a **different** request, a set change yields **`superseded`**
+      (not `refused`), and the restore path's own failure cleanup keeps the identity as a **retry wait**.
+      **Two defects found by these cases and fixed:** the record's identity check was self-satisfying
+      (the generation advance wrote the new counter into the record, so "the old record does not describe
+      the new request" could not be observed) — fixed with an explicit `identityValid` flag; and
+      `noteRestoreSetEpoch` cleared the records *after* recording their `superseded` terminal, wiping the
+      outcome it had just written. **RAM1 enforced:** the first version cost 64 B of ITCM
+      (`padding 888 → 824`, i.e. below the approved floor); every helper is now `FLASHMEM` and the line is
+      back to `code 392,328 / padding 888`. Full native **2,305 / 1 skipped / 0 failures**.
+      **Still open:** the wait-state transitions at the denying gates (`waiting_slot_owned`,
+      `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`), the `refused`/`unnecessary`
+      terminals, pre-publication identity validation, and `loopSlotRestoreAttempted_` retirement.
+ Introduce
       the request identity `(track, slot, requestGeneration, setEpoch)`, explicit **queued/running** states,
       and the separate **wait** states
       (`waiting_slot_owned`, `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`,
