@@ -2878,9 +2878,15 @@ authorized scratch slot track 5 / slot 1.
 **(2) A 24-bar overdub is admitted.** `record loop length 18432/18432`, `Overdubbing started` ×2,
 `op=overdub_start` denials **0**, 0 `#MEM_DENIED`/`#MEM_EXT_REFUSED`/`FATAL`, SEVT `bars=24/24`, display
 `overdub_ok`/`transport_ok` true — against the pre-change RC-MEM-5 leg's zero starts and 4 denials.
-**(3) CORRECTION — the restored library DOES survive a reboot:** after a serial-open reset the dump reports
-`CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`, so the recorded S1.3 blocker is withdrawn and the
-slope-to-failure sweep is now constructible (not yet run).
+**(3) CORRECTION, and then a withdrawal of my own correction:** the dump after a serial-open reset reports
+`CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`, so a slot can come back byte-exact right after its own
+save+reset. A growth attempt (`STIM-…-TEMP-RWSO-GROWTH`, track 6) then **falsified** the "library can grow"
+generalisation: after a second forced reboot the catalog does not reconcile (`could not reconcile
+MidiLooper/sets/index.bin`), `Track 6 loaded state: EMPTY` (and track 7), `DIAG,lcr,skip,restore`, and the
+census's non-zero-slot set changed between boots (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`).
+Selecting track 5 reads `3 bars (2304 ticks)`, not the 24-bar loop. **The S1.3 slope sweep stays blocked, on the
+SD catalog reconcile rather than on scratch-slot approval.** Also: a boot census needs a **forced** reboot, and
+repeated runs without one accumulate residency (`live` 4,658 KB → **8,170 KB**, heap pinned at its 52 KB floor).
 **(4) Content NOT verified, recorded as such:** `storage_matches_effective: true` and all 24 bars dense (1,746
 rows) but `inventory_equal: false` with **2 unexplained missing rows in bar 0** (`[128,5,76,0]`,
 `[176,5,74,101]`) — both present in the raw output in quantity (157/264), the first outside the cycle window

@@ -255,13 +255,17 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `src/` byte-identical. Native byte figures were rejected as device numbers (native `sizeof(EventChunk)`
       is 8,208 B vs the device's 5,132 B). Full record:
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.3 clause 2. **Still open on this task:** the
-      *device* slope to the failure point. **DEVICE CENSUS TAKEN 2026-09-23 (Leg 1), and the obstacle is
-      withdrawn:** on HEAD (`26e96539`, hex `673e20ca…`) the restore walk spends **0 chunks** on committed
-      slots (`free_chunks 480 → 480`, `credits=0` on all eight rows) with the enabled set at **32** chunks
-      (was 96) and `free_chunks` pre-restore **480 of 512** (was 400). The recorded blocker — "the restored
-      scratch slot does not survive a reboot" — is **not reproducible**: the 24-bar slot restored with
-      `CAPTURE_CONTENT,…,length=18432` after a serial-open reset, so the library **can** grow and the
-      slope-to-failure sweep is now constructible (it is not run yet).
+      *device* slope to the failure point. **DEVICE CENSUS TAKEN 2026-09-23 (Leg 1):** on HEAD (`26e96539`,
+      hex `673e20ca…`) the restore walk spends **0 chunks** on committed slots (`free_chunks 480 → 480`,
+      `credits=0` on all eight rows) with the enabled set at **32** chunks (was 96) and `free_chunks`
+      pre-restore **480 of 512** (was 400). **The sweep itself is still blocked, and the blocker moved:** a
+      growth attempt (`STIM-…-TEMP-RWSO-GROWTH`, track 6) reproduces the obstacle at **catalog** level —
+      `could not reconcile MidiLooper/sets/index.bin`, `Track 6 loaded state: EMPTY` (and track 7),
+      `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set **changed between boots**
+      (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). So the obstacle is the SD catalog reconcile,
+      not scratch-slot approval, and successive boots do **not** accumulate a library. **A claim of mine —
+      that the library "can grow" because a reset-then-dump once returned `length=18432` — is withdrawn as
+      over-generalised;** Leg 3 of the device session records the falsification.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
@@ -368,12 +372,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       S1.4's two clauses (undo residency ≈2,635–2,659 KB over 83–84 slabs; pinned passes 0 → 5 → 8 → 3 → 7
       across 0 → 2 slots); — added the same day — S1.3's **second clause**, the synthetic 60-descriptor
       characterisation (reservation flat at 40 chunks / 205,280 B from N = 8 to N = 60, red-proven); and the
-      **RWSO-24CAP device legs** (the zero per-committed-slot reservation census, the 24-bar overdub admitted
-      with 0 denials, and the restored-slot-survives-a-reboot correction). **Not satisfied: S1.3's slope
-      *to the failure point*** — but its recorded blocker is **withdrawn** (the restored scratch slot does
-      survive a reboot, Leg 3), so the sweep is constructible and merely unrun; and a **content-verified
-      PASS**, which the pipeline run does not meet (2 unexplained missing rows in bar 0, Leg 4). S1.5's
-      refusal-N and S1.4's pass→chunk conversion also remain.
+      **RWSO-24CAP device legs** (the zero per-committed-slot reservation census, and the 24-bar overdub
+      admitted with 0 denials). **Not satisfied: S1.3's slope *to the failure point*** — still blocked, now by
+      the **SD catalog reconcile defect** (`could not reconcile …/index.bin`, `Track 6 loaded state: EMPTY`,
+      `DIAG,lcr,skip,restore`, a restored-set that changes between boots), so successive boots do not
+      accumulate a library; and a **content-verified PASS**, which the pipeline run does not meet (2
+      unexplained missing rows in bar 0, Leg 4). S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -678,11 +682,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       library restore walk goes `free_chunks 480 → 480` across all eight `(track,slot)` rows with
       `credits=0` on every one, including the two committed library slots. `free_chunks` pre-restore is
       **480 of 512** (was 400). Full table: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device
-      session — RWSO-24CAP, Leg 1. **Still open:** the **slope-to-failure sweep** (varying N across boots)
-      and the failure point. **Its stated blocker is corrected, not merely repeated:** the claim that the
-      restored scratch slot does not survive a reboot is **not reproducible** — after a serial-open reset the
-      dump reports `CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`, i.e. the 24-bar slot restored with its
-      exact length (Leg 3), so the library **can** grow.
+      session — RWSO-24CAP, Leg 1. **Still open — and still blocked, now sharply:** the **slope-to-failure
+      sweep** (varying N across boots) and the failure point. A growth attempt (`STIM-…-TEMP-RWSO-GROWTH`,
+      track 6) was stopped by the **SD catalog reconcile defect**, which reproduces the recorded obstacle at
+      *catalog* level: `could not reconcile MidiLooper/sets/index.bin`, `Track 6 loaded state: EMPTY` (and
+      track 7), `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set **changed between boots**
+      (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). **An earlier claim of mine — that the library
+      "can grow" because Leg 3 dumped `length=18432` after a reset — is withdrawn as over-generalised:** a slot
+      can come back byte-exact right after its own save+reset, but successive boots do not accumulate a library.
       **The 24-bar overdub itself is admitted on hardware (Leg 2):** the same run records `record loop length
       18432/18432`, **`Overdubbing started` twice** (ticks 755 and 22,836), **`op=overdub_start` denials 0**,
       0 `#MEM_DENIED` / `#MEM_EXT_REFUSED` / `FATAL`, SEVT `bars=24/24 count_ok/span_ok/bars_ok = true` and
