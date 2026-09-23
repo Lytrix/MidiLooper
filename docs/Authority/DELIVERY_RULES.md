@@ -124,6 +124,13 @@ Do not introduce new top-level domain nouns without user approval (see architect
 
 ---
 
+## Per-slice implementation evidence
+
+Every implementation slice follows the [G2 execution packet](IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice).
+The packet fixes outcomes, controls and acceptance before production behavior changes; the builder records
+actual verification and the reviewer checks it before task/stage completion. Future steps of current changes
+also apply this rule. This refines the existing G2/G3 and verification gates, without a second approval gate.
+
 ## Verification gates
 
 | Gate | When | Command / doc |

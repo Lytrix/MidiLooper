@@ -12,17 +12,17 @@ context: |
   - `TrackUndo`, `StorageManager` (SD v4+ loops, Current workspace, Set revisions), `DisplayManager`, DROID USB MIDI
   - Live note edit: `EditManager` / `NoteEditSession.store`
 
-  Milestone status (Jun 2026):
-  - M1–M7 shipped; M8 edit + pool-budget + loop-ownership + long-record-memory-headroom **archived** → `openspec/specs/`
-  - **Active work:** persistence / overlay — see `docs/Runtime/CURRENT_WORK.md` + `PROJECT_STATE.md`
-  - Post-persistence sequencing: `docs/Runtime/ROADMAP.md` (informational — not implementation authority)
-
-  Jam D13 arrangement capture is PARKED — see
+  Milestone status: **do not restate here — it goes stale.**
+  Load `docs/Runtime/PROJECT_STATE.md` (execution context) and
+  `docs/Runtime/CURRENT_WORK.md` (implementation scope) for volatile facts.
+  Sequencing only: `docs/Runtime/ROADMAP.md` (informational — not implementation
+  authority). Jam D13 arrangement capture is PARKED — see
   `openspec/changes/archive/20260617-parked-jam-recording-d13/PARKED.md`
 
   Authority (agents):
   - `docs/Authority/NAMING.md` — architectural vocabulary (canonical)
   - `docs/Authority/README.md` — hierarchy + conflict resolution (OpenSpec = behavior; architecture = structure)
+  - `docs/Authority/IMPLEMENTATION_READINESS.md` — G0–G3 evidence/contract gate before firmware work
   - `docs/Runtime/PROJECT_STATE.md` — execution context (load first)
   - `docs/Runtime/CURRENT_WORK.md` — implementation scope (required before coding)
   - `docs/Runtime/ROADMAP.md` — future milestones (optional; never sole authority)
@@ -54,13 +54,27 @@ rules:
     - Check `docs/Runtime/CURRENT_WORK.md` for implementation scope — not ROADMAP alone
     - List open product decisions (TBD) explicitly; do not invent UX without flagging
     - Non-goals section when scope is easy to over-expand (jam vs scenes vs LFO)
+    - Separate known behavior, evidence-backed assumptions, and UNKNOWNs
   design:
     - Respect ownership in `docs/Authority/ARCHITECTURE_RULES.md`
+    - Satisfy `docs/Authority/IMPLEMENTATION_READINESS.md` G0-G2 before firmware implementation
+    - Define one G2 execution packet per implementation slice using docs/Templates/EXECUTION_PACKET.md or equivalent review sections; pin dependency closure, stepwise oracle, outcome semantics, controllable production-path fixtures, and verification recipe
+    - Ground affected call paths, owners, state transitions, deferred continuations, and lifetime claims in existing code, specs, or device evidence; label the rest UNKNOWN
+    - Resolve architecture-changing UNKNOWNs before generating implementation tasks
     - Ownership moves only via transfer protocol (reassessment, migration, compat removal trigger)
-    - Name primary files (`Loop.cpp`, `EditManager.cpp`, `StorageManager.cpp`) and hot-path constraints
+    - Name primary files (`Loop.cpp`, `EditManager.cpp`, `StorageManager.cpp`) and hot-path bound class
+    - State preconditions, postconditions, invariants, failure behavior, non-goals, and validation
+    - Check envelope consequences against real sources — tempo clamp in `ClockManager`, `Config::NUM_TRACKS` / `MAX_LOOPS_PER_TRACK`, window-sized working sets, and `activeLoopIndex` as sole activation authority
     - No full validate on record/overdub stop; deferred save via `requestDeferredSaveState`
   tasks:
     - Chunk tasks for reviewable PRs; implement from `openspec/changes/<name>/tasks.md`
-    - Complete DECISION_REVIEW + PREFLIGHT before firmware edits; search DECISION_LOG
+    - Complete DECISION_REVIEW + IMPLEMENTATION_READINESS G0-G2 + PREFLIGHT before firmware edits; search DECISION_LOG
+    - Tasks must implement approved contracts; do not defer architecture discovery into implementation
+    - Apply the G2 execution-packet workflow to every future slice, including existing changes; establish the discriminating fixture before production behavior changes and record actual evidence before checkoff
+    - Keep fixture, native, build, and device completion distinct; absent or skipped required cases are not passes; never weaken an oracle or threshold merely to pass; documentation-only work uses proportionate checks
+    - Each implementation stage names owner, preconditions, postconditions, invariants, non-goals, validation, and commit boundary
+    - STOP and return to design on an ownership/lifetime/state-machine/persistence/timing assumption conflict
+    - Apply agent is not an architect — report changed-contract evidence, do not solve it in code
+    - Do not bundle unrelated cleanup, opportunistic refactors, or compatibility removal
     - Native tests required for logic changes; HITL per DELIVERY_RULES verification matrix
     - Archive only after gates pass; update PROJECT_STATE and CURRENT_WORK after session

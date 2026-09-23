@@ -2,6 +2,13 @@
 
 > Project goal and decision log: [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
 
+## Workflow update — 2026-09-23 (working tree, no firmware delivery)
+
+DEC-080 strengthens [implementation readiness](Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice)
+with fixture-first execution packets and evidence-backed checkoff. The runtime-working-set-ownership
+[phase review](../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) specifies acceptance
+for upcoming slices; test fixtures and firmware remain to be implemented. This is not a shipped runtime feature.
+
 ## Shipped vs Next (updated Sep 2026)
 
 **Shipped** (in firmware on `dev`):

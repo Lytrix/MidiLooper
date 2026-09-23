@@ -1,4 +1,29 @@
+# Targeted implementation handoff review — 2026-09-23
+
+Five findings from the implementation review are corrected in
+[IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) and the active task/spec text:
+
+- Circular S2b dependencies: a single boot/admission slice pulls forward only its stop/liveness/placement
+  prerequisites; its gate uses current resident content, not S2/F/S6.
+- Singleton budget: explicit per-holder cardinalities, overlap and current-root accounting.
+- Orphan recovery: the existing live job retains the sealed extent and retries; no retire/re-admit handoff.
+- Duplicate playback scope: S4c is contract-only; phase F is explicitly uncreated and gates final acceptance.
+- Latch composition: existing manager carriers retain continuations with explicit supersession transitions.
+
+Evidence: `prewarmPlaybackForSlot` unconditionally reserves canonical output; `CaptureStopJob` owns rawRange;
+`beginDeferredOverdubStop` has a per-track pending-job guard; retirement clears owner/loopId and advances the
+ring; manager start/switch state exists separately. These are code facts, not device validation.
+The five review gaps are addressed in documentation; runtime gates and checkboxes remain open.
+
+---
+
 # Falsification review — runtime-working-set-ownership
+
+> **2026-09-19 status:** the acceptance rule and the **per-interval** finalization cardinality are now recorded
+> as **DEC-078** (amending DEC-067 and DEC-076 point 2) and in `design.md` **Revision 18**, which also carries
+> the G2 red-team findings (B1–B11) and the extracted sibling change `windowed-playback-generation`. The F3 text
+> below is the **historical record**: its "denied / re-pressed" wording is superseded — a stop meeting a busy
+> owner is accepted and executes once, from one request.
 
 ## Resolution (2026-09-18) — all six answered; F1 and F2 change the plan's shape
 
@@ -133,7 +158,7 @@ request, which is why the fix is small.
 the storage the ring cannot provide, and it does not reintroduce the queue model that was correctly rejected.
 
 **Acceptance.** One press. The stop completes (possibly after the predecessor retires), the user never re-issues,
-and the retry path is observable (`finalization_lease_stop_denied` becomes a **retry** counter, not a
+and the retry path is observable (`accepted_stop_finalizer_wait` becomes a **retry** counter, not a
 user-facing denial). The pre-fix counterfactual is the existing `successor_stop_denied_capacity` row.
 
 ## F4 — MAJOR: the spec contains a requirement this change cannot satisfy

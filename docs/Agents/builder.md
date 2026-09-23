@@ -4,6 +4,9 @@ Implementation role for coding agents after **user-approved** plan or explicit s
 
 ## Responsibilities
 
+- Execute each slice through the [G2 execution packet](../Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice): freeze the oracle, build controlled production-path fixtures, implement, run the recipe, record evidence, then check off. Fill routine fixture details autonomously; return contract-changing discoveries through G3.
+- Report specified/fixture/native/device status separately; missing mandatory device evidence leaves the stage open.
+
 - Implement approved plan with minimal diff
 - Follow [ARCHITECTURE_RULES.md](../Authority/ARCHITECTURE_RULES.md) ownership and forbidden patterns
 - Complete [DECISION_REVIEW.md](../Templates/DECISION_REVIEW.md) and [PREFLIGHT.md](../Templates/PREFLIGHT.md) **only when a formal trigger fired**

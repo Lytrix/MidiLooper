@@ -17,4 +17,9 @@ Use with global **`naming-and-terminology`**: clear **action + scope** (ideal tw
 4. **Pipeline / Queue / Flow** — do not use for synchronous deterministic algorithms; use **Resolution** (see NAMING.md § Geometry resolution).
 5. **Investigation and naming debt** — current-vs-preferred mapping in [`docs/Plans/architecture_naming_authority_refinement.md`](../../docs/Plans/architecture_naming_authority_refinement.md).
 
+6. **Chat references:** always pair each stage/task/packet/gate/decision ID with its short descriptive
+   name, even on repeated mentions and in link labels. See
+   [Short names beside IDs in chat](../../docs/Authority/NAMING.md#short-names-beside-ids-in-chat).
+   Preserve literal commands/code; this changes presentation, not identifiers.
+
 Archived OpenSpec baselines: **`m8-rename`**, **`m8-edit`**, **`pool-budget`** (see `openspec/specs/`).

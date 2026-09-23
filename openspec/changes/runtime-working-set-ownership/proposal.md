@@ -1,3 +1,8 @@
+> **Implementation handoff corrected 2026-09-23 (DEC-079).**
+> [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) defines executable slices and dependencies.
+> The first gate proves boot reservation removal, not the final memory law. Playback decoupling remains
+> a planned, uncreated sibling; S7/archive waits for that gate and S6.
+
 ## Why
 
 The target is **~60 recorded slots at up to 64 bars** (envelope: 8 tracks x 8 slots = 64). The
@@ -29,14 +34,14 @@ bundles (1,430 KB) and the next arm could not fit its ~845 KB chain, so it exite
 | Slots sounding per track | **1** today. The target is that slots behave as **virtual tracks** (16 MIDI channels x 8 slots) and can sound together whenever set active; a typical scenario may be 2 per track, but that is a working number, not a limit (F1) |
 | Slots sounding simultaneously | **N, derived** -- the memory law must compute the largest N the budget supports and must **not preclude 16 / 32 / 48 / 64** sounding slots |
 | Slots holding a **playback window lease** | up to **N sounding, derived from the budget** (8 today at one per track) |
-| Slots holding the **live capture** role (record / overdub, resumable small-packet logic inside MIDI boundaries) | **1** |
-| Slots holding **deferred finalization** | **1** -- one *finalizing predecessor* alongside one *live successor*, **not** two simultaneously finalizing captures |
+| Slots holding the **live capture** role (record / overdub, resumable small-packet logic inside MIDI boundaries) | **1 per track** |
+| Slots holding **deferred finalization** | **1 per interval** -- one *finalizing predecessor* alongside one *live successor*, concurrent holders on different tracks are budgeted independently; pinned to the interval's track+slot across a switch, and a second stop there is **accepted and scheduled** (DEC-078) |
 | Slots holding the **interactive edit / undo / display** role | **1**, unless evidence requires more |
 | **Transfer overlap** | measured and explicitly budgeted |
 | Slots that may be selected or browsed | the whole library (~60 recorded) |
 | Transport continuity | the looper **never stops playing** across track/slot switching, record/overdub start, or undo/redo, with no MIDI timing degradation |
 
-So the resident set is **N playback-window leases plus one of each specialized role**, where N today is 8 (8 tracks x 1 slot) and the design must not bound it artificially. While the specialized roles may stay large, the lease that gets multiplied by N is what matters, and at today's cost:
+So the resident set is **N playback-window leases plus each specialized role multiplied by its holder bound**, where N today is 8 (8 tracks x 1 slot) and the design must not bound it artificially. While the specialized roles may stay large, the lease that gets multiplied by N is what matters, and at today's cost:
 
 ```
 32 x  845 KB  ~=  27 MB
@@ -46,8 +51,8 @@ So the resident set is **N playback-window leases plus one of each specialized r
 against ~8 MB PSRAM if every one of those 32 were a full complex working set -- which is precisely why the
 budget is **not** `32 x worst-case complex lease`. **Window sizing is a prerequisite, not a safeguard**: it
 must make the *playback* lease both length-independent (a 64-bar slot costs what a 4-bar slot costs, with
-playback crossing window boundaries seamlessly) and small enough that 32 of them fit, while the one-or-two
-specialized roles may remain considerably larger. That is the difference between a feasible envelope and
+playback crossing window boundaries seamlessly) and small enough that 32 of them fit, while specialized
+roles are budgeted at their simultaneous holder counts. That is the difference between a feasible envelope and
 pathological micro-optimization of every operation.
 
 Three distinct quantities are still designed separately:
@@ -55,18 +60,19 @@ Three distinct quantities are still designed separately:
 | Quantity | Value | Backed by |
 |---|---|---|
 | **Library residency** | ~60+ recorded slots | canonical metadata + persisted content |
-| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture 1 + deferred finalization 1 (a second stop is **accepted and scheduled**, never refused) + interactive 1 | composable leases, one per role class |
+| **Logical active slots** | **N playback** (derived; 8 today, must not preclude 16/32/48/64) + live capture per track + deferred finalization per admitted interval + interactive 1 | composable leases, one per role class |
 | **Resident working-set leases** | must fit PSRAM | bounded, window-sized |
 
 The third quantity is **per class**, and the constraint is:
 
 ```
-fixed  +  N x PlaybackWindowLease  +  LiveCaptureLease  +  DeferredFinalizationLease
-       +  InteractiveLease  +  transfer overlap  +  reserve   <=   PSRAM budget
+fixed + N*P + Cmax*C + Dmax*D + Imax*I + Omax*O
+      + canonical + roots + undo + visual + standby + reserve <= PSRAM budget
 ```
 
-Only `PlaybackWindowLease` is multiplied by N, so only it must be small; the specialized roles may stay
-large. **The plan's output is N** -- the largest sounding-slot count the budget supports, stated as a
+P/C/D/I are per-holder costs. Cmax/Dmax/Imax/Omax and current whole-root costs are explicit in the
+[handoff budget](IMPLEMENTATION_CONTRACT.md#2-budget-cardinalities-and-transfer-overlap); a single-track
+measurement cannot establish the device-wide envelope. **The plan's output is N** -- the largest sounding-slot count the budget supports, stated as a
 capability (today 8 at one slot per track; the target is that 16 / 32 / 48 / 64 are reachable by policy
 rather than blocked by memory).
 
@@ -160,23 +166,25 @@ scheduled and executed instead of refused.
   window instead of the 2048-event ceiling so a slot's cost is **independent of its loop length**, and the
   feasible resident cap is computed from PSRAM arithmetic rather than chosen as a policy guess.
 - **Role classes with explicit cardinalities, and they are transferable.** Playback window leases scale with
-  the envelope (N, derived from the budget); live capture is one; deferred finalization is one and a second stop
-  while it is occupied is delayed non-destructively, not refused; interactive edit/undo/display is
-  one unless evidence requires more. A slot may hold several classes at once, and selecting another slot or
-  track **transfers the relevant role quickly** without a transport stop. Classes are composable rather than
-  one monolithic lease, so 32 playback slots do not each carry fields only one live operation uses.
-- **The finalization lease rotates; a second stop waits for it.** Its sufficiency does **not** rest on the
-  Teensy having one core -- the finalization job is resumable and retains ownership across many service turns,
-  so another capture runs while it is alive. The rotation is: `STOP A` -> A takes the finalization lease;
-  switch to B and `START B` -> B takes the live-capture lease and records normally while A finalizes; A
-  finishes -> releases; `STOP B` -> B takes that same lease. So the supported concurrency is **one finalizing
-  predecessor + one live successor**, and a `STOP B` that arrives before A releases is **denied
-  non-destructively with B still recording/overdubbing**; a subsequent stop request **may** succeed once the role
-  frees, subject to the other single-instance resources.
-  Only the pathological case (very short captures, or rapid punch-stop/start/stop) is constrained. The
-  initial envelope therefore does **not** pay memory for a second finalization lease: instead it counts
-  `finalization_lease_stop_denied`, so a second lease can be justified by evidence if real use shows
-  frequent denials.
+  the envelope (N, derived from the budget); live capture is one **per track**; deferred finalization is one
+  **per interval** and a second stop on the same track and slot is **accepted and scheduled**, never refused;
+  interactive edit/undo/display is one per selected track+slot unless evidence requires more. A slot may hold
+  several classes at once, and selecting another slot or track **transfers the relevant role quickly** without a
+  transport stop. Classes are composable rather than one monolithic lease, so 32 playback slots do not each
+  carry fields only one live operation uses.
+- **Finalization is per interval; a second stop is accepted and scheduled (DEC-078).** Its sufficiency does
+  **not** rest on the Teensy having one core -- the finalization job is resumable and retains ownership across
+  many service turns, so another capture runs while it is alive. The rotation is: `STOP A` -> A's interval takes
+  the finalization occupancy; switch to B and `START B` -> B takes the live-capture lease and records normally
+  while A finalizes; A finishes -> releases; `STOP B` -> B takes that same occupancy. For a shared per-track finalization resource the overlap
+  is **one finalizing predecessor + one live successor**, and a `STOP B` that arrives before A releases is
+  **accepted at the edge**: B keeps recording/overdubbing with its interval intact, and the accepted stop
+  executes exactly once after A releases, from **one** user request -- never a re-press. The bound is that
+  track+slot's own single-instance resources (other track+slot pairs are independent), and the occupancy is
+  pinned to the interval across an active-slot change. Only the pathological case (very short captures, or rapid
+  punch-stop/start/stop) is constrained, and it costs a wait, not a refusal. The initial envelope prices independent tracks separately (handoff §2), but does
+  **not** pre-provision a second simultaneous finalizer on one track; instead it counts `accepted_stop_finalizer_wait` as a
+  **wait/retry** counter, so a second occupancy can be justified by evidence if real use shows frequent waits.
 - **The looper never stops playing.** Track/slot switching, record/overdub start and undo/redo all happen
   while playback continues, so the pool must **pre-provision the inbound role before releasing the
   outbound one**, the switch itself must be allocation-free, and it must land on a MIDI boundary. The
@@ -295,13 +303,14 @@ F5 (the role tiers create a second authority for "active" alongside `activeLoopI
    8-track banks. Confirm whether that UI/bank work lands here or as its own change, while this one only
    guarantees the memory law does not preclude it.
 3. **How deep the transfer overlap must be**, including whether a specialized role overlaps the playing set
-   (its holder may also be one of the sounding slots). Finalization cardinality is decided at 1 with a
-   `finalization_lease_stop_denied` counter as the evidence path to a second lease; live capture 1 and
-   interactive 1 are confirmed.
-3a. **Finalization concurrency is settled, not open.** One finalizer; a second stop is delayed non-destructively,
-   never refused (DEC-067 capacity, device-verified; invariant 31). `CaptureStopJobs::kCapacity = 4` is a descriptor ring, not a proven multi-finalizer
-   store, so a queue model would be its own capacity/ownership change.
-4. **Whether a second finalization lease is ever warranted**, decided from `finalization_lease_stop_denied`
+   (its holder may also be one of the sounding slots). Finalization occupancy is decided at **1 per interval**
+   (pinned to the track+slot across a switch) with a `accepted_stop_finalizer_wait` wait counter as the
+   evidence path to a second occupancy; live capture is 1 per track and interactive 1 per selected track+slot.
+3a. **Finalization concurrency is settled, not open.** One finalizer **per interval** (not a device-wide
+   singleton); a second stop on the same track and slot is **accepted and scheduled**, never refused (DEC-078,
+   with DEC-067's capacity model preserved). `CaptureStopJobs::kCapacity = 4` is a descriptor ring, not a proven
+   multi-finalizer store, so a queue model would be its own capacity/ownership change.
+4. **Whether a second finalization lease is ever warranted**, decided from `accepted_stop_finalizer_wait`
    evidence rather than reserved preemptively (the pathological shapes are very short captures and rapid
    punch-stop/start/stop).
 5. **The SELECTED tier's content.** What bounded index/preview is cheap enough to keep for browsing.
