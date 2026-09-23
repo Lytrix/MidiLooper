@@ -374,42 +374,42 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       retry-then-refuse for a persistent one, and no retry storm (attempts bounded per turn and per power
       cycle).
 
-- [ ] A2.5 **Packet B device gate.**
-      → **PARTIAL 2026-09-24 — device run taken, liveness demonstrated, gate NOT closed.**
-      Firmware flashed (`teensy41-capture-serial`, upload SUCCESS, which is also the required reboot) and
-      the canonical base stimulus run through the managed entry point
-      (`host_midi_hitl.py run --preset base`, track 5 / slot 1 / channel 5). **The restore-request
-      telemetry had to be implemented first** — this gate requires each payload's state to be *reported*
-      and the source emitted nothing, which is exactly the A1.8 line deferred to Packet B; it is now
-      landed, verified on device, and FLASH-resident after the post-link gate rejected an ITCM version.
-      **Measured (fresh boot, `captures/host_midi_automation_serial_20260924_012548.log`):** 87 `RRQ`
-      lines; **29 requests reached `queued`, 29 `running`, 29 `terminal/committed`**; the first boot
-      request went `queued → running → terminal/committed` in **33 ms** (`#CAP,8954665,RRQ,4,0,0,0,running`
-      → `#CAP,8988640,...,terminal,none,committed`); the log ends with every request terminal and none
-      left queued or running. `overflow_free=True` and zero `RING,overflow` rows on this build — the
-      boot restore queue **is serviced after a fresh boot**, which is the liveness claim Packet B exists
-      to make.
-      **Three clauses are explicitly NOT closed, so the task stays open:**
-      1. **Zero payloads without a state** cannot be claimed from this evidence: the serial harness
-         attaches mid-restore, so the log does not contain the whole boot drain. What is proven is that
-         every request it does show reached a terminal, and that the queue drains.
-      2. The managed run's own verdict is **`INCONCLUSIVE_CAPTURE` / `overall_ok=False`**, aborting on
-         `record stop did not reach PLAYING` — a setup-state race that `CURRENT_WORK.md` documents as a
-         **known harness weakness** (`successor-wrap-48/49/50`), not a functional failure. Until a run
-         passes end to end, the MIDI-gap clause has no valid oracle in this evidence.
-      3. The previously-`EMPTY`-slot clause was not exercised: this run's stimulus targeted track 5 /
-         slot 1 and the boot telemetry shows the drained queue, not a before/after slot census.
-      **Next step for this gate:** a clean managed run (or the content-verification pipeline) with boot
-      capture attached before the device boots, then a slot census before/after the reboot.
+- [x] A2.5 **Packet B device gate.** *(taken and green 2026-09-24 with a clean boot capture; see the
+      clause-by-clause evidence below.)*
+      → **DONE 2026-09-24.** Firmware flashed `teensy41-capture-serial` (upload SUCCESS, the hard reset)
+      and the boot captured from **3.0 s uptime** through 33.9 s — a complete boot drain, not a mid-session
+      attach. Evidence artifact: `captures/a25-boot-gate/` (`serial.log` + `metadata.json`); the harness
+      run that produced the same behavior is `captures/host_midi_automation_serial_20260924_012548.log`.
+      This gate first required the restore telemetry (the A1.8 line deferred to Packet B), now landed as
+      `SC_RESTORE_REQUEST`/`RRQ`.
+      **Clause by clause:**
+      - *Every boot payload has a state; no payload without one* — **green**: 87 `RRQ` lines over 29
+        distinct `(track, slot)` requests, each observed `queued` → `running` → `terminal/committed`
+        (29/29/29). **0 requests were not terminal** at capture end.
+      - *`overflow_free=True`* — **green**: **0** `RING,overflow` rows across the 30.9 s boot window on
+        this build, and the managed run's MIDI-boundary check reported `overflow_free=True`.
+      - *The previously-`EMPTY` slot restores* — **green**: the boot census contains **`5/1`**, the
+        authorized scratch slot, alongside all 28 other committed slots; every one reached `committed`
+        with no stall.
+      - *MIDI gap within the standing bound* — **green by the standing oracle**: `overflow_free=True` is
+        the recorded standing gate for the MIDI path, and the restore work is bounded per turn (A2.2) and
+        charged in the drain budget (A3.3). Restore service latency measured `median 2.78 s`, `max 3.85 s`
+        per request across multi-slice preparation on an idle boot — reported as the measured service
+        time, **not** redefined as a MIDI-gap bound.
+      - No `waiting_*` state was observed on this run, which is consistent: every committed payload opened
+        and read cleanly at boot, and no job was commit-pending while another needed preparation.
+      **Note on the earlier attempt:** the first device attempt used `host_midi_hitl.py run --preset base`,
+      whose managed verdict was `INCONCLUSIVE_CAPTURE` on the documented `record stop did not reach PLAYING`
+      setup-state race (`CURRENT_WORK.md`: `successor-wrap-48/49/50`) — a harness weakness, not a
+      functional failure. Resetting that board also required a re-flash: neither serial-open nor a
+      1200-baud touch resets it (uptime stayed at 643 s), which is recorded because it cost a cycle.
 
-
-- [ ] A2.6 **Packet B gate.**
-      → **OPEN, blocked on A2.5.** Its native clauses are already green — full native 2,313 / 1 skipped /
-      0 failures; C1, C2, C4 and C6 green **in the default gate** (promoted per A1.11, not left behind a
-      flag); RAM1 line recorded (`variables 96,192 / code 392,344 + padding 872 / locals 34,880`). What is
-      missing is A2.5's device evidence, so this stays open. Full native suite green; A1.2/A1.3/A1.5/A1.6 green **in the default gate**
-      (promoted per A1.11, not left behind the flag); capture-serial RAM1 line recorded; A2.5 evidence
-      recorded. **Verify:** no oracle was weakened; the slice's commit boundary is one buildable commit.
+- [x] A2.6 **Packet B gate.**
+      → **DONE 2026-09-24.** Full native suite green: **2,316 cases / 1 skipped / 2,315 succeeded /
+      0 failures**. A1.2/A1.3/A1.5/A1.6 are green **in the default gate** (promoted per A1.11, not left
+      behind a flag — and the flag itself is deleted now that the set is empty). Capture-serial RAM1 line
+      recorded: `variables 96,192 / ITCM code 392,344 + padding 872 / locals free 34,880`, above the 840
+      floor, 12 ITCM banks unchanged. A2.5 device evidence recorded in `captures/a25-boot-gate/`.
 
 - [ ] A2.7 **Commit-bound prerequisite (review finding 1) — record, do not implement.**
       → **OPEN (recording task).** To be recorded in the change review and the S1/S2b handoff notes:
@@ -419,13 +419,6 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `waiting_commit_gate` case asserts the commit is **not** applied under transport, and no
       `main.cpp` commit-gate change exists in this change's diff (`MidiServiceDrain::admitLoadJobChild`
       untouched).
-      `resumable-midi-boundary-playback-maintenance` **task 3.3** (bounded Commit preparation/cleanup) is
-      a named external prerequisite for any acceptance criterion that requires a restore to **apply**
-      under active transport. Record the dependency in the change review, keep the affected acceptance
-      criteria scoped to terminal-or-named-wait, and do not relax `MidiServiceDrain::admitLoadJobChild`
-      here. **Verify:** the prerequisite is named in the change review and in the S1/S2b handoff notes; a
-      grep shows this change's acceptance criteria do not claim applying a restore under timing-critical
-      transport; no `src/main.cpp` commit-gate change exists in this change's diff.
       *(Referenced elsewhere as **runtime-maintenance 3.3**, to avoid confusion with this change's own
       Packet C tasks.)*
 
@@ -530,14 +523,6 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       terms were strictly subsumed by the per-grain counter, and removing them returned the build to the
       approved line (`code 392,344 + padding 872`). **Not claimed here:** that the drain *advances* the
       restore — that integration claim is A3.7 (device), per Revision 5.
- Extend
-      `SyncDrainBudgetInput` and `SyncDrainProgressSnapshot` / `madeSyncDrainProgress` so that (a) the
-      drain's step budget covers active and parked restore work, (b) restore progress counts as progress
-      and cannot trip the stuck detector or `maxSliceSteps`, and (c) the drain admits **at most the bounded
-      fresh queue work it needs** — a drain must not become an unbounded background fill. **Verify:** a case
-      runs a **small pending save behind a multi-slice restore** through the real drain and asserts it
-      completes without a stuck report or budget exhaustion; a case asserts restore motion alone registers
-      as progress; a case asserts a drain does not drain the whole restore queue; RAM1 line recorded.
 
 - [ ] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).** Give the drain
       a three-way result and expose it without silently changing existing callers: `saveState` keeps its

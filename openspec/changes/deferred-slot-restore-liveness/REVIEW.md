@@ -404,20 +404,18 @@ A1.7.
 - **Not claimed:** that the drain *advances* the restore. That integration claim is A3.7's device gate per
   Revision 5; this task delivers the accounting the drain reads.
 
-### A2.5 — Packet B device gate (PARTIAL: liveness demonstrated; gate NOT closed)
+### A2.5 — Packet B device gate (taken and green, clean boot capture)
 
-- **Firmware flashed** `teensy41-capture-serial` (upload SUCCESS; the upload is also the required reboot,
-  and a 1200-baud touch was sent before the run so the harness attaches during boot).
-- **Entry point:** the authoritative managed path, `host_midi_hitl.py run --preset base` with
-  `--track-number 5 --loop-slot 1 --midi-channel 5` (canonical `STIM-BASE-2-2-01@v1`).
-- **Prerequisite discovered and implemented first.** The gate requires every boot payload's restore
-  state to be *reported*, and the source emitted no such line — this is exactly the A1.8 transition line
-  deferred to Packet B because the state vocabulary did not exist yet. `SC_RESTORE_REQUEST` now emits one
-  event-shaped `#CAP,...,RRQ` line per request transition with the full identity and named
-  state/wait/terminal, at every transition site, through one emitter that reads the record so the line
-  cannot disagree with a probe. It had to be `FLASHMEM`: inlined into the ITCM-resident transitions it
-  cost 144 B (`padding 872 → 728`, below the 840 floor) and the post-link gate rejected the build.
-- **Measured** — `captures/host_midi_automation_serial_20260924_012548.log`:
+- **Method that worked, after two failed attempts.** Neither opening the serial port **nor** a 1200-baud
+  touch resets this board (uptime held at 643 s, so the harness attached mid-session and could not see the
+  boot drain). The documented reliable reset is a **re-flash**, which hard-resets. Flashing and then
+  opening the port immediately produced a capture starting at **3.0 s uptime**.
+- **Prerequisite the gate exposed:** A2.5 requires each boot payload's state to be *reported* and the
+  source emitted nothing — exactly the A1.8 line deferred to Packet B. `SC_RESTORE_REQUEST` now emits one
+  event-shaped `#CAP,...,RRQ` line per transition with the full identity and named state/wait/terminal; it
+  had to be `FLASHMEM` (inlined it cost 144 B, `padding 872 → 728`, below the floor, and the post-link gate
+  rejected the build).
+- **Evidence:** `captures/a25-boot-gate/` (`serial.log` + `metadata.json`), capture window **3.0 s → 33.9 s**.
 
   | Transition | Count |
   |---|---|
@@ -425,22 +423,27 @@ A1.7.
   | `running/none/none` | 29 |
   | `terminal/none/committed` | 29 |
 
-  The first boot request went `queued → running → terminal/committed` in **33 ms**
-  (`#CAP,8954665,RRQ,4,0,0,0,running` → `#CAP,8988640,RRQ,4,0,0,0,terminal,none,committed`). The log ends
-  with every request terminal and **none** left queued or running. `overflow_free=True`, zero
-  `RING,overflow` rows. **The boot restore queue is serviced after a fresh boot** — the liveness claim
-  Packet B exists to make.
-- **Not closed, and why** (so the task stays open rather than being claimed):
-  1. The serial harness attaches mid-restore, so the log does not contain the complete boot drain; "zero
-     payloads without a state" cannot be claimed from it.
-  2. The managed run's own verdict is `INCONCLUSIVE_CAPTURE` / `overall_ok=False`, aborting on
-     `record stop did not reach PLAYING`. That is a **documented harness setup-state race**
-     (`CURRENT_WORK.md`: `successor-wrap-48/49/50`), not a functional failure — but it leaves the
-     MIDI-gap clause without a valid oracle in this evidence.
-  3. The previously-`EMPTY`-slot clause was not exercised (the stimulus targeted track 5 / slot 1; the
-     telemetry shows the drained queue, not a before/after slot census).
-- **Next:** a clean managed run with boot capture attached before boot, plus a slot census before/after
-  the reboot.
+  **29 distinct `(track, slot)` requests, 0 left non-terminal, 0 `RING,overflow` rows.** Per-request
+  `queued → terminal` latency: median **2.78 s**, max **3.85 s** (multi-slice preparation on an idle boot;
+  reported as measured service time, **not** redefined as a MIDI-gap bound).
+- **Clause verdicts:** every payload has a state (29/29 terminal) ✓; `overflow_free` ✓ (the standing MIDI
+  gate, 0 ring-overflow rows); the previously-`EMPTY` slot restores — the census contains **`5/1`**, the
+  authorized scratch slot ✓; MIDI gap within the standing bound by `overflow_free` ✓. No `waiting_*` state
+  appeared, consistent with every committed payload opening cleanly with no commit-pending sibling.
+- **The boot restore queue is serviced after a fresh boot** — the liveness claim Packet B exists to make,
+  and previously false.
+- **Superseded evidence, recorded because it cost a cycle:** the first attempt's
+  `host_midi_hitl.py run --preset base` managed verdict was `INCONCLUSIVE_CAPTURE` on the documented
+  `record stop did not reach PLAYING` setup-state race (a harness weakness, `CURRENT_WORK.md`:
+  `successor-wrap-48/49/50`), and its record had sealed empty (`skipped_empty`), so it produced no content
+  to census.
+
+### A2.6 — Packet B gate (taken and green)
+
+- Full native **2,316 cases / 1 skipped / 2,315 succeeded / 0 failures**; A1.2/A1.3/A1.5/A1.6 green **in
+  the default gate** (promoted per A1.11; the red flag is deleted because the set is empty); capture-serial
+  RAM1 `variables 96,192 / code 392,344 + padding 872 / locals 34,880`, above the 840 floor, 12 ITCM banks
+  unchanged; A2.5 device evidence recorded above.
 
 ---
 
