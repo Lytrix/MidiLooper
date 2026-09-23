@@ -848,3 +848,53 @@ which is a type-size change. Size assertions alone do not satisfy S3.0.
 allowance to about **2,176 B**. A deliberate cold-code placement improvement is therefore planned as its
 own change — **not** as part of this runtime-correctness slice — and the post-link check is what keeps the
 situation visible in the meantime.
+
+## P1 — B03 transport retarget, and why the obligation is consumed there (2026-09-23)
+
+### Oracle and result
+
+`test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it` (default gate) drives the
+**production** transport-stop entry — `Track::stopOverdubbingToStopped()` →
+`requestDeferredOverdubStopToStopped()`, not a fake running-clock toggle — on an admitted
+`Playing`-destination stop and asserts:
+
+- the stop survives the transport stop (`hasPendingDeferredOverdubStop()` still true) and is **retargeted**
+  to `PendingStopDestination::Stopped`;
+- the accepted obligation is clear at that point (see below);
+- the job keeps its identity: exactly one descriptor, bound to the interval's slot 0, with its interval
+  unchanged — nothing dropped, re-created or rebound).
+
+### `consumeAcceptedStopObligation()` at the transport-stop entry is load-bearing
+
+`stopOverdubbingToStopped()` clears the accepted obligation before it admits or synchronously completes
+the stop. **Removing that would be a defect, not a nicety:** if the transport-stop leg admitted the stop
+while leaving the latch set, or took the synchronous fallback, the latch would survive an interval that no
+longer exists. It would then keep `hasStopInFlight()` true forever — blocking every later record start,
+slot switch and release through the guards S4f.5 just fixed — and its deferred drive would be refused by
+`isOverdubbing()` on every turn with nothing to clear it.
+
+### Recorded limitations — NOT coverage
+
+- **The `Stopped`-destination *drain* is not assertable in this suite.** The retire block for a `Stopped`
+  destination calls `Track::silenceTrackMidiOutput()`, which is a fail-closed off-path stub in
+  `off_path_deps.h`. So the fixture owns the retarget and no-loss properties; the drain is covered for a
+  `Playing` destination (B02, S2b2) but not for `Stopped`.
+- **The latched (accepted, not admitted) transport-stop leg is not assertable either**, for the same
+  reason plus the `commitCaptureForStop` stub: with credit denied the transport-stop path takes the
+  synchronous fallback, which those stubs exist to keep off this suite's path. On device that fallback is
+  the pre-existing transport-stop behavior; the deferred drive is what this change added.
+- **B06 (dispatch reachability) is not implemented as a fixture.** The scheduler's eligibility decision
+  lives in `src/main.cpp` (`hasRealtimeIdleWork`, the all-stopped guard) and the sketch is not
+  native-linkable, so proving "a stopped or non-focus track still gets a grain" needs either a production
+  extraction of that decision or a device run. For this slice a latched stop keeps its track in
+  `OVERDUBBING`, which `hasRealtimeIdleWork` already accepts, so the drive is reachable — and it is why
+  retargeting at transport stop was **not** taken: a retargeted-but-unadmitted stop on an all-stopped
+  transport would need B06 first or it would hang in `OVERDUBBING`.
+
+### Verification
+
+| check | result |
+|---|---|
+| focused `test_continuous_capture` | **PASSED, 87/87** |
+| full native | **2,272 cases / 1 skipped / 2,271 succeeded / 0 failures** |
+| firmware + RAM1 budget check | **SUCCESS** — `variables 96,128 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,944` |

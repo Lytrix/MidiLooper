@@ -4163,6 +4163,44 @@ void test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes() {
   TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
 }
 
+/// P1/B03 (S4f.4, DEC-070): transport stop retargets a pending stop to STOPPED through the
+/// **production** route, and the accepted request is not lost. A fake running-clock toggle would not
+/// cover this: the retarget is `Track::stopOverdubbingToStopped` -> `requestDeferredOverdubStopToStopped`.
+void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it() {
+  Track& track = preparePlayingTrack();
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(PendingStopDestination::Playing),
+                          TrackCaptureStopTestAccess::jobDestination(track));
+
+  // The production transport-stop entry.
+  track.stopOverdubbingToStopped();
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "an admitted stop must survive the transport stop, not be lost");
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(static_cast<uint8_t>(PendingStopDestination::Stopped),
+                                  TrackCaptureStopTestAccess::jobDestination(track),
+                                  "transport stop retargets the pending stop to STOPPED");
+  // Consuming the accepted obligation at the transport-stop entry is load-bearing: a latch left
+  // behind would keep `hasStopInFlight()` true forever and block every later start and switch.
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+
+  // The job keeps its identity across the retarget: still one descriptor, bound to the interval's
+  // slot, with its admission still pending. Nothing was silently dropped or re-created.
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
+  TEST_ASSERT_EQUAL_UINT64(TrackCaptureStopTestAccess::interval(track),
+                           TrackCaptureStopTestAccess::jobInterval(track));
+  // The STOPPED-destination *drain* is not assertable in this suite: the retire block for a Stopped
+  // destination calls `Track::silenceTrackMidiOutput()`, which is a fail-closed off-path stub in
+  // `off_path_deps.h`. Recorded as a harness limitation, not as coverage -- the retarget and the
+  // no-loss property above are what this fixture owns. The `Playing`-destination drain is covered by
+  // B02 and the S2b2 fixture.
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4260,6 +4298,7 @@ int main() {
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
+  RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
   // baseline exception once the implementing slice lands").
