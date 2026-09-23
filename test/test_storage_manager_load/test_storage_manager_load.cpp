@@ -47,6 +47,7 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/LoadLoopJob.cpp"
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
+#include "../../src/StorageManager/RestoreRequestState.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"
 // The runtime's own explicit-request / background-fill entry points live beside the SD boot load, not
 // in the load-job TU: without them the suite could only reach the queue through internal helpers.
@@ -603,6 +604,161 @@ void test_restore_state_probe_reports_the_save_blocked_by_restore() {
 }
 
 // ---------------------------------------------------------------------------
+// Packet B / A2.1 — the restore request record: identity, state separation, exactly one terminal.
+//
+// These are **desired-behavior** cases over the A2.1 contract. The record and its API exist; what does
+// not exist yet is the production wiring that drives every transition, so the cases below that require
+// wiring are red and belong to the `RESTORE_LIVENESS_RED` set. The identity/state-separation cases that
+// the record itself satisfies are default-gate.
+// ---------------------------------------------------------------------------
+
+/// **The production path drives the request state (A2.1 wiring).** A real queued restore begins
+/// `queued`, is `running` while an admitted job owns it, and reaches its terminal on commit -- so the
+/// state is the runtime's own, not a record only a fixture writes.
+void test_restore_request_state_is_driven_by_the_production_path() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  RestoreHarness::armBackgroundRestoreRequest(0, 7, 68);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(
+      static_cast<int>(StorageManagerInternal::RestoreRequestState::Queued),
+      static_cast<int>(StorageManagerInternal::restoreRequestState(0, 7)),
+      "the queue entry must be born `queued`");
+
+  // One production turn: the request is selected into a job, which is `running`.
+  RestoreHarness::runSingleLoadServiceTurn();
+  const auto afterSelection = StorageManagerInternal::restoreRequestState(0, 7);
+  TEST_ASSERT_TRUE_MESSAGE(
+      afterSelection == StorageManagerInternal::RestoreRequestState::Running ||
+          afterSelection == StorageManagerInternal::RestoreRequestState::Terminal,
+      "a selected request must be `running` or already terminal, never still queued");
+
+  // Drive to completion: the payload commits, so the request reaches its terminal.
+  RestoreHarness::runLoadServiceTurns(64, RestoreHarness::restoreWorkIdle);
+  TEST_ASSERT_TRUE_MESSAGE(trackManager.getSelectedTrack().getLoop(7).hasCommittedPasses(),
+                           "the fixture must actually have restored the slot");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(
+      static_cast<int>(StorageManagerInternal::RestoreRequestState::Terminal),
+      static_cast<int>(StorageManagerInternal::restoreRequestState(0, 7)),
+      "a committed restore must reach its terminal");
+  TEST_ASSERT_EQUAL_STRING(
+      "committed", StorageManagerInternal::restoreRequestTerminalName(
+                       StorageManagerInternal::RestoreRequestTerminal::Committed));
+}
+
+/// A fresh request is **queued**, not terminal: "not yet served" and "finished" are different states,
+/// which is the separation D1 requires.
+void test_restore_request_starts_queued_and_is_not_a_terminal() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Queued),
+                        static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)));
+  TEST_ASSERT_TRUE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 2));
+}
+
+/// A running slice keeps the identity and is not given a fictitious wait reason.
+void test_restore_request_running_keeps_identity_without_a_wait() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  const uint32_t generation = StorageManagerInternal::restoreRequestGenerationFor(0, 2);
+  StorageManagerInternal::markRestoreRequestRunning(0, 2);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Running),
+                        static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generation,
+                                   StorageManagerInternal::restoreRequestGenerationFor(0, 2),
+                                   "running work must retain the request identity");
+}
+
+/// A denying gate moves the request to **waiting** with a name, and that wait is not a terminal.
+void test_restore_request_wait_is_named_and_not_terminal() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  StorageManagerInternal::markRestoreRequestWaiting(0, 2,
+                                                   StorageManagerInternal::RestoreRequestWait::CommitGate);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Waiting),
+                        static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)));
+  TEST_ASSERT_EQUAL_STRING(
+      "waiting_commit_gate",
+      StorageManagerInternal::restoreRequestWaitName(
+          StorageManagerInternal::RestoreRequestWait::CommitGate));
+}
+
+/// **Exactly one terminal per identity**: a second terminal for the same identity is refused, so the
+/// first outcome is never overwritten by a later one.
+void test_restore_request_records_exactly_one_terminal_per_identity() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  TEST_ASSERT_TRUE(StorageManagerInternal::markRestoreRequestTerminal(
+      0, 2, StorageManagerInternal::RestoreRequestTerminal::Committed));
+  TEST_ASSERT_FALSE_MESSAGE(
+      StorageManagerInternal::markRestoreRequestTerminal(
+          0, 2, StorageManagerInternal::RestoreRequestTerminal::Superseded),
+      "a second terminal for the same identity must be refused");
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Terminal),
+                        static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)));
+}
+
+/// A reused `(track, slot)` is a **different request**: an external generation advance makes the old
+/// record stale, so the earlier terminal cannot describe the new request.
+void test_restore_request_reused_coordinates_are_a_new_request() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  const uint32_t firstGeneration = StorageManagerInternal::restoreRequestGenerationFor(0, 2);
+  TEST_ASSERT_TRUE(StorageManagerInternal::markRestoreRequestTerminal(
+      0, 2, StorageManagerInternal::RestoreRequestTerminal::Committed));
+
+  StorageManagerInternal::advanceRestoreRequestGeneration(0, 2);
+  TEST_ASSERT_GREATER_THAN(firstGeneration,
+                           StorageManagerInternal::restoreRequestGenerationFor(0, 2));
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 2),
+                            "the earlier record must not describe the new request");
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(StorageManagerInternal::RestoreRequestState::Queued),
+                                static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)),
+                                "the new request starts queued, not terminal");
+}
+
+/// A set change supersedes outstanding requests, and `superseded` is distinct from `refused`.
+void test_restore_request_set_change_supersedes_outstanding() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  StorageManagerInternal::beginRestoreRequest(1, 4);
+  StorageManagerInternal::markRestoreRequestRunning(0, 2);
+
+  StorageManagerInternal::noteRestoreSetEpoch(7);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(StorageManagerInternal::RestoreRequestState::Terminal),
+                        static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)));
+  TEST_ASSERT_EQUAL_STRING(
+      "superseded", StorageManagerInternal::restoreRequestTerminalName(
+                        StorageManagerInternal::RestoreRequestTerminal::Superseded));
+  TEST_ASSERT_EQUAL_UINT32(7, StorageManagerInternal::restoreSetEpoch());
+}
+
+/// The restore path's **own** failure cleanup resets the slot but keeps the identity: the request goes to
+/// its retry wait, never to `superseded`. This is the G2 tightening — a blind generation advance on every
+/// reset would supersede the very request meant to retry.
+void test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait() {
+  StorageManagerInternal::resetAllRestoreRequestState();
+  StorageManagerInternal::beginRestoreRequest(0, 2);
+  const uint32_t generation = StorageManagerInternal::restoreRequestGenerationFor(0, 2);
+
+  // The restore path's own cleanup: reset the slot, keep the identity, name the wait.
+  StorageManagerInternal::resetLoopSlotToEmpty(trackManager.getSelectedTrack().getLoop(2), 2);
+  StorageManagerInternal::markRestoreRequestWaiting(0, 2, StorageManagerInternal::RestoreRequestWait::Retry);
+
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(generation,
+                                   StorageManagerInternal::restoreRequestGenerationFor(0, 2),
+                                   "the restore path's own cleanup must keep the identity");
+  TEST_ASSERT_TRUE(StorageManagerInternal::restoreRequestRecordIsCurrent(0, 2));
+  TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(StorageManagerInternal::RestoreRequestState::Waiting),
+                                static_cast<int>(StorageManagerInternal::restoreRequestState(0, 2)),
+                                "its own failed attempt is a retry wait, not superseded");
+}
+
+// ---------------------------------------------------------------------------
 // SD write-mode semantics (fix/sd-temp-rewrite, docs/Plans/sd_temp_write_truncation_refinement.md)
 //
 // The device's `SD.open(path, FILE_WRITE)` is `O_RDWR|O_CREAT|O_AT_END` -- it appends -- and
@@ -700,6 +856,15 @@ int main(int, char**) {
   // A1.8 — observability is default-gate: it is observation-only and passes on the current tree.
   RUN_TEST(test_restore_state_probe_reports_queue_and_job_ownership);
   RUN_TEST(test_restore_state_probe_reports_the_save_blocked_by_restore);
+  // A2.1 — the request record's identity/state contracts (default-gate; the record satisfies them).
+  RUN_TEST(test_restore_request_state_is_driven_by_the_production_path);
+  RUN_TEST(test_restore_request_starts_queued_and_is_not_a_terminal);
+  RUN_TEST(test_restore_request_running_keeps_identity_without_a_wait);
+  RUN_TEST(test_restore_request_wait_is_named_and_not_terminal);
+  RUN_TEST(test_restore_request_records_exactly_one_terminal_per_identity);
+  RUN_TEST(test_restore_request_reused_coordinates_are_a_new_request);
+  RUN_TEST(test_restore_request_set_change_supersedes_outstanding);
+  RUN_TEST(test_restore_request_own_failure_cleanup_keeps_identity_as_retry_wait);
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
   RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);

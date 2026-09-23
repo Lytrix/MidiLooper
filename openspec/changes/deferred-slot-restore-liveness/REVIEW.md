@@ -261,6 +261,39 @@ A1.7.
   vocabulary that A2.1 defines, which is exactly the "do not fabricate a state" line the design draws.
   No per-turn state line is emitted (capture-ring overflow precedent respected); the probe is on-demand.
 
+### A2.1 — request identity and state separation (in progress: record + birth/committed wiring landed)
+
+- **New owner, no new module boundary:** `src/StorageManager/RestoreRequestState.cpp`, declared in
+  `StorageManagerInternal.h`, beside the existing restore arrays. `STORAGE_PERSIST_DATA` for the records
+  (external allocation) and `FLASHMEM` for every function.
+- **Identity:** `(track, slot, requestGeneration, setEpoch)`. The generation advances **only** through
+  `advanceRestoreRequestGeneration`, which the call sites for an *external* change use; the restore path's
+  own failure cleanup keeps the identity and names a retry wait. `noteRestoreSetEpoch` supersedes
+  outstanding requests before the epoch moves.
+- **State separation:** `RestoreRequestState { Queued, Running, Waiting, Terminal }` with
+  `RestoreRequestWait { SlotOwned, Capture, CommitGate, JobCapacity, Retry }` and
+  `RestoreRequestTerminal { Committed, Unnecessary, Refused, Superseded }`, each with a name function for
+  the observability work.
+- **Wiring landed:** born `queued` at both queue-entry sites; `running` in `beginLoadLoopJob`; the
+  `committed` terminal in `commitLoadLoopJobPublish`.
+- **Native evidence:** suite **18/18**; full native **2,305 / 1 skipped / 2,304 succeeded / 0 failures**.
+  The cases include the production-driven
+  `test_restore_request_state_is_driven_by_the_production_path` and the six identity/terminal contracts.
+- **Two defects the cases caught (both fixed):**
+  1. **The identity check was self-satisfying.** `restoreRequestRecordIsCurrent` compared the record's
+     stored generation against the per-slot counter — but the advance *writes the new counter into the
+     record*, so a stale record always compared equal and the "an earlier terminal must not describe the
+     new request" contract was unobservable. Fixed with an explicit `identityValid` flag that only
+     `beginRestoreRequest` sets, so an advance leaves the record describing **no** request.
+  2. **The set-change supersede wiped its own outcome.** `noteRestoreSetEpoch` recorded `superseded` and
+     then cleared the records, erasing the terminal it had just written. The epoch now moves first and the
+     records are rebuilt as superseded terminals in one pass.
+- **RAM1 was enforced, not advisory.** The first version cost 64 B of ITCM (`padding 888 → 824`, below the
+  approved floor of 840) and the post-link budget gate failed the build. Making every helper `FLASHMEM`
+  restored `code 392,328 / padding 888` with 48 B of headroom.
+- **Still open:** wait-state transitions at the denying gates, the `refused`/`unnecessary` terminals,
+  pre-publication identity validation, and `loopSlotRestoreAttempted_` retirement.
+
 ---
 
 ## Mechanism ledger (A1.9)
