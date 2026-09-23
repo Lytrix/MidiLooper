@@ -68,7 +68,14 @@
 #include "../../src/Track/TrackMidiEventRouting.cpp"
 #include "../../src/TrackManager.cpp"
 
+// A suite that also links `src/TrackUndo.cpp` must omit this: `MidiButtonActions.cpp` defines
+// `restorePlaybackAfterSlotClear` in an anonymous namespace while `TrackUndo.cpp` defines it at namespace
+// scope. Separate translation units never collide; an include-based harness concatenates them into one, so
+// the suite chooses. `test_continuous_capture` needs the button routes and defines nothing; the load harness
+// needs the undo path and opts out.
+#if !defined(HARNESS_OMITS_MIDI_BUTTON_ACTIONS)
 #include "../../src/MidiButtonActions.cpp"
+#endif
 
 #include "../../src/Utils/RuntimeTimingTelemetry.cpp"
 #include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"

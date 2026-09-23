@@ -244,6 +244,18 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   one symbol from linking**: `StorageManagerInternal::storageIoFromFileRead(File&)`, which lives in the
   heavyweight boot-load TUs and would pull much of the persistence layer -- a deliberate stopping point, with
   the fixture's design already recorded. Load suite **4/4**, full native **2,276 / 1 skipped / 0 failures**.
+- **S2b.5's retirement half is blocked by a harness artifact, now named.** The fixture's second half ("after
+  retirement, restoration happens exactly once") needs the job drained to retirement, which makes
+  `TrackUndo::prepareOverdubSessionEntry` live, which needs `src/TrackUndo.cpp`. Linking it collides with the
+  already-linked `MidiButtonActions.cpp`: **both define `restorePlaybackAfterSlotClear`** -- `TrackUndo.cpp` at
+  namespace scope, `MidiButtonActions.cpp:118` inside an **anonymous namespace**. Separate translation units
+  never collide; an include-based harness concatenates them into one. The obvious seam
+  (`HARNESS_OMITS_MIDI_BUTTON_ACTIONS`, left guarded in `track_harness.inc` for the next attempt) then breaks
+  differently, because `off_path_deps.h` stubs `ControlSurfaceManager`/`MidiFaderActions` whose **headers**
+  arrive only via `MidiButtonActions.cpp`. So the obstacle is the harness's single-TU assumption, not the load
+  path. Two routes: give the load suite its own minimal stub surface instead of reusing `off_path_deps.h`, or
+  split the shared harness into "button headers" vs "button TU". Load suite **5/5**, full native
+  **2,277 / 1 skipped / 0 failures**, firmware + per-env budget SUCCESS.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

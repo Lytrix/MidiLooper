@@ -1412,3 +1412,40 @@ check keeps reporting headroom rather than re-basing anything.
 
 S2b.5's own acceptance also wants "after retirement, restoration happens exactly once" — that half is the
 next increment's assertion, on the same fixture, and is not claimed here.
+
+## P1 — S2b.5's retirement half: the blocker is a harness artifact, and it is named (2026-09-23)
+
+The fixture's second half — "after retirement, restoration happens exactly once" — needs the admitted job
+drained to retirement (`Track::processDeferredOverdubStopGrain`), and that surfaced a **harness** problem
+rather than a production one. Nothing was committed from the attempt; the suite stays at 5/5.
+
+### The chain, and why it is an artifact
+
+- Draining the job makes `Track::stepDeferredUndoCollection` live, which needs
+  `TrackUndo::prepareOverdubSessionEntry` from `src/TrackUndo.cpp`.
+- Linking `TrackUndo.cpp` collides with the already-linked `MidiButtonActions.cpp`:
+  **both define `restorePlaybackAfterSlotClear`** — `TrackUndo.cpp` at namespace scope, and
+  `MidiButtonActions.cpp:118` inside an **anonymous namespace**. Separate translation units never collide;
+  an include-based harness concatenates them into one, so the two definitions meet.
+- Adding the obvious seam (`HARNESS_OMITS_MIDI_BUTTON_ACTIONS`, guarded in `track_harness.inc` and left in
+  place for the next attempt) makes the build fail differently: `off_path_deps.h` stubs
+  `ControlSurfaceManager`, `MidiFaderActions` and friends whose **headers** arrive only by way of
+  `MidiButtonActions.cpp`. Omitting the TU removes the declarations too.
+
+So the obstacle is the include-based harness's single-TU assumption plus `off_path_deps.h`'s reliance on a
+neighbouring TU's includes — not the load path, and not anything S2b.5 changes. The two workable routes for
+the next attempt are (a) let the load suite carry its own minimal stub surface instead of reusing
+`off_path_deps.h`, or (b) give the shared harness an explicit "include the button headers, not the button
+TU" split. Either is a contained test-infrastructure change.
+
+### Verification (unchanged)
+
+| check | result |
+|---|---|
+| load suite | **5/5** |
+| full native | **2,277 cases / 1 skipped / 2,276 succeeded / 0 failures** |
+| `test_continuous_capture` | 87/87 |
+| firmware + budget | SUCCESS, `teensy41-capture-serial` padding **1,032** |
+
+S2b.5 remains **open** on this half plus the device gate. Its primary acceptance — a load must not destroy a
+live owner's slot, proven through the production selection entry — is landed and green.
