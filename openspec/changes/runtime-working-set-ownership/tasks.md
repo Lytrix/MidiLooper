@@ -210,22 +210,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       slots; payload 1 -> 4 chunks, admitted 41 -> 44) and that `freeChunkCount()` stays at or above
       `PassConfig::CHUNK_RESERVE` (16). Recorded constant: boot's own cost is **40 chunks** for the default
       enabled set (~5 per enabled slot) -- constant in the committed-slot count and bounded by the enabled
-      set, not the library. **PARTIAL 2026-09-23:** the third clause (the smallest N at which a 24-bar overdub
-      is refused) was **attempted as a native sweep and reverted as misleading** -- it probed the arm admission
-      after committing 24-bar loops one at a time and reported its first refusal at N=2, which cannot be the
-      capacity boundary because the native pool is **heap-backed** (it does not truly exhaust; it is bounded only
-      by the 512 chunk ids, and two such loops hold ~32 of them), so that refusal comes from a *different*
-      admission condition (a windowed-only / companion-horizon / whole-take branch), not exhaustion. Publishing
-      it would have been an unverified capacity claim. The clause needs either a deterministic **id-ceiling**
-      construction that also asserts the refusal *reason*, or the device leg where the pool is real and S1.3 is
-      already specified to record the failure point. **NARROWED 2026-09-23:** the obvious cause was probed and
-      eliminated -- the record arm **is** repeatable (three successive grants succeed; kept as the guard
-      `test_record_arm_admission_is_repeatable`), so the N=2 refusal was neither exhaustion nor re-granting. The
-      reason cannot be distinguished natively at all: `prewarmPlaybackForSlot` returns only a bool and the cause
-      is emitted as `#MEM_DENIED`, a **device** diagnostic. So the clause needs either a **test-only reason
-      capture at the admission boundary** (an observation seam, which DEC-080 permits) or the device leg.
-      **Outstanding:** that seam or the device run, and the boot `live` figure against a 24-bar overdub's peak
-      reservation (~191 chunks).
+      set, not the library. **CORRECTED 2026-09-23 -- the earlier "N=2 refusal" finding was a MISREAD and is
+      withdrawn.** The sweep never reached an admission probe: the failure was at the fixture's own
+      `TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(...))`, and `SealOutcome` value 2 is
+      **`FailedValidation`** (`LoopPasses.h:25-31`). So a dense 24-bar loop (~72 events/bar) **does not seal** in
+      this harness, and no refusal was measured. The clause is **not yet attempted with a valid construction**;
+      the concrete next step is a construction that seals first -- itself a property of the capture validation
+      path worth knowing. The arm-repeatability guard added at the same time is unaffected and correct.
+      **Outstanding:** that construction, and the boot `live` figure against a 24-bar overdub's peak reservation
+      (~191 chunks).
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
