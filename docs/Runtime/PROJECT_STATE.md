@@ -51,6 +51,14 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   removal) is deliberately not in this step**, so phase A is not complete; S4f.1/S4f.2/S2b.6 are recorded
   as partial and S4f.5 (the 49 in-flight consumers), S4f.3, S4f.4's epoch counter, S4.0, S2b.2-S2b.5 and
   B03-B07 remain open.
+- **Next slice pinned by reading the tree, not assumed.** Two hazards must ship with S2b.1 (boot/load
+  reservation removal): (1) `Track::startOverdubbing` never admits the transfer horizon, so with the boot
+  reservation gone a loaded slot's stop would fail `transfer_denied` forever — that admission belongs at
+  the overdub start's cold point, **not** in the park, because
+  `prewarmActiveOverdubTransferHorizon` relocates `passes.overdubPasses` and must not run mid-interval;
+  (2) `prewarmCanonicalCaptureOutput` requires an empty `canonicalCaptureOutput.store`, which the retire
+  block never touches, so S2b.1 must ship with S2b.6's retire-path invariant or a loaded slot's second
+  overdub can wait forever. Recorded in `ARCHITECTURE-REVIEW.md` § P1 rather than implemented in a hurry.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
