@@ -103,11 +103,85 @@ void test_runtime_bundle_estimates_are_non_zero() {
   TEST_ASSERT_GREATER_THAN(0u, sdBytes);
 }
 
+// ---------------------------------------------------------------------------
+// Packet C / A3.3 — restore work in the drain's budget and progress accounting.
+//
+// `SyncDrainBudgetInput` and `SyncDrainProgressSnapshot` carried persistence fields only, so a large
+// restore could exhaust `maxSliceSteps` or look stalled while legitimately progressing, and the stuck
+// detector could abort a drain that was making real progress (design.md D4 rule 4, G2 finding 3).
+// These cases are the pure-decision oracles for that accounting; the integration claim ("the drain
+// advances the restore") is the A3.7 device gate per the Revision 5 split.
+// ---------------------------------------------------------------------------
+
+/// Restore work is charged in the drain's step budget and byte estimate, so `maxSliceSteps` covers it.
+void test_drain_budget_includes_restore_work() {
+  PersistenceSyncDrainBudget::SyncDrainBudgetInput withoutRestore{};
+  withoutRestore.queuedWorkSliceSteps = 100;
+  withoutRestore.queuedWorkSdBytes = 4096;
+
+  PersistenceSyncDrainBudget::SyncDrainBudgetInput withRestore = withoutRestore;
+  withRestore.restoreSliceSteps = 50;
+  withRestore.restoreSdBytes = 2048;
+
+  const SyncDrainBudget baseline =
+      PersistenceSyncDrainBudget::buildSyncDrainBudget(withoutRestore, Config::maxPersistenceMicrosPerLoop);
+  const SyncDrainBudget extended =
+      PersistenceSyncDrainBudget::buildSyncDrainBudget(withRestore, Config::maxPersistenceMicrosPerLoop);
+
+  TEST_ASSERT_GREATER_THAN(baseline.expectedSliceSteps, extended.expectedSliceSteps);
+  TEST_ASSERT_GREATER_THAN(baseline.estimatedSdPayloadBytes, extended.estimatedSdPayloadBytes);
+  TEST_ASSERT_GREATER_THAN(baseline.maxSliceSteps, extended.maxSliceSteps);
+}
+
+/// **Restore motion alone counts as drain progress.** Without this, a drain advancing a multi-slice
+/// restore trips the stuck detector while making real progress.
+void test_made_sync_drain_progress_counts_restore_motion() {
+  SyncDrainProgressSnapshot before{};
+  // No persistence work at all: the drain is waiting on the restore, which is the C5 shape.
+  before.restoreProgressCounter = 10;
+
+  SyncDrainProgressSnapshot afterSlice = before;
+  afterSlice.restoreProgressCounter = 11;
+  TEST_ASSERT_TRUE_MESSAGE(
+      PersistenceSyncDrainBudget::madeSyncDrainProgress(before, afterSlice),
+      "restore motion must count as drain progress");
+
+  SyncDrainProgressSnapshot afterRestorePhase = before;
+  afterRestorePhase.restorePhase = 1;
+  TEST_ASSERT_TRUE_MESSAGE(
+      PersistenceSyncDrainBudget::madeSyncDrainProgress(before, afterRestorePhase),
+      "a restore phase change must count as drain progress");
+
+  // A restore that advanced nothing is still not progress.
+  TEST_ASSERT_FALSE(PersistenceSyncDrainBudget::madeSyncDrainProgress(before, before));
+}
+
+/// A restore-only drain is still bounded: the budget covers the restore work instead of being sized by
+/// persistence alone, and its wall-clock cap remains finite.
+void test_restore_only_drain_budget_is_bounded_not_zero() {
+  PersistenceSyncDrainBudget::SyncDrainBudgetInput input{};
+  input.restoreSliceSteps = 200;
+  input.restoreSdBytes = 65536;
+  input.restoreOnlyBlocker = true;
+
+  const SyncDrainBudget budget =
+      PersistenceSyncDrainBudget::buildSyncDrainBudget(input, Config::maxPersistenceMicrosPerLoop);
+
+  TEST_ASSERT_GREATER_THAN(0u, budget.expectedSliceSteps);
+  TEST_ASSERT_GREATER_THAN(0u, budget.maxSliceSteps);
+  TEST_ASSERT_GREATER_THAN(0u, budget.maxWallClockUs);
+  TEST_ASSERT_GREATER_THAN(0u, budget.estimatedSdPayloadBytes);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   RUN_TEST(test_loop_persist_slice_steps_scales_with_chunks);
   RUN_TEST(test_build_sync_drain_budget_applies_headroom);
   RUN_TEST(test_made_sync_drain_progress_detects_queue_and_stage_changes);
   RUN_TEST(test_runtime_bundle_estimates_are_non_zero);
+  // A3.3 — restore work in the drain budget and progress accounting.
+  RUN_TEST(test_drain_budget_includes_restore_work);
+  RUN_TEST(test_made_sync_drain_progress_counts_restore_motion);
+  RUN_TEST(test_restore_only_drain_budget_is_bounded_not_zero);
   return UNITY_END();
 }

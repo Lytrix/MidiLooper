@@ -52,6 +52,11 @@ STORAGE_PERSIST_MEM SyncDrainProgressSnapshot captureSyncDrainProgressSnapshot()
   snapshot.capturePassCursor = storageSession.currentWorkspaceSave.capturePassCursor;
   snapshot.chunkCursor = storageSession.currentWorkspaceSave.chunkCursor;
   snapshot.pendingFlush = storageSession.currentWorkspaceSave.pending;
+  // A3.3: restore motion, so a drain advancing the restore it waits on is not read as stuck. The C5
+  // shape has no active persistence work item at all, which is why these terms must be compared before
+  // `madeSyncDrainProgress`'s "no active work item" short-circuit.
+  snapshot.restorePhase = restoreWorkPhase();
+  snapshot.restoreProgressCounter = restoreProgressCounter();
   return snapshot;
 }
 
@@ -63,6 +68,10 @@ STORAGE_PERSIST_MEM SyncDrainBudget buildSyncDrainBudgetForSession() {
   input.queuedWorkSliceSteps = accum.sliceSteps;
   input.queuedWorkSdBytes = accum.sdBytes;
   input.midPassQueueDepth = PersistenceQueue::queueDepth();
+  // A3.3: the restore work the drain may have to advance is charged in the same budget.
+  input.restoreSliceSteps = restoreWorkSliceSteps();
+  input.restoreSdBytes = restoreWorkSdBytes();
+  input.restoreOnlyBlocker = restoreWorkPhase() != 255 && accum.sliceSteps == 0;
   if (storageSession.currentWorkspaceSave.pending && PersistenceWorkQueue::queueDepth() == 0 &&
       PersistenceWorkQueue::writingWorkItemCount() == 0 &&
       !storageSession.persistenceWorkItem.itemActive) {

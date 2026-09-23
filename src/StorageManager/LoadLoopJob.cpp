@@ -809,6 +809,41 @@ void armBackgroundRestoreHoldoff(uint32_t delayMs) {
     backgroundRestoreHoldoffUntilMs_ = millis() + delayMs;
 }
 
+/// A3.3: charge the drain for the restore work it may have to advance. One persist-like slice step per
+/// `ReadChunkBytes` of payload across both instances, plus a small constant for the phase work, so a
+/// large restore is not budget-starved by a persistence-only estimate.
+STORAGE_PERSIST_MEM uint32_t restoreWorkSliceSteps() {
+    using namespace StorageManagerInternal;
+    const size_t payload = loadLoopJob_.payloadSize + parkedLoadLoopJob_.payloadSize;
+    const size_t read = loadLoopJob_.bytesRead + parkedLoadLoopJob_.bytesRead;
+    const size_t remaining = payload > read ? payload - read : 0;
+    const uint32_t remainingSteps =
+        static_cast<uint32_t>((remaining + LoadLoopBudget::ReadChunkBytes - 1) / LoadLoopBudget::ReadChunkBytes);
+    // A constant covers the parse/commit/cleanup phase steps that do not scale with bytes.
+    const bool anyJob = loadLoopJob_.active || parkedLoadLoopJob_.active;
+    return remainingSteps + (anyJob ? 2u : 0u);
+}
+
+/// A3.3: estimated SD bytes still to be read for the live restore.
+STORAGE_PERSIST_MEM uint32_t restoreWorkSdBytes() {
+    using namespace StorageManagerInternal;
+    const size_t payload = loadLoopJob_.payloadSize + parkedLoadLoopJob_.payloadSize;
+    const size_t read = loadLoopJob_.bytesRead + parkedLoadLoopJob_.bytesRead;
+    return static_cast<uint32_t>(payload > read ? payload - read : 0);
+}
+
+/// A3.3: the phase of the instance that is servicing preparation, or 255 when none is.
+STORAGE_PERSIST_MEM uint8_t restoreWorkPhase() {
+    using namespace StorageManagerInternal;
+    if (loadLoopJob_.active) {
+        return static_cast<uint8_t>(loadLoopJob_.phase);
+    }
+    if (parkedLoadLoopJob_.active) {
+        return static_cast<uint8_t>(parkedLoadLoopJob_.phase);
+    }
+    return 255;
+}
+
 bool isActiveLoadLoopJobRunning() {
     return loadLoopJob_.active;
 }
@@ -890,6 +925,8 @@ void STORAGE_PERSIST_MEM stepSubmittedLoadJobsImpl(uint32_t budgetUs, bool activ
         }
         const LoadLoopJobPhase phaseBefore = loadLoopJob_.phase;
         const SlotLoadAdvanceResult result = stepLoadLoopJob(deadlineUs);
+        // A3.3: a serviced grain is restore progress, which the blocking drain reads.
+        bumpRestoreProgressCounter();
         // A2.2: the moment preparation completes, a request whose commit the gate denies is in its
         // **named** commit-gate wait. Recording it here (not only at the next frame's entry check) means
         // the state is observable on the same turn the phase changes, which is what a fixture and an

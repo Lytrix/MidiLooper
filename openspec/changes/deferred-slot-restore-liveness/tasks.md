@@ -496,7 +496,26 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       name, not spun). **Verify:** cases assert the named reason for capture-active, commit-gate,
       job-capacity and retry waits; no case asserts a generic `Stuck` where a named reason is available.
 
-- [ ] A3.3 **Restore work in the drain budget and progress accounting (D4, G2 finding 3).** Extend
+- [ ] A3.3 **Restore work in the drain budget and progress accounting (D4, G2 finding 3).**
+      → **NATIVE SCOPE DONE 2026-09-23 (per the Revision 5 split); the drain-integration half is A3.7.**
+      `SyncDrainBudgetInput` gains `restoreSliceSteps` / `restoreSdBytes` / `restoreOnlyBlocker`, and
+      `buildSyncDrainBudget` charges them alongside persistence work, so a drain that must advance a large
+      restore is not budget-starved by a persistence-only estimate. `SyncDrainProgressSnapshot` gains
+      `restorePhase` and a monotonic `restoreProgressCounter`, compared **before** `madeSyncDrainProgress`'s
+      "no active persistence work item" short-circuit — because the C5 shape is exactly "a save is owed and
+      the drain is waiting on the restore", where a drain making real restore progress previously read as
+      stuck. Wired to live state: the counter is bumped per serviced job grain, and
+      `captureSyncDrainProgressSnapshot` / `buildSyncDrainBudgetForSession` populate the restore terms from
+      the job instances.
+      **Three new native cases** in `test_persistence_sync_drain_budget` (a pure library, so a tight
+      oracle): restore work raises `expectedSliceSteps` / `maxSliceSteps` / `estimatedSdPayloadBytes`;
+      restore motion **alone** counts as progress (counter and phase), while no motion does not; and a
+      restore-only budget is bounded (non-zero steps, finite wall clock, non-zero bytes). Suite 7/7.
+      **Trimmed after the RAM1 gate rejected two redundant fields:** the byte/parse-position progress
+      terms were strictly subsumed by the per-grain counter, and removing them returned the build to the
+      approved line (`code 392,344 + padding 872`). **Not claimed here:** that the drain *advances* the
+      restore — that integration claim is A3.7 (device), per Revision 5.
+ Extend
       `SyncDrainBudgetInput` and `SyncDrainProgressSnapshot` / `madeSyncDrainProgress` so that (a) the
       drain's step budget covers active and parked restore work, (b) restore progress counts as progress
       and cannot trip the stuck detector or `maxSliceSteps`, and (c) the drain admits **at most the bounded

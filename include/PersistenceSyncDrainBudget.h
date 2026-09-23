@@ -52,6 +52,11 @@ struct SyncDrainProgressSnapshot {
   uint16_t capturePassCursor = 0;
   uint16_t chunkCursor = 0;
   bool pendingFlush = false;
+  /// A3.3: restore motion, so a drain advancing a restore is not misreported as stuck. The counter is
+  /// bumped per serviced grain, so it subsumes byte/parse-position terms; the phase term catches a
+  /// transition that lands between two increments.
+  uint8_t restorePhase = 255;
+  uint32_t restoreProgressCounter = 0;
 };
 
 namespace PersistenceSyncDrainBudget {
@@ -81,6 +86,14 @@ struct SyncDrainBudgetInput {
   uint32_t queuedWorkSdBytes = 0;
   uint16_t midPassQueueDepth = 0;
   uint16_t finalizeSliceSteps = 0;
+  /// A3.3 (D4 rule 4): the restore work the drain may have to advance. The drain's step budget is
+  /// derived from queued persistence work, so without these terms a large restore could exhaust
+  /// `maxSliceSteps` while making real progress.
+  uint32_t restoreSliceSteps = 0;
+  uint32_t restoreSdBytes = 0;
+  /// True when an owed save is blocked **only** by the restore, which is the C5 shape: the drain then
+  /// needs enough budget for the restore rather than for the save.
+  bool restoreOnlyBlocker = false;
 };
 
 SyncDrainBudget buildSyncDrainBudget(const SyncDrainBudgetInput& input, uint32_t sliceBudgetUs);
