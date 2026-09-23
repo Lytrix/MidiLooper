@@ -1765,3 +1765,43 @@ canonical payload, reservation and derived bytes separately (total pool live is 
 by the `hitl-content-verification` pipeline (not the base run's own verdict). Nothing may be flashed without the
 owner's go-ahead, and device SD is user data: quarantine, never delete or rename, without same-session
 permission.
+
+## P1 — S1.5's third clause does not reproduce natively, and that is recorded (2026-09-23)
+
+S1.5 asks for three things: the chunks/bytes `prewarmPlaybackRuntime` reserves per committed slot, the free
+chunk count, and **the smallest N at which a 24-bar overdub is refused**. The first two are answered
+(§ P1 — S2b.3: the per-committed-slot reservation is **zero**, and boot's own cost is a constant 40 chunks for
+the default enabled set). The third was attempted as a native sweep and **reverted**, because it measured
+something else.
+
+### What the sweep did, and why its answer is not the asked-for number
+
+The fixture committed 24-bar loops (~72 events/bar) into slots one at a time, re-ran
+`prewarmPlaybackRuntime()` after each, and probed the load-time admission with
+`prewarmPlaybackForSlot(probeSlot, true)` on a slot deliberately left empty. It reported its first refusal at
+**N = 2**.
+
+That number cannot be the capacity boundary the task means:
+
+- the native pool is **heap-backed**, so it does not truly exhaust the way the device's fixed PSRAM pool does —
+  it is bounded only by `POOL_CHUNK_COUNT` (512 ids), and two 24-bar loops hold on the order of 32 of them;
+- so the refusal at N = 2 comes from a **different admission condition** inside the arm prewarm (a
+  windowed-only / companion-horizon / whole-take admissibility branch), not from exhaustion.
+
+Publishing "2" as "the smallest library that refuses a 24-bar overdub" would therefore have been a misleading
+number — exactly the kind of unverified capacity claim invariant 3 forbids. The fixture and its helper were
+reverted; the suite stays at 90/90.
+
+### What this means for the task
+
+S1.5's third clause needs either (a) a construction that reaches the **id** ceiling deterministically (fill the
+pool with a known chunk cost, probe at the boundary, and assert the refusal *reason*), or (b) the device leg,
+where the pool is real and the failure point is the one S1.3 is specified to record. Recording that the naive
+form does not work saves the next attempt the same detour.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **90/90** (sweep reverted) |
+| full native | **2,280 cases / 1 skipped / 2,279 succeeded / 0 failures** (run after the revert) |

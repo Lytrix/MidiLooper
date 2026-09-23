@@ -210,8 +210,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       slots; payload 1 -> 4 chunks, admitted 41 -> 44) and that `freeChunkCount()` stays at or above
       `PassConfig::CHUNK_RESERVE` (16). Recorded constant: boot's own cost is **40 chunks** for the default
       enabled set (~5 per enabled slot) -- constant in the committed-slot count and bounded by the enabled
-      set, not the library. **Outstanding:** the boot `live` figure against a 24-bar overdub's peak
-      reservation (~191 chunks) is S1.5's device leg and is NOT RUN.
+      set, not the library. **PARTIAL 2026-09-23:** the third clause (the smallest N at which a 24-bar overdub
+      is refused) was **attempted as a native sweep and reverted as misleading** -- it probed the arm admission
+      after committing 24-bar loops one at a time and reported its first refusal at N=2, which cannot be the
+      capacity boundary because the native pool is **heap-backed** (it does not truly exhaust; it is bounded only
+      by the 512 chunk ids, and two such loops hold ~32 of them), so that refusal comes from a *different*
+      admission condition (a windowed-only / companion-horizon / whole-take branch), not exhaustion. Publishing
+      it would have been an unverified capacity claim. The clause needs either a deterministic **id-ceiling**
+      construction that also asserts the refusal *reason*, or the device leg where the pool is real and S1.3 is
+      already specified to record the failure point. **Outstanding:** that construction, and the boot `live`
+      figure against a 24-bar overdub's peak reservation (~191 chunks).
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
