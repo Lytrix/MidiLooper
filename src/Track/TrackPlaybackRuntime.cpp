@@ -2047,3 +2047,23 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM const LoopPlaybackRuntime& TrackPlaybackRuntime:
     uint8_t slotIndex) const {
   return const_cast<TrackPlaybackRuntime*>(this)->slot(slotIndex);
 }
+
+// ---------------------------------------------------------------------------
+// S3.0 placement pins for the per-slot working set (runtime-working-set-ownership).
+//
+// The change sits on the RAM1 FlexRAM bank edge: one crossed bank costs 32,768 B
+// and drops the stack into the documented silent boot hang, so a layout regression
+// must be a build error and not a linker surprise. Re-measure with
+// `template <size_t N> struct Probe; Probe<sizeof(X)> p;` before changing a number,
+// and record the RAM1 line in the change's review artifact. Device-only: pointer
+// width differs natively. `Track`'s own pins (and the private latch/ring types) live
+// in `Track::placementPins()`, a member context.
+// ---------------------------------------------------------------------------
+#if defined(__IMXRT1062__)
+static_assert(sizeof(LoopPlaybackRuntime) == 6344,
+              "S3.0: LoopPlaybackRuntime is the per-slot working set (6,344 B extmem)");
+static_assert(sizeof(Loop) == 984, "S3.0: Loop layout changed");
+static_assert(sizeof(TrackPlaybackRuntime) == 32,
+              "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
+              "per-track authority may hide here");
+#endif

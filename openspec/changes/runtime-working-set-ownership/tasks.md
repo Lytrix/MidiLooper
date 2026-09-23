@@ -432,7 +432,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
-- [ ] S3.0 **Placement and size pins (B11, invariant 36).** Before adding any field: `static_assert` pins for the
+- [ ] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS DONE 2026-09-23, task open on its RAM1 clause.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **Outstanding:** the evidence clause `padding >= 872` is **not met** -- the measured line is **840** (32 B below; `code + padding` constant at 393,216, no bank cross, `locals free` unchanged). The latch placement is pinned and explained; the remaining 872-vs-840 decision is recorded in [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1.) Before adding any field: `static_assert` pins for the
       **existing** structs (`sizeof(LoopPlaybackRuntime)`, `sizeof(Loop)`, `sizeof(TrackPlaybackRuntime)`) **and
       for every new member added by this change** (the latch `PendingInteractionRequest`, **`PendingStopAdmission::slot`**,
       **the per-slot runtime generation**, the new TrackManager transport epoch, the envelope, the standby/cold-undo

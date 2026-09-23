@@ -677,6 +677,31 @@ private:
   }
   /// S3.0/S4f.1: the latch is part of the ring's cold admission, so no action edge allocates one.
   bool prewarmInteractionLatch();
+  /// S3.0 placement and size pins (runtime-working-set-ownership). A member context so the private
+  /// nested types are nameable and `Track` itself is complete; never called, so it emits no code.
+  /// The change sits on the RAM1 FlexRAM bank edge, where one crossed bank costs 32,768 B and drops
+  /// the stack into the documented silent boot hang. `Track` is the eight-way DTCM array, so a
+  /// by-value member costs 8x: holding the latch as a `std::unique_ptr` here measured 64 B of RAM1
+  /// and took padding from 872 to 856, which is why it lives in the externally allocated ring object.
+  /// Re-measure with `template <size_t N> struct Probe; Probe<sizeof(X)> p;` before changing a number.
+  static void placementPins() {
+    // Platform-independent: the latch holds no pointers, so a drift is a contract change.
+    static_assert(sizeof(PendingInteractionLatch) == 40,
+                  "S3.0: the accepted-interaction latch is one small record per live interval");
+    static_assert(std::is_trivially_copyable<PendingInteractionLatch>::value,
+                  "S3.0: the latch must stay a POD -- the drive copies it and no edge may allocate");
+    static_assert(offsetof(PendingInteractionLatch, slot) == 2,
+                  "S3.0: the interval's slot is the latch identity; keep it early and stable");
+    static_assert(offsetof(PendingInteractionLatch, interval) == 8,
+                  "S3.0: the latch's interval identity offset is pinned with its slot");
+#if defined(__IMXRT1062__)
+    static_assert(sizeof(Track) == 384,
+                  "S3.0: Track is the eight-way DTCM array, so a by-value member costs 8x");
+    static_assert(sizeof(CaptureStopJobs) == 2736,
+                  "S3.0: the externally allocated ring object also carries the latch; its size is a "
+                  "RAM1-relevant decision, not incidental");
+#endif
+  }
   /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
   void latchAcceptedStop(PendingStopDestination destination, uint8_t slot, uint64_t interval);
   /// Consume the stop obligation of a successfully admitted (or synchronously completed) stop.

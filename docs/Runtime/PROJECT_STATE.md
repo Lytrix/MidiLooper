@@ -101,6 +101,14 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   the recorded 872; `code + padding` still constant at 393,216, still no bank cross, `locals free`
   unchanged) — the two new ITCM call sites to the FLASH-resident predicate. Making the manager entries
   FLASH-resident is a placement decision for the architect.
+- **S3.0 placement pins landed** (the pulled-forward prerequisite for the fields this slice added).
+  `Track::placementPins()` pins the latch layout platform-independently and, device-only, `Track` and the
+  ring object; a separate block pins `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32.
+  Device sizes were **measured, not guessed** (template probe), and the pins are **effective** — a
+  deliberately wrong latch pin failed the device build in all 8 TUs that include `Track.h`. The pins emit
+  no code (`code` 392,376 / `padding` 840 unchanged). **S3.0's own RAM1 clause is still not met:** padding
+  **840** vs the recorded 872 (`code + padding` constant at 393,216, no bank cross, `locals free`
+  unchanged at 34,944). That re-base-or-move-ITCM decision is the one open item blocking a clean S3.0.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
