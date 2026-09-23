@@ -1,4 +1,8 @@
 #pragma once
+// Marks the native Arduino boundary stub. A production file that carries its own native fallback under
+// `PIO_UNIT_TEST_NATIVE` must defer to this stub when a suite links both, so the two do not define the same
+// inline function in one translation unit (see src/Loop/LoopPendingNoteChange.cpp).
+#define HARNESS_ARDUINO_STUB 1
 // Native hardware boundary only. Domain owners use their production declarations.
 #include <cstdint>
 #include <cstddef>

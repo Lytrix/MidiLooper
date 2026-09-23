@@ -210,6 +210,17 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   `isParkedLoadLoopJobFor` (`LoadLoopJob.cpp`) -- so the next increment links those two TUs, re-adds the
   fixture, watches it go red, and only then makes the S2b.5 call-site fix. The fixture was reverted again to
   keep the suite green at 3/3; full native **2,275 / 1 skipped / 0 failures**.
+- **B04 is reproducible, and the S2b.5 defect is worse than "a lost request".** The last linkage step landed
+  (SlotLoadSession, LoadLoopJob, LoopPendingNoteChange, TrackManagerSlotMatrix; plus two documented seams --
+  `HARNESS_ARDUINO_STUB` for a duplicate native `micros()`, and the earlier
+  `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD`). The fixture shows that for **a slot with committed passes** --
+  exactly a finalizing predecessor's state -- the pop's done-test treats the request as already satisfied and
+  **silently discards the entry, returning false**, and `queueDeferredLoopSlotRestore` then refuses to take it
+  back, so the obligation is **unrecoverable with no signal at the pop**. Re-queueing is inert for committed
+  slots; the Loop's destruction is the later consequence, when the loader runs for a slot it was told to load
+  and the payload is absent or invalid. Load suite **4/4**, full native **2,276 / 1 skipped / 0 failures**,
+  firmware + per-env budget SUCCESS. **Next:** the bounded S2b.5 call-site fix (peek/pre-check or the forced
+  enqueue), then re-point the fixture at the fixed behaviour.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

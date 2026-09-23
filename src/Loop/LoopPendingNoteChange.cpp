@@ -24,7 +24,7 @@
 #include <algorithm>
 #include <cstdio>
 
-#if defined(PIO_UNIT_TEST_NATIVE)
+#if defined(PIO_UNIT_TEST_NATIVE) && !defined(HARNESS_ARDUINO_STUB)
 #include <cstdint>
 inline uint32_t micros() { return 0; }
 #else

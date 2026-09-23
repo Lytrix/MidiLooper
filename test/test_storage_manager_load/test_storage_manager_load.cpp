@@ -29,6 +29,10 @@ SDClass SD;
 #include "../../src/MidiHandler.cpp"
 #include "../../src/StorageManager/CurrentSetStorage.cpp"
 #include "../../src/StorageManager/SlotLoadAdmission.cpp"
+#include "../../src/StorageManager/SlotLoadSession.cpp"
+#include "../../src/StorageManager/LoadLoopJob.cpp"
+#include "../../src/Loop/LoopPendingNoteChange.cpp"
+#include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"
 
 void setUp() {
@@ -79,10 +83,61 @@ void test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard() {
   TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::pendingLoopSlotRestores_.count);
 }
 
+/// Commit one record pass into a slot, so the slot holds content -- the state that makes
+/// `needsSlotLoad` false, exactly as a finalizing predecessor's slot does.
+static void commitRecordPassIntoSlot(Track& track, uint8_t slot) {
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getLoop(slot);
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+
+/// S2b.5/B04, defect mechanism. `LoadLoopJob.cpp`'s callers **pop the restore entry before** calling
+/// `beginLoadLoopJob`, and re-queueing is **inert** for a slot that has committed passes, because
+/// `needsSlotLoad` refuses it. The pop therefore loses the request outright -- which is why the fix must
+/// peek/pre-check before the pop, or use the forced enqueue.
+void test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot() {
+  Track& track = trackManager.getSelectedTrack();
+  commitRecordPassIntoSlot(track, 0);
+
+  // Re-queueing is inert for a slot with committed content: nothing is enqueued at all.
+  StorageManagerInternal::queueDeferredLoopSlotRestore(0, 0);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "queueDeferredLoopSlotRestore must refuse a committed slot");
+
+  // Seed the request the way the forced path can, then do what the caller does today: pop first.
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 0, 1));
+  StorageManagerInternal::DeferredLoopSlotRestore popped{};
+  // Stronger than a lost request: for a slot with committed passes the pop's done-test treats the
+  // request as already satisfied and **silently discards it**, returning false and dropping the entry.
+  // A caller that pops first therefore loses the obligation with no signal at all -- and this is exactly
+  // the state a finalizing predecessor's slot is in.
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::popFocusDeferredLoopSlotRestore(0, 0, popped),
+                            "the pop discards a committed slot's request as already done");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the discarded request has left the queue");
+
+  // The request is gone and cannot be put back: the queued obligation was destroyed by the pop.
+  StorageManagerInternal::queueDeferredLoopSlotRestore(0, 0);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+      0, StorageManagerInternal::pendingLoopSlotRestores_.count,
+      "a popped request for a committed slot cannot be re-queued -- the caller must not pop first");
+
+  // The content the live owner depends on is still intact, so the loss here is the *request*; the slot's
+  // destruction follows later, when the loader runs for a slot it was told to load.
+  TEST_ASSERT_TRUE(track.getLoop(0).hasCommittedPasses());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
   RUN_TEST(test_restore_queue_peek_has_no_done_test_for_an_attempted_slot);
   RUN_TEST(test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard);
+  RUN_TEST(test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot);
   return UNITY_END();
 }
