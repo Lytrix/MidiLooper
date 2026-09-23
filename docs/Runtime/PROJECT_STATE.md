@@ -198,6 +198,18 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   the active/parked job queries and the committed-passes check), plus `CurrentSetStorage::formatLoopSlotPath`
   and `verifySaveFileTokenAtPath` (link `CurrentSetStorage.cpp`). Nothing was committed from the fixture; the
   load suite stays 3/3 and the tree is clean.
+- **Load harness increment 3: the load decision is extracted and the SD card is complete.** Three verified
+  steps: (1) `StorageManager::needsSlotLoad` moved out of the `StorageManager.cpp` monolith into
+  `src/StorageManager/SlotLoadAdmission.cpp` so the load *decision* links without the persistence layer --
+  pure predicate, **FLASHMEM**, and the firmware's RAM1 line is byte-identical (`code 392,376 / padding 840`)
+  which the post-link budget check confirms; (2) the load suite links `CurrentSetStorage.cpp` and
+  `SlotLoadAdmission.cpp`, so `formatLoopSlotPath`/`verifySaveFileTokenAtPath` are real production
+  definitions; (3) the in-memory SD card gained `rename`, `FILE_WRITE`, `File::write` and create-or-truncate
+  `open` (additive; `test_continuous_capture` still 87/87). **B04 is now one triple of symbols away:**
+  `SlotLoadSession::isActiveFor` (`SlotLoadSession.cpp`) and `isActiveLoadLoopJobFor` /
+  `isParkedLoadLoopJobFor` (`LoadLoopJob.cpp`) -- so the next increment links those two TUs, re-adds the
+  fixture, watches it go red, and only then makes the S2b.5 call-site fix. The fixture was reverted again to
+  keep the suite green at 3/3; full native **2,275 / 1 skipped / 0 failures**.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
