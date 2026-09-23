@@ -334,10 +334,18 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `IMPLEMENTATION_CONTRACT.md` §1 before removing reservations. Later stages extend these helpers;
       S5 reconstruction joins the predicate only when introduced. Validate stop retry/transport retargeting
       together with boot removal; do not ship a reservation-removal-only intermediate commit.
-- [ ] S2b.1 **Remove the per-slot canonical reservation from boot/load.** `TrackManager::prewarmPlaybackRuntime`
+- [x] S2b.1 **Remove the per-slot canonical reservation from boot/load.** `TrackManager::prewarmPlaybackRuntime`
       and `Track::prewarmPlaybackForSlot(s,false)` establish the runtime index and descriptors only: no
       `prewarmCanonicalCaptureOutput()`, no transfer horizon for a committed-but-inactive slot.
-- [ ] S2b.2 Make canonical-copy capacity **lazy and name its admission points without re-gating START**: the
+      **DONE 2026-09-23.** The canonical output is reserved only for `prepareCapture` (the record arm)
+      and the transfer horizon only for `prepareCapture`; boot still establishes the runtime index, the
+      stop-descriptor ring and the canonical-copy directory. The three 2026-09-23 red characterizations
+      (S1.2 a/b and B01) are **green and promoted into the default gate**; the `WORKING_SET_RED` gate is
+      deleted. Evidence: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 (S2b.1/S2b.2), including
+      the **reported RAM1 deviation**: padding 856 against the recorded 872 line (16 B of linker
+      alignment; `code + padding` constant; no bank cross; `locals free` unchanged) -- flagged for the
+      architect rather than redefined.
+- [x] S2b.2 Make canonical-copy capacity **lazy and name its admission points without re-gating START**: the
       **record arm** keeps its existing admission in `prewarmPlaybackForSlot`, and the **accepted stop's park
       (S2b.6)** acquires the reservation in a deferred turn (legal there, as `replenishCanonicalCaptureChunk`
       already shows). `Track::startOverdubbing` is explicitly **not** gated on
@@ -346,6 +354,17 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       predecessor) is a stop-side `canonical_output_busy` wait handled by the park. Fixture: load a slot (never
       record-armed this power cycle) → overdub start → stop → the park reserves and the stop completes, one
       request, `canonicalCaptureOutputAdmitted()` true at execution.
+      **DONE 2026-09-23.** `Track::startOverdubbing` calls the FLASH-resident
+      `Track::admitOverdubStartWorkingSet()`, which establishes the record arm's reserve set for a slot
+      boot left cold -- the view/bridge/companion scratch (without it the stop's estimates are
+      `UINT64_MAX` and admission denies as `preparation_service_unavailable`), the transfer horizon, and
+      the prepared-companion-history horizon (without which the job admitted and never retired). START is
+      still **not** gated on `canonicalCaptureOutputAdmitted()`. The companion grant is gated on
+      `!hasPendingDeferredOverdubStop()`: granting it unconditionally broke
+      `test_adversarial_reentry_at_the_publication_checkpoint`, because `prewarmPreparedCompanionHistory`
+      resets the Loop's prepared history -- the DEC-072/5.12 successor hazard. Fixture
+      `test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target` is green in the default
+      gate.
 - [ ] S2b.3 Boot budget evidence: with N committed slots, `LoopEventStore::freeChunkCount()` after boot is
       >= peak reservation + `CHUNK_RESERVE` (16); record the boot pool `live` figure against S1.5.
 - [ ] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
@@ -388,6 +407,10 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       exactly the park's unfixable case. The retire path must drain the store on the committing route and clear it
       on a skipped route, reporting a named terminal if it can do neither. Fixture: loaded slot → overdub start →
       stop under pool pressure → the stop completes after capacity returns, one request.
+      **PARTIAL UPDATE 2026-09-23:** the retire-path invariant is **implemented** -- the retire block
+      drains `canonicalCaptureOutput.store` and releases the frozen canonical builders when a retiring
+      job leaves the store populated (`canonical_output_drained_at_retire`), which is what makes S2b.1
+      safe. Still outstanding: the named `accepted_stop_park_terminal` and the pool-pressure fixture.
 - [ ] S2b gates: the first-slice native/build/device checks in `IMPLEMENTATION_CONTRACT.md` §1,
       using the S1 resident-library baseline plus a synthetic 60-descriptor fixture. Prove canonical
       reservation bytes flat in inactive-slot count; report canonical payload and derived bytes separately.

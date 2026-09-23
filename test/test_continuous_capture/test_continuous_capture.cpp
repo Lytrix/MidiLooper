@@ -143,6 +143,27 @@ Track& preparePlayingTrack() {
   return track;
 }
 
+/// S2b.1/S2b.2: a committed slot admitted through **boot/load only** -- the runtime index, the
+/// stop-descriptor ring and the canonical copy directory. No record-arm prewarm, so the slot holds
+/// no canonical reservation and no transfer horizon; that is the state a loaded slot is in after
+/// the boot reservation is removed, and it is what the overdub start and the stop park must supply.
+Track& prepareLoadedPlayingTrack() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  loop.commitPendingCapturePass();
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  trackManager.prewarmPlaybackRuntime();
+  track.forceSetState(TRACK_PLAYING);
+  return track;
+}
+
 struct TrackCaptureStopTestAccess {
   static auto& job(Track& track) { return track.captureStopJob(); }
   static size_t queueSize(const Track& track) { return track.captureStopJobs_->count; }
@@ -212,6 +233,28 @@ struct TrackCaptureStopTestAccess {
   static uint64_t acceptedLatchInterval(const Track& track) {
     const auto* latch = track.interactionLatch();
     return latch == nullptr ? 0 : latch->interval;
+  }
+  /// S2b admission diagnostics: the individual preconditions `beginDeferredOverdubStopForSlot`
+  /// checks, so a denied drive can be localised without the SESSION_CAPTURE diagnostic tier.
+  static bool admitForSlot(Track& track, PendingStopDestination destination, uint32_t tick,
+                           uint8_t slot, uint64_t interval) {
+    return track.beginDeferredOverdubStopForSlot(destination, tick, slot, interval);
+  }
+  static bool tailPendingNotesEmpty(Track& track) {
+    Track::CaptureStopJob* tail = track.captureStopJobTail();
+    return tail != nullptr && tail->pendingNotes.empty();
+  }
+  static bool rawExtentSealable(Track& track, uint8_t slot) {
+    Track::CaptureStopJob* tail = track.captureStopJobTail();
+    return tail != nullptr && track.loopForSlot(slot).capture.store.canSealCaptureRange(tail->rawRange);
+  }
+  static size_t liveStagingEvents(Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    auto* st = rt != nullptr ? rt->liveCaptureStagingIfPrewarmed() : nullptr;
+    return st != nullptr ? st->storage.eventCount : 0;
+  }
+  static bool stopStoppingTransitionValid(Track& track) {
+    return track.isValidStateTransition(TRACK_OVERDUB_STOPPING);
   }
   /// The real S4f.2 dispatch decision (the same entry `processDeferredIdleMaintenance` calls).
   static bool serviceAcceptedInteraction(Track& track) {
@@ -3653,11 +3696,10 @@ void test_deferred_overdub_stop_completion_queues_stored_verification() {
 // canonical capture output and a transfer horizon per committed slot, and the per-slot
 // runtime bundle keeps its working set resident with no release path.
 //
-// `WORKING_SET_RED=1` runs the law case, which is **expected to fail** until the
-// implementing slice (S2b, then S3/S4 release) lands. The default suite keeps only the
-// well-formedness case so a repository-wide native run stays green and the measurement
-// cannot rot. Remove the gate and promote the law case into the default gate when the
-// slice lands (RECIPE R, IMPLEMENTATION_READINESS.md).
+// The law cases failed from 2026-09-23 (when they were written) until S2b.1 removed the
+// per-slot boot reservation, behind a temporary `WORKING_SET_RED` gate so a repository-wide
+// native run stayed green. **The gate is gone**: S2b.1 turned them green the same day and all
+// three now run in the default gate (RECIPE R, IMPLEMENTATION_READINESS.md).
 // ---------------------------------------------------------------------------
 namespace {
 
@@ -3774,9 +3816,8 @@ void test_working_set_residence_measurement_is_well_formed() {
   TEST_ASSERT_GREATER_THAN(0, four.residentWorkingSetSlots);
 }
 
-/// S1.2 law case (a). Red on today's architecture: run with `WORKING_SET_RED=1`.
-/// PlatformIO captures native stdout, so the numbers are carried in the failure
-/// message rather than printed.
+/// S1.2 law case (a). PlatformIO captures native stdout, so the numbers are carried in the
+/// failure message rather than printed.
 void test_working_set_residence_does_not_grow_with_recorded_slots() {
   const WorkingSetResidence one = measureWorkingSetResidence(1);
   const WorkingSetResidence four = measureWorkingSetResidence(4);
@@ -3793,7 +3834,7 @@ void test_working_set_residence_does_not_grow_with_recorded_slots() {
   TEST_ASSERT_EQUAL_INT32_MESSAGE(one.reservedChunks(), four.reservedChunks(), message);
 }
 
-/// S1.2 law case (b). Red on today's architecture: run with `WORKING_SET_RED=1`.
+/// S1.2 law case (b).
 void test_inactive_committed_slot_retains_no_resident_working_set() {
   const WorkingSetResidence one = measureWorkingSetResidence(1);
   const WorkingSetResidence four = measureWorkingSetResidence(4);
@@ -3810,10 +3851,8 @@ void test_inactive_committed_slot_retains_no_resident_working_set() {
                                    four.residentWorkingSetSlots, message);
 }
 
-/// P1/B01 boot cold reservation. Red on today's architecture: run with
-/// `WORKING_SET_RED=1`. On today's code the unconditional canonical reservation is
-/// the discriminating failure (the transfer-horizon clause is only reached once it
-/// is green).
+/// P1/B01 boot cold reservation. Green since S2b.1; before it, the unconditional per-slot
+/// canonical reservation was the discriminating failure.
 void test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon() {
   const WorkingSetResidence four = measureWorkingSetResidence(4);
   TEST_ASSERT_EQUAL_UINT32(4, four.recordedSlots);
@@ -3911,6 +3950,72 @@ void test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once() {
   (void)chunksBefore;
 }
 
+/// S2b.1 + S2b.2 + S2b.6 (invariant 34): a loaded slot that was never record-armed still admits
+/// its own overdub and completes one stop. Boot reserves no canonical-copy capacity for it, so the
+/// overdub start must establish the transfer horizon and the park must acquire the canonical target.
+void test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target() {
+  Track& track = prepareLoadedPlayingTrack();
+  Loop& loop = track.getActiveLoop();
+  // Boot/load admission only: neither resource exists for this committed-but-inactive slot.
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track),
+                            "boot must not reserve the canonical copy for a committed slot");
+  TEST_ASSERT_FALSE_MESSAGE(loop.hasActiveOverdubTransferAdmission(),
+                            "boot must not admit a transfer horizon for a committed slot");
+
+  // The overdub start is this slot's own cold admission, and it is explicitly **not** gated on the
+  // canonical output -- that would re-create the DEC-067 START denial. It establishes the record
+  // arm's reserve set instead: the view/bridge/companion scratch (without which the stop's declared
+  // estimates are UINT64_MAX), the transfer horizon and the prepared-companion-history horizon.
+  clockManager.assignCurrentTickSilently(96);
+  track.startOverdubbing(96);
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(loop.hasActiveOverdubTransferAdmission());
+  TEST_ASSERT_TRUE(loop.preparedCompanionHistoryPrewarmed(0));
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track),
+                            "START must not be gated on the canonical copy");
+
+  // One Stop press while the canonical target is absent: accepted and retained, no job.
+  inputNote(60, 97, 120);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+
+  // Required admission preconditions are independently satisfied, so the only thing denying the
+  // drive is the canonical-copy target the park has to acquire.
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::tailPendingNotesEmpty(track));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::rawExtentSealable(track, 0));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::liveStagingEvents(track, 0) > 0);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::stopStoppingTransitionValid(track));
+  TEST_ASSERT_TRUE(loop.canHandoffSessionExitSnapshot());
+
+  // The park acquires the canonical target in a deferred turn and the drive then binds one job.
+  for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputAdmitted(track),
+                           "the accepted stop's park must acquire the canonical target");
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_EQUAL_UINT32(1, static_cast<uint32_t>(TrackCaptureStopTestAccess::queueSize(track)));
+  TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
+  // Admission consumed the accepted obligation: it is not a second, still-pending request.
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                            "a loaded slot's accepted stop must retire without a second press");
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  // S2b.6's retire-path invariant: the retiring job leaves the canonical target empty, so the next
+  // admission's reservation has something it can actually acquire.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0),
+                           "a retiring job must not leave the canonical copy store populated");
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4004,10 +4109,12 @@ int main() {
   // P1/B02 accepted-stop acceptance: green once the latch + park are in place, so it runs
   // in the default gate (unlike the residence characterizations).
   RUN_TEST(test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once);
-  if (getenv("WORKING_SET_RED") != nullptr) {
-    RUN_TEST(test_working_set_residence_does_not_grow_with_recorded_slots);
-    RUN_TEST(test_inactive_committed_slot_retains_no_resident_working_set);
-    RUN_TEST(test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon);
-  }
+  RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
+  // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
+  // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
+  // baseline exception once the implementing slice lands").
+  RUN_TEST(test_working_set_residence_does_not_grow_with_recorded_slots);
+  RUN_TEST(test_inactive_committed_slot_retains_no_resident_working_set);
+  RUN_TEST(test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon);
   return UNITY_END();
 }

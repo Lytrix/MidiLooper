@@ -517,12 +517,22 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
     // Boot reserves no capture staging (DEC-065). Staging is provisioned by capture
     // admission - the record arm's `prewarmViews` above, or `Track::startOverdubbing`
     // for a loaded slot - so a slot that never records does not carry two
-    // 2,048-event roles resident from boot. Boot still establishes the runtime slot,
-    // the stop-descriptor ring, the transfer horizon and the canonical copy
-    // directory, which is what makes admission deterministic.
-    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCanonicalOutput);
-    ok = runtime->prewarmCanonicalCaptureOutput() && ok;
-    ExternalPoolAccounting::endTag();
+    // 2,048-event roles resident from boot.
+    //
+    // S2b.1 (invariant 34, DEC-078 item 8): boot/load is an **admission boundary**, so a
+    // committed-but-inactive slot reserves no canonical-copy capacity either. It used to reserve
+    // 8 pool chunks (41,056 B) per committed slot here, which is the RC-MEM-5 state: at ~60
+    // committed slots that is 480/512 chunks before any activation. The canonical copy is now
+    // acquired lazily at the two cold admission points that need it - the record arm
+    // (`prepareCapture`, below) and `Track::startOverdubbing` - and the accepted stop's park
+    // re-runs it in a deferred turn when it is absent. Boot still establishes the runtime slot,
+    // the stop-descriptor ring and the canonical copy directory, which is what keeps admission
+    // O(1) on the hot path.
+    if (prepareCapture) {
+      ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCanonicalOutput);
+      ok = runtime->prewarmCanonicalCaptureOutput() && ok;
+      ExternalPoolAccounting::endTag();
+    }
   } else if (prepareCapture) {
     // Without a runtime slot there is no staging and no canonical output, so the take
     // cannot be admitted on the terms this reserve exists to guarantee. `trySlot`
@@ -539,9 +549,13 @@ TRACK_COLD_MEM bool Track::prewarmPlaybackForSlot(uint8_t slotIndex, bool prepar
   // preparation (the RECORDING entry point) must reserve the target loop's
   // horizon even when other tracks are already playing; otherwise the later
   // overdub command is rejected before it can enter the deferred stop path.
-  // Boot-only staging keeps the all-stopped guard and never grows during an
-  // active transport turn.
-  if (prepareCapture || !anyTimingCriticalTrackActive()) {
+  //
+  // S2b.1: the horizon is no longer admitted for a committed-but-inactive slot at boot. The old
+  // `|| !anyTimingCriticalTrackActive()` clause existed to let the boot path reserve it for every
+  // committed slot, which is the per-slot slope this stage removes. A loaded slot now acquires its
+  // own horizon at `Track::startOverdubbing`'s cold admission (S2b.2), and the record arm keeps
+  // this one.
+  if (prepareCapture) {
     ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
     ok = loop.prewarmActiveOverdubTransferHorizon() && ok;
     ExternalPoolAccounting::endTag();

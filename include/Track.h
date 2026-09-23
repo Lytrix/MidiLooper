@@ -647,6 +647,9 @@ private:
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs();
+  /// S2b.2: the reserve set a slot needs at its own overdub start once boot/load stops prewarming a
+  /// committed-but-inactive slot. FLASH-resident cold path.
+  bool admitOverdubStartWorkingSet();
   /// S4f.1: the accepted interaction, stored in the externally allocated ring object. Null when
   /// the ring has not been admitted yet.
   PendingInteractionLatch* interactionLatch() {
