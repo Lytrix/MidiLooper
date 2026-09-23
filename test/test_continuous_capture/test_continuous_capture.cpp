@@ -2,6 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include <unity.h>
+#include <cstdio>
 #include <random>
 
 #include "../../src/Logger.cpp"
@@ -115,6 +116,20 @@ struct TrackCaptureStopTestAccess {
   static void discardColdQueue(Track& track) { track.captureStopJobs_.reset(); }
   static auto& liveNotes(Track& track) { return track.pendingNotes; }
   static auto& runtime(Track& track) { return *track.playbackRuntime.slotIfAllocated(0); }
+  static bool runtimeAllocated(const Track& track, uint8_t slot) {
+    return track.playbackRuntime.slotIfAllocated(slot) != nullptr;
+  }
+  /// Residence signal for the working-set law (DEC-076 point 1): true when this slot
+  /// still holds an admitted/prewarmed *working set* -- playback views, canonical
+  /// capture output or live-capture staging. An inactive slot may keep descriptors
+  /// and bounded metadata; it must not keep one of these.
+  static bool hasResidentWorkingSet(const Track& track, uint8_t slot) {
+    const LoopPlaybackRuntime* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt == nullptr) return false;
+    return rt->viewSetIfPrewarmed() != nullptr ||
+           rt->liveCaptureStagingIfPrewarmed() != nullptr ||
+           rt->canonicalCaptureOutputAdmitted();
+  }
   static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
@@ -3542,6 +3557,162 @@ void test_deferred_overdub_stop_completion_queues_stored_verification() {
   TEST_ASSERT_EQUAL_UINT32(1, track.deferredStoredVerificationOpportunityCountForTest());
 }
 
+// ---------------------------------------------------------------------------
+// S1.2 -- working-set residence scaling characterization
+// (openspec/changes/runtime-working-set-ownership, invariant 30 / DEC-076 point 1)
+//
+// The law: resident working-set cost is owned by the *active runtime role*, so with a
+// constant active set it must not grow with the number of recorded slots. Today both
+// terms grow: boot/load admission (`TrackManager::prewarmPlaybackRuntime`) reserves a
+// canonical capture output and a transfer horizon per committed slot, and the per-slot
+// runtime bundle keeps its working set resident with no release path.
+//
+// `WORKING_SET_RED=1` runs the law case, which is **expected to fail** until the
+// implementing slice (S2b, then S3/S4 release) lands. The default suite keeps only the
+// well-formedness case so a repository-wide native run stays green and the measurement
+// cannot rot. Remove the gate and promote the law case into the default gate when the
+// slice lands (RECIPE R, IMPLEMENTATION_READINESS.md).
+// ---------------------------------------------------------------------------
+namespace {
+
+struct WorkingSetResidence {
+  size_t recordedSlots = 0;
+  /// Chunks the committed content itself holds, before any admission runs.
+  uint16_t canonicalPayloadChunks = 0;
+  /// Chunks held once boot/load admission has reserved for every committed slot.
+  uint16_t canonicalAdmittedChunks = 0;
+  /// Slots whose runtime still holds a resident working set after admission.
+  size_t residentWorkingSetSlots = 0;
+  /// Slots that have a runtime bundle at all (allocated, working set or not).
+  size_t allocatedRuntimeSlots = 0;
+
+  /// The part of the measured residency that belongs to *inactive* slots: what
+  /// admission added on top of the committed content, plus any working set held by a
+  /// slot that is not the one active role.
+  int32_t reservedChunks() const {
+    return static_cast<int32_t>(canonicalAdmittedChunks) -
+           static_cast<int32_t>(canonicalPayloadChunks);
+  }
+};
+
+void commitRecordPassIntoTrackSlot(Track& track, uint8_t slot) {
+  TrackCaptureStopTestAccess::selectSlot(track, slot);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = 768;
+  loop.beginCapture(CapturePhase::Record);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(0, 1, 48, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(48, 1, 48, 0)));
+  TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(768, CommitReason::RecordStop));
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+}
+
+/// Boot the production admission path with `recordedSlots` committed slots on the
+/// selected track, then admit the one active slot through the record-arm path. The
+/// active set is one slot in every variant, so any growth in the result is growth
+/// caused by the recorded-slot count.
+WorkingSetResidence measureWorkingSetResidence(size_t recordedSlots) {
+  trackManager.~TrackManager();
+  LoopEventStore::resetPoolForTests();
+  new (&trackManager) TrackManager();
+  LoopEventStore::initPool();
+
+  const uint16_t poolChunks = LoopEventStoreConfig::POOL_CHUNK_COUNT;
+  WorkingSetResidence result;
+  result.recordedSlots = recordedSlots;
+
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  for (uint8_t slot = 0; slot < static_cast<uint8_t>(recordedSlots); ++slot) {
+    commitRecordPassIntoTrackSlot(track, slot);
+  }
+  result.canonicalPayloadChunks =
+      static_cast<uint16_t>(poolChunks - LoopEventStore::freeChunkCount());
+
+  // Production boot/load admission: every committed-but-inactive slot today.
+  trackManager.prewarmPlaybackRuntime();
+  // Production admission of the one active role (the record-arm route).
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+
+  result.canonicalAdmittedChunks =
+      static_cast<uint16_t>(poolChunks - LoopEventStore::freeChunkCount());
+
+  for (uint8_t t = 0; t < Config::NUM_TRACKS; ++t) {
+    Track& candidate = trackManager.getTrack(t);
+    for (uint8_t s = 0; s < Config::MAX_LOOPS_PER_TRACK; ++s) {
+      if (TrackCaptureStopTestAccess::runtimeAllocated(candidate, s)) {
+        ++result.allocatedRuntimeSlots;
+      }
+      if (TrackCaptureStopTestAccess::hasResidentWorkingSet(candidate, s)) {
+        ++result.residentWorkingSetSlots;
+      }
+    }
+  }
+
+  // The constant active set: exactly this slot is selected, nothing is sounding.
+  TrackCaptureStopTestAccess::selectSlot(track, 0);
+  return result;
+}
+
+}  // namespace
+
+/// Default-suite case: the measurement itself is well formed, so the gated law case
+/// cannot rot silently. It deliberately does not assert the law -- see the gated case.
+void test_working_set_residence_measurement_is_well_formed() {
+  const WorkingSetResidence one = measureWorkingSetResidence(1);
+  const WorkingSetResidence four = measureWorkingSetResidence(4);
+
+  TEST_ASSERT_EQUAL_UINT32(1, one.recordedSlots);
+  TEST_ASSERT_EQUAL_UINT32(4, four.recordedSlots);
+  // Identical per-slot content, so the committed payload is identical for one slot and
+  // is what the four-slot variant holds plus three more slots' worth.
+  TEST_ASSERT_GREATER_THAN(0, one.canonicalPayloadChunks);
+  TEST_ASSERT_GREATER_THAN(0, four.canonicalPayloadChunks);
+  TEST_ASSERT_TRUE(four.canonicalPayloadChunks >= one.canonicalPayloadChunks);
+  // Admission must have observed the committed content, not started from empty.
+  TEST_ASSERT_TRUE(one.canonicalAdmittedChunks >= one.canonicalPayloadChunks);
+  TEST_ASSERT_TRUE(four.canonicalAdmittedChunks >= four.canonicalPayloadChunks);
+  // The one active role is admitted in both variants.
+  TEST_ASSERT_GREATER_THAN(0, one.residentWorkingSetSlots);
+  TEST_ASSERT_GREATER_THAN(0, four.residentWorkingSetSlots);
+}
+
+/// S1.2 law case (a). Red on today's architecture: run with `WORKING_SET_RED=1`.
+/// PlatformIO captures native stdout, so the numbers are carried in the failure
+/// message rather than printed.
+void test_working_set_residence_does_not_grow_with_recorded_slots() {
+  const WorkingSetResidence one = measureWorkingSetResidence(1);
+  const WorkingSetResidence four = measureWorkingSetResidence(4);
+
+  char message[192];
+  snprintf(message, sizeof(message),
+           "boot/load admission reserves per recorded slot: reserved(1 slot)=%d, "
+           "reserved(4 slots)=%d (payload %u/%u, admitted %u/%u)",
+           one.reservedChunks(), four.reservedChunks(),
+           static_cast<unsigned>(one.canonicalPayloadChunks),
+           static_cast<unsigned>(four.canonicalPayloadChunks),
+           static_cast<unsigned>(one.canonicalAdmittedChunks),
+           static_cast<unsigned>(four.canonicalAdmittedChunks));
+  TEST_ASSERT_EQUAL_INT32_MESSAGE(one.reservedChunks(), four.reservedChunks(), message);
+}
+
+/// S1.2 law case (b). Red on today's architecture: run with `WORKING_SET_RED=1`.
+void test_inactive_committed_slot_retains_no_resident_working_set() {
+  const WorkingSetResidence one = measureWorkingSetResidence(1);
+  const WorkingSetResidence four = measureWorkingSetResidence(4);
+
+  char message[192];
+  snprintf(message, sizeof(message),
+           "an inactive committed slot keeps a resident working set: "
+           "resident(1 slot)=%u, resident(4 slots)=%u (allocated bundles %u/%u)",
+           static_cast<unsigned>(one.residentWorkingSetSlots),
+           static_cast<unsigned>(four.residentWorkingSetSlots),
+           static_cast<unsigned>(one.allocatedRuntimeSlots),
+           static_cast<unsigned>(four.allocatedRuntimeSlots));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(one.residentWorkingSetSlots,
+                                   four.residentWorkingSetSlots, message);
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -3628,5 +3799,13 @@ int main() {
   RUN_TEST(test_redundant_stored_verification_queue_keeps_pending_dump);
   RUN_TEST(test_ineligible_stored_verification_queue_keeps_pending_dump);
   RUN_TEST(test_deferred_overdub_stop_completion_queues_stored_verification);
+  // S1.2 working-set residence characterization: the measurement runs in the default
+  // gate; the law case is the known-red characterization and stays behind its gate
+  // until the implementing slice (S2b + S3/S4 release) lands.
+  RUN_TEST(test_working_set_residence_measurement_is_well_formed);
+  if (getenv("WORKING_SET_RED") != nullptr) {
+    RUN_TEST(test_working_set_residence_does_not_grow_with_recorded_slots);
+    RUN_TEST(test_inactive_committed_slot_retains_no_resident_working_set);
+  }
   return UNITY_END();
 }

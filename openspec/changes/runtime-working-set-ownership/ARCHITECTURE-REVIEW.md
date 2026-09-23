@@ -4,9 +4,12 @@ Authority: [G2 execution-packet workflow](../../../docs/Authority/IMPLEMENTATION
 [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) (DEC-079), and the stage-specific tasks.
 This file makes acceptance executable without changing the approved runtime behavior.
 
-**Status: specified only.** No fixture, native, build or device result is claimed. All tasks remain unchecked.
-Use one packet per reviewable slice; follow dependencies rather than numeric task order. Later architecture-gated
-work remains blocked until its own contract exists. Do not implement the umbrella in a single pass.
+**Status: P0 specified and partly evidenced; P1–P8 specified only.** P0's S1.2 characterization is
+implemented and its native red/green results are recorded under *Implementation review and evidence
+record* below, together with the S0 decision verification. No P1–P8 fixture, native, build or device
+result is claimed there, and every P1–P8 task remains unchecked. Use one packet per reviewable slice;
+follow dependencies rather than numeric task order. Later architecture-gated work remains blocked until
+its own contract exists. Do not implement the umbrella in a single pass.
 
 ## Architecture gate — common to every packet
 
@@ -255,4 +258,139 @@ Reviewer checklist for each packet:
 - Task completion matches its own evidence; device/dependency gates still open are stated explicitly.
 - Durable docs/ExecutionBounds and required decision updates match shipped behavior.
 
-No implementation evidence recorded yet.
+## P0 — S0 decisions and S1 measurement (2026-09-23)
+
+### Packet
+
+- **Packet/task IDs and approved contract:** P0 (D0.1), S0.1–S0.7, S1.1–S1.5; preconditions of
+  [handoff §1](IMPLEMENTATION_CONTRACT.md#1-executable-first-slice-bootload-canonical-admission);
+  DEC-076 (points 1, 2, 8), DEC-078, DEC-079, DEC-080; invariants 1, 25, 34.
+- **Status:** S0 decisions **verified (documentation)**; S1.2 **fixture implemented + native red
+  characterization recorded**; S1.1/S1.5 **partly** evidenced; S1.3, S1.4 and **every device leg
+  NOT RUN** (no hardware in this session).
+- **Owner and production entry → worker → commit:** no runtime ownership mutation in this packet.
+  The measurement drives the production boot/load admission
+  (`TrackManager::prewarmPlaybackRuntime` → `Track::prewarmPlaybackForSlot(s, false)`) and the
+  production active-role admission (`Track::prewarmPlaybackForSlot(s, true)`, the record-arm route)
+  from the existing production-path harness.
+- **Primary files:** `test/test_continuous_capture/test_continuous_capture.cpp` (fixture plus a
+  read-only `TrackCaptureStopTestAccess` extension). **No firmware file is touched**, so the
+  firmware artifact is unchanged by this packet.
+- **Preconditions present:** DEC-076/078/079 and the current `Config`/`PassConfig` constants; the
+  current supported resident library. **Not** a 60-long-slot library (S0.5/S1.3).
+- **Prerequisites included in this slice:** none.
+- **Mutation / postconditions:** a native characterization exists and is reproducible; nothing
+  runtime-visible changes.
+- **Explicit non-goals:** boot reservation removal, the latch/interaction pool, playback
+  decoupling, S6 canonical residency, and any claim about the 60-slot envelope.
+- **Commit boundary:** measurement and characterization only; independently buildable.
+
+### Oracle fixed before behavior edits
+
+**M01 — working-set residence at a constant active-role count (S1.2; invariants 1, 25, 34).**
+Initial state: fresh `TrackManager` and `LoopEventStore` pool; `recordedSlots` ∈ {1, 4} small
+committed record passes on the selected track; no transport active. The active set is one slot in
+both variants, and the `TrackManager` default enabled set is identical in both, so it cancels.
+Ordered actions: commit content → record committed payload → `prewarmPlaybackRuntime()` →
+`prewarmPlaybackForSlot(0, true)` → census.
+Observations **after each step** are recorded, not inferred: the payload is content-proportional,
+and the two law assertions are:
+
+- `reservedChunks(1 slot) == reservedChunks(4 slots)`, with `reservedChunks = admitted − payload`;
+- `residentWorkingSetSlots(1 slot) == residentWorkingSetSlots(4 slots)`.
+
+Counterexample that must fail (and does today): `reserved 96 → 120`, `residents 8 → 11`.
+
+**M02 — canonical payload separated from the reservation (S1.1/S1.5 input).** The fixture records
+the committed payload *before* admission and the admitted total *after*, so the boot reservation
+slope is read separately from the content it copies. Observed natively: payload 1 → 4 chunks
+(content), reservation 96 → 120 chunks — a slope of exactly **8 chunks per admitted boot slot**,
+i.e. `PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS` reserved by
+`LoopPlaybackRuntime::prewarmCanonicalCaptureOutput`. `reserved` for one committed slot is 96
+because `TrackManager`'s default enabled set is slot 0 on each of the 8 tracks
+(`TrackManager.cpp:39`), so eight slots are admitted at boot independent of recorded content; the
+count is identical in both variants and cancels in the comparison.
+
+### Controls and coverage
+
+- **Seams reused:** the `test_continuous_capture` production-path harness (Track/manager lifecycle,
+  prewarm, real `Loop` capture/seal/commit) plus a read-only `TrackCaptureStopTestAccess` extension
+  (`runtimeAllocated`, `hasResidentWorkingSet`). No mock, stub or copied lifecycle sits on the
+  asserted path; `hasResidentWorkingSet` reads only existing public state
+  (`viewSetIfPrewarmed`, `liveCaptureStagingIfPrewarmed`, `canonicalCaptureOutputAdmitted`).
+- **Busy/stale/failure/recovery controls:** not applicable to a boot-time measurement — the
+  denial/recovery controls belong to P1 (B01–B07).
+- **Independent oracle:** the expected relation comes from the law (invariant 34 / DEC-076 point 1)
+  and from `PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS` (8), not from the implementation's own output.
+- **Baseline failure:** reproducible behind `WORKING_SET_RED=1`. The default gate keeps only the
+  well-formedness case, so a repository-wide `pio test -e native` stays green while the
+  characterization cannot rot. **Removal condition:** delete the gate and promote both law cases
+  into the default gate when S2b.1 (and the S3/S4 release path) lands — RECIPE R, "a known baseline
+  exception only under its exact case ID/assertion".
+- **Bounded drain / fuzz:** none needed; no deferred service runs and there are no sleeps.
+
+### Verification recipe
+
+```sh
+pio test -e native -f test_continuous_capture              # default gate; must be green
+WORKING_SET_RED=1 pio test -e native -f test_continuous_capture   # the red characterization
+pio test -e native                                        # full native
+pio run -e teensy41-capture-serial                        # RAM1 line
+```
+
+### Completion record
+
+Baseline revision `7f90d996`, clean tree, **before** any edit: `test_playback_prewarm` 179/179;
+`test_continuous_capture` 77/77; full native **2,262 cases / 1 skipped / 2,261 succeeded / 0 failures**.
+
+| check | actual command | result |
+|---|---|---|
+| default focused | `pio test -e native -f test_continuous_capture` | **PASSED, 78/78** (+1 well-formedness case) |
+| red characterization | `WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` | **2 failed, 78 succeeded**: `test_working_set_residence_does_not_grow_with_recorded_slots` — `Expected 96 Was 120`; `test_inactive_committed_slot_retains_no_resident_working_set` — `Expected 8 Was 11` |
+| full native | `pio test -e native` | **2,263 cases / 1 skipped / 2,262 succeeded / 0 failures** |
+| firmware build | `pio run -e teensy41-capture-serial` | **SUCCESS**; RAM1 `variables 96,128 / code 392,344 / padding 872 / locals free 34,944`; FLASH `code 1,009,608` |
+
+- **Oracle/contract unchanged**, or authorized change and supporting evidence: unchanged.
+- **Fixture implemented and discriminating assertion demonstrated:** yes — the two failures above
+  are native assertion failures carrying the measured numbers, not build errors.
+- **Native verification:** S1.2 satisfied. S1.1 and S1.5 partly evidenced (the reservation slope and
+  the admission path); the per-owner byte census (views, staging, companion
+  reconstruction/apply/bridge-map/passes, canonical inputs, transfer horizon, stop-job capacity,
+  prepared pair), per-loop derived bytes (snapshot slabs, whole-loop `VisualCache`) and the lease
+  holder count are **NOT RUN** here — they need the device/S1.4 pass.
+- **Build/RAM1 verification:** done. Only a test file changed, so the firmware artifact is
+  unaffected and `padding 872` is the recorded line.
+- **Device verification:** **NOT RUN** (S1.3 slope and failure point, S1.4 undo/canonical-pin
+  baseline, and every device leg of the S1 gate remain open). Setup failure is inconclusive, not pass.
+- **Required reviews and durable docs:** predecessor review recorded below (S0 verification).
+- **Task IDs eligible for checkoff:** S0.1, S0.1a, S0.2, S0.3, S0.3a, S0.4, S0.5, S0.6 (with the
+  observation below), S0.7, S0 gates; and **S1.2**. D0.1, S1.1, S1.3, S1.4, S1.5 and the S1 gate
+  stay open.
+- **Stage gates still open:** S1 device legs, S1.4, D0.2–D0.5, and all of P1/S2b.
+
+### S0 decision verification (P0, D0.1) — verify, do not re-decide
+
+Every S0 item was checked against its landing site; the search covered `docs/DECISION_LOG.md`,
+`docs/Authority/NAMING.md` and this change's artifacts, and the predecessors named by `tasks.md`
+(RC-MEM-2, RC-MEM-3, RC-MEM-5, `immutable-loop-snapshot-passes` §5.13) were found at their
+DEC-076 cross-references. **No code change is required by any of them.**
+
+| task | recorded at |
+|---|---|
+| S0.1 role tiers | DEC-076 point 1; `design.md` Revision 2 and Revision 12 (F5: the tiers are a view of `activeLoopIndex`/`CapturePhase`/`TrackState`) |
+| S0.1a role classes and cardinalities | DEC-076 point 2 as amended by DEC-078 items 5–7 (finalization is per `(track, slot, interval generation)`, `LiveCaptureLease` 1 per track, no queue of stopped intervals) |
+| S0.2 lease identity | DEC-076 point 1 (`owner + generation + role`); `design.md` Revision 3; invariant 6 |
+| S0.3 two-tier cold undo | `design.md` Revision 4, superseded in part by Revision 18 § 7 (pinned canonical bytes charged, ClearSlot excluded, missing body defers); DEC-076 point 7 |
+| S0.3a eviction priority | `design.md` Revision 4 (§ eviction order) and Revision 18 § 6 |
+| S0.4 canonical residency is a gated phase | `design.md` Revision 7; S6.0 requires its own DEC amendment |
+| S0.5 topology pin | `tasks.md` S0.5 and `design.md` Context (`NUM_TRACKS = 8` × `MAX_LOOPS_PER_TRACK = 8` = 64 slots, `runtimeBySlot_`); `PROJECT_STATE.md` carries the same N-derived statement |
+| S0.6 resumable work-item contract | `design.md` Revision 16 (the contract) and DEC-076 point 8 (the vocabulary is part of the decision); the normative definition is `NAMING.md` § Pipeline of role-owned stages |
+| S0.7 acceptance + per-interval finalization | DEC-078 (accepted, amending DEC-067 and DEC-076 point 2) and `design.md` Revision 18 § 1–2 |
+| S0 gate | decisions recorded; no production code change in this packet |
+
+**Recorded observation, not a blocker:** S0.6 asks for the work-item contract "as a convention plus
+`DEC`". There is **no dedicated `DEC-###` id** for the work-item convention itself — the binding
+decision is DEC-076 point 8 together with Revision 16 and `NAMING.md`. Recorded here so a reviewer
+can require a dedicated id if the vocabulary must be citable on its own; nothing in this change
+depends on one, because the contract is header-only vocabulary with no new owner.
+

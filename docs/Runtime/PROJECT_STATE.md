@@ -1,5 +1,33 @@
 # Project state (execution context)
 
+**2026-09-23 `runtime-working-set-ownership` P0 started on `feature/runtime-working-set-ownership`: S0 verified, S1.2 red characterization landed — no firmware change.**
+First slice through the DEC-080 execution-packet workflow, on a branch cut from the planning line (the
+change does not exist on `dev`, so committing the handoff docs as the branch base was the only base that
+preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § P0.
+
+- **S0 (decisions-only) verified, not re-decided:** every item checked against its landing site — DEC-076
+  points 1/2/8, DEC-078, `design.md` Revisions 2/3/4/7/12/16/18, `tasks.md` S0.5. No code change follows
+  from any of them. One observation recorded rather than skipped: S0.6 asks for the resumable work-item
+  contract "as a convention plus `DEC`", and there is **no dedicated `DEC-###` id** — DEC-076 point 8 with
+  Revision 16 and `NAMING.md` § Pipeline of role-owned stages bind it.
+- **S1.2 (red scaling fixture) implemented in `test/test_continuous_capture`**, driving the production
+  boot/load admission and the record-arm admission (no copied lifecycle): two law cases behind
+  `WORKING_SET_RED=1` plus a default-gate well-formedness case.
+- **Measured, at a constant active set:** boot admission reserves **96 chunks with 1 recorded slot and 120
+  with 4** — a slope of exactly **8 chunks = `PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS` per admitted boot
+  slot** — and resident working sets go **8 → 11**. Canonical **payload** is recorded separately from the
+  **reservation** (payload 1 → 4 chunks), so the slope is not confused with content. Both law assertions
+  fail as designed: `WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` → **2 failed,
+  78 succeeded** (`Expected 96 Was 120`, `Expected 8 Was 11`); the default gate stays green at 78/78.
+- **Verification:** full native **2,263 cases / 1 skipped / 2,262 succeeded / 0 failures** (baseline
+  `7f90d996`: 2,262 / 1 / 2,261); `teensy41-capture-serial` **SUCCESS**, RAM1 `variables 96,128 /
+  code 392,344 / padding 872 / locals free 34,944`. Only a test file changed, so the firmware artifact is
+  unaffected and `padding 872` is the recorded line.
+- **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
+  undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
+  in this session**. Next: D0.2 (P1 harness controls), then S2b.1, which is expected to turn both S1.2 law
+  assertions green and to retire the `WORKING_SET_RED` gate.
+
 **2026-09-23 — chat reference readability.** Agent replies now pair every stage/task/gate/decision ID
 with a short descriptive name, including repeats and link labels. Canonical rule:
 [NAMING — short names beside IDs](../Authority/NAMING.md#short-names-beside-ids-in-chat), linked from

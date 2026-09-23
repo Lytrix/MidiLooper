@@ -1,5 +1,23 @@
 # Current work (implementation scope)
 
+**2026-09-23 `runtime-working-set-ownership` P0 landed on `feature/runtime-working-set-ownership` — S0 verified, S1.2 red characterization implemented; no firmware change.**
+Implementation has started on the branch named by the owner, cut from the planning line (the change does not
+exist on `dev`). S0's decisions were **verified against their landing sites, not re-decided**; S1.2's red
+scaling fixture now exists in `test/test_continuous_capture` and fails exactly as the law predicts. Full
+packet and evidence: [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § P0; the
+numbers are repeated in `tasks.md` S1.2 and in [PROJECT_STATE.md](PROJECT_STATE.md).
+
+- **Red characterization (S1.2, invariants 1/25/34).** At a constant active set, boot admission reserves
+  **96 chunks with 1 recorded slot and 120 with 4** — exactly **8 chunks per admitted boot slot**
+  (`PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS`, the `canonicalCaptureOutput` reservation) — and resident
+  working sets go **8 → 11**. `WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` reports
+  **2 failed, 78 succeeded**; the default gate keeps only the well-formedness case and stays green. The
+  gate is removed when S2b.1 (with the S3/S4 release) lands.
+- **Gates run:** full native **2,263 / 1 skipped / 2,262 succeeded / 0 failures**; `teensy41-capture-serial`
+  build SUCCESS with RAM1 padding **872**. **No device run** — S1.1's per-owner census, S1.3's slope and
+  S1.4's undo/canonical-pin baseline remain open, so the S1 gate is not closed.
+- **Next:** D0.2 (P1/S2b harness controls) → S2b.1, the first behavior change.
+
 **2026-09-23 — chat reference readability.** Agent replies now pair every stage/task/gate/decision ID
 with a short descriptive name, including repeats and link labels. Canonical rule:
 [NAMING — short names beside IDs](../Authority/NAMING.md#short-names-beside-ids-in-chat), linked from
@@ -2816,6 +2834,10 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
 
 **Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
+
+**Progress (2026-09-23, P0):** S0 is verified and S1.2's red scaling characterization is implemented and
+recorded — native legs only, **no firmware change and no device run**. Next slice: D0.2's P1/S2b harness
+controls, then S2b.1. The S1 gate's device legs stay open.
 
 **Related, designed not implemented: `capture-tier-a-budget-profiles`** — the instrumentation change that keeps a
 15–20 minute session inside the 1 MiB capture ring (per-family byte budgets, edge/sample/stream classes, critical

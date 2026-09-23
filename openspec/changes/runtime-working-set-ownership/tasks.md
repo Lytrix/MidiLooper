@@ -7,6 +7,11 @@ is binding for stage dependencies, cardinality accounting, regeneration ownershi
 and interaction supersession (DEC-079). Earlier revision notes are historical where they conflict.
 No implementation checkbox is completed by this documentation correction.
 
+**First checkoffs (2026-09-23, P0):** the S0 decision verification and the S1.2 red characterization
+are checked below with their evidence in [ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) § P0. They
+carry no firmware change — S0 is decisions-only and S1.2 is a measurement fixture. Everything from
+D0.2/S2b onward is still open, and the S1 gate's device legs are **unrun**.
+
 **Ownership change.** Before any firmware edit: run
 [`docs/Templates/DECISION_REVIEW.md`](../../../docs/Templates/DECISION_REVIEW.md), the preflight, and the
 transfer protocol in [`docs/Authority/ARCHITECTURE_RULES.md`](../../../docs/Authority/ARCHITECTURE_RULES.md);
@@ -38,6 +43,12 @@ not another broad design revision. A listed fixture/command is not implemented o
 
 - [ ] D0.1 For S0/S1, execute P0's attribution/measurement recipe and record baseline revision, inputs,
       suite presence and separate canonical/reservation/root/derived costs; keep expected red evidence explicit.
+      **PARTIAL 2026-09-23:** baseline revision `7f90d996` (clean tree) recorded — `test_playback_prewarm`
+      179/179, `test_continuous_capture` 77/77, full native 2,262/1 skipped/0 failures — with inputs, suite
+      presence, canonical-**payload** vs canonical-**reservation** separation, the red evidence, and the
+      after-edit re-verification in [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P0. Still missing:
+      the root/derived costs (snapshot slabs, whole-loop `VisualCache`) and the per-owner byte census, which
+      need the S1.4/S1.3 device pass. Unchecked until those are recorded.
 - [ ] D0.2 Before S2b behavior edits, extend the existing continuous-capture harness with P1's transport,
       reservation-denial/recovery, worker/dispatch and read-only ownership controls. Link production load/
       transport paths for assertions that require them; no copied lifecycle or success-returning domain stubs.
@@ -94,23 +105,28 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 > `LiveCaptureLease` is **1 per track**; switching is an **accepted** interaction; and the windowed-playback
 > decoupling (S2.9) is **extracted** to the sibling change `windowed-playback-generation`.
 
-- [ ] S0.1 **RECORDED as DEC-076 point 1** (verify, do not re-decide): role tiers `COLD` / `SELECTED` /
+> **S0 verified 2026-09-23 (P0/D0.1).** Every S0 item was checked against its landing site — none was
+> re-decided and none requires a code change. The per-task citations and the one recorded observation
+> (S0.6 has no dedicated `DEC-###` id; DEC-076 point 8 plus Revision 16 and `NAMING.md` bind it) are in
+> [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § *S0 decision verification*.
+
+- [x] S0.1 **RECORDED as DEC-076 point 1** (verify, do not re-decide): role tiers `COLD` / `SELECTED` /
       `PREPARED-ACTIVE` / `CAPTURE-ACTIVE` / `DEFERRED`, with selection explicitly cheap and
       "about to sound"/arm/preload as the only cold admission boundary. The tiers are a view of
       `activeLoopIndex`/`CapturePhase`/`TrackState`, not a second authority (F5).
-- [ ] S0.1a **RECORDED as DEC-076 point 2 + DEC-078** (verify, do not re-decide): role classes and cardinalities
+- [x] S0.1a **RECORDED as DEC-076 point 2 + DEC-078** (verify, do not re-decide): role classes and cardinalities
       -- `PlaybackWindowLease` **N, derived** (8 today; must not preclude 16/32/48/64), `LiveCaptureLease`
       **1 per track**, `DeferredFinalizationLease` **1 per interval** identified by
       `(track, slot, interval generation)` and pinned across `activeLoopIndex` movement and track/slot switching,
       bounded by that track+slot's own single-instance resources, `InteractiveLease` 1 per selected/active
       track+slot -- composable, each owning only the resources its operation needs. **No queue of stopped
       intervals** (DEC-078 item 7).
-- [ ] S0.1b Record that a second finalization lease is **not** provisioned preemptively, and that the evidence
+- [x] S0.1b Record that a second finalization lease is **not** provisioned preemptively, and that the evidence
       path is the `accepted_stop_finalizer_wait` counter; note the constrained shapes (very short captures,
       rapid punch-stop/start/stop).
-- [ ] S0.2 `DEC` invariant: lease identity is `slot + generation + role`; leases transfer and release by
+- [x] S0.2 `DEC` invariant: lease identity is `slot + generation + role`; leases transfer and release by
       identity; a generation-mismatched release is a rejected, reported no-op.
-- [ ] S0.3 **DECIDED -- two-tier cold undo** (recorded in `design.md` Revision 4): hot slots may hold
+- [x] S0.3 **DECIDED -- two-tier cold undo** (recorded in `design.md` Revision 4): hot slots may hold
       snapshot-backed undo roots; cold slots hold only compact logical descriptors (no `LoopSnapshot` ref, no
       slab ownership) under a per-slot depth and a device-wide byte budget, evicting oldest-cold-first;
       reactivation rebuilds only the current state; a cold undo reconstructs off-clock and commits only after
@@ -119,25 +135,25 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **Revised by Revision 18 § 7:** a cold descriptor that pins canonical pass ids charges the **pinned canonical
       bytes** to the budget; **ClearSlot is excluded** from the cold tier (its before-state is a whole-slot
       snapshot no pass-id descriptor reproduces); and a missing canonical body **defers**, never erases.
-- [ ] S0.3a Record the eviction priority: current musical state and dirty canonical content are never evicted by
+- [x] S0.3a Record the eviction priority: current musical state and dirty canonical content are never evicted by
       undo pressure; active hot undo is preferred; recent cold undo is retained within budget; oldest cold undo
       is the first victim. This is the input `overUndoMemoryPressure` (RC-MEM-3) should manage.
-- [ ] S0.4 Record that **canonical residency is a separate gated phase** (S6) with its own `DEC`
+- [x] S0.4 Record that **canonical residency is a separate gated phase** (S6) with its own `DEC`
       amendment, and that the cold contract is descriptor-based.
-- [ ] S0.6 Record the **resumable work-item contract** as a convention plus `DEC` (Revision 16): shared
+- [x] S0.6 Record the **resumable work-item contract** as a convention plus `DEC` (Revision 16): shared
       `WorkIdentity { owner, generation, role }`, one terminal vocabulary, declared cost, declared deadline,
       existing admission/accounting enums, non-destructive failure. Explicitly *not* a framework: header-only
       vocabulary, concrete owner types, no vtables, no allocation. Retrofit is opportunistic and belongs in its
       own change, not here.
-- [ ] S0.5 **Pin the topology** (do not leave it open): **8 tracks are implemented by this change**; 16-channel
+- [x] S0.5 **Pin the topology** (do not leave it open): **8 tracks are implemented by this change**; 16-channel
       bank switching and multi-slot-per-track playback are **future capabilities this memory law must not
       preclude**. No task here implements them, and no acceptance test claims them. Record the
       **transfer-overlap depth** the pool must cover, and record that **boot/load is an admission boundary**
       (S2b): a committed-but-inactive slot reserves no canonical-copy capacity.
-- [ ] S0.7 **Acceptance and per-interval finalization are RECORDED as DEC-078** (accepted 2026-09-19, amending
+- [x] S0.7 **Acceptance and per-interval finalization are RECORDED as DEC-078** (accepted 2026-09-19, amending
       DEC-067 and DEC-076 point 2; the "finalization is a queue" bullet is withdrawn). Verify the amendment
       pointers and sweep the change's own text for any remaining assertion of a denied or re-pressed stop.
-- [ ] S0 gates: decisions recorded; no code change.
+- [x] S0 gates: decisions recorded; no code change.
 
 ## S1 — characterize the current scaling (measurement only)
 
@@ -145,9 +161,20 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       reconstruction/apply/bridge-map/passes, canonical pass inputs, transfer horizon, stop-job capacity,
       prepared pair), per-loop derived bytes (snapshot slabs, whole-loop `VisualCache`), lease holder
       count, owning slot, role.
-- [ ] S1.2 **Red scaling fixture**: assert that growing recorded slots with a constant active set does
+- [x] S1.2 **Red scaling fixture**: assert that growing recorded slots with a constant active set does
       *not* grow working-set residence. It must **fail** on today's architecture; that failure is the
       baseline this change exists to remove. Reuse the same fixture as the green acceptance test.
+      **DONE 2026-09-23 — fixture implemented + native red characterization recorded.** In
+      `test/test_continuous_capture` (production boot/load admission + record-arm admission, no stub):
+      `test_working_set_residence_does_not_grow_with_recorded_slots` (reserved chunks) and
+      `test_inactive_committed_slot_retains_no_resident_working_set` (resident working sets), plus the
+      default-gate well-formedness case `test_working_set_residence_measurement_is_well_formed`. Red run
+      `WORKING_SET_RED=1 pio test -e native -f test_continuous_capture` → **2 failed, 78 succeeded**:
+      `Expected 96 Was 120` (reserved chunks, 1 vs 4 recorded slots — a slope of exactly 8 chunks =
+      `PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS` per admitted boot slot) and `Expected 8 Was 11`
+      (resident working sets). Default gate stays green (78/78). **Gate removal condition:** promote both
+      law cases into the default gate when S2b.1 (plus the S3/S4 release) lands. Full record:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P0.
 - [ ] S1.3 Device slope to the **current failure point** (not a 60-slot baseline -- the resident event
       store holds only ~28 sixty-four-bar loops today): grow the library until residency or canonical
       capacity fails and record the slope, the failure point and the error. Add a synthetic
@@ -159,6 +186,11 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       committed slot), the free-chunk count, and the smallest N at which a 24-bar overdub is refused.
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
+      **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /
+      0 failures; `teensy41-capture-serial` SUCCESS with RAM1 `variables 96,128 / code 392,344 /
+      padding 872 / locals free 34,944`; the red fixture failing and recorded (see S1.2).** The gate stays
+      **open** for S1.3's device slope and failure point and S1.4's undo/canonical-pin baseline, which need
+      hardware.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
