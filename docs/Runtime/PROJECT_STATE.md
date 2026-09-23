@@ -221,6 +221,18 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   and the payload is absent or invalid. Load suite **4/4**, full native **2,276 / 1 skipped / 0 failures**,
   firmware + per-env budget SUCCESS. **Next:** the bounded S2b.5 call-site fix (peek/pre-check or the forced
   enqueue), then re-point the fixture at the fixed behaviour.
+- **B04's live-owner fixture attempted; the goal narrowed and the fix is fully specified.** Two clarifications
+  worth keeping: the owning predicate is a live **job**, not committed content (`noLiveOwnerForSlot`
+  correctly ignores committed passes, so the fixture must build a real admitted stop job), and that state can
+  be built **without** the MIDI/note-edit layer -- open the interval on the Loop directly and admit through
+  `Track::beginDeferredOverdubStop` via the existing `TrackCaptureStopTestAccess` friend contract, whereas
+  routing through `midiButtonActions` drags in `analyzeEditSessionInteractions` and
+  `resolveConstrainedGeometry`. Remaining linkage, in the order it appeared: `StorageLoopIo.cpp` +
+  `StorageLoopIoBodyFormatV1.cpp` (they define `releasePersistedLoopSnapshotChunks`, despite
+  `PersistedLoopSnapshotRelease.cpp`'s name), then `LoadLoopBudget.cpp`. **The fix is designed and local:**
+  guard `LoadLoopJob.cpp`'s four pop sites with `noLiveOwnerForSlot(entry.track, entry.slot)` before the pop
+  (peeking first at the two `popNext` sites, which have no filter), leaving the entry queued and returning
+  when a live owner holds the slot. Load suite **4/4**, full native **2,276 / 1 skipped / 0 failures**.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
