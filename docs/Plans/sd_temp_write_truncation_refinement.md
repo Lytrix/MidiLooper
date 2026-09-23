@@ -3,6 +3,15 @@
 **Type:** Bugfix / refinement ([DELIVERY_RULES](../Authority/DELIVERY_RULES.md) work type "Bugfix").
 **Owner:** SD file-format and atomic-write owner (`CurrentSetStorage` / `StorageManager` persistence).
 **Status:** Fixed and native-verified; device-verified for its own claim (boot catalog reconcile).
+**Superseded in part (2026-09-23, later same day):** the Round 7 "the catalog IS stable" claim below is
+scoped to *a recorded loop's body persists and its own slot restores across one reboot*. The later
+RWSO-24CAP device session then showed the **restored library still does not accumulate across successive
+boots** (`Track 6 loaded state: EMPTY`, a `(track,slot)` census that changed between boots), which is what
+`runtime-working-set-ownership` S1.3's slope sweep needs. The fix here is not withdrawn — it repaired
+reconcile and the save path — but the remaining blocker is a **restore-liveness** defect, now proposed as
+the OpenSpec change
+[`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
+(six mechanisms C1–C6 in its `design.md`). **This plan is not the live queue for that defect.**
 **Found by:** the `runtime-working-set-ownership` device session
 ([ARCHITECTURE-REVIEW § Device session — RWSO-24CAP](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md)),
 which was blocked by it.

@@ -2,6 +2,31 @@
 
 > Project goal and decision log: [Authority/PROJECT_INTENT.md](Authority/PROJECT_INTENT.md). This page is the single shipped-vs-next overview.
 
+## Working state — 2026-09-23 (branch `feature/runtime-working-set-ownership`, nothing new on `dev`)
+
+**Next change is proposed: [`deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md).**
+Planning artifacts complete, `openspec validate` clean, **implementation not started**. It fixes the
+restore-liveness defect that blocks every remaining device gate of `runtime-working-set-ownership`: a slot
+with committed SD content can stay `EMPTY` for a power cycle, the one-shot background-fill admission never
+re-offers it, the queue head can stall every request behind it, and the deferred-save drain then spins its
+whole stuck budget so CLEAR aborts. Six mechanisms (C1–C6) are recorded in its `design.md` **as hypotheses**;
+Packet A confirms or withdraws each with a fixture before any behavior edit.
+
+**`runtime-working-set-ownership` native scope (P0/P1) is COMPLETE.** Full native
+**2,289 / 1 skipped / 0 failures** (re-verified on a clean tree 2026-09-23). Landed and green: S0
+verification, the S1.2/S1.3-clause-2/S1.5-clause-3 fixtures, the accepted-stop latch, boot/load admission
+removal (S2b.1–S2b.3), S4.0/S2b.4 liveness + release, S4f.5's stop consumers, S3.0 placement pins + the
+post-link RAM1 budget check, and B01–B06. **Remaining and device-gated:** S1.1's per-owner census, S1.3's
+device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's post-restore baseline, S2b.5's
+device gate, the content PASS, D0.2's B07 allocation census (not measurable natively), and phases B–E.
+
+**DEC-081 is device-verified** on its discriminating case (five tracks audibly playing + a genuinely owed
+save → the clear's blocking drain completed in <833 ms, 0 `Clear aborted` / `drain stuck`), and the
+persist-as-you-record mid-pass flush is device-verified (13 `PERS,mid_pass` rows, including inside live
+`OVERDUBBING`/`PLAYING` windows, `overflow_free=True`). **Process gap, recorded not hidden:** both landed on
+plan docs + code with **no OpenSpec change**; `deferred-slot-restore-liveness` covers only the
+**restore**-liveness half, and **no change yet covers the save/immediacy half**.
+
 ## Workflow update — 2026-09-23 (working tree, no firmware delivery)
 
 **SD temp-write truncation fix (bugfix, not shipped).** A pre-existing persistence defect found by the
@@ -17,8 +42,14 @@ post-fix boots that actually reset the board (against one on every pre-fix boot)
 a recorded loop body persists (`loop_persist=4252 sliced=True ok=True`) and its slot restores across a
 reboot (`CAPTURE_CONTENT,begin,track=5,slot=0,length=3072`, 190 rows), with pre-existing content faithful
 (`length=13824`, 1,964 rows). **Not shipped:** it is not on `dev`. **Still open** under
-`runtime-working-set-ownership`: the content PASS (needs a clean managed capture) and the S1.3 slope sweep
-(now constructible).
+`runtime-working-set-ownership`: the content PASS (needs a clean managed capture) and the S1.3 slope sweep.
+**Correction (same day, later evidence):** the later RWSO-24CAP device session showed the **restored set is
+still unstable across boots** (`Track 6 loaded state: EMPTY`, a census that changes between boots), so this
+fix repaired reconcile and the save path but did **not** make the library faithful — the remaining blocker is
+the restore-liveness defect, proposed as [`deferred-slot-restore-liveness`](../openspec/changes/deferred-slot-restore-liveness/proposal.md).
+The Round 7 "the catalog IS stable" claim in the plan is scoped to *a recorded loop's body persists and its
+own slot restores across one reboot*; it does not extend to *the library accumulates across successive
+boots*, and it is the latter that the slope sweep needs.
 
 ## Workflow update — 2026-09-23 (working tree, no firmware delivery)
 

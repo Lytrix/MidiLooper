@@ -1,5 +1,38 @@
 # Current work (implementation scope)
 
+**2026-09-23 working state — `runtime-working-set-ownership` P0/P1 native scope complete; the next OpenSpec change is proposed and unimplemented.**
+
+Two facts define what may be implemented right now:
+
+1. **`runtime-working-set-ownership`'s remaining gates are all device legs, and all of them are blocked by
+   a restore-liveness defect outside that change.** Native is complete and green (full native
+   **2,289 / 1 skipped / 0 failures**, re-verified on a clean tree 2026-09-23). Open: S1.1's per-owner
+   census, S1.3's device slope, S1.4's undo/root baseline, S1.5's device refusal point, S2b.3's
+   post-restore baseline, S2b.5's device gate, the content PASS, D0.2's B07 allocation census (not
+   measurable natively), and phases B–E. The restored set is unstable across boots, so no deterministic
+   single-slot capture can be produced until the defect is fixed.
+2. **New OpenSpec change `deferred-slot-restore-liveness` — PROPOSED 2026-09-23, planning artifacts
+   complete, `openspec validate` clean, no implementation started.** It exists to unblock (1). Read its
+   [`proposal.md`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md) and
+   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it; its
+   `tasks.md` Packet A is fixture-first and may withdraw any of the six recorded mechanisms (C1–C6).
+   **Do not implement it without the owner starting the apply workflow.**
+
+**Scope note — landed work that is NOT tracked by an OpenSpec change.** The persistence-immediacy and SD
+temp-write work of 2026-09-23 landed on plan docs and code only:
+[`persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md)
+(the one-chunk-per-turn mid-pass flush, the queued-capture-chunk invocation reason, DEC-081) and
+[`sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md) (the
+`openForRewrite` fix and the self-healing `reconcileSetIndexOnSd`). `deferred-slot-restore-liveness`
+covers the **restore**-liveness half of the same defect cluster; **no change yet covers the save/immediacy
+half**. That gap is recorded, not papered over: a plan is not implementation authority
+([`docs/Authority/README.md`](../Authority/README.md) conflict table).
+
+**Branch note.** `feature/runtime-working-set-ownership` is **738 commits ahead of `origin/dev`** with no
+upstream configured, which is well beyond the repo's short-lived `feature/` convention. Any new change
+should be cut from `dev` (or the branch strategy decided) before firmware work starts; nothing in this
+document assumes the current branch.
+
 **2026-09-23 `runtime-working-set-ownership` P0 landed on `feature/runtime-working-set-ownership` — S0 verified, S1.2 red characterization implemented; no firmware change.**
 Implementation has started on the branch named by the owner, cut from the planning line (the change does not
 exist on `dev`). S0's decisions were **verified against their landing sites, not re-decided**; S1.2's red
@@ -2863,40 +2896,63 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 ## Now implementing
 
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
+**Next OpenSpec change (proposed, not started):** [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
+— read its `design.md` § G2 execution packets; its Packet A is fixture-first and its six recorded mechanisms
+(C1–C6) are hypotheses to confirm or withdraw, not established conclusions.
 
-**DEC-081 landed 2026-09-23 (owner direction): audible playback never gates persistence.** The "all tracks
-silent" gate is superseded by *never require stopping, always keep playing*: `isTransportActiveForPersistence()`
-became `isCaptureRecordingForPersistence()` (recording only), the drain-gate reason became `BlockedByCapture`,
-and the bounded **300 us** active slice budget is deliberately retained during playback (the idle fallback is
-3,000 us). Build + native + harness suites green. Device: 0 clear aborts across five runs and a content pass
-`Result: PASS` with `overflow_free=True`, but no run had a pending save at clear time, so the change's
-discriminating case is **not** demonstrated — recorded as such.
+**DEC-081 landed 2026-09-23 (owner direction): audible playback never gates persistence.**
+**DEVICE-VERIFIED on the discriminating case** (recorded in
+[DEC-081](../DECISION_LOG.md#dec-081--audible-playback-never-gates-persistence-and-never-stops-for-it) and
+[PROJECT_STATE.md](PROJECT_STATE.md); this entry previously read "not demonstrated" and was stale). The "all
+tracks silent" gate is superseded by *never require stopping, always keep playing*:
+`isTransportActiveForPersistence()` became `isCaptureRecordingForPersistence()` (recording only), the
+drain-gate reason became `BlockedByCapture`, and the bounded **300 us** active slice budget is deliberately
+retained during playback (the idle fallback is 3,000 us). Build (`code 392,328 / padding 888`) + full native
+2,289 / 1 skipped / 0 failures + harness suites green. **Device:** with **five tracks audibly playing** and a
+deferred save genuinely owed, the clear's blocking drain completed — `Clear waiting for deferred save
+completion` → `Draining persistence work queue to SD card...` → **`State saved successfully (v4).`** →
+`Clear ignored — track is empty`, in **<833 ms**, with **0** `Clear aborted` / `Persistence drain stuck` /
+`Persistence drain blocked` where the old gate gave 33 stuck iterations then an abort; the other tracks kept
+playing and the same build reports `overflow_free=True`. Standing observation (not a regression):
+`DIAG,persist_save` still reaches ~40 ms maxima, because a single persist *grain* is not bounded by the
+slice budget, only the loop is.
 
-**Scope added 2026-09-23 (owner direction): persistence immediacy and CLEAR latency.**
+**Scope added 2026-09-23 (owner direction): persistence immediacy and CLEAR latency — BOTH HALVES LANDED AND DEVICE-VERIFIED.**
 Owner asked that *a recording persist as soon as possible* (so a hang or power loss right after preserves
 part of the take) and that *CLEAR be immediate*. Findings and status:
 [`docs/Plans/persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md).
-The incremental mechanism already exists (`LoopEventStore::sealChunk` → `admitSealedChunk` →
-`MidPassChunkPersist`, emitting `PERS,mid_pass`) but sat behind the transport gate; a one-chunk-per-turn
-FLASH-resident flush is **landed** in `DeferredSaveScheduler.cpp` and its timing risk is device-verified
-(`overflow_free=True` on a 24-bar take), but it is **not yet effective** because `main.cpp`'s
-`runDeferredSaveState` requires a pending deferred save, so add a queued-capture-chunk invocation reason
-next. CLEAR's slowness is diagnosed: it silences only the **selected** track while
-`isTransportActiveForPersistence()` requires **all** tracks silent, so the drain can never finish when other
-tracks sound; the fix is per-slot supersession of the pending save rather than a global wait.
+The incremental mechanism already existed (`LoopEventStore::sealChunk` → `admitSealedChunk` →
+`MidPassChunkPersist`, emitting `PERS,mid_pass`) but sat behind the transport gate. **Landed:** a
+one-chunk-per-turn FLASH-resident flush in `DeferredSaveScheduler.cpp` plus its own queued-capture-chunk
+invocation reason in `main.cpp` (`runDeferredSaveState` no longer needs a pending deferred save), so a take
+is durable while it is recorded. **Device:** **13 `PERS,mid_pass` rows**, including inside live
+`OVERDUBBING` (584,590,680 · 584,617,581 us) and `PLAYING` (598,393,317 · 598,402,101 us) windows, each
+`ok:t4:s0:cNN:n256` for the slot under test, with `overflow_free=True`. The earlier "0 mid_pass" was a
+`--record-only` fixture artifact — that mode never commits a pass, so its chunks are released and never
+admitted. **CLEAR:** its slowness was that CLEAR silences only the **selected** track while
+`isTransportActiveForPersistence()` required **all** tracks silent, so the drain could never finish when
+another track sounded. The per-slot-supersession fix first proposed for it was **superseded by DEC-081**
+(the owner ruled that the gate comes off rather than that every track must stop); CLEAR is now
+device-verified completing in <833 ms with five tracks audibly playing. The two decisions compose: the
+mid-pass flush is what keeps a live take durable, and DEC-081 is what lets CLEAR drain without silencing
+the device. Both landed on plan docs + code only — see the scope note at the top of this file.
 
-**Scope added 2026-09-23 (owner direction): SD temp-write truncation fix.** The device session was
-blocked by `could not reconcile MidiLooper/sets/index.bin`; the cause is that Teensy's
+**Scope added 2026-09-23 (owner direction): SD temp-write truncation fix — LANDED, reconcile warning gone.**
+The device session was blocked by `could not reconcile MidiLooper/sets/index.bin`; the cause is that Teensy's
 `SD.open(path, FILE_WRITE)` **appends** (`O_RDWR|O_CREAT|O_AT_END`) and `FILE_WRITE_BEGIN` does not
 truncate (`O_TRUNC` is never set), so a temp left by a failed write corrupts every later one — and the
 native SD stub modelled create-or-truncate, which hid the whole class. Fixed via
 `CurrentSetStorage::openForRewrite` at the 16 from-scratch sites plus a self-healing
 `reconcileSetIndexOnSd`, with the stub corrected and a red-proven regression test. Plan and evidence:
 [`docs/Plans/sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md).
-**Still blocking the content PASS and S1.3's slope sweep:** a separate managed-capture loss (see that
-plan's final section).
+**Device:** 0 reconcile warnings on every post-fix boot that reset the board, a recorded loop body persists
+and restores across a reboot, and pre-existing content stays faithful. **What still blocks the content PASS
+and S1.3's slope sweep is NOT this fix but the restore-liveness defect** (`Track 6 loaded state: EMPTY`,
+`DIAG,lcr,skip,restore`, a census that changes between boots, and the CLEAR drain that aborts) — now
+proposed as the OpenSpec change `deferred-slot-restore-liveness`, whose `design.md` records six mechanisms
+(C1–C6) for it.
 
-**Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
+**Current handoff:** for `runtime-working-set-ownership`, follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated. **Its remaining work is device-gated, and every device leg is blocked by the restore-liveness defect now proposed as [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)** — implement that first, then re-run this change's device legs (see that change's `tasks.md` A5.1).
 
 **Progress (2026-09-23, DEVICE SESSION — RWSO-24CAP): the S2b/S1.5 hardware gate is taken, the restored library
 survives a reboot, and a clear-drain blocker was worked around.** Flashed HEAD `26e96539`

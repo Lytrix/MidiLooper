@@ -6,8 +6,18 @@ CLEAR action in `MidiButtonActions`.
 **Requested by the owner (2026-09-23):** *"any recording should persist asap in case of a hang or power
 failure just right after so it can preserve part of the recording"* and *"clear should be immediate, so
 anything that can speed it up would help"*.
-**Status:** part 1 landed and timing-verified but **not yet effective** (one invocation gate remains);
-part 2 diagnosed, not yet changed; a content pass was run and is inconclusive (setup class).
+**Status (2026-09-23, final): BOTH PARTS LANDED AND DEVICE-VERIFIED.** Part 1 (persist a take while it is
+recorded) is verified on device — **13 `PERS,mid_pass` rows**, including inside live `OVERDUBBING` and
+`PLAYING` windows, each `ok:t4:s0:cNN:n256`, with `overflow_free=True`; the mid-document "not yet effective"
+notes below are the earlier rounds, kept for the diagnosis. Part 2 (CLEAR latency) was resolved by
+**DEC-081** — the owner ruled the all-tracks-silent gate comes off rather than that every track must stop —
+and is device-verified with five tracks audibly playing (the clear's blocking drain completed in **<833 ms**,
+0 `Clear aborted` / `drain stuck`). The content pass also PASSES (see Part 3 CORRECTED).
+**Process gap:** this work landed on plan docs + code with **no OpenSpec change**; the *restore*-liveness
+half of the same defect cluster is now proposed as
+[`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md), and
+**no OpenSpec change yet covers this save/immediacy half** — recorded in
+[PROJECT_STATE](../Runtime/PROJECT_STATE.md) and [CURRENT_WORK](../Runtime/CURRENT_WORK.md).
 
 Sibling work: [`sd_temp_write_truncation_refinement.md`](sd_temp_write_truncation_refinement.md) (the
 `index.bin` corruption fix that unblocked the catalog).
