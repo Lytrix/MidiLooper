@@ -147,6 +147,19 @@ committed content, or the payload is absent/invalid), `refused` (a named, non-re
 `superseded` (the set changed, the slot was cleared, or a newer request for the same coordinates replaced
 it). `superseded` and `refused` are distinct so a set change is never reported as a failure.
 
+**Identity validation before any supersession (G2 tightening).** A `requestGeneration` advance SHALL NOT be
+blind. Load-failure paths call `resetLoopSlotToEmpty()` internally, so "advance the generation on every
+reset" would supersede the very request that is meant to retry. The rule:
+
+- every reset/clear site SHALL distinguish an **external** reset (a user CLEAR, a set change, a different
+  owner committing that `(track, slot)`) from the **loader's own cleanup** on behalf of a live request;
+- the loader's own cleanup keeps the request identity and moves it to `waiting_retry` (or to its terminal
+  when the attempt bound is exhausted) — it SHALL NOT read as `superseded`;
+- the identity SHALL be validated for a **queued**, an **active**, and a **parked** job, and again
+  **immediately before publication**, so a request cannot bind or publish into a slot whose owner changed
+  while the job was in flight. A mismatch before publication results in `superseded`, consumes nothing from
+  the replacement content, and reports the reason.
+
 *Why:* C4/C5/C6 are all "the request left, or could never leave, the queue without an outcome the user can
 see", and recording deferral (the `DIAG,lcr,skip,restore` gate) must stay a **wait**, never a terminal.
 
@@ -164,23 +177,43 @@ Add a background-restore invocation reason with its own bounded per-turn budget,
 deferred frame, so **read/parse preparation** advances while playback continues. Recording keeps its
 existing deferral (Open Question O1).
 
-The contract is deliberately bounded by the stop-gate in Context:
+The contract is deliberately bounded by the stop-gate in Context, and — per G2 finding 2 — **the
+preparation promise is conditional, not unconditional**:
 
-- preparation (open, read, parse) SHALL be admissible under active transport within its declared budget;
+- preparation (open, read, parse) SHALL be admissible under active transport within its declared budget
+  **while no job is commit-pending**;
 - **commit and cleanup SHALL NOT be claimed as active-transport operations by this change** — they remain
   gated by `MidiServiceDrain::admitLoadJobChild` until
   `resumable-midi-boundary-playback-maintenance` task 3.3 lands its bounded Commit continuations;
+- **the gate is global, not per-job (corrected).** `hasLoadLoopJobCommitPending()` returns true when
+  **either** the active **or** the parked instance is in `Committing`/`Cleanup`, and `main.cpp` then denies
+  the **entire** load child for that turn. So once one request reaches commit under active transport,
+  **no other request's preparation advances** either. This change SHALL therefore define a second named
+  wait — `waiting_job_capacity` (another request holds the commit/cleanup phase) — and SHALL NOT claim that
+  queue-head skipping solves this scheduler-level blockage, because it does not. A design that narrows the
+  gate per-phase is a separately reviewed change (Open Question O5), not something this one infers;
 - a request whose preparation is complete SHALL enter `waiting_commit_gate`, not a terminal and not an
   unbounded spin, and SHALL be applied at the first turn the gate admits.
 
+**Scope consequence, stated plainly.** With the global gate unchanged, the deliverable of this change is
+**diagnosable preparation and named waits**, plus the drain-side advancement that applies when the gate
+admits. It does **not** by itself unblock CLEAR during continued playback of another track; that outcome
+depends on runtime-maintenance task 3.3. The change's acceptance criteria are written to that scope, and
+A2.7 records the dependency rather than papering over it.
+
 *Why:* C1/C2 are the primary starvation, and DEC-081 established that audible playback must not gate
-storage work. The honest scope of that ruling here is *preparation plus a named, bounded wait for apply*,
-because the apply itself is bounded only by 3.3.
+storage work. The honest scope of that ruling here is *preparation while no job is commit-pending, plus
+named waits for apply and for job capacity*, because both the apply and the per-turn child admission are
+bounded only by 3.3.
 
 *Alternative considered:* promise full completion during playback by relaxing the commit gate in this
 change. Rejected — the gate exists for a measured reason (a synchronous publish with no
-content-independent bound), relaxes it would regress the display/MIDI stalls it prevents, and its
+content-independent bound), relaxing it would regress the display/MIDI stalls it prevents, and its
 resolution is owned by another change with an open task.
+
+*Alternative considered:* narrow `admitLoadJobChild` to deny only the committing job's turn while allowing
+another job's read/parse. Not taken here: it changes the tick-domain one-child rule and its MIDI-boundary
+reasoning, so it needs its own review (O5).
 
 *Bound:* the slice budget is a declared constant analogous to the mid-pass one-chunk flush; the MIDI
 service budget and the `overflow_free` gate are standing acceptance conditions.
@@ -221,19 +254,45 @@ path is unavailable — a drain that merely watches a restore cannot cause it to
    already-admitted job, so preparation, commit and cleanup can all complete while the drain owns the
    thread. It SHALL reuse the existing job state machine and phase gates; it SHALL NOT add a second
    loader, a second queue, or a parallel admission policy.
-3. **Admission and budget rules.** One bounded slice per drain iteration, using the existing
-   `LoadLoopBudget` resolution; the commit and cleanup phases keep their *existing* gate semantics —
-   the drain is the STOPPED-policy path (`timingCriticalTrackActive` is false during a blocking drain,
-   because CLEAR stops the selected track), which is exactly the state `admitLoadJobChild` admits. The
-   drain SHALL NOT invent an active-transport commit bound; that remains 3.3's clause.
-4. **MIDI-service behaviour.** The drain is already a blocking operation that yields; servicing a restore
-   inside it SHALL NOT lengthen that beyond the existing drain budget contract, and SHALL keep the
-   existing `overflow_free` standing gate. The drain's slice budget stays derived from queued SD work
-   (`buildSyncDrainBudgetForSession`).
-5. **Termination.** If the restore reaches a terminal or a wait that the drain cannot clear (for example
-   `waiting_capture`, which the drain must not break), the drain SHALL report that named reason rather
-   than spinning the stuck budget; `BlockedBySlotLoad` therefore becomes
-   `BlockedByRestore(<owning wait reason>)`.
+3. **Admission uses the same actual runtime eligibility in both service paths (G2 finding 1 —
+   corrected).** The earlier draft claimed `timingCriticalTrackActive` is false during a blocking drain
+   "because CLEAR stops the selected track". **That is wrong and is withdrawn:**
+   `MidiButtonActions::handleClearTrack` stops only the **selected** track, while `timingCriticalTrackActive`
+   is computed in the main loop over **all** tracks
+   (`t.isRecording() || t.isAudiblePlaybackActive()`) and the global clock may still be running. So during a
+   CLEAR with another track playing, the real runtime eligibility is still *timing-critical*, and the commit
+   gate would still deny — or, if the drain bypassed the gate, it would admit an **unbounded** commit/cleanup
+   while another track plays, which is the regression the gate exists to prevent.
+   The drain SHALL therefore derive its admission from the **same** predicate the normal path uses
+   (`admitLoadJobChild` fed by the all-tracks timing-critical computation and
+   `hasLoadLoopJobCommitPending()`), not from an assumption about who stopped. Two consequences:
+   - where the gate admits (nothing timing-critical), the drain advances the restore to completion;
+   - where the gate denies, the drain **preserves** the request and reports the named wait
+     (`waiting_commit_gate`) rather than forcing the commit. Successful CLEAR in that case is
+     **runtime-maintenance task 3.3's** outcome, not this change's.
+   The drain SHALL NOT invent a content-independent commit bound, and SHALL NOT bypass the gate to make
+   CLEAR succeed.
+4. **Restore work is charged in the drain's budget and progress accounting (G2 finding 3).** The existing
+   budget estimates persistence work only (`SyncDrainBudgetInput`: queued work steps/bytes, mid-pass depth,
+   finalize steps) and `SyncDrainProgressSnapshot` carries persistence fields, so a large restore could
+   consume the drain's step limit or look stalled while legitimately progressing — and the stuck detector
+   would abort a drain that was making real progress. The contract:
+   - `SyncDrainBudgetInput` gains the restore term (active/parked restore slice steps and estimated SD
+     bytes, and whether the restore is the only reason the drain is waiting), so `maxSliceSteps` covers it;
+   - `SyncDrainProgressSnapshot` gains restore progress (phase, bytes read, parse position, or a monotonic
+     restore-progress counter) and `madeSyncDrainProgress` compares it, so restore progress counts as
+     progress and cannot trip the stuck path;
+   - the drain SHALL NOT admit **unlimited fresh queue work** while draining: it starts at most the requests
+     it needs to clear the save gate (bounded per iteration), so a drain cannot become an unbounded
+     background fill;
+   - the existing post-load commit holdoff is honored (`deferredSaveBlockedByPostLoadCommitHoldoff`), with
+     the drain reporting `BlockedByPostLoadHoldoff` rather than spinning when the holdoff is what it waits on.
+5. **MIDI-service behaviour.** The drain is already a blocking operation that yields; servicing a restore
+   inside it SHALL NOT lengthen that beyond the corrected drain budget, and SHALL keep the existing
+   `overflow_free` standing gate.
+6. **Termination.** If the restore reaches a terminal or a wait the drain cannot clear (`waiting_capture`,
+   `waiting_commit_gate` under a denying gate), the drain SHALL report that named reason rather than
+   spinning the stuck budget; `BlockedBySlotLoad` becomes `BlockedByRestore(<owning wait reason>)`.
 
 *Why:* C5. The 2026-09-23 classifier named the gate but the gate was a state the caller could not leave;
 CLEAR still aborted. Naming a wait was necessary but not sufficient.
@@ -334,12 +393,14 @@ its own validation. Numeric task ids live in `tasks.md`; the packet ids here are
 
 - **Prerequisite:** Packet A fixtures for C1, C2, C4 and C6 red.
 - **Transition oracle:** with transport running and a track audibly playing, a queued background restore
-  is **served** — its preparation advances and it reaches either a terminal or the named
-  `waiting_commit_gate` within a bounded number of production turns, and never stalls indefinitely
-  without a reason; with a non-startable head, a lower-priority startable request begins and the head
-  keeps its reason; a transient read failure retries and then reaches `refused` with that reason after
-  the bounded attempt count. **Not asserted here:** that a restore commits during playback — that
-  requires 3.3's bounded Commit and is recorded as such.
+  is **served while no job is commit-pending** — its preparation advances and it reaches either a terminal
+  or a named wait (`waiting_commit_gate`, `waiting_job_capacity`) within a bounded number of production
+  turns, and never stalls indefinitely without a reason; with a non-startable head, a lower-priority
+  startable request begins and the head keeps its reason; a transient read failure retries and then
+  reaches `refused` with that reason after the bounded attempt count. **Not asserted here:** that a
+  restore commits during playback (requires runtime-maintenance 3.3), or that a second request's
+  preparation advances once another is commit-pending (the gate is global — see finding 2). A dedicated
+  case covers the two-request shape and asserts the `waiting_job_capacity` reason rather than progress.
 - **Must preserve:** MIDI continuity and the per-turn service budget; recording still defers the load;
   the S2b.5 liveness guard (a finalizing predecessor still blocks a load into *its* slot only);
   exactly-once commit; no new ITCM-resident code.
@@ -352,19 +413,25 @@ its own validation. Numeric task ids live in `tasks.md`; the packet ids here are
 ### Packet C — drain advances the restore (D4)
 
 - **Prerequisite:** Packet B green, since the drain step reuses the same selection/admission the deferred
-  frame uses. **Also a hard external prerequisite for any "completes during playback" claim:**
-  `resumable-midi-boundary-playback-maintenance` task 3.3's bounded Commit. This packet does not depend
-  on it (a blocking drain runs with the transport stopped), but the *liveness* claim in the spec does.
+  frame uses. **Also a hard external prerequisite for any "CLEAR completes during another track's
+  playback" claim:** runtime-maintenance task 3.3's bounded commit/cleanup (finding 1's corrected form).
+  This packet's advancement claim holds only where the real eligibility gate admits.
 - **Transition oracle:** calling the **real blocking drain** with a restore in flight terminates the
   restore and completes the save, with **no external advancement of the restore between assertions**;
-  a restore in a wait the drain must not break reports `BlockedByRestore(<wait reason>)` rather than
-  spinning the stuck budget; both an **active** and a **parked** job instance are serviced.
+  both an **active** and a **parked** job instance are serviced; with **another track playing** and a
+  restore commit pending, the drain **preserves** the request and reports
+  `BlockedByRestore(waiting_commit_gate)` rather than forcing an unbounded commit or aborting;
+  a restore in a wait the drain must not break reports its named reason instead of spinning.
+- **Accounting oracle (finding 3):** a **small pending save behind a multi-slice restore** completes
+  through the real drain without tripping `maxSliceSteps` or the stuck detector; `madeSyncDrainProgress`
+  reports progress from restore motion alone; the drain admits at most the bounded fresh queue work it
+  needs; and a post-load holdoff is reported as `BlockedByPostLoadHoldoff`.
 - **Must preserve:** DEC-081 (audible playback is not a gate), the recording gate, the mid-pass
   one-chunk flush, and the single persist grain's existing (unbounded-by-design) latency.
-- **Evidence:** green fixtures plus a device run showing a CLEAR that completes with a restore in
-  flight, and 0 `Clear aborted` / `drain stuck`.
-- **Exit criteria:** the spec requirement "A pending slot restore does not block persistence
-  indefinitely" holds; the device gate is taken.
+- **Evidence:** green fixtures plus a device run showing a CLEAR that completes (or is refused with the
+  named wait) with a restore in flight, and 0 `Clear aborted` / `drain stuck`.
+- **Exit criteria:** the spec requirement "The blocking persistence drain advances the restore it waits
+  on" holds where the gate admits, and the named-wait requirement holds where it does not.
 
 ### Packet D — boot reconcile outcome (D6)
 
@@ -424,3 +491,13 @@ change does not modify.
 - **O4 (resolved by this revision).** Whether the drain needs its own restore-service path or can merely
   observe progress. Resolved: it must **service** both job instances (D4). The only sub-question left
   is the exact drain-side slice budget, which is a measurement (O2), not an architectural choice.
+- **O5 (not deferrable — needs its own review before any implementation relies on it).** Whether
+  `admitLoadJobChild` should be narrowed to deny only the **committing** job's turn while allowing another
+  job's read/parse, replacing the current global deny. This is the only way this change could deliver
+  preparation progress *after* a request reaches commit under active transport; it changes the tick-domain
+  one-child rule and its MIDI-boundary reasoning, so it requires its own reassessment and fixture rather
+  than being inferred here. Until then the `waiting_job_capacity` wait is the honest contract.
+- **O6 (decision recorded, not a question).** This change delivers **diagnosable preparation and named
+  waits**; it does not by itself unblock CLEAR during another track's playback. That outcome requires
+  runtime-maintenance task 3.3 (bounded commit/cleanup). Recorded here so a later reader does not read the
+  Packet B/C gates as promising the stronger result.

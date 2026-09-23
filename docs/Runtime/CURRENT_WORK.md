@@ -4639,7 +4639,7 @@ device timing closure is claimed.
 **RC-P1 SHIPPED (2026-09-12).** Resumable `LoopSnapshotTail` + A4.2 `writeLoopSnapshotPayloadByteSlice` quota fix. Device A4 PASS [`164947`](../../captures/session_20260912_164947.log): `loop_snapshot_tail,done` → `payload_done` → `SAVE,completed`. Plan frozen:
 [`deferred_persist_lsv1_edittail_slice_bugfix.md`](../Plans/deferred_persist_lsv1_edittail_slice_bugfix.md). RC-P2 **DEFER**.
 
-**OpenSpec §6.6 partial closeout** — **SHIPPED:** 6C-B, RC-P1-SORT, RC-P1.3, GAP-8 (6.6.4). **REVERTED/DEFERRED:** GAP-8b (6.6.5), GAP-8c (6.6.6). **NOW:** stage 7 (6.6.7). Tracking: [`tasks.md` §6.6](../openspec/changes/immutable-loop-snapshot-passes/tasks.md#66-post-closeout-polish-linked-plans--non-blocking).
+**OpenSpec §6.6 partial closeout** — **SHIPPED:** 6C-B, RC-P1-SORT, RC-P1.3, GAP-8 (6.6.4). **REVERTED/DEFERRED:** GAP-8b (6.6.5), GAP-8c (6.6.6). **NOW:** stage 7 (6.6.7). Tracking: [`tasks.md` §6.6](../../openspec/changes/immutable-loop-snapshot-passes/tasks.md#66-post-closeout-polish-linked-plans--non-blocking).
 
 **OpenSpec 6.4 SHIPPED (2026-09-12).** Sign-off on device [`164947`](../../captures/session_20260912_164947.log)
 (LSV1 tail + `SAVE,completed`); RAM1 **6848**; native **1707/1707** at RC-P1 close — gates not re-run.
