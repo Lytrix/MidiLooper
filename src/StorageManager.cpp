@@ -277,26 +277,6 @@ void syncCurrentSetDirtyTrackingFromLoadedState() {
 }
 
 
-void resetLoopSlotToEmpty(Loop& loop, uint8_t slotIndex) {
-    loop.discardPendingCapturePass();
-    loop.discardCapture();
-    loop.resetPassTimeline();
-    loop.loopId = static_cast<LoopId>(slotIndex);
-    loop.startLoopTick = 0;
-    loop.loopLengthTicks = 0;
-    loop.loopStartTick = 0;
-    loop.nextPassId_ = 1;
-    loop.nextNoteId_ = 1;
-    loop.nextMergeSequence_ = 0;
-    loop.lastCommittedPassId_ = kInvalidPassId;
-    loop.lastTickInLoop = 0;
-    loop.nextEventIndex = 0;
-    loop.clearEditStateDirty();
-    loop.visualCache.clear();
-    loop.capturePreviewView().clear();
-    loop.pendingVisualDelta.clear();
-    loop.invalidateCaches();
-}
 
 
 static STORAGE_PERSIST_MEM void markCommittedChunkIdsPersistedFromSdLoad(
