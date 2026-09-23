@@ -328,7 +328,12 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     if (autoAlignEnabled) {
       t.setLoopLength(masterLoopLength);
     }
-    requestLoopSlotPersistAndSaveState(t, trackIndex, captureSlot);
+    // Qualified to this TU's local overload. `TrackInternal.h` also declares a global
+    // `requestLoopSlotPersistAndSaveState(Track&, uint8_t, uint8_t)` (defined in
+    // `TrackStopTelemetryColdHelpers.cpp`), and the literal argument converts to both signatures, so
+    // the call is ambiguous whenever both TUs are visible together -- which is exactly what happens in
+    // an include-based native harness. Firmware compiles the TUs separately and never sees it.
+    ::requestLoopSlotPersistAndSaveState(t, trackIndex, captureSlot);
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();
     // S4f.5 / intermediate slice (DEC-078 item 4): the active slot may move only once the interval's

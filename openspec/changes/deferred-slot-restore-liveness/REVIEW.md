@@ -188,13 +188,15 @@ second, larger class that the earlier enumeration missed:
 | `SavedSetCatalog::parseSavedSetFolderName`/`readSavedSetMetadataTrailer`, `PersistenceSchema::crc32*`, `RevisionPackedBlob::*`, `SetRevisionCatalog::*` | catalog + revision pack | the revision/catalog import set |
 | `StorageManagerInternal::applyLoadedTrackStateAfterLoopSlots` | `CurrentSetBootLoad.cpp` (already included) | still unresolved after inclusion, so it has a second owner |
 
-**A pre-existing production defect blocks the capture-queue TU from compiling natively.**
-`TrackManagerCaptureQueue.cpp`'s call to `requestLoopSlotPersistAndSaveState` is **ambiguous**: the
+**A latent production defect, found and fixed (2026-09-23).**
+`TrackManagerCaptureQueue.cpp`'s call to `requestLoopSlotPersistAndSaveState` was **ambiguous**: the
 capture-queue TU defines a `(const Track&, uint8_t, uint8_t)` overload in an anonymous namespace while
-`TrackStopTelemetryColdHelpers.cpp` defines a `(Track&, uint8_t, uint32_t)` one, and the call's arguments
-convert to both. Including the capture-queue TU therefore fails to compile, which also blocks
-`hasQueuedRecordingTrack` and the capture-side `TrackManager` members. This is a real code finding, not a
-harness limitation.
+`include/TrackInternal.h` declares a global `(Track&, uint8_t, uint32_t)` one (defined in
+`TrackStopTelemetryColdHelpers.cpp`), and the literal argument converts to both. The firmware never sees
+it because it compiles each TU separately; an include-based harness that joins them does, which is how it
+was found. Fixed with an explicit `::` qualification at the call site (one line plus a comment); the
+firmware build and the native suites were both re-run after the fix. This unblocked the capture-queue TU
+natively, which in turn supplies `hasQueuedRecordingTrack` and the capture-side `TrackManager` members.
 
 **Assessment.** The drain's C5 behavior is not natively reachable by a bounded closure; it needs most of
 the persistence stack plus cold display/edit/track-manager owners, and it exposes a genuine overload
