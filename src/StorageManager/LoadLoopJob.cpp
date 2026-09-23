@@ -357,7 +357,11 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
                 // (session_20260719_001237).
                 DeferredLoopSlotRestore focusNext{};
                 // S2b.5: never pop a request for a slot a live owner still holds -- the pop would discard it.
-                if (!queuedRestoreMayBegin(focusTrack, focusSlot)) return;
+                if (!queuedRestoreMayBegin(focusTrack, focusSlot)) {
+                    // A2.1: the denial is a named wait, preserved rather than dropped.
+                    markRestoreRequestWaiting(focusTrack, focusSlot, RestoreRequestWait::SlotOwned);
+                    return;
+                }
                 if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, focusNext)) {
                     (void)beginLoadLoopJob(focusNext.track, focusNext.slot);
                     return;
@@ -383,13 +387,27 @@ STORAGE_PERSIST_MEM void ensureActiveLoadLoopJobSelected(uint8_t focusTrack, uin
     const bool backgroundQueued = pendingLoopSlotRestoreCount() > 0;
     const auto action = LoadLoopSelectionPolicy::resolveEmptyIdleAction(
         focusQueued, backgroundQueued, canRunBackgroundLoadLoopNow());
+    // A2.1: name the wait on the priority head when the only thing stopping it is a live owner. Without
+    // this the request stays "queued" forever with no reason, which is exactly the C4 stall the
+    // observable state exists to make diagnosable.
+    if (backgroundQueued) {
+        DeferredLoopSlotRestore blockedHead{};
+        if (peekFirstPendingLoopSlotRestore(blockedHead) &&
+            !queuedRestoreMayBegin(blockedHead.track, blockedHead.slot)) {
+            markRestoreRequestWaiting(blockedHead.track, blockedHead.slot,
+                                      RestoreRequestWait::SlotOwned);
+        }
+    }
     DeferredLoopSlotRestore next{};
     switch (action) {
         case LoadLoopSelectionPolicy::EmptyIdleAction::BeginFocusFromQueue:
             // S2b.5: leave the request queued while a live owner holds the focus slot; the pop would
             // discard it (see `queuedRestoreMayBegin`).
-            if (queuedRestoreMayBegin(focusTrack, focusSlot) &&
-                popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, next)) {
+            if (!queuedRestoreMayBegin(focusTrack, focusSlot)) {
+                markRestoreRequestWaiting(focusTrack, focusSlot, RestoreRequestWait::SlotOwned);
+                return;
+            }
+            if (popFocusDeferredLoopSlotRestore(focusTrack, focusSlot, next)) {
                 (void)beginLoadLoopJob(next.track, next.slot);
                 return;
             }

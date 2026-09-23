@@ -254,9 +254,18 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       outcome it had just written. **RAM1 enforced:** the first version cost 64 B of ITCM
       (`padding 888 → 824`, i.e. below the approved floor); every helper is now `FLASHMEM` and the line is
       back to `code 392,328 / padding 888`. Full native **2,305 / 1 skipped / 0 failures**.
-      **Still open:** the wait-state transitions at the denying gates (`waiting_slot_owned`,
-      `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`), the `refused`/`unnecessary`
-      terminals, pre-publication identity validation, and `loopSlotRestoreAttempted_` retirement.
+      **Wait transition landed (same day):** a denial by a live owner now **names the wait**:
+      `markRestoreRequestWaiting(..., SlotOwned)` fires at all three selection denials (the empty-idle head
+      check, the focus branch's early return, and the parked/focus branch), so a blocked request reports
+      `waiting_slot_owned` instead of sitting `queued` with no reason — the observable form of C4. Red
+      first: `test_restore_request_slot_owned_denial_names_the_wait` asserted the desired state and failed
+      with *Expected 2 Was 0* before the wiring, then passed. Suite **19/19**;
+      `RESTORE_LIVENESS_RED=1` → 24 cases / 4 failed (the unchanged Packet A set); RAM1 still
+      `code 392,328 / padding 888`.
+      **Still open:** the remaining wait transitions (`waiting_capture`, `waiting_commit_gate`,
+      `waiting_job_capacity`), the `refused`/`unnecessary` terminals, pre-publication identity validation,
+      and `loopSlotRestoreAttempted_` retirement — the last three land with A2.2–A2.4, since they are the
+      gates those tasks introduce.
  Introduce
       the request identity `(track, slot, requestGeneration, setEpoch)`, explicit **queued/running** states,
       and the separate **wait** states
