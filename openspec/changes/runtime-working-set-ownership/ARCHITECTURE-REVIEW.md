@@ -2486,10 +2486,88 @@ reproduces the table above exactly.
   **lease holder / owning slot / role** triple, which cannot be measured before **S2.1** introduces the
   playback-window lease. The record-density flakiness that understated the baseline census is a **host** defect
   (below), so a content leg is retried to a PASS.
-- **S1.3: not started, and it has a concrete prerequisite.** Growing the restored library by recording into the
-  scratch slot does **not** work today: the restored slot reports `Track 6 loaded state: EMPTY` and
-  `index.bin` does not reconcile. Until that is resolved there is no way to raise N across reboots, so the
-  slope-to-failure sweep cannot run. The scratch range is now approved (**track 6, slots 1–8**) for when it can.
+- **S1.3: clause 2 done, device clause still blocked.** The synthetic 60-descriptor characterization is
+  **implemented and green** (§ P1 — S1.3 clause 2): reservation flat at 40 chunks (205,280 B) from N = 8 to
+  N = 60, payload and the runtime directory reported separately, red-proven against the pre-S2b.1 state. The
+  **device** slope-to-failure sweep still cannot run: growing the restored library by recording into the
+  scratch slot does **not** work today — the restored slot reports `Track 6 loaded state: EMPTY` and
+  `index.bin` does not reconcile — so there is no way to raise N across reboots. The scratch range is
+  approved (**track 6, slots 1–8**) for when it can.
 - **S2b.3 / S2b gates:** the device half **is taken** — HEAD was flashed (`ea5e6d03…`, then the instrumented
-  `6490ee60…`) and the zero-per-committed-slot result reproduces on both HEAD images. What remains open on this
-  gate is the S1.3/S1.4 device material it depends on.
+  `6490ee60…`) and the zero-per-committed-slot result reproduces on both HEAD images. The **synthetic
+  60-descriptor half is now done too** (§ P1 — S1.3 clause 2). What remains open on this gate is the
+  S1.3/S1.4 device material it depends on.
+
+## P1 — S1.3 clause 2: the synthetic 60-descriptor characterization (2026-09-23)
+
+**Execution packet (DEC-080, measurement slice — no production file is touched).**
+
+- **Scope.** S1.3's **second clause** only: the synthetic metadata-only 60-descriptor characterization of the
+  residency law, which `S2b gates` additionally requires ("a synthetic 60-descriptor fixture covers boot
+  admission independently of S6's content residency", [IMPLEMENTATION_CONTRACT.md](IMPLEMENTATION_CONTRACT.md) §1).
+  Owner is the test harness. **Non-goals:** S1.3's device slope to the failure point (still blocked by the
+  restored scratch slot not surviving a reboot), S1.5's refusal-N, S1.4's pass→chunk conversion, and every S2/S3
+  lease behavior. The genuine 60-long-slot and total-residency gates stay in S6/S7.
+- **Why the existing helper cannot be reused.** `measureWorkingSetResidence()` commits every descriptor into
+  **one** track's slots (`for (slot = 0; slot < recordedSlots; ++slot)`) and `Config::MAX_LOOPS_PER_TRACK` is
+  **8**, so `recordedSlots = 60` indexes out of bounds. Sixty descriptors must span the 8 × 8 = 64-slot matrix.
+- **Transition oracle.** Reset pool + `TrackManager` → commit `N` one-note record passes into
+  `(track = i / 8, slot = i % 8)` → record committed canonical payload → run the production boot/load admission
+  (`TrackManager::prewarmPlaybackRuntime`) → admit exactly one active role through the production record-arm
+  entry (`Track::prewarmPlaybackForSlot(activeSlot, true)`) → census canonical-copy credits and
+  transfer-horizon admission per committed slot, and resident/allocated runtime slots across all 64. Final
+  state: `N` committed descriptors, exactly one active role, everything else inactive.
+- **Controllable fixture.** Reuses the existing production-path harness in `test_continuous_capture` (real
+  chunk pool, real `TrackManager`, real admission functions). No stub and no copied state machine.
+- **Independent observables.** At a constant active set: (a) `reservedChunks()` (admission minus payload) is
+  equal at N = 8 and N = 60; (b) `residentWorkingSetSlots` is equal; (c) every *inactive* committed slot holds
+  zero canonical credits and no transfer horizon; (d) the pool keeps at least `PassConfig::CHUNK_RESERVE` free
+  chunks at N = 60, so a flat result cannot be a capacity artifact. **Payload and the runtime directory are
+  reported, not asserted flat** — the contract requires them separated.
+- **Recipe.** `pio test -e native -f test_continuous_capture`; then full `pio test -e native`; then
+  `pio run -e teensy41-capture-serial` with its post-link RAM1 budget check.
+
+### Measured (2026-09-23, native) — the law is flat at the 60-descriptor envelope
+
+Two cases, both in the default gate: `test_s1_3_sixty_descriptor_characterization_is_well_formed` and
+`test_s1_3_residence_is_flat_across_sixty_descriptors`. Both variants hold **exactly one active role**
+and commit one-note descriptors distributed `(track = i / 8, slot = i % 8)`, so `N = 60` spans all eight
+tracks and the 8 x 8 = 64-slot matrix.
+
+| term | N = 8 (one track) | N = 60 (eight tracks) | reading |
+|---|---|---|---|
+| committed descriptors | 8 | 60 | input |
+| canonical **payload** | 8 chunks | 60 chunks | content; grows by construction, reported separately |
+| admitted (payload + reservation) | 48 chunks | 100 chunks | |
+| **reservation** (admitted − payload) | **40 chunks** | **40 chunks** | **the law: flat** |
+| free chunks after admission | 412 | 412 | 100 of 512 used; reserve intact |
+| canonical credits on inactive descriptors | 0 over 7 | 0 over 59 | |
+| transfer horizons on inactive descriptors | 0 | 0 | |
+| the active slot's canonical credits | 8 | 8 | `PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS` |
+| resident working sets | 1 | 1 | only the active role |
+| runtime **directory** slots | 15 | 60 | reported; **not** flat (see below) |
+
+The constant 40-chunk reservation decomposes as boot's stop-descriptor tail reserve (**32 chunks = 8
+tracks x 4 `CaptureStopJobs` entries x 1 chunk**, bounded by the enabled set, not the library) plus the
+one active role's own canonical copy (**8 chunks**). It is therefore *not* a claim of zero reservation —
+it is a claim that nothing is reserved **per committed descriptor**.
+
+Device conversion, kept separate from the chunk census as `IMPLEMENTATION_CONTRACT.md` §1 requires
+(`sizeof(EventChunk)` = **5,132 B** on the device, from the recorded 41,056 B per 8 chunks):
+
+- **reservation: 40 chunks = 205,280 B, constant** between 8 and 60 descriptors;
+- **payload: 8 -> 60 chunks = 41,056 -> 307,920 B** (content, by construction);
+- **runtime directory: 15 -> 60 x `LoopPlaybackRuntime` 6,344 B (S3.0 pin) = 95,160 -> 380,640 B** —
+  per-committed-descriptor, so not flat. It is descriptor/directory state, not a working set, and it is
+  the term S3's reusable lease pool is meant to make active-owned; it is reported here, not asserted flat.
+- **Native byte figures were deliberately not used:** native `sizeof(EventChunk)` is **8,208 B**, not
+  5,132 B, because `MidiEvent`'s `sysexData` union holds a 64-bit pointer. The chunk counts are the
+  device-identical unit and are what the law is asserted on.
+
+**Discrimination proven, not assumed.** Re-introducing the state S2b.1 removed — making
+`prewarmCanonicalCaptureOutput()` unconditional in `Track::prewarmPlaybackForSlot` — fails **both** cases:
+the law case reports `reserved(8)=152` vs `reserved(60)=452` (~8 chunks per descriptor, the RC-MEM-5
+slope) and the well-formedness case catches the pool exhausting (`admitted=512`, `free=0`) before sixty
+descriptors can be admitted at all. Seven cases in the suite go red under that mutation, including the
+1-vs-4 law cases and B01, which is the expected cross-check. The mutation was reverted immediately
+(`src/` is byte-identical; `git diff` on `src/` is empty) and the suite is green again at 95/95.

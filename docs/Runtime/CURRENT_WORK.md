@@ -2866,6 +2866,19 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
 
+**Progress (2026-09-23, S1.3 clause 2 — native): the synthetic 60-descriptor characterization landed, and it
+red-proves the law at the contract's envelope.** Test-only; no `src/` change. New
+`measureWorkingSetResidenceAcrossTracks(N)` spans the 8x8 slot matrix (the single-track helper could not
+express N > 8), and two default-gate cases in `test_continuous_capture` show canonical **reservation flat at
+40 chunks / 205,280 B from N = 8 to N = 60** with one active role, payload and the runtime directory reported
+separately (8 -> 60 chunks / 41,056 -> 307,920 B; 15 -> 60 directory slots / 95,160 -> 380,640 B, not asserted
+flat), zero canonical credits and zero horizons on all 59 inactive descriptors, and the pool reserve intact
+(100 of 512 used). Making the removed S2b.1 reservation unconditional again turns both cases red
+(`reserved(8)=152` vs `reserved(60)=452`; pool exhausts at `free=0`), then was reverted. Full native
+**2,285 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS at `code 392,312 / padding 904`
+(unchanged, `src/` untouched). **S1.3's device slope remains blocked** on the restored scratch slot not
+surviving a reboot; the other device legs (S1.5 refusal-N, S1.4 pass->chunk) are unchanged.
+
 **Session closeout (2026-09-23).** The P0 and P1 **native** scopes are complete and verified: full native
 **2,281 cases / 1 skipped / 0 failures**, all four firmware envs passing their per-env RAM1 budgets, and RAM1
 `padding` **improved 872 → 1,096**. Four real defects were found by fixtures rather than review (a start guard
