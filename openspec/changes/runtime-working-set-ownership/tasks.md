@@ -214,6 +214,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       store holds only ~28 sixty-four-bar loops today): grow the library until residency or canonical
       capacity fails and record the slope, the failure point and the error. Add a synthetic
       metadata-only 60-slot characterisation for the law itself.
+      **Blocked/obstacle recorded 2026-09-23.** (1) *Device slope:* growing the library requires the restored
+      scratch slot to survive a reboot and it does not (`Track 6 loaded state: EMPTY`, `index.bin` does not
+      reconcile), so N cannot be raised across boots; the scratch range track 6 slots 1–8 is approved for when
+      it can. (2) *The synthetic 60-slot characterisation is native and unblocked, but the existing helper
+      cannot be reused as-is:* `measureWorkingSetResidence(recordedSlots)` commits into **one** track's slots
+      (`test_continuous_capture.cpp:3725`, `for slot < recordedSlots` over `track.ensureLoopsAllocated()`), and
+      `MAX_LOOPS_PER_TRACK` is **8** — so N=60 indexes out of bounds. Sixty descriptors must span tracks
+      (8 × 8 = 64 slots available), and the 512-chunk pool has to be budgeted for 60 committed slots before the
+      "reservation flat in inactive-slot count" claim can be asserted, or the fixture will fail for capacity
+      rather than for the law. This is the concrete next step, and **S2b gates** depends on it.
 - [ ] S1.4 Undo residency baseline: how much snapshot residency cold slots retain today via undo roots, **and how
       many canonical chunks those roots pin** via `SlotPassReferences` (the B10 baseline).
       **Clause 1 MEASURED 2026-09-23** (dense PASS run, no new telemetry): the undo root retains essentially the
