@@ -445,6 +445,41 @@ A1.7.
   RAM1 `variables 96,192 / code 392,344 + padding 872 / locals 34,880`, above the 840 floor, 12 ITCM banks
   unchanged; A2.5 device evidence recorded above.
 
+### A3.2 — named drain verdict (attempted; not landed — ITCM placement is the blocker)
+
+An attempt was made and **fully reverted**; the tree is clean at `29db1096`. Recording it so the next
+attempt starts from the measurement instead of repeating it.
+
+**What works:** the pure classifier is straightforward and its fixtures are good. `SyncDrainFailureReason`
+gains `BlockedByRestore`, and a single `classifySyncDrainVerdict(captureRecording, slotLoadActive,
+postLoadHoldoff, restoreWait)` returns the reason **paired with the gate name**, so the drain's report site
+stays branch-free — the first attempt returned only the reason and needed a nested ternary in the ITCM
+drain, which was strictly worse. Five fixtures covered capture-first ordering, all five named waits,
+`BlockedBySlotLoad` retention when no wait is named, the holdoff, and `Stuck` reserved for an unexplained
+gate. **12/12 green** when they were in place.
+
+**Why it was reverted — a real, measured budget wall:** the classifier is ~96 B of ITCM code extra. The
+classifier and its name table are `FLASHMEM`, so the residual is the call/verdict plumbing from the ITCM
+drain. That took `padding 872 → 792`, and `padding_floor` is **840**: the checker's message is explicit
+that the floor is a reviewed allowance and that the remedy is to **move code out of ITCM**, not to re-base
+the floor. Unlike the A2.4 re-base (which was justified because the request record is genuine RAM1 *state*),
+there was no budget authority to spend here.
+
+**Two things the attempt proved, which constrain the next one:**
+
+1. **Do not duplicate the wait vocabulary.** The first version declared a second enum
+   (`SyncDrainRestoreWait`) beside `StorageManagerInternal::RestoreRequestWait` and mapped between them.
+   It worked, but a duplicate enum plus a classifier plus a name table is more ITCM than the problem
+   needs; the second version folded the wait code into the verdict itself.
+2. **A naive "extract the report block to FLASH" refactor is unsafe by hand.** The extraction was
+   attempted (moving the failed-drain report into a `STORAGE_PERSIST_MEM` helper, which is exactly the
+   sustained remedy), but the mechanical re-indentation of that block corrupted the function and it was
+   reverted rather than patched forward. That extraction is the right fix; it needs to be done as its own
+   reviewed step with the build run at each move, not folded into a feature slice.
+
+**Net for A1.7:** unchanged — still waiting on A3.2's and A3.4's pure-decision cases. No part of A3.2 is
+claimed.
+
 ---
 
 ## Mechanism ledger (A1.9)

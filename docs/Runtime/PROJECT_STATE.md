@@ -1,5 +1,22 @@
 # Project state (execution context)
 
+**2026-09-24 — A3.2 attempted and reverted; the blocker is ITCM placement, not the design.**
+
+The pure drain-verdict classifier was built and its five fixtures passed, but the change needed ~96 B of
+ITCM beyond the 48 B of headroom and took `padding 872 → 792`. `padding_floor` (840) is a **reviewed
+allowance**, and the checker is explicit that the remedy is to move code out of ITCM rather than re-base
+the floor — unlike the A2.4 re-base, which was justified because the request record is genuine RAM1 state.
+
+The correct remedy was identified and is the next step: extract the drain's cold failed-report block into a
+`STORAGE_PERSIST_MEM` helper. A hand re-indentation of that block corrupted the function, so the whole
+attempt was **reverted rather than patched forward**; the tree is clean at `29db1096` with firmware SUCCESS
+at the approved `code 392,344 + padding 872`, budget suite 7/7 and load suite 26/26.
+
+Two constraints recorded for the retry: the verdict must carry the gate name (returning only the reason
+forces a nested conditional in the ITCM drain, which is strictly worse), and the report-block extraction
+must be its own reviewed step with the build run at each move. **Nothing of A3.2 is claimed**, and A1.7 is
+still waiting on A3.2/A3.4's pure-decision cases.
+
 **2026-09-24 — A2.5 and A2.6 landed: Packet B's device gate is taken and green.**
 
 The boot restore queue **is serviced after a fresh boot** — the liveness claim this change exists to make.
