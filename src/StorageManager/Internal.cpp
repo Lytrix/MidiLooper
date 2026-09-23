@@ -159,10 +159,19 @@ STORAGE_PERSIST_MEM bool isCaptureActiveForPersistence() {
     return false;
 }
 
-STORAGE_PERSIST_MEM bool isTransportActiveForPersistence() {
+/// A track actively **recording** parks the full deferred-save drain; audible **playback** does not.
+///
+/// `PROJECT_INTENT` §1 -- *"record MIDI the moment the idea happens; the music never stops"* --
+/// supersedes the older "every track silent" gate this replaces (DEC-081). A playing track must never
+/// be stopped, nor held up, so that persistence can run. That gate is what made CLEAR wait for every
+/// other track to fall silent, and then abort when one kept playing.
+///
+/// The live-capture case still parks the multi-frame bundle writers; the bounded
+/// one-chunk-per-turn flush in `DeferredSaveScheduler` is the deliberate exception that keeps a take
+/// durable *while* it is recorded.
+STORAGE_PERSIST_MEM bool isCaptureRecordingForPersistence() {
     for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
-        const Track& track = trackManager.getTrack(trackIndex);
-        if (track.isAudiblePlaybackActive() || track.isRecording()) {
+        if (trackManager.getTrack(trackIndex).isRecording()) {
             return true;
         }
     }
@@ -179,10 +188,27 @@ STORAGE_PERSIST_MEM bool anyTrackArmedOrPendingRecordForPersistence() {
     return false;
 }
 
+/// True while any track is audibly playing.
+///
+/// Kept as its own predicate because the **slice budget** still needs it even though the *gate* no
+/// longer does: persistence may now run while tracks play (DEC-081), but it must stay inside the same
+/// bounded active budget, or the longer idle-sized bursts would reintroduce the display stalls the
+/// active budget exists to cap.
+STORAGE_PERSIST_MEM bool anyTrackAudibleForPersistence() {
+    for (uint8_t trackIndex = 0; trackIndex < trackManager.getTrackCount(); ++trackIndex) {
+        if (trackManager.getTrack(trackIndex).isAudiblePlaybackActive()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 STORAGE_PERSIST_MEM uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state) {
+    // `transportBudgetActive` keeps the small active budget whenever anything is sounding or being
+    // recorded; only a genuinely quiet device gets the larger idle budget.
     return PersistenceBudget::resolvePersistenceSliceBudgetUs(
         isCaptureActiveForPersistence(),
-        isTransportActiveForPersistence());
+        isCaptureRecordingForPersistence() || anyTrackAudibleForPersistence());
 }
 
 STORAGE_PERSIST_MEM bool anyCurrentSetLoopSlotDirty() {

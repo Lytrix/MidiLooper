@@ -65,7 +65,7 @@ void StorageManager::processDeferredSaveState(const LooperState& state) {
     // load owns the SD session while it is active (`LoadLoopJob` parse overlapped with a write hung
     // once, 235129), and a workspace save that is itself parked must not starve the flush -- that is
     // exactly the state that made a take unrecoverable.
-    if (isTransportActiveForPersistence()) {
+    if (isCaptureRecordingForPersistence()) {
         flushOneQueuedCaptureChunkDuringTransport();
         return;
     }

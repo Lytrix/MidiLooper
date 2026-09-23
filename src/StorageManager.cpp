@@ -180,7 +180,7 @@ STORAGE_PERSIST_MEM void maybeAdmitDeferredWorkspaceFooter() {
     if (!StorageManagerInternal::workspaceFooterPersistDeferred) {
         return;
     }
-    if (isCaptureActiveForPersistence() || isTransportActiveForPersistence() ||
+    if (isCaptureActiveForPersistence() || isCaptureRecordingForPersistence() ||
         anyTrackArmedOrPendingRecordForPersistence()) {
         return;
     }

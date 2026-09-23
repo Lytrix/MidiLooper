@@ -2864,6 +2864,14 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
 
+**DEC-081 landed 2026-09-23 (owner direction): audible playback never gates persistence.** The "all tracks
+silent" gate is superseded by *never require stopping, always keep playing*: `isTransportActiveForPersistence()`
+became `isCaptureRecordingForPersistence()` (recording only), the drain-gate reason became `BlockedByCapture`,
+and the bounded **300 us** active slice budget is deliberately retained during playback (the idle fallback is
+3,000 us). Build + native + harness suites green. Device: 0 clear aborts across five runs and a content pass
+`Result: PASS` with `overflow_free=True`, but no run had a pending save at clear time, so the change's
+discriminating case is **not** demonstrated — recorded as such.
+
 **Scope added 2026-09-23 (owner direction): persistence immediacy and CLEAR latency.**
 Owner asked that *a recording persist as soon as possible* (so a hang or power loss right after preserves
 part of the take) and that *CLEAR be immediate*. Findings and status:

@@ -131,7 +131,32 @@ whole stuck budget, and CLEAR aborts. That is the measured
 `Clear aborted: could not complete deferred save first`, and it also explains the intermittency: the
 outcome depends on whether anything else happened to be sounding.
 
-### Options, with the trade-off stated
+### RESOLVED by DEC-081 (2026-09-23): the gate is removed
+
+The owner ruled that the "all tracks silent" gate is **superseded** by *never require stopping, always keep
+playing*: a slot may be stopped on the selected track as it is being emptied, but every other playing track
+keeps playing. Implemented:
+
+- `isTransportActiveForPersistence()` → **`isCaptureRecordingForPersistence()`**, testing `track.isRecording()`
+  only; all four call sites updated.
+- `BlockedByTransport` → **`BlockedByCapture`** in the drain-gate classifier.
+- **The slice budget is deliberately retained:** `resolvePersistenceSliceBudgetUs` still receives "anything
+  sounding or recording" as `transportBudgetActive`, so playback keeps `maxPersistenceMicrosActive`
+  (**300 us**) instead of the idle fallback (**3,000 us**). Removing the gate without this would have made SD
+  bursts ten times longer during playback and reintroduced the display stalls the active budget caps.
+- The clear still stops the *selected* track before resetting its slot, which the owner explicitly allows;
+  other tracks are untouched and `restorePlaybackAfterSlotClear` restarts the cleared track if another
+  enabled slot has content.
+
+**Verification:** built (SUCCESS, `code 392,328 / padding 888`); full native 2,289 / 1 skipped / 0 failures;
+harness suites OK. Device: **0** `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`
+across five runs, and a content pass reports `Result: PASS` with `overflow_free=True`. **Honest limit: none
+of those runs had a deferred save pending at clear time**, so they do not discriminate this change — the old
+`Clear aborted` state was not reproduced post-change, and one attempt to force it (fresh boot + early clear)
+accidentally stopped an already-running transport with its transport tap, which clears the gate for the old
+reason. A discriminating test needs a pending save *and* other tracks playing at the clear.
+
+### Options that were considered before the ruling
 
 1. **Retire the guard for the cleared slot** (preferred product behaviour): CLEAR stops waiting for the
    global save, supersedes the pending work for the slot it is resetting, clears immediately, and lets the

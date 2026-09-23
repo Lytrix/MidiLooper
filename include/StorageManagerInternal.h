@@ -128,7 +128,9 @@ void fillSlotSummariesForTrack(uint8_t trackIndex, const Track& track,
 bool writeWorkspaceMetaAfterDeferredSave();
 
 bool isCaptureActiveForPersistence();
-bool isTransportActiveForPersistence();
+/// True while a track is actively recording. Audible playback is deliberately NOT a gate:
+/// the music never stops (PROJECT_INTENT §1, DEC-081).
+bool isCaptureRecordingForPersistence();
 bool anyTrackArmedOrPendingRecordForPersistence();
 void maybeAdmitDeferredWorkspaceFooter();
 uint32_t resolvePersistenceSliceBudgetUs(const LooperState& state);
