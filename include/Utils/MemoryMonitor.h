@@ -83,6 +83,28 @@ void logStatus(bool includeExternalPoolUsage = false);
 void logExternalPoolAccounting(const char* phase);
 
 /**
+ * @brief Log the full per-owner working-set census (runtime-working-set-ownership S1.1).
+ *
+ * `logExternalPoolAccounting` prints only `tagBytes[1..7]`, so the owners S1.1 names —
+ * companion reconstruction / apply / bridge-map / passes, canonical pass inputs, the
+ * reset pass timeline and prepare-first-bar (tags 8..16) — are invisible on the 1 Hz
+ * tick. The full vector exists in `ExternalPoolAccounting::formatTagVector`, whose only
+ * caller was the pool-*refusal* path, which meant the complete per-owner census could be
+ * read only at a refusal. This emits the same vector deliberately, at a slower cadence
+ * than the tick, together with the snapshot-slab census that carries the per-loop derived
+ * bytes.
+ *
+ * Read it as "net bytes attributed to each owner right now". It is O(1) bookkeeping, so
+ * it is safe from the transport thread; it is compiled only under `SESSION_CAPTURE`.
+ *
+ * Not covered, deliberately: whole-loop `VisualCache` bytes (no byte accessor exists) and
+ * the lease holder/owning-slot/role triple (no playback-window lease exists until S2).
+ *
+ * @param phase Short tag for the call site (for example "owners").
+ */
+void logWorkingSetOwners(const char* phase);
+
+/**
  * @brief Log heap, PSRAM, pool, and active-loop storage stats at a record/overdub milestone.
  * @param addedNoteOns Total note-ons stored this record/overdub pass.
  * @param loopEventCount Events in the active loop vector (all types).

@@ -952,6 +952,15 @@ void loop() {
     lastExternalAccountingLog = now;
     MemoryMonitor::logExternalPoolAccounting("tick");
   }
+
+  // Full per-owner census (S1.1) on a slower cadence: the tick above carries only tags
+  // 1..7, and the remaining owners were reachable solely through a pool refusal.
+  static uint32_t lastOwnerCensusLog = 0;
+  constexpr uint32_t OWNER_CENSUS_INTERVAL_MS = 4000;
+  if (now - lastOwnerCensusLog >= OWNER_CENSUS_INTERVAL_MS) {
+    lastOwnerCensusLog = now;
+    MemoryMonitor::logWorkingSetOwners("owners");
+  }
 #endif
 
   // End performance monitoring for this loop iteration

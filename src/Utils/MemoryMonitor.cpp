@@ -377,6 +377,43 @@ FLASHMEM void logExternalPoolAccounting(const char* phase) {
       static_cast<unsigned long>(getInternalHeapMinEverFreeBytes() / 1024));
 }
 
+FLASHMEM void logWorkingSetOwners(const char* phase) {
+  // S1.1's owner list is wider than the tick's tag window. `logExternalPoolAccounting`
+  // prints `tagBytes[1..7]` only, so companion reconstruction/apply/bridge-map/passes,
+  // canonical pass inputs, the reset pass timeline and prepare-first-bar (tags 8..16) were
+  // reachable **only** through `#MEM_EXT_REFUSED` — that is, only once the pool had already
+  // refused, which is precisely the failure a working-set budget exists to prevent. Same
+  // vector, emitted deliberately. `formatTagVector` covers tags 1..17.
+  const ExternalPoolAccounting::Counters& c = ExternalPoolAccounting::counters();
+  uint32_t tagTotalBytes = 0;
+  for (size_t tag = 1; tag < ExternalPoolAccounting::Counters::kTagCount; ++tag) {
+    tagTotalBytes += c.tagBytes[tag];
+  }
+  char tagVector[200];
+  ExternalPoolAccounting::formatTagVector(tagVector, sizeof(tagVector));
+  const SnapshotSlabCensus slabCensus = snapshotSlabCensus();
+  Serial.printf_P(
+      PSTR("#MEM_OWNERS,%lu,phase=%s,tag_total=%luKB,tags=%s,"
+           "slab_live=%lu,slab_used=%luKB,slab_unused=%luKB,slabs_at_most_one=%lu,"
+           "slabs_two_to_four=%lu,snap=%luKB,chunks_free=%lu,live=%luKB,blocks=%lu,"
+           "untracked=%lu,unknown=%lu,heap_free=%luKB,heap_min=%luKB\n"),
+      static_cast<unsigned long>(micros()), phase != nullptr ? phase : "-",
+      static_cast<unsigned long>(tagTotalBytes / 1024), tagVector,
+      static_cast<unsigned long>(slabCensus.liveSlabs),
+      static_cast<unsigned long>(slabCensus.usedBytes / 1024),
+      static_cast<unsigned long>(slabCensus.unusedBytes / 1024),
+      static_cast<unsigned long>(slabCensus.slabsAtMostOneNode),
+      static_cast<unsigned long>(slabCensus.slabsTwoToFourNodes),
+      static_cast<unsigned long>(snapshotAllocByteCount() / 1024),
+      static_cast<unsigned long>(LoopEventStore::freeChunkCount()),
+      static_cast<unsigned long>(c.liveBytes / 1024),
+      static_cast<unsigned long>(c.liveBlocks),
+      static_cast<unsigned long>(c.untrackedBlocks),
+      static_cast<unsigned long>(c.unknownFrees),
+      static_cast<unsigned long>(getInternalHeapFreeBytes() / 1024),
+      static_cast<unsigned long>(getInternalHeapMinEverFreeBytes() / 1024));
+}
+
 void logStatusAtAddedNotes(uint32_t addedNoteOns, size_t loopEventCount,
                            const void* loopEventsData, size_t loopChunkRefCount,
                            bool loopChunkBacked) {
@@ -541,6 +578,7 @@ uint32_t getInternalHeapMinEverFreeBytes() { return getInternalHeapFreeBytes(); 
 void resetInternalHeapWatermark() {}
 void logStatus(bool) {}
 void logExternalPoolAccounting(const char*) {}
+void logWorkingSetOwners(const char*) {}
 void reportPrewarmAdmissionDenied(OperationKind) {}
 // Native/other-platform stub: the gate has no pool to consult and must not
 // change host-test behaviour, so it always admits.
@@ -645,6 +683,7 @@ uint32_t getInternalHeapMinEverFreeBytes() { return 0; }
 void resetInternalHeapWatermark() {}
 void logStatus(bool) {}
 void logExternalPoolAccounting(const char*) {}
+void logWorkingSetOwners(const char*) {}
 void reportPrewarmAdmissionDenied(OperationKind) {}
 // Native/other-platform stub: the gate has no pool to consult and must not
 // change host-test behaviour, so it always admits.
