@@ -828,3 +828,18 @@ void STORAGE_PERSIST_MEM StorageManager::probeLoadLoopJobProgress(size_t& bytesR
     bytesRead = loadLoopJob_.bytesRead + parkedLoadLoopJob_.bytesRead;
     payloadSize = loadLoopJob_.payloadSize + parkedLoadLoopJob_.payloadSize;
 }
+
+void STORAGE_PERSIST_MEM StorageManager::probeParkedLoadLoopJob(bool& active, uint8_t& track,
+                                                               uint8_t& slot, uint8_t& phase) {
+    using namespace StorageManagerInternal;
+    active = parkedLoadLoopJob_.active;
+    if (!active) {
+        track = 255;
+        slot = 255;
+        phase = 255;
+        return;
+    }
+    track = parkedLoadLoopJob_.track;
+    slot = parkedLoadLoopJob_.slot;
+    phase = static_cast<uint8_t>(parkedLoadLoopJob_.phase);
+}

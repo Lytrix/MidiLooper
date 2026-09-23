@@ -159,6 +159,32 @@ inline void armRestoreRequestThroughProductionQueue(uint8_t trackIndex, uint8_t 
   StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
 }
 
+/// The common "a payload-bearing slot with no committed content is queued for restore" precondition,
+/// reached through production calls only: reset the slot (production reset), write a valid payload
+/// with the production body writer, then enqueue through the production request entry.
+///
+/// The reset is required rather than cosmetic: an earlier fixture in the suite may already have
+/// committed content into this slot, and `needsSlotLoad`/`queueDeferredLoopSlotRestore` correctly
+/// refuse a slot that does not need a load.
+///
+/// This header deliberately touches only the **public** `StorageManager` surface (the internals are
+/// declared after this include in the suite), so it asserts the public preconditions rather than the
+/// queue count; a fixture asserts the queue itself.
+inline void armBackgroundRestoreRequest(uint8_t trackIndex, uint8_t slotIndex, uint8_t note = 60) {
+  trackManager.getTrack(trackIndex).ensureLoopsAllocated();
+  StorageManagerInternal::resetLoopSlotToEmpty(trackManager.getTrack(trackIndex).getLoop(slotIndex),
+                                               slotIndex);
+  TEST_ASSERT_TRUE(writePayloadWithOneNoteToSd(trackIndex, slotIndex, note));
+  armRestoreRequestThroughProductionQueue(trackIndex, slotIndex);
+  TEST_ASSERT_TRUE_MESSAGE(StorageManager::hasLoopSlotPayloadOnSdInRam(trackIndex, slotIndex),
+                           "the payload must be admitted into the RAM payload mirror");
+  // `needsSlotLoad` is deliberately false once the request is queued (the queue *is* the pending
+  // load), so the observable postcondition is "no committed content + payload present".
+  TEST_ASSERT_FALSE_MESSAGE(
+      trackManager.getTrack(trackIndex).getLoop(slotIndex).hasCommittedPasses(),
+      "the fixture must start from a slot without committed content");
+}
+
 /// One production service turn: select (which may begin a job) then step it under the background
 /// slice budget. This is the *production* deferred-load shape from
 /// `StorageManager::processDeferredLoopSlotRestore` minus the scheduler wrapper, so a fixture drives
@@ -167,6 +193,9 @@ inline void runLoadServiceTurn() {
   (void)StorageManager::selectSubmittedLoadJobs();
   StorageManager::stepSubmittedLoadJobs(LoadLoopBudget::BackgroundRestoreUs, false);
 }
+
+/// One production selection+service turn, named for the "construct a job's instance state" use.
+inline void runSingleLoadServiceTurn() { runLoadServiceTurn(); }
 
 /// Drive up to \p maxTurns production service turns, stopping early when \p stop reports true.
 /// Returns the number of turns actually run (a fixture asserts on it when a bounded wait matters).
@@ -190,31 +219,47 @@ inline bool restoreWorkIdle() {
          !StorageManagerInternal::anyLoadLoopJobActive() && !SlotLoadSession::isActive();
 }
 
-/// One observable snapshot of the request's outcome, taken from the production state the runtime
-/// already exposes. Packet A fixtures need to distinguish three things without the named-wait record
-/// that Packet B adds:
+/// One observable snapshot of the request's outcome, taken from production state only. Packet A
+/// cannot use the named-wait oracle (Packet B adds it), so the discriminator here is **ownership** of
+/// the request:
 ///
-///   * `served`     — the request reached the slot (terminal in Packet B's vocabulary);
-///   * `progressed` — the job did measurable preparation work (bytes read or a phase advance);
-///   * `stalled`    — none of the above: the request is still owed and nothing advanced.
+///   * `served`    — the slot now holds committed content (terminal), or the slot was reset and the
+///                   request retired (the existing `attempted` terminal);
+///   * `owned`     — an active or parked job instance is working this exact request;
+///   * `unowned`   — the request is still owed and **no production mechanism owns it**: it is queued
+///                   and neither instance holds it. This is the stall the change removes, and it is a
+///                   structural state, not a timing measurement.
+///
+/// `probeLoadLoopJobProgress` is deliberately **not** used as an oracle: neither instance's
+/// `bytesRead`/`payloadSize` is cleared on every job teardown path, so a leftover count from an
+/// earlier fixture or request can read as "progress". It stays available for failure messages only.
 struct RestoreOutcomeObservation {
   bool served = false;
-  bool progressed = false;
-  bool stalled = false;
+  /// `owned` is true when either instance held the request; `activeOwned` requires the **active**
+  /// instance, which is the only one a service step can advance. A request that only ever sat in the
+  /// parked instance was selected and parked — i.e. never serviced — which is C2's defect.
+  bool owned = false;
+  bool activeOwned = false;
+  bool unowned = false;
   uint32_t turnsRun = 0;
+  uint32_t turnsOwned = 0;
+  uint32_t turnsActivelyOwned = 0;
   uint16_t pendingAtEnd = 0;
-  uint8_t phaseAtEnd = 255;
   bool jobActiveAtEnd = false;
+  uint8_t phaseAtEnd = 255;
+  bool parkedAtEnd = false;
+  uint8_t parkedPhaseAtEnd = 0;
+  bool attemptedAtEnd = false;
+  bool committedAtEnd = false;
+  size_t bytesReadAtEnd = 0;
+  size_t payloadBytesAtEnd = 0;
 };
 
-/// Drive production turns while observing whether the request is served or its preparation advances.
-/// `progressed` is true only for real work: a phase advance, or a positive `bytesRead`/parsed payload
-/// on either job instance. Being selected into a job is deliberately **not** progress — that is the
-/// parked-job shape C2 describes.
+/// Drive a **fixed** number of production turns and report the request's outcome. No early exit: the
+/// measurement is deterministic, so a failure message is a state rather than a race.
 inline RestoreOutcomeObservation observeRestoreOutcome(uint8_t trackIndex, uint8_t slotIndex,
                                                       uint32_t maxTurns) {
   RestoreOutcomeObservation observation{};
-  uint8_t lastPhase = 255;
   for (uint32_t turn = 0; turn < maxTurns; ++turn) {
     runLoadServiceTurn();
     observation.turnsRun = turn + 1;
@@ -225,24 +270,18 @@ inline RestoreOutcomeObservation observeRestoreOutcome(uint8_t trackIndex, uint8
     uint8_t phase = 0;
     uint8_t isFocus = 0;
     StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
-    if (active && phase != lastPhase) {
-      observation.progressed = true;
-      lastPhase = phase;
+    bool parked = false;
+    uint8_t parkedTrack = 0;
+    uint8_t parkedSlot = 0;
+    uint8_t parkedPhase = 0;
+    StorageManager::probeParkedLoadLoopJob(parked, parkedTrack, parkedSlot, parkedPhase);
+    const bool activeOwnsThisRequest = active && track == trackIndex && slot == slotIndex;
+    const bool parkedOwnsThisRequest = parked && parkedTrack == trackIndex && parkedSlot == slotIndex;
+    if (activeOwnsThisRequest || parkedOwnsThisRequest) {
+      ++observation.turnsOwned;
     }
-    if (active) {
-      size_t bytesRead = 0;
-      size_t payloadSize = 0;
-      StorageManager::probeLoadLoopJobProgress(bytesRead, payloadSize);
-      if (bytesRead > 0) {
-        observation.progressed = true;
-      }
-    }
-    const bool committed =
-        trackManager.getTrack(trackIndex).getLoop(slotIndex).hasCommittedPasses();
-    const bool attempted = StorageManagerInternal::isLoopSlotRestoreAttempted(trackIndex, slotIndex);
-    if (committed || attempted || restoreWorkIdle()) {
-      observation.served = committed;
-      break;
+    if (activeOwnsThisRequest) {
+      ++observation.turnsActivelyOwned;
     }
   }
 
@@ -254,9 +293,36 @@ inline RestoreOutcomeObservation observeRestoreOutcome(uint8_t trackIndex, uint8
   StorageManager::probeActiveLoadLoopJob(active, track, slot, phase, isFocus);
   observation.jobActiveAtEnd = active;
   observation.phaseAtEnd = phase;
+  bool parked = false;
+  uint8_t parkedTrack = 0;
+  uint8_t parkedSlot = 0;
+  uint8_t parkedPhase = 0;
+  StorageManager::probeParkedLoadLoopJob(parked, parkedTrack, parkedSlot, parkedPhase);
+  observation.parkedAtEnd = parked;
+  observation.parkedPhaseAtEnd = parkedPhase;
+
   observation.pendingAtEnd = StorageManagerInternal::pendingLoopSlotRestoreCount();
-  observation.stalled = !observation.served && !observation.progressed;
+  observation.attemptedAtEnd =
+      StorageManagerInternal::isLoopSlotRestoreAttempted(trackIndex, slotIndex);
+  observation.committedAtEnd =
+      trackManager.getTrack(trackIndex).getLoop(slotIndex).hasCommittedPasses();
+  StorageManager::probeLoadLoopJobProgress(observation.bytesReadAtEnd,
+                                           observation.payloadBytesAtEnd);
+
+  // `served` is an actual terminal for this request: the slot committed, or the slot was reset and
+  // the request retired (`attempted`). A merely empty queue is NOT a terminal here — the request may
+  // be sitting in the parked instance, which is C2's shape, not success.
+  observation.served = observation.committedAtEnd || observation.attemptedAtEnd;
+  observation.owned = observation.turnsOwned > 0;
+  observation.activeOwned = observation.turnsActivelyOwned > 0;
+  observation.unowned = !observation.served && !observation.owned;
   return observation;
+}
+
+/// The desired-behavior predicate Packet A asserts: the request was served, or some production
+/// mechanism owns it. `unowned` is the defect.
+inline bool restoreRequestHasOutcome(const RestoreOutcomeObservation& observation) {
+  return observation.served || observation.owned;
 }
 
 }  // namespace RestoreHarness
