@@ -649,6 +649,34 @@ void test_restore_request_state_is_driven_by_the_production_path() {
                        StorageManagerInternal::RestoreRequestTerminal::Committed));
 }
 
+/// **A denying gate names the wait (A2.1).** A queued request whose slot a live owner holds must be
+/// reported as `waiting_slot_owned` -- a named wait, not a terminal and not an unexplained stall. This is
+/// C4's shape, and the state is what the A1.8 probe and the drain's verdict will report.
+void test_restore_request_slot_owned_denial_names_the_wait() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  StorageManagerInternal::resetAllRestoreRequestState();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  // A live owner on slot 4, and a queued request for that uncommitted slot.
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  RestoreHarness::resetSlotToEmpty(0, 4);
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, PendingStopDestination::Playing, 4);
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(4));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 4, 0));
+
+  // One production selection turn: the slot is owned, so nothing may begin.
+  RestoreHarness::runSingleLoadServiceTurn();
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the blocked request must stay queued");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(
+      static_cast<int>(StorageManagerInternal::RestoreRequestState::Waiting),
+      static_cast<int>(StorageManagerInternal::restoreRequestState(0, 4)),
+      "a denial by a live owner must be a named wait, not a terminal and not still queued");
+}
+
 /// A fresh request is **queued**, not terminal: "not yet served" and "finished" are different states,
 /// which is the separation D1 requires.
 void test_restore_request_starts_queued_and_is_not_a_terminal() {
@@ -858,6 +886,7 @@ int main(int, char**) {
   RUN_TEST(test_restore_state_probe_reports_the_save_blocked_by_restore);
   // A2.1 — the request record's identity/state contracts (default-gate; the record satisfies them).
   RUN_TEST(test_restore_request_state_is_driven_by_the_production_path);
+  RUN_TEST(test_restore_request_slot_owned_denial_names_the_wait);
   RUN_TEST(test_restore_request_starts_queued_and_is_not_a_terminal);
   RUN_TEST(test_restore_request_running_keeps_identity_without_a_wait);
   RUN_TEST(test_restore_request_wait_is_named_and_not_terminal);

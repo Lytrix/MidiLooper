@@ -291,8 +291,16 @@ A1.7.
 - **RAM1 was enforced, not advisory.** The first version cost 64 B of ITCM (`padding 888 → 824`, below the
   approved floor of 840) and the post-link budget gate failed the build. Making every helper `FLASHMEM`
   restored `code 392,328 / padding 888` with 48 B of headroom.
-- **Still open:** wait-state transitions at the denying gates, the `refused`/`unnecessary` terminals,
-  pre-publication identity validation, and `loopSlotRestoreAttempted_` retirement.
+- **Named wait wired (fixture-first):** `test_restore_request_slot_owned_denial_names_the_wait` was
+  written red first (*Expected 2 Was 0* — the request stayed `queued`), then the three selection denials
+  were wired to `markRestoreRequestWaiting(..., SlotOwned)`: the empty-idle priority-head check, the focus
+  branch's early return, and the parked/focus branch. A request blocked by a live owner now reports
+  `waiting_slot_owned`, which is the observable form of C4 and the reason the A1.8 probe's
+  `queueHeadStartable` matters.
+- **Still open:** the remaining wait transitions (`waiting_capture`, `waiting_commit_gate`,
+  `waiting_job_capacity`) and the `refused`/`unnecessary` terminals land with A2.2–A2.4 (they are the gates
+  those tasks introduce); pre-publication identity validation and `loopSlotRestoreAttempted_` retirement
+  remain in A2.1/A2.4.
 
 ---
 
