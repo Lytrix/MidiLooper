@@ -1489,3 +1489,41 @@ the job with `TrackCaptureStopTestAccess::step`, assert `noLiveOwnerForSlot(0)` 
 `selectSubmittedLoadJobs()`, and assert the retained request is consumed **once**
 (`pendingLoopSlotRestores_.count == 0` and `isLoopSlotRestoreAttempted(0, 0)`), with a second selection
 consuming nothing. The harness now links everything that needs.
+
+## P1 — B04 complete: both halves green (2026-09-23)
+
+`test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned` now covers the whole S2b.5
+acceptance:
+
+1. **While the slot is owned:** a queued restore survives the production `selectSubmittedLoadJobs()` — the
+   entry is still queued and the slot's content is untouched. (This is the assertion that was **red** before
+   the fix; it is the discriminating one.)
+2. **After the owner retires:** the retained request is resolved exactly once. Building the interval through
+   the production `Track::startOverdubbing` (rather than poking Loop state) is what makes the job able to
+   finalize — a hand-built interval admits a job that can never retire, which the first attempt at this half
+   discovered. Once it retires, the committed content **satisfies** the queued restore, so the request is
+   resolved as unnecessary: no load is begun, no attempt is marked, and nothing resets the slot. A second
+   selection consumes nothing.
+
+That correction matters for the oracle: "restoration happens exactly once" for a slot whose finalizing
+interval *committed its content* is a resolution, not a load. The fixture asserts the outcome that is
+actually correct rather than the one the task text's phrasing suggested.
+
+### Harness additions this increment
+
+- `test/test_storage_manager_load/load_harness_stubs.h` gained the note-edit fold stubs
+  (`commitAllPendingNoteEditActions`, `foldLiveCaptureIntoNoteEditSession`, both fail-closed — the production
+  start reaches them only with a note-edit session active, which a load fixture never has) and the
+  `silenceTrackMidiOutput` counting boundary (the counter itself is one of the shared harness globals).
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **5/5 PASSED** |
+| full native | **2,277 cases / 1 skipped / 2,276 succeeded / 0 failures** |
+| `test_continuous_capture` | 87/87 |
+| firmware + budget | SUCCESS, `teensy41-capture-serial` padding **1,032** |
+
+**S2b.5's native acceptance is now met.** The task stays open only for its device gate, which the S1 resident-library
+baseline owns.

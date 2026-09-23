@@ -36,6 +36,15 @@ LOAD_HARNESS_OFF_PATH_EDIT(EditLengthNoteState)
 LOAD_HARNESS_OFF_PATH_EDIT(EditPitchNoteState)
 #undef LOAD_HARNESS_OFF_PATH_EDIT
 
+/// Note-edit is not reachable from a load fixture, so these fail closed like the state handlers above.
+void EditManager::commitAllPendingNoteEditActions(Track&) { LOAD_HARNESS_OFF_PATH(); }
+void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { LOAD_HARNESS_OFF_PATH(); }
+
+/// A physical output boundary, not an unrelated domain route: both stop destinations silence the track, so
+/// this is observable rather than fail-closed (the same decision as the other suite's boundary). The counter
+/// itself is one of the shared harness globals in track_harness.inc.
+void Track::silenceTrackMidiOutput() { ++g_nativeSilenceTrackCalls; }
+
 inline uint8_t resolveTrackIndexForPersistence(const Track& track) {
   for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
     if (&trackManager.getTrack(i) == &track) return i;
