@@ -17,6 +17,16 @@ enum class SyncDrainFailureReason : uint8_t {
   /// it, so the drain has nothing to step. Terminal and immediate: spinning the full stuck budget
   /// on a state that cannot change only hides the cause. See `admitWork`'s fixed-table exhaustion.
   AdmissionRefused,
+  /// The drain can step nothing because `StorageManager::processDeferredSaveState` returns early on a
+  /// gate, not because the work itself stalled. These name the gate.
+  ///
+  /// Without them the blocking CLEAR drain reported the generic `Stuck` while the actual cause was a
+  /// gate the caller could have waited out or reported differently: the 2026-09-23 device session
+  /// could not tell a transport gate from a slot-load gate from a post-load holdoff from any log, and
+  /// so could not choose a fix on evidence.
+  BlockedByTransport,
+  BlockedBySlotLoad,
+  BlockedByPostLoadHoldoff,
 };
 
 /// Upper-bound sync drain budget derived from queued SD work (not a fixed step cap).
