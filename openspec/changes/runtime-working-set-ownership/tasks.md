@@ -759,7 +759,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       that is never compared adds no protection and would cost RAM1. Transport history is covered by
       **consumption plus identity validation**. **Closes only on the four paused-worker transition tests:**
       (1) Transport Stop -> Start -- *native, green in B03*; (2) seek/reset/MIDI Start recompute the
-      boundary in the new tick domain -- *no native entry, the ClockManager entries are stubs*; (3) load/
+      boundary in the new tick domain -- **now green natively**
+      (`test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution`: latch at 96, seek before
+      execution, assert the admitted boundary is not the stored tick and lies in the new domain). **Coverage
+      limit, stated in the fixture:** the `ClockManager` seek/reset/MIDI-Start entries are harness stubs, so the
+      tick domain is moved with the controlled clock -- that proves the decision (the drive passes the live
+      tick, never `request.phaseTick`), not the production entry that moves the domain, which is device
+      territory; (3) load/
       replacement cannot bind an old request to replacement content -- *needs the load harness*;
       (4) repeated retries commit exactly one stop -- *native, green in B03*.
       **(3) is now green too, and it was a defect, not just a fixture:** a request whose interval is gone (a load

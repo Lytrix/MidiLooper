@@ -266,6 +266,14 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   **1, 3 and 4** are green natively; transition 2 (seek/reset/MIDI Start) has no native entry because those
   `ClockManager` entries are harness stubs. Full native **2,279 / 1 skipped / 0 failures**; firmware + per-env
   budget SUCCESS at padding 1,096.
+- **S4f.4's four paused-worker transitions are all green natively.** Transition 2 (seek/reset/MIDI Start) was
+  the last: `test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution` latches an accepted stop at
+  tick 96, moves the tick domain before execution, drives, and asserts the admitted boundary is **not** the
+  stored tick and lies in the new domain -- discriminating, since a drive that used `request.phaseTick` would
+  make the two equal. **Coverage limit stated in the fixture:** the `ClockManager` seek/reset/MIDI-Start entries
+  are harness stubs, so the domain is moved with the controlled clock; that proves the decision, not the
+  production entry that moves it (device territory). Full native **2,280 / 1 skipped / 0 failures**; firmware +
+  per-env budget SUCCESS at padding 1,096.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
