@@ -89,13 +89,15 @@ Full native after the fix: **2,289 cases / 1 skipped / 2,288 succeeded / 0 failu
 `code 392,200 / padding 1,016 / locals 34,944` — **112 B better** than the pre-fix `392,312 / 904`
 (single-argument call sites plus a FLASH-resident helper).
 
-**Device** (HEAD + fix, `firmware.hex` sha256 `52d5a805…`). Three post-fix boots, **0**
-`could not reconcile` warnings — against a warning on **every** pre-fix boot
-(`captures/rwso-24cap/session_20260923_201842.log`, `captures/rwso-growth/boot-n2/`). The boot census is
-unchanged and correct: enabled set 512 → 480 (32 chunks), restore walk `phase=before 480 → phase=after
-480` with `credits=0` on every row, `track=1,slot=2` the only committed library slot, payload to
-`chunks_free=441`. Post-fix logs: `captures/sd-fix-boot-01/`, `captures/sd-fix-24cap/`,
-`captures/sd-fix-24cap-nograin/`.
+**Device** (HEAD + fix, `firmware.hex` sha256 `52d5a805…`). **Two** genuine post-fix boots — only two of
+the four post-fix logs contain a boot sequence (`BOOT,load,start`); the other two opened serial without
+resetting the board and so say nothing about boot — and both have **0** `could not reconcile` warnings,
+against a warning on **every** pre-fix boot (`captures/rwso-24cap/session_20260923_201842.log`,
+`captures/rwso-growth/boot-n2/`). The boot census is unchanged and correct: enabled set 512 → 480
+(32 chunks), restore walk `phase=before 480 → phase=after 480` with `credits=0` on every row,
+`track=1,slot=2` the only committed library slot, payload to `chunks_free=441`. Booting post-fix logs:
+`captures/sd-fix-boot-01/`, `captures/sd-fix-24cap-nograin/`; non-boot: `captures/sd-fix-24cap/`,
+`captures/sd-fix-boot-02/`.
 
 ## What this does NOT fix
 

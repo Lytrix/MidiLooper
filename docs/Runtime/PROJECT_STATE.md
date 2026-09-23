@@ -24,8 +24,9 @@ append/offset-0 and the class is visible natively.
 **Evidence.** New `test_storage_manager_load` cases, **red-proven**: with the remove disabled the
 stale-temp test fails `Expected 8 Was 13`. Full native **2,289 / 1 skipped / 2,288 succeeded /
 0 failures**; `teensy41-capture-serial` SUCCESS at `code 392,200 / padding 1,016` — **112 B better** than
-the pre-fix `392,312 / 904`. Device (`52d5a805…`): **three post-fix boots, 0 `could not reconcile`**,
-against a warning on every pre-fix boot, with the census unchanged (enabled set 32 chunks, restore walk
+the pre-fix `392,312 / 904`. Device (`52d5a805…`): **two genuine post-fix boots (only two of the four
+post-fix logs contain a boot sequence), 0 `could not reconcile`**, against a warning on every pre-fix
+boot, with the census unchanged (enabled set 32 chunks, restore walk
 480 → 480 at `credits=0`, payload to 441). Plan:
 [`docs/Plans/sd_temp_write_truncation_refinement.md`](../Plans/sd_temp_write_truncation_refinement.md).
 
