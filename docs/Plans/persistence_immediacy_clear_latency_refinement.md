@@ -150,11 +150,25 @@ keeps playing. Implemented:
 
 **Verification:** built (SUCCESS, `code 392,328 / padding 888`); full native 2,289 / 1 skipped / 0 failures;
 harness suites OK. Device: **0** `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`
-across five runs, and a content pass reports `Result: PASS` with `overflow_free=True`. **Honest limit: none
-of those runs had a deferred save pending at clear time**, so they do not discriminate this change — the old
-`Clear aborted` state was not reproduced post-change, and one attempt to force it (fresh boot + early clear)
-accidentally stopped an already-running transport with its transport tap, which clears the gate for the old
-reason. A discriminating test needs a pending save *and* other tracks playing at the clear.
+across five runs, and a content pass reports `Result: PASS` with `overflow_free=True`.
+
+**Honest limit — the discriminating case is not demonstrated, and two attempts to build it are recorded:**
+
+1. *Fresh boot + early clear.* The intent was to catch the boot workspace save still owed. The transport tap
+   **stopped** a transport that was already running rather than starting it, which clears the gate for the old
+   reason, so the run proves nothing. Lesson recorded: read the transport state from serial first — later
+   attempts do.
+2. *Double clear with the transport confirmed running.* Select the scratch slot, start the transport (state
+   read from serial: it was stopped), clear, then clear again so the second clear meets a pending save. It
+   still did not discriminate, because on the current device state **no other track is sounding**: after
+   starting the transport the only MIDI is LED feedback on channel 15, and `PERS,backlog` never reports
+   `pending=1`. With no pending save *and* no other track playing, the gate is satisfied either way.
+
+So the condition this change governs — a pending deferred save **while other tracks keep playing** — is not
+reachable on the device as it now stands without creating content on a track **outside the approved scratch
+range**, which this session will not do unilaterally. The change stands on the owner's decision and on the
+build/suite evidence; the discriminating device run needs either the owner's go-ahead to write a second
+track, or the restored library to be playing again.
 
 ### Options that were considered before the ruling
 

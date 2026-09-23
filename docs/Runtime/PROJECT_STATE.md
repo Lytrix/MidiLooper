@@ -15,10 +15,13 @@ during playback would be ten times longer). Build SUCCESS at `code 392,328 / pad
 **Device, stated honestly:** the failure mode did not recur — across five runs there are **0**
 `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`, and a content pass reports
 **`Result: PASS`** with `overflow_free=True`. **But none of those runs had a deferred save pending at clear
-time**, so they do **not** discriminate this change; the old `Clear aborted` state was not reproduced
-post-change, and an attempt to force it (fresh boot + early clear) accidentally stopped an already-running
-transport with its transport tap — clearing the gate for the old reason. A discriminating test needs a pending
-save *and* other tracks playing at the clear. Full entry: `DEC-081` in
+time**, so they do **not** discriminate this change. Two attempts to build the discriminating state are
+recorded: (1) a fresh boot plus early clear failed because the transport tap *stopped* an already-running
+transport (lesson: read transport state from serial first); (2) a double clear with the transport confirmed
+running still did not discriminate, because **no other track is currently sounding** — the only MIDI after
+starting the transport is LED feedback on ch15, and `PERS,backlog` never reports `pending=1`. Reaching the
+condition needs either the owner's go-ahead to write a second track (outside the approved scratch range) or the
+restored library playing again. Full entry: `DEC-081` in
 [`docs/DECISION_LOG.md`](../DECISION_LOG.md).
 
 **Earlier 2026-09-23 owner asks (persist-as-you-record, content pass): the content pass PASSES and
