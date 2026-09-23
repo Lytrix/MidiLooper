@@ -2043,6 +2043,10 @@ than guessed at:
 
 This is left **open and precisely specified** rather than implemented under time pressure: the park is
 invariant-31 surface, and a terminal that cleared the store would silently regress S2b.4's red-proven guarantee.
+The conflict itself is resolvable by the documented authority order rather than by preference: a change's
+**spec delta is normative** and its `design.md` is explanatory, so the report-only reading governs and the
+design sentence should be corrected to describe the **retire** route. What remains is the implementation
+decision it names — the observable counter — not the semantics.
 
 ## Device session — the baseline is flashed, and boot/load residency is measured on device (2026-09-23)
 
