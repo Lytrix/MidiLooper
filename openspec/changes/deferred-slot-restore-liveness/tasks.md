@@ -498,7 +498,30 @@ fixture for C5 is claimed, and A1.7 stays open until its pure-decision cases lan
       restore commit pending asserts the drain preserves the request and reports the named commit-gate
       wait instead of admitting an unbounded commit**.
 
-- [ ] A3.2 **Named drain verdict (D4).** Replace the generic `BlockedBySlotLoad` verdict with
+- [x] A3.2 **Named drain verdict (D4).**
+      → **DONE 2026-09-24.** `SyncDrainFailureReason` gains **`BlockedByRestore`**, and
+      `classifySyncDrainVerdict(captureRecording, slotLoadActive, postLoadHoldoff, restoreWait)` is the
+      **pure** classifier: it returns the reason **paired with the gate name**, so the drain's report site
+      is branch-free and the ITCM drain pays nothing for the wait vocabulary. Order matches the drain's own
+      checks — capture first (a recording track defers the load itself), then the slot-load gate, then the
+      post-load holdoff — and `Stuck` is reserved for a gate nothing explains. The wait arrives as a small
+      `SyncDrainWait` code, deliberately **not** a second enum: the first attempt introduced a duplicate
+      vocabulary and cost more ITCM than the problem needs.
+      Wired: `restoreRequestWaitFor` reads the A2.1 record's wait, `restoreWaitReasonBlockingSave` /
+      `restoreWaitCodeBlockingSave` resolve the request holding the save gate (live job instances first),
+      and `drainPersistenceWorkBlocking` classifies through the pure function, reporting e.g.
+      `blocked by waiting_commit_gate` instead of the generic `slot_load_active`.
+      **Five new cases** in `test_persistence_sync_drain_budget` (a pure library, so a tight oracle):
+      capture outranks the slot-load gate; all five named waits map to their `waiting_*` names; an active
+      slot load with **no** named wait keeps `BlockedBySlotLoad`; the holdoff is named and outranked by an
+      active slot load; and `Stuck` is reserved for an unexplained gate, with every named verdict carrying
+      a reportable name. Suite **12/12**.
+      **Prerequisite landed first, as its own commit:** the drain's cold terminal report moved to a
+      `STORAGE_PERSIST_MEM` helper, freeing **512 B of ITCM** (`padding 872 → 1,384`). A3.2 then cost
+      112 B, leaving `code 392,024 + padding 1,192` — **352 B above the 840 floor**, i.e. net better than
+      before both steps. Full native green.
+      **Not claimed:** the drain-integration/device half (A3.7) — this is the decision and its report.
+ Replace the generic `BlockedBySlotLoad` verdict with
       `BlockedByRestore(<request wait reason>)` so the drain reports *why* it could not advance, and keep
       the existing `BlockedByCapture` / `BlockedByPostLoadHoldoff` distinctions (the holdoff is reported by
       name, not spun). **Verify:** cases assert the named reason for capture-active, commit-gate,

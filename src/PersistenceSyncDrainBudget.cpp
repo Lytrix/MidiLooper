@@ -154,6 +154,53 @@ SyncDrainBudget buildSyncDrainBudget(const SyncDrainBudgetInput& input, uint32_t
   return budget;
 }
 
+const char* syncDrainRestoreWaitName(uint8_t wait) {
+  switch (wait) {
+    case SyncDrainWait::kSlotOwned:
+      return "waiting_slot_owned";
+    case SyncDrainWait::kCapture:
+      return "waiting_capture";
+    case SyncDrainWait::kCommitGate:
+      return "waiting_commit_gate";
+    case SyncDrainWait::kJobCapacity:
+      return "waiting_job_capacity";
+    case SyncDrainWait::kRetry:
+      return "waiting_retry";
+    default:
+      return nullptr;
+  }
+}
+
+SyncDrainVerdict classifySyncDrainVerdict(bool captureRecording, bool slotLoadActive,
+                                                   bool postLoadHoldoff, uint8_t restoreWait) {
+  SyncDrainVerdict verdict{};
+  if (captureRecording) {
+    verdict.reason = SyncDrainFailureReason::BlockedByCapture;
+    verdict.gate = "transport_active";
+    return verdict;
+  }
+  if (slotLoadActive) {
+    if (restoreWait != SyncDrainWait::kNone) {
+      verdict.reason = SyncDrainFailureReason::BlockedByRestore;
+      // The request's own named wait: the whole point of A3.2 -- report *why*, not just that a restore
+      // holds the gate.
+      verdict.gate = syncDrainRestoreWaitName(restoreWait);
+      return verdict;
+    }
+    verdict.reason = SyncDrainFailureReason::BlockedBySlotLoad;
+    verdict.gate = "slot_load_active";
+    return verdict;
+  }
+  if (postLoadHoldoff) {
+    verdict.reason = SyncDrainFailureReason::BlockedByPostLoadHoldoff;
+    verdict.gate = "post_load_holdoff";
+    return verdict;
+  }
+  verdict.reason = SyncDrainFailureReason::Stuck;
+  verdict.gate = "unexplained";
+  return verdict;
+}
+
 bool madeSyncDrainProgress(const SyncDrainProgressSnapshot& before,
                            const SyncDrainProgressSnapshot& after) {
   if (after.workQueueDepth < before.workQueueDepth) {

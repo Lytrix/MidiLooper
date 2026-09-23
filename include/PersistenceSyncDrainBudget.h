@@ -25,9 +25,25 @@ enum class SyncDrainFailureReason : uint8_t {
   /// could not tell a transport gate from a slot-load gate from a post-load holdoff from any log, and
   /// so could not choose a fix on evidence.
   BlockedByCapture,
+  /// **A3.2:** a restore holds the save gate. The verdict carries the request's own **named wait**, so
+  /// a blocking CLEAR reports *why* instead of collapsing every restore block into `BlockedBySlotLoad`.
+  BlockedByRestore,
+  /// Retained for a slot load that is active but whose request names no wait, so no existing report
+  /// regresses to a less specific label.
   BlockedBySlotLoad,
   BlockedByPostLoadHoldoff,
 };
+
+/// The restore wait reasons the drain can report, as small integer codes. Deliberately not a second enum
+/// type: a duplicate vocabulary cost more ITCM than the problem needs (measured in the first attempt).
+namespace SyncDrainWait {
+constexpr uint8_t kNone = 0;
+constexpr uint8_t kSlotOwned = 1;
+constexpr uint8_t kCapture = 2;
+constexpr uint8_t kCommitGate = 3;
+constexpr uint8_t kJobCapacity = 4;
+constexpr uint8_t kRetry = 5;
+}  // namespace SyncDrainWait
 
 /// Upper-bound sync drain budget derived from queued SD work (not a fixed step cap).
 struct SyncDrainBudget {
@@ -97,6 +113,25 @@ struct SyncDrainBudgetInput {
 };
 
 SyncDrainBudget buildSyncDrainBudget(const SyncDrainBudgetInput& input, uint32_t sliceBudgetUs);
+
+/// **A3.2 — the classified drain verdict**, pairing the reason with the name to report. Returning both
+/// from one call keeps the drain's report site branch-free: the classification runs once, on the FLASH
+/// side, instead of as a nested conditional in the ITCM drain.
+struct SyncDrainVerdict {
+  SyncDrainFailureReason reason = SyncDrainFailureReason::None;
+  /// `transport_active` / a `waiting_*` name / `slot_load_active` / `post_load_holdoff` / `unexplained`.
+  const char* gate = "none";
+};
+
+/// **A3.2 — the pure drain-verdict classifier.** Names *why* the drain could not advance, from the three
+/// gate predicates it already tests plus the restore request's wait code (`SyncDrainWait`). Order matters
+/// and matches the drain's own check order: capture first (a recording track defers the load itself),
+/// then the slot-load gate, then the post-load holdoff. `Stuck` is reserved for the case where no gate
+/// explains it.
+SyncDrainVerdict classifySyncDrainVerdict(bool captureRecording, bool slotLoadActive,
+                                          bool postLoadHoldoff, uint8_t restoreWait);
+/// The `waiting_*` name for a restore wait code, or `nullptr` for `kNone`.
+const char* syncDrainRestoreWaitName(uint8_t wait);
 
 bool madeSyncDrainProgress(const SyncDrainProgressSnapshot& before,
                            const SyncDrainProgressSnapshot& after);

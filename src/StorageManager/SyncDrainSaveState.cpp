@@ -22,8 +22,9 @@ namespace StorageManagerInternal {
 /// post-loop failure checks, and the success report. It owns the bool result and the telemetry scope's
 /// outcome so the drain keeps a single return point.
 STORAGE_PERSIST_MEM bool finishPersistenceDrainReport(
-    SyncDrainFailureReason failureReason, uint32_t steps, uint32_t stuckIterations,
-    const SyncDrainBudget& drainBudget, HotPathTelemetry::ScopedSaveState& telemetryScope) {
+    SyncDrainFailureReason failureReason, const PersistenceSyncDrainBudget::SyncDrainVerdict& verdict,
+    uint32_t steps, uint32_t stuckIterations, const SyncDrainBudget& drainBudget,
+    HotPathTelemetry::ScopedSaveState& telemetryScope) {
     if (failureReason != SyncDrainFailureReason::None) {
 #if defined(SESSION_CAPTURE)
         const SyncDrainProgressSnapshot progress = captureSyncDrainProgressSnapshot();
@@ -45,13 +46,12 @@ STORAGE_PERSIST_MEM bool finishPersistenceDrainReport(
                                   drainBudget.estimatedSdPayloadBytes);
 #endif
         } else if (failureReason == SyncDrainFailureReason::BlockedByCapture ||
+                   failureReason == SyncDrainFailureReason::BlockedByRestore ||
                    failureReason == SyncDrainFailureReason::BlockedBySlotLoad ||
                    failureReason == SyncDrainFailureReason::BlockedByPostLoadHoldoff) {
-            const char* gate = failureReason == SyncDrainFailureReason::BlockedByCapture
-                                   ? "transport_active"
-                                   : (failureReason == SyncDrainFailureReason::BlockedBySlotLoad
-                                          ? "slot_load_active"
-                                          : "post_load_holdoff");
+            // A3.2: the name was chosen once by the classifier, so this site has no branching and the
+            // ITCM drain pays nothing for the vocabulary.
+            const char* gate = verdict.gate;
             Serial.printf(
                 "[StorageManager] ERROR: Persistence drain blocked by %s after %u iterations "
                 "(max %u, expected ~%u slice steps, ~%u SD bytes)\n",
@@ -145,6 +145,7 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
     uint32_t stuckIterations = 0;
     SyncDrainProgressSnapshot lastProgress = captureSyncDrainProgressSnapshot();
     SyncDrainFailureReason failureReason = SyncDrainFailureReason::None;
+    PersistenceSyncDrainBudget::SyncDrainVerdict verdict{};
 
     while (hasPersistenceWorkPending()) {
         if (steps >= drainBudget.maxSliceSteps) {
@@ -176,15 +177,15 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
                 // Name the gate that stopped the drain, in the same order `processDeferredSaveState`
                 // checks them, so a blocking CLEAR reports *why* instead of the generic "stuck"
                 // (2026-09-23 device session: the gate could not be told apart from any log).
-                if (StorageManagerInternal::isCaptureRecordingForPersistence()) {
-                    failureReason = SyncDrainFailureReason::BlockedByCapture;
-                } else if (StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd()) {
-                    failureReason = SyncDrainFailureReason::BlockedBySlotLoad;
-                } else if (StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff()) {
-                    failureReason = SyncDrainFailureReason::BlockedByPostLoadHoldoff;
-                } else {
-                    failureReason = SyncDrainFailureReason::Stuck;
-                }
+                // A3.2: the classification is a pure decision (natively tested in
+                // `test_persistence_sync_drain_budget`), and it carries the restore request's own
+                // **named wait** instead of collapsing every restore block into `BlockedBySlotLoad`.
+                verdict = PersistenceSyncDrainBudget::classifySyncDrainVerdict(
+                    StorageManagerInternal::isCaptureRecordingForPersistence(),
+                    StorageManagerInternal::deferredSaveBlockedByActiveSlotLoadSd(),
+                    StorageManagerInternal::deferredSaveBlockedByPostLoadCommitHoldoff(),
+                    StorageManagerInternal::restoreWaitCodeBlockingSave());
+                failureReason = verdict.reason;
                 break;
             }
         }
@@ -192,10 +193,10 @@ bool drainPersistenceWorkBlocking(const LooperState& state) {
 
     // A3.2 / RAM1: the terminal report is FLASH-resident (see `finishPersistenceDrainReport`).
     if (!hasPersistenceWorkPending()) {
-        return finishPersistenceDrainReport(SyncDrainFailureReason::None, steps, stuckIterations,
-                                           drainBudget, telemetryScope);
+        return finishPersistenceDrainReport(SyncDrainFailureReason::None, verdict, steps,
+                                           stuckIterations, drainBudget, telemetryScope);
     }
-    return finishPersistenceDrainReport(failureReason, steps, stuckIterations, drainBudget,
+    return finishPersistenceDrainReport(failureReason, verdict, steps, stuckIterations, drainBudget,
                                        telemetryScope);
 #endif
 }

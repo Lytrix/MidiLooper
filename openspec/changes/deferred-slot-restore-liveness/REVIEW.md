@@ -445,55 +445,37 @@ A1.7.
   RAM1 `variables 96,192 / code 392,344 + padding 872 / locals 34,880`, above the 840 floor, 12 ITCM banks
   unchanged; A2.5 device evidence recorded above.
 
-### A3.2 — named drain verdict (attempted; not landed — ITCM placement is the blocker)
+### A3.2 — named drain verdict (landed)
 
-An attempt was made and **fully reverted**; the tree is clean at `29db1096`. Recording it so the next
-attempt starts from the measurement instead of repeating it.
+- **Classifier:** `classifySyncDrainVerdict(captureRecording, slotLoadActive, postLoadHoldoff, restoreWait)`
+  in `PersistenceSyncDrainBudget` — pure, FLASH-free of storage dependencies, and returning the reason
+  **paired with the gate name** so the drain's report site is branch-free. First attempt returned only the
+  reason and needed a nested ternary in the ITCM drain; returning the pair is what made it fit.
+- **Vocabulary:** `SyncDrainFailureReason::BlockedByRestore` plus small `SyncDrainWait` codes. Deliberately
+  not a second enum — the duplicate-vocabulary version cost more ITCM than the problem needs.
+- **Order:** capture → slot-load gate → post-load holdoff, matching the drain; `Stuck` is reserved for a
+  gate nothing explains. `BlockedBySlotLoad` is retained when a slot load is active but names no wait, so
+  no existing report regresses.
+- **Wiring:** `restoreRequestWaitFor` reads the A2.1 record's wait; `restoreWaitReasonBlockingSave` /
+  `restoreWaitCodeBlockingSave` resolve the request holding the save gate (live job instances first, then
+  any request in a named wait); the drain classifies through the pure function and reports e.g.
+  `blocked by waiting_commit_gate`.
+- **Evidence:** suite **12/12** (five new cases); full native green.
 
-**What works:** the pure classifier is straightforward and its fixtures are good. `SyncDrainFailureReason`
-gains `BlockedByRestore`, and a single `classifySyncDrainVerdict(captureRecording, slotLoadActive,
-postLoadHoldoff, restoreWait)` returns the reason **paired with the gate name**, so the drain's report site
-stays branch-free — the first attempt returned only the reason and needed a nested ternary in the ITCM
-drain, which was strictly worse. Five fixtures covered capture-first ordering, all five named waits,
-`BlockedBySlotLoad` retention when no wait is named, the holdoff, and `Stuck` reserved for an unexplained
-gate. **12/12 green** when they were in place.
+#### The ITCM path to landing it — two steps, and the order mattered
 
-**Why it was reverted — a real, measured budget wall:** the classifier is ~96 B of ITCM code extra. The
-classifier and its name table are `FLASHMEM`, so the residual is the call/verdict plumbing from the ITCM
-drain. That took `padding 872 → 792`, and `padding_floor` is **840**: the checker's message is explicit
-that the floor is a reviewed allowance and that the remedy is to **move code out of ITCM**, not to re-base
-the floor. Unlike the A2.4 re-base (which was justified because the request record is genuine RAM1 *state*),
-there was no budget authority to spend here.
+1. **Report-block extraction, its own commit.** `drainPersistenceWorkBlocking`'s whole terminal-outcome
+   report became `finishPersistenceDrainReport`, a `STORAGE_PERSIST_MEM` helper owning the bool result and
+   the telemetry scope's outcome so the drain keeps one return point. Pure move; drain suite 1/1, load
+   suite 26/26, full native green. **`code 392,344 + padding 872` → `code 391,832 + padding 1,384`:
+   512 B of ITCM freed**, from 32 B *below* the 840 floor to 544 B above.
+2. **A3.2 on top.** Cost **112 B**, leaving `code 392,024 + padding 1,192` — **352 B above the floor**,
+   net better than before either step.
 
-**Two things the attempt proved, which constrain the next one:**
-
-1. **Do not duplicate the wait vocabulary.** The first version declared a second enum
-   (`SyncDrainRestoreWait`) beside `StorageManagerInternal::RestoreRequestWait` and mapped between them.
-   It worked, but a duplicate enum plus a classifier plus a name table is more ITCM than the problem
-   needs; the second version folded the wait code into the verdict itself.
-2. **A naive "extract the report block to FLASH" refactor is unsafe by hand.** The extraction was
-   attempted (moving the failed-drain report into a `STORAGE_PERSIST_MEM` helper, which is exactly the
-   sustained remedy), but the mechanical re-indentation of that block corrupted the function and it was
-   reverted rather than patched forward. That extraction is the right fix; it needs to be done as its own
-   reviewed step with the build run at each move, not folded into a feature slice.
-
-**RAM1 remedy landed (same day): the report-block extraction.** `drainPersistenceWorkBlocking`'s whole
-terminal-outcome report — the failure report, the two post-loop failure checks, and the success report —
-is now `finishPersistenceDrainReport(...)`, a `STORAGE_PERSIST_MEM` helper that owns the bool result and
-the telemetry scope's outcome so the drain keeps one return point. Done as its own commit with the
-firmware build run immediately after, which is what the first attempt got wrong.
-
-**Measured effect: `code 392,344 + padding 872` → `code 391,832 + padding 1,384`** — **512 B of ITCM
-freed**, moving the tree from 32 B below the 840 floor to **544 B above** it. That is the headroom the
-A3.2 classifier needs, and it was wanted independently of A3.2: a cold once-per-drain report does not
-belong in ITCM.
-
-Behavior preserved: the drain suite (A1.7's closure proof) 1/1, load suite 26/26, full native
-**2,316 / 1 skipped / 0 failures**, firmware SUCCESS. The extraction is a pure move — the failure-reason
-branches, the two post-loop checks and the success path are byte-for-byte the same logic, only relocated.
-
-**Net for A1.7:** unchanged — still waiting on A3.2's and A3.4's pure-decision cases. No part of A3.2 is
-claimed *yet*; the ITCM blocker is now cleared.
+**Lesson recorded:** the first attempt failed because it tried to land a feature *and* a mechanical
+extraction in one slice; the hand re-indentation corrupted the function and had to be reverted. Done as
+two build-verified steps it was routine. `padding_floor` is a reviewed allowance, and the checker's
+"move code out of ITCM" remedy was the right one — no re-base was needed.
 
 ---
 
