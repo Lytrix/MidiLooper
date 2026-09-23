@@ -1,5 +1,22 @@
 # Project state (execution context)
 
+**2026-09-23 round 9 — A2.1's named-wait transition landed.**
+
+A request blocked by a live owner now reports **`waiting_slot_owned`** instead of sitting `queued` with no
+reason — the observable form of C4, and the state the A1.8 probe's `queueHeadStartable` and the drain's
+verdict will report. Fixture-first: `test_restore_request_slot_owned_denial_names_the_wait` failed
+(*Expected 2 Was 0*) before the wiring, then passed. The transition fires at all three selection denials
+(empty-idle priority-head check, focus branch early return, parked/focus branch).
+
+Evidence: suite **19/19**; `RESTORE_LIVENESS_RED=1` → 24 cases / 4 failed (the unchanged Packet A set);
+full native **2,306 / 1 skipped / 2,305 succeeded / 0 failures**; `teensy41-capture-serial` SUCCESS with
+RAM1 `code 392,328 / padding 888`. (One anomalous 2,236-case reading appeared mid-round; two consecutive
+re-runs both reported 2,306, so it is recorded as a measurement artifact rather than a lost suite.)
+
+**A2.1 remaining:** `waiting_capture` / `waiting_commit_gate` / `waiting_job_capacity` (the gates A2.2
+introduces), the `refused`/`unnecessary` terminals (A2.4), pre-publication identity validation, and
+`loopSlotRestoreAttempted_` retirement.
+
 **2026-09-23 round 8 — Packet B started: A2.1's request record and its birth/running/committed wiring.**
 
 `deferred-slot-restore-liveness` remains **9/36 checked**; A2.1 is now **in progress** with its first
