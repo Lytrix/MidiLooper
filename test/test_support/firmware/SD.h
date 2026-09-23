@@ -21,6 +21,18 @@
 #define FILE_WRITE_BEGIN 2
 #endif
 
+/// POSIX open flags the persistence path passes to the SD boundary. The device's SD/FsFat layer
+/// accepts them; the in-memory card ignores them because `open()` is mode-driven.
+#ifndef O_CREAT
+#define O_CREAT 0100
+#endif
+#ifndef O_RDWR
+#define O_RDWR 02
+#endif
+#ifndef O_AT_END
+#define O_AT_END 0100000
+#endif
+
 class File {
  public:
   std::vector<uint8_t>* bytes = nullptr;
@@ -55,6 +67,10 @@ class File {
     return count;
   }
   size_t write(uint8_t value) { return write(&value, 1); }
+  /// The device's `File::flush` pushes buffered bytes to the card. The in-memory card writes
+  /// synchronously, so there is nothing to push; the method exists because production persistence
+  /// code calls it and would otherwise not compile natively.
+  void flush() {}
   void close() { isOpen = false; }
 
   bool writable = false;

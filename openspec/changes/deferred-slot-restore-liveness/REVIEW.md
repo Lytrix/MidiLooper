@@ -156,6 +156,35 @@ background restore, which is exactly the defect under test.
   attempted=1, pending=0, active=0, parked=0)` — the latch holds the slot for the power cycle.
 - **Harness additions:** `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
 
+### A1.7 — C5 the blocking drain cannot advance the restore (closure measured; fixture not yet landed)
+
+A1.7 requires the **real** `drainPersistenceWorkBlocking`, and this path has zero native coverage
+today. This round measured its link closure rather than modelling it with a test-only stand-in (which
+the G2 packet rules forbid as acceptance evidence) or silently expanding the slice.
+
+- **New suite:** `test/test_storage_drain_restore`, registered in `scripts/native_test_link.py`'s
+  `_FIRMWARE_BOUNDARY_SUITES`. It links the drain TU and the measured import set and currently runs one
+  **behaviour-free** case that only proves the boundary stubs and the import set compile and link
+  together. A1.7 and Packet C replace that case with the real drain call.
+- **Boundary stubs added** (shared with every native suite, all device-faithful and additive):
+  `PSTR`, `NativeSerial::printf_P`, `NativeSerial::print(value, base)`, the `DEC/HEX/OCT/BIN`
+  selectors, `File::flush`, and `O_CREAT`/`O_RDWR`/`O_AT_END`.
+- **Import set that links** (beyond the load suite): `SyncDrainSaveState`, `SyncDrainBudget`,
+  `PersistenceSyncDrainBudget`, `PersistenceWorkQueue`, `DeferredSaveScheduler`, `PersistenceBudget`,
+  `RevisionLoadPolicy`, `Internal`, `PersistenceAdmit`, `PersistenceFailurePolicy`, `RevisionLoad`,
+  `RevisionCommit`, `MidPassChunkPersist`, `WallClockSdSync`, `PersistenceWorkItemPersist`.
+- **Remaining undefined symbols** (the tail, in link order): `PersistenceSchema::crc32*`,
+  `RevisionPackedBlob::*` (7 functions), `SetRevisionCatalog::allocateNextSetId`,
+  `LooperStateManager::exitLoadSaveMode`, plus whatever those pull in.
+- **Why this is parked rather than absorbed.** Completing the tail means importing the revision/catalog
+  pack and the workspace-save job stages — `RevisionPackedBlob`, `SetRevisionCatalog`, `WorkspaceSave`,
+  `DeferredSaveJobStages`, `BootRecovery` — which is a real expansion of Packet A's slice and of this
+  suite's surface, not a fixture mechanic. The honest options are (a) complete the import set as a
+  deliberate, recorded slice, or (b) decide that the drain's C5 behaviour is device-verified only and
+  narrow A1.7/A3.x accordingly. That choice changes what Packet C can claim, so it is recorded here for
+  the owner rather than taken silently. `design.md`/`tasks.md` currently require native drain fixtures
+  (A3.1/A3.3/A3.4), so (a) is the path the contract assumes.
+
 ---
 
 ## Mechanism ledger (A1.9)
@@ -170,7 +199,7 @@ unreviewed.**
 | C2 | A parked non-focus job is never re-serviced under play | red fixture in place; mechanism reproduced (parked instance owns the request for all 64 turns, actively owned 0) | `test_c2_parked_job_is_serviced_or_named_after_transport_starts` |
 | C3 | one-shot enqueue never re-offers | **withdrawn before code** (G2 review finding 5): the boot scan already offers every payload-bearing `(track,slot)` and a blocked request stays queued | none — no work produced |
 | C4 | priority head with a live owner stalls the queue behind it | red fixture in place; mechanism reproduced, with the trigger **corrected**: the head must also fail the pop's done-test (a committed head is skipped, not blocking) | `test_c4_blocked_priority_head_does_not_stall_a_startable_request` |
-| C5 | the blocking drain never services the load scheduler | open | A1.7 (planned) |
+| C5 | the blocking drain never services the load scheduler | **open** — the defect is read from code (`drainPersistenceWorkBlocking` loops on `processDeferredSaveState` + `yield()` and never invokes the load scheduler), but the native reproducer needs the drain link closure measured above | A1.7 (closure landed, fixture pending) |
 | C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | red fixture in place; mechanism reproduced (failure path reached, healed payload never retried) | `test_c6_transient_failure_is_retried_not_latched` |
 
 ---

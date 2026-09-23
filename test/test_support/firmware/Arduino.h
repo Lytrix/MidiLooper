@@ -18,12 +18,29 @@ inline uint32_t millis() { return 0; }
 inline void delay(uint32_t) {}
 inline void delayMicroseconds(uint32_t) {}
 
+/// The device's PROGMEM string macro. Native has no flash/RAM split, so it is a no-op, but the
+/// production code that routes strings through flash (the RAM1-bank-boundary work) must still compile.
+#ifndef PSTR
+#define PSTR(s) s
+#endif
+
+/// The device's `Serial.print(value, HEX/DEC/BIN)` base selector. Native has no such enum, but
+/// production diagnostics pass it, so the boundary supplies the same names.
+enum NativePrintBase { DEC = 10, HEX = 16, OCT = 8, BIN = 2 };
+
 struct NativeSerial {
   template<class... A> void printf(const char*, A...) {}
+  /// Flash-string variant of `printf`. Native has one address space, so the `_P` form is the same call;
+  /// production code that keeps a literal out of RAM1 uses it, and stubbing it here is what lets a
+  /// native suite link that code at all.
+  template<class... A> void printf_P(const char*, A...) {}
   void print() {}
   template <class T> void print(const T&) {}
+  /// Device form `print(value, base)`: diagnostics print raw bytes as HEX.
+  template <class T> void print(const T&, int) {}
   void println() {}
   template <class T> void println(const T&) {}
+  template <class T> void println(const T&, int) {}
   void flush() {}
 };
 inline NativeSerial Serial;

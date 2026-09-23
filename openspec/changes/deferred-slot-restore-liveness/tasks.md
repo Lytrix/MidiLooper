@@ -143,6 +143,16 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       as that named reason rather than a generic stuck verdict. **Verify:** the case is red on current
       `src/` (the drain never services the load scheduler); record the iteration count as a **diagnostic**,
       not as the oracle.
+      → **IN PROGRESS 2026-09-23 (closure landed, fixture pending).** This path had zero native coverage,
+      so the slice first had to make the real drain linkable. `test/test_storage_drain_restore` is created
+      and registered as a hardware-boundary suite, the boundary stubs it needs are added (`PSTR`,
+      `printf_P`, `print(value, base)` + `DEC/HEX/OCT/BIN`, `File::flush`, `O_CREAT`), the 15-TU import set
+      links, and the suite runs one behaviour-free case proving that. The remaining tail
+      (`PersistenceSchema`, `RevisionPackedBlob`, `SetRevisionCatalog`, `LooperStateManager::
+      exitLoadSaveMode`) means importing the revision/catalog pack and the workspace-save job stages —
+      recorded in [`REVIEW.md`](REVIEW.md) § A1.7 as a deliberate scope decision (the contract's Packet C
+      requires native drain fixtures) rather than taken silently. **No fixture, no red evidence, and no
+      diagnostic count yet.**
 
 - [ ] A1.8 **Observability, event-shaped (per `design.md` D6).** Add capture-tier lines: one per restore
       **state transition** (terminal or named wait) with the request identity and reason, and an on-demand
