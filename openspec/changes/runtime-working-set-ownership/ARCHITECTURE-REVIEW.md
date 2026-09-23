@@ -1449,3 +1449,43 @@ TU" split. Either is a contained test-infrastructure change.
 
 S2b.5 remains **open** on this half plus the device gate. Its primary acceptance — a load must not destroy a
 live owner's slot, proven through the production selection entry — is landed and green.
+
+## P1 — route (a) done: the load harness carries its own stub surface (2026-09-23)
+
+The obstacle recorded in the previous section is gone. The load suite no longer reuses
+`test_continuous_capture/off_path_deps.h`; it carries `test/test_storage_manager_load/load_harness_stubs.h`
+and **links `src/TrackUndo.cpp`**, which is what the retirement half needs.
+
+### How it was resolved, and the measurement that made it cheap
+
+Removing `off_path_deps.h` and rebuilding listed exactly **six** missing symbols — so the minimal stub
+surface was measured, not guessed:
+
+| symbol | treatment |
+|---|---|
+| `resolveTrackIndexForPersistence(const Track&)` | a pointer comparison over the track array; stubbed locally |
+| `vtable for EditNoteHomeState` / `EditSelectNoteState` / `EditStartNoteState` / `EditLengthNoteState` / `EditPitchNoteState` | emitted by out-of-line virtuals; the five state headers are included and their virtuals are defined fail-closed |
+
+With that in place the note-edit button TU is omitted from this suite
+(`HARNESS_OMITS_MIDI_BUTTON_ACTIONS`, the guarded seam added earlier), which is what lets `TrackUndo.cpp`
+link at all. The earlier failure was circular — omitting the button TU removed the edit-state headers
+`off_path_deps.h` needed — and owning the stub surface breaks the cycle. Nothing in the load path itself is
+stubbed: the queue, selection policy, admission, the SD adapter, `needsSlotLoad` and `resetLoopSlotToEmpty`
+are all real production code.
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **5/5** |
+| full native | **2,277 cases / 1 skipped / 2,276 succeeded / 0 failures** |
+| `test_continuous_capture` | 87/87 |
+| firmware + budget | SUCCESS, padding **1,032** |
+
+### Next, and it is a small step
+
+The retirement half's assertions are written and were one edit from landing when this stretch ran out: drain
+the job with `TrackCaptureStopTestAccess::step`, assert `noLiveOwnerForSlot(0)` is then true, run
+`selectSubmittedLoadJobs()`, and assert the retained request is consumed **once**
+(`pendingLoopSlotRestores_.count == 0` and `isLoopSlotRestoreAttempted(0, 0)`), with a second selection
+consuming nothing. The harness now links everything that needs.
