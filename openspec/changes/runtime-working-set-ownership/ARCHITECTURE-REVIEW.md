@@ -1656,3 +1656,39 @@ remains set.
 Transitions **1, 3 and 4** are now green natively. Transition **2** (seek/reset/MIDI Start) has no native
 entry — the `ClockManager` seek/reset/MIDI-Start entries are harness stubs — so the task stays open on that one
 plus the device gate.
+
+## P1 — S4f.4 transition 2: the boundary is recomputed at execution (2026-09-23)
+
+The last of the four paused-worker transitions reachable natively.
+
+`test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution`: with the interval live, latch an
+accepted stop at tick 96 and record the latch's stored `phaseTick`; then move the tick domain (a seek) before
+the request executes; drive; and assert the admitted job's boundary is **not** the stored tick and lies in the
+new domain. Pre-fix — if the drive had used `request.phaseTick` — the two values would be equal and the first
+assertion would fail, so the case discriminates on the property that matters.
+
+**Coverage limit, stated in the fixture itself:** `ClockManager`'s own seek / reset / MIDI-Start entries are
+harness stubs, so the tick domain is moved with the harness's controlled clock rather than through a
+production seek. That proves the *decision* (the drive passes the live tick, never the stored one) but not the
+production entry that moves the domain; the latter is device territory.
+
+### S4f.4 status — all four transitions green natively
+
+| # | transition | status |
+|---|---|---|
+| 1 | Transport Stop → Start: no PLAYING regained, no resurrected start | green (B03) |
+| 2 | Seek/reset/MIDI Start: boundary recomputed in the new tick domain | green (this case; decision-level) |
+| 3 | Load/replacement: a stale request is superseded, not bound | green — and it fixed a real wedging defect |
+| 4 | Repeated retries: exactly one stop commits | green (B03) |
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **90/90** (+1) |
+| load suite | 5/5 |
+| full native | **2,280 cases / 1 skipped / 2,279 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, capture-serial padding **1,096** (unchanged) |
+
+**S4f.4's paused-worker transition set is met natively.** The task stays open only for the device leg of the
+`ClockManager` seek/reset entry.

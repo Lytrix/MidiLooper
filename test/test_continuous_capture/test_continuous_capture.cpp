@@ -150,6 +150,11 @@ struct TrackCaptureStopTestAccess {
   static void latchAcceptedStop(Track& track, uint8_t slot) {
     track.latchAcceptedStop(PendingStopDestination::Playing, slot, track.captureInterval_);
   }
+  static uint64_t acceptedLatchPhaseTick(const Track& track) {
+    const auto* latch = track.interactionLatch();
+    return latch == nullptr ? 0 : latch->phaseTick;
+  }
+  static uint64_t jobPhaseTick(Track& track) { return job(track).phaseTick; }
   /// S4f.1 latch identity, read through primitive accessors so the fixture never names the
   /// private nested type (the friend struct reads it; the test function cannot).
   static int acceptedLatchKind(const Track& track) {
@@ -4206,6 +4211,32 @@ void test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound() {
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track));
 }
 
+/// S4f.4 transition 2 (seek/reset): the boundary is recomputed in the tick domain present at execution, not
+/// taken from the tick stored when the request was accepted. `ClockManager`'s own seek/reset/MIDI-Start
+/// entries are harness stubs, so the tick domain is moved with the harness's controlled clock -- which is
+/// enough to prove the *decision*: the drive passes the live tick, not `request.phaseTick`.
+void test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution() {
+  Track& track = preparePlayingTrack();
+  // The interval is live (OVERDUBBING) so the drive can actually admit; the point of this case is *which*
+  // tick the admitted boundary derives from, not whether admission is reachable.
+  track.forceSetState(TRACK_OVERDUBBING);
+  clockManager.assignCurrentTickSilently(96);
+  TrackCaptureStopTestAccess::latchAcceptedStop(track, 0);
+  const uint64_t latchPhaseTick = TrackCaptureStopTestAccess::acceptedLatchPhaseTick(track);
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+
+  // A seek moves the tick domain before the request executes.
+  clockManager.assignCurrentTickSilently(600);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::serviceAcceptedInteraction(track));
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+
+  const uint64_t executedPhaseTick = TrackCaptureStopTestAccess::jobPhaseTick(track);
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(latchPhaseTick, executedPhaseTick,
+                               "the executed boundary must not be the tick stored at acceptance");
+  TEST_ASSERT_TRUE_MESSAGE(executedPhaseTick > latchPhaseTick,
+                           "the boundary must be recomputed in the new tick domain");
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4305,6 +4336,7 @@ int main() {
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
   RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
+  RUN_TEST(test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution);
   RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
