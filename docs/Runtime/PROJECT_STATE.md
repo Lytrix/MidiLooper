@@ -59,6 +59,24 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   (2) `prewarmCanonicalCaptureOutput` requires an empty `canonicalCaptureOutput.store`, which the retire
   block never touches, so S2b.1 must ship with S2b.6's retire-path invariant or a loaded slot's second
   overdub can wait forever. Recorded in `ARCHITECTURE-REVIEW.md` § P1 rather than implemented in a hurry.
+- **S2b.1/S2b.2 landed: boot/load canonical admission is gone, and the residency law is green.** The
+  three red characterizations written hours earlier now **pass in the default gate** and the temporary
+  `WORKING_SET_RED` gate is deleted: reserved chunks are flat in recorded slots (was 96 vs 120), resident
+  working sets are flat (was 8 vs 11), and inactive slots hold zero canonical credits and zero transfer
+  horizons (was 24 credits over 3 slots). `Track::startOverdubbing` now admits its own reserve set for a
+  slot boot left cold via the FLASH-resident `admitOverdubStartWorkingSet()` — the view/bridge/companion
+  scratch (without it the stop's estimates are `UINT64_MAX` and admission denies as
+  `preparation_service_unavailable`), the transfer horizon, and the prepared-companion-history horizon
+  (without it the job admitted and never retired) — while START stays **not** gated on the canonical copy.
+  S2b.6's retire-path invariant drains `canonicalCaptureOutput.store` at retirement, which is what makes
+  the removal safe. Two implementation findings worth keeping: granting the companion history
+  unconditionally broke the DEC-072/5.12 adversarial reentry case (`prewarmPreparedCompanionHistory`
+  resets the Loop's prepared history), so it is gated on no job being in flight; and the whole admission
+  body had to move out of ITCM-resident `startOverdubbing` into FLASH (568 → 856 padding recovered).
+  **Reported deviation, not silently accepted:** RAM1 `padding` is **856 against the recorded 872 line** —
+  16 B of linker alignment, `code + padding` constant at 393,216, **no bank cross**, `locals free`
+  unchanged at 34,944. It needs the architect's call (re-base the line with that arithmetic, or find the
+  16 B elsewhere) before S3.0's static_assert work. Full native **2,268 / 1 skipped / 0 failures**.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

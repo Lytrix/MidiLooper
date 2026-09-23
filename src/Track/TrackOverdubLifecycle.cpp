@@ -166,6 +166,71 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
   return false;
 }
 
+/// S2b.2 (invariant 34): the reserve set a slot needs at its own overdub start once boot/load no
+/// longer prewarms a committed-but-inactive slot. It is the record arm's set, minus the canonical
+/// copy (which stays lazy and is acquired by the accepted stop's park). FLASH-resident: it is an
+/// allocation-bearing cold path, and inlining it into `Track::startOverdubbing` (ITCM) cost ~300 B
+/// of the RAM1 padding line.
+TRACK_COLD_MEM bool Track::admitOverdubStartWorkingSet() {
+  // No arguments on purpose: the caller is ITCM and this is the only cold call it makes for the
+  // admission, so every instruction at the call site is RAM1 padding spent.
+  auto* runtimePtr = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  if (runtimePtr == nullptr) return false;
+  LoopPlaybackRuntime& runtime = *runtimePtr;
+  Loop& loop = getActiveLoop();
+  // The denial report lives here rather than at the call site: this function is FLASH-resident and
+  // the caller is ITCM, so every call saved there is RAM1 padding kept.
+  struct DenialReport {
+    bool ok = true;
+    ~DenialReport() {
+      if (!ok) MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::OverdubStart);
+    }
+  } denial;
+  // (1) The view/bridge/companion scratch. The stop's declared preparation estimates are
+  // `UINT64_MAX` without it (`LoopPlaybackRuntime::requiredStopRankedGrains` returns UINT64_MAX when
+  // `viewSetIfPrewarmed()` is null), so admission would deny as `preparation_service_unavailable`
+  // forever. Guarded, so a record-armed or successor slot reserves nothing.
+  if (runtime.viewSetIfPrewarmed() == nullptr) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagViewPrewarm);
+    const bool viewsAdmitted = runtime.prewarmViews(loop.companionRowHorizonBound(),
+                                                   loop.fullTakePlaybackViewAdmissible());
+    ExternalPoolAccounting::endTag();
+    if (!viewsAdmitted) { denial.ok = false; return false; }
+  }
+  // (2) The transfer horizon, which the DEC-067 guard chain reads as
+  // `hasActiveOverdubTransferAdmission()`. Guarded by that same predicate, which is what makes the
+  // placement safe: `prewarmActiveOverdubTransferHorizon` grows `passes.overdubPasses`, so it must
+  // not run while an admitted job depends on that vector's addressing. When the predicate is already
+  // true nothing is reserved, and when it is false no stop job can hold the slot (admission
+  // requires it).
+  if (!loop.hasActiveOverdubTransferAdmission()) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagTransferHorizon);
+    const bool horizonAdmitted = loop.prewarmActiveOverdubTransferHorizon();
+    ExternalPoolAccounting::endTag();
+    if (!horizonAdmitted) { denial.ok = false; return false; }
+  }
+  // (3) The Loop-level prepared-companion-history horizon, which the deferred stop's
+  // `PrepareTransfer`/`CanonicalTail` phases deny without (`stepPreparedCompanionHistory` is
+  // refused), so a loaded slot would admit its stop and then never retire it. Same derived grant the
+  // record arm uses.
+  const size_t usedRows =
+      std::min(loop.passes.editPasses.size(), RuntimePlaybackViewConfig::kRecordsPerBridge);
+  const size_t companionCapacity =
+      std::min(RuntimePlaybackViewConfig::kRecordsPerBridge - usedRows,
+               loop.companionRowHorizonBound());
+  // A live stop job already proved this reserve (its admission requires it) and it may be
+  // *mid-preparation* on it: `prewarmPreparedCompanionHistory` resets the Loop's prepared history,
+  // which is exactly the DEC-072/5.12 successor hazard, so never touch it while a job is in flight.
+  if (!hasPendingDeferredOverdubStop() &&
+      !loop.preparedCompanionHistoryPrewarmed(companionCapacity)) {
+    ExternalPoolAccounting::beginTag(ExternalPoolAccounting::TagCompanionHistory);
+    const bool prepared = loop.prewarmPreparedCompanionHistory(companionCapacity);
+    ExternalPoolAccounting::endTag();
+    if (!prepared) { denial.ok = false; return false; }
+  }
+  return true;
+}
+
 TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
   if (!captureStopJobs_) {
     auto* storage = ExternalMemoryFirstAllocator<CaptureStopJobs>{}.allocate(1);
@@ -1310,6 +1375,22 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   job.pendingPass = PendingCapturePass{};
   job.ownsPendingPass = false;
+  // S2b.6 retire-path invariant (invariant 34; precondition of S2b.1). A retiring job leaves the
+  // slot's canonical-copy target empty. Every committing route consumes the store at
+  // `PrepareTransfer`, but a skipped or failed route can leave it populated with no ring entry --
+  // and once boot stops reserving the canonical output per slot, a populated store makes
+  // `prewarmCanonicalCaptureOutput` deny forever, so the accepted stop would wait on a resource
+  // nothing can ever free. Drain it here so the next admission's reservation has an empty target.
+  if (!runtime->canonicalCaptureOutput.store.empty()) {
+    runtime->canonicalCaptureOutput.store.clear();
+    runtime->canonicalCaptureOutput.phase = CapturePhase::None;
+    // The store's copy cursor is authoritative only while a copy is in flight; at retirement the
+    // job is past `DeferredCleanup`, so releasing the frozen canonical builders here keeps the
+    // joint state consistent instead of leaving a cursor aimed at an emptied store.
+    runtime->discardFrozenCaptureCanonicalOrder();
+    SC_ODUB_STOP_STAGE("deferred_cleanup", 0, 0, UINT32_MAX, UINT32_MAX, 0, 0,
+                       "canonical_output_drained_at_retire");
+  }
   job.owner = nullptr;
   job.loopId = kInvalidLoopId;
   captureStopJobs_->head = (captureStopJobs_->head + 1) % CaptureStopJobs::kCapacity;
@@ -1446,6 +1527,12 @@ void Track::startOverdubbing(uint32_t currentTick) {
     MemoryMonitor::reportPrewarmAdmissionDenied(MemoryMonitor::OperationKind::OverdubStart);
     return;
   }
+  // S2b.2 (invariant 34): boot/load no longer prewarms a committed-but-inactive slot's working set,
+  // so this interval's own cold admission must establish what the later deferred stop declares. It
+  // is an allocation-bearing cold turn, so it lives in FLASH with the other cold admission helpers:
+  // inlining it here cost ~300 B of ITCM and took the RAM1 padding line from 872 to 568. The
+  // canonical copy stays lazy -- START is deliberately not gated on it; the stop's park acquires it.
+  if (!admitOverdubStartWorkingSet()) return;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
   CaptureAdmissionStaging* viewSet =
       runtime != nullptr ? runtime->liveCaptureStagingIfPrewarmed() : nullptr;

@@ -27,6 +27,16 @@ numbers are repeated in `tasks.md` S1.2 and in [PROJECT_STATE.md](PROJECT_STATE.
   reservation removal (S2b.1) is deliberately NOT in this step**; S4f.1/S4f.2/S2b.6 are partial and
   S4f.5, S4f.3, S4f.4's epoch, S4.0 and S2b.2–S2b.5 remain open.
 
+- **S2b.1 + S2b.2 landed: boot/load no longer reserves canonical-copy capacity or a transfer horizon per
+  committed slot, and the residency law is now green in the default gate.** The three former red
+  characterizations (S1.2 a/b and B01) pass and the `WORKING_SET_RED` gate is deleted. A loaded slot's
+  overdub start admits its own reserve set (views scratch, transfer horizon, prepared-companion-history
+  horizon) without gating START on the canonical copy, and the accepted stop's park acquires that copy;
+  the retire block drains the store so a retiring job never leaves it populated.
+  **Reported deviation:** RAM1 `padding` is **856 vs the recorded 872 line** (16 B of linker alignment,
+  `code + padding` constant, **no bank cross**, `locals free` unchanged) — flagged for the architect
+  rather than redefined. Full native **2,268 / 1 skipped / 0 failures**; firmware build SUCCESS.
+
 - **Next:** the remaining D0.2 controls (dispatch pause-and-step; linked load and transport-retarget
   paths; B07's allocation census, which is not measurable natively) → S2b.0/S2b.1, the first behavior
   change, which is expected to turn all three red cases green.

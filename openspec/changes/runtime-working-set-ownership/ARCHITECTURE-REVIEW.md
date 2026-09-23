@@ -556,3 +556,72 @@ Confirmed by reading the tree (not assumed), so the next slice does not guess:
 
 Both are recorded here rather than implemented in a hurry: a rushed S2b.1 risks a permanent stop wait on
 a device whose product rule is that a stop always completes from one press.
+
+## P1 — S2b.1/S2b.2 boot/load canonical admission (2026-09-23)
+
+The residency law is now green: **boot/load no longer reserves canonical-copy capacity or a transfer
+horizon per committed slot**, and a loaded slot's accepted stop acquires what it needs itself.
+
+### What changed
+
+| task | implementation |
+|---|---|
+| **S2b.1** remove the per-slot boot reservation | `Track::prewarmPlaybackForSlot(s, false)` no longer calls `prewarmCanonicalCaptureOutput()`, and the transfer horizon is admitted only for `prepareCapture` (the old `\|\| !anyTimingCriticalTrackActive()` clause existed to let boot reserve it for every committed slot). Boot still establishes the runtime index, the stop-descriptor ring and the canonical-copy directory, so hot-path admission stays O(1). |
+| **S2b.2** start is not gated; the start admits its own reserves | `Track::startOverdubbing` now calls the FLASH-resident `Track::admitOverdubStartWorkingSet()`, which establishes the record arm's set for a slot boot left cold: the view/bridge/companion scratch, the transfer horizon and the prepared-companion-history horizon. The canonical copy is **not** admitted here — START is deliberately not gated on it. |
+| **S2b.6** retire-path invariant | `Track::processDeferredOverdubStopGrain`'s retire block now drains `canonicalCaptureOutput.store` (and releases the frozen canonical builders) when a retiring job leaves it populated, reporting `canonical_output_drained_at_retire`. This is what makes S2b.1 safe: `prewarmCanonicalCaptureOutput` requires an empty store, so an orphaned store would make the park deny forever. |
+
+### Two findings from implementing it (both were pinned in advance, both confirmed)
+
+1. **The overdub start needed the view set, not only the horizon.** `requiredStopRankedGrains` returns
+   `UINT64_MAX` when `viewSetIfPrewarmed()` is null, so a loaded slot's stop denied as
+   `preparation_service_unavailable` regardless of the horizon. It also needed the Loop-level
+   `prewarmPreparedCompanionHistory` horizon, without which the job admitted and then never retired.
+2. **That companion grant must not touch a live job.** Granting it unconditionally broke
+   `test_adversarial_reentry_at_the_publication_checkpoint` ("a predecessor paused at CompanionHistory
+   must still retire after a successor starts") — `prewarmPreparedCompanionHistory` resets the Loop's
+   prepared history, which is exactly the DEC-072/5.12 successor hazard. It is now gated on
+   `!hasPendingDeferredOverdubStop()`, which is sound because a live job's own admission already proved
+   that reserve.
+
+### Oracle and result
+
+The three characterizations written on 2026-09-23-as-red are now **green and promoted into the default
+gate**; the temporary `WORKING_SET_RED` gate is **deleted** (RECIPE R: remove a known baseline exception
+once the implementing slice lands):
+
+- `test_working_set_residence_does_not_grow_with_recorded_slots` — reserved chunks now flat (was 96 vs 120).
+- `test_inactive_committed_slot_retains_no_resident_working_set` — resident working sets flat (was 8 vs 11).
+- `test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon` — zero credits and zero
+  horizons on inactive slots (was 24 credits over 3 slots).
+
+New **`test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target`** (default gate):
+boot-only admission leaves the slot with no canonical reservation and no horizon → overdub start
+establishes the horizon, the prepared-companion-history horizon and the view set while **not** being
+gated on the canonical output → one Stop press is accepted and retained → the park acquires the
+canonical target → exactly one job binds → the drain retires it, leaving the canonical store empty.
+
+### Verification
+
+| check | command | result |
+|---|---|---|
+| focused | `pio test -e native -f test_continuous_capture` | **PASSED, 83/83** |
+| full native | `pio test -e native` | **2,268 cases / 1 skipped / 2,267 succeeded / 0 failures** |
+| firmware | `pio run -e teensy41-capture-serial` | **SUCCESS**; RAM1 below |
+| OpenSpec | `openspec validate ... --strict` | valid |
+
+### Reported deviation — the RAM1 threshold is missed by 16 B
+
+`teensy_size` now reports `RAM1: variables 96,128 / code 392,360 / padding 856 / locals free 34,944`.
+S3.0 requires `padding >= 872`, so this is **16 B short** and is reported rather than redefined:
+
+- `code + padding` is **constant at 393,216** across the change (392,344 + 872 → 392,360 + 856), so the
+  16 B is linker alignment the new ITCM call site consumed, not a size regression in disguise.
+- **No FlexRAM bank crossed.** The documented symptom is a 32,768 B drop in `free for local variables`;
+  it is unchanged at **34,944**, which is the invariant the bank rule protects.
+- Mitigation attempted and kept because it is right regardless: the whole admission body was moved out
+  of ITCM-resident `Track::startOverdubbing` into the FLASH-resident
+  `Track::admitOverdubStartWorkingSet()`, which recovered 288 B (568 → 856) and keeps future growth of
+  that path out of ITCM. The remaining 16 B resisted further argument/denesting changes.
+
+**This needs the architect's call**: either the 872 line is re-based with the arithmetic above, or the
+16 B must come from elsewhere in ITCM before S3.0's static_assert work lands. It is not silently accepted.
