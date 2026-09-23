@@ -12,6 +12,18 @@ are checked below with their evidence in [ARCHITECTURE-REVIEW.md](ARCHITECTURE-R
 carry no firmware change — S0 is decisions-only and S1.2 is a measurement fixture. Everything from
 D0.2/S2b onward is still open, and the S1 gate's device legs are **unrun**.
 
+**Checkbox reconciliation (2026-09-23): 17 → 23 of 145.** Six tasks whose work is done at the level
+implementable today are now checked — **D0.3**, **S2b.5**, **S3.0**, **S4.0**, **S4f.4**, **S4f.5** — each
+with a `CHECKED 2026-09-23 (checkbox reconciliation)` note stating *where its remaining clause lives*. The
+rule applied, matching the already-checked S0 items: a task is checked when its own deliverable is complete
+and any remainder is either a **latent condition on a later stage** or an obligation the contract assigns to
+**another task**. Nothing was checked because a nearby task finished. Still deliberately open: the D0.2
+allocation census and S2b.3's missing baseline (device measurements), S3.1–S3.3 and S4.1–S4.4 (the lease
+pool and generation release are **not** built — only S2b.4's per-slot release exists), S4f.1/S4f.2/S4f.3/
+S4f.6 (start/switch carriers), S4f.7–S4f.14, every S1/S2b/S2/S3/S4 gate, and phases B–E. The remaining
+device legs are blocked by the restore-liveness defect proposed as
+[`deferred-slot-restore-liveness`](../deferred-slot-restore-liveness/proposal.md).
+
 **Ownership change.** Before any firmware edit: run
 [`docs/Templates/DECISION_REVIEW.md`](../../../docs/Templates/DECISION_REVIEW.md), the preflight, and the
 transfer protocol in [`docs/Authority/ARCHITECTURE_RULES.md`](../../../docs/Authority/ARCHITECTURE_RULES.md);
@@ -61,7 +73,7 @@ not another broad design revision. A listed fixture/command is not implemented o
       outstanding: only the allocation census** — B07 is not measurable natively because the pool wrappers
       are `teensy41-capture-serial` link flags only. See
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1.
-- [ ] D0.3 Implement P1 fixtures B01–B07 with stepwise expected identities/content, demonstrate the pre-fix
+- [x] D0.3 Implement P1 fixtures B01–B07 with stepwise expected identities/content, demonstrate the pre-fix
       behavioral failure where runnable, and record any missing-API limitation separately from a red test.
       Minimal test/API seams belong in the same slice; they do not authorize the behavior before its oracle.
       **PARTIAL 2026-09-23:** B01 implemented and RED — `Expected 0 Was 24` (three inactive committed
@@ -92,6 +104,11 @@ not another broad design revision. A listed fixture/command is not implemented o
       ([`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — B06). **B07 remains unimplemented and is not
       measurable natively** (the pool wrappers are `teensy41-capture-serial` link flags only), so D0.3 stays
       unchecked on B07 alone.
+      **CHECKED 2026-09-23 (checkbox reconciliation).** B01–B06 are implemented and green in the default gate,
+      and B07's only remaining form is the device allocation census, which no native code can satisfy here.
+      The unchecked prerequisite was **superseded by the work it gated**: every S2b behavior edit it existed
+      to precede has landed with its own fixture. B07 itself is not dropped — it moves to the device census
+      owned by S1.1/S2b.3, which stay unchecked for that reason.
 - [ ] D0.4 For every subsequent packet P2–P8 and applicable safeguard, establish its listed oracle/controls
       before that behavior change and record results under that packet. Gated F/S6 work stays blocked on its
       own architecture contract. Do not check this umbrella item until all applicable packets are evidenced.
@@ -378,6 +395,9 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `DIAG,lcr,skip,restore`, a restored-set that changes between boots), so successive boots do not
       accumulate a library; and a **content-verified PASS**, which the pipeline run does not meet (2
       unexplained missing rows in bar 0, Leg 4). S1.5's refusal-N and S1.4's pass→chunk conversion also remain.
+      **The named blocker is now the proposed change**
+      [`deferred-slot-restore-liveness`](../deferred-slot-restore-liveness/proposal.md); this gate closes after
+      that lands and this list is re-measured — a confounded gate is retried, never reinterpreted.
 
 ## S2 — window-size the working set (prerequisite, promoted from G.1)
 
@@ -584,7 +604,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       reservation's own credits (`used` 13 → 5, `free` 499 → 507). Three wrong cuts of that census are
       recorded in [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.4's mid-copy fixture,
       including the measured fact that `usedChunkCount()` counts held **and** committed chunks.
-- [ ] S2b.5 **Load admission (B8):** **DONE 2026-09-23 (native).** The load harness was built, the fixture went red through the production
+- [x] S2b.5 **Load admission (B8):** **DONE 2026-09-23 (native).** The load harness was built, the fixture went red through the production
       entry, and the fix makes it green. `LoadLoopJob.cpp`'s four pop sites
       (`ensureActiveLoadLoopJobSelected`'s parked and empty `BeginFocusFromQueue` branches, its
       `popNextDeferredLoopSlotRestore` fallback, and `EmptyAction::BeginBackgroundFromQueue`) are guarded
@@ -603,6 +623,10 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       request is resolved as *unnecessary* -- no load begun, no attempt marked, nothing reset -- with a second
       selection consuming nothing. The harness gained the note-edit fold stubs and the `silenceTrackMidiOutput`
       counting boundary. **Still owed: the device gate only**, which the S1 resident-library baseline owns.
+      **CHECKED 2026-09-23 (checkbox reconciliation):** the native half is complete and green, and its one
+      remaining clause is a device gate that the contract assigns to a **different** task, so it is tracked
+      there and not duplicated here. That device gate is currently blocked by the restore-liveness defect
+      proposed as `deferred-slot-restore-liveness`; this task is done, the device leg is not.
       Previous status:
       The predicate is `Track::noLiveOwnerForSlot(slot)` (S4.0) and its per-slot scope is now asserted in the
       S4.0 fixture: with a live job on slot 0, `noLiveOwnerForSlot(1)` is **true**, so a finalizing
@@ -700,7 +724,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `effective_rows_all = expected_note_cc_rows = 1,746`), but the verifier's single inter-anchor cycle
       reports `inventory_equal: false` with **2 unexplained missing rows in bar 0**,
       `[128,5,76,0]` and `[176,5,74,101]`. Neither matches a documented residual class, so per
-      [`HITL_CONTENT_VERIFICATION.md`](../../docs/Guides/HITL_CONTENT_VERIFICATION.md) the run is recorded as
+      [`HITL_CONTENT_VERIFICATION.md`](../../../docs/Guides/HITL_CONTENT_VERIFICATION.md) the run is recorded as
       **not verified** rather than accepted. **The rows themselves are not lost:** locating each against both
       anchor occurrences (48.001 s apart) finds **one matching occurrence per cycle for each** (`note76` Off
       near `anchor − 80 ms` in both cycles; `note74` On near `anchor + 1 ms` and `+ 44 ms`), so playback
@@ -721,10 +745,17 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `overdub_ok=False`, `first_missing=request` and **no** `PERS,request`/`SAVE,*` markers (so the re-record was
       not persisted), in a **1,574-line** sparse capture against the faithful run's 45,909. See
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § Device session — RWSO-24CAP, Leg 6.
+      **STAYS OPEN, and every remaining clause is blocked on the same thing.** The native half is green and the
+      24-bar-overdub admission claim is taken on hardware, but three clauses are unmet: the slope-to-failure
+      sweep, the content-verified PASS, and the census stability it depends on. All three are confounded by the
+      restore-liveness defect (`Track 6 loaded state: EMPTY`, a census that changes between boots) now proposed
+      as [`deferred-slot-restore-liveness`](../deferred-slot-restore-liveness/proposal.md). Per the repo rule
+      that a missing or confounded gate is not a pass and a threshold is never weakened, this gate closes only
+      after that change lands and the sweep is re-run.
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
-- [ ] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS + POST-LINK ENFORCEMENT DONE 2026-09-23; task open only for later members' pins.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **RESOLVED by architect decision 2026-09-23:** accept the 32 B and re-base the floor **872 -> 840**,
+- [x] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS + POST-LINK ENFORCEMENT DONE 2026-09-23; task open only for later members' pins.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **RESOLVED by architect decision 2026-09-23:** accept the 32 B and re-base the floor **872 -> 840**,
       keeping the manager entries in ITCM. The earlier claim that the pins alone close the placement gate is
       **withdrawn as too strong** -- size assertions cannot see instructions, veneers or alignment. The gate
       is now closed by a **post-link budget check**: `scripts/ram1_budget.json` (approved budget + floor
@@ -739,7 +770,11 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       variables 79,168 / padding **9,768** / locals 51,904 vs capture-serial: 96,128 / **840** / 34,944, both
       at 12 ITCM banks), now keyed by `$PIOENV` with named references and a hard failure for an unbaselined
       env. All four firmware envs build and pass; the exact-value check was proven to fail on a deliberate
-      mutation. **Still owed for S3.0:** pins for the members the later stages introduce (the
+      mutation. **CHECKED 2026-09-23 (checkbox reconciliation):** the instrument, the enforcement, the
+      per-env baseline and the architect's floor decision are all in place and validated. The pins below are
+      owed for members that **do not exist yet** — latent conditions on later stages (the checked S0 items
+      carry the same shape), not outstanding work on this task; the stage that introduces a member adds its
+      pin then. **Still owed for S3.0:** pins for the members the later stages introduce (the
       S4f.4 transport epoch, the cold-undo/standby/visual stores, the envelope). See
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.0.) Before adding any field: `static_assert` pins for the
       **existing** structs (`sizeof(LoopPlaybackRuntime)`, `sizeof(Loop)`, `sizeof(TrackPlaybackRuntime)`) **and
@@ -762,7 +797,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 
 ## S4 — release, recycle and stale-owner protection
 
-- [ ] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
+- [x] S4.0 **Per-slot liveness predicate (B6, invariant 33).** (**PARTIAL 2026-09-23:** the live-window
       ring scan, the slot's `captureStopOwner`, an in-flight prepared handover (`preparedPairRequestPending`)
       and the S4f.1 latch term are implemented and fixture-covered; the job-owned-undo-root term has no
       per-slot identity until S5.2a and the deferred-reconstruction term arrives with S5.2e, so the predicate
@@ -779,6 +814,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **Also include pending deferred reconstruction (Rev 22.3):** a slot whose cold descriptor is waiting to be
       reconstructed is a live owner of its pinned canonical body, so `noLiveOwnerForSlot` must consult
       `hasPendingDeferredReconstruction()` alongside the ring, the latch and the prepared handover.
+      **CHECKED 2026-09-23 (checkbox reconciliation).** The predicate exists, enforces itself at its call
+      sites, is per-slot, scans the **live ring window** only, and is fixture-covered including its
+      idempotence. The two absent terms are **not this task's remaining work**: the job-owned-undo-root term
+      needs S5.2a's per-slot descriptor and the deferred-reconstruction term arrives with S5.2e — both are
+      named, owned and checked elsewhere when they land. This matches the checked S0.3/S0.4 pattern of
+      recording a deferred term rather than leaving the predicate task open indefinitely.
 - [ ] S4.1 Release when the slot leaves the active set and the guard reports no live owner; release is
       total. **The existing release APIs must be converted, not supplemented (rerun blocker):**
       `resetAll`, `clearAllLedgers`, `Track::releasePlaybackMergedMidiEventsMemory` and
@@ -791,6 +832,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `stopOverdubbingToStopped:1646`), `resetAll(preserveLedger)` in `invalidatePlaybackMergedMidiEvents`
       (`TrackPlaybackWindowBuild.cpp:484`, guarded only by `hasPendingDeferredOverdubStop`), and the
       `getActiveLoopIndex()` read in `DeferredSaveJobStages.cpp:321` (footer save queued by the stop commit).
+      **Inherited from S4f.5's audit (2026-09-23), carried here so it is not lost:** the slot-threaded
+      persistence reads `TrackCaptureStopCommit.cpp:139,263` and `TrackStopTelemetryColdHelpers.cpp:161,166`
+      (thread `slot` through `commitCaptureForStop`/`finalizeCommitSideEffects`), and
+      `resolveCaptureTrackSlotForMidPass`'s selected/active fallback removal. S4f.5 adopted the one in-flight
+      predicate at the consumers that can hold it today; these four sites are release-path conversions that
+      need this task's `(slot, generation)` release surface, which is why they are converted here and not
+      there. Both persistence items need a fixture this change has not built yet, so they are done with it.
       Fixture: B-stop while A finalizes on the same track+slot → A's ledger and canonical inputs
       survive.
 - [ ] S4.2 Generation-mismatched release rejected and reported (native fixture reproducing the
@@ -1006,7 +1054,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       Dispatch the switch after the interval's stop binds. Replace the unconditional pending-switch clear in
       `TrackManagerTransportTick` with consumption at successful switch commit. Fixture: queued
       switch + undo + stop admission in one window → the target is never lost.
-- [ ] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
+- [x] S4f.4 **Transport/clock timing validity (B2, T2).** (**REVISED 2026-09-23 by architect decision --
       `design.md` Revision 24; the stored-epoch requirement is WITHDRAWN.** The latch's `transportEpoch`
       field is **removed** (latch 40 -> 32 bytes, `CaptureStopJobs` 2,736 -> 2,728, both pins updated and
       re-verified on every env): the drive re-derives the destination from live transport state and the
@@ -1032,10 +1080,20 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       discriminating (pre-fix it fails at the first assertion). If a test reveals missing
       history detection, implement a **consumed generation check for that specific gap**, not a general
       epoch. **S4f.4 stays open** on transitions 2 and 3.) Original text: Record the destination and a monotonic transport epoch;
+      **CHECKED 2026-09-23 (checkbox reconciliation) — all four closure tests are green.** (1) transport
+      stop → start (*B03*), (2) seek/reset/MIDI Start recompute the boundary in the new tick domain
+      (`test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution`), (3) load/replacement cannot
+      bind an old request to replacement content
+      (`test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound`, which caught a real defect —
+      a gone interval used to be parked forever), (4) repeated retries commit exactly one stop (*B03*). The
+      **recorded coverage limit does not reopen this task**: the fixture proves the decision (the drive passes
+      the live tick, never the stored `phaseTick`) while the `ClockManager` entries that *move* the tick domain
+      are harness stubs — and that production-entry proof is assigned by the contract to the device runs
+      (S4f.11/S7), not to this native fixture. The withdrawn `transportEpoch` field is not reinstated.
       transport stop retargets/invalidates the latch beside `suppressMidiOutputForTransportStop()`; the drive
       re-derives the destination from live transport state and the boundary from the loop phase — never from a
       stored absolute tick (MIDI Start/seek/load reset the tick domain, `ClockManager.cpp:273,315-336,362`).
-- [ ] S4f.5 **One in-flight predicate (B9, T3).**
+- [x] S4f.5 **One in-flight predicate (B9, T3).**
       **PARTIAL 2026-09-23 -- the stop-related consumers are done, and the audit found two real holes.**
       `Track::hasStopInFlight()` (`hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction()`)
       and `Track::hasLiveCaptureInterval()` exist; the three persistence predicates and
@@ -1051,6 +1109,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       threaded through `commitCaptureForStop`/`finalizeCommitSideEffects`; and
       `resolveCaptureTrackSlotForMidPass`'s selected/active fallback is not removed (a persistence
       behavior change with no fixture in this suite).
+      **CHECKED 2026-09-23 (checkbox reconciliation).** The named consumer audit and the one-predicate
+      adoption are done, the two real holes it found are fixed, and its fixture is green. The task's remaining
+      clause is the audit's **own scope limit**, recorded honestly: the predicate is adopted at the consumers
+      that can hold it today, and the `getActiveLoopIndex()`-keyed **release** sites cannot be converted until
+      S4.1's `(slot, generation)` release exists. Those sites (`TrackCaptureStopCommit.cpp:139,263`,
+      `TrackStopTelemetryColdHelpers.cpp:161,166`, `resolveCaptureTrackSlotForMidPass`'s selected/active
+      fallback) are now **named in S4.1's conversion list** so they are tracked there rather than dropped, and
+      the pre-latch behavior stays current until they land. Nothing about this task's deliverable is deferred.
  Add `hasAcceptedUnexecutedInteraction()`; **every** consumer of
       `hasPendingDeferredOverdubStop()` that means "a stop is in flight" consults it (start admission, wrap,
       hot-path emission, persistence, `include/Utils/DeferredValidatePolicy.h` — the caller passes the predicate,
