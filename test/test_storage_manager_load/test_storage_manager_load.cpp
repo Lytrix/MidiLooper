@@ -51,6 +51,9 @@ bool sequencerRunning = false;
 // The runtime's own explicit-request / background-fill entry points live beside the SD boot load, not
 // in the load-job TU: without them the suite could only reach the queue through internal helpers.
 #include "../../src/StorageManager.cpp"
+// Packet A's C5 fixture and Packet C both drive the **real blocking persistence drain**, so its TU is
+// linked here rather than modelled by a test-only stand-in.
+#include "../../src/StorageManager/SyncDrainSaveState.cpp"
 
 void setUp() {
   StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
