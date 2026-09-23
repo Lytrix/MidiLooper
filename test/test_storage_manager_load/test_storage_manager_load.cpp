@@ -21,6 +21,7 @@ bool sequencerRunning = false;
 
 // The shared production harness (Loop/Track/TrackManager objects + harness globals). Extracted so this
 // suite links the same production code as test_continuous_capture without duplicating the include list.
+// This suite links src/TrackUndo.cpp, so it omits MidiButtonActions.cpp -- see the seam in the include.
 #include "../test_support/track_harness.inc"
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 // This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
@@ -149,6 +150,7 @@ struct TrackCaptureStopTestAccess {
   static bool admit(Track& track, PendingStopDestination destination, uint32_t tick) {
     return track.beginDeferredOverdubStop(destination, tick);
   }
+  static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
 };
 
 /// B04 (S2b.5), the real case: a **live finalization owner** on the slot whose restore is queued. The pop is
@@ -183,6 +185,7 @@ void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
       "a queued restore for a slot with a live finalization owner must stay queued");
   TEST_ASSERT_TRUE_MESSAGE(track.getLoop(0).hasCommittedPasses(),
                            "the load must not have reset the slot out from under its owner");
+
 }
 
 int main(int, char**) {
