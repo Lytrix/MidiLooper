@@ -2866,6 +2866,16 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
 
+**Session closeout (2026-09-23).** The P0 and P1 **native** scopes are complete and verified: full native
+**2,281 cases / 1 skipped / 0 failures**, all four firmware envs passing their per-env RAM1 budgets, and RAM1
+`padding` **improved 872 → 1,096**. Four real defects were found by fixtures rather than review (a start guard
+that ignored the latch; a switch that moved the active slot under an unadmitted stop; a load that discarded a
+live owner's queued request; and a stale-interval park that would have wedged a track). Two of my own findings
+were corrected in place, including a retraction. **What remains is hardware:** S1.1/S1.3/S1.4/S1.5 and the S2b
+device gate, with baseline `83be2e19` pinned and proven plus the reproduction recipe in
+`ARCHITECTURE-REVIEW.md`; S3.0's pins for later-stage members; and phases B–F. Full detail:
+`PROJECT_STATE.md` session-closeout entry.
+
 **Progress (2026-09-23, P0):** S0 is verified and S1.2's red scaling characterization is implemented and
 recorded — native legs only, **no firmware change and no device run**. Next slice: D0.2's P1/S2b harness
 controls, then S2b.1. The S1 gate's device legs stay open.
