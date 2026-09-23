@@ -2004,6 +2004,46 @@ fixture now asserts.
 | same suite, guard removed | **1 failed / 91 succeeded** on the intended assertion |
 | full native | **2,282 cases / 1 skipped / 2,281 succeeded / 0 failures** |
 
+## P1 — S2b.6: a stale annotation, and a design/spec conflict the terminal must not paper over (2026-09-23)
+
+Two findings from picking up S2b.6 — one correction, one decision this change must not make by accident.
+
+**The "pool-pressure fixture" S2b.6 listed as outstanding already exists and is registered.** No new fixture
+was needed:
+
+- `test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once` drains the canonical credits, issues
+  the stop **exactly once**, and asserts the accepted stop stays in the live interval with no job, no descriptor
+  and identical capture rows, then admits when capacity returns and retires exactly once with no second request.
+  That is the task's fixture clause almost verbatim.
+- `test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target` covers the "loaded slot" variant the
+  task text names.
+
+Both are in `RUN_TEST` and green in the current suite (92/92), so the annotation was stale and has been corrected
+rather than re-implemented.
+
+**`accepted_stop_park_terminal` is blocked on a design/spec conflict, and resolving it in the park would break the
+invariant I just proved.** `design.md:1104` says the park "routes a busy owner + non-empty store" to a new
+`clearCanonicalCaptureOutput()` (or to `regenerateFrozenCaptureStaging`) *and* reports the terminal. But clearing a
+populated canonical store **while a copy is in flight is exactly what S2b.4 forbids** — the invariant
+`test_s2b4_midcopy_populated_store_refuses_release` now proves by guard removal. The normative spec scenario
+(`spec.md:290-296`) sides with S2b.4, not with the design note: the terminal is a **report-only
+fault/escalation**, the accepted interaction "remains authoritative and executes exactly once when the owner
+frees", the park "never abandons the stop", and "the user is never asked to press again".
+
+So the terminal must be **report-only**: it cannot clear, drain or cancel. Two consequences are recorded rather
+than guessed at:
+
+- The design note's "route ... to `clearCanonicalCaptureOutput()`" should be read as describing the **retire**
+  route, which already clears inline past `DeferredCleanup` (so no live copy is disturbed) — not as licence for
+  the park to clear a store a live owner holds.
+- A fixture for the terminal needs an **observable counter** (the way `waitCount` backs
+  `accepted_stop_finalizer_wait`), and `PendingInteractionLatch` is size-pinned by S3.0's placement asserts
+  (`sizeof(CaptureStopJobs) == 2728`), so whether to spend a latch byte or key the report off the existing
+  `waitCount` is a deliberate choice with a placement consequence.
+
+This is left **open and precisely specified** rather than implemented under time pressure: the park is
+invariant-31 surface, and a terminal that cleared the store would silently regress S2b.4's red-proven guarantee.
+
 ## Device session — the baseline is flashed, and boot/load residency is measured on device (2026-09-23)
 
 The owner's go-ahead ("flash and create + run dedicated HITLs for each measurement") opened the device

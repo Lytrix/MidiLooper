@@ -540,7 +540,26 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       **PARTIAL UPDATE 2026-09-23:** the retire-path invariant is **implemented** -- the retire block
       drains `canonicalCaptureOutput.store` and releases the frozen canonical builders when a retiring
       job leaves the store populated (`canonical_output_drained_at_retire`), which is what makes S2b.1
-      safe. Still outstanding: the named `accepted_stop_park_terminal` and the pool-pressure fixture.
+      safe.
+      **FIXTURE CLAUSE ALREADY SATISFIED -- annotation corrected 2026-09-23.** The "pool-pressure
+      fixture" this task listed as outstanding **exists and is registered**:
+      `test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once` drains the canonical credits,
+      issues the stop exactly once, and asserts the accepted stop stays in the live interval with no job,
+      no descriptor and identical rows, then admits when capacity returns and retires exactly once;
+      `test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target` covers the "loaded slot"
+      variant the task text names. Both are green in the current suite. So the fixture clause is not
+      outstanding and never was.
+      **STILL OUTSTANDING: the named `accepted_stop_park_terminal`**, and it is now blocked on a
+      **design/spec conflict that must be resolved before it is implemented**: `design.md:1104` says the
+      park "routes a busy owner + non-empty store" to a new `clearCanonicalCaptureOutput()` (or
+      `regenerateFrozenCaptureStaging`) and reports the terminal, but clearing a populated store **while a
+      copy is in flight is precisely what S2b.4 forbids** -- the invariant
+      `test_s2b4_midcopy_populated_store_refuses_release` now proves by guard removal. The normative spec
+      scenario (`spec.md:290-296`) agrees with S2b.4: the terminal is a **report-only fault/escalation**,
+      the interaction "remains authoritative and executes exactly once when the owner frees", and the park
+      "never abandons the stop". So the terminal must not clear or cancel. Implementing it also needs an
+      **observable counter** (like `waitCount`) for a fixture to assert on, and `PendingInteractionLatch`
+      is size-pinned by S3.0's placement asserts, so that choice needs to be made deliberately.
 - [ ] S2b gates: the first-slice native/build/device checks in `IMPLEMENTATION_CONTRACT.md` §1,
       using the S1 resident-library baseline plus a synthetic 60-descriptor fixture. Prove canonical
       reservation bytes flat in inactive-slot count; report canonical payload and derived bytes separately.
