@@ -1,5 +1,37 @@
 # Project state (execution context)
 
+**2026-09-23 round 12 — A2.4 landed: the known-red set is empty and the exclusion flag is deleted.**
+
+`deferred-slot-restore-liveness` is **12/36 checked**. A2.4 replaced the permanent attempt latch with a
+bounded retry: `kMaxLoopSlotRestoreAttempts = 3` and `scheduleLoopSlotRestoreRetry` reset the slot as the
+restore path's **own** cleanup (keeping the request identity and recording a `waiting_retry` wait, per the
+A2.1/G2 tightening) and re-queue while under the bound; at the bound the request reaches the **`refused`**
+terminal. Retryable now covers the token/epoch/header/size/seek/open failures and the mid-job
+reopen/seek/read/token/parse/body-probe failures; an **absent** file stays `unnecessary` with no retry.
+
+**C6 turned green and was promoted into the default gate, so the known-red set is empty and
+`RESTORE_LIVENESS_RED` is deleted.** No red fixture was deleted, generalized or threshold-relaxed.
+**`loopSlotRestoreAttempted_` is subsumed by the request record** (A2.1's retirement clause), removing a
+second 64-byte array and leaving one source of truth for exactly-once.
+
+**Two things worth reading in `REVIEW.md` § A2.4:**
+1. The C6 fixture's phase-1 oracle had to be **corrected**. It asserted the old latch (`attempted=1`) as
+   proof the injected failure was reached — under the fix that is false, so the assertion would have
+   **re-encoded the defect as the oracle**. It now asserts the request is still **owed** and not committed.
+2. **RAM1 was re-based deliberately, in the same commit, with the reason recorded** in
+   `ram1_budget.json` and `REVIEW.md`: the record stores identity + state + terminal per `(track, slot)`
+   where the retired flag stored one bit. `teensy41-capture-serial` → `variables 96,192 / locals free
+   34,880 / padding 872` (above the 840 floor, still 12 ITCM banks). Changed accessors were made `FLASHMEM`
+   first, which kept the bank count at 12.
+
+Evidence: suite **26/26** default (identical with the now-inert flag set); full native **2,313 / 1 skipped
+/ 2,312 succeeded / 0 failures**; `teensy41-capture-serial` SUCCESS.
+
+**Open and hardware-dependent, deliberately not claimed:** **A2.5** (Packet B device gate — needs the
+board, owner permission to flash, the canonical stimulus and a capture), and therefore **A2.6**. **A2.7**
+is a recording task and is now recorded in `tasks.md`. **Packet C (A3.1–A3.8), A4.2/A4.3 and closeout
+(A5.1–A5.6) remain.**
+
 **2026-09-23 round 11 — A2.3 landed: the queue serves the first startable request, not the priority head.**
 
 `deferred-slot-restore-liveness` is **11/36 checked** (A2.3 added). `popNextStartableDeferredLoopSlotRestore`
