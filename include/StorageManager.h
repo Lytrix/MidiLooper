@@ -64,6 +64,10 @@ public:
     static void processDeferredSaveState(const LooperState& state);
     static bool isDeferredSaveActive();
     static bool hasDeferredSaveWork();
+    /// True while sealed capture chunks are waiting for the incremental SD flush. Separate from
+    /// `hasDeferredSaveWork()`: during a live take the workspace save is parked, so this is what lets the
+    /// main loop invoke the scheduler to persist a take as it is recorded.
+    static bool hasQueuedCaptureChunksToPersist();
     static bool hasActivePersistenceWorkItem();
     /// True while a pending workspace save still has queued or in-flight work items.
     static bool shouldPrioritizeWorkspaceSaveDrain();
