@@ -361,6 +361,15 @@ public:
   /// "a stop is in flight" must consult this alongside `hasPendingDeferredOverdubStop`,
   /// because the accepted request exists before any job does.
   bool hasAcceptedUnexecutedInteraction() const;
+  /// S4f.5: the interval is still capturing (RECORDING or OVERDUBBING).
+  bool hasLiveCaptureInterval() const;
+  /// S4f.5: "a stop is in flight" -- an admitted job owns the slot's finalization resources, **or**
+  /// a stop is accepted and not yet executed. The latch exists before any job does, and once S4f.3
+  /// lets an accepted stop outlive a state change, `isOverdubbing()` stops being a proxy for it.
+  /// Every consumer of `hasPendingDeferredOverdubStop()` that means "a stop is in flight" consults
+  /// this instead. `isRecording()` is deliberately not a term: a record interval with no stop
+  /// obligation is not a stop in flight (use `hasLiveCaptureInterval()` alongside).
+  bool hasStopInFlight() const;
   /// S4f.8 evidence: waits counted on the accepted stop (0 when none is latched).
   uint32_t acceptedStopWaitCount() const;
   bool isPlaying() const;
