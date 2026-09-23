@@ -202,6 +202,23 @@ struct TrackCaptureStopTestAccess {
     auto* rt = track.playbackRuntime.slotIfAllocated(slot);
     return rt != nullptr && rt->prewarmCanonicalCaptureOutput();
   }
+  /// S2b.4's mid-copy state: a canonical store that already holds an appended event, which is
+  /// what `stepFrozenCaptureCanonicalCopy` leaves behind between quanta -- that grain appends
+  /// into this store through this very reservation (`TrackPlaybackRuntime.cpp:1949`). Both
+  /// calls are the store's own production API; no member is poked, and the event's payload is
+  /// irrelevant because the release predicate asks only whether the store is empty.
+  static bool appendCanonicalEvent(Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt == nullptr) return false;
+    LoopEventStore& store = rt->canonicalCaptureOutput.store;
+    if (!store.reservedAppendReady() && !store.reserveCaptureTail()) return false;
+    MidiEvent event{};
+    return store.appendReserved(event, rt->canonicalCaptureChunks);
+  }
+  static void clearCanonicalOutput(Track& track, uint8_t slot) {
+    auto* rt = track.playbackRuntime.slotIfAllocated(slot);
+    if (rt != nullptr) rt->canonicalCaptureOutput.store.clear();
+  }
   static int rawRingEntrySlot(const Track& track, size_t index) {
     if (track.captureStopJobs_ == nullptr || index >= Track::CaptureStopJobs::kCapacity) return -1;
     return static_cast<int>(track.captureStopJobs_->entries[index].slot);
@@ -4015,6 +4032,50 @@ void test_s4_0_release_respects_the_live_ring_window_and_is_idempotent() {
                            static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
 }
 
+/// S2b.4 (invariants 33/34) mid-copy: the release must be **refused** while the canonical store
+/// still holds a taken event. Releasing there would hand the credits back to the pool while the
+/// in-flight copy still expects them -- the `Denied` grain S2b.4 names -- so the refusal, not the
+/// release, is the safety property. The slot is deliberately given no live owner, which makes the
+/// populated store the *only* admissible refusal reason: the same call succeeds once the store is
+/// empty, so the fixture cannot pass on an unrelated guard.
+void test_s2b4_midcopy_populated_store_refuses_release() {
+  Track& track = preparePlayingTrack();
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::prewarmCanonicalReservation(track, 0));
+  const size_t reserved = TrackCaptureStopTestAccess::canonicalChunks(track);
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                           static_cast<uint32_t>(reserved));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 0),
+                           "the slot must be idle so the populated store is the sole refusal reason");
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0));
+
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::appendCanonicalEvent(track, 0),
+                           "the reserved tail must accept one event (the mid-copy state)");
+  TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0),
+                            "the store must be populated for this fixture to mean anything");
+  // Appending the copied event consumes the reservation credit that backs it. That *is* the
+  // mid-copy signature, and it is precisely why releasing here would strand the copy: the
+  // credit is already committed to an event the pool would otherwise hand to someone else.
+  const size_t afterAppend = TrackCaptureStopTestAccess::canonicalChunks(track);
+  TEST_ASSERT_TRUE_MESSAGE(afterAppend < reserved,
+                           "storing a copied event must spend the credit that backs it");
+
+  TEST_ASSERT_FALSE_MESSAGE(
+      TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0),
+      "a populated store must refuse release: releasing mid-copy strands the copy");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(afterAppend),
+      static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)),
+      "a refused release must not give any further credit back");
+
+  // Draining the copy makes the same call succeed, so the refusal above was the store and not
+  // the liveness predicate or a missing runtime.
+  TrackCaptureStopTestAccess::clearCanonicalOutput(track, 0);
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0));
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0),
+                           "an empty store with no live owner must release");
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+}
+
 /// S2b.3 boot budget evidence (invariant 34): boot consumes only the committed content, never a
 /// per-slot reservation, and leaves the pool's own reserve intact. The device-scale peak figure
 /// (a 24-bar overdub's reservation) is S1.5's device leg, not this fixture.
@@ -4348,6 +4409,7 @@ int main() {
   RUN_TEST(test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once);
   RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
+  RUN_TEST(test_s2b4_midcopy_populated_store_refuses_release);
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
