@@ -149,7 +149,71 @@ outcome depends on whether anything else happened to be sounding.
 when CLEAR runs, so part 1 also shortens CLEAR — but it cannot remove the gate, which is why option 1 is
 still required for "immediate".
 
-## Part 3 — the content pass (2026-09-23)
+## Part 1 VERIFIED ON DEVICE (2026-09-23, later) — chunks do persist during a live take
+
+The earlier "still 0 `PERS,mid_pass`" result was a **fixture artifact**: `--record-only` never commits the
+pass, so its chunks are released and never admitted. With the authoritative full shape
+(`captures/content-pass-02/`, `--record-bars 4 --overdub-bars 2`) there are **13 `PERS,mid_pass` rows**,
+and they land *inside live transport windows*:
+
+| phase window (us) | flushes inside it |
+|---|---|
+| `RECORDING` 569,394,225 – 578,086,677 | - |
+| **`OVERDUBBING` 579,411,336 – 597,402,732** | **584,590,680 · 584,617,581** |
+| **`PLAYING` 558,459,317 – 598,411,707** | **598,393,317 · 598,402,101** |
+
+Each row is `PERS,mid_pass,0,<sealSequence>,<chunkId>,ok:t4:s0:cNN:n256` — for the slot under test, 256
+events per chunk — and the run still reports
+`VERIFY MIDI-boundary timing: intervals={'OVERDUBBING': 2, 'OVERDUBBING_STOPPING': 2, 'PLAYING': 17,
+'RECORDING': 1} stopping=2 overflow_free=True call_sites=True`. So a take now reaches SD **while it is being
+recorded**, which is the owner's ask.
+
+**So no further diagnostic is needed for part 1**: `PERS,backlog` already carries the chunk queue depth
+(3rd field: `workQ,writingItems,chunkQ,...`), and the phase windows plus `PERS,mid_pass` answer the question
+directly.
+
+## Part 3 CORRECTED — the content pass PASSES, and the owner's read was right
+
+The owner observed that `stored overdub span … count=0/15 … count_ok=False` looked like a logging/validation
+error rather than a storage failure. **That is exactly right, and it is now proven.**
+
+`captures/content-pass-02/` (full shape, 4-bar record + 2-bar overdub) reported
+`VERIFY stored overdub span (SEVT ticks): count=0/15 … count_ok=False` and
+`Result: FAIL (FIRMWARE_CONTRADICTION)`. The authoritative `!CAPTURE_CONTENT` dump of the same slot says
+otherwise:
+
+```
+CAPTURE_CONTENT,begin,track=5,slot=0,length=3072
+CAPTURE_CONTENT,rows,record,0,188
+CAPTURE_CONTENT,rows,overdub,0,48
+CAPTURE_CONTENT,rows,overdub,1,24
+CAPTURE_CONTENT,rows,effective,0,260
+```
+
+The content-verification pipeline agrees:
+
+```
+result = PASS
+storage_matches_effective = true
+effective_rows_all = expected_note_cc_rows = 260
+cycles: 3  (each rows=260, inventory_equal=true, exact_order=true, missing=0, extra=0)
+```
+
+Evidence: `captures/cp02-playback/content-review.json`.
+
+**Why the base run said otherwise.** `stored_overdub_span` carries `sevt_missing: true` — the harness knows
+the **SEVT telemetry dump** is missing, and derives `count_ok/span_ok/bars_match_ok` from a dump that never
+arrived. The harness itself documents this as temporary
+(`legacy_record_baseline.py`: *"TEMPORARY (2026-09-16): the stored-MIDI (SEVT) dump is not reliably armed by
+the canonical base flow … a missing SEVT dump must not by itself turn an otherwise valid run into
+INCONCLUSIVE_CAPTURE"*, `sevt_gate_required = False`), and the firmware carries a matching temporary note
+(`TrackDeferredMaintenance.cpp`: *"TEMPORARY DEVICE DIAGNOSTIC … once SEVT is restored to a required gate"*).
+This run's own `VERIFY issues` are `record_stored_revt_missing` and
+`persistence_active_snapshot_unavailable_during_save` — **also telemetry/observation classes, not content**.
+So the `FIRMWARE_CONTRADICTION` verdict for this run is a **telemetry false negative**, and the standing
+guidance applies: prove content with the content-verification pipeline, not the base run's own verdict.
+
+## Part 3 (original) — the earlier content pass (2026-09-23)
 
 `host_midi_hitl.py run --preset base --track 5 --loop-slot 1 --midi-channel 5` →
 `captures/content-pass-01/`. Result **INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)**: `record loop length
