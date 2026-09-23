@@ -123,6 +123,17 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   **840 B is still tight** — the next bank cross would drop the local allowance to ~2,176 B — so a
   deliberate cold-code placement improvement is planned as its own change, kept out of this
   runtime-correctness slice.
+- **S2b.5 split into a done half and a harness-blocked half.** The predicate S2b.5 needs **is**
+  `Track::noLiveOwnerForSlot(slot)` (S4.0), and its per-slot scope is now asserted in the S4.0 fixture: with
+  a live job on slot 0, `noLiveOwnerForSlot(1)` is **true** -- a finalizing predecessor blocks a load into
+  *its* slot and not another slot of the same track, which a track-level "capture active" flag would fail.
+  The remaining work is local (`LoadLoopJob.cpp`'s callers pop the restore entry *before* `beginLoadLoopJob`,
+  and re-queueing is inert, so a load can destroy a live owner) but it is **not implemented**: that path has
+  **zero** native coverage -- the native `SD.h` stub is two lines and no suite links `LoadLoopJob.cpp` or
+  `LoopSlotRestoreQueue.cpp` -- so shipping it would be an unverified change to load behavior. The harness
+  gap and the full B04 plan (files to link, in-memory SD/File emulation, stub boundaries, assertion
+  sequence, and the ordering against B06 and the mid-copy fixture) are pinned in
+  `ARCHITECTURE-REVIEW.md` § P1 -- S2b.5. Full native **2,272 / 1 skipped / 0 failures**.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
