@@ -29,6 +29,7 @@ bool sequencerRunning = false;
 // This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
 // out of those stubs.
 #include "load_harness_stubs.h"
+#include "load_and_restore_harness.h"
 #include "../../src/TrackUndo.cpp"
 
 // TrackManager's constructor references the global MIDI handler; the load path pulls it in.
@@ -47,6 +48,9 @@ bool sequencerRunning = false;
 #include "../../src/Loop/LoopPendingNoteChange.cpp"
 #include "../../src/TrackManager/TrackManagerSlotMatrix.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"
+// The runtime's own explicit-request / background-fill entry points live beside the SD boot load, not
+// in the load-job TU: without them the suite could only reach the queue through internal helpers.
+#include "../../src/StorageManager.cpp"
 
 void setUp() {
   StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
@@ -217,6 +221,98 @@ void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
 
 
 // ---------------------------------------------------------------------------
+// Packet A / A1.1 of `deferred-slot-restore-liveness` — the controllable restore harness.
+//
+// The fixtures below are the acceptance set for the restore-liveness change. Every one of them drives
+// the **production** queue and load-job entry points (`selectSubmittedLoadJobs` +
+// `stepSubmittedLoadJobs`) and asserts the **desired** behavior, so it is red on the current tree and
+// green only once the change's mechanism lands. Old-state observations are kept as separate
+// diagnostics, never as the acceptance oracle (tasks.md A1.11, design.md D7).
+//
+// The known-red set is excluded from the default gate behind `RESTORE_LIVENESS_RED` (a *test-read*
+// environment variable, the `WORKING_SET_RED` precedent) and each case is promoted into the default
+// gate in the same commit that turns it green.
+// ---------------------------------------------------------------------------
+
+/// The A1.1 smoke case: one queued restore request, driven to a committed slot through production
+/// calls only. It proves the harness itself (payload writer + queue admission + selection + job steps)
+/// reaches a real commit, which is the precondition every red fixture below relies on.
+void test_restore_harness_smoke_commits_a_queued_request_through_production_path() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  // Explicit idle runtime: the harness's default track state is TRACK_PLAYING, which would gate the
+  // background restore this case is about (see the harness header's state note).
+  RestoreHarness::setRuntimeTransportIdle();
+
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  TEST_ASSERT_FALSE(track.getLoop(2).hasCommittedPasses());
+  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 2, 67));
+
+  RestoreHarness::armRestoreRequestThroughProductionQueue(0, 2);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the payload-backed request must enter the real restore queue");
+
+  const uint32_t turns = RestoreHarness::runLoadServiceTurns(64, RestoreHarness::restoreWorkIdle);
+  char message[160];
+  snprintf(message, sizeof(message),
+           "the queued request did not commit through production turns (turns=%u, pending=%u, job=%u)",
+           static_cast<unsigned>(turns),
+           static_cast<unsigned>(StorageManagerInternal::pendingLoopSlotRestoreCount()),
+           StorageManagerInternal::anyLoadLoopJobActive() ? 1u : 0u);
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(2).hasCommittedPasses(), message);
+  TEST_ASSERT_EQUAL_UINT32(768, track.getLoop(2).loopLengthTicks);
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isLoopSlotRestoreAttempted(0, 2),
+                           "a committed restore must mark its request consumed exactly once");
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the served request must leave the queue");
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::anyLoadLoopJobActive(),
+                            "the job retires after a completed commit");
+}
+
+/// **A1.2 [C1 — transport-gated background admission], desired behavior, red on current `src/`.**
+///
+/// Shape: the transport is running with one track audibly playing, a payload-bearing slot is queued
+/// for background restore, and the focus sits on a different slot. Through the production admission
+/// path the request must be either served or making measurable preparation progress within a bounded
+/// number of turns — a request that is neither served nor progressing is an unexplained stall, which
+/// is the defect.
+///
+/// Red today because `canRunBackgroundLoadLoopNow()` is false under transport, so the job is parked
+/// and re-promoted without ever reading a byte (`design.md` C1/C2). Packet B's bounded background
+/// preparation slice is what turns it green; the named waits that replace "progress" as the oracle
+/// arrive in the same packet (A2.1/A2.2).
+void test_c1_transport_gated_background_admission_desired() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  RestoreHarness::setTrackAudiblyPlaying(1);  // another track is sounding; focus track is stopped
+
+  Track& focusTrack = trackManager.getSelectedTrack();
+  focusTrack.ensureLoopsAllocated();
+  // The preceding smoke case commits into this slot; the fixture needs the pre-restore state that
+  // makes the slot "needs load" (empty, no committed content), reached through the production reset.
+  StorageManagerInternal::resetLoopSlotToEmpty(focusTrack.getLoop(2), 2);
+  TEST_ASSERT_TRUE(RestoreHarness::writePayloadWithOneNoteToSd(0, 2, 61));
+
+  RestoreHarness::armRestoreRequestThroughProductionQueue(0, 2);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the request must enter the real restore queue");
+
+  const RestoreHarness::RestoreOutcomeObservation observation =
+      RestoreHarness::observeRestoreOutcome(0, 2, 64);
+  char message[224];
+  snprintf(message, sizeof(message),
+           "C1: the queued background restore was neither served nor progressing after %u turns "
+           "(pending=%u, phase=%u, jobActive=%u)",
+           static_cast<unsigned>(observation.turnsRun),
+           static_cast<unsigned>(observation.pendingAtEnd),
+           static_cast<unsigned>(observation.phaseAtEnd), observation.jobActiveAtEnd ? 1u : 0u);
+  TEST_ASSERT_FALSE_MESSAGE(observation.stalled, message);
+}
+
+// ---------------------------------------------------------------------------
 // SD write-mode semantics (fix/sd-temp-rewrite, docs/Plans/sd_temp_write_truncation_refinement.md)
 //
 // The device's `SD.open(path, FILE_WRITE)` is `O_RDWR|O_CREAT|O_AT_END` -- it appends -- and
@@ -300,6 +396,14 @@ int main(int, char**) {
   RUN_TEST(test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard);
   RUN_TEST(test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot);
   RUN_TEST(test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned);
+  // A1.1 — the controllable restore harness smoke case (production path only).
+  RUN_TEST(test_restore_harness_smoke_commits_a_queued_request_through_production_path);
+  // A1.11 — the known-red desired-behavior acceptance set. Registered unconditionally so a run with
+  // `RESTORE_LIVENESS_RED=1` shows exactly these cases red; excluded from the default gate until the
+  // slice that turns each one green promotes it (the `WORKING_SET_RED` precedent).
+  if (getenv("RESTORE_LIVENESS_RED") != nullptr) {
+    RUN_TEST(test_c1_transport_gated_background_admission_desired);
+  }
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
   RUN_TEST(test_sd_in_place_patch_keeps_the_body_and_does_not_append);

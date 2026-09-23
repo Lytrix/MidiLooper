@@ -819,3 +819,12 @@ void STORAGE_PERSIST_MEM StorageManager::probeActiveLoadLoopJob(bool& active, ui
     phase = static_cast<uint8_t>(loadLoopJob_.phase);
     isFocus = loadLoopJobIsFocusSlot() ? 1 : 0;
 }
+
+void STORAGE_PERSIST_MEM StorageManager::probeLoadLoopJobProgress(size_t& bytesRead,
+                                                                 size_t& payloadSize) {
+    using namespace StorageManagerInternal;
+    // Both instances: `deferredSaveBlockedByActiveSlotLoadSd` counts either one, so a fixture asking
+    // "did preparation advance?" must not miss the parked instance.
+    bytesRead = loadLoopJob_.bytesRead + parkedLoadLoopJob_.bytesRead;
+    payloadSize = loadLoopJob_.payloadSize + parkedLoadLoopJob_.payloadSize;
+}
