@@ -161,6 +161,17 @@ TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
   if (latch == nullptr) return false;
   const PendingInteractionLatch request = *latch;
   if (request.kind != PendingInteractionLatch::Kind::Stop) return false;
+  // S4f.4 transition 3 (load/replacement): a load or a replacement interval can leave the slot *number*
+  // unchanged while the interval the request identified is gone. Such a request must not bind to the
+  // replacement content, and it must not park either -- parking would wait forever for an interval that can
+  // never return. It is **superseded**: reported and retired, exactly once.
+  if (request.slot >= Config::MAX_LOOPS_PER_TRACK || request.interval != captureInterval_) {
+    logger.log(CAT_TRACK, LOG_INFO,
+               "Accepted stop superseded: its interval is no longer live (slot=%u)",
+               static_cast<unsigned>(request.slot));
+    consumeAcceptedStopObligation();
+    return true;
+  }
   // DEC-078 item 3: re-derive the destination from live transport state rather than trusting a
   // stored absolute tick or a destination that transport stop has since retargeted.
   const PendingStopDestination destination =

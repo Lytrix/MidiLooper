@@ -761,7 +761,14 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       (1) Transport Stop -> Start -- *native, green in B03*; (2) seek/reset/MIDI Start recompute the
       boundary in the new tick domain -- *no native entry, the ClockManager entries are stubs*; (3) load/
       replacement cannot bind an old request to replacement content -- *needs the load harness*;
-      (4) repeated retries commit exactly one stop -- *native, green in B03*. If a test reveals missing
+      (4) repeated retries commit exactly one stop -- *native, green in B03*.
+      **(3) is now green too, and it was a defect, not just a fixture:** a request whose interval is gone (a load
+      or replacement leaving the same slot number) used to go straight to the park, which waits for a canonical
+      reservation unrelated to the failure -- so the obligation was retained forever and `hasStopInFlight()`
+      stayed true. The drive now recognises it before any admission attempt, reports
+      `"Accepted stop superseded: its interval is no longer live"`, consumes the obligation exactly once and
+      admits nothing. Fixture `test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound` is
+      discriminating (pre-fix it fails at the first assertion). If a test reveals missing
       history detection, implement a **consumed generation check for that specific gap**, not a general
       epoch. **S4f.4 stays open** on transitions 2 and 3.) Original text: Record the destination and a monotonic transport epoch;
       transport stop retargets/invalidates the latch beside `suppressMidiOutputForTransportStop()`; the drive

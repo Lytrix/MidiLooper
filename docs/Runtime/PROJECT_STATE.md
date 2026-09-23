@@ -256,6 +256,16 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   path. Two routes: give the load suite its own minimal stub surface instead of reusing `off_path_deps.h`, or
   split the shared harness into "button headers" vs "button TU". Load suite **5/5**, full native
   **2,277 / 1 skipped / 0 failures**, firmware + per-env budget SUCCESS.
+- **S4f.4 transition 3 was a defect, and it is fixed.** Writing the load/replacement fixture showed the drive
+  sent *every* refusal to the park -- including a request whose interval is gone because a load or replacement
+  left the same slot number. Parking waits for a canonical reservation unrelated to the failure, so the
+  obligation was retained forever and `hasStopInFlight()` stayed true, blocking every later start, switch and
+  release for that track. The drive now recognises a stale interval **before any admission attempt**, reports
+  it, consumes the obligation exactly once and admits nothing. Fixture
+  `test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound` is discriminating. S4f.4 transitions
+  **1, 3 and 4** are green natively; transition 2 (seek/reset/MIDI Start) has no native entry because those
+  `ClockManager` entries are harness stubs. Full native **2,279 / 1 skipped / 0 failures**; firmware + per-env
+  budget SUCCESS at padding 1,096.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
