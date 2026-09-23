@@ -230,6 +230,14 @@ public:
   void releasePlaybackMergedMidiEventsMemory();
   /// Phase 1B — release rebuildable playback windows when not referenced this tick.
   bool tryReleasePlaybackMergedMidiEventsMemory();
+  /// S4.0 (B6, invariant 33): per-slot liveness. True when the slot has no live owner, so its
+  /// working set may be released and a load may be admitted into it. The ring test scans the
+  /// **live window only**: retirement clears `owner`/`loopId` but not `slot`, so a whole-array scan
+  /// would report a retired entry as an owner forever and block release and load admission.
+  bool noLiveOwnerForSlot(uint8_t slot) const;
+  /// S2b.4: the release entry point. It enforces `noLiveOwnerForSlot` itself so a production caller
+  /// cannot release underneath a live owner: the guard must not be merely a convention at call sites.
+  bool tryReleaseCanonicalCaptureReservation(uint8_t slot);
   /// Phase 1B — drop revision-keyed materialized events scratch when note edit does not need it.
   bool tryClearCommittedMidiScratch();
 

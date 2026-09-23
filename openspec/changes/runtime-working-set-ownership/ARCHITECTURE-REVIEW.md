@@ -625,3 +625,53 @@ S3.0 requires `padding >= 872`, so this is **16 B short** and is reported rather
 
 **This needs the architect's call**: either the 872 line is re-based with the arithmetic above, or the
 16 B must come from elsewhere in ITCM before S3.0's static_assert work lands. It is not silently accepted.
+
+## P1 — S4.0 per-slot liveness and S2b.4 reservation release (2026-09-23)
+
+### What changed
+
+- **`Track::noLiveOwnerForSlot(slot)`** (S4.0, invariant 33). Terms, in order:
+  1. the ring test scans the **live window only** (`[head, head + count)`), so a retired entry that
+     still carries `slot == 0` is not a stale positive;
+  2. the slot's `captureStopOwner`, defensively — it can be set with no ring entry, and releasing
+     underneath it would strand a live job;
+  3. `preparedPairRequestPending`, i.e. a prepared handover still being **built**. The published pair is
+     deliberately not a term: it is the slot's playback authority and stays valid while the slot sounds,
+     so counting it would make release unreachable for every sounding slot;
+  4. an accepted interaction targeting the slot (S4f.1's latch).
+- **`LoopPlaybackRuntime::releaseCanonicalCaptureReservation()`** (S2b.4): refuses while
+  `canonicalCaptureOutput.store` is non-empty (the store's chunks must be released with it, and
+  `prewarmCanonicalCaptureOutput` requires an empty store anyway); otherwise returns the credits and is
+  idempotent.
+- **`Track::tryReleaseCanonicalCaptureReservation(slot)`** enforces `noLiveOwnerForSlot` itself, so the
+  guard is not a convention a production caller can bypass. `tryReleasePlaybackMergedMidiEventsMemory`'s
+  per-slot loop calls it *before* the merged-window checks, so a slot with no window still releases.
+
+### Oracle and result
+
+`test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` (default gate): an idle slot with no
+job, latch or owner reports no live owner; an **admitted** job for slot 0 makes `noLiveOwnerForSlot(0)`
+false and the release entry point returns false with the 8 credits intact; after the job retires the
+descriptor is out of the live window but still carries `slot == 0`, and the predicate reports no live
+owner (the B6 stale-positive discriminator); the release then succeeds, a second release is a no-op
+success, and re-reserving re-retains the 8 credits.
+
+### Verification
+
+| check | result |
+|---|---|
+| focused `test_continuous_capture` | **PASSED, 84/84** |
+| full native | **2,269 cases / 1 skipped / 2,268 succeeded / 0 failures** |
+| firmware `teensy41-capture-serial` | **SUCCESS**; RAM1 unchanged at `variables 96,128 / code 392,360 / padding 856 / locals free 34,944` — every new function is FLASH-resident, so the reported 16 B deviation did **not** grow |
+
+### Recorded limitations — NOT coverage
+
+- **S4.0 is partial.** Two listed terms are not implemented and are recorded rather than assumed:
+  (a) the **job-owned undo root** term — the ring scan covers job-owned roots while the entry lives, but
+  the protected undo publication is track-level and has no per-slot identity to test; S5.2a's cold
+  descriptor is where it becomes expressible; (b) the **deferred-reconstruction** term, which S5.2e
+  introduces. There is no `S5.2f` regeneration replacement of the stop grain's stall-and-hold yet.
+- **S2b.4 is partial.** The listed fixture's "mid-copy release attempt → no `Denied` grain" is not yet
+  exercised: the refusal is implemented (non-empty store) but no fixture drives a populated
+  `canonicalCaptureOutput.store` through the release. The "role leaves the active set" trigger is the
+  existing pressure-reclaim loop, which is the only such surface until S5.1 adds demotion.

@@ -1903,6 +1903,13 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::prewarmCanonicalCaptur
       canonicalCaptureChunks.reserveChunks(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS);
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::releaseCanonicalCaptureReservation() {
+  if (!canonicalCaptureOutput.store.empty()) return false;
+  const size_t available = canonicalCaptureChunks.availableChunks();
+  if (available == 0) return true;
+  return canonicalCaptureChunks.releaseGrain(available);
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::canonicalCaptureOutputAdmitted() const {
   return canonicalCaptureOutput.store.empty() && canonicalCaptureOutput.store.reservedAppendReady() &&
       canonicalCaptureChunks.availableChunks() >= PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS;
