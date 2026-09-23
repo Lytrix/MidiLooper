@@ -16,6 +16,17 @@
 
 SDClass SD;
 
+// The shared production harness (Loop/Track/TrackManager objects + harness globals). Extracted so this
+// suite links the same production code as test_continuous_capture without duplicating the include list.
+#include "../test_support/track_harness.inc"
+// The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
+// This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
+// out of those stubs.
+#define HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD
+#include "../test_continuous_capture/off_path_deps.h"
+
+// TrackManager's constructor references the global MIDI handler; the load path pulls it in.
+#include "../../src/MidiHandler.cpp"
 #include "../../src/StorageManager/LoopSlotRestoreQueue.cpp"
 
 void setUp() {
