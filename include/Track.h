@@ -349,6 +349,12 @@ public:
   /// prepared PLAYING window. It remains an admission barrier until its
   /// companion metadata and bridge publication have completed.
   bool hasPendingDeferredOverdubStop() const;
+  /// S4f.5: true while an interaction is accepted and not yet executed. Consumers that mean
+  /// "a stop is in flight" must consult this alongside `hasPendingDeferredOverdubStop`,
+  /// because the accepted request exists before any job does.
+  bool hasAcceptedUnexecutedInteraction() const;
+  /// S4f.8 evidence: waits counted on the accepted stop (0 when none is latched).
+  uint32_t acceptedStopWaitCount() const;
   bool isPlaying() const;
   /// True for every state whose committed MIDI playback must keep advancing.
   bool isAudiblePlaybackActive() const;
@@ -595,6 +601,32 @@ private:
   };
   // Stable descriptors only: shared canonical/companion worker scratch is not
   // duplicated. Additional admission stays guarded until session isolation.
+  struct PendingInteractionLatch {
+    enum class Kind : uint8_t { None = 0, Stop, Switch, Start };
+    Kind kind = Kind::None;
+    PendingStopDestination destination = PendingStopDestination::Playing;
+    uint8_t slot = 0;
+    uint8_t switchTarget = 0;
+    uint64_t interval = 0;
+    uint32_t phaseTick = 0;
+    uint64_t transportEpoch = 0;
+    /// S4f.8: the accepted stop's waits are counted as scheduling, never as refusals.
+    uint32_t waitCount = 0;
+    /// S4f.2/S2b.6: report the wait once per episode rather than once per deferred turn.
+    bool waitReported = false;
+    bool isSet() const { return kind != Kind::None; }
+    /// A repeat of the same accepted interaction is a no-op (S4f.1). A distinct operation is
+    /// not a duplicate merely because the interval matches.
+    bool matches(Kind otherKind, uint8_t otherSlot, uint8_t otherTarget,
+                 uint64_t otherInterval) const {
+      return kind == otherKind && slot == otherSlot && switchTarget == otherTarget &&
+             interval == otherInterval;
+    }
+    void clear() { *this = PendingInteractionLatch{}; }
+  };
+  // The accepted interaction lives in the externally allocated ring object (S3.0). A by-value
+  // member of `Track` would be DTCM: the extra unique_ptr alone measured 8 B x 8 tracks = 64 B of
+  // RAM1 locals and took the padding line from 872 to 856, below the documented floor.
   struct CaptureStopJobs {
     static constexpr size_t kCapacity = 4;
     /// Out-of-line and FLASH-resident. `CaptureStopJob` owns a `PendingCapturePass`
@@ -606,12 +638,39 @@ private:
     CaptureStopJob entries[kCapacity];
     size_t head = 0;
     size_t count = 0;
+    /// S4f.1: the track's accepted-but-not-yet-executed interaction. One instance, not a ring
+    /// descriptor: it consumes none of `entries`/`count` and is never stacked.
+    PendingInteractionLatch interaction;
   };
   struct CaptureStopJobsDeleter {
     void operator()(CaptureStopJobs* jobs) const;
   };
   std::unique_ptr<CaptureStopJobs, CaptureStopJobsDeleter> captureStopJobs_;
   bool prewarmCaptureStopJobs();
+  /// S4f.1: the accepted interaction, stored in the externally allocated ring object. Null when
+  /// the ring has not been admitted yet.
+  PendingInteractionLatch* interactionLatch() {
+    return captureStopJobs_ ? &captureStopJobs_->interaction : nullptr;
+  }
+  const PendingInteractionLatch* interactionLatch() const {
+    return captureStopJobs_ ? &captureStopJobs_->interaction : nullptr;
+  }
+  /// S3.0/S4f.1: the latch is part of the ring's cold admission, so no action edge allocates one.
+  bool prewarmInteractionLatch();
+  /// Latch an accepted stop for `slot`/`interval`; a same-identity repeat is a no-op.
+  void latchAcceptedStop(PendingStopDestination destination, uint8_t slot, uint64_t interval);
+  /// Consume the stop obligation of a successfully admitted (or synchronously completed) stop.
+  void consumeAcceptedStopObligation();
+  /// S4f.2: one deferred turn of the accepted interaction. Returns true when it ran a grain.
+  bool driveAcceptedInteraction();
+  /// S4f.2: the dispatch decision at the top of `processDeferredIdleMaintenance` -- the latch is
+  /// driven only when no admitted job owns the turn, so an accepted request can never stack a
+  /// second stop job. A named production entry so the decision itself is directly assertable
+  /// without linking the whole maintenance body's storage dependencies.
+  bool serviceAcceptedInteractionTurn();
+  /// S2b.6: the stop-side park. Re-runs the interval slot's canonical reservation and reports
+  /// the wait as scheduling; never cancels the accepted request.
+  void parkAcceptedStopForCanonicalOutput(uint8_t slot);
   /// Protected undo transaction. Externally allocated: it carries an UndoEntry
   /// plus retirement storage, and it must outlive the admitted job through its
   /// post-commit drain, so it cannot be DTCM-resident or job-owned.
@@ -679,6 +738,13 @@ private:
                                        uint8_t idleBarsPerSlice, uint16_t idleDirtyBefore,
                                        uint16_t idleDirtyAfter);
 
+  /// S4f.0 (DEC-078 item 3): admission is slot-parameterised. The deferred drive binds the
+  /// interval's own slot and interval, never whatever `activeLoopIndex` happens to be at drive
+  /// time, so the DEC-067 guard chain, the staging, the canonical output and `job.slot` all
+  /// resolve the interval's slot.
+  bool beginDeferredOverdubStopForSlot(PendingStopDestination destination, uint32_t currentTick,
+                                       uint8_t slot, uint64_t interval);
+  /// Live-edge wrapper: admits against the currently active slot and live interval.
   bool beginDeferredOverdubStop(PendingStopDestination destination, uint32_t currentTick);
   static bool appendReservedCaptureNoteOffForOwner(
       Loop& loop, CaptureAdmissionStaging& staging,

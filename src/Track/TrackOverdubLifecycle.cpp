@@ -75,6 +75,97 @@ TRACK_COLD_MEM void Track::CaptureStopJobsDeleter::operator()(CaptureStopJobs* j
   ExternalMemoryFirstAllocator<CaptureStopJobs>{}.deallocate(jobs, 1);
 }
 
+/// S4f.1/S3.0: the latch is a value member of the externally allocated ring object, so
+/// "provisioning" is the ring's own cold admission and never an allocation at the stop edge.
+TRACK_COLD_MEM bool Track::prewarmInteractionLatch() { return captureStopJobs_ != nullptr; }
+
+TRACK_COLD_MEM bool Track::hasAcceptedUnexecutedInteraction() const {
+  const PendingInteractionLatch* latch = interactionLatch();
+  return latch != nullptr && latch->isSet();
+}
+
+TRACK_COLD_MEM uint32_t Track::acceptedStopWaitCount() const {
+  const PendingInteractionLatch* latch = interactionLatch();
+  return latch != nullptr ? latch->waitCount : 0;
+}
+
+/// S4f.1: retain an accepted stop against the interval's own slot and generation. The identity
+/// is written once and never overwritten by a later request (handoff §5): a repeat of the same
+/// stop is a no-op, not a second obligation.
+TRACK_COLD_MEM void Track::latchAcceptedStop(PendingStopDestination destination, uint8_t slot,
+                                             uint64_t interval) {
+  PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr) return;
+  if (latch->matches(PendingInteractionLatch::Kind::Stop, slot, 0, interval)) return;
+  latch->clear();
+  latch->kind = PendingInteractionLatch::Kind::Stop;
+  latch->destination = destination;
+  latch->slot = slot;
+  latch->interval = interval;
+  latch->phaseTick = capturePhaseTick(clockManager.getCurrentTick());
+}
+
+/// The stop obligation is consumed exactly once: by the admission that binds it to the job, by
+/// the transport-stop path that retargets it to STOPPED, or by a synchronous stop that completes
+/// the interval. It never clears an unrelated pending switch or start carrier (handoff §5).
+TRACK_COLD_MEM void Track::consumeAcceptedStopObligation() {
+  PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr || latch->kind != PendingInteractionLatch::Kind::Stop) return;
+  latch->clear();
+}
+
+/// S2b.6: the stop-side park. Admission found the interval slot's canonical-copy reservation
+/// unadmitted. Legal here because a deferred turn is not the action edge. It re-runs the slot's
+/// reservation, then reports `canonical_output_busy` as a **wait** and lets the next deferred
+/// turn re-evaluate the full guard chain. It never freezes, never exchanges staging roles, and
+/// never cancels the accepted request: the user never presses twice (invariant 31).
+TRACK_COLD_MEM void Track::parkAcceptedStopForCanonicalOutput(uint8_t slot) {
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  PendingInteractionLatch* latch = interactionLatch();
+  if (runtime == nullptr || latch == nullptr) return;
+  const bool admitted = runtime->canonicalCaptureOutputAdmitted();
+  if (!admitted && runtime->canonicalCaptureOutput.store.empty() &&
+      LoopEventStore::freeChunkCount() != 0) {
+    (void)runtime->replenishCanonicalCaptureChunk();
+  }
+  if (!admitted) (void)runtime->prewarmCanonicalCaptureOutput();
+  if (!latch->waitReported) {
+    latch->waitReported = true;
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0,
+                       "accepted_stop_finalizer_wait");
+  }
+  ++latch->waitCount;
+}
+
+/// S4f.2: the dispatch decision. Called at the top of `processDeferredIdleMaintenance`, after the
+/// admitted stop's grain and before the owner-specific branches, so the latch is reachable on
+/// every deferred owner lane. The admitted job always owns the turn first, so an accepted request
+/// can never stack a second stop job.
+TRACK_COLD_MEM bool Track::serviceAcceptedInteractionTurn() {
+  if (!hasAcceptedUnexecutedInteraction() || hasPendingDeferredOverdubStop()) return false;
+  (void)driveAcceptedInteraction();
+  return true;
+}
+
+/// S4f.2: one deferred turn of the accepted interaction.
+TRACK_COLD_MEM bool Track::driveAcceptedInteraction() {
+  const PendingInteractionLatch* latch = interactionLatch();
+  if (latch == nullptr) return false;
+  const PendingInteractionLatch request = *latch;
+  if (request.kind != PendingInteractionLatch::Kind::Stop) return false;
+  // DEC-078 item 3: re-derive the destination from live transport state rather than trusting a
+  // stored absolute tick or a destination that transport stop has since retargeted.
+  const PendingStopDestination destination =
+      clockManager.isTransportRunning() ? request.destination : PendingStopDestination::Stopped;
+  if (beginDeferredOverdubStopForSlot(destination, clockManager.getCurrentTick(), request.slot,
+                                      request.interval)) {
+    consumeAcceptedStopObligation();
+    return true;
+  }
+  parkAcceptedStopForCanonicalOutput(request.slot);
+  return false;
+}
+
 TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
   if (!captureStopJobs_) {
     auto* storage = ExternalMemoryFirstAllocator<CaptureStopJobs>{}.allocate(1);
@@ -94,7 +185,9 @@ TRACK_COLD_MEM bool Track::prewarmCaptureStopJobs() {
     if (entry.undoPassIds.capacity() < rows) entry.undoPassIds.reserve(rows);
     if (entry.undoCompanionIds.capacity() < rows) entry.undoCompanionIds.reserve(rows);
   }
-  return prewarmProtectedUndo();
+  // S4f.1: the accepted-interaction latch is cold admission too; the stop edge must never
+  // allocate one, and a missing latch would silently degrade acceptance back to a denial.
+  return prewarmInteractionLatch() && prewarmProtectedUndo();
 }
 
 TRACK_COLD_MEM bool Track::retireJobCaptureSourceGrain(CaptureStopJob& job, Loop& loop,
@@ -246,8 +339,24 @@ TRACK_COLD_MEM bool Track::commitPreparedOverdubStopBridge(
 }
 
 TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination destination,
-                                                     uint32_t currentTick) {
+                                                    uint32_t currentTick) {
+  // S4f.0: the live edge admits against the interval that is actually recording. The deferred
+  // drive calls the slot-parameterised form with the latch's own (slot, interval).
+  return beginDeferredOverdubStopForSlot(destination, currentTick, activeLoopIndex,
+                                         captureInterval_);
+}
+
+TRACK_COLD_MEM bool Track::beginDeferredOverdubStopForSlot(PendingStopDestination destination,
+                                                           uint32_t currentTick, uint8_t slot,
+                                                           uint64_t interval) {
   if (!captureStopJobs_ || !isOverdubbing() || hasPendingDeferredOverdubStop()) {
+    return false;
+  }
+  // DEC-078 item 3 / S4f.0: the request names the interval it belongs to. A drive whose
+  // interval is no longer live is a superseded request, not a refusal of a user interaction:
+  // it must not bind this job to a later interval's content, staging or generation.
+  if (slot >= Config::MAX_LOOPS_PER_TRACK || interval != captureInterval_) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0, "stale_interval");
     return false;
   }
   // The ring is the FIFO admission authority. A new stop interval always takes
@@ -260,8 +369,10 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
     return false;
   }
   CaptureStopJob& job = *admission;
-  Loop& loop = getActiveLoop();
-  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(activeLoopIndex);
+  // S4f.0: every Loop/runtime-derived guard and binding below resolves the interval's own
+  // slot, so a later active-slot movement cannot make the drive test the wrong slot.
+  Loop& loop = getLoop(slot);
+  LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
   // A selected bridge is intentionally retained across PLAYING so it can
   // stream the just-published pass. Its completed build workers are no longer
   // an active stop transaction, however. Retire those workers before admitting
@@ -442,16 +553,16 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   // is the *timely* edge for the HITL probe (`#CAP` DIAG rows queue behind the deferred
   // stop's flood and arrive seconds late); the DIAG row is the evidence-tier record.
   logger.log(CAT_TRACK, LOG_INFO, "Reentry window open slot=%u",
-             static_cast<unsigned>(activeLoopIndex));
+             static_cast<unsigned>(slot));
 #if defined(SESSION_CAPTURE)
-  DebugSessionCapture::successorStartWindowOpen(activeLoopIndex, currentTick,
+  DebugSessionCapture::successorStartWindowOpen(slot, currentTick,
                                                 loop.loopLengthTicks);
 #endif
   deferredStopStallNoted_ = false;
   job.loopId = loop.loopId;
-  job.slot = activeLoopIndex;  job.phaseTick = capturePhaseTick(currentTick);
+  job.slot = slot;  job.phaseTick = capturePhaseTick(currentTick);
   job.loopLengthTicks = loop.loopLengthTicks;
-  job.interval = captureInterval_;
+  job.interval = interval;
   job.admission.sessionExitReceiptRing = sessionExitReceiptRing;
   job.causalBase = baseSource;
   job.causalBaseSnapshot = std::move(causalBaseSnapshot);
@@ -506,14 +617,14 @@ TRACK_COLD_MEM bool Track::beginDeferredOverdubStop(PendingStopDestination desti
   trackState = TRACK_OVERDUB_STOPPING;
 #if RUNTIME_TIMING_ENABLED
   RuntimeTimingTelemetry::recordStopStateTransition(
-      resolveTrackIndexForPersistence(*this), activeLoopIndex,
+      resolveTrackIndexForPersistence(*this), slot,
       TRACK_OVERDUBBING, TRACK_OVERDUB_STOPPING, job.admission.stopTick, micros());
 #endif
   if (destination == PendingStopDestination::Playing) {
     trackState = TRACK_PLAYING;
 #if RUNTIME_TIMING_ENABLED
     RuntimeTimingTelemetry::recordStopStateTransition(
-        resolveTrackIndexForPersistence(*this), activeLoopIndex,
+        resolveTrackIndexForPersistence(*this), slot,
         TRACK_OVERDUB_STOPPING, TRACK_PLAYING, job.admission.stopTick, micros());
 #endif
     armPlayingMidiDrainAfterOverdubStop();
@@ -1447,6 +1558,9 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
     closeTick = capturePhaseTick(currentTick);
   }
   if (handleNoteEditFold(true, currentTick, closeTick, stopStartUs)) {
+    // The in-edit fold completed this interval's stop, so an accepted stop's obligation is
+    // consumed here rather than being driven against an interval that no longer records.
+    consumeAcceptedStopObligation();
     loop.closeOverdubSession();
     return;
   }
@@ -1454,6 +1568,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   // remains a fault fallback until the stop owner has its explicit recovery
   // state; ordinary admitted input never reaches it.
   if (beginDeferredOverdubStop(PendingStopDestination::Playing, currentTick)) {
+    consumeAcceptedStopObligation();
     return;
   }
   // Capacity denial: a predecessor still owns the sole frozen/deferred admission
@@ -1480,6 +1595,14 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
     DebugSessionCapture::reentryDecision("deny", currentTick, captureInterval_, activeLoopIndex,
                                          captureStopQueueDepth());
 #endif
+    // DEC-078 / invariant 31: this is not a refusal. The stop is accepted and retained against
+    // the interval's own slot and generation; `Track::driveAcceptedInteraction` re-runs this
+    // guard chain on a deferred turn and executes it exactly once when the owner frees. The
+    // interval keeps recording, with its rows, reservations, pending notes and preview intact,
+    // and the user never presses twice. The `deny` row above is retained as the DEC-067
+    // counterfactual the HITL oracle already reads; `accepted_stop_finalizer_wait` is the
+    // DEC-078 scheduling evidence.
+    latchAcceptedStop(PendingStopDestination::Playing, activeLoopIndex, captureInterval_);
     // DEC-070 diagnostic: name the resource that is still owned. The generic message hid which of
     // five different leaks wedged the slot (`ring_count_without_job` in particular means the ring
     // bookkeeping, not a live job, is holding the refusal).
@@ -1624,6 +1747,11 @@ TRACK_COLD_MEM void Track::noteLoopPrefixMeasureAfterUndo() {
 
 TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   if (isEmpty()) return;
+  // S4f.4, transport stop: transport stop wins over a pending return to PLAYING, and this path
+  // admits (or synchronously completes) the stop itself. The accepted stop's obligation is
+  // therefore consumed here, so the deferred drive can never execute a stale PLAYING stop
+  // against an interval this path already stopped.
+  consumeAcceptedStopObligation();
   suppressMidiOutputForTransportStop();
   if (hasPendingDeferredOverdubStop()) {
     // Transport Stop wins over a pending return to PLAYING. The frozen source
@@ -1648,6 +1776,7 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
     return;
   }
   if (beginDeferredOverdubStop(PendingStopDestination::Stopped, currentTick)) {
+    consumeAcceptedStopObligation();
     return;
   }
   finalizePendingNotes(currentTick);
