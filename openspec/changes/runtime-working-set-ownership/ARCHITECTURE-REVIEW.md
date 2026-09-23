@@ -2688,18 +2688,36 @@ slope removed on hardware; canonical **payload** is separate and is what moves `
   setup-oracle** class, which per [CURRENT_WORK.md](../../../docs/Runtime/CURRENT_WORK.md) is not evidence
   against the content. The content check is Leg 4.
 
-### Leg 3 — CORRECTION: the restored library DOES survive a reboot
+### Leg 3 — the restore works once, but is NOT stable across reboots (a claim of mine, corrected)
 
-The recorded S1.3 obstacle was that growing the library is impossible because *"the restored scratch slot does
-not survive a reboot (`Track 6 loaded state: EMPTY`, `index.bin` does not reconcile)"*. **That is not
-reproducible here.** `dump_and_capture.py` opens serial with a 25 s settle, and opening serial resets the
-board, so the dump is taken *after a reboot and an SD restore*. It reports:
+`dump_and_capture.py` opens serial with a 25 s settle and opening serial resets the board, so its dump is taken
+*after a reboot and an SD restore*. It reported:
 
 > `CAPTURE_CONTENT,begin,track=5,slot=0,length=18432`
 
-— the 24-bar loop, restored with its exact length, on track 5 slot 1. So **at least one scratch slot grows and
-restores across boots**, which is the prerequisite S1.3's slope sweep needs. The earlier finding was about
-track 6 and/or a different device state; it should not be generalised to "the library cannot grow".
+so immediately after the 24-bar slot's own save, that slot came back with its exact length.
+
+**I over-generalised that to "the library can grow across boots", and the growth attempt falsified it.** A
+second forced reboot (`captures/rwso-growth/boot-n2/`, re-flashed to hard-reset) shows the recorded obstacle
+reproducing, and it is *track-specific and catalog-level* rather than general:
+
+- `[StorageManager] WARN: could not reconcile MidiLooper/sets/index.bin`
+- `[StorageManager] Queuing boot playback loop slot restore 6 pending; first 4/0`
+- `Track 6 loaded state: EMPTY` and `Track 7 loaded state: EMPTY` (tracks 0–5 report `STOPPED`)
+- `#CAP,…,DIAG,lcr,skip,restore`
+- and the census's non-zero-slot set **changed between boots**: Leg 1 walked `{track=1,slot=2,
+  track=4,slot=1}`, this boot walks `{track=1,slot=2}` only.
+
+Selecting track 5 afterwards reads `Sent loop length CC feedback: 3 bars (2304 ticks)` — not the 24-bar loop
+that Leg 3 dumped — and selecting track 6 emits **no** length feedback at all, matching its `EMPTY` state. So
+the restored set is **not stable or faithful across reboots**: the catalog does not reconcile, and which slots
+come back (and with what) varies. **Growing the library across boots is therefore not reliable on this
+firmware**, and S1.3's slope sweep stays **blocked** — with a sharp diagnosis (SD catalog reconcile + skipped
+track-6 restore) instead of the earlier broad claim. The scratch range track 6 slots 1–8 was never the
+obstacle; the catalog is.
+
+Leg 3's narrow fact survives and is still worth keeping: a slot's content *can* come back byte-exact right after
+its own save+reset. What does **not** survive is the assumption that successive boots accumulate a library.
 
 ### Leg 4 — content verification: STORED and PLAYING, but NOT a verified PASS
 
@@ -2759,11 +2777,30 @@ transport-gate classification and the host's pre-clear detection gap are a separ
 outside this change's scope, recorded here because they block every content HITL run on a device that boots
 with a pending workspace save.
 
+### The growth-sweep attempt, and why it stopped
+
+The sweep was attempted as `STIM-BASE-2-2-01-TEMP-RWSO-GROWTH` (forked from `STIM-BASE-2-ONE-OD-01`,
+`--record-only --record-bars 4`, track 6 slot 1). Two device facts stopped it, both worth recording:
+
+1. **A boot census needs a forced reboot.** `capture_session.py` / the managed harness open serial, which only
+   *sometimes* resets the Teensy — the first growth step's log has **no** boot section at all (78 lines, device
+   uptime ~885 s), so no `capture_prewarm` census. Per-step censuses therefore require a re-flash between
+   steps, not just a serial open.
+2. **Repeated runs without a reboot accumulate working-set state.** Before the re-flash the same device read
+   `live=8,170KB` with `heap_free=52KB, heap_min=52KB` and `chunks_free=431` — against `live=4,658KB` and
+   `chunks_free=441` at the fresh boot of Leg 1 — i.e. **~3.5 MB more live residency after a handful of runs,
+   with the internal heap pinned at its 52 KB minimum.** The per-owner vector at that point is the S1.1 census
+   (`tags=404/715/148/0/1/0/58/0/0/10/2/64/66/68/96/144/0`, `tag_total=1776KB`). This is the residency the change
+   exists to make active-owned, observed as accumulation within one power cycle — recorded as an observation,
+   not as a measured slope, since no per-N boot census exists to attribute it to.
+
+The sweep is therefore left **unrun**, with its blocker now the catalog reconcile defect above rather than
+scratch-slot approval.
+
 ### What this session did not get
 
-- The **S1.3 slope-to-failure sweep** (N committed slots across boots). Leg 3 removes its stated blocker, so
-  the sweep is now *constructible*: record into successive scratch slots, rebooting between them, and read the
-  boot census at each N. It is not run here.
+- The **S1.3 slope-to-failure sweep** (N committed slots across boots): blocked on the SD catalog reconcile
+  defect above. Growing the library across boots is not reliable, so there is no trustworthy per-N census.
 - The **content-verified PASS** (Leg 4), which needs the cycle-window re-capture above.
 - A baseline (`83be2e19`) comparison run for the 24-bar shape; the pre-change RC-MEM-5 leg is the recorded
   comparator and the boot census baseline is already on record, so nothing here re-derives them.

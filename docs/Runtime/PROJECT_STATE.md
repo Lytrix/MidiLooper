@@ -16,11 +16,18 @@ library slots the walk visits. That is the S2b.3/S1.5/S2b-gate claim on hardware
 `FATAL`, SEVT `bars=24/24 count_ok/span_ok/bars_ok`, display `overdub_ok`/`transport_ok` true. The pre-change
 RC-MEM-5 leg recorded zero starts against 4 denials, so the capacity path this change must not regress does not.
 
-**Leg 3 — CORRECTION: the restored library DOES survive a reboot.** The recorded S1.3 blocker ("the restored
-scratch slot does not survive a reboot, `Track 6 loaded state: EMPTY`, `index.bin` does not reconcile") is **not
-reproducible**. `dump_and_capture.py` resets the board on serial open, so its dump is post-reboot and post-restore:
-`CAPTURE_CONTENT,begin,track=5,slot=0,length=18432` — the 24-bar slot restored with its exact length. **The
-library can grow**, so S1.3's slope-to-failure sweep is constructible; it is not yet run.
+**Leg 3 — the restore works once but is NOT stable across boots, and my "library can grow" claim is withdrawn.**
+`dump_and_capture.py` resets the board on serial open, and its dump showed `CAPTURE_CONTENT,begin,track=5,slot=0,
+length=18432` — so a slot *can* come back byte-exact right after its own save+reset. I over-generalised that to
+"the library can grow"; a growth attempt falsified it. After a second forced reboot
+(`captures/rwso-growth/boot-n2/`) the recorded obstacle reproduces at **catalog** level:
+`could not reconcile MidiLooper/sets/index.bin`, `Queuing boot playback loop slot restore 6 pending; first 4/0`,
+`Track 6 loaded state: EMPTY` (and track 7), `DIAG,lcr,skip,restore`, and a census whose non-zero-slot set
+**changed between boots** (`{track=1,slot=2, track=4,slot=1}` → `{track=1,slot=2}`). Selecting track 5 then reads
+`3 bars (2304 ticks)` — not the dumped 24-bar loop — and track 6 emits no length feedback at all. **The obstacle
+is the SD catalog reconcile, not scratch-slot approval, and S1.3's slope sweep stays blocked.** Also recorded: a
+boot census needs a **forced** reboot (a serial open only sometimes resets), and repeated runs without a reboot
+accumulate residency — `live` 4,658 KB → **8,170 KB** with `heap_free` pinned at its 52 KB minimum.
 
 **Leg 4 — content NOT verified, recorded as such.** `storage_matches_effective: true` with all 24 bars dense
 (`per_bar_effective` 70–84; `effective_rows_all = expected_note_cc_rows = 1,746`), but the verifier's single
@@ -42,8 +49,13 @@ transport start preceding its anchor. **Workaround (device prep): stop the globa
 owed workspace save drains, then run.** This defect pair is pre-existing and outside this change; it blocks any
 content run on a device that boots with a pending workspace save.
 
-**Still open:** S1.3's slope sweep and failure point, the content-verified PASS, S1.4's pass→chunk conversion,
-S1.5's device refusal point, and phases B–F. Full evidence and the exact citations:
+**Also observed (not a measured slope):** repeated runs **without** a reboot accumulate residency — the same
+device read `live=8,170KB`, `chunks_free=431`, `heap_free/heap_min=52KB` before the re-flash, against
+`live=4,658KB`, `chunks_free=441` at the fresh boot of Leg 1, with the S1.1 per-owner vector
+(`tag_total=1776KB`) unchanged in shape. Recorded as an observation; no per-N census exists to attribute a slope.
+
+**Still open:** S1.3's slope sweep and failure point (blocked by the SD catalog reconcile defect), the
+content-verified PASS, S1.4's pass→chunk conversion, S1.5's device refusal point, and phases B–F. Full evidence and the exact citations:
 [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § Device
 session — RWSO-24CAP. **Note:** the pre-change baseline revision remains `83be2e19`; no baseline firmware was
 flashed in this session (its census is already on record).
