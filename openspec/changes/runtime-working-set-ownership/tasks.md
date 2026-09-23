@@ -54,9 +54,12 @@ not another broad design revision. A listed fixture/command is not implemented o
       transport paths for assertions that require them; no copied lifecycle or success-returning domain stubs.
       **PARTIAL 2026-09-23:** transport (test-controlled `isTransportRunning`), reservation denial/recovery
       (real `ChunkReservation` pool-credit exhaustion) and the read-only ownership census are in place in
-      `test_continuous_capture`. Outstanding: the worker/dispatch pause-and-step control, the linked
-      production load and transport-stop-retarget paths, and an allocation census (B07 is not measurable
-      natively — the pool wrappers are `teensy41-capture-serial` link flags only). See
+      `test_continuous_capture`. **Reconciled 2026-09-23 (S1.3 slice):** the worker/dispatch control is now
+      the per-turn production drive `TrackCaptureStopTestAccess::serviceAcceptedInteraction` with the
+      controlled clock and a controlled interval identity (the S4f.4 cases), and the production **load** and
+      **transport-stop-retarget** paths are linked (`test_storage_manager_load`, 5/5; B03). **Still
+      outstanding: only the allocation census** — B07 is not measurable natively because the pool wrappers
+      are `teensy41-capture-serial` link flags only. See
       [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1.
 - [ ] D0.3 Implement P1 fixtures B01–B07 with stepwise expected identities/content, demonstrate the pre-fix
       behavioral failure where runnable, and record any missing-API limitation separately from a red test.
@@ -76,6 +79,19 @@ not another broad design revision. A listed fixture/command is not implemented o
       and commits one pass. **Still not assertable:** the *latched* transport-stop leg (synchronous fallback stubs). **B06 needs a
       production extraction of `src/main.cpp`'s eligibility decision or a device run** -- the sketch is not
       native-linkable -- and it is why retargeting at transport stop was not taken in this slice.
+      **Status reconciled 2026-09-23 (S1.3 slice).** Every B-case is now accounted for except B07:
+      **B01** green in the default gate (`test_b01_inactive_committed_slots_reserve_no_canonical_copy_or_horizon`);
+      **B02** `test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once`; **B03** as above;
+      **B04** both halves green in `test_storage_manager_load` **5/5** (`test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot`,
+      `test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned`); **B05** the release refusal
+      `test_s2b4_midcopy_populated_store_refuses_release`; **B06** its extraction landed
+      (`Track::hasRealtimeDeferredIdleWork`, `src/main.cpp` delegating) with the discriminating case
+      `test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track` — so the earlier
+      "B06 needs an extraction or a device run" note is **superseded**, and what remains device-observable is
+      only that the scheduler *reads* the predicate for a stopped track
+      ([`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — B06). **B07 remains unimplemented and is not
+      measurable natively** (the pool wrappers are `teensy41-capture-serial` link flags only), so D0.3 stays
+      unchecked on B07 alone.
 - [ ] D0.4 For every subsequent packet P2–P8 and applicable safeguard, establish its listed oracle/controls
       before that behavior change and record results under that packet. Gated F/S6 work stays blocked on its
       own architecture contract. Do not check this umbrella item until all applicable packets are evidenced.
