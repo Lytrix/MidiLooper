@@ -186,6 +186,18 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   finalizing interval on a slot, queue a restore for it, run the real selection/admission and assert the
   entry is still queued, the Loop was not reset and the finalizer is intact; only then the S2b.5 call-site
   fix against that red fixture.
+- **B04 narrowed to a one-step-away, fully specified increment.** With the harness in place the defect
+  mechanism was written as a fixture, which sharpened B04's trigger rather than just its shape: the caller's
+  **pop destroys the request** (`queueDeferredLoopSlotRestore` is inert for a slot with committed passes or
+  one already attempted), and the slot's **destruction** (`resetLoopSlotToEmpty`) happens later and only when
+  the loader runs for a slot whose payload is absent or invalid. So B04's discriminating state is **a live
+  finalizing owner on a slot whose queued restore has no valid payload** -- which also means the
+  request-loss half is observable with no SD at all. The fixture named exactly three missing symbols:
+  `StorageManager::needsSlotLoad` (live in the `src/StorageManager.cpp` monolith -- **recommended: extract it
+  into its own small TU**, a ~25-line predicate over Config, the attempted flag, `SlotLoadSession::isActiveFor`,
+  the active/parked job queries and the committed-passes check), plus `CurrentSetStorage::formatLoopSlotPath`
+  and `verifySaveFileTokenAtPath` (link `CurrentSetStorage.cpp`). Nothing was committed from the fixture; the
+  load suite stays 3/3 and the tree is clean.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
