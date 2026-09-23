@@ -1,5 +1,28 @@
 # Project state (execution context)
 
+**2026-09-23 continued — A3.3's native scope landed (Packet C, per the Revision 5 split).**
+
+The drain's restore accounting is now native-verified while the drain-integration claim stays with the
+A3.7 device gate. `SyncDrainBudgetInput` gained `restoreSliceSteps` / `restoreSdBytes` /
+`restoreOnlyBlocker` and `buildSyncDrainBudget` charges them, so a large restore cannot be budget-starved
+by a persistence-only estimate. `SyncDrainProgressSnapshot` gained `restorePhase` and a monotonic
+`restoreProgressCounter`, compared **before** `madeSyncDrainProgress`'s "no active persistence work item"
+short-circuit — that ordering is the substantive fix, because the C5 shape has no active persistence work
+item, so a drain advancing the restore it waits on previously read as **stuck**.
+
+**Trimmed under RAM1 pressure, and that is the notable part:** the first version also added
+`restoreBytesRead` and `restoreParsePosition`. The post-link gate rejected the build (`padding 808`, below
+the 840 floor). The honest fix was **not** to re-base the budget — a re-base was available — but to
+recognise that the per-grain counter *strictly subsumes* byte and parse-position motion. Removing the two
+fields returned the build to the approved line.
+
+Evidence: `test_persistence_sync_drain_budget` **7/7** (three new cases); load suite 26/26; full native
+**2,316 / 1 skipped / 2,315 succeeded / 0 failures**; firmware SUCCESS at `code 392,344 + padding 872`.
+
+**Remaining in Packet C, per Revision 5:** the pure-decision oracles for A3.2 (named drain verdict) and
+A3.4/A3.4a (three-way caller contract, re-entry guard) are the other native-testable parts; **A3.1/A3.5/
+A3.6/A3.7** are the drain-servicing behavior and its device gate. **A2.5/A2.6** remain open on hardware.
+
 **2026-09-23 round 12 — A2.4 landed: the known-red set is empty and the exclusion flag is deleted.**
 
 `deferred-slot-restore-liveness` is **12/36 checked**. A2.4 replaced the permanent attempt latch with a
