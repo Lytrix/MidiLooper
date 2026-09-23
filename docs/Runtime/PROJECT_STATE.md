@@ -109,6 +109,20 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   no code (`code` 392,376 / `padding` 840 unchanged). **S3.0's own RAM1 clause is still not met:** padding
   **840** vs the recorded 872 (`code + padding` constant at 393,216, no bank cross, `locals free`
   unchanged at 34,944). That re-base-or-move-ITCM decision is the one open item blocking a clean S3.0.
+- **RAM1 decision taken and enforced (architect, 2026-09-23).** The 32-byte ITCM increase is **accepted**;
+  the padding floor is **re-based 872 -> 840** for this slice and the manager entries stay in ITCM (moving
+  them to FLASH would be a separate execution-placement change needing its own latency verification). The
+  correction that mattered: **size pins do not close the placement gate** — `static_assert` cannot see
+  instructions, linker veneers or alignment, so the earlier "the pins make any further drift a build error"
+  claim is withdrawn. Enforcement is now **post-link**: `scripts/ram1_budget.json` holds the approved budget
+  and the floor's history (edited deliberately, never auto-updated) and `scripts/check_ram1_budget.py` runs
+  the platform's own `teensy_size` on the linked ELF via `AddPostAction` from `[env:teensy41]`, failing the
+  build when the ITCM region, RAM1 variables, the local allowance or the floor change. Verified both ways:
+  the normal build prints `variables 96,128 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,944`
+  and passes, and temporarily raising the floor to 900 **fails the build** with an actionable message.
+  **840 B is still tight** — the next bank cross would drop the local allowance to ~2,176 B — so a
+  deliberate cold-code placement improvement is planned as its own change, kept out of this
+  runtime-correctness slice.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

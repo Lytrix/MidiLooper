@@ -17,7 +17,7 @@
 namespace {
 
 TRACK_COLD_MEM void persistActiveLoopGeometryChange(Track& track) {
-  requestActiveLoopSlotPersist(track);
+  requestActiveLoopSlotPersist(track, track.getActiveLoopIndex());
   track.invalidateCaches();
 }
 

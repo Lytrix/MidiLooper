@@ -10,7 +10,7 @@ void emitOverdubStopDisplaySnapshot(Track&, uint8_t, uint32_t) {}
 void logMemoryAfterOverdubStop(uint32_t, const Loop&) {}
 void logOverdubStopStage(const Loop&, uint32_t, const char*, uint32_t, uint32_t, uint32_t, const char*, const StopPathStorageStats*, const PendingCapturePass*) {}
 const char* commitResultLabel(CommitResult) { return "native"; }
-void requestActiveLoopSlotPersist(Track&) { OFF_PATH(); }
+void requestActiveLoopSlotPersist(Track&, uint8_t) { OFF_PATH(); }
 MidiEventVec& EditManager::sessionMidiEvents() { OFF_PATH(); static MidiEventVec empty; return empty; }
 void EditManager::foldLiveCaptureIntoNoteEditSession(Track&) { OFF_PATH(); }
 void EditManager::commitAllPendingNoteEditActions(Track&) { OFF_PATH(); }
@@ -28,7 +28,7 @@ void EditManager::bumpSessionPlaybackPreviewRevision() { OFF_PATH(); }
 void EditManager::scheduleDeferredNoteEditDisplayRefresh() { OFF_PATH(); }
 MidiEventVec& EditManager::editMidiEvents(Track&) { OFF_PATH(); static MidiEventVec empty; return empty; }
 const MidiEventVec& EditManager::editMidiEvents(const Track&) const { OFF_PATH(); static MidiEventVec empty; return empty; }
-CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t) { OFF_PATH(); return {}; }
+CommitResult Track::commitCaptureForStop(CommitReason, uint32_t, uint32_t, uint8_t) { OFF_PATH(); return {}; }
 void Track::silenceTrackMidiOutput() { OFF_PATH(); }
 void Track::clearQueuedPlaybackStart() { OFF_PATH(); }
 void Track::queuePlaybackStartAtGrid(int32_t, uint32_t) { OFF_PATH(); }

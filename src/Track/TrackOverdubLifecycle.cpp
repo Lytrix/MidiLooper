@@ -1744,7 +1744,7 @@ TRACK_COLD_MEM void Track::stopOverdubbing() {
   finalizePendingNotes(currentTick);
   const uint32_t sealStartUs = micros();
   const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::OverdubStop, currentTick, closeTick);
+      commitCaptureForStop(CommitReason::OverdubStop, currentTick, closeTick, activeLoopIndex);
   // Stage order seal → finalize preserved; duration covers seal+finalize together on seal.
   logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs,
                       DebugSessionCapture::kUnsampledHeapBytes,
@@ -1877,7 +1877,7 @@ TRACK_COLD_MEM void Track::stopOverdubbingToStopped() {
   finalizePendingNotes(currentTick);
   const uint32_t sealStartUs = micros();
   const CommitResult commitResult =
-      commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick);
+      commitCaptureForStop(CommitReason::OverdubStopToStopped, currentTick, closeTick, activeLoopIndex);
   logOverdubStopStage(loop, stopStartUs, "seal", micros() - sealStartUs,
                       DebugSessionCapture::kUnsampledHeapBytes,
                       DebugSessionCapture::kUnsampledHeapBytes,

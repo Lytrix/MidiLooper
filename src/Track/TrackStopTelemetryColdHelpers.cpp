@@ -157,13 +157,15 @@ TRACK_INTERNAL_MEM void requestLoopSlotPersistAndSaveState(Track& track, uint8_t
   StorageManager::requestDeferredSaveState(looperState.getLooperState(), admissionHeap, true);
 }
 
-TRACK_INTERNAL_MEM void requestActiveLoopSlotPersist(Track& track) {
-  requestLoopSlotPersist(track, track.getActiveLoopIndex());
+/// S4f.5: the caller names the interval's slot; resolving `getActiveLoopIndex()` here would key the
+/// persistence of a captured interval to whichever slot happens to be active at commit time.
+TRACK_INTERNAL_MEM void requestActiveLoopSlotPersist(Track& track, uint8_t slotIndex) {
+  requestLoopSlotPersist(track, slotIndex);
 }
 
-TRACK_INTERNAL_MEM void requestActiveLoopSlotPersistAndSaveState(Track& track,
+TRACK_INTERNAL_MEM void requestActiveLoopSlotPersistAndSaveState(Track& track, uint8_t slotIndex,
                                                                  uint32_t admissionHeap) {
-  requestLoopSlotPersistAndSaveState(track, track.getActiveLoopIndex(), admissionHeap);
+  requestLoopSlotPersistAndSaveState(track, slotIndex, admissionHeap);
 }
 
 TRACK_INTERNAL_MEM void resetActiveLoopAfterEmptyCapture(Loop& loop) {
