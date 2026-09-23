@@ -991,3 +991,47 @@ before the 13th bank.
 
 **Lesson recorded:** the enforcement added to satisfy the architect's requirement was itself unverified
 until it was exercised on every env. Checking the check is part of shipping it.
+
+## P1 — two decisions the implementer cannot take alone (2026-09-23)
+
+### 1. S4f.4's transport-epoch counter costs RAM1 and has no behavioural use left
+
+The slot-parameterised drive **already satisfies the epoch's actual requirement**: `driveAcceptedInteraction`
+re-derives the destination from live transport state (`clockManager.isTransportRunning()`) and re-derives
+the boundary tick from `clockManager.getCurrentTick()` — it never trusts the stored absolute
+`request.phaseTick`. The contract's own reason for the epoch is *"an absolute tick is diagnostic only —
+MIDI Start, seek and load reset the tick domain"*, and that property holds today.
+
+What the contract specifies in addition is a **new `TrackManager`-level monotonic counter** bumped by
+transport stop, `resetToLoopStart`/`setCurrentTick`, load and MIDI Start. There is no existing tick-domain
+epoch to reuse (checked `ClockManager`/`TrackManager`), so it is genuinely new state, and:
+
+- `Track`'s `.bss` additions are documented as costing **4 KB of lost local allowance each** on this tree,
+  and `TrackManager` is a global — so the counter lands in RAM1 `variables`, which changes the *locals*
+  figure and needs a second deliberate budget re-base;
+- its only use would be diagnostic: the latch already stores `transportEpoch`, but nothing consumes it
+  because the drive does not need it.
+
+So the field is currently **dead but declared**, which is worse than either wiring or removing it. Three
+options, for the architect: (a) accept the re-base and wire the counter for evidence; (b) keep the field
+unset and record it as an S4f.4 residual; (c) drop the field (shrinking the latch 40 → 32 bytes and
+updating its pin) and record the epoch as satisfied by live re-derivation. **Recommended: (c)** — it is the
+only option that removes dead state and costs nothing, and the behavioural requirement is already met.
+
+### 2. The load harness is a multi-slice build, with increment-1 findings
+
+A one-build probe of `StorageManager/LoopSlotRestoreQueue.cpp` against the native stubs produced concrete
+findings that replace the earlier estimate:
+
+- `scripts/native_test_link.py` puts the Arduino/SD stub path on the include path **only** for
+  `test_continuous_capture`; a new suite must be added to that allow-list (the file currently hardcodes one
+  suite name, so the allow-list wants generalising).
+- The firmware `SD.h` stub declares only `struct File {};` — there is **no `SD` object** and no
+  `read`/`seek`/`size`/`open`/`close`, so `SD.exists(...)` does not even compile. An in-memory SD/File
+  emulation is required, not a header tweak.
+- `CurrentSetStorage::verifySaveFileTokenAtPath` is not visible from that TU, so `CurrentSetStorage` (and
+  `CurrentWorkspaceStorage`) must be linked, not stubbed.
+
+That is a suite of its own, to be built once for S2b.5 + B04 + B06's non-focus leg + S2b.4's mid-copy
+fixture. It is the right next build, but it is not a single-slice change, and nothing was committed from
+the probe: the tree is unchanged and the 87-case suite still passes.
