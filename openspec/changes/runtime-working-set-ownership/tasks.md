@@ -452,7 +452,7 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       post-restore value is not measured. Also found: the restored slot reports `Track 6 loaded state: EMPTY` and
       `index.bin` does not reconcile, so recording into the scratch slot does **not** currently grow the restored
       library — the prerequisite S1.3 needs. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3.
-- [ ] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
+- [x] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
       `noLiveOwnerForSlot` predicate as S4.0. **No release path exists today** (the only
       `canonicalCaptureOutput.store.clear()` is the runtime destructor; `releaseGrain` runs only from the
       reservation destructor / `CaptureRange`), so this is new surface: release fires only after the last owning
@@ -469,16 +469,18 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       runs inside `tryReleasePlaybackMergedMidiEventsMemory`'s per-slot loop, before the merged-window
       checks, so a slot with no window still releases. Fixture
       `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green.
-      **MID-COPY FIXTURE DONE 2026-09-23.**
+      **MID-COPY FIXTURE + REFCOUNT CENSUS DONE 2026-09-23 — task closed.**
       `test_s2b4_midcopy_populated_store_refuses_release` drives the listed case: prewarm → one
       `appendReserved` into the canonical store (the state `stepFrozenCaptureCanonicalCopy` leaves between
       quanta, `TrackPlaybackRuntime.cpp:1949`) → the release is **refused** and returns no further credit →
       drain → the same call succeeds. It is **discriminating by removal**: deleting the `!store.empty()`
       guard in `releaseCanonicalCaptureReservation` makes it fail on exactly the intended assertion
       (1 failed / 91 succeeded); with the guard, 92/92. The append itself spends a credit (8 → 7) — the
-      mid-copy signature, and the reason the refusal is the safety property. Fixture and the corrected first
-      assertion: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.4's mid-copy fixture.
-      **Remaining on this task:** the refcount census clause.
+      mid-copy signature, and the reason the refusal is the safety property. The refcount census asserts the
+      leak property: the refused release moves neither counter, and `clear()` + release returns exactly the
+      reservation's own credits (`used` 13 → 5, `free` 499 → 507). Three wrong cuts of that census are
+      recorded in [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.4's mid-copy fixture,
+      including the measured fact that `usedChunkCount()` counts held **and** committed chunks.
 - [ ] S2b.5 **Load admission (B8):** **DONE 2026-09-23 (native).** The load harness was built, the fixture went red through the production
       entry, and the fix makes it green. `LoadLoopJob.cpp`'s four pop sites
       (`ensureActiveLoadLoopJobSelected`'s parked and empty `BeginFocusFromQueue` branches, its

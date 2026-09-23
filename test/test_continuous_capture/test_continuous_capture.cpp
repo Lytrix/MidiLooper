@@ -4040,10 +4040,20 @@ void test_s4_0_release_respects_the_live_ring_window_and_is_idempotent() {
 /// empty, so the fixture cannot pass on an unrelated guard.
 void test_s2b4_midcopy_populated_store_refuses_release() {
   Track& track = preparePlayingTrack();
+  // Refcount census (S2b.4's second clause). `usedChunkCount()` counts every **allocated** chunk --
+  // both the credits a reservation holds and the chunks backing committed content -- and
+  // `freeChunkCount()` is its complement, so the two must move together by exactly the credit count
+  // across a release. `preparePlayingTrack()` has already admitted this slot's reservation, so the
+  // 8 credits are inside `usedBefore`; the release at the end of the fixture is what must give them
+  // back. (Established by measurement, not by reading: two earlier cuts of this census assumed
+  // "held" was invisible to `used` and the pool answered 13 and 13 where they predicted 21 and 14.)
+  const uint16_t usedBefore = LoopEventStore::usedChunkCount();
+  const uint16_t freeBefore = LoopEventStore::freeChunkCount();
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::prewarmCanonicalReservation(track, 0));
   const size_t reserved = TrackCaptureStopTestAccess::canonicalChunks(track);
-  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
-                           static_cast<uint32_t>(reserved));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                                   static_cast<uint32_t>(reserved),
+                                   "the slot's canonical reservation is held before the fixture runs");
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 0),
                            "the slot must be idle so the populated store is the sole refusal reason");
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::canonicalOutputEmpty(track, 0));
@@ -4058,6 +4068,17 @@ void test_s2b4_midcopy_populated_store_refuses_release() {
   const size_t afterAppend = TrackCaptureStopTestAccess::canonicalChunks(track);
   TEST_ASSERT_TRUE_MESSAGE(afterAppend < reserved,
                            "storing a copied event must spend the credit that backs it");
+  // The event lands in a chunk the reservation already holds and already counts as allocated, so
+  // neither counter moves: writing into a held chunk allocates nothing new.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(usedBefore), static_cast<uint32_t>(LoopEventStore::usedChunkCount()),
+      "writing into an already-held chunk must not allocate another one");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(freeBefore), static_cast<uint32_t>(LoopEventStore::freeChunkCount()),
+      "writing into a held chunk takes nothing further from the free list");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(reserved - 1),
+                                   static_cast<uint32_t>(afterAppend),
+                                   "the append must spend exactly one held credit");
 
   TEST_ASSERT_FALSE_MESSAGE(
       TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0),
@@ -4066,6 +4087,12 @@ void test_s2b4_midcopy_populated_store_refuses_release() {
       static_cast<uint32_t>(afterAppend),
       static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)),
       "a refused release must not give any further credit back");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(usedBefore),
+                                   static_cast<uint32_t>(LoopEventStore::usedChunkCount()),
+                                   "a refused release must return no chunk to the pool");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(static_cast<uint32_t>(freeBefore),
+                                   static_cast<uint32_t>(LoopEventStore::freeChunkCount()),
+                                   "a refused release must not free a held credit");
 
   // Draining the copy makes the same call succeed, so the refusal above was the store and not
   // the liveness predicate or a missing runtime.
@@ -4074,6 +4101,17 @@ void test_s2b4_midcopy_populated_store_refuses_release() {
   TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0),
                            "an empty store with no live owner must release");
   TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
+  // Releasing must hand the held credits back: `used` falls and `free` rises by exactly the credit
+  // count, so no residue is left. A residue here would be credits the slot never gives back -- the
+  // working-set leak this change exists to remove.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(usedBefore) - static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+      static_cast<uint32_t>(LoopEventStore::usedChunkCount()),
+      "release must deallocate exactly the reservation's own credits");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+      static_cast<uint32_t>(freeBefore) + static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+      static_cast<uint32_t>(LoopEventStore::freeChunkCount()),
+      "release must return every held credit to the free list");
 }
 
 /// S2b.3 boot budget evidence (invariant 34): boot consumes only the committed content, never a
