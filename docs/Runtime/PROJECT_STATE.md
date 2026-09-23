@@ -1,5 +1,29 @@
 # Project state (execution context)
 
+**2026-09-23 round 8 — Packet B started: A2.1's request record and its birth/running/committed wiring.**
+
+`deferred-slot-restore-liveness` remains **9/36 checked**; A2.1 is now **in progress** with its first
+slice landed. New TU `src/StorageManager/RestoreRequestState.cpp` gives the restore request an identity
+`(track, slot, requestGeneration, setEpoch)`, the queued/running/waiting/terminal state split, five named
+waits and four named terminals, exactly-one-terminal-per-identity, validated generation advance, and
+set-epoch supersede. The production path now drives it: born `queued` at both queue-entry sites,
+`running` in `beginLoadLoopJob`, `committed` terminal in `commitLoadLoopJobPublish`.
+
+Two defects were caught by the new cases rather than by review, and both are fixed: the identity check was
+**self-satisfying** (the generation advance wrote the new counter into the record, so a stale record always
+compared equal) — now guarded by an explicit `identityValid` flag; and `noteRestoreSetEpoch` recorded each
+request's `superseded` terminal and then **cleared the records**, wiping the outcome it had just written.
+
+**RAM1 was enforced, not advisory:** the first version cost 64 B of ITCM (`padding 888 → 824`, below the
+approved floor of 840) and the post-link gate failed the build; every helper is now `FLASHMEM` and the line
+is back to `code 392,328 / padding 888` with 48 B of headroom.
+
+Evidence: suite 18/18 by default; `RESTORE_LIVENESS_RED=1` → 23 cases / 4 failed (C1, C2, C4, C6 exactly);
+full native **2,305 / 1 skipped / 2,304 succeeded / 0 failures**; `teensy41-capture-serial` SUCCESS.
+
+**A2.1 still open:** the wait-state transitions at the denying gates, the `refused`/`unnecessary`
+terminals, pre-publication identity validation, and `loopSlotRestoreAttempted_` retirement.
+
 **2026-09-23 round 7 — Packet A closed; A4.1 landed; the A1.7/A3.1 oracle split is now the contract.**
 
 `deferred-slot-restore-liveness` **9/36 tasks** complete (A1.1, A1.2, A1.3, A1.5, A1.6, A1.9, A1.10,
