@@ -144,14 +144,18 @@ empty, but all other tracks should just keep on playing if in a playing state."*
 - CLEAR no longer requires the device to fall silent; it can complete while other tracks play.
 - Persistence may now advance during playback, bounded to 300 us per loop.
 - The `BlockedByTransport` drain-gate reason becomes `BlockedByCapture`, which is what it now means.
-- **Verification status, stated honestly:** the change is built (`teensy41-capture-serial` SUCCESS,
-  `code 392,328 / padding 888`), full native is 2,289 / 1 skipped / 0 failures, and the harness suites pass.
-  On device the failure mode did **not** recur — a four-run sweep plus a content pass show **0**
-  `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`, and the content pass reports
-  `Result: PASS` with `overflow_free=True`. **But none of those runs had a deferred save actually pending at
-  clear time**, so they do not discriminate this change: the `Clear aborted` state was not reproduced
-  post-change. A discriminating device test needs a pending save *and* other tracks playing at the clear,
-  which the canonical flow no longer produces.
+- **Device-verified on the discriminating case.** Built (`teensy41-capture-serial` SUCCESS,
+  `code 392,328 / padding 888`); full native 2,289 / 1 skipped / 0 failures; harness suites pass. With **five
+  tracks audibly playing** and a deferred save genuinely owed, the clear's blocking drain **completed**:
+  `Clear waiting for deferred save completion` -> `Draining persistence work queue to SD card...` ->
+  **`State saved successfully (v4).`** -> `Clear ignored — track is empty`, in **<833 ms** and with **0**
+  `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked` — where the old gate produced 33
+  stuck iterations followed by `Clear aborted: could not complete deferred save first`. The other tracks kept
+  playing (musical note-ons sampled before and after on 1-based channels 1, 2, 3, 4, 6), and the same build
+  reports `overflow_free=True`.
+- **Standing observation, not a regression from this decision:** `DIAG,persist_save` still reaches ~40 ms
+  maxima (39.6 ms before the change, 43.3 ms after). A single persist *grain* is not bounded by the slice
+  budget, only the loop is; that family is the one the 90–598 ms display-gap history belongs to.
 
 ### Reference
 

@@ -152,23 +152,34 @@ keeps playing. Implemented:
 harness suites OK. Device: **0** `Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`
 across five runs, and a content pass reports `Result: PASS` with `overflow_free=True`.
 
-**Honest limit — the discriminating case is not demonstrated, and two attempts to build it are recorded:**
+**The discriminating case IS demonstrated (2026-09-23, final round).** Earlier attempts failed for two
+recorded reasons — a transport tap that *stopped* an already-running transport (so the gate was satisfied for
+the old reason), and a sample in which no other track happened to be sounding. Both were fixed by toggling
+the transport until serial confirms `Transport started` before measuring. With **five tracks audibly playing**
+(1-based channels 1, 2, 3, 4, 6) and the approved scratch slot selected, two clears were issued so the second
+meets the save the first one owed:
 
-1. *Fresh boot + early clear.* The intent was to catch the boot workspace save still owed. The transport tap
-   **stopped** a transport that was already running rather than starting it, which clears the gate for the old
-   reason, so the run proves nothing. Lesson recorded: read the transport state from serial first — later
-   attempts do.
-2. *Double clear with the transport confirmed running.* Select the scratch slot, start the transport (state
-   read from serial: it was stopped), clear, then clear again so the second clear meets a pending save. It
-   still did not discriminate, because on the current device state **no other track is sounding**: after
-   starting the transport the only MIDI is LED feedback on channel 15, and `PERS,backlog` never reports
-   `pending=1`. With no pending save *and* no other track playing, the gate is satisfied either way.
+```
+[283.028] [INFO] Clear waiting for deferred save completion      <- the drain block engages: a save IS owed
+[StorageManager] Draining persistence work queue to SD card...   <- the blocking drain runs
+[StorageManager] State saved successfully (v4).                  <- it COMPLETES
+[283.861] [DEBUG] Clear ignored — track is empty                 <- the clear proceeds
+aborts: 0
+```
 
-So the condition this change governs — a pending deferred save **while other tracks keep playing** — is not
-reachable on the device as it now stands without creating content on a track **outside the approved scratch
-range**, which this session will not do unilaterally. The change stands on the owner's decision and on the
-build/suite evidence; the discriminating device run needs either the owner's go-ahead to write a second
-track, or the restored library to be playing again.
+- The drain **completed** in **<833 ms** (press-release to completion) where the old gate produced
+  `Persistence drain stuck after 33 iterations` followed by
+  `Clear aborted: could not complete deferred save first`. **0** `Clear aborted` / `drain stuck` /
+  `drain blocked` in the window.
+- The other tracks **kept playing**: musical note-ons on 1-based channels 1, 0-based, 5, 3, 2 sampled before
+  and after the clears (only channel 15's LED feedback is non-musical).
+- `VERIFY MIDI-boundary timing: … overflow_free=True` on the same build.
+
+**Timing observation, pre-existing and worth its own look.** `DIAG,persist_save` (the per-loop time inside
+`processDeferredSaveState`) still reaches **~40 ms** maxima: 39.6 ms before this change
+(`content-pass-02`) and 43.3 ms after (`dec081-01`), i.e. the change did **not** introduce it — a single
+persist *grain* is not bounded by the slice budget, only the loop is. That is the family the 90–598 ms
+display-gap history belongs to, so it is recorded as a standing item, not a DEC-081 regression.
 
 ### Options that were considered before the ruling
 
