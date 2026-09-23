@@ -1692,3 +1692,76 @@ production entry that moves the domain; the latter is device territory.
 
 **S4f.4's paused-worker transition set is met natively.** The task stays open only for the device leg of the
 `ClockManager` seek/reset entry.
+
+## Device session — pre-change baseline revision and the measurement recipe (2026-09-23)
+
+The architect's instruction: *"Preserve a reproducible pre-change firmware revision for the baseline
+measurements; measurements of the modified firmware alone cannot establish the original slope."* This section
+pins that revision so the device session can produce a **comparison**, not a snapshot.
+
+### The pinned baseline
+
+**`83be2e19`** — *"test(working-set): add the P1/S2b harness controls and the B01 red oracle"* — the last commit
+before this change's first firmware edit (`7b998d0e`, the accepted-stop latch).
+
+It is **firmware-identical to the branch base `7f90d996`**, and that is proven rather than asserted:
+
+```sh
+git diff --name-only 7f90d996 83be2e19 -- src include lib platformio.ini   # -> empty (0 files)
+git diff --name-only 83be2e19 HEAD     -- src include platformio.ini       # -> 22 files
+```
+
+So the baseline binary is exactly the pre-change firmware, and the 22-file list is this change's whole firmware
+footprint. The baseline was **measured** on that revision (this session's first build, recorded in § P0):
+
+> `RAM1: variables 96,128 / code 392,344 / padding 872 / locals free 34,944`; `FLASH: code 1,009,608`
+
+versus the current revision:
+
+> `RAM1: variables 96,128 / code 392,120 / padding **1,096** / locals free 34,944`; `FLASH: code 1,010,976`
+
+Both hold ITCM at 12 banks. **The change improved the padding line by 224 B** (872 → 1,096): one ITCM bank
+cross was never approached, and the extractions of `needsSlotLoad`, `resetLoopSlotToEmpty` and
+`hasRealtimeDeferredIdleWork` to FLASH more than repaid the 32 B the latch spent.
+
+### Reproducing the baseline
+
+`lib/SSD1322_OLED` is a **git submodule**, so a fresh worktree of the baseline needs it initialised first:
+
+```sh
+git worktree add --detach /tmp/rwso-baseline 83be2e19
+cd /tmp/rwso-baseline && git submodule update --init --recursive
+pio run -e teensy41-capture-serial -t upload     # baseline firmware
+```
+
+(The first attempt at this failed with `SSD1322.h: No such file or directory` — that is the un-initialised
+submodule, not a source problem, and it is recorded here so the device session does not lose time to it.)
+
+### What the device session must record, per leg
+
+**S1.1 per-owner accounting** — working-set bytes by owner (views, capture staging, companion
+reconstruction/apply/bridge-map/passes, canonical pass inputs, transfer horizon, stop-job capacity, prepared
+pair), per-loop derived bytes (snapshot slabs, whole-loop `VisualCache`), lease holder count, owning slot,
+role. The tag vector and the slab census already exist (`ExternalPoolAccounting`, `DebugSessionCapture`); no
+new telemetry is required, and instrumentation stays behind the session-capture gate.
+
+**S1.3 device slope to the current failure point** — grow the library until residency or canonical capacity
+fails; record the slope, the failure point and the error. *This is the leg that needs the baseline*, because
+the claim being tested is that the **boot reservation slope** is gone: on `83be2e19` boot reserves 8 chunks
+(41,056 B) per committed slot, so ~N committed slots should show a slope that the current revision does not.
+
+**S1.4 undo residency and canonical pinning (B10)** — how much snapshot residency cold slots retain through
+undo roots, and how many canonical chunks `SlotPassReferences` pins.
+
+**S1.5 boot pool census** — `freeChunkCount()` after boot with N committed slots (the native leg already
+asserts the per-committed-slot reservation is **zero** and records boot's constant 40-chunk descriptor cost),
+plus the smallest N at which a 24-bar overdub is refused.
+
+**S2b device gate** — the S1 resident-library baseline with room for canonical content: demonstrate the
+per-slot **reservation** slope removed and a 24-bar overdub where the measured capacity permits it, reporting
+canonical payload, reservation and derived bytes separately (total pool live is not expected flat yet).
+
+**HITL entry point** — the authoritative preset or the `hitl_stop_interruption.py` wrapper, with content proven
+by the `hitl-content-verification` pipeline (not the base run's own verdict). Nothing may be flashed without the
+owner's go-ahead, and device SD is user data: quarantine, never delete or rename, without same-session
+permission.
