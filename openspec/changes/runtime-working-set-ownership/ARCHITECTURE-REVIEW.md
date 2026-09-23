@@ -2084,13 +2084,35 @@ no `PHASE BLOCKED`. The boot census, taken identically:
 | boot sequence A: `credits` / `ready` per track | **8 / 1** | **0 / 0** |
 | boot sequence B: cost per committed slot | **8 chunks** | **0 chunks** |
 | boot sequence B: `credits` / `ready` | **8 / 1** | **0 / 0** |
-| `free_chunks` after boot | **400** of 512 | **480** of 512 |
+| `free_chunks` after prewarm (**pre-restore** — see correction below) | **400** of 512 | **480** of 512 |
 
 The discriminating lines are explicit. Baseline sequence B (lines 44, 50 of its log) resolves `track=1,slot=2`
 and `track=4,slot=1` at `ready=1,credits=8` and drops 8 chunks each; HEAD sequence B (lines 118–132) resolves
 the **same two slots** at `ready=0,credits=0` and drops **nothing** — every `free_chunks=480`. Both revisions
 restored the same 2 committed slots, so this is a like-for-like comparison of the term the change removes:
 **8 chunks per committed slot → 0**, with boot's own enabled-set cost falling 12 → 4 per track at the same time.
+
+**CORRECTION — those `free_chunks` figures are PRE-restore, and the post-restore value is the one S1.5 asks
+for.** A bounded boot-only capture (`scripts/capture_session.py`, no MIDI, no SD write) exposed the ordering:
+
+```
+line   7  [StorageManager] Queuing boot playback loop slot restore 6 pending; first 5/0
+line  20  [StorageManager] Current workspace loaded successfully.
+line  21  [StorageManager] WARN: could not reconcile MidiLooper/sets/index.bin
+line  41  Track 6 loaded state: EMPTY
+line 261  [StorageManager] LoadLoopJob done 5/0
+```
+
+Boot **queues** the loop restores and applies them through `LoadLoopJob` afterwards — `LoadLoopJob done 5/0`
+lands well after the prewarm sequence, so the `phase=after` figure (400 baseline / 480 HEAD) is the pool
+*before* the library is loaded back. Log `captures/rwso-BOOT-restore-probe/session_20260923_192650.log`; the
+same capture's last tick, at 27.1 s, shows HEAD settling at **`free_chunks = 440`** — the restore costs
+**40 chunks**, so the correct "after boot, with N committed slots" figure for HEAD is **440 of 512**, not 480.
+The baseline's post-restore value is **not measured** (no baseline probe was taken); the like-for-like
+comparison above therefore stands on the prewarm rows, which are exact and revision-matched. Two further facts
+fall out and they are exactly what S1.3's sweep needs: the restored slot reports `Track 6 loaded state: EMPTY`,
+and `index.bin` does not reconcile — so **recording into the scratch slot does not currently grow the restored
+library**, and that is a prerequisite S1.3 must solve before a slope-to-failure sweep can run.
 
 A second, controlled comparison falls out of the tick line. The two runs' first ticks sit at almost the same
 uptime, so the same-moment state can be read directly:
@@ -2252,13 +2274,19 @@ reproduces the table above exactly.
 
 ### What this leaves open, precisely
 
-- **S1.5 device leg:** the per-committed-slot figure (8 chunks, baseline) and `free_chunks` after boot (400 of
-  512) are **recorded**; the "smallest N refusing a 24-bar overdub" clause is **open**, and the native attempt
-  did not reach an admission probe.
-- **S1.1:** partially answerable now (tags 1–7, size classes, slab census); tags 8–16 and `VisualCache`/lease
-  fields need the instrumentation increment named above. Fix the record-density setup first, or the census
-  understates a real working set (`notes=4` against a `min 31` gate).
-- **S1.3:** not started. It needs a *grown* library, which means committing more slots on device — that writes
-  loop content, so it needs the owner's word on which slots are scratch.
-- **S2b.3/S2b gates:** the HEAD image is built and hashed but **not yet flashed**; the device half of the
-  zero-reservation comparison is therefore not taken.
+- **S1.5 device leg:** the per-committed-slot figure (**8 chunks → 0**) and `free_chunks` after boot
+  (**pre-restore** 400 → 480; **post-restore HEAD 440**) are **recorded**. The "smallest N refusing a 24-bar
+  overdub" clause is **open** — the native attempt never reached an admission probe, and the device route needs
+  a grown library (below).
+- **S1.1: closed for tags 1..16** by the instrumentation increment (§ S1.1 device census) — every owner the task
+  names is now a measured device number. Still open: whole-loop `VisualCache` bytes (no accessor) and the
+  **lease holder / owning slot / role** triple, which cannot be measured before **S2.1** introduces the
+  playback-window lease. The record-density flakiness that understated the baseline census is a **host** defect
+  (below), so a content leg is retried to a PASS.
+- **S1.3: not started, and it has a concrete prerequisite.** Growing the restored library by recording into the
+  scratch slot does **not** work today: the restored slot reports `Track 6 loaded state: EMPTY` and
+  `index.bin` does not reconcile. Until that is resolved there is no way to raise N across reboots, so the
+  slope-to-failure sweep cannot run. The scratch range is now approved (**track 6, slots 1–8**) for when it can.
+- **S2b.3 / S2b gates:** the device half **is taken** — HEAD was flashed (`ea5e6d03…`, then the instrumented
+  `6490ee60…`) and the zero-per-committed-slot result reproduces on both HEAD images. What remains open on this
+  gate is the S1.3/S1.4 device material it depends on.

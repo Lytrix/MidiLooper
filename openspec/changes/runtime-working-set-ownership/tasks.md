@@ -435,7 +435,12 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `free_chunks` after boot is **480 of 512**, the same 2 committed slots cost **0 chunks** each at
       `ready=0,credits=0`, and the enabled-set cost fell **12 → 4 chunks per track**. A controlled same-uptime
       tick comparison (~11.0 s vs ~11.1 s) shows `CanonicalOutput` **320 KB → 0 KB** and `TransferHorizon`
-      **8 KB → 0 KB**. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3 device half.
+      **8 KB → 0 KB**. **But see the correction:** those `free_chunks` are **pre-restore** — boot queues the loop
+      restores and applies them via `LoadLoopJob` afterwards, so the "after boot with N committed slots" figure
+      is the post-restore one, measured for HEAD as **440 of 512** (the restore costs 40 chunks). The baseline's
+      post-restore value is not measured. Also found: the restored slot reports `Track 6 loaded state: EMPTY` and
+      `index.bin` does not reconcile, so recording into the scratch slot does **not** currently grow the restored
+      library — the prerequisite S1.3 needs. See [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S2b.3.
 - [ ] S2b.4 Release the per-slot canonical reservation when the slot's role leaves the active set, using the same
       `noLiveOwnerForSlot` predicate as S4.0. **No release path exists today** (the only
       `canonicalCaptureOutput.store.clear()` is the runtime destructor; `releaseGrain` runs only from the
