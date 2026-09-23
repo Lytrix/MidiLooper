@@ -70,6 +70,18 @@ because neither gate has a classification. A boot log shows the restore queued t
 be named from existing telemetry — which is the actionable gap: **classify the gates** first, then choose the
 behavioural fix on evidence.
 
+**Round 7 MET the catalog-stability clause, and corrected round 6.** With the authoritative full shape
+(`--record-bars 4 --overdub-bars 2`) a recorded loop's **body** persists — `loop_persist=4252 sliced=True
+ok=True`, `record loop length 3072/3072` — and after a genuine reboot (`captures/sd-fix-full01-dump/`,
+`BOOT,load,start` present, uptime 31 s) its slot dumps **`track=5,slot=0,length=3072` with 190 event rows**,
+with **0** reconcile warnings; a pre-existing slot stays faithful at `length=13824` / 1,964 rows. **So the
+catalog IS stable**, and round 6's "newly recorded content does not restore" is **withdrawn**: that loop was
+recorded with the fixture's `--record-only` mode, which never queued a loop-body persist (`loop_persist=0`,
+`first_missing=request`, metadata bundles only), so there was nothing on SD to restore. Whether
+`--record-only` should queue a loop-body persist is a fixture question, not a catalog defect. **Still open
+under `runtime-working-set-ownership`:** the content PASS (needs a clean managed capture) and the S1.3 slope
+sweep (now constructible, since persistence works with the full shape).
+
 **Round 6 found the root, and corrected two of my readings.** `SyncDrainFailureReason` now classifies the
 drain gate (`BlockedByTransport` / `BlockedBySlotLoad` / `BlockedByPostLoadHoldoff`) and prints
 `Persistence drain blocked by <gate>` instead of the generic `Stuck`; it is built and unexercised because

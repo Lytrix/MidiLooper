@@ -13,8 +13,12 @@ failed write corrupted `sets/index.bin` and the boot catalog stopped reconciling
 2,289 / 1 skipped / 0 failures; device shows **0** `could not reconcile` warnings across the two
 post-fix boots that actually reset the board (against one on every pre-fix boot). Plan:
 [`Plans/sd_temp_write_truncation_refinement.md`](Plans/sd_temp_write_truncation_refinement.md).
-**Not shipped:** it is not on `dev`, and a separate managed-capture loss still blocks the content PASS
-and S1.3's slope sweep.
+**Verified on device (2026-09-23):** 0 `could not reconcile` on every post-fix boot that reset the board,
+a recorded loop body persists (`loop_persist=4252 sliced=True ok=True`) and its slot restores across a
+reboot (`CAPTURE_CONTENT,begin,track=5,slot=0,length=3072`, 190 rows), with pre-existing content faithful
+(`length=13824`, 1,964 rows). **Not shipped:** it is not on `dev`. **Still open** under
+`runtime-working-set-ownership`: the content PASS (needs a clean managed capture) and the S1.3 slope sweep
+(now constructible).
 
 ## Workflow update — 2026-09-23 (working tree, no firmware delivery)
 
