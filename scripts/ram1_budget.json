@@ -1,0 +1,23 @@
+{
+  "_comment": "Approved RAM1 budget for the Teensy 4.1 firmware. Edit deliberately, in the same commit as the change that needs it, and record the reason in the owning change's review artifact. Never auto-update from a build.",
+  "approved_utc": "2026-09-23",
+  "approved_by_change": "runtime-working-set-ownership",
+  "ram1_total_bytes": 524288,
+  "itcm_banks": 12,
+  "itcm_bytes": 393216,
+  "ram1_variables": 96128,
+  "locals_free": 34944,
+  "padding_floor": 840,
+  "padding_floor_history": [
+    {
+      "floor": 872,
+      "until": "2026-09-23",
+      "note": "Recorded line before runtime-working-set-ownership began."
+    },
+    {
+      "floor": 840,
+      "since": "2026-09-23",
+      "note": "Reviewed 32-byte allowance for the accepted-interaction latch: two ITCM call sites to the FLASH-resident predicate inside the ITCM manager entries, plus the latch drive. ITCM stayed at 12 banks; locals free unchanged at 34,944."
+    }
+  ]
+}

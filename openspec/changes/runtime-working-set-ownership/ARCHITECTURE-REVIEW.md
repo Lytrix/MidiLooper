@@ -797,3 +797,54 @@ FlexRAM bank crossed, and `locals free` is unchanged at 34,944. The pins now mak
 build error, so the number cannot move silently again — but the decision to re-base the 872 line (or to
 move the ITCM-resident manager entries to FLASH) is the architect's, and is the one open item blocking
 a clean S3.0.
+
+## S3.0 — reviewed RAM1 re-base and post-link budget enforcement (architect decision 2026-09-23)
+
+### Decision
+
+**The explained 32-byte ITCM increase is accepted and the padding floor is re-based 872 → 840 for this
+slice. The ITCM manager entries stay in ITCM.** Moving `startRecordingTrack` /
+`finalizeCaptureAndSelectSlot` to FLASH would be a separate execution-placement change on record and
+slot-selection paths, and is not justified merely to recover 32 bytes; it needs its own placement
+analysis and latency verification.
+
+The arithmetic behind the decision: ITCM allocation stays **12 banks / 393,216 B**, RAM1 variables stay
+**96,128 B**, and the local allowance stays **34,944 B**. The change consumed **32 bytes of headroom before
+the next bank boundary**, not 32 bytes of current stack allowance. `code + padding` is constant at
+393,216 across the whole change.
+
+The historical line is preserved rather than overwritten: `scripts/ram1_budget.json` carries
+`padding_floor_history` with 872 (until 2026-09-23) and 840 (since, with the reason).
+
+### Correction accepted: structure pins do not close the placement gate
+
+The earlier claim in this artifact that "the pins now make any further drift a build error" was **too
+strong** and is withdrawn. `static_assert` on a structure's size protects that structure's layout. It
+cannot see additional instructions, linker veneers, alignment changes, or unrelated RAM1 growth — none of
+which is a type-size change. Size assertions alone do not satisfy S3.0.
+
+### Enforcement added
+
+- `scripts/ram1_budget.json` — the approved budget (ITCM banks/bytes, RAM1 variables, local allowance,
+  padding floor) plus the floor history. Edited deliberately by a human in the same commit as the change
+  that needs it, with the reason recorded here. **Never auto-updated.**
+- `scripts/check_ram1_budget.py` — a **post-link** check registered as
+  `env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf", ...)` from `[env:teensy41]`, so every firmware env
+  inherits it. It runs the platform's own `teensy_size` on the linked ELF and fails the build when the
+  ITCM region, RAM1 variables, the local allowance, or the padding floor no longer match the approved
+  budget. A floor breach reports the numbers and says the floor is a reviewed allowance, not an automatic
+  reset.
+
+### Evidence
+
+| run | result |
+|---|---|
+| `pio run -e teensy41-capture-serial` | **SUCCESS** — `[RAM1 budget] variables 96,128 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,944 \| approved floor: padding >= 840` |
+| the same build with `padding_floor` temporarily raised to 900 | **FAILED as designed** — `padding below the approved floor: 840 B < 900 B`, then the baseline was restored and the build passed again |
+
+### Remaining tightness, and the planned follow-up (kept separate from this slice)
+
+**840 B is still tight.** Crossing the next bank boundary with `variables` unchanged would drop the local
+allowance to about **2,176 B**. A deliberate cold-code placement improvement is therefore planned as its
+own change — **not** as part of this runtime-correctness slice — and the post-link check is what keeps the
+situation visible in the meantime.

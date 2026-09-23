@@ -80,8 +80,10 @@ void Track::finalizeLoopAtStop(uint32_t openTailCloseTick, bool scheduleDeferred
 
 TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result,
                                                              CommitReason reason,
-                                                             uint32_t closeTick) {
-  Loop& loop = getActiveLoop();
+                                                             uint32_t closeTick, uint8_t slot) {
+  // S4f.5: everything below resolves the interval's own slot. Live-edge callers pass the active
+  // index, so behaviour is unchanged today; S4f.3 is what makes these differ.
+  Loop& loop = getLoop(slot);
   const bool recordStop = reason == CommitReason::RecordStop ||
                           reason == CommitReason::RecordStopToStopped;
   const bool overdubStop = reason == CommitReason::OverdubStop ||
@@ -120,7 +122,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #if defined(SESSION_CAPTURE)
           const uint32_t pushUndoStartUs = micros();
 #endif
-          TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), kInvalidPassId, {},
+          TrackUndo::pushOverdubSessionOnStop(*this, slot, kInvalidPassId, {},
                                               false);
 #if defined(SESSION_CAPTURE)
           emitOverdubStopFinalizeTraceStage(finalizeTrace, "seal_fx_push_overdub_undo",
@@ -136,7 +138,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
           TrackUndo::bindTipSessionExitUndoAttach(*this, loop);
         }
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-        const uint8_t persistSlotIndex = getActiveLoopIndex();
+        const uint8_t persistSlotIndex = slot;
 #if defined(SESSION_CAPTURE)
         const uint32_t markDirtyStartUs = micros();
 #endif
@@ -188,7 +190,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
           loop.passes.hasRecordPass() && loop.passes.recordPass.id == undoPassId;
       EditPassIdList companionIds;
       if (isRecordPass) {
-        TrackUndo::pushRecordPassAdded(*this, getActiveLoopIndex(), undoPassId);
+        TrackUndo::pushRecordPassAdded(*this, slot, undoPassId);
         loop.markDisplayCachesStale();
       } else if (!editManager.isNoteEditActive()) {
         // Dual-storage encoding: OverdubPass already published; seal Shorten/Hide companions.
@@ -203,7 +205,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 #if defined(SESSION_CAPTURE)
         const uint32_t pushUndoStartUs = micros();
 #endif
-        TrackUndo::pushOverdubSessionOnStop(*this, getActiveLoopIndex(), undoPassId, companionIds,
+        TrackUndo::pushOverdubSessionOnStop(*this, slot, undoPassId, companionIds,
                                             true);
         loop.queueSessionExitSnapshot(reason, companionIds);
         TrackUndo::bindTipSessionExitUndoAttach(*this, loop);
@@ -260,7 +262,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
       }
       if (overdubStop) {
         const uint8_t persistTrackIndex = resolveTrackIndexForPersistence(*this);
-        const uint8_t persistSlotIndex = getActiveLoopIndex();
+        const uint8_t persistSlotIndex = slot;
 #if defined(SESSION_CAPTURE)
         const uint32_t markDirtyStartUs = micros();
 #endif
@@ -294,7 +296,7 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
       trackManager.reclaimUnreferencedDisabledPasses();
       const CommitResult retry = loop.commitCapturePass(reason, closeTick);
       if (retry != CommitResult::SealFailed) {
-        result = finalizeCommitSideEffects(retry, reason, closeTick);
+        result = finalizeCommitSideEffects(retry, reason, closeTick, slot);
         return result;
       }
       break;
@@ -335,10 +337,10 @@ TRACK_COLD_MEM CommitResult Track::finalizeCommitSideEffects(CommitResult result
 }
 
 TRACK_COLD_MEM CommitResult Track::commitCaptureForStop(CommitReason reason, uint32_t commitTick,
-                                                         uint32_t closeTick) {
-  Loop& loop = getActiveLoop();
+                                                         uint32_t closeTick, uint8_t slot) {
+  Loop& loop = getLoop(slot);
   const CommitResult commitResult = loop.commitCapturePass(reason, commitTick);
-  return finalizeCommitSideEffects(commitResult, reason, closeTick);
+  return finalizeCommitSideEffects(commitResult, reason, closeTick, slot);
 }
 
 uint32_t Track::prepareRecordStop(uint32_t currentTick, const char* guardLabel) {
@@ -385,7 +387,7 @@ void Track::stopRecording(uint32_t currentTick) {
   const uint32_t closeTick = UINT32_MAX;
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick);
+      commitCaptureForStop(CommitReason::RecordStop, currentTick, closeTick, getActiveLoopIndex());
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
   logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs,
@@ -529,7 +531,7 @@ TRACK_COLD_MEM void Track::stopRecordingToStopped(uint32_t currentTick) {
   const uint32_t closeTick = UINT32_MAX;
   const uint32_t finalizeStartUs = micros();
   const CommitResult sideEffectResult =
-      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick);
+      commitCaptureForStop(CommitReason::RecordStopToStopped, currentTick, closeTick, getActiveLoopIndex());
   const uint32_t finalizeDurationUs = micros() - finalizeStartUs;
   const StopPathStorageStats stopPathStats = collectStopPathStorageStats(loop, false);
   logRecordStopStage(loop, stopPathStartUs, "finalize", finalizeDurationUs,

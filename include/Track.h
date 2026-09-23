@@ -162,10 +162,15 @@ public:
   /// Wrap-window only: record/overdub stop hot path. Schedules deferred full validate.
   void finalizeLoopAtStop(uint32_t openTailCloseTick = UINT32_MAX,
                           bool scheduleDeferredFullValidate = true);
+  /// S4f.5: `slot` is the **interval's** slot. Every Loop, undo and persistence target inside
+  /// resolves from it rather than from `activeLoopIndex`, so a later stage may let the active slot
+  /// move while this interval's stop is still being committed (S4f.3). Live-edge callers pass
+  /// `getActiveLoopIndex()`, which is the interval's slot today.
   CommitResult finalizeCommitSideEffects(CommitResult result, CommitReason reason,
-                                         uint32_t closeTick);
+                                         uint32_t closeTick, uint8_t slot);
   /// Seal capture then shared finalize only — never transport, playback, editor, or pending buffers.
-  CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick);
+  CommitResult commitCaptureForStop(CommitReason reason, uint32_t commitTick, uint32_t closeTick,
+                                    uint8_t slot);
   /// Queue the stored-MIDI verification dump; draining happens in idle maintenance, never on the
   /// MIDI-dispatched stop path.
   void queueDeferredStoredMidiVerification();

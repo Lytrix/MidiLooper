@@ -432,7 +432,16 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 
 ## S3 — introduce the reusable lease pool (no release yet)
 
-- [ ] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS DONE 2026-09-23, task open on its RAM1 clause.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **Outstanding:** the evidence clause `padding >= 872` is **not met** -- the measured line is **840** (32 B below; `code + padding` constant at 393,216, no bank cross, `locals free` unchanged). The latch placement is pinned and explained; the remaining 872-vs-840 decision is recorded in [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1.) Before adding any field: `static_assert` pins for the
+- [ ] S3.0 **Placement and size pins (B11, invariant 36).** (**PINS + POST-LINK ENFORCEMENT DONE 2026-09-23; task open only for later members' pins.** `Track::placementPins()` in `include/Track.h` and a pin block in `src/Track/TrackPlaybackRuntime.cpp` now pin the latch layout platform-independently and the device sizes of `LoopPlaybackRuntime` 6,344 / `Loop` 984 / `TrackPlaybackRuntime` 32 / `Track` 384 / `CaptureStopJobs` 2,736 / `PendingInteractionLatch` 40. Effectiveness verified: a deliberately wrong pin failed the device build in all 8 TUs that include `Track.h`. The pins emit no code (`code`/`padding` unchanged). **RESOLVED by architect decision 2026-09-23:** accept the 32 B and re-base the floor **872 -> 840**,
+      keeping the manager entries in ITCM. The earlier claim that the pins alone close the placement gate is
+      **withdrawn as too strong** -- size assertions cannot see instructions, veneers or alignment. The gate
+      is now closed by a **post-link budget check**: `scripts/ram1_budget.json` (approved budget + floor
+      history; edited deliberately, never auto-updated) enforced by `scripts/check_ram1_budget.py` as an
+      `AddPostAction` on `$BUILD_DIR/${PROGNAME}.elf` from `[env:teensy41]`. Verified both ways: the normal
+      build passes and prints the numbers, and temporarily raising the floor to 900 fails the build with an
+      actionable message. **Still owed for S3.0:** pins for the members the later stages introduce (the
+      S4f.4 transport epoch, the cold-undo/standby/visual stores, the envelope). See
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § S3.0.) Before adding any field: `static_assert` pins for the
       **existing** structs (`sizeof(LoopPlaybackRuntime)`, `sizeof(Loop)`, `sizeof(TrackPlaybackRuntime)`) **and
       for every new member added by this change** (the latch `PendingInteractionRequest`, **`PendingStopAdmission::slot`**,
       **the per-slot runtime generation**, the new TrackManager transport epoch, the envelope, the standby/cold-undo
@@ -440,7 +449,8 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `LoopPlaybackRuntime` (6,344 B extmem) or the `LoopPool` `Loop`; **per-track state — including the latch —
       externally held (`std::unique_ptr`) or with out-of-line `TRACK_COLD_MEM` ctors/dtors**, because `.bss`
       routes to DTCM and a by-value scalar latch would land there. Re-measure the padding baseline at S3.0 (the
-      cursor rule still cites 1,256; the recorded line is 872). Evidence: the RAM1 line stays `padding >= 872`,
+      cursor rule still cites 1,256; the recorded line is 872). Evidence: the RAM1 line stays `padding >= 840` (re-based from 872 on 2026-09-23 by the reviewed
+      32-byte allowance; enforced post-link),
       12 banks, `locals free` unchanged (a bank cross costs 32,768 B and the documented silent boot hang).
 - [ ] S3.1 `WorkingSetLease` with owner = slot + generation + role, and a pool provisioned for the
       measured active envelope. Route today's prewarm through it so behaviour is unchanged but ownership
