@@ -1,5 +1,19 @@
 # Project state (execution context)
 
+**2026-09-23 SESSION CLOSEOUT — `runtime-working-set-ownership` P0/P1 native scope complete on `feature/runtime-working-set-ownership`; the remaining gates need hardware.** Read this instead of the per-round entries below it.
+
+**What landed and is verified.** S0's decisions verified against their landing sites (no re-decision). S1.2's red scaling characterization, now **green**: the per-committed-slot boot reservation is gone, so reserved chunks and resident working sets are flat in recorded slots (they were 96→120 chunks and 8→11 bundles). The accepted-stop latch (S4f.0/S4f.1/S4f.2/S2b.6) with its deferred drive, canonical park and retire-path drain; the three boot/load admission tasks (S2b.1–S2b.3); the S4.0 per-slot liveness predicate with the S2b.4 release; S4f.5's stop-related in-flight consumers; S4f.4's four paused-worker transitions; B03 and B04 in the new `test_storage_manager_load` harness; S3.0's placement pins with a **per-env post-link RAM1 budget check**.
+
+**Numbers.** Full native **2,281 cases / 1 skipped / 2,280 succeeded / 0 failures**; `test_continuous_capture` 91/91; the load harness 5/5. All four firmware envs build and pass their per-env budgets. **RAM1 `padding` improved 872 → 1,096**: the FLASH extractions of `needsSlotLoad`, `resetLoopSlotToEmpty` and `hasRealtimeDeferredIdleWork` more than repaid the 32 B the latch cost, and the post-link check that enforces the approved budget caught two real defects in itself on the way (a configuration-specific pin and a global-vs-per-env baseline).
+
+**Four defects found by fixtures, not by review** — the argument for the fixture-first rule: `startRecordingTrack` ignored the latch and admitted a record start on top of an unaccepted-invisible stop; `finalizeCaptureAndSelectSlot` moved the active slot underneath an unadmitted stop; `LoadLoopJob`'s callers popped a restore request before checking liveness and the queue would not take it back; and `driveAcceptedInteraction` parked a request whose interval was gone, which would have wedged the track forever.
+
+**Two corrections to my own record, kept visible.** An "N=2 refusal" measurement was a misread `SealOutcome::FailedValidation` (an enum read as a count), and a follow-up "seal needs the transfer horizon" finding was **retracted** after its own bisect showed the horizon was not the discriminator — the real lesson is that `loop.appendCaptureEvent` is not the production ingress once the arm has admitted staging.
+
+**Open.** (a) Every **device leg**: S1.1's per-owner census, S1.3's slope to the current failure point, S1.4's undo/canonical-pin baseline, S1.5's smallest-refusal N, and the S2b device gate — all needing the owner's go-ahead to flash. The **baseline revision is pinned and proven** (`83be2e19`, firmware-identical to the branch base, with the reproduction recipe and per-leg measurement list in `ARCHITECTURE-REVIEW.md`). (b) S3.0's pins for members the later stages introduce. (c) Phases B–F of the change itself.
+
+**Recommended next step:** a device session — baseline `83be2e19` first, then HEAD — using the documented recipe and per-leg list.
+
 **2026-09-23 `runtime-working-set-ownership` P0 started on `feature/runtime-working-set-ownership`: S0 verified, S1.2 red characterization landed — no firmware change.**
 First slice through the DEC-080 execution-packet workflow, on a branch cut from the planning line (the
 change does not exist on `dev`, so committing the handoff docs as the branch base was the only base that
