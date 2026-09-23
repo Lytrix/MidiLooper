@@ -22,12 +22,14 @@ bool sequencerRunning = false;
 // The shared production harness (Loop/Track/TrackManager objects + harness globals). Extracted so this
 // suite links the same production code as test_continuous_capture without duplicating the include list.
 // This suite links src/TrackUndo.cpp, so it omits MidiButtonActions.cpp -- see the seam in the include.
+// This suite links src/TrackUndo.cpp, so it omits the note-edit button TU (see the seam in the include).
+#define HARNESS_OMITS_MIDI_BUTTON_ACTIONS
 #include "../test_support/track_harness.inc"
 // The stub surface: physical outputs and unrelated domain routes stay fail-closed or observable.
 // This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
 // out of those stubs.
-#define HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD
-#include "../test_continuous_capture/off_path_deps.h"
+#include "load_harness_stubs.h"
+#include "../../src/TrackUndo.cpp"
 
 // TrackManager's constructor references the global MIDI handler; the load path pulls it in.
 #include "../../src/MidiHandler.cpp"

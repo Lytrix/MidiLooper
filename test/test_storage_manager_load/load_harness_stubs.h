@@ -1,0 +1,44 @@
+// Minimal stub surface for the load harness.
+//
+// This suite deliberately does NOT reuse test_continuous_capture/off_path_deps.h: it links
+// src/TrackUndo.cpp, whose `restorePlaybackAfterSlotClear` collides with the anonymous-namespace one in
+// MidiButtonActions.cpp, and the seam that would omit that TU also removes the edit-state headers
+// off_path_deps.h depends on. Instead this file supplies only what the load suite's linked production set
+// actually needs, which was measured rather than guessed: `resolveTrackIndexForPersistence` plus the five
+// note-edit state vtables (their virtual methods are what emit them).
+//
+// Nothing here is domain logic under test: the note-edit routes are unreachable from a load fixture, and
+// resolving a track index is a pointer comparison. The load path itself is real production code.
+#pragma once
+
+#include <unity.h>
+
+// The edit-state class declarations, which the note-edit button TU would otherwise bring in transitively.
+#include "EditLengthNoteState.h"
+#include "EditNoteHomeState.h"
+#include "EditPitchNoteState.h"
+#include "EditSelectNoteState.h"
+#include "EditStartNoteState.h"
+
+/// Fail closed if a fixture accidentally enters a note-edit route.
+#define LOAD_HARNESS_OFF_PATH() TEST_FAIL_MESSAGE(__PRETTY_FUNCTION__)
+
+#define LOAD_HARNESS_OFF_PATH_EDIT(Type)                                    \
+  void Type::onEnter(EditManager&, Track&, uint32_t) { LOAD_HARNESS_OFF_PATH(); } \
+  void Type::onExit(EditManager&, Track&) { LOAD_HARNESS_OFF_PATH(); }       \
+  void Type::onEncoderTurn(EditManager&, Track&, int) { LOAD_HARNESS_OFF_PATH(); } \
+  void Type::onButtonPress(EditManager&, Track&) { LOAD_HARNESS_OFF_PATH(); }
+
+LOAD_HARNESS_OFF_PATH_EDIT(EditNoteHomeState)
+LOAD_HARNESS_OFF_PATH_EDIT(EditSelectNoteState)
+LOAD_HARNESS_OFF_PATH_EDIT(EditStartNoteState)
+LOAD_HARNESS_OFF_PATH_EDIT(EditLengthNoteState)
+LOAD_HARNESS_OFF_PATH_EDIT(EditPitchNoteState)
+#undef LOAD_HARNESS_OFF_PATH_EDIT
+
+inline uint8_t resolveTrackIndexForPersistence(const Track& track) {
+  for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
+    if (&trackManager.getTrack(i) == &track) return i;
+  }
+  return 0;
+}
