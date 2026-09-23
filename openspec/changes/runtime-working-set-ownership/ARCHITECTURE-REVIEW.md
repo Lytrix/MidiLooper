@@ -1569,3 +1569,42 @@ records the new measured margin; the floor stays 840.
 | load suite | 5/5 |
 | full native | **2,278 cases / 1 skipped / 2,277 succeeded / 0 failures** |
 | firmware + budget, both envs | SUCCESS; capture-serial padding **1,096**, plain env **9,960** |
+
+## P1 — the latch drive's declared bound, and the canonical-prefix yield (2026-09-23)
+
+The last two S4f.2 items.
+
+### The canonical-prefix child yields to the accepted interaction
+
+`Track::processDeferredCanonicalPrefix` already refused while an *admitted* stop was pending
+(`hasPendingDeferredOverdubStop()`). It now also refuses while one is merely **accepted**
+(`hasAcceptedUnexecutedInteraction()`), so background canonical preparation cannot compete for the deferred
+turn the accepted stop's drive needs.
+
+**No new fixture, and the reason is recorded rather than glossed:** the change is a strict narrowing — it can
+only *prevent* background work, never add any — and a discriminating oracle would have to construct a state
+where the function would otherwise proceed to real canonical work. The guard-clause assertion would be
+non-discriminating (a `PLAYING` track can decline for unrelated reasons such as no allocated runtime or
+`canonicalPreparationHasPriorityWork`), so asserting it would have looked like coverage without being any.
+The existing full native suite plus the firmware build are the checks for this step, which is why the task note
+says the fixture is *not* claimed.
+
+### `ExecutionBounds.md` row 31
+
+The latch drive is now a declared owner with a stated bound, as the Closeout section requires:
+
+> `Track::serviceAcceptedInteractionTurn` → `driveAcceptedInteraction` →
+> `parkAcceptedStopForCanonicalOutput` — every deferred idle-owner lane, immediately after the admitted stop's
+> grain and before the owner-specific branches. **At most one accepted-interaction grain per turn**: one
+> admission attempt for the interval's slot plus, on refusal, one canonical-reservation replenish and one wait
+> report. The drive is skipped while the ring is non-empty, so an accepted request never stacks a second stop
+> job. The park never freezes, never exchanges staging roles, and never cancels the request.
+> **Structurally bounded**; device latency for the acceptance-to-execution wait remains open.
+
+### Verification
+
+| check | result |
+|---|---|
+| full native | **2,278 cases / 1 skipped / 2,277 succeeded / 0 failures** |
+| load suite | 5/5 |
+| firmware + budget | SUCCESS, capture-serial padding **1,096** (unchanged) |
