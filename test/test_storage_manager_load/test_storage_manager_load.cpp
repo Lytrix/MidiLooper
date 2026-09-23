@@ -55,6 +55,12 @@ bool sequencerRunning = false;
 void setUp() {
   StorageManagerInternal::clearPendingLoopSlotRestoresAtBoot();
   StorageManagerInternal::resetAllLoopSlotRestoreAttempted();
+  // The job instances are function-local statics in `LoadLoopJob.cpp` and are **not** cleared by the
+  // queue resets above. Without this, an earlier fixture's parked job survives into the next fixture
+  // and owns its request, so an outcome assertion reads a state this fixture never produced (measured:
+  // a parked job left over from an earlier case made the C4 fixture read "owned" while its own request
+  // was still queued). Each fixture starts from no restore work.
+  StorageManagerInternal::clearLoadLoopJob();
 }
 void tearDown() {}
 
@@ -360,6 +366,100 @@ void test_c2_parked_job_is_serviced_or_named_after_transport_starts() {
   TEST_ASSERT_TRUE_MESSAGE(observation.served || observation.activeOwned, message);
 }
 
+/// **A1.5 [C4 — head-of-line blockage], desired behavior, red on current `src/`.**
+///
+/// Shape: the priority **head** is a request whose slot a live owner holds and which has **no
+/// committed content**, and a lower-priority request for a free, uncommitted slot sits behind it.
+///
+/// Desired behavior: the startable lower-priority request begins, and the blocked head stays queued
+/// with its reason observable. Queue order is a *selection* order, not a gate on service.
+///
+/// Red today: `ensureActiveLoadLoopJobSelected` calls `backgroundHeadMayBegin()` **before**
+/// `popNextDeferredLoopSlotRestore`, and the pop has no track/slot filter. A blocked-but-not-done head
+/// therefore means no entry is served at all, so the queue stalls behind it.
+///
+/// Shape facts measured while building this fixture (see `REVIEW.md` § A1.5):
+/// * **The head must fail both tests.** `popNextDeferredLoopSlotRestore` drains *every* done entry from
+///   the front (`isLoopSlotRestoreAttempted || hasCommittedPasses`), so a **committed** head is skipped
+///   rather than blocking — an earlier draft built on a committed head was green on the untouched tree
+///   and was discarded. The head must therefore have a live owner **and** no committed content.
+/// * **A live owner without a commit** is exactly the capture-interval window: a slot that has a
+///   playback runtime and an open overdub interval, reset to empty by the production reset (which does
+///   not release the runtime's `captureStopOwner`). The interval route needs staging and canonical-copy
+///   admission, so the fixture uses the production interval only to establish that owner and keeps the
+///   S4f.1 accepted-interaction latch as the explicit owner of record.
+/// * **The startable slot must be production-reset** — an earlier fixture in the same binary leaves
+///   committed content at slot 2, which makes the outcome assertion read true before this fixture runs.
+void test_c4_blocked_priority_head_does_not_stall_a_startable_request() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  RestoreHarness::setRuntimeTransportIdle();
+
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+
+  // Establish a genuine slot owner with no committed content: commit once to give slot 1 a playback
+  // runtime, open an interval there, then production-reset the loop to empty. The reset clears content
+  // but not the runtime's `captureStopOwner`, so `noLiveOwnerForSlot(1)` stays false while
+  // `hasCommittedPasses()` is false — the exact pair C4 needs.
+  commitRecordPassIntoSlot(track, 1);
+  track.setActiveLoopIndex(1);
+  track.forceSetState(TRACK_PLAYING);
+  clockManager.assignCurrentTickSilently(96);
+  track.startOverdubbing(96);
+  RestoreHarness::resetSlotToEmpty(0, 1);
+  RestoreHarness::resetSlotToEmpty(0, 2);
+  // The owner of record, so the fixture does not depend on the interval's internal state surviving the
+  // reset. `Track::noLiveOwnerForSlot` counts the S4f.1 latch.
+  TrackCaptureStopTestAccess::latchAcceptedStopForSlot(track, PendingStopDestination::Playing, 1);
+
+  char setupMsg[288];
+  snprintf(setupMsg, sizeof(setupMsg),
+           "C4 setup: ownsSlot1=%u committed1=%u committed2=%u",
+           track.noLiveOwnerForSlot(1) ? 0u : 1u,
+           track.getLoop(1).hasCommittedPasses() ? 1u : 0u,
+           track.getLoop(2).hasCommittedPasses() ? 1u : 0u);
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(1),
+                            "the priority-head slot needs a live owner");
+  TEST_ASSERT_FALSE_MESSAGE(track.getLoop(1).hasCommittedPasses(),
+                            "the head must be uncommitted, or the pop drains it instead of blocking");
+  TEST_ASSERT_FALSE_MESSAGE(track.getLoop(2).hasCommittedPasses(),
+                            "the startable slot must start empty");
+
+  TEST_ASSERT_TRUE_MESSAGE(RestoreHarness::writePayloadWithOneNoteToSd(0, 2, 63), setupMsg);
+  // Both requests enter through the **forced** boot entry: this fixture is about queue ordering, so its
+  // input queue is stated explicitly. A1.2/A1.3 are the payload-admission fixtures.
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 1, 0));
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 2, 1));
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(2, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "both requests must be queued");
+  StorageManagerInternal::sortPendingLoopSlotRestoreQueue();
+  StorageManagerInternal::DeferredLoopSlotRestore head{};
+  TEST_ASSERT_TRUE(StorageManagerInternal::peekFirstPendingLoopSlotRestore(head));
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(1, head.slot, "the blocked entry must be the priority head");
+
+  const RestoreHarness::RestoreOutcomeObservation observation =
+      RestoreHarness::observeRestoreOutcome(0, 2, 32);
+  char message[384];
+  snprintf(message, sizeof(message),
+           "C4: the startable request behind a blocked head was never served or owned after %u turns "
+           "(served=%u, unowned=%u, pending=%u, committed2=%u, attempted2=%u, active=%u, parked=%u, "
+           "headStillQueued=%u, headOwned=%u)",
+           static_cast<unsigned>(observation.turnsRun), observation.served ? 1u : 0u,
+           observation.unowned ? 1u : 0u, static_cast<unsigned>(observation.pendingAtEnd),
+           observation.committedAtEnd ? 1u : 0u, observation.attemptedAtEnd ? 1u : 0u,
+           observation.jobActiveAtEnd ? 1u : 0u, observation.parkedAtEnd ? 1u : 0u,
+           StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 1) ? 1u : 0u,
+           track.noLiveOwnerForSlot(1) ? 0u : 1u);
+  TEST_ASSERT_TRUE_MESSAGE(RestoreHarness::restoreRequestHasOutcome(observation), message);
+  TEST_ASSERT_TRUE_MESSAGE(
+      StorageManagerInternal::isDeferredLoopSlotRestoreQueued(0, 1),
+      "the blocked head must stay queued with its reason after a lower-priority request is served");
+  TEST_ASSERT_FALSE_MESSAGE(track.noLiveOwnerForSlot(1),
+                            "the fixture must not have cleared the head's owner by the end");
+}
+
 // ---------------------------------------------------------------------------
 // SD write-mode semantics (fix/sd-temp-rewrite, docs/Plans/sd_temp_write_truncation_refinement.md)
 //
@@ -452,6 +552,7 @@ int main(int, char**) {
   if (getenv("RESTORE_LIVENESS_RED") != nullptr) {
     RUN_TEST(test_c1_transport_gated_background_admission_desired);
     RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
+    RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
   }
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);
