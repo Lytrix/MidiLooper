@@ -233,6 +233,17 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   guard `LoadLoopJob.cpp`'s four pop sites with `noLiveOwnerForSlot(entry.track, entry.slot)` before the pop
   (peeking first at the two `popNext` sites, which have no filter), leaving the entry queued and returning
   when a live owner holds the slot. Load suite **4/4**, full native **2,276 / 1 skipped / 0 failures**.
+- **`resetLoopSlotToEmpty` extracted -- and it gave RAM1 headroom back.** The destruction the load path
+  performs on a slot whose payload is absent or invalid (the function B04 exists to prove is *not* called)
+  moved from the `StorageManager.cpp` monolith into `src/StorageManager/SlotReset.cpp` and is now **FLASHMEM**.
+  The enforcement caught both halves: the first cut, left without the attribute, **failed the post-link
+  budget check** at `code 392,440 / padding 776` (the split had pushed 64 B into ITCM); with `FLASHMEM` the
+  line is `code 392,184 / padding **1,032**` -- **+192 B of headroom** against the line this change had
+  spent, reported as headroom rather than absorbed, and the floor stays 840 as instructed. A side effect is
+  that a suite can now link the destructive function without the monolith. **The live-owner B04 fixture is
+  one symbol from linking**: `StorageManagerInternal::storageIoFromFileRead(File&)`, which lives in the
+  heavyweight boot-load TUs and would pull much of the persistence layer -- a deliberate stopping point, with
+  the fixture's design already recorded. Load suite **4/4**, full native **2,276 / 1 skipped / 0 failures**.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

@@ -1322,3 +1322,43 @@ suite verified at 4/4. Nothing was committed from the attempt.
 Link the three remaining TUs, add the live-owner fixture (design above), watch it **fail**, then apply the
 four-site guard and re-point the fixture at the fixed behaviour: entry **still queued**, Loop not reset,
 exactly one restore after the owner retires.
+
+## P1 — the destructive path is now linkable, and the budget check earned its cost (2026-09-23)
+
+### Landed: `resetLoopSlotToEmpty` extracted, and it *improved* the RAM1 line
+
+`StorageManagerInternal::resetLoopSlotToEmpty` — the destruction the load path performs on a slot whose
+payload is absent or invalid, and the function B04 exists to prove is **not** called — moved out of the
+`StorageManager.cpp` monolith into `src/StorageManager/SlotReset.cpp`. It is small and self-contained (it only
+calls `Loop` methods) and now **FLASHMEM**.
+
+The move turned out to be a net win, and the enforcement caught both halves of it:
+
+| step | measured |
+|---|---|
+| first cut, function left without `FLASHMEM` | `code 392,440 / padding **776**` — the post-link budget check **FAILED**, correctly: the extraction had pushed 64 B of code into ITCM |
+| with `FLASHMEM` applied | `code 392,184 / padding **1,032**` — **+192 B of headroom** over the previous line, reported as headroom rather than absorbed |
+
+So the change does not merely pay for itself; it recovers 192 B of the margin this change had spent, and the
+floor stays at 840 (the check reports the headroom and does **not** re-base anything automatically, as
+instructed). A useful side effect of the split: a suite can now link the destructive function without the
+monolith, which is exactly what B04 needs.
+
+### The live-owner fixture: one symbol from linking
+
+Re-adding it now fails to link on a **single** symbol,
+`StorageManagerInternal::storageIoFromFileRead(File&)`, which lives in the heavyweight boot-load TUs
+(`CurrentSetBootLoad.cpp`, `SavedSetIo.cpp`, `LegacyMonolithLoad.cpp`) and would pull a large part of the
+persistence layer behind it. That is a deliberate stopping point, not an unknown: the fixture's design is
+recorded above and the remaining work is "link a boot-load TU, or stub the one read adapter at the SD
+boundary".
+
+Nothing was committed from the fixture; it was reverted so the suite stays green at 4/4.
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **4/4** |
+| full native | **2,276 cases / 1 skipped / 2,275 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, `variables 96,128 / ITCM 393,216 (code 392,184 + padding **1,032**) / locals 34,944` |
