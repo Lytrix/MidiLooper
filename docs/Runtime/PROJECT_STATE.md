@@ -147,6 +147,20 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   declares only `struct File {};` with **no `SD` object**, so an in-memory SD/File emulation is needed rather
   than a header tweak; and `CurrentSetStorage::verifySaveFileTokenAtPath` is not visible, so those units must
   be linked. Nothing was committed from the probe and the tree is unchanged.
+- **Shared load harness increment 1 landed: the load path now links natively.** New suite
+  `test/test_storage_manager_load` compiles, links and runs `StorageManager/LoopSlotRestoreQueue.cpp` --
+  the path had **zero** native presence before. Blockers removed at the right boundary: the firmware
+  `SD.h` stub (two lines, no `SD` object) is now an in-memory card; the harness defines `ARDUINO 1` because
+  `CurrentSetStorage`'s SD declarations -- including `verifySaveFileTokenAtPath` -- sit behind
+  `#if defined(ARDUINO)`, **which is precisely why this path was never natively testable**; the native
+  serial stub gained `println`/`flush` (activated by that define); and `native_test_link.py`'s hardcoded
+  suite name is now an allow-list. Two facts now asserted that shape the S2b.5 fix: the queue orders
+  **ascending** by `restorePriority` (the first test asserted descending and failed, which is how the real
+  contract got pinned), `peekFirstPendingLoopSlotRestore` has **no done-test**, and a **forced enqueue
+  already exists** (`appendBootLoopSlotRestore`) -- the contract's alternative -- so S2b.5 need not invent
+  one. Next increment: link the `TrackManager`/`Track`/`Loop` set so `needsSlotLoad` and the pop done-test
+  go live, then drive `beginLoadLoopJob` for B04, and only then make the S2b.5 call-site fix. Full native
+  **2,275 / 1 skipped / 0 failures**; all firmware envs pass their per-env RAM1 budgets.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

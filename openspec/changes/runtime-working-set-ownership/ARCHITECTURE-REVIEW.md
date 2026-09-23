@@ -1035,3 +1035,46 @@ findings that replace the earlier estimate:
 That is a suite of its own, to be built once for S2b.5 + B04 + B06's non-focus leg + S2b.4's mid-copy
 fixture. It is the right next build, but it is not a single-slice change, and nothing was committed from
 the probe: the tree is unchanged and the 87-case suite still passes.
+
+## P1 — shared load harness, increment 1: the load path links natively (2026-09-23)
+
+The architect's scoped build, increment 1. **`StorageManager/LoopSlotRestoreQueue.cpp` now compiles, links
+and runs under `pio test -e native`** in the new `test/test_storage_manager_load` suite. That is the
+milestone: the load path had no native presence at all, and the reasons are now fixed rather than worked
+around.
+
+### What had to change, and why each was the right boundary
+
+| blocker | fix |
+|---|---|
+| The firmware `SD.h` stub was `struct File {};` — no `SD` object, no `read`/`seek`/`size`/`open`/`close`, so `SD.exists(...)` did not compile. | `test/test_support/firmware/SD.h` is now an **in-memory card** (`SDClass` with `exists`/`open`/`writeFile`, and a `File` with `size`/`seek`/`read`/`available`/`close`). Only the physical card is replaced. |
+| `CurrentSetStorage`'s SD-dependent declarations — including `verifySaveFileTokenAtPath` — sit behind `#if defined(ARDUINO)`. **Not defining it is precisely why this path was never natively testable.** | The harness defines `ARDUINO 1` for itself, so production's SD paths are visible instead of compiled out. |
+| That activated allocator failure-reporting paths using `Serial.println`/`Serial.flush`, absent from the native serial stub. | `test/test_support/firmware/Arduino.h`'s `NativeSerial` gained `println`/`flush`. Additive; `test_continuous_capture` still passes 87/87. |
+| `native_test_link.py` hardcoded one suite name for the Arduino/SD include path. | It is now an explicit **suite allow-list** (`test_continuous_capture`, `test_storage_manager_load`). |
+
+### Tests, and two facts that shape the S2b.5 fix
+
+- **Ordering:** `sortPendingLoopSlotRestoresByPriority` is **ascending** by `restorePriority` (a lower
+  number is served first). The first version of the test asserted descending and failed, which is how the
+  real contract got pinned rather than assumed.
+- **`peekFirstPendingLoopSlotRestore` has no done-test**: with `loopSlotRestoreAttempted_[2][3]` set, peek
+  still returns `(2,3)`. This is the contract's finding, now asserted, and it is why the caller must add
+  the done-test (or use a forced enqueue).
+- **A forced enqueue already exists**: `appendBootLoopSlotRestore` appends regardless of the attempted
+  flag or committed content — the contract's "or a dedicated forced enqueue" alternative is already in the
+  tree, so S2b.5 does not need to invent one.
+
+### Verification
+
+| check | result |
+|---|---|
+| new suite | **3/3 PASSED** |
+| full native | **2,275 cases / 1 skipped / 2,274 succeeded / 0 failures** (`test_continuous_capture` 87/87 unchanged) |
+| firmware + budget | **SUCCESS**, `variables 96,128 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,944` |
+
+### Next increment
+
+Link the suite's `TrackManager`/`Track`/`Loop` set (the same production objects `test_continuous_capture`
+already links) so `queueDeferredLoopSlotRestore`'s `needsSlotLoad` guard and
+`popFocusDeferredLoopSlotRestore`'s done-test become live, then drive `beginLoadLoopJob` itself for **B04**.
+Only then is the S2b.5 call-site fix implementable against a fixture, per the architect's order.
