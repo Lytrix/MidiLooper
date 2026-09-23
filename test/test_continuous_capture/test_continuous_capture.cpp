@@ -4076,6 +4076,34 @@ void test_s4_0_release_respects_the_live_ring_window_and_is_idempotent() {
                            static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
 }
 
+/// S2b.3 boot budget evidence (invariant 34): boot consumes only the committed content, never a
+/// per-slot reservation, and leaves the pool's own reserve intact. The device-scale peak figure
+/// (a 24-bar overdub's reservation) is S1.5's device leg, not this fixture.
+void test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve() {
+  const WorkingSetResidence one = measureWorkingSetResidence(1);
+  const WorkingSetResidence four = measureWorkingSetResidence(4);
+
+  // Boot's own cost is the descriptor directories for the *default enabled set* (slot 0 of each of
+  // the 8 tracks), which is a constant here and independent of the committed-slot count -- not a
+  // per-recorded-slot reservation. The law is about the slope, so assert the slope is zero and
+  // record the constant.
+  char message[256];
+  snprintf(message, sizeof(message),
+           "boot's per-committed-slot pool cost must be zero: reserved(1 slot)=%d reserved(4 slots)=%d "
+           "(payload %u/%u, admitted %u/%u)",
+           one.reservedChunks(), four.reservedChunks(),
+           static_cast<unsigned>(one.canonicalPayloadChunks),
+           static_cast<unsigned>(four.canonicalPayloadChunks),
+           static_cast<unsigned>(one.canonicalAdmittedChunks),
+           static_cast<unsigned>(four.canonicalAdmittedChunks));
+  TEST_ASSERT_EQUAL_INT32_MESSAGE(one.reservedChunks(), four.reservedChunks(), message);
+
+  // The pool's own reserve survives boot: `PassConfig::CHUNK_RESERVE` (16) is the floor admission
+  // refuses below, so boot must not consume it.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::CHUNK_RESERVE),
+                                      static_cast<uint32_t>(LoopEventStore::freeChunkCount()));
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4171,6 +4199,7 @@ int main() {
   RUN_TEST(test_b02_accepted_stop_waits_for_canonical_credit_then_executes_once);
   RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
+  RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
   // baseline exception once the implementing slice lands").

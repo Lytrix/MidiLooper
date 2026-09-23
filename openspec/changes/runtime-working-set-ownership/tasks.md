@@ -195,6 +195,13 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
 - [ ] S1.5 **Boot/load residency baseline (B7):** with N committed slots, record the pool chunks and bytes that
       `TrackManager::prewarmPlaybackRuntime` reserves before any activation (today 8 chunks / 41,056 B per
       committed slot), the free-chunk count, and the smallest N at which a 24-bar overdub is refused.
+      **NATIVE LEG DONE 2026-09-23, task still open:** `test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve`
+      asserts the per-committed-slot pool cost is **exactly zero** (`reservedChunks` identical at 1 and 4
+      slots; payload 1 -> 4 chunks, admitted 41 -> 44) and that `freeChunkCount()` stays at or above
+      `PassConfig::CHUNK_RESERVE` (16). Recorded constant: boot's own cost is **40 chunks** for the default
+      enabled set (~5 per enabled slot) -- constant in the committed-slot count and bounded by the enabled
+      set, not the library. **Outstanding:** the boot `live` figure against a 24-bar overdub's peak
+      reservation (~191 chunks) is S1.5's device leg and is NOT RUN.
 - [ ] S1 gates: native full; `teensy41-capture-serial` RAM1 line; the red fixture failing and recorded;
       the slope and failure point in this file as numbers.
       **Recorded 2026-09-23 (native legs only): full native 2,263 cases / 1 skipped / 2,262 succeeded /

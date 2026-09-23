@@ -675,3 +675,20 @@ success, and re-reserving re-retains the 8 credits.
   exercised: the refusal is implemented (non-empty store) but no fixture drives a populated
   `canonicalCaptureOutput.store` through the release. The "role leaves the active set" trigger is the
   existing pressure-reclaim loop, which is the only such surface until S5.1 adds demotion.
+
+### S2b.3 boot budget — native leg (2026-09-23)
+
+`test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve` (default gate) measures the
+same two variants as S1.2 and asserts what S2b.3 asks for, at native scale:
+
+- **boot's per-committed-slot pool cost is exactly zero** — `reservedChunks` (admitted − payload) is
+  identical at 1 and 4 recorded slots. Measured: payload 1 → 4 chunks, admitted 41 → 44 chunks.
+- **the pool's own reserve survives boot** — `freeChunkCount()` stays at or above
+  `PassConfig::CHUNK_RESERVE` (16), the floor admission refuses below.
+
+Recorded, because it is a real number a reader would otherwise have to guess: boot's **constant** cost is
+**40 chunks** in both variants — the stop-descriptor ring's sealed-range directories and the playback
+order for the **default enabled set** (slot 0 of each of the 8 tracks), i.e. ~5 chunks per enabled slot.
+It is constant in the committed-slot count and bounded by the enabled set, not by the library, which is
+what the law requires. The device-scale figure S2b.3 also asks for (boot `live` against a 24-bar
+overdub's peak reservation, ~191 chunks) remains **S1.5's device leg and is NOT RUN**.
