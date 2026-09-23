@@ -143,6 +143,24 @@ TRACK_COLD_MEM void Track::parkAcceptedStopForCanonicalOutput(uint8_t slot) {
                        "accepted_stop_finalizer_wait");
   }
   ++latch->waitCount;
+  // S2b.6's diagnostic terminal (invariant 31; spec.md "A park terminal never cancels an accepted
+  // interaction"). `accepted_stop_finalizer_wait` above marks the *first* wait; this marks the point
+  // where waiting has become **stalled**: the canonical target is held by a live owner -- a populated
+  // store, which the park must not clear because that is exactly what S2b.4 forbids mid-copy -- and
+  // the reservation cannot be acquired, so no deferred turn can admit the stop until that owner frees.
+  //
+  // Reported, never acted on: it does not clear, drain or cancel, so the accepted stop stays
+  // authoritative and still executes exactly once when the owner frees. Keyed off the existing
+  // per-latch `waitCount` rather than a new latch field because `PendingInteractionLatch` is
+  // size-pinned by S3.0's placement asserts; `==` makes it once per episode, since the count passes
+  // through the threshold only once however long the wedge lasts.
+  constexpr uint32_t kAcceptedStopParkTerminalAfterWaits = 8;
+  if (!runtime->canonicalCaptureOutputAdmitted() &&
+      !runtime->canonicalCaptureOutput.store.empty() &&
+      latch->waitCount == kAcceptedStopParkTerminalAfterWaits) {
+    SC_ODUB_STOP_STAGE("admission", 0, 0, UINT32_MAX, UINT32_MAX, 1, 0,
+                       "accepted_stop_park_terminal");
+  }
 }
 
 /// S4f.2: the dispatch decision. Called at the top of `processDeferredIdleMaintenance`, after the
