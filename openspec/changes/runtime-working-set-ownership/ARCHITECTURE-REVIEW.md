@@ -1223,3 +1223,60 @@ against it. Nothing was committed from the fixture; it was reverted again so the
 | full native | **2,275 cases / 1 skipped / 2,274 succeeded / 0 failures** |
 | firmware + budget | SUCCESS, RAM1 unchanged |
 | `test_continuous_capture` | 87/87 (the shared SD stub change is additive) |
+
+## P1 — B04 is reproducible, and the defect is worse than "a lost request" (2026-09-23)
+
+The last linkage step landed and the fixture runs. It changed the finding.
+
+### The fixture, and what it shows
+
+`test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot` (default gate, `test_storage_manager_load`):
+
+- re-queueing is **inert** for a slot with committed passes — `queueDeferredLoopSlotRestore` enqueues
+  nothing, because `needsSlotLoad` refuses committed content;
+- seeding the request through the forced path and then doing what `LoadLoopJob.cpp`'s callers do —
+  **pop first** — does not merely take the entry: `popFocusDeferredLoopSlotRestore`'s done-test sees the
+  committed passes, treats the request as **already satisfied, returns false and silently discards the
+  entry**;
+- re-queueing after that still enqueues nothing, so the obligation is **unrecoverable**, with no signal at
+  the pop;
+- the slot's content — what the live owner depends on — is untouched at this stage.
+
+So the correct statement of the S2b.5 defect is not "the pop loses the request" but **"for a committed slot
+the pop silently discards an outstanding restore request, and the queue will not take it back."** The
+destruction of the Loop is the *later* consequence, when the loader runs for a slot it was told to load and
+the payload is absent or invalid. A finalizing predecessor's slot has committed passes, so it is exactly this
+state.
+
+### Linkage completed in this increment
+
+| TU | why |
+|---|---|
+| `SlotLoadSession.cpp` | `isActiveFor` — a `needsSlotLoad` term |
+| `LoadLoopJob.cpp` | the active/parked job queries and the admission path itself |
+| `LoopPendingNoteChange.cpp` | `applyPendingNoteChangesToDisplayNotes`, newly live under `LoadLoopJob` |
+| `TrackManagerSlotMatrix.cpp` | `getSelectedSlotIndex`, called by `currentDeferredRestorePriority` |
+
+Two explicit seams were needed, both documented and both no-ops for firmware:
+
+- `HARNESS_ARDUINO_STUB` — `LoopPendingNoteChange.cpp` carries its own `inline micros()` under
+  `PIO_UNIT_TEST_NATIVE`; a suite that links it *and* the Arduino boundary stub would define `micros()`
+  twice in one TU, so that fallback now defers to the stub. On firmware `PIO_UNIT_TEST_NATIVE` is
+  undefined, so the branch is unchanged.
+- `HARNESS_LINKS_LOOP_SLOT_PAYLOAD_ON_SD` (from the previous increment) — the load suite links the real
+  loop-slot-payload functions, so `off_path_deps.h` omits those two stubs for it.
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **4/4 PASSED** (B04 included) |
+| full native | **2,276 cases / 1 skipped / 2,275 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, RAM1 line unchanged (`code 392,376 / padding 840 / locals 34,944`) |
+
+### Next
+
+The fixture is **green as a characterization of the pre-fix behaviour**, which is what S2b.5 must change.
+The fix is now a bounded edit: make the callers peek/pre-check (or use the forced enqueue) so a slot with a
+live owner keeps its request, and re-point the fixture at the fixed behaviour — the entry **still queued**,
+the Loop not reset, and exactly one restore after the owner retires.
