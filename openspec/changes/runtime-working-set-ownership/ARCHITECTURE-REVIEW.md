@@ -1149,3 +1149,36 @@ The harness can now drive the real path. **B04** is the next step and is a test 
 finalizing interval on a slot, queue a restore for that slot, run the real selection/admission, and assert
 the entry is **still queued**, the Loop was **not** reset and the finalizer is intact — then retire and
 assert exactly one restore. Only after that fixture is red does the S2b.5 call-site fix get made against it.
+
+## P1 — B04 is one linkage step away, and the exact step is now known (2026-09-23)
+
+The harness can now drive the *queue* against the real Track objects, so the defect mechanism was written
+as a fixture — and it immediately named the three symbols that stand between the suite and B04. **Nothing
+was committed from it**: the fixture was reverted and the suite stays at 3/3.
+
+### The defect mechanism, derived rather than assumed
+
+Writing the fixture sharpened B04's trigger. `LoadLoopJob.cpp`'s callers pop the restore entry **before**
+`beginLoadLoopJob`, and `queueDeferredLoopSlotRestore` is **inert** for a slot that has committed passes
+or was already attempted (`needsSlotLoad`). So:
+
+1. the **pop destroys the request** — it cannot be put back;
+2. the slot's **destruction** (`resetLoopSlotToEmpty`) happens later, and only when the loader runs for a
+   slot it was told to load and the payload is absent or invalid.
+
+So B04's discriminating state is **a live finalizing owner on a slot whose queued restore has no valid
+payload**, not merely "a load begun for an occupied slot". That refinement decides what the fixture must
+build (a committed slot plus a missing in-memory SD file), and it is why the request-loss half is
+observable without any SD at all.
+
+### The three missing symbols, and the recommended fix for each
+
+| symbol | defined in | recommendation |
+|---|---|---|
+| `StorageManager::needsSlotLoad` | `src/StorageManager.cpp:243` (the monolith) | **extract it** into its own small TU (e.g. `src/StorageManager/SlotLoadAdmission.cpp`). It is a ~25-line predicate over `Config`, `isLoopSlotRestoreAttempted`, `SlotLoadSession::isActiveFor`, the active/parked job queries and `track / getLoop(slot).hasCommittedPasses()`. Extracting it makes the load *decision* linkable without the monolith, which is the same mechanical split the repo's translation-unit workflow already sanctions. |
+| `CurrentSetStorage::formatLoopSlotPath` | `src/StorageManager/CurrentSetStorage.cpp` | link the TU (paths and the save-file token are the production definitions the load path must use, not something to stub). |
+| `CurrentSetStorage::verifySaveFileTokenAtPath` | same | same. |
+
+The next increment is therefore: extract `needsSlotLoad`, link `CurrentSetStorage.cpp`, re-add the B04
+fixture (red), and only then make the S2b.5 call-site fix. The in-memory SD card and the full Track harness
+are already in place, so the remaining work is mechanical rather than exploratory.
