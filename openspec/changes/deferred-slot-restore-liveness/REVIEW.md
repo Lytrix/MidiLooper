@@ -76,9 +76,9 @@ background restore, which is exactly the defect under test.
 - **Verification:**
   - `pio test -e native -f test_storage_manager_load` → **8 cases / 8 succeeded / 0 failures** (flag
     unset; the red fixture is absent, not run-and-failing).
-  - `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` → **11 cases / 2 failed /
-    8 succeeded**, the two failures being exactly the listed red fixtures (C1, C2).
-- **Promotion log:** none yet — A1.2/A1.3 are promoted in the A2.2/A2.3 slices.
+  - `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` → **12 cases / 3 failed /
+    8 succeeded**, the three failures being exactly the listed red fixtures (C1, C2, C4).
+- **Promotion log:** none yet — A1.2/A1.3 are promoted in the A2.2/A2.3 slices, A1.5 in A2.3.
 
 ### A1.2 — C1 transport-gated background admission (desired behavior, red)
 
@@ -115,25 +115,32 @@ background restore, which is exactly the defect under test.
   parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0, pending=0, attempted=0, committed=0)` — the
   parked instance holds the request for every turn and the active instance never gets it.
 
-### A1.5 — C4 head-of-line blockage (in progress; fixture not yet landed)
+### A1.5 — C4 head-of-line blockage (desired behavior, red)
 
-Two fixture-shaping facts measured while drafting it, recorded so the next attempt does not repeat
-them:
-
-1. **The owner must be a production term, and the interval route is expensive.**
-   `Track::noLiveOwnerForSlot` counts four terms: a live `captureStopJobs_` ring entry, the runtime's
-   `captureStopOwner`, a pending prepared pair, and the **S4f.1 accepted-interaction latch**.
-   `Track::latchAcceptedStop` is private, but `TrackCaptureStopTestAccess` is a declared friend, so the
-   suite gained `latchAcceptedStopForSlot` (committed; unused until the fixture lands). That is the
-   cheap, production-state way to hold the priority-head slot.
-2. **The head must be uncommitted, and the startable slot must be reset.**
-   The pop's done-test (`isLoopSlotRestoreAttempted || getLoop(slot).hasCommittedPasses()`) discards a
-   **committed** head as already satisfied — correct queue hygiene, not the C4 defect — so a
-   committed head cannot express head-of-line blockage. Symmetrically, `observeRestoreOutcome`'s
-   `served`/terminal reading is per-slot, and an earlier fixture in the same binary can leave a
-   committed slot 2, which makes the C4 assertion read false-green. The startable slot must be
-   production-reset and asserted empty in the fixture's own setup; a draft that omitted that step
-   passed on the untouched tree and was discarded rather than weakened.
+- **Shape:** the priority head is a request whose slot a live owner holds **and** which has no
+  committed content; a lower-priority request for a free, uncommitted slot sits behind it. Both enter
+  through the forced boot entry, since this fixture is about queue ordering.
+- **Oracle:** the startable request is served or owned, the blocked head is still queued afterwards, and
+  its owner is still live. `pending` distinguishes "head blocked" from "queue empty".
+- **Red evidence:** `C4: the startable request behind a blocked head was never served or owned after 32
+  turns (served=0, unowned=1, pending=2, committed2=0, attempted2=0, active=0, parked=0,
+  headStillQueued=1, headOwned=1)`.
+- **Mechanism correction to `design.md` C4.** The design says `popNextDeferredLoopSlotRestore` "takes the
+  priority head and has no track/slot filter, so a head that cannot start blocks every entry behind it".
+  The **first half is incomplete**: the pop drains *every* done entry from the front
+  (`isLoopSlotRestoreAttempted || getLoop(slot).hasCommittedPasses()`), so a **committed** head is
+  *skipped*, not blocking, and the lower-priority entry is then served normally. The genuine stall needs a
+  head that fails the done-test **and** fails `noLiveOwnerForSlot` — i.e. a slot with a live owner and no
+  committed content, which is the capture-interval window. Two earlier drafts built on a committed head
+  were green on the untouched tree and were discarded rather than weakened (the second only after the
+  `setUp` defect below was fixed). The mechanism is real, but the design's stated trigger is narrower than
+  written; the fixture now encodes the exact pair.
+- **Suite defect this surfaced (fixed):** `setUp` cleared the restore queue and the attempted flags but
+  **not** the `LoadLoopJob` instances, which are function-local statics in `LoadLoopJob.cpp`. An earlier
+  fixture's parked job therefore survived into the next fixture and owned *its* request, making an
+  outcome assertion read a state the fixture never produced (measured: a leftover parked job made C4 read
+  "owned" while its own request was still queued). `StorageManagerInternal::clearLoadLoopJob()` now runs
+  in `setUp`.
 
 ---
 
@@ -148,7 +155,7 @@ unreviewed.**
 | C1 | `canRunBackgroundLoadLoopNow()` false under transport; nothing begins | red fixture in place; mechanism reproduced (request left **unowned** for 64 production turns: pending, no active or parked job) | `test_c1_transport_gated_background_admission_desired` |
 | C2 | A parked non-focus job is never re-serviced under play | red fixture in place; mechanism reproduced (parked instance owns the request for all 64 turns, actively owned 0) | `test_c2_parked_job_is_serviced_or_named_after_transport_starts` |
 | C3 | one-shot enqueue never re-offers | **withdrawn before code** (G2 review finding 5): the boot scan already offers every payload-bearing `(track,slot)` and a blocked request stays queued | none — no work produced |
-| C4 | priority head with a live owner stalls the queue behind it | open | A1.5 (planned) |
+| C4 | priority head with a live owner stalls the queue behind it | red fixture in place; mechanism reproduced, with the trigger **corrected**: the head must also fail the pop's done-test (a committed head is skipped, not blocking) | `test_c4_blocked_priority_head_does_not_stall_a_startable_request` |
 | C5 | the blocking drain never services the load scheduler | open | A1.7 (planned) |
 | C6 | `markLoopSlotRestoreAttempted` latches a transient failure for the power cycle | open | A1.6 (planned) |
 
@@ -163,3 +170,4 @@ unreviewed.**
 | 2026-09-23 | A1.11 | `RESTORE_LIVENESS_RED=1 pio test -e native -f test_storage_manager_load` | 10 cases, **1 failed / 8 succeeded** — exactly the listed red fixture |
 | 2026-09-23 | A1.2 | as above | red as required: *left unowned after 64 turns (served=0, ownedTurns=0, pending=1)* |
 | 2026-09-23 | A1.3 | as above | red as required: *never serviced after 64 turns (parkedEnd=1, parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0)* |
+| 2026-09-23 | A1.5 | as above | red as required: *never served or owned after 32 turns (served=0, unowned=1, pending=2, headStillQueued=1)* |

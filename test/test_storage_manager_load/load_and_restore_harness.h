@@ -159,6 +159,15 @@ inline void armRestoreRequestThroughProductionQueue(uint8_t trackIndex, uint8_t 
   StorageManager::requestLoopSlotRestoreFromSd(trackIndex, slotIndex);
 }
 
+/// Production-reset one slot to empty. Fixtures must call this before asserting on a slot's
+/// post-restore content: an earlier fixture in the same binary may already have committed into it, and
+/// a leftover commit makes a "was it restored?" assertion read true before the fixture does anything.
+inline void resetSlotToEmpty(uint8_t trackIndex, uint8_t slotIndex) {
+  trackManager.getTrack(trackIndex).ensureLoopsAllocated();
+  StorageManagerInternal::resetLoopSlotToEmpty(trackManager.getTrack(trackIndex).getLoop(slotIndex),
+                                               slotIndex);
+}
+
 /// The common "a payload-bearing slot with no committed content is queued for restore" precondition,
 /// reached through production calls only: reset the slot (production reset), write a valid payload
 /// with the production body writer, then enqueue through the production request entry.

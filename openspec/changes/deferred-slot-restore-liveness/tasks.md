@@ -104,11 +104,23 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       policy without addressing starvation. **Verify:** the withdrawal is recorded in the mechanism ledger
       (A1.9) with the code citation; the corresponding implementation task is deleted, not deferred.
 
-- [ ] A1.5 **[C4 — head-of-line blockage] desired-behavior fixture, red.** Queue a priority-head request
+- [x] A1.5 **[C4 — head-of-line blockage] desired-behavior fixture, red.** Queue a priority-head request
       whose slot is held by a live owner plus a lower-priority startable request; assert the **desired**
       behavior: the startable request begins and the blocked head stays queued with its reason. **Verify:**
       the case is red on current `src/` (today nothing begins); the assertion distinguishes "head blocked"
       from "queue empty"; record it.
+      → **DONE 2026-09-23:** `test_c4_blocked_priority_head_does_not_stall_a_startable_request`, promoted
+      under `RESTORE_LIVENESS_RED`; **red**: *"the startable request behind a blocked head was never served
+      or owned after 32 turns (served=0, unowned=1, pending=2, committed2=0, attempted2=0, active=0,
+      parked=0, headStillQueued=1, headOwned=1)"* — both entries stay queued while the lower-priority slot
+      is free, and the assertion separates "head blocked" (`headStillQueued=1`, `headOwned=1`) from "queue
+      empty" (`pending=2`). **Mechanism correction to `design.md` C4:** the pop drains *every* done entry
+      from the front (`isLoopSlotRestoreAttempted || hasCommittedPasses`), so a **committed** head is
+      skipped rather than blocking; the real stall needs a head that fails the done-test **and**
+      `noLiveOwnerForSlot`. The fixture builds that pair with a capture-interval owner on an uncommitted
+      slot plus the S4f.1 latch. Also fixed a suite defect this surfaced: `setUp` never cleared the
+      `LoadLoopJob` instances, so an earlier fixture's parked job survived into the next fixture and owned
+      its request; `StorageManagerInternal::clearLoadLoopJob()` now runs in `setUp`.
 
 - [ ] A1.6 **[C6 — attempt latch] desired-behavior fixture, red.** Inject a transient SD read/open failure
       for one payload, drive the restore to its failure path, then make the payload healthy; assert the
