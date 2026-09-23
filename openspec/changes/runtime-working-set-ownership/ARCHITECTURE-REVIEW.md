@@ -1868,3 +1868,39 @@ clause's real requirement (a reason-capturing seam, or the device) stated precis
 | check | result |
 |---|---|
 | `test_continuous_capture` | **91/91** (+1: the arm-repeatability guard) |
+
+## P1 — the dense-loop seal: one half established, one half open (2026-09-23)
+
+Following the S1.5 misread correction, the upstream question was *why a dense 24-bar loop fails
+`sealCapture`*. Progress, stated with its exact limits:
+
+### Established (and kept as a guard)
+
+`test_dense_loop_seal_requires_the_transfer_horizon` asserts that a dense 24-bar loop **fails validation when
+no transfer horizon has been admitted** — `SealOutcome::FailedValidation`, discriminating in the sense that the
+same helper seals a small loop against an untouched pool. Read against `Loop::sealCapture`, the failing branch
+is the transfer precondition (`preparePendingCapturePassTransfer`), which is why the requirement exists at all.
+This is the production reason S2b.2 admits the horizon **at the arm** rather than at the stop: without it, a
+dense capture cannot even be sealed, so it could never reach a stop.
+
+### Open, and deliberately not guessed at
+
+**Admitting the arm's transfer horizon first does not make that construction seal** — it still returns
+`FailedValidation`. So the horizon is **necessary but not sufficient**, and the remaining cause is not
+identified. It is not content volume either: halving the loop to 1,200 events still failed, well inside the
+horizon's 8-chunk (2,048-event) credit. The fixture therefore asserts only the proven half and names the
+converse as unestablished, rather than encoding a guess.
+
+### What this means for S1.5's third clause
+
+Still not measurable, and now for a *known* reason at the first step: the scenario needs a 24-bar capture that
+seals at all, and this harness's dense construction does not. Either the remaining seal failure is diagnosed
+next, or the clause is answered on device where the load path reads from SD rather than sealing a fresh capture
+— which is, after all, what a *loaded* library is.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **92/92** (+1: the horizon-necessity guard) |
+| full native | **2,282 cases / 1 skipped / 2,281 succeeded / 0 failures** |
