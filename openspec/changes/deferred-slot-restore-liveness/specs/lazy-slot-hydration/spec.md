@@ -67,7 +67,11 @@ of that coordinates pair — a user clear, a set change, or a commit by a differ
 `setEpoch` identifies the loaded current set. A later session reusing the same `(track, slot)` SHALL be a
 **different** request.
 
-A request SHALL be in exactly one **wait** state or exactly one **terminal** state at a time.
+A request SHALL be in exactly one lifecycle state at a time: **queued**, **running**, **waiting**,
+or **terminal**. Queued work awaits selection; running work is advancing an admitted job through
+read/parse/commit/cleanup under the applicable gates; waiting work has a named blocking reason.
+Exactly one terminal outcome SHALL be recorded per completed or superseded request identity.
+A yield between runnable slices SHALL NOT by itself imply a blocking wait or a terminal outcome.
 
 Wait states SHALL carry a named reason and SHALL NOT be terminals: a slot owned by a live owner, capture
 active on that slot, the commit gate not admitting (no content-independent bound), **another restore job
@@ -96,6 +100,13 @@ in flight.
 - **WHEN** a slot restore request is queued and the system processes it to completion
 - **THEN** exactly one terminal outcome is recorded for that request's identity
 - **AND** the request is not re-enqueued afterwards
+
+#### Scenario: Preparation has a nonterminal running state
+
+- **WHEN** an admitted request advances through reading or parsing across service turns
+- **THEN** it is running, not terminal and not assigned a fictitious blocking reason
+- **AND** a service yield preserves its identity and progress
+- **AND** when a real gate denies further work it transitions to waiting with that reason
 
 #### Scenario: A blocked request waits with a named reason
 
@@ -292,6 +303,48 @@ indefinitely. The holdoff duration SHALL be a single named declaration.
 - **WHEN** the drain returns a failed outcome
 - **THEN** the caller reports the failure and its reason
 - **AND** the outcome is distinguishable in the reported state from a temporarily blocked wait
+
+### Requirement: MIDI service cannot re-enter or invalidate a blocking drain
+
+StorageManager SHALL own a single scoped drain-in-progress guard. A nested drain request SHALL return
+`Blocked(drain_in_progress)` before changing shared drain/save state, and SHALL NOT overwrite the outer
+operation's result, budget, or persistence obligation. The guard SHALL release on every exit.
+
+MIDI-dispatched destructive/storage actions conflicting with the outer target or drain-owned storage
+SHALL be refused by name before any side effects. Normal musical input and transport SHALL remain
+serviced. After each callback boundary the drain SHALL re-evaluate capture/timing eligibility, restore
+identity and commit admission before advancing work. The outer destructive caller SHALL retain and
+revalidate its original target identity; focus changes SHALL NOT redirect it to another slot.
+
+#### Scenario: A second CLEAR cannot recursively drain or reset
+
+- **WHEN** a controller message requests another CLEAR while MIDI is serviced inside a drain
+- **THEN** the nested action is refused with `drain_in_progress` before stopping or resetting a track
+- **AND** no nested drain mutates shared state, and the outer save obligation and result remain intact
+
+#### Scenario: Conflicting replacement is refused before mutation
+
+- **WHEN** an undo or set/revision callback would replace the outer target or mutate drain-owned storage
+- **THEN** it is refused with `drain_in_progress` before that mutation
+- **AND** normal musical MIDI remains serviced
+
+#### Scenario: Transport or capture changes invalidate cached eligibility
+
+- **WHEN** MIDI service changes transport or capture state during the holdoff
+- **THEN** the next restore/save step uses the new all-track eligibility and request identity
+- **AND** a denying gate yields a named blocked result with obligations preserved
+
+#### Scenario: Focus changes do not redirect the outer CLEAR
+
+- **WHEN** focus changes while the original CLEAR is draining
+- **THEN** any subsequent clear targets only its original, revalidated slot identity
+- **AND** a changed target identity causes a named refusal without resetting replacement content
+
+#### Scenario: Every drain exit releases its guard
+
+- **WHEN** a drain returns completed, blocked, or failed
+- **THEN** its scoped guard is released
+- **AND** a later independent drain can enter normally
 
 ### Requirement: Restore and boot-catalog state is observable
 

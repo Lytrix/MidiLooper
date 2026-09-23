@@ -79,6 +79,10 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
 
 ## Impact
 
+- Drain-side MIDI polling requires a StorageManager-owned re-entry guard, pre-mutation checks in
+  conflicting MIDI action callers, and live eligibility/target revalidation (design D4 rule 9). This is
+  a prerequisite to holdoff polling, not a new action queue or a firmware change already shipped.
+
 - `src/StorageManager/LoadLoopJob.cpp` — `canRunBackgroundLoadLoopNow`, `ensureActiveLoadLoopJobSelected`,
   `stepSubmittedLoadJobsImpl`, `deferredSaveBlockedByActiveSlotLoadSd`; the restore admission and its
   state record.

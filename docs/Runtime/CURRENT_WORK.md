@@ -2909,6 +2909,17 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 ## Now implementing
 
+
+**2026-09-23 — restore-liveness plan correction (documentation only).**
+The final review's callback re-entry finding is addressed in
+[`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
+**A3.4a — drain re-entry and callback safety**, required before **A3.5 — holdoff MIDI servicing**.
+The contract adds a scoped owner guard, pre-side-effect refusal of conflicting callbacks, live eligibility
+and target revalidation, and production-dispatch fixtures. CLEAR gates consistently permit named refusals
+and reject unexplained aborts. The final falsification tightenings are also incorporated: explicit
+queued/running/waiting/terminal states and the actual `saveNewSetInternal()` caller, with corresponding
+acceptance fixtures. Firmware and verification tasks remain unimplemented/unrun.
+
 **Execution workflow:** use [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) packets and tasks D0 for every upcoming slice (DEC-080); acceptance fixtures precede production behavior changes.
 **Next OpenSpec change (proposed + G2-reviewed, not started):** [`deferred-slot-restore-liveness`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md)
 — read its `design.md` § G2 execution packets; its Packet A's acceptance fixtures assert the **desired**

@@ -1,5 +1,16 @@
 # Project state (execution context)
 
+
+**2026-09-23 — restore-liveness plan correction (documentation only).**
+The final review's callback re-entry finding is addressed in
+[`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
+**A3.4a — drain re-entry and callback safety**, required before **A3.5 — holdoff MIDI servicing**.
+The contract adds a scoped owner guard, pre-side-effect refusal of conflicting callbacks, live eligibility
+and target revalidation, and production-dispatch fixtures. CLEAR gates consistently permit named refusals
+and reject unexplained aborts. The final falsification tightenings are also incorporated: explicit
+queued/running/waiting/terminal states and the actual `saveNewSetInternal()` caller, with corresponding
+acceptance fixtures. Firmware and verification tasks remain unimplemented/unrun.
+
 **2026-09-23 DEC-081 LANDED: audible playback no longer gates persistence and never stops for it.**
 
 The owner ruled that the "all tracks silent" persistence gate is **superseded** by *never require stopping,
