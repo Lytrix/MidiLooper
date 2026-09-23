@@ -53,6 +53,8 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/CurrentSetBootLoad.cpp"
 #include "../../src/StorageManager/LegacyMonolithLoad.cpp"
 #include "../../src/StorageManager/SavedSetIo.cpp"
+#include "../../src/Loop/LoopContentHistory.cpp"
+#include "../../src/StorageManager/LoadedTrackStateApply.cpp"
 #include "../../src/Track/TrackDisplayState.cpp"
 #include "../../src/TrackManager/TrackManagerMidiLedFeedback.cpp"
 #include "../../src/TrackManager/TrackManagerMemoryPressure.cpp"
@@ -95,13 +97,10 @@ void tearDown() {}
 /// because the remaining closure is larger than Packet A needs. A1.7 and Packet C re-enable the real
 /// drain call here; the include list above is the measured closure recorded in `REVIEW.md`.
 /// Behaviour-free closure proof: the boundary stubs and the closed import set compile and link
-/// together. The **real** drain call is not made here yet -- retaining it pulls the remaining
-/// `TrackManager`/`DisplayManager`/`EditManager` owners recorded in `REVIEW.md` A1.7, which is a scope
-/// decision rather than a fixture mechanic.
+/// together. The **real** drain call is deliberately not retained here: A1.7 measured that doing so also
+/// needs the display stack, which is a recorded scope decision (see `REVIEW.md` A1.7), not a fixture
+/// mechanic.
 void test_drain_suite_links_the_closed_import_set() {
-  // Behaviour-free closure proof. The real drain call is not retained here: doing so pulls the cold
-  // display/edit/track-manager owners listed in REVIEW.md A1.7, which is a scope decision, not a
-  // fixture mechanic.
   TEST_ASSERT_TRUE(StorageManagerInternal::pendingLoopSlotRestoreCount() == 0);
 }
 

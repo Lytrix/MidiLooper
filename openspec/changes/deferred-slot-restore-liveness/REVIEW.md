@@ -198,14 +198,29 @@ was found. Fixed with an explicit `::` qualification at the call site (one line 
 firmware build and the native suites were both re-run after the fix. This unblocked the capture-queue TU
 natively, which in turn supplies `hasQueuedRecordingTrack` and the capture-side `TrackManager` members.
 
-**Assessment.** The drain's C5 behavior is not natively reachable by a bounded closure; it needs most of
-the persistence stack plus cold display/edit/track-manager owners, and it exposes a genuine overload
-ambiguity in production code. Packet C's tasks A3.1/A3.3/A3.4 assume native drain fixtures, so the
-options are (a) declare a deliberate "drain native-link expansion" slice that absorbs that set and
-resolves the ambiguity, or (b) amend Packet C to verify the drain's C5 behavior on device only, with
-native coverage limited to the parts that link. **Recommended: (a)**, because A3.3's budget/progress
-accounting and A3.4a's re-entry guard are logic that a device-only gate cannot falsify cheaply. This is
-recorded for the owner; no fixture, red evidence or diagnostic count is claimed for A1.7 yet.
+**Assessment, after attempting the expansion.** A fifth round took the "absorb it" path and measured
+where it actually ends: retaining the real drain call pulls the **display stack** as well
+(`DisplayManager::DisplayManager()` and its `_display` member drag the OLED/Adafruit-GFX font chain into
+the native build), on top of the persistence stack and the cold display/edit/track-manager owners. The
+native drain path is therefore close to the whole firmware, and the expansion cannot be justified as a
+test-only closure.
+
+**Revised recommendation — split, do not absorb.** Packet C's requirements divide cleanly:
+
+- **Pure decisions are already native-testable** and should carry the tight oracles: drain budget and
+  progress accounting (`PersistenceSyncDrainBudget`, `buildSyncDrainBudget`, `madeSyncDrainProgress` —
+  already a native suite), the A3.2 wait-reason classification, and the A3.4 three-way caller contract
+  mapping. These are the parts where a device run is a slow and weak oracle.
+- **The integration claim — "the drain advances the restore it waits on" (A3.1)** — is what needs the
+  real thread, and that belongs to the device gate (A3.7), with A2.5/A3.7's capture evidence as its
+  oracle. The contract already has that gate; this only says the native fixture cannot be the primary
+  evidence for it.
+
+This keeps A1.7's deliverable honest: **the drain's C5 defect stays read-from-code with its mechanism
+cited, plus a native closure proof for everything that does link**, and the red-fixture claim moves to the
+packets whose logic is separable. Amending `tasks.md` A1.7/A3.1 to that scope is the next step and is
+recorded here rather than taken silently. No fixture, red evidence or diagnostic count is claimed for
+A1.7.
 
 ---
 
