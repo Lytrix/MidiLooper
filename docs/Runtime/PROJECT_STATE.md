@@ -1,5 +1,29 @@
 # Project state (execution context)
 
+**2026-09-24 — A2.5 device run taken: boot restore liveness demonstrated, gate still open.**
+
+The board was available, so the Packet B device gate was run: firmware flashed
+(`teensy41-capture-serial`, upload SUCCESS — also the required reboot) and the canonical base stimulus
+run through the authoritative managed path (`host_midi_hitl.py run --preset base`, track 5 / slot 1 /
+channel 5).
+
+**The run first required implementing the restore telemetry.** A2.5 needs each boot payload's state to be
+*reported*, and the source emitted nothing — exactly the A1.8 line deferred to Packet B. `SC_RESTORE_REQUEST`
+now emits one event-shaped `#CAP,...,RRQ` line per request transition (full identity + named
+state/wait/terminal); it had to be `FLASHMEM`, because inlined into the ITCM transitions it cost 144 B and
+the post-link gate rejected the build.
+
+**Measured** (`captures/host_midi_automation_serial_20260924_012548.log`): 29 requests reached `queued`,
+29 `running`, 29 `terminal/committed`; the first went `queued → running → terminal/committed` in **33 ms**;
+no request left queued or running; `overflow_free=True`, zero `RING,overflow`. **The boot restore queue is
+serviced after a fresh boot.**
+
+**Three clauses are not closed:** the harness attaches mid-restore so the whole boot drain is not in the
+log; the managed run's own verdict is `INCONCLUSIVE_CAPTURE` (the documented `record stop did not reach
+PLAYING` setup-state race, a harness weakness, not a functional failure), so the MIDI-gap clause has no
+valid oracle here; and the previously-`EMPTY`-slot census was not exercised. A2.5 therefore stays **open**
+with a clean-run recipe recorded in `tasks.md`/`REVIEW.md`.
+
 **2026-09-23 continued — A3.3's native scope landed (Packet C, per the Revision 5 split).**
 
 The drain's restore accounting is now native-verified while the drain-integration claim stays with the
