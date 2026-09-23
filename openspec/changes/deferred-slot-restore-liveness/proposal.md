@@ -148,8 +148,9 @@ gate) and for the content-verified PASS. `docs/Runtime/PROJECT_STATE.md` already
   by `MidiServiceDrain::admitLoadJobChild(timingCriticalTrackActive, activeCommitPending)` and has no
   content-independent bound; bounding it is the open clause of
   `resumable-midi-boundary-playback-maintenance` task 3.3, which this change names as an external
-  prerequisite rather than absorbing. The promise here is: never lost, never starved, never silently
-  terminated, preparation advances under transport, and apply happens at the first admitted turn.
+  prerequisite rather than absorbing. The promise here is bounded and precise: never lost, never silently
+  terminated — the request is either served or in a **named wait** that names its reason and its clearing
+  condition, and such a wait may last until the external prerequisite is resolved.
 
 ## Known behavior, evidence-backed assumptions, and UNKNOWNs
 
