@@ -83,6 +83,9 @@ void ClockManager::assignCurrentTickSilently(uint32_t tick) { currentTick = tick
 // hardcoded true, so a case can stop the transport and then drive the *production*
 // retarget/epoch entry rather than only moving the fake clock. Reset in setUp.
 bool nativeTransportRunning = true;
+/// Counts `Track::silenceTrackMidiOutput()` (defined in `off_path_deps.h`, which is included much
+/// later). Declared here so `setUp` can reset it.
+unsigned g_nativeSilenceTrackCalls = 0;
 bool ClockManager::isTransportRunning() const { return nativeTransportRunning; }
 bool ClockManager::shouldQuantizeRecordStart() const { return true; }
 
@@ -118,6 +121,7 @@ struct PoolCreditControl {
 // and physical outputs are native boundaries; off-path domain stubs fail closed.
 void setUp() {
   nativeTransportRunning = true;
+  g_nativeSilenceTrackCalls = 0;
   trackManager.~TrackManager();
   LoopEventStore::resetPoolForTests();
   new (&trackManager) TrackManager();
@@ -4194,11 +4198,19 @@ void test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_i
   TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
   TEST_ASSERT_EQUAL_UINT64(TrackCaptureStopTestAccess::interval(track),
                            TrackCaptureStopTestAccess::jobInterval(track));
-  // The STOPPED-destination *drain* is not assertable in this suite: the retire block for a Stopped
-  // destination calls `Track::silenceTrackMidiOutput()`, which is a fail-closed off-path stub in
-  // `off_path_deps.h`. Recorded as a harness limitation, not as coverage -- the retarget and the
-  // no-loss property above are what this fixture owns. The `Playing`-destination drain is covered by
-  // B02 and the S2b2 fixture.
+  // Drain the retargeted job. This half is only reachable now that `silenceTrackMidiOutput` is a
+  // counting output boundary instead of a fail-closed stub; the `Stopped`-destination retire block is
+  // the only production path that silenced a track and had no native coverage at all.
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE_MESSAGE(track.isStopped(),
+                           "a retargeted stop must resolve to STOPPED, never PLAYING");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, g_nativeSilenceTrackCalls,
+                                   "the STOPPED retire path silences the track exactly once");
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE(track.getActiveLoop().hasCommittedPasses());
 }
 
 int main() {

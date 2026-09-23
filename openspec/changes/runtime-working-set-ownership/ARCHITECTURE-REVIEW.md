@@ -875,10 +875,14 @@ slot switch and release through the guards S4f.5 just fixed — and its deferred
 
 ### Recorded limitations — NOT coverage
 
-- **The `Stopped`-destination *drain* is not assertable in this suite.** The retire block for a `Stopped`
-  destination calls `Track::silenceTrackMidiOutput()`, which is a fail-closed off-path stub in
-  `off_path_deps.h`. So the fixture owns the retarget and no-loss properties; the drain is covered for a
-  `Playing` destination (B02, S2b2) but not for `Stopped`.
+- **The `Stopped`-destination drain is now covered** (updated same day). `Track::silenceTrackMidiOutput()`
+  was converted from a fail-closed `OFF_PATH()` stub to an **observable counting boundary**
+  (`g_nativeSilenceTrackCalls`, reset in `setUp`) and B03 drains the retargeted job: it resolves to
+  `STOPPED` and never `PLAYING`, silences the track **exactly once**, clears the accepted obligation and
+  commits one pass. The stub was over-broad: silencing is reachable from *both* stop destinations, so
+  failing closed on it left the entire `Stopped`-destination retire path -- production behavior, and one
+  the accepted-stop work touches -- with no native coverage at all. Counting keeps it observable without
+  pretending the physical silence is under test.
 - **The latched (accepted, not admitted) transport-stop leg is not assertable either**, for the same
   reason plus the `commitCaptureForStop` stub: with credit denied the transport-stop path takes the
   synchronous fallback, which those stubs exist to keep off this suite's path. On device that fallback is
