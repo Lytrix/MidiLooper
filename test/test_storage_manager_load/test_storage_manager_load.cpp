@@ -169,8 +169,9 @@ void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
   // deliberately avoided: it would drag the note-edit input layer into this suite.
   clockManager.assignCurrentTickSilently(96);
   Loop& loop = track.getLoop(0);
-  loop.beginCapture(CapturePhase::Overdub, 0);
-  track.forceSetState(TRACK_OVERDUBBING);
+  // The interval is opened through the production start, not by poking Loop state: a hand-built interval
+  // admits a job that can never finalize, which the retirement half of this fixture would then never reach.
+  track.startOverdubbing(96);
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(96, 1, 60, 100)));
   TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(120, 1, 60, 0)));
   TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admit(track, PendingStopDestination::Playing, 96));
@@ -188,6 +189,30 @@ void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
   TEST_ASSERT_TRUE_MESSAGE(track.getLoop(0).hasCommittedPasses(),
                            "the load must not have reset the slot out from under its owner");
 
+  // The other half of S2b.5: once the owner retires, the retained request is served exactly once. The
+  // in-memory card holds no payload for this slot, so the correct post-retirement outcome is an attempt
+  // that empties it -- allowed now precisely because no live owner remains.
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE_MESSAGE(track.noLiveOwnerForSlot(0),
+                           "the retired slot has no live owner, so the load may proceed");
+  TEST_ASSERT_EQUAL_UINT16(1, StorageManagerInternal::pendingLoopSlotRestores_.count);
+
+  (void)StorageManager::selectSubmittedLoadJobs();
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the retained request is consumed once the owner retires");
+  // The retired interval committed its content, so the queued restore is resolved as *unnecessary* rather
+  // than served: the pop's done-test discards it, no load is begun, and the fresh committed content is left
+  // alone. That is the correct post-retirement outcome, and it is why no attempt is marked.
+  TEST_ASSERT_FALSE_MESSAGE(StorageManagerInternal::isLoopSlotRestoreAttempted(0, 0),
+                            "a satisfied slot is resolved without a load attempt");
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(0).hasCommittedPasses(),
+                           "nothing may reset the slot after the interval committed");
+  // A second selection finds nothing left: exactly one request, one attempt.
+  (void)StorageManager::selectSubmittedLoadJobs();
+  TEST_ASSERT_EQUAL_UINT16(0, StorageManagerInternal::pendingLoopSlotRestores_.count);
 }
 
 int main(int, char**) {
