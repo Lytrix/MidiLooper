@@ -843,3 +843,41 @@ void STORAGE_PERSIST_MEM StorageManager::probeParkedLoadLoopJob(bool& active, ui
     slot = parkedLoadLoopJob_.slot;
     phase = static_cast<uint8_t>(parkedLoadLoopJob_.phase);
 }
+
+void STORAGE_PERSIST_MEM StorageManager::probeRestoreState(RestoreStateProbe& out) {
+    using namespace StorageManagerInternal;
+    out = RestoreStateProbe{};
+
+    out.queuedCount = pendingLoopSlotRestoreCount();
+    DeferredLoopSlotRestore head{};
+    if (peekFirstPendingLoopSlotRestore(head)) {
+        out.queueHeadPresent = true;
+        out.queueHeadTrack = head.track;
+        out.queueHeadSlot = head.slot;
+        out.queueHeadPriority = head.restorePriority;
+        // The head's own startability, which is the state an operator needs to tell "the head is
+        // blocked on an owner" from "the queue is empty" without a bisect.
+        out.queueHeadStartable = queuedRestoreMayBegin(head.track, head.slot);
+    }
+
+    if (loadLoopJob_.active) {
+        out.activeJob = true;
+        out.activeJobTrack = loadLoopJob_.track;
+        out.activeJobSlot = loadLoopJob_.slot;
+        out.activeJobPhase = static_cast<uint8_t>(loadLoopJob_.phase);
+        out.activeJobIsFocus = loadLoopJobIsFocusSlot();
+        out.activeBytesRead = loadLoopJob_.bytesRead;
+        out.activePayloadSize = loadLoopJob_.payloadSize;
+    }
+    if (parkedLoadLoopJob_.active) {
+        out.parkedJob = true;
+        out.parkedJobTrack = parkedLoadLoopJob_.track;
+        out.parkedJobSlot = parkedLoadLoopJob_.slot;
+        out.parkedJobPhase = static_cast<uint8_t>(parkedLoadLoopJob_.phase);
+        out.parkedBytesRead = parkedLoadLoopJob_.bytesRead;
+        out.parkedPayloadSize = parkedLoadLoopJob_.payloadSize;
+    }
+
+    out.saveBlockedBySlotLoad = deferredSaveBlockedByActiveSlotLoadSd();
+    out.saveBlockedByPostLoadHoldoff = deferredSaveBlockedByPostLoadCommitHoldoff();
+}
