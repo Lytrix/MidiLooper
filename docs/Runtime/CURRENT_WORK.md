@@ -12,18 +12,20 @@ Two facts define what may be implemented right now:
    measurable natively), and phases B–E. The restored set is unstable across boots, so no deterministic
    single-slot capture can be produced until the defect is fixed.
 2. **New OpenSpec change `deferred-slot-restore-liveness` — PROPOSED 2026-09-23, planning complete,
-   `openspec validate` clean, G2 adversarial contract review's six findings corrected
-   (`tasks.md` Revision 2), no implementation started.** It exists to unblock (1). Read its
+   `openspec validate` clean, two G2 adversarial contract reviews' nine findings corrected
+   (`tasks.md` Revisions 2–3), no implementation started.** It exists to unblock (1). Read its
    [`proposal.md`](../../openspec/changes/deferred-slot-restore-liveness/proposal.md) and
-   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it. Three
-   corrections bind any future work on it: (a) its promise is scoped to **preparation** — bounded Commit
-   is the open clause of `resumable-midi-boundary-playback-maintenance` **task 3.3** and is a named
-   external prerequisite, so no acceptance criterion may claim a restore *applies* under timing-critical
-   transport, and `MidiServiceDrain::admitLoadJobChild` must not be relaxed here; (b) its acceptance
-   fixtures assert the **desired** behavior (red now, green after the fix) and the red set is excluded
-   from the initial green gate behind a named flag; (c) the blocking drain must **advance** the restore
-   (active and parked instances), because the normal deferred-load frame cannot run while the drain owns
-   the thread. C3 (one-shot enqueue) is withdrawn.
+   [`design.md`](../../openspec/changes/deferred-slot-restore-liveness/design.md) before coding it. Four
+   corrections bind any future work on it: (a) **scope** — it delivers diagnosable preparation and named
+   waits plus drain advancement where the commit gate admits; it does **not** by itself unblock CLEAR
+   while another track keeps playing, because that needs bounded commit/cleanup, the open clause of
+   **runtime-maintenance task 3.3**, and per-phase gate narrowing is design O5 (needs its own review);
+   (b) the commit gate is **global** — `hasLoadLoopJobCommitPending()` is true for *either* job instance,
+   so one request at commit blocks every other request's preparation (`waiting_job_capacity`), and
+   queue-head skipping does not solve that; (c) the drain must derive admission from the **same all-tracks
+   runtime eligibility** as the normal path (`handleClearTrack` stops only the selected track) and must
+   charge restore work in its budget and progress detection; (d) `MidiServiceDrain::admitLoadJobChild`
+   must not be relaxed here.
    **Do not implement it without the owner starting the apply workflow.**
 
 **Scope note — landed work that is NOT tracked by an OpenSpec change.** The persistence-immediacy and SD
