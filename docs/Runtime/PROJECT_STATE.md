@@ -134,6 +134,19 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   gap and the full B04 plan (files to link, in-memory SD/File emulation, stub boundaries, assertion
   sequence, and the ordering against B06 and the mid-copy fixture) are pinned in
   `ARCHITECTURE-REVIEW.md` § P1 -- S2b.5. Full native **2,272 / 1 skipped / 0 failures**.
+- **Two decisions recorded for the architect (2026-09-23), both about not inventing on the implementer's
+  authority.** (1) **S4f.4's transport-epoch counter**: the drive already satisfies the epoch's behavioural
+  requirement -- it re-derives the destination from live transport state and the boundary tick from
+  `getCurrentTick()`, never trusting the stored absolute tick -- and no existing tick-domain epoch can be
+  reused, so the contract's new `TrackManager` counter is new RAM1 state (`Track`'s `.bss` additions are
+  documented as costing ~4 KB of locals each) with only a diagnostic use. The latch currently stores a
+  `transportEpoch` nothing consumes, which is worse than wiring or removing it; **recommended: drop the field
+  (latch 40 -> 32 bytes, update its pin) and record the epoch as satisfied by live re-derivation**.
+  (2) **The load harness is a multi-slice build**, with increment-1 findings from a one-build probe: the
+  native link script allow-lists only `test_continuous_capture` for the Arduino/SD stub path; the `SD.h` stub
+  declares only `struct File {};` with **no `SD` object**, so an in-memory SD/File emulation is needed rather
+  than a header tweak; and `CurrentSetStorage::verifySaveFileTokenAtPath` is not visible, so those units must
+  be linked. Nothing was committed from the probe and the tree is unchanged.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the
