@@ -1280,3 +1280,45 @@ The fixture is **green as a characterization of the pre-fix behaviour**, which i
 The fix is now a bounded edit: make the callers peek/pre-check (or use the forced enqueue) so a slot with a
 live owner keeps its request, and re-point the fixture at the fixed behaviour — the entry **still queued**,
 the Loop not reset, and exactly one restore after the owner retires.
+
+## P1 — B04's live-owner fixture: the goal narrows and the target is precise (2026-09-23)
+
+Attempting the *real* B04 fixture produced a sharper statement of both the fixture and the fix, and left the
+suite verified at 4/4. Nothing was committed from the attempt.
+
+### What the attempt established
+
+1. **The owning predicate is a live *job*, not committed content.** `noLiveOwnerForSlot` — correctly — does
+   not treat committed passes as an owner. So S2b.5's guard is about a live deferred job on the slot (ring
+   window, `captureStopOwner`, prepared handover in flight, the accepted stop latch), and the fixture must
+   build that state rather than a merely-committed slot.
+2. **That state can be built without the MIDI/note-edit layer**, which matters for suite size: open the
+   interval on the Loop directly (`beginCapture(CapturePhase::Overdub)` + `forceSetState(TRACK_OVERDUBBING)`)
+   and admit through `Track::beginDeferredOverdubStop` via the **existing** friend contract
+   (`TrackCaptureStopTestAccess`, which `Track.h` already names as a friend — a suite defines only the
+   helpers it needs, as `test_continuous_capture` does). Going through `midiButtonActions` instead drags in
+   `analyzeEditSessionInteractions` and `resolveConstrainedGeometry`.
+3. **The remaining linkage, in the order it appeared:** `StorageLoopIo.cpp` +
+   `StorageLoopIoBodyFormatV1.cpp` (they define `releasePersistedLoopSnapshotChunks`, despite the name of
+   `PersistedLoopSnapshotRelease.cpp`), then `LoadLoopBudget.cpp` (`shouldFinishActiveBeforePreempt`). The
+   chain advances one TU per probe and is converging, but it is linkage, not analysis.
+4. **The fix itself is designed and local.** Guard the four pop sites in `LoadLoopJob.cpp`
+   (`ensureActiveLoadLoopJobSelected`'s parked and empty `BeginFocusFromQueue` branches, its
+   `popNextDeferredLoopSlotRestore` fallback, and `EmptyIdleAction::BeginBackgroundFromQueue`) with
+   `noLiveOwnerForSlot(entry.track, entry.slot)` **before** the pop: when a live owner holds the slot, leave
+   the entry queued and return. For the `popNext` sites the entry must be peeked first, since the pop has no
+   filter. That is a bounded edit confined to one file plus its test.
+
+### Verification (unchanged state)
+
+| check | result |
+|---|---|
+| load suite | **4/4** |
+| full native | **2,276 cases / 1 skipped / 2,275 succeeded / 0 failures** |
+| firmware + budget | SUCCESS, RAM1 line unchanged |
+
+### Next increment, fully specified
+
+Link the three remaining TUs, add the live-owner fixture (design above), watch it **fail**, then apply the
+four-site guard and re-point the fixture at the fixed behaviour: entry **still queued**, Loop not reset,
+exactly one restore after the owner retires.
