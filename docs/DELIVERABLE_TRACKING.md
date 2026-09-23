@@ -7,7 +7,12 @@
 DEC-080 strengthens [implementation readiness](Authority/IMPLEMENTATION_READINESS.md#g2-execution-packet--required-for-each-implementation-slice)
 with fixture-first execution packets and evidence-backed checkoff. The runtime-working-set-ownership
 [phase review](../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) specifies acceptance
-for upcoming slices; test fixtures and firmware remain to be implemented. This is not a shipped runtime feature.
+for upcoming slices. The change's **native measurement stage (S1) has since landed its fixtures** — the 1-vs-4
+and synthetic 60-descriptor residence laws, the dense-24-bar library capacity law, and the dense-seal
+diagnosis (all in the default native gate) — plus the first boot/admission behaviors (S2b.1/S2b.2 and the
+accepted-stop latch). **Nothing here is shipped firmware:** the change is on
+`feature/runtime-working-set-ownership`, not `dev`, and its device gates are unrun. This is not a shipped
+runtime feature.
 
 ## Shipped vs Next (updated Sep 2026)
 
