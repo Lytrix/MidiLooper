@@ -1,5 +1,40 @@
 # Project state (execution context)
 
+**2026-09-23 owner asks: persist a take as it records, and make CLEAR immediate — part 1 landed (not yet effective), part 2 diagnosed, and a content pass run (inconclusive, setup class).**
+
+Full findings and the exact remaining gates:
+[`docs/Plans/persistence_immediacy_clear_latency_refinement.md`](../Plans/persistence_immediacy_clear_latency_refinement.md).
+
+**Persist-as-you-record.** The incremental mechanism already exists — `LoopEventStore::sealChunk` admits each
+sealed capture chunk via `PersistenceQueue::admitSealedChunk`, and `stepMidPassChunkPersist` writes one and
+emits `PERS,mid_pass` — but it sat behind `processDeferredSaveState`'s transport gate, so a take lived only
+in RAM until the stop. **Landed:** a deliberate one-chunk-per-turn exception in
+`DeferredSaveScheduler.cpp` (FLASH-resident helper; guard kept for an active `SlotLoadSession`; not starved
+by a parked workspace save; the bundle writers stay parked because they are what caused the 90-598 ms
+display gaps). Firmware SUCCESS at `padding 888` (48 B above the floor, i.e. 64 B of ITCM spent). Device: the
+risk check passes — a 24-bar take reports `overflow_free=True call_sites=True`. **NOT yet effective:**
+`PERS,mid_pass` never appeared, because `main.cpp`'s `runDeferredSaveState` requires
+`hasDeferredSaveWork()` *and* the persistence idle-owner allowance, so the scheduler is not invoked during a
+take. Next: give the queued-capture-chunk flush its own invocation reason, then verify `PERS,mid_pass`
+appears between `EMPTY->RECORDING` and `RECORDING->STOPPED_RECORDING`. No native suite links
+`DeferredSaveScheduler.cpp`, so this is device-verified only.
+
+**CLEAR latency — diagnosed.** The clear stops only the **selected** track (`MidiButtonActions`,
+`track.stopPlaying()`), while the blocking drain's first gate `isTransportActiveForPersistence()` is true
+while **any** track is audible or recording. With other tracks sounding the gate can never clear, the drain
+spins its whole stuck budget and CLEAR aborts (`Persistence drain stuck ... Clear aborted: could not
+complete deferred save first`) — which also explains the intermittency. Preferred fix: **retire the guard per
+slot** (supersede the pending work for the slot being reset and clear immediately), preserving the guard's
+stated purpose — keeping the writer off a slot mid-reset — as per-slot supersession instead of a global
+wait. Silencing every track would be smaller but trades a slow CLEAR for an audible gap, against the
+never-stop-playing rule; a bigger slice budget cannot help while the gate blocks.
+
+**Content pass (owner ask):** `captures/content-pass-01/` -> `INCONCLUSIVE_CAPTURE (SETUP_UNCONFIRMED)`.
+Healthy: `record loop length 1536/1536`, `persistence handoff result=ok duration_us=74940`
+(`loop_persist=691 sliced=True ok=True`). Not healthy: `stored overdub span count=0/15 ... count_ok=False` —
+the overdub phase did not register. Per the standing rule that class is **retried, never reinterpreted**, so
+no content verdict is claimed.
+
 **2026-09-23 SD temp-write truncation FIXED (a pre-existing defect found by the rwso device session) — the boot catalog reconcile is repaired; a separate capture-loss problem still blocks the content PASS and S1.3's slope sweep.**
 
 Root cause, confirmed in the vendor headers: Teensy's `SD.open(path, FILE_WRITE)` is
