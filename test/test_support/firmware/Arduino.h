@@ -14,7 +14,12 @@ inline uint32_t millis() { return 0; }
 inline void delay(uint32_t) {}
 inline void delayMicroseconds(uint32_t) {}
 
-struct NativeSerial { template<class... A> void printf(const char*, A...) {} };
+struct NativeSerial {
+  template<class... A> void printf(const char*, A...) {}
+  void println() {}
+  template <class T> void println(const T&) {}
+  void flush() {}
+};
 inline NativeSerial Serial;
 class File;
 inline void noInterrupts() {}
