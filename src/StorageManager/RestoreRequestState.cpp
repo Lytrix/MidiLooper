@@ -207,6 +207,14 @@ STORAGE_PERSIST_MEM void noteRestoreSetEpoch(uint32_t setEpoch) {
 
 STORAGE_PERSIST_MEM uint32_t restoreSetEpoch() { return restoreSetEpoch_; }
 
+STORAGE_PERSIST_DATA uint32_t g_restoreProgressCounter = 0;
+
+STORAGE_PERSIST_MEM void bumpRestoreProgressCounter() { ++g_restoreProgressCounter; }
+
+
+STORAGE_PERSIST_MEM uint32_t restoreProgressCounter() { return g_restoreProgressCounter; }
+
+
 STORAGE_PERSIST_MEM uint32_t restoreRequestGenerationFor(uint8_t trackIndex, uint8_t slotIndex) {
     if (!coordinatesValid(trackIndex, slotIndex)) {
         return 0;

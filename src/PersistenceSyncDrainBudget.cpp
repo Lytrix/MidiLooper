@@ -130,10 +130,12 @@ uint32_t estimateWorkItemSdBytes(PersistWorkType type, const LoopPasses* loopPas
 
 SyncDrainBudget buildSyncDrainBudget(const SyncDrainBudgetInput& input, uint32_t sliceBudgetUs) {
   SyncDrainBudget budget{};
+  // A3.3: restore work is charged alongside persistence work, so a drain that has to advance a large
+  // restore is not budget-starved by a persistence-only estimate.
   budget.expectedSliceSteps = input.queuedWorkSliceSteps + estimateMidPassSliceSteps(input.midPassQueueDepth) +
-                              input.finalizeSliceSteps;
-  budget.estimatedSdPayloadBytes =
-      input.queuedWorkSdBytes + estimateMidPassSdBytes(input.midPassQueueDepth);
+                              input.finalizeSliceSteps + input.restoreSliceSteps;
+  budget.estimatedSdPayloadBytes = input.queuedWorkSdBytes + estimateMidPassSdBytes(input.midPassQueueDepth) +
+                                   input.restoreSdBytes;
   budget.sliceBudgetUs = sliceBudgetUs;
 
   budget.maxSliceSteps =
@@ -167,6 +169,15 @@ bool madeSyncDrainProgress(const SyncDrainProgressSnapshot& before,
     return true;
   }
   if (before.pendingFlush && !after.pendingFlush) {
+    return true;
+  }
+  // A3.3: restore motion counts as drain progress **before** the "no active work item" short-circuit,
+  // because the C5 shape is exactly "a save is owed and the drain is waiting on the restore": with no
+  // active persistence work item, a drain advancing that restore must not read as stuck.
+  if (after.restoreProgressCounter != before.restoreProgressCounter) {
+    return true;
+  }
+  if (after.restorePhase != before.restorePhase) {
     return true;
   }
   if (!after.workItemActive) {

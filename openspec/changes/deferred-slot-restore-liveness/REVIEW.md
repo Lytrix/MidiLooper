@@ -380,6 +380,30 @@ A1.7.
 - **Evidence:** suite **26/26** default (and identical with the now-inert flag set); firmware SUCCESS at
   `variables 96,192 / ITCM code 392,344 + padding 872 / locals 34,880`.
 
+### A3.3 — restore work in the drain budget and progress accounting (native scope done)
+
+- **Budget:** `SyncDrainBudgetInput` gains `restoreSliceSteps`, `restoreSdBytes` and `restoreOnlyBlocker`;
+  `buildSyncDrainBudget` charges them alongside persistence work, so `maxSliceSteps` covers a restore the
+  drain may have to advance.
+- **Progress:** `SyncDrainProgressSnapshot` gains `restorePhase` and a monotonic `restoreProgressCounter`.
+  Both are compared **before** `madeSyncDrainProgress`'s `!after.workItemActive` short-circuit — the C5
+  shape has *no* active persistence work item, so a drain advancing the restore it waits on previously
+  read as stuck. That ordering is the substantive fix, not the field addition.
+- **Wiring:** the counter is bumped per serviced job grain (`stepSubmittedLoadJobsImpl`), and
+  `captureSyncDrainProgressSnapshot` / `buildSyncDrainBudgetForSession` populate the restore terms from
+  the live job instances through `restoreWorkPhase` / `restoreWorkSliceSteps` / `restoreWorkSdBytes`.
+- **Evidence:** `test_persistence_sync_drain_budget` **7/7** with three new cases (restore raises the
+  budget; restore motion alone is progress while no-motion is not; a restore-only budget is bounded);
+  `test_storage_manager_load` 26/26; firmware SUCCESS at the approved RAM1 line
+  `code 392,344 + padding 872`.
+- **Trimmed under RAM1 pressure, and worth recording:** the first version also added `restoreBytesRead`
+  and `restoreParsePosition` progress terms. The post-link gate rejected the build (`padding 808`, below
+  the 840 floor) and the honest fix was not to re-base the budget but to recognise that the per-grain
+  counter **strictly subsumes** byte and parse-position motion. Removing the two fields returned the build
+  to the approved line. A budget re-base was available and was not needed.
+- **Not claimed:** that the drain *advances* the restore. That integration claim is A3.7's device gate per
+  Revision 5; this task delivers the accounting the drain reads.
+
 ---
 
 ## Mechanism ledger (A1.9)

@@ -272,6 +272,17 @@ void noteRestoreSetEpoch(uint32_t setEpoch);
 uint32_t restoreSetEpoch();
 uint32_t restoreRequestGenerationFor(uint8_t trackIndex, uint8_t slotIndex);
 void resetAllRestoreRequestState();
+/// A3.3: a monotonic counter bumped each time the restore path is serviced (a job grain or a
+/// selection/admission turn). The blocking drain compares it to decide whether the restore it waits on
+/// is making progress, so a drain advancing a large restore is not misreported as stuck.
+void bumpRestoreProgressCounter();
+uint32_t restoreProgressCounter();
+/// A3.3: the restore work the drain may have to advance, derived from the live job instances, so the
+/// drain's step budget covers it.
+uint32_t restoreWorkSliceSteps();
+uint32_t restoreWorkSdBytes();
+/// A3.3: 255 when no job instance is servicing preparation, else the active instance's phase.
+uint8_t restoreWorkPhase();
 const char* restoreRequestStateName(RestoreRequestState state);
 const char* restoreRequestWaitName(RestoreRequestWait wait);
 const char* restoreRequestTerminalName(RestoreRequestTerminal terminal);
