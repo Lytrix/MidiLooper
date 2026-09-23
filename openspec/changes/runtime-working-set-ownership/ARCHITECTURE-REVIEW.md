@@ -1930,9 +1930,11 @@ Two consequences, both recorded:
    I inferred it from reading the code after seeing a failure that my own construction produced. The fixture and
    its helper are reverted; nothing is claimed. This is exactly the "evidence only once the exact assertion is
    identified" rule again, one level deeper.
-2. **The useful knowledge survives.** For this harness: a slot's content must be appended *before* the arm is
-   prewarmed, or through the staged ingress. That is the missing piece for any future dense-content fixture,
-   including S1.5's third clause, and it is why the earlier sweep's helper failed at its first commit.
+2. **The "useful knowledge" is also withdrawn (2026-09-23, later the same day).** The staging-order rule was
+   itself an artifact of the uncontrolled variable: with pairs >= `DEFAULT_NOTE_MIN_LENGTH_TICKS` apart, all
+   three append/prewarm orders seal. The real cause is the hot-stop **min-length removal** running before the
+   seal's empty check — see § P1 — S1.5 clause 3. Kept visible rather than deleted, because it is the second
+   consecutive inference drawn from a construction that was itself the problem.
 
 ### Where S1.5's third clause stands
 
@@ -2571,3 +2573,69 @@ slope) and the well-formedness case catches the pool exhausting (`admitted=512`,
 descriptors can be admitted at all. Seven cases in the suite go red under that mutation, including the
 1-vs-4 law cases and B01, which is the expected cross-check. The mutation was reverted immediately
 (`src/` is byte-identical; `git diff` on `src/` is empty) and the suite is green again at 95/95.
+
+## P1 — S1.5 clause 3: the dense seal is diagnosed, and the refusal point is outside the supported envelope (2026-09-23)
+
+**Execution packet (DEC-080, measurement slice — no production file is touched).**
+
+- **Scope.** S1.5's third clause: *"the smallest N at which a 24-bar overdub is refused"*. Owner is the test
+  harness. **Non-goals:** the device leg, S1.3's slope, and the byte-budget terms. The **recorded obstacle**
+  was upstream — a dense 24-bar construction did not seal at all, and two findings about why were withdrawn.
+- **Identify the exact branch first (the rule both withdrawn findings broke).**
+  `Loop::sealCapture` runs `CaptureIncrementalSanity::removePairsShorterThanNoteMinLength` **before** its
+  empty check (`LoopCapture.cpp:2266-2284`), so a construction whose note pairs are closer together than
+  `Config::DEFAULT_NOTE_MIN_LENGTH_TICKS` (**8**) has every pair removed, the live store empties, and the seal
+  returns `FailedValidation` from the **`capture.store.empty()` branch** — *not* from the transfer
+  precondition (`preparePendingCapturePassTransfer`), which is what both withdrawn findings had inferred from
+  reading the code after seeing a failure their own construction produced.
+- **The discriminating signature.** The events really are in the live store before the seal; `beginCapture`
+  holds exactly one tail chunk (free = 511); and the failed seal **releases** it, so the pool returns to fully
+  free (**512**) — nothing retained. The positive control at exactly 8 ticks seals `Ok` and keeps its chunk
+  (511). Same density, same ordering, only the pair length differs.
+- **Ordering was not the cause.** All three orders seal with pairs >= 8 ticks apart: never prewarm, prewarm
+  before `beginCapture`, and prewarm between `beginCapture` and the appends. The earlier ordering inference is
+  therefore also withdrawn; the pair length was the uncontrolled variable.
+- **The construction.** 24 bars at the task's recorded ~72 events/bar = 864 pairs = 1,728 events, pairs 8 ticks
+  apart, committed across the 8 x 8 slot matrix, then the production boot admission, then the arm/overdub
+  reserve admission probed on the next empty slot (`prewarmPlaybackForSlot(slot, true)`).
+- **Transition oracle.** Reset -> commit N dense descriptors -> `prewarmPlaybackRuntime()` -> read
+  `freeChunkCount()` -> probe the reserve admission on slot N -> read `freeChunkCount()` again.
+- **Outcome at the boundary.** The probe answers **admitted / refused** only, and the native refusal carries
+  no reason (`MemoryMonitor::reportPrewarmAdmissionDenied` is a no-op stub off-device), so the reason is
+  classified from **pool state** instead — the part that *is* independently derivable. The fixture asserts
+  that arithmetic rather than a diagnostic string.
+
+### Measured
+
+| term | value |
+|---|---|
+| boot's own cost (`n = 0`, free before probe) | 480 of 512 -> **32 chunks** |
+| chunks per dense 24-bar loop | **7** = `ceil(1,728 / 256)`, asserted, constant in N |
+| `n = 63` (the whole matrix bar the probe slot) | free before probe **39**, after **31** |
+| arithmetic | `512 - 32 - 63*7 = 39`; `39 - 8` (`ACTIVE_OVERDUB_TRANSFER_CHUNKS`) `= 31` |
+| refusal within the supported matrix | **none** — the probe is admitted at every N up to 63 |
+| library events at `n = 63` | 108,864 of the 512 x 256 = 131,072 ceiling (83%) |
+
+**So S1.5 clause 3's native answer is that the smallest refusing N lies outside the supported 8 x 8
+envelope.** A library filling the matrix with dense 24-bar loops still admits the 24-bar reserve set, with
+**31 chunks free** — 7 above `CHUNK_RESERVE + ACTIVE_OVERDUB_TRANSFER_CHUNKS` (24).
+
+**Red-proven against the pre-S2b.1 architecture.** With the per-slot canonical reservation restored (making
+`prewarmCanonicalCaptureOutput()` unconditional in `Track::prewarmPlaybackForSlot`), the same construction
+refuses at **N = 30** (free = 6 before the probe, below the 8-chunk reserve), and at `n = 63` the fixture fails
+on its admission assertion with `free before probe=0`. So the HEAD answer is a **capacity result of the S2b.1
+removal**, not a property of the pool. The mutation was reverted immediately; `src/` is byte-identical.
+
+**What this does not establish.** The device's refusal point is **byte**-limited (PSRAM), not id-limited, and
+it is S1.3's device leg; nothing here claims a device capacity number. The ~191-chunk figure the task cites
+for a 24-bar overdub's peak reservation is **not reproducible natively**, because the reserve set's byte terms
+(views, companion rows, snapshot inputs) are heap-backed off-device — which is exactly why the native refusal
+must be reported as an *id-ceiling* result and the clause's device half left open.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **97/97** (+2: the capacity law and the seal diagnosis) |
+| full native | **2,287 cases / 1 skipped / 2,286 succeeded / 0 failures** |
+| firmware + post-link RAM1 budget | SUCCESS, `code 392,312 / padding 904` — unchanged (`src/` untouched) |

@@ -294,10 +294,34 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       is that **`loop.appendCaptureEvent` is not the production ingress once the arm has admitted capture
       staging**: content must be appended *before* the arm is prewarmed, or through `Track`'s staged ingress. I
       never identified which of `sealCapture`'s four `FailedValidation` returns fired, so nothing is claimed.
+      **SUPERSEDED 2026-09-23 (same day): the branch is now identified and the ingress claim above is also
+      withdrawn** — the failure came from the `capture.store.empty()` branch after the hot-stop min-length
+      removal, and the append/prewarm ordering is *not* a factor. See the clause-3 entry below.
       **Next step:** a staging-correct dense construction (append through the staged ingress, or append before
       prewarming); only then can the refusal point be measured -- or answer it on device, where a loaded library
       is read from SD rather than sealed. **Outstanding:** that construction, and the boot `live` figure against
       a 24-bar overdub's peak reservation (~191 chunks).
+      **CLAUSE 3 ANSWERED NATIVELY 2026-09-23 — the construction was the problem, and the branch is now
+      identified.** `Loop::sealCapture` runs `removePairsShorterThanNoteMinLength` **before** its empty check, so
+      note pairs closer than `Config::DEFAULT_NOTE_MIN_LENGTH_TICKS` (**8**) are all removed, the live store
+      empties, and the seal returns `FailedValidation` from the **`capture.store.empty()` branch** — not from the
+      transfer precondition both withdrawn findings had inferred. The signature: events present before the seal,
+      one tail chunk held (free 511), and the failed seal **releases** it (free **512**, nothing retained), while
+      the control at exactly 8 ticks seals `Ok` and keeps its chunk. **Ordering was not the cause** — all three
+      append/prewarm orders seal with pairs >= 8 ticks apart, so that inference is withdrawn too. With a valid
+      construction (864 pairs = 1,728 events = **7 chunks** per dense 24-bar loop, across the 8 × 8 matrix), the
+      answer is: **boot costs 32 chunks; at N = 63 the probe's free chunks are 39 before and 31 after, and the
+      24-bar reserve admission is ADMITTED at every N up to 63 — so the smallest refusing N lies outside the
+      supported envelope.** The library at N = 63 holds 108,864 events (83 % of the 131,072 ceiling) and still
+      keeps 31 free, 7 above `CHUNK_RESERVE + ACTIVE_OVERDUB_TRANSFER_CHUNKS`. **Red-proven:** with the
+      pre-S2b.1 per-slot reservation restored, the same construction refuses at **N = 30** (free = 6), so the
+      HEAD answer is a capacity result of S2b.1 rather than a property of the pool. Fixtures
+      `test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve` and
+      `test_s1_5_a_pair_below_the_min_length_empties_the_store_and_fails_the_seal` (both default gate).
+      **Still open on this task:** the **device** refusal point (byte-limited PSRAM, not the 512-id ceiling) and
+      the boot `live` figure against the ~191-chunk peak reservation, which is **not reproducible natively**
+      because those byte terms are heap-backed off-device. Details:
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S1.5 clause 3.
       **DEVICE BASELINE HALF RECORDED 2026-09-23** on the pinned baseline `83be2e19` (hex `a4bc37e6…040920`,
       isolated build): `#CAP,…,DIAG,capture_prewarm` shows the default enabled set costing a flat **12 chunks per
       track / 96 for 8 tracks** (`free_chunks` 512 → 416), and then **exactly 8 chunks per committed slot** — the

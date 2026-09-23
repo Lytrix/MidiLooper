@@ -3706,6 +3706,93 @@ void commitRecordPassIntoTrackSlot(Track& track, uint8_t slot) {
   TEST_ASSERT_TRUE(loop.hasCommittedPasses());
 }
 
+// ---------------------------------------------------------------------------
+// S1.5 clause 3: the smallest dense-24-bar library that refuses an admission.
+//
+// The recorded obstacle was that a dense 24-bar construction did not seal at all.
+// **Diagnosed 2026-09-23**: `Loop::sealCapture` runs
+// `CaptureIncrementalSanity::removePairsShorterThanNoteMinLength` *before* its empty check, so
+// note pairs closer together than `DEFAULT_NOTE_MIN_LENGTH_TICKS` (8) are removed, the live store
+// empties, and the seal returns `FailedValidation` from the `capture.store.empty()` branch -- not
+// from the transfer precondition, which is what the two withdrawn findings had inferred. The
+// `free=512` signature at that failure (nothing retained) is the distinguishing evidence. With
+// pairs >= 8 ticks apart the same dense construction seals and holds `ceil(1728 / 256) = 7` chunks,
+// and the append/prewarm *ordering* is irrelevant (all three orders seal).
+// ---------------------------------------------------------------------------
+
+/// 24 bars at the task's recorded ~72 events/bar: 36 pairs per bar, 864 pairs = 1,728 events.
+constexpr size_t kDense24BarPairs = 864;
+constexpr uint32_t kDense24BarTicks = 24 * 768;
+/// The shortest pair that survives the hot-stop min-length removal.
+constexpr uint32_t kSurvivingPairTicks = 8;
+
+size_t commitDense24BarLoopIntoTrackSlot(Track& track, uint8_t slot) {
+  TrackCaptureStopTestAccess::selectSlot(track, slot);
+  Loop& loop = track.getActiveLoop();
+  loop.loopLengthTicks = kDense24BarTicks;
+  loop.beginCapture(CapturePhase::Record);
+  size_t appended = 0;
+  for (size_t i = 0; i < kDense24BarPairs; ++i) {
+    const uint32_t on = static_cast<uint32_t>((static_cast<uint64_t>(i) * kDense24BarTicks) /
+                                              kDense24BarPairs);
+    const uint8_t pitch = static_cast<uint8_t>(48 + (i % 12));
+    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(on, 1, pitch, 100)));
+    TEST_ASSERT_TRUE(
+        loop.appendCaptureEvent(MidiEvent::NoteOff(on + kSurvivingPairTicks, 1, pitch, 0)));
+    appended += 2;
+  }
+  TEST_ASSERT_TRUE(loop.sealCapture(kDense24BarTicks, CommitReason::RecordStop) == SealOutcome::Ok);
+  TEST_ASSERT_TRUE(loop.commitPendingCapturePass());
+  TEST_ASSERT_TRUE(loop.hasCommittedPasses());
+  return appended;
+}
+
+struct DenseLibraryAdmission {
+  size_t committed = 0;
+  uint16_t freeBeforeProbe = 0;
+  bool probeAdmitted = false;
+  uint16_t freeAfterProbe = 0;
+};
+
+/// Fresh run: commit `n` dense 24-bar descriptors across the 8 x 8 slot matrix, run the production
+/// boot/load admission, then probe the next empty slot's **arm/overdub reserve admission**
+/// (`prewarmPlaybackForSlot(slot, true)`), which is the reserve set a 24-bar overdub needs.
+/// `n` may be 0 (boot only) through 63 (the matrix's last slot stays free to probe). The library's
+/// per-loop cost is derived by the caller against the `n == 0` run rather than assumed here.
+DenseLibraryAdmission measureDenseLibraryAdmission(size_t n) {
+  constexpr size_t kSlotsAvailable =
+      static_cast<size_t>(Config::NUM_TRACKS) * Config::MAX_LOOPS_PER_TRACK;
+  TEST_ASSERT_TRUE_MESSAGE(n < kSlotsAvailable,
+                           "the sweep needs one empty slot to probe; n must stay below the matrix");
+
+  LoopEventStore::resetPoolForTests();
+  trackManager.~TrackManager();
+  new (&trackManager) TrackManager();
+  LoopEventStore::initPool();
+
+  DenseLibraryAdmission result;
+  for (size_t i = 0; i < n; ++i) {
+    const uint8_t trackIndex = static_cast<uint8_t>(i / Config::MAX_LOOPS_PER_TRACK);
+    const uint8_t slot = static_cast<uint8_t>(i % Config::MAX_LOOPS_PER_TRACK);
+    Track& track = trackManager.getTrack(trackIndex);
+    track.ensureLoopsAllocated();
+    TEST_ASSERT_EQUAL_UINT32(2 * kDense24BarPairs,
+                             static_cast<uint32_t>(commitDense24BarLoopIntoTrackSlot(track, slot)));
+    ++result.committed;
+  }
+
+  trackManager.prewarmPlaybackRuntime();
+  result.freeBeforeProbe = LoopEventStore::freeChunkCount();
+
+  const uint8_t probeTrackIndex = static_cast<uint8_t>(n / Config::MAX_LOOPS_PER_TRACK);
+  const uint8_t probeSlot = static_cast<uint8_t>(n % Config::MAX_LOOPS_PER_TRACK);
+  Track& probeTrack = trackManager.getTrack(probeTrackIndex);
+  probeTrack.ensureLoopsAllocated();
+  result.probeAdmitted = probeTrack.prewarmPlaybackForSlot(probeSlot, true);
+  result.freeAfterProbe = LoopEventStore::freeChunkCount();
+  return result;
+}
+
 /// Boot the production admission path with `recordedSlots` committed slots on the
 /// selected track, then admit the one active slot through the record-arm path. The
 /// active set is one slot in every variant, so any growth in the result is growth
@@ -4000,6 +4087,7 @@ void test_s1_3_sixty_descriptor_characterization_is_well_formed() {
   TEST_ASSERT_TRUE_MESSAGE(sixty.freeChunksAtEnd >= PassConfig::CHUNK_RESERVE, message);
 }
 
+
 /// S1.3 clause 2 law case (invariant 1/25/34 at the contract's 60-descriptor envelope). The active
 /// set is one role in both variants, so any growth between N = 8 and N = 60 is growth caused by the
 /// recorded-slot count. Payload and the runtime directory are reported separately, not asserted flat.
@@ -4047,6 +4135,124 @@ void test_s1_3_residence_is_flat_across_sixty_descriptors() {
                                    message);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0, static_cast<uint32_t>(sixty.horizonsOnInactiveSlots),
                                    message);
+}
+
+/// S1.5 clause 3, default-gate law at the supported envelope: a library filling the whole 8 x 8 slot
+/// matrix with dense 24-bar loops still admits the 24-bar reserve set, so **no library size within
+/// the supported envelope refuses**. Before S2b.1 the same construction refused at N = 30, so this is
+/// the removal's capacity result rather than a description of the pool.
+void test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve() {
+  const DenseLibraryAdmission bootOnly = measureDenseLibraryAdmission(0);
+  const DenseLibraryAdmission full = measureDenseLibraryAdmission(63);
+
+  TEST_ASSERT_EQUAL_UINT32(0, static_cast<uint32_t>(bootOnly.committed));
+  TEST_ASSERT_EQUAL_UINT32(63, static_cast<uint32_t>(full.committed));
+  // One dense 24-bar loop is 1,728 events = ceil(1728 / CHUNK_CAPACITY) = 7 chunks, and the cost is
+  // linear in the library: 63 loops on top of boot's own spend.
+  const int32_t payloadChunks = static_cast<int32_t>(bootOnly.freeBeforeProbe) -
+                                static_cast<int32_t>(full.freeBeforeProbe);
+  const int32_t chunksPerLoop = payloadChunks / static_cast<int32_t>(full.committed);
+  const int32_t expectedPerLoop =
+      static_cast<int32_t>((2 * kDense24BarPairs + LoopEventStoreConfig::CHUNK_CAPACITY - 1) /
+                           LoopEventStoreConfig::CHUNK_CAPACITY);
+
+  char message[512];
+  // The point of the clause, asserted first so a refusal names itself rather than surfacing as a
+  // downstream arithmetic mismatch.
+  snprintf(message, sizeof(message),
+           "a fully populated dense 24-bar library refuses the 24-bar reserve admission: "
+           "free before probe=%u, after=%u, pool=%u, 63 loops x %d chunks on top of boot "
+           "(free at boot only=%u)",
+           static_cast<unsigned>(full.freeBeforeProbe),
+           static_cast<unsigned>(full.freeAfterProbe),
+           static_cast<unsigned>(LoopEventStoreConfig::POOL_CHUNK_COUNT), expectedPerLoop,
+           static_cast<unsigned>(bootOnly.freeBeforeProbe));
+  TEST_ASSERT_TRUE_MESSAGE(full.probeAdmitted, message);
+
+  snprintf(message, sizeof(message),
+           "a dense 24-bar loop does not cost its ceiling: %d chunks/loop over %u loops "
+           "(expected %d; free(boot)=%u free(63)=%u)",
+           chunksPerLoop, static_cast<unsigned>(full.committed), expectedPerLoop,
+           static_cast<unsigned>(bootOnly.freeBeforeProbe),
+           static_cast<unsigned>(full.freeBeforeProbe));
+  TEST_ASSERT_EQUAL_INT32_MESSAGE(expectedPerLoop, chunksPerLoop, message);
+
+  // The reserve set the probe admits is the canonical copy; the pool must still hold it afterwards.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(full.freeBeforeProbe) -
+                               static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+                           full.freeAfterProbe);
+  // And the reason cannot be exhaustion: the pool keeps its own reserve plus the admitted set.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(
+      static_cast<uint32_t>(PassConfig::CHUNK_RESERVE + PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
+      full.freeAfterProbe);
+}
+
+/// S1.5 clause 3, red-proven diagnosis: the dense construction seals **because** its note pairs are at
+/// least `noteMinLengthTicks` apart. A pair one tick short is removed by the hot-stop min-length pass,
+/// which empties the live store, so `sealCapture` reports `FailedValidation` with the pool untouched.
+/// This is the mechanism the two withdrawn findings were guessing at, and it is why the earlier sweep
+/// failed at its first commit.
+void test_s1_5_a_pair_below_the_min_length_empties_the_store_and_fails_the_seal() {
+  // Same construction, same density, same ordering -- only the pair length differs. That the control
+  // seals while the sub-threshold one fails is what makes this a diagnosis rather than a coincidence.
+  struct SealProbe {
+    int outcome = -1;
+    uint16_t freeBeforeSeal = 0;
+    uint16_t freeAfterSeal = 0;
+  };
+  const auto sealWithPairLength = [](uint32_t pairTicks) {
+    LoopEventStore::resetPoolForTests();
+    trackManager.~TrackManager();
+    new (&trackManager) TrackManager();
+    LoopEventStore::initPool();
+    Track& track = trackManager.getSelectedTrack();
+    track.ensureLoopsAllocated();
+    Loop& loop = track.getActiveLoop();
+    loop.loopLengthTicks = kDense24BarTicks;
+    loop.beginCapture(CapturePhase::Record);
+    size_t appended = 0;
+    for (size_t i = 0; i < 16; ++i) {
+      const uint32_t on = static_cast<uint32_t>(i * 64);
+      TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(on, 1, 48, 100)));
+      TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(on + pairTicks, 1, 48, 0)));
+      appended += 2;
+    }
+    TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(appended),
+                             static_cast<uint32_t>(loop.capture.store.size()));
+    SealProbe probe;
+    probe.freeBeforeSeal = LoopEventStore::freeChunkCount();
+    probe.outcome = static_cast<int>(loop.sealCapture(kDense24BarTicks, CommitReason::RecordStop));
+    probe.freeAfterSeal = LoopEventStore::freeChunkCount();
+    return probe;
+  };
+
+  const SealProbe belowThreshold = sealWithPairLength(kSurvivingPairTicks - 1);
+  const SealProbe atThreshold = sealWithPairLength(kSurvivingPairTicks);
+
+  char message[320];
+  snprintf(message, sizeof(message),
+           "a sub-min-length construction must fail the seal from the emptied-store branch: "
+           "outcome=%d, free before=%u after=%u (control: outcome=%d, free %u -> %u)",
+           belowThreshold.outcome, static_cast<unsigned>(belowThreshold.freeBeforeSeal),
+           static_cast<unsigned>(belowThreshold.freeAfterSeal), atThreshold.outcome,
+           static_cast<unsigned>(atThreshold.freeBeforeSeal),
+           static_cast<unsigned>(atThreshold.freeAfterSeal));
+  TEST_ASSERT_EQUAL_INT32_MESSAGE(static_cast<int32_t>(SealOutcome::FailedValidation),
+                                  static_cast<int32_t>(belowThreshold.outcome), message);
+  // The discriminator: `beginCapture` holds exactly one tail chunk, and the emptied store releases
+  // it, so the pool returns to fully free -- nothing was retained. The control keeps its chunk.
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT - 1),
+                           static_cast<uint32_t>(belowThreshold.freeBeforeSeal));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT),
+                           static_cast<uint32_t>(belowThreshold.freeAfterSeal));
+  TEST_ASSERT_EQUAL_INT32(static_cast<int32_t>(SealOutcome::Ok),
+                          static_cast<int32_t>(atThreshold.outcome));
+  TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(LoopEventStoreConfig::POOL_CHUNK_COUNT - 1),
+                           static_cast<uint32_t>(atThreshold.freeAfterSeal));
+  // The min-length removal is the configured default, not a harness setting.
+  TEST_ASSERT_TRUE(noteMinLengthRemoveEnabled);
+  TEST_ASSERT_EQUAL_UINT32(Config::DEFAULT_NOTE_MIN_LENGTH_TICKS,
+                           static_cast<uint32_t>(noteMinLengthTicks));
 }
 
 /// P1/B02 (DEC-078, invariant 31): an accepted stop waits for the canonical-copy target and
@@ -4721,5 +4927,9 @@ int main() {
   // default gate.
   RUN_TEST(test_s1_3_sixty_descriptor_characterization_is_well_formed);
   RUN_TEST(test_s1_3_residence_is_flat_across_sixty_descriptors);
+  // S1.5 clause 3: the dense-library capacity law at the supported envelope, and the diagnosed
+  // reason a dense construction used to fail its seal at all.
+  RUN_TEST(test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve);
+  RUN_TEST(test_s1_5_a_pair_below_the_min_length_empties_the_store_and_fails_the_seal);
   return UNITY_END();
 }

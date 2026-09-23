@@ -2866,6 +2866,28 @@ Authority hygiene: execution bound class is a gated property — [ExecutionBound
 
 **Current handoff:** follow [IMPLEMENTATION_CONTRACT.md](../../openspec/changes/runtime-working-set-ownership/IMPLEMENTATION_CONTRACT.md) (2026-09-23, DEC-079) for the first slice and its prerequisites; phase F is planned but uncreated.
 
+**Progress (2026-09-23, S1.5 clause 3 — native): the dense-24-bar refusal point is answered, and the seal
+puzzle is diagnosed.** Test-only; no `src/` change. The three-round blocker was upstream: a dense 24-bar
+construction did not seal, and two explanations were withdrawn. **The branch is identified** —
+`Loop::sealCapture` runs the hot-stop min-length removal **before** its empty check, so note pairs closer than
+`Config::DEFAULT_NOTE_MIN_LENGTH_TICKS` (8) are all removed, the live store empties, and the seal returns
+`FailedValidation` from the **`capture.store.empty()` branch**. Asserted signature: events present before the
+seal, one tail chunk held (free 511), released by the failure (free **512**, nothing retained); the control at
+exactly 8 ticks seals `Ok` and keeps its chunk. The "staging-order" rule is withdrawn too — all three
+append/prewarm orders seal with pairs >= 8 ticks apart.
+
+With a valid construction (864 pairs = 1,728 events = **7 chunks** per dense 24-bar loop across the 8 × 8
+matrix): boot costs 32 chunks, and at **N = 63** free chunks are **39 -> 31**, so the 24-bar reserve admission
+is **admitted at every N up to 63 — the smallest refusing N lies outside the supported envelope** (108,864
+events, 83 % of the ceiling, 31 chunks free, 7 above `CHUNK_RESERVE + ACTIVE_OVERDUB_TRANSFER_CHUNKS`).
+**Red-proven:** with the pre-S2b.1 per-slot reservation restored the same construction refuses at **N = 30**
+(free = 6), so this is a capacity result of S2b.1, not a property of the pool. New default-gate cases
+`test_s1_5_the_supported_dense_library_still_admits_the_24_bar_reserve` and
+`test_s1_5_a_pair_below_the_min_length_empties_the_store_and_fails_the_seal`. `test_continuous_capture`
+**97/97**; full native **2,287 / 1 skipped / 0 failures**; firmware SUCCESS at `code 392,312 / padding 904`
+(unchanged). **Still open:** S1.5's **device** refusal point (byte-limited PSRAM, not the 512-id ceiling) and
+the boot `live` figure against the ~191-chunk peak reservation, which is not reproducible natively.
+
 **Progress (2026-09-23, S1.3 clause 2 — native): the synthetic 60-descriptor characterization landed, and it
 red-proves the law at the contract's envelope.** Test-only; no `src/` change. New
 `measureWorkingSetResidenceAcrossTracks(N)` spans the 8x8 slot matrix (the single-track helper could not
