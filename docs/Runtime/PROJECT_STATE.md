@@ -1,6 +1,30 @@
 # Project state (execution context)
 
 
+**2026-09-23 — `deferred-slot-restore-liveness` Packet A started: A1.1/A1.2/A1.3/A1.11 landed, no behavior change.**
+
+Implementation has begun. A1.1 built the controllable restore harness in
+`test/test_storage_manager_load` (`load_and_restore_harness.h`): payloads written with the production
+body writer through the production write boundary, explicit runtime-eligibility controls, and a bounded
+turn driver over `selectSubmittedLoadJobs` + `stepSubmittedLoadJobs`. A1.11 wired the known-red
+acceptance set behind the test-read `RESTORE_LIVENESS_RED` flag; A1.2 (C1) and A1.3 (C2) are the first
+two red desired-behavior fixtures, each asserting the **desired** behavior so it is red on the current
+tree and green only once Packet B lands.
+
+Measured harness facts now recorded: this suite's default track state is `TRACK_PLAYING`, so every
+fixture must set runtime eligibility explicitly; and `probeActiveLoadLoopJob` cannot see a **parked**
+job, although a parked instance keeps the `SlotLoadSession` that `deferredSaveBlockedByActiveSlotLoadSd()`
+reports — A1.3 adds the observation-only `probeParkedLoadLoopJob`. Packet A's oracle is structural
+request ownership (`served || owned`), not byte progress: `probeLoadLoopJobProgress` can read a previous
+request's leftover `bytesRead` and made C1 look green on the untouched tree.
+
+Evidence: suite default gate 8/8 green; `RESTORE_LIVENESS_RED=1` → 11 cases / 2 failed (exactly C1 and
+C2); full native **2,290 / 1 skipped / 0 failures**; `teensy41-capture-serial` SUCCESS at
+`code 392,328 / padding 888`. Details and packet evidence:
+[`REVIEW.md`](../../openspec/changes/deferred-slot-restore-liveness/REVIEW.md). **No `src/` behavior has
+changed**; A1.5 (C4), A1.6 (C6), A1.7 (C5) and A1.8 remain, then Packet A's gate.
+
+
 **2026-09-23 — restore-liveness plan correction (documentation only).**
 The final review's callback re-entry finding is addressed in
 [`deferred-slot-restore-liveness/tasks.md`](../../openspec/changes/deferred-slot-restore-liveness/tasks.md)
