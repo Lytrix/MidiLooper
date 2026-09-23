@@ -468,8 +468,17 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       `canonicalCaptureOutput.store` is non-empty and is idempotent (re-reserving re-retains the ids). It
       runs inside `tryReleasePlaybackMergedMidiEventsMemory`'s per-slot loop, before the merged-window
       checks, so a slot with no window still releases. Fixture
-      `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green. **Outstanding:** the
-      listed mid-copy fixture (a populated store refusing release) is not driven yet.
+      `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green.
+      **MID-COPY FIXTURE DONE 2026-09-23.**
+      `test_s2b4_midcopy_populated_store_refuses_release` drives the listed case: prewarm → one
+      `appendReserved` into the canonical store (the state `stepFrozenCaptureCanonicalCopy` leaves between
+      quanta, `TrackPlaybackRuntime.cpp:1949`) → the release is **refused** and returns no further credit →
+      drain → the same call succeeds. It is **discriminating by removal**: deleting the `!store.empty()`
+      guard in `releaseCanonicalCaptureReservation` makes it fail on exactly the intended assertion
+      (1 failed / 91 succeeded); with the guard, 92/92. The append itself spends a credit (8 → 7) — the
+      mid-copy signature, and the reason the refusal is the safety property. Fixture and the corrected first
+      assertion: [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.4's mid-copy fixture.
+      **Remaining on this task:** the refcount census clause.
 - [ ] S2b.5 **Load admission (B8):** **DONE 2026-09-23 (native).** The load harness was built, the fixture went red through the production
       entry, and the fix makes it green. `LoadLoopJob.cpp`'s four pop sites
       (`ensureActiveLoadLoopJobSelected`'s parked and empty `BeginFocusFromQueue` branches, its

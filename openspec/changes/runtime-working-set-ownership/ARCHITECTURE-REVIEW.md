@@ -1947,6 +1947,43 @@ point be measured — or it is answered on device, where a loaded library is rea
 | `test_continuous_capture` | **91/91** (fixture and helper reverted) |
 | full native | **2,281 cases / 1 skipped / 2,280 succeeded / 0 failures** |
 
+## P1 — S2b.4's mid-copy fixture: the refusal is the safety property (2026-09-23)
+
+S2b.4's outstanding item was the mid-copy fixture: a populated canonical store must **refuse** release.
+`test_s2b4_midcopy_populated_store_refuses_release` now drives it, and the implementation was already correct —
+this increment is the evidence, not a fix.
+
+**How the mid-copy state is reached.** Through production APIs only. `prewarmCanonicalCaptureOutput()` reserves
+the credits, then one `LoopEventStore::appendReserved(event, canonicalCaptureChunks)` puts an event in the store
+— which is exactly what `stepFrozenCaptureCanonicalCopy` does between quanta
+(`TrackPlaybackRuntime.cpp:1949`, the same store through the same reservation). No member is poked; the event's
+payload is irrelevant because the predicate only asks whether the store is empty. The two hooks
+(`appendCanonicalEvent`, `clearCanonicalOutput`) live in the fixture's `TrackCaptureStopTestAccess`.
+
+**The fixture is discriminating, and that was verified by removal.** With
+`if (!canonicalCaptureOutput.store.empty()) return false;` deleted from
+`LoopPlaybackRuntime::releaseCanonicalCaptureReservation`, the suite goes **1 failed / 91 succeeded**, failing on
+precisely the intended assertion — *"a populated store must refuse release: releasing mid-copy strands the
+copy"*. The guard was restored; `test_continuous_capture` then reports **92/92**.
+
+**A first assertion of mine was wrong, and the failure was informative.** I had captured the credit count
+*before* appending and asserted it was unchanged across the refused release; the run answered
+`Expected 8 Was 7`. That is not a leak: **appending the copied event spends the credit that backs it**, so the
+reservation legitimately drops to 7 — and that is the mid-copy signature itself, and the reason releasing there
+would strand the copy (the credit is already committed to an event the pool would otherwise re-issue). The
+fixture now asserts that signature explicitly (`afterAppend < reserved`) and then that the refused release
+returns no *further* credit. The slot is deliberately given no live owner, so the populated store is the only
+admissible refusal reason — and the same call succeeds after the store is drained, so the test cannot pass on an
+unrelated guard.
+
+### Verification
+
+| check | result |
+|---|---|
+| `test_continuous_capture` | **92/92** |
+| same suite, guard removed | **1 failed / 91 succeeded** on the intended assertion |
+| full native | **2,282 cases / 1 skipped / 2,281 succeeded / 0 failures** |
+
 ## Device session — the baseline is flashed, and boot/load residency is measured on device (2026-09-23)
 
 The owner's go-ahead ("flash and create + run dedicated HITLs for each measurement") opened the device
