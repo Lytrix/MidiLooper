@@ -460,6 +460,55 @@ void test_c4_blocked_priority_head_does_not_stall_a_startable_request() {
                             "the fixture must not have cleared the head's owner by the end");
 }
 
+/// **A1.6 [C6 — attempt latch], desired behavior, red on current `src/`.**
+///
+/// Shape: a payload-backed restore whose **first** read attempt fails transiently (the slot file is
+/// truncated so the payload read comes up short — the save token lives at the end of the file), then
+/// the payload is healed and further production turns are driven with no external advancement of the
+/// request.
+///
+/// Desired behavior: the request is retried and reaches `committed`; only a **persistent** failure
+/// reaches a refusal, and only after a bounded attempt count.
+///
+/// Red today: every failure path calls `markLoopSlotRestoreAttempted`, and `loopSlotRestoreAttempted_`
+/// is reset only by a full boot load, so one transient SD failure latches that `(track, slot)` for the
+/// whole power cycle and the healed payload is never read again.
+void test_c6_transient_failure_is_retried_not_latched() {
+  SD.reset();
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  RestoreHarness::setRuntimeTransportIdle();
+  RestoreHarness::armBackgroundRestoreRequest(0, 2, 64);
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(1, StorageManagerInternal::pendingLoopSlotRestores_.count,
+                                   "the request must enter the real restore queue");
+
+  // Inject the transient failure and let the production path reach its failure terminal.
+  const std::vector<uint8_t> goodPayload = RestoreHarness::snapshotSlotPayloadBytes(0, 2);
+  TEST_ASSERT_FALSE(goodPayload.empty());
+  RestoreHarness::truncateSlotPayload(0, 2, 3);
+  RestoreHarness::observeRestoreOutcome(0, 2, 8);
+  char failMsg[256];
+  snprintf(failMsg, sizeof(failMsg),
+           "C6: the injected transient failure did not reach the failure path "
+           "(attempted=%u, committed=%u, pending=%u)",
+           StorageManagerInternal::isLoopSlotRestoreAttempted(0, 2) ? 1u : 0u,
+           trackManager.getSelectedTrack().getLoop(2).hasCommittedPasses() ? 1u : 0u,
+           static_cast<unsigned>(StorageManagerInternal::pendingLoopSlotRestores_.count));
+  TEST_ASSERT_TRUE_MESSAGE(StorageManagerInternal::isLoopSlotRestoreAttempted(0, 2), failMsg);
+
+  // Heal the payload and drive further turns with no external advancement of the request.
+  RestoreHarness::replaceSlotPayloadBytes(0, 2, goodPayload);
+  const RestoreHarness::RestoreOutcomeObservation retry = RestoreHarness::observeRestoreOutcome(0, 2, 32);
+  char message[288];
+  snprintf(message, sizeof(message),
+           "C6: a healed payload was never retried after a transient failure (committed=%u, "
+           "attempted=%u, pending=%u, active=%u, parked=%u)",
+           retry.committedAtEnd ? 1u : 0u, retry.attemptedAtEnd ? 1u : 0u,
+           static_cast<unsigned>(retry.pendingAtEnd), retry.jobActiveAtEnd ? 1u : 0u,
+           retry.parkedAtEnd ? 1u : 0u);
+  TEST_ASSERT_TRUE_MESSAGE(retry.committedAtEnd, message);
+}
+
 // ---------------------------------------------------------------------------
 // SD write-mode semantics (fix/sd-temp-rewrite, docs/Plans/sd_temp_write_truncation_refinement.md)
 //
@@ -553,6 +602,7 @@ int main(int, char**) {
     RUN_TEST(test_c1_transport_gated_background_admission_desired);
     RUN_TEST(test_c2_parked_job_is_serviced_or_named_after_transport_starts);
     RUN_TEST(test_c4_blocked_priority_head_does_not_stall_a_startable_request);
+    RUN_TEST(test_c6_transient_failure_is_retried_not_latched);
   }
   // SD write-mode semantics: the stale-temp corruption fix, and the in-place patch contract.
   RUN_TEST(test_sd_rewrite_does_not_inherit_a_stale_temp_body);

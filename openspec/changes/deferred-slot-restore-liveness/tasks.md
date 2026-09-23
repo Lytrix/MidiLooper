@@ -122,11 +122,19 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `LoadLoopJob` instances, so an earlier fixture's parked job survived into the next fixture and owned
       its request; `StorageManagerInternal::clearLoadLoopJob()` now runs in `setUp`.
 
-- [ ] A1.6 **[C6 — attempt latch] desired-behavior fixture, red.** Inject a transient SD read/open failure
+- [x] A1.6 **[C6 — attempt latch] desired-behavior fixture, red.** Inject a transient SD read/open failure
       for one payload, drive the restore to its failure path, then make the payload healthy; assert the
       **desired** behavior: the request is retried and reaches `committed` (a persistent failure instead
       reaches `refused` after the bounded attempt count). **Verify:** the case is red on current `src/`
       because the slot is latched for the session; record the injected failure and the observed state.
+      → **DONE 2026-09-23:** `test_c6_transient_failure_is_retried_not_latched`, promoted under
+      `RESTORE_LIVENESS_RED`; **red**: *"a healed payload was never retried after a transient failure
+      (committed=0, attempted=1, pending=0, active=0, parked=0)"*. Injection is a production-path
+      transient: the slot file is truncated by 3 bytes, and because the save token lives at the END of
+      the file the **read** stage comes up short before any parse. The fixture first asserts the failure
+      path was actually reached (`attempted=1`) with the payload still uncommitted, then heals the
+      payload from a byte snapshot and drives 32 further turns with no external advancement. New harness
+      helpers: `snapshotSlotPayloadBytes`, `replaceSlotPayloadBytes`, `truncateSlotPayload`.
 
 - [ ] A1.7 **[C5 — drain cannot advance the restore] desired-behavior fixture, red.** Owe a deferred save,
       hold a `LoadLoopJob` in flight, and call the **real blocking drain** — with **no external

@@ -53,6 +53,37 @@
 
 namespace RestoreHarness {
 
+/// Snapshot one slot's payload bytes so a fixture can inject a failure and then heal it, exercising
+/// the production failure path and its retry policy against a payload that later becomes good.
+inline std::vector<uint8_t> snapshotSlotPayloadBytes(uint8_t trackIndex, uint8_t slotIndex) {
+  char path[64];
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), trackIndex, slotIndex));
+  const auto found = SD.files.find(path);
+  if (found == SD.files.end()) {
+    return {};
+  }
+  return found->second;
+}
+
+/// Replace one slot's payload bytes wholesale. Used with `snapshotSlotPayloadBytes` to heal a
+/// deliberately corrupted payload.
+inline void replaceSlotPayloadBytes(uint8_t trackIndex, uint8_t slotIndex,
+                                    const std::vector<uint8_t>& bytes) {
+  char path[64];
+  TEST_ASSERT_TRUE(CurrentSetStorage::formatLoopSlotPath(path, sizeof(path), trackIndex, slotIndex));
+  SD.writeFile(path, bytes);
+}
+
+/// Truncate one slot's payload by \p dropBytes from the end. The save token lives at the END of the
+/// slot file, so this makes the **read** stage fail (short read) before any parse — a transient
+/// failure of the kind C6 latches for the rest of the power cycle.
+inline void truncateSlotPayload(uint8_t trackIndex, uint8_t slotIndex, size_t dropBytes) {
+  std::vector<uint8_t> bytes = snapshotSlotPayloadBytes(trackIndex, slotIndex);
+  TEST_ASSERT_TRUE_MESSAGE(bytes.size() > dropBytes, "the fixture needs a payload to truncate");
+  bytes.resize(bytes.size() - dropBytes);
+  replaceSlotPayloadBytes(trackIndex, slotIndex, bytes);
+}
+
 /// Set the transport global the production gate reads (`extern bool sequencerRunning`).
 inline void setSequencerRunning(bool running) { sequencerRunning = running; }
 
