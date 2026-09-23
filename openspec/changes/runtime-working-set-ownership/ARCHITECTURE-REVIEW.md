@@ -1806,7 +1806,35 @@ form does not work saves the next attempt the same detour.
 | `test_continuous_capture` | **90/90** (sweep reverted) |
 | full native | **2,280 cases / 1 skipped / 2,279 succeeded / 0 failures** (run after the revert) |
 
-## P1 — S1.5's refusal-N: the cause cannot be distinguished natively (2026-09-23)
+## P1 — CORRECTION: the S1.5 "N=2 refusal" was a misread seal failure (2026-09-23)
+
+**The earlier statement in this section and in `tasks.md` that the sweep "reported its first refusal at N = 2"
+is wrong, and the reasoning built on it is withdrawn.** Re-running the sweep with the refusal step classified
+showed the truth: the failure was at the *first commit*, not at an admission probe —
+
+```
+test_continuous_capture.cpp:4268: Expected 0 Was 2
+```
+
+Line 4268 is the fixture's own `TEST_ASSERT_EQUAL(SealOutcome::Ok, loop.sealCapture(kTicks, RecordReason::RecordStop))`,
+and `SealOutcome` value 2 is **`FailedValidation`** (`LoopPasses.h:25-31`: Ok, SkippedEmpty, FailedValidation,
+AlreadyPending, PoolExhausted). So the dense 24-bar loop **never sealed**, the sweep never reached an admission
+probe, and no refusal was measured at all. I read "Was 2" as a slot count; it was an enum.
+
+Two consequences, both recorded rather than smoothed over:
+
+- **S1.5's third clause is untouched by the earlier finding** — it is not "attempted and shown not to reproduce",
+  it is **not yet attempted with a valid construction**. The open question is now concrete and upstream: a
+  24-bar loop at ~72 events/bar fails `sealCapture` validation in this harness, so the scenario needs a
+  construction that seals first. That is the next thing to establish, and it is a property of the *capture
+  validation path*, which is worth knowing in its own right.
+- The arm-repeatability guard added alongside it is unaffected and still correct: three successive
+  `prewarmPlaybackForSlot(0, true)` grants do succeed.
+
+This is a reminder the project's own rules anticipate: a failing assertion is evidence only once its **exact**
+assertion is identified — "Expected 0 Was 2" was read as a measurement when it was an enum.
+
+## P1 — S1.5's refusal-N: the cause cannot be distinguished natively (SUPERSEDED by the correction above)
 
 One hypothesis for the reverted sweep's N=2 refusal was a **non-idempotent record arm** — a real defect if
 true, and one that would also mean re-granting contributed to the per-slot slope the change removes. Probed
