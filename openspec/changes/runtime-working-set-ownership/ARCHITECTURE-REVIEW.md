@@ -2766,6 +2766,13 @@ recorded as not verified, with the content itself shown present.
 `capacity_path_exercised: false` — the densest bar is 84 refs against the old 256 ceiling, so this is a
 **parity run, not a capacity re-stress**, exactly as the guide distinguishes.
 
+**The next step for a formal PASS, and why it is not taken here.** The verifier cannot anchor because the
+playback window carries *every* track's output, and which tracks have content changes per boot. The one
+non-destructive lever left is to **silence the other tracks** (MIDI mute), which does not touch their content on
+SD; clearing them would be destructive and is **not** permitted. Muting was not attempted in this session: it
+alters persisted track state on a device whose catalog is already failing to reconcile, and the honest
+prerequisite is the catalog fix, after which a single-slot capture should anchor normally.
+
 ### Blocker found and worked around: CLEAR cannot proceed while transport is active
 
 The first two attempts aborted at the harness's clear precondition:
