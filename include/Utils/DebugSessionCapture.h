@@ -251,6 +251,13 @@ SC_MEM_ATTR void loopRemainder(const char* span, uint32_t durationUs, uint8_t tr
 SC_MEM_ATTR void recordLoopRemainderSpan(const char* span, uint32_t durationUs);
 SC_MEM_ATTR void persistence(const char* stage, uint32_t durationUs, uint32_t heapBefore,
                              uint32_t heapAfter, const char* outcome);
+/// A1.8/A2.1 (design D6): one event-shaped line per restore **request state transition**, carrying the
+/// full identity and the named reason/outcome. Event-shaped, not per-turn: the capture-ring precedent
+/// showed a per-turn family evicts the rows a run is read for. `state`, `wait` and `terminal` are the
+/// static name strings from `restoreRequestStateName`/`WaitName`/`TerminalName`.
+SC_MEM_ATTR void restoreRequest(uint8_t track, uint8_t slot, uint32_t requestGeneration,
+                                uint32_t setEpoch, const char* state, const char* wait,
+                                const char* terminal);
 SC_MEM_ATTR void persistenceBundle(const char* workType, uint32_t totalUs,
                                    uint32_t maxSliceUs, uint32_t sliceCount,
                                    uint32_t undoEntryCount, uint32_t snapshotCount);
@@ -365,6 +372,8 @@ void emitDiagCheckpointLine(const Diagnostics::DiagTraceRecord& record);
                                            DebugSessionCapture::overdubStopStage(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) \
                                            DebugSessionCapture::persistence(stage, durationUs, heapBefore, heapAfter, outcome)
+#define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) \
+  DebugSessionCapture::restoreRequest(track, slot, requestGeneration, setEpoch, state, wait, terminal)
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) \
   DebugSessionCapture::persistenceBundle(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount)
 #define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
@@ -471,6 +480,7 @@ inline void restartCaptureBootGrace() {}
 #define SC_DROID_FEEDBACK_QUEUE(depth, oldestAgeUs, overflowCount) ((void)0)
 #define SC_ODUB_STOP_STAGE(stage, elapsedUs, durationUs, heapBefore, heapAfter, eventCount, chunkRefCount, outcome) ((void)0)
 #define SC_PERSIST(stage, durationUs, heapBefore, heapAfter, outcome) ((void)0)
+#define SC_RESTORE_REQUEST(track, slot, requestGeneration, setEpoch, state, wait, terminal) ((void)0)
 #define SC_PERSIST_BUNDLE(workType, totalUs, maxSliceUs, sliceCount, undoEntryCount, snapshotCount) ((void)0)
 #define SC_PERSIST_DIAG(freeChunks, usedChunks, reserve, queueDepth, writingChunks, transportBlk, \
                         heapBlk, budgetBlk, sliceDone, peakLatUs, dirtyAgeMs, maxBacklog, pending, \
