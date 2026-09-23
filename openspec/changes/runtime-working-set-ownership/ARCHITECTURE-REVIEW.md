@@ -902,3 +902,46 @@ slot switch and release through the guards S4f.5 just fixed — and its deferred
 | focused `test_continuous_capture` | **PASSED, 87/87** |
 | full native | **2,272 cases / 1 skipped / 2,271 succeeded / 0 failures** |
 | firmware + RAM1 budget check | **SUCCESS** — `variables 96,128 / ITCM 393,216 (code 392,376 + padding 840) / locals 34,944` |
+
+## P1 — S2b.5 status: half done, half blocked on a harness that does not exist (2026-09-23)
+
+### The predicate half is already done and verified
+
+S2b.5's requirement is that `beginLoadLoopJob` must not destroy a live owner, "the predicate must be
+defined against the ring entry's `job.owner` **and** `job.slot`". That predicate **is**
+`Track::noLiveOwnerForSlot(slot)` (S4.0), and S2b.5's own rerun correction adds "S2b.4 must never release
+while a ring entry with that `job.slot` exists" — also done.
+
+Its **scope** is now asserted rather than assumed. The S4.0 fixture additionally requires that with a live
+job admitted on slot 0, `noLiveOwnerForSlot(1)` is **true**: a finalizing predecessor must block a load into
+*its* slot and must not block any other slot of the same track. A track-level "capture active" flag — the
+shape S4.0 corrects — fails that assertion. That is exactly the property a load decision needs.
+
+### The call-site half is blocked, and this is the concrete plan
+
+Remaining S2b.5 work is small and local: `LoadLoopJob.cpp`'s callers **pop the restore entry before calling
+`beginLoadLoopJob`** (`:339, :367, :372, :377`) and re-queueing is inert
+(`queueDeferredLoopSlotRestore` early-returns unless `needsSlotLoad`), so a load begun for a slot whose
+freedescriptor is still owned destroys it. The fix is a filtered, done-tested peek before the pop, or a
+forced enqueue.
+
+It cannot be implemented this round without shipping an unverified change to a path with **zero** native
+coverage, so the harness is pinned instead:
+
+- **Gap:** there is no SD emulation anywhere in the native suites. `test/test_support/firmware/SD.h` is two
+  lines (`struct File {};`), and neither `test_storage_loop_io` nor `test_sd_load_adopt` links
+  `StorageManager/LoadLoopJob.cpp` or `StorageManager/LoopSlotRestoreQueue.cpp`.
+- **What a B04 suite must link:** `LoadLoopJob.cpp`, `LoopSlotRestoreQueue.cpp`, `SlotLoadSession.cpp`,
+  `CurrentSetStorage.cpp`, `CurrentWorkspaceStorage.cpp` (path/format + save-file token helpers), plus an
+  in-memory `SD`/`File` emulation providing `exists`, `open`, `size`, `seek`, `read`, `close`.
+- **What must be stubbed, and how:** the physical boundaries only (`Track::silenceTrackMidiOutput` as a
+  counting boundary, display/telemetry no-ops). `resetLoopSlotToEmpty` must **not** be stubbed — observing
+  that it is *not* called is the fixture's whole point.
+- **B04 assertion sequence:** queue a restore for the slot of an admitted finalizing job → run the real
+  load selection/admission → the entry is **still queued**, the Loop was **not** reset, the finalizing job
+  is untouched → retire the owner → run selection again → the request is consumed exactly once and the
+  restored content is exact.
+- **Ordering:** this harness is also what unblocks B06's non-focus leg and S2b.4's mid-copy fixture, so it
+  is worth building as one shared `test_storage_manager_load` suite rather than three one-off stubs.
+- `hasPendingDeferredReconstruction()` does not exist yet; its term joins the S2b.5 predicate when S5.2e
+  introduces that owner, as the contract states.

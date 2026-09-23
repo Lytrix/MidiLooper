@@ -402,7 +402,15 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       checks, so a slot with no window still releases. Fixture
       `test_s4_0_release_respects_the_live_ring_window_and_is_idempotent` is green. **Outstanding:** the
       listed mid-copy fixture (a populated store refusing release) is not driven yet.
-- [ ] S2b.5 **Load admission (B8):** `beginLoadLoopJob` must not destroy a live owner. Its callers **pop the
+- [ ] S2b.5 **Load admission (B8):** **STATUS 2026-09-23 -- predicate half DONE, call-site half blocked on a missing harness.**
+      The predicate is `Track::noLiveOwnerForSlot(slot)` (S4.0) and its per-slot scope is now asserted in the
+      S4.0 fixture: with a live job on slot 0, `noLiveOwnerForSlot(1)` is **true**, so a finalizing
+      predecessor blocks a load into its own slot and not another slot of the same track. The remaining
+      call-site change (peek/pre-check before the pop at `LoadLoopJob.cpp:339,367,372,377`) is **not**
+      implemented: it would be an unverified change to a path with zero native coverage. The harness gap and
+      the full B04 plan (files to link, in-memory SD/File emulation, stub boundaries, assertion sequence,
+      ordering against B06 and the mid-copy fixture) are pinned in
+      [`ARCHITECTURE-REVIEW.md`](ARCHITECTURE-REVIEW.md) § P1 — S2b.5. `beginLoadLoopJob` must not destroy a live owner. Its callers **pop the
       restore entry before calling it** (`LoadLoopJob.cpp:339,367,372,377`) and re-queueing is **inert**:
       `queueDeferredLoopSlotRestore` early-returns unless `needsSlotLoad`, which is false once
       `isLoopSlotRestoreAttempted` is set or the slot `hasCommittedPasses()` (`StorageManager.cpp:258-268`) —

@@ -4054,6 +4054,10 @@ void test_s4_0_release_respects_the_live_ring_window_and_is_idempotent() {
   TEST_ASSERT_EQUAL_INT(0, TrackCaptureStopTestAccess::liveRingEntrySlot(track, 0));
   TEST_ASSERT_FALSE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 0),
                             "an admitted job for the slot is a live owner");
+  // S2b.5 depends on this scope: a finalizing predecessor must block a load into ITS slot and must
+  // not block any other slot on the same track. A track-level "capture active" flag would fail here.
+  TEST_ASSERT_TRUE_MESSAGE(TrackCaptureStopTestAccess::noLiveOwner(track, 1),
+                           "a live job on slot 0 must not mark another slot of the same track owned");
   TEST_ASSERT_FALSE(TrackCaptureStopTestAccess::releaseCanonicalReservation(track, 0));
   TEST_ASSERT_EQUAL_UINT32(static_cast<uint32_t>(PassConfig::ACTIVE_OVERDUB_TRANSFER_CHUNKS),
                            static_cast<uint32_t>(TrackCaptureStopTestAccess::canonicalChunks(track)));
