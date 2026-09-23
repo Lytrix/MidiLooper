@@ -147,6 +147,57 @@ further stop press. The managed harness is the authoritative content creator; th
 caution existed for. The attempt wrote into the approved scratch slot (track 5 slot 1), which is the
 likely origin of the 3-bar loop above; nothing outside the scratch slot was touched.
 
-**Next step:** the catalog's restored-content fidelity is now its own defect — diagnose it before the
-content PASS or the slope sweep can be credited. The capture-loss problem in the section above remains
-open too.
+## Round 5: the content-run blocker is the clear precondition, and it is intermittent
+
+Round 4 left "the restored content is not faithful" as the finding. Round 5 shows that conclusion needs
+one correction and that a **different** defect is the operative blocker for the content PASS.
+
+**The operative blocker, definitively localized.** Running the authoritative preset with the harness's own
+narration captured (`captures/sd-fix-persist4/`) aborts at the clear step every time it aborts at all:
+
+```
+[track 5] clear selected loop (long press record/overdub)
+[hitl] ACTION RECOVERY_FAILED requested=EMPTY retries=0 state=None blocked
+[error] Clear aborted in firmware (deferred save); the selected slot is not a valid fixture
+```
+
+with, on device, `[StorageManager] ERROR: Persistence drain stuck after 33 iterations …` followed by
+`[ERROR] Clear aborted: could not complete deferred save first`. `StorageManager::processDeferredSaveState`
+returns immediately while `isTransportActiveForPersistence()`, so the blocking clear-drain cannot advance;
+and the drain has no transport-gate classification, so it reports the generic `Stuck`. The harness does not
+help because its `_prepare_deferred_save_before_clear` never printed "transport stop before clear long
+press" — its transport-running check does not see a start that precedes its anchor, and no
+`PERS,*`/`SAVE,*` marker is present in that window to make `save_active` true.
+
+**It is intermittent, and not explained by a board reset.** The three most recent runs disagree:
+
+| run | boot rows in log | clear aborted | recorded? |
+|---|---|---|---|
+| `rwso-24cap-retry2` (earlier success) | 0 | 0 | yes — 18432 ticks + overdub + save |
+| `sd-fix-persist3` | 0 | 0 | no |
+| `sd-fix-persist4` | 0 | 1 | no |
+
+I first suspected the serial-open **reset** (a reset would create a fresh boot save that the harness then
+blocks by starting the transport before the clear). **That hypothesis is not supported:** all three logs
+have `boot_rows = 0`, so none of them reset. It is withdrawn rather than recorded as a cause.
+
+**What the transport-stop prep does and does not fix.** Pre-stopping the transport and idling before a run
+fixes the **capture sparsity** (561 lines → 25,164 in `sd-fix-persist3`) but not the clear: the harness
+still starts the transport itself before it presses clear.
+
+**So "the restored content is not faithful" (round 4) is not yet established either.** The 24-bar reading
+before that reboot was taken while the device held an uncommitted, mis-driven session state; what *is*
+established is that the restore is **deterministic** — two consecutive post-reboot attributed reads both
+gave track 5 slot 1 = 3 bars and track 2 slot 3 = 18 bars. Write→restore fidelity is therefore
+**untested**, because no recent run has recorded, and it cannot be tested until the clear unblocks.
+
+**Next step, and it is a two-part fix in owners other than this one:**
+
+1. **Firmware (diagnostics, small):** give the blocking drain a `BlockedByTransport` classification so the
+   reason is named instead of reported as `Stuck`. It does not unblock by itself.
+2. **Host (the effective unblock):** make `_prepare_deferred_save_before_clear` actually stop the
+   transport — its detector must see a transport start that precedes its anchor, and/or treat "an owed
+   save with an active transport" as save-active. Only then can the clear's drain complete.
+
+Both are outside the SD temp-write fix, and the host one is the shortest path to the content PASS and the
+S1.3 slope sweep.

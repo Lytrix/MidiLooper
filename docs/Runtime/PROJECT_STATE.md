@@ -42,6 +42,24 @@ reports `EMPTY` for a slot holding 24 bars), and **raw-MIDI record driving must 
 attempt started an *overdub* instead of stopping the record and had to be halted (it wrote only into the
 approved scratch slot).
 
+**Round 5 localized the operative blocker for the content run, and corrected round 4's conclusion.**
+The run aborts at the clear: on device `Persistence drain stuck after 33 iterations` then
+`Clear aborted: could not complete deferred save first`, and in the harness narration
+`ACTION RECOVERY_FAILED requested=EMPTY … Clear aborted in firmware (deferred save)`. Cause: the blocking
+clear-drain cannot advance while the transport is active, and it has no transport-gate classification (generic
+`Stuck`); the harness never printed "transport stop before clear long press" because its transport detector
+does not see a start preceding its anchor. **It is intermittent** — of the three latest runs, one cleared and
+(earlier) one full run recorded 18432 ticks + an overdub + a save, one cleared without recording, and one
+aborted at the clear. A suspected serial-open **reset** explanation is **withdrawn**: all three logs have
+`boot_rows = 0`, so none reset. The transport-stop prep fixes capture sparsity (561 → 25,164 lines) but not
+the clear, because the harness starts the transport itself before pressing clear. **Round 4's "restored
+content is not faithful" is therefore not established either** — that 24-bar reading was taken from an
+uncommitted, mis-driven session state. What *is* established is restore **determinism** (two consecutive
+attributed reads both gave track 5 slot 1 = 3 bars, track 2 slot 3 = 18 bars); write→restore fidelity stays
+**untested** because nothing has recorded since. Next, in owners other than the SD fix: (1) firmware —
+classify the transport gate instead of `Stuck`; (2) host — make the pre-clear step actually stop the
+transport, which is the effective unblock.
+
 **Also still blocked, and it is a different defect:** the managed capture truncates mid-run (561 and 1,732
 lines against a good run's 45,909) with **0** ring-overflow rows, so the firmware's ring did not shed —
 the capture stopped. The harness is capture-driven, so it never reaches the overdub and reports
