@@ -209,6 +209,9 @@ public:
     /// Observation-only remainder DIAG: active LoadLoopJob identity. 255 = none.
     static void probeActiveLoadLoopJob(bool& active, uint8_t& track, uint8_t& slot, uint8_t& phase,
                                        uint8_t& isFocus);
+    /// Observation-only: read/parse progress of the jobs that hold a slot-load session, summed over
+    /// the active and parked instances. Zero/zero means no admitted preparation has happened yet.
+    static void probeLoadLoopJobProgress(size_t& bytesRead, size_t& payloadSize);
 
 private:
     static bool loadCurrentSetFromSd(LooperState& state);

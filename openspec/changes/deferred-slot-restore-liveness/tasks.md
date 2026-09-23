@@ -50,7 +50,7 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
 
 ## 1. Packet A — characterize and observe (no behavior change)
 
-- [ ] A1.1 **Native restore harness increment: link the queue and the load job into one controllable
+- [x] A1.1 **Native restore harness increment: link the queue and the load job into one controllable
       suite.** Extend `test/test_storage_manager_load` (or add its sibling) so a test can enqueue,
       inspect and drain restore requests through the production entry points
       (`StorageManager::selectSubmittedLoadJobs`, `stepSubmittedLoadJobs`,
@@ -58,8 +58,13 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `isRecording` / `isAudiblePlaybackActive` inputs, and a controllable SD payload set.
       **Verify:** the suite builds and stays green, and one smoke case drives a queued request to a
       committed slot through production calls only. Record the case count and the linked production TUs.
+      → **DONE 2026-09-23:** `test/test_storage_manager_load/load_and_restore_harness.h` (+ suite) —
+      production body-writer payloads, explicit runtime-eligibility controls, bounded production turn
+      driver. `pio test -e native -f test_storage_manager_load`: **8 cases / 8 succeeded / 0 failures**;
+      smoke case commits its own payload through production calls only. Linked production TUs and the
+      measured default-state fact: [`REVIEW.md`](REVIEW.md) § Common packet controls / A1.1.
 
-- [ ] A1.2 **[C1 — transport-gated background admission] desired-behavior fixture, red.** Drive a queued
+- [x] A1.2 **[C1 — transport-gated background admission] desired-behavior fixture, red.** Drive a queued
       background restore with the transport running and one track audibly playing, through the production
       admission path (the extracted `hasRealtimeDeferredIdleWork` predicate plus the load-job child
       admission — **not** `stepSubmittedLoadJobs()` directly). Assert the **desired** outcome: while the
@@ -69,6 +74,14 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `src/`** because the request is neither served nor in a named wait, and it is registered in the
       change's named exclusion set (A1.11) so the default gate stays green. Record the assertion output
       and the exclusion flag. No `src/` change in this task.
+      → **DONE 2026-09-23:** `test_c1_transport_gated_background_admission_desired`, green in the default
+      gate by exclusion (A1.11), **red under `RESTORE_LIVENESS_RED=1`**: *"neither served nor progressing
+      after 64 turns (pending=1, phase=255, jobActive=0)"* — the request stays queued and unexplained,
+      which is the defect, not a red test that asserts it. Admission goes through the production
+      selection/child-admission calls, not a direct job step. Named waits (`waiting_commit_gate`,
+      `waiting_job_capacity`) do not exist yet, so "served or progressing" is Packet A's oracle; A2.2
+      replaces it with the named-wait oracle. Shape note: focus is on the **stopped** track while another
+      track plays, so the denial is the transport gate, not the focus path. Evidence: [`REVIEW.md`](REVIEW.md).
 
 - [ ] A1.3 **[C2 — parked job never re-serviced] desired-behavior fixture, red.** Begin a non-focus
       background job while idle, then set the playing condition and drive turns; assert the **desired**
@@ -125,18 +138,24 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       commands and outputs are recorded; no behavior change is claimed by this packet; no red fixture was
       deleted, generalized, or had a threshold relaxed to make the suite green.
 
-- [ ] A1.11 **Red-acceptance coexistence rule (review finding 3).** Define and wire the named exclusion set
+- [x] A1.11 **Red-acceptance coexistence rule (review finding 3).** Define and wire the named exclusion set
       for the red desired-behavior fixtures (a dedicated env flag in the change's own suite, following the
       `WORKING_SET_RED` / `ONLY_COMPANION` / `REENTRY_RED` precedent). Each fixture is promoted into the
       **default gate in the same commit that turns it green**; the flag is deleted when the set is empty.
       **Verify:** the default `pio test -e native` run is green with the flag unset; a run with the flag set
       shows exactly the listed fixtures red; the promotion is checked off per fixture in the slice that
       fixes it.
+      → **DONE 2026-09-23:** `RESTORE_LIVENESS_RED` (test-read env var) gates the known-red set; the
+      fixture is registered unconditionally, so the flag only decides whether it **runs**. Default gate
+      **8 cases / 8 succeeded / 0 failures**; `RESTORE_LIVENESS_RED=1` → **10 cases / 1 failed / 8
+      succeeded**, the single failure being the listed red fixture. Promotion bookkeeping: each A1.x
+      fixture is recorded here as promoted in the Packet B/C slice that turns it green.
 
 ## 2. Packet B — background restore liveness (D2, D3, D5)
 
 - [ ] A2.1 **Request identity and state separation (D1), with validated generational advance.** Introduce
-      the request identity `(track, slot, requestGeneration, setEpoch)` and the separate **wait** states
+      the request identity `(track, slot, requestGeneration, setEpoch)`, explicit **queued/running** states,
+      and the separate **wait** states
       (`waiting_slot_owned`, `waiting_capture`, `waiting_commit_gate`, `waiting_job_capacity`,
       `waiting_retry`) versus the four **terminals** (`committed`, `unnecessary`, `refused`, `superseded`);
       key the record by the full identity, invalidate outstanding requests on a set change as `superseded`,
@@ -146,7 +165,9 @@ skipped required case is not a pass; never weaken an oracle or threshold to make
       `(track, slot)`) and keep the identity for the restore path's **own** failure cleanup (which becomes
       `waiting_retry`). Validate the identity for a **queued**, an **active** and a **parked** job, and
       again **immediately before publication**. Stored beside the existing restore arrays outside ITCM.
-      **Verify:** native cases assert exactly one terminal per identity; a wait never converts to a terminal
+      **Verify:** native cases assert running read/parse work and service yields retain identity/progress
+      without a fictitious wait or terminal, and a denying gate transitions to its named wait;
+      exactly one terminal per identity; a wait never converts to a terminal
       from elapsed turns alone; recording deferral is a wait; a reused `(track, slot)` is a different
       request; a set change yields `superseded`; **the restore path's own failed attempt resets the slot but
       yields `waiting_retry`, not `superseded`**; and a job whose slot owner changed before publication is
@@ -281,19 +302,39 @@ callers; corrected here, in `proposal.md`, `specs/`, and `design.md`:**
 - [ ] A3.4 **Caller contract: completed / blocked / failed (D4 rule 7, G2 caller finding).** Give the drain
       a three-way result and expose it without silently changing existing callers: `saveState` keeps its
       `bool` as a thin `Completed`-only wrapper, and both call sites
-      (`MidiButtonActions::handleClearTrack`, `SavedSetIo.cpp`'s revision-load pre-flight) use the detailed
+      (`MidiButtonActions::handleClearTrack`, `saveNewSetInternal()` in `SavedSetIo.cpp` (save-new-set pre-flight)) use the detailed
       entry point. On **temporarily blocked**, CLEAR SHALL refuse the operation, log the named reason,
       leave the slot untouched, and leave the owed save owed; it SHALL NOT report success while persistence
       is pending, and SHALL NOT reset the slot. Retention (an accepted-interaction CLEAR latch) is O7 and
       is **not** implemented here. **Verify:** cases assert a blocked drain yields a named, non-success
       outcome at the real CLEAR caller; **a case asserts a blocked CLEAR does not reset the slot and does
       not clear the obligation**; a case asserts a failed outcome is distinguishable from a blocked one;
-      `SavedSetIo`'s caller honors the blocked outcome rather than treating it as failure or success.
+      the real `saveNewSetInternal()` caller honors the blocked outcome rather than treating it as failure
+      or success, and does not continue saving a new set while the pre-flight drain remains blocked.
+
+- [ ] A3.4a **Drain re-entry and callback safety (D4 rule 9; prerequisite to holdoff polling).**
+      Add the StorageManager-owned scoped guard before any shared drain mutation. Nested detailed calls
+      return `Blocked(drain_in_progress)` without changing the outer state; the bool wrapper returns false.
+      Audit MIDI-dispatched destructive/storage entry points, record their names and conflict checks,
+      and reject conflicting callbacks before side effects (including CLEAR's early stop). Preserve
+      normal musical input/transport service. Revalidate all-track eligibility and request identity after
+      each callback boundary; retain/revalidate the outer caller's original target before resetting it.
+      **Fixtures first:** inject a second CLEAR through the real MIDI/controller dispatch during holdoff;
+      assert maximum drain depth one, no nested reset/stop, unchanged outer result/budget, and save still
+      owed until actual completion. Separately inject transport Start and capture activation; assert the
+      next step honors live eligibility, no denied commit/save executes, and the obligation survives a
+      named block. Change focus and assert the outer CLEAR is not redirected. Exercise a conflicting
+      undo/set-replacement action and assert rejection before target/storage mutation. Exercise Completed,
+      Blocked and Failed exits followed by a new drain; assert the guard is always released. Do not replace
+      the injected production callbacks with a success stub. **Verify:** named fixture evidence, full
+      native suite, capture-serial build and guard placement/RAM1 line recorded; all assertions default-on
+      with the implementation.
 
 - [ ] A3.5 **The finite post-load holdoff is waited out, not aborted (D4 rule 8).** Name the holdoff
       constant (`LoadLoopJob.cpp`'s 100 ms `postLoadCommitSaveHoldoffUntilMs_`), and let the drain wait it
       out when `Completed` is otherwise reachable, bounded by the remaining wall-clock budget and
-      **servicing MIDI** (`midiHandler.handleMidiInput()` plus the existing yield pattern) during the wait;
+      **servicing MIDI** (`midiHandler.handleMidiInput()` plus the existing yield pattern) during the wait,
+      only after A3.4a — drain re-entry and callback safety is implemented and verified;
       if the wait would exceed the budget, return the named holdoff wait. **Verify:** a case where restore
       **cleanup starts the holdoff** asserts the save still completes (not an abort with progress
       discarded) for the "nothing else sounding" shape; a case with the holdoff pushed beyond the budget
@@ -314,7 +355,7 @@ callers; corrected here, in `proposal.md`, `specs/`, and `design.md`:**
       capture paths. If cancellation turns out to be necessary, STOP and return to design for the `DEC`
       (proposal TBD-3) rather than implementing it here.
 
-- [ ] A3.8 **Packet C gate.** Full native suite green; A3.1–A3.6 cases green; RAM1 line recorded;
+- [ ] A3.8 **Packet C gate.** Full native suite green; A3.1–A3.6 cases, including A3.4a — drain re-entry and callback safety, green; RAM1 line recorded;
       A3.7 evidence recorded for both shapes.
 
 ## 4. Packet D — boot catalog reconcile outcome (D6)
