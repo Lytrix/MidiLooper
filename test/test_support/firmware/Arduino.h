@@ -20,6 +20,8 @@ inline void delayMicroseconds(uint32_t) {}
 
 struct NativeSerial {
   template<class... A> void printf(const char*, A...) {}
+  void print() {}
+  template <class T> void print(const T&) {}
   void println() {}
   template <class T> void println(const T&) {}
   void flush() {}

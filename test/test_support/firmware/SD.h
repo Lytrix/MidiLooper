@@ -39,6 +39,7 @@ class File {
     pos += take;
     return static_cast<int>(take);
   }
+  int position() const { return static_cast<int>(pos); }
   int available() const {
     if (bytes == nullptr) return 0;
     return static_cast<int>(bytes->size() - pos);

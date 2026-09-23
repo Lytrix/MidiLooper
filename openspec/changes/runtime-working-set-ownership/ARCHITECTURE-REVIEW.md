@@ -1362,3 +1362,53 @@ Nothing was committed from the fixture; it was reverted so the suite stays green
 | load suite | **4/4** |
 | full native | **2,276 cases / 1 skipped / 2,275 succeeded / 0 failures** |
 | firmware + budget | SUCCESS, `variables 96,128 / ITCM 393,216 (code 392,184 + padding **1,032**) / locals 34,944` |
+
+## P1 — S2b.5 landed: a load no longer destroys a live owner's slot (2026-09-23)
+
+The fixture went **red** through the real production entry, and the fix makes it green.
+
+### The red fixture
+
+`test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned` builds a genuine live finalization
+owner — a committed slot, an interval opened on the Loop, an overdub admitted through
+`Track::beginDeferredOverdubStop` — force-enqueues a restore for **that** slot through the boot path, and runs
+the production `StorageManager::selectSubmittedLoadJobs()`. Before the fix it failed exactly as predicted:
+
+```
+Expected 1 Was 0. a queued restore for a slot with a live finalization owner must stay queued
+```
+
+So `selectSubmittedLoadJobs()` popped and consumed a restore request for a slot a live owner still held — the
+defect S2b.5 describes, reproduced through the production entry rather than inferred.
+
+### The fix
+
+Four pop sites in `LoadLoopJob.cpp`, each now guarded **before** the pop by one predicate and one peek helper:
+
+- `ensureActiveLoadLoopJobSelected`: the parked `BeginFocusFromQueue` branch, the empty
+  `BeginFocusFromQueue` branch, and its `popNextDeferredLoopSlotRestore` fallback;
+- `EmptyIdleAction::BeginBackgroundFromQueue`.
+
+`queuedRestoreMayBegin(trackIndex, slotIndex)` is `trackManager.getTrack(track).noLiveOwnerForSlot(slot)` —
+the S4.0 predicate, so liveness is **per slot**: a finalizing predecessor on one slot does not block a load
+into another. The two `popNext` sites have no track/slot filter, so `backgroundHeadMayBegin()` peeks the head
+(which is what the pop would take) and checks liveness against *it*. A blocked slot now leaves its request
+**queued** and the load is admitted once the owner retires; nothing is discarded and no reset runs.
+
+### RAM1 side effect: the prerequisite paid for itself
+
+Extracting `resetLoopSlotToEmpty` to FLASH (see the previous section) moved code *out* of ITCM, so the line
+improved rather than degraded: `teensy41-capture-serial` `padding 840 → **1,032**` and `teensy41`
+`padding 9,768 → **9,960**`. Both are recorded in `scripts/ram1_budget.json`; the **floor stays 840** and the
+check keeps reporting headroom rather than re-basing anything.
+
+### Verification
+
+| check | result |
+|---|---|
+| load suite | **5/5 PASSED** (B04 green in the default gate) |
+| full native | **2,277 cases / 1 skipped / 2,276 succeeded / 0 failures** |
+| firmware + budget, both envs | SUCCESS; `teensy41-capture-serial` padding **1,032**, `teensy41` padding **9,960** |
+
+S2b.5's own acceptance also wants "after retirement, restoration happens exactly once" — that half is the
+next increment's assertion, on the same fixture, and is not claimed here.

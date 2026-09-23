@@ -16,6 +16,9 @@
 
 SDClass SD;
 
+/// The sketch owns this global; the load path reads it, so the harness provides it.
+bool sequencerRunning = false;
+
 // The shared production harness (Loop/Track/TrackManager objects + harness globals). Extracted so this
 // suite links the same production code as test_continuous_capture without duplicating the include list.
 #include "../test_support/track_harness.inc"
@@ -28,6 +31,13 @@ SDClass SD;
 // TrackManager's constructor references the global MIDI handler; the load path pulls it in.
 #include "../../src/MidiHandler.cpp"
 #include "../../src/StorageManager/CurrentSetStorage.cpp"
+#include "../../src/StorageManager/FileIo.cpp"
+#include "../../src/StorageManager/SlotReset.cpp"
+#include "../../src/StorageManager/LoadLoopBudget.cpp"
+#include "../../src/StorageLoopIo.cpp"
+#include "../../src/StorageLoopIoBodyFormatV1.cpp"
+#include "../../src/StorageManager/CurrentWorkspaceStorage.cpp"
+#include "../../src/StorageManager/LoadLoopSelectionPolicy.cpp"
 #include "../../src/StorageManager/SlotLoadAdmission.cpp"
 #include "../../src/StorageManager/SlotLoadSession.cpp"
 #include "../../src/StorageManager/LoadLoopJob.cpp"
@@ -133,11 +143,54 @@ void test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot() {
   TEST_ASSERT_TRUE(track.getLoop(0).hasCommittedPasses());
 }
 
+/// `Track` names this struct as a friend, so a suite can reach the private admission surface. Only the
+/// helpers this suite needs are defined; `test_continuous_capture` defines its own set.
+struct TrackCaptureStopTestAccess {
+  static bool admit(Track& track, PendingStopDestination destination, uint32_t tick) {
+    return track.beginDeferredOverdubStop(destination, tick);
+  }
+};
+
+/// B04 (S2b.5), the real case: a **live finalization owner** on the slot whose restore is queued. The pop is
+/// a one-way door -- it discards an entry whose slot it judges done and the queue will not take it back -- so
+/// the production selection entry must not pop before it has checked liveness.
+void test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned() {
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  commitRecordPassIntoSlot(track, 0);
+  TEST_ASSERT_TRUE(track.prewarmPlaybackForSlot(0, true));
+  track.forceSetState(TRACK_PLAYING);
+
+  // A live finalization owner, built through the production admission entry. The MIDI button route is
+  // deliberately avoided: it would drag the note-edit input layer into this suite.
+  clockManager.assignCurrentTickSilently(96);
+  Loop& loop = track.getLoop(0);
+  loop.beginCapture(CapturePhase::Overdub, 0);
+  track.forceSetState(TRACK_OVERDUBBING);
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(96, 1, 60, 100)));
+  TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(120, 1, 60, 0)));
+  TEST_ASSERT_TRUE(TrackCaptureStopTestAccess::admit(track, PendingStopDestination::Playing, 96));
+  TEST_ASSERT_TRUE_MESSAGE(track.hasPendingDeferredOverdubStop(),
+                           "the fixture needs a live finalization owner on slot 0");
+  TEST_ASSERT_FALSE(track.noLiveOwnerForSlot(0));
+
+  // Queue a restore for the owned slot through the forced path, then run the real selection entry.
+  TEST_ASSERT_TRUE(StorageManagerInternal::appendBootLoopSlotRestore(0, 0, 1));
+  (void)StorageManager::selectSubmittedLoadJobs();
+
+  TEST_ASSERT_EQUAL_UINT16_MESSAGE(
+      1, StorageManagerInternal::pendingLoopSlotRestores_.count,
+      "a queued restore for a slot with a live finalization owner must stay queued");
+  TEST_ASSERT_TRUE_MESSAGE(track.getLoop(0).hasCommittedPasses(),
+                           "the load must not have reset the slot out from under its owner");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_restore_queue_orders_by_priority_and_peek_returns_the_head);
   RUN_TEST(test_restore_queue_peek_has_no_done_test_for_an_attempted_slot);
   RUN_TEST(test_restore_queue_forced_enqueue_bypasses_the_needs_slot_load_guard);
   RUN_TEST(test_b04_pop_then_requeue_loses_the_request_for_a_committed_slot);
+  RUN_TEST(test_b04_real_load_selection_keeps_the_request_while_the_slot_is_owned);
   return UNITY_END();
 }
