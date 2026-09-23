@@ -115,6 +115,26 @@ background restore, which is exactly the defect under test.
   parkedPhase=1, ownedTurns=64, activelyOwnedTurns=0, pending=0, attempted=0, committed=0)` — the
   parked instance holds the request for every turn and the active instance never gets it.
 
+### A1.5 — C4 head-of-line blockage (in progress; fixture not yet landed)
+
+Two fixture-shaping facts measured while drafting it, recorded so the next attempt does not repeat
+them:
+
+1. **The owner must be a production term, and the interval route is expensive.**
+   `Track::noLiveOwnerForSlot` counts four terms: a live `captureStopJobs_` ring entry, the runtime's
+   `captureStopOwner`, a pending prepared pair, and the **S4f.1 accepted-interaction latch**.
+   `Track::latchAcceptedStop` is private, but `TrackCaptureStopTestAccess` is a declared friend, so the
+   suite gained `latchAcceptedStopForSlot` (committed; unused until the fixture lands). That is the
+   cheap, production-state way to hold the priority-head slot.
+2. **The head must be uncommitted, and the startable slot must be reset.**
+   The pop's done-test (`isLoopSlotRestoreAttempted || getLoop(slot).hasCommittedPasses()`) discards a
+   **committed** head as already satisfied — correct queue hygiene, not the C4 defect — so a
+   committed head cannot express head-of-line blockage. Symmetrically, `observeRestoreOutcome`'s
+   `served`/terminal reading is per-slot, and an earlier fixture in the same binary can leave a
+   committed slot 2, which makes the C4 assertion read false-green. The startable slot must be
+   production-reset and asserted empty in the fixture's own setup; a draft that omitted that step
+   passed on the untouched tree and was discarded rather than weakened.
+
 ---
 
 ## Mechanism ledger (A1.9)
