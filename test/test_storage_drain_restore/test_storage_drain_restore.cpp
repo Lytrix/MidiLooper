@@ -26,6 +26,7 @@ bool sequencerRunning = false;
 // This suite links the real load path, which defines the two loop-slot-payload functions, so it opts
 // out of those stubs.
 #include "../test_storage_manager_load/load_harness_stubs.h"
+#include "drain_harness_stubs.h"
 #include "../test_storage_manager_load/load_and_restore_harness.h"
 #include "../../src/TrackUndo.cpp"
 #include "../../src/PersistenceSyncDrainBudget.cpp"
@@ -42,6 +43,13 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/WallClockSdSync.cpp"
 #include "../../src/StorageManager/PersistenceWorkItemPersist.cpp"
 #include "../../src/StorageManager/SyncDrainBudget.cpp"
+#include "../../src/TrackManager/TrackManagerPlaybackPolicy.cpp"
+// Capture-queue owner: supplies `hasQueuedRecordingTrack` and the capture-side `TrackManager`
+// members. `TrackPlaybackHotPath.cpp` follows it deliberately: the capture-queue TU calls a
+// `requestLoopSlotPersistAndSaveState` overload that only that TU declares, so without it the call is
+// ambiguous. The physical-output boundary in it (`silenceTrackMidiOutput`) collides with the shared
+// harness's stub, so it is included only for the declaration and its duplicate definition is avoided
+// by not including it -- see the note in drain_harness_stubs.h.
 
 // TrackManager's constructor references the global MIDI handler; the load path pulls it in.
 #include "../../src/MidiHandler.cpp"
@@ -72,10 +80,11 @@ void tearDown() {}
 /// The suite currently links the drain TU and its measured closure but drives **no** production call,
 /// because the remaining closure is larger than Packet A needs. A1.7 and Packet C re-enable the real
 /// drain call here; the include list above is the measured closure recorded in `REVIEW.md`.
+/// Behaviour-free closure proof: the boundary stubs and the closed import set compile and link
+/// together. The **real** drain call is not made here yet -- retaining it pulls the remaining
+/// `TrackManager`/`DisplayManager`/`EditManager` owners recorded in `REVIEW.md` A1.7, which is a scope
+/// decision rather than a fixture mechanic.
 void test_drain_suite_links_the_closed_import_set() {
-  // Deliberately behaviour-free: it proves the boundary stubs (`PSTR`, `printf_P`, `File::flush`,
-  // `O_CREAT`, `HEX`) and the closed import set compile and link together, which is the prerequisite
-  // the real drain call needs.
   TEST_ASSERT_TRUE(StorageManagerInternal::pendingLoopSlotRestoreCount() == 0);
 }
 
