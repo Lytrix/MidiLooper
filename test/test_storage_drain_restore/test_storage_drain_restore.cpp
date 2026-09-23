@@ -43,7 +43,21 @@ bool sequencerRunning = false;
 #include "../../src/StorageManager/WallClockSdSync.cpp"
 #include "../../src/StorageManager/PersistenceWorkItemPersist.cpp"
 #include "../../src/StorageManager/SyncDrainBudget.cpp"
+#include "../../src/PersistenceSchema.cpp"
+#include "../../src/RevisionPackedBlob.cpp"
+#include "../../src/SetRevisionCatalog.cpp"
+#include "../../src/SavedSetCatalog.cpp"
+#include "../../src/StorageManager/DeferredSaveJobStages.cpp"
+#include "../../src/StorageManager/WorkspaceSave.cpp"
+#include "../../src/StorageManager/RuntimeBundleFooter.cpp"
+#include "../../src/StorageManager/CurrentSetBootLoad.cpp"
+#include "../../src/StorageManager/LegacyMonolithLoad.cpp"
+#include "../../src/StorageManager/SavedSetIo.cpp"
+#include "../../src/Track/TrackDisplayState.cpp"
+#include "../../src/TrackManager/TrackManagerMidiLedFeedback.cpp"
+#include "../../src/TrackManager/TrackManagerMemoryPressure.cpp"
 #include "../../src/TrackManager/TrackManagerPlaybackPolicy.cpp"
+#include "../../src/TrackManager/TrackManagerCaptureQueue.cpp"
 // Capture-queue owner: supplies `hasQueuedRecordingTrack` and the capture-side `TrackManager`
 // members. `TrackPlaybackHotPath.cpp` follows it deliberately: the capture-queue TU calls a
 // `requestLoopSlotPersistAndSaveState` overload that only that TU declares, so without it the call is
@@ -85,6 +99,9 @@ void tearDown() {}
 /// `TrackManager`/`DisplayManager`/`EditManager` owners recorded in `REVIEW.md` A1.7, which is a scope
 /// decision rather than a fixture mechanic.
 void test_drain_suite_links_the_closed_import_set() {
+  // Behaviour-free closure proof. The real drain call is not retained here: doing so pulls the cold
+  // display/edit/track-manager owners listed in REVIEW.md A1.7, which is a scope decision, not a
+  // fixture mechanic.
   TEST_ASSERT_TRUE(StorageManagerInternal::pendingLoopSlotRestoreCount() == 0);
 }
 
