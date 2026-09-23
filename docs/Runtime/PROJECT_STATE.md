@@ -1,5 +1,32 @@
 # Project state (execution context)
 
+**2026-09-24 — A2.5 and A2.6 landed: Packet B's device gate is taken and green.**
+
+The boot restore queue **is serviced after a fresh boot** — the liveness claim this change exists to make.
+Clean boot capture (`captures/a25-boot-gate/`, window **3.0 s → 33.9 s**): 87 `RRQ` lines over **29 distinct
+`(track, slot)` requests**, each `queued → running → terminal/committed` (29/29/29), **0 requests left
+non-terminal**, **0 `RING,overflow`** rows. Per-request latency median 2.78 s / max 3.85 s (measured service
+time, not redefined as a MIDI-gap bound). Clause verdicts: every boot payload has a state ✓; `overflow_free`
+✓; the previously-`EMPTY` authorized scratch slot restores — the census contains **`5/1`** ✓; MIDI gap within
+the standing bound ✓. A2.6 follows: full native **2,316 / 1 skipped / 0 failures**, Packet A's red set
+promoted with the flag deleted, RAM1 `code 392,344 + padding 872`.
+
+Two things worth carrying forward:
+
+1. **Resetting this board needs a re-flash.** Neither opening the serial port nor a 1200-baud touch resets
+   it (uptime held at 643 s, so the harness attached mid-session and could not see the boot drain). The
+   documented reliable reset is `pio run -t upload`. That cost a cycle; it is recorded in `REVIEW.md`.
+2. **The gate first required the restore telemetry** (the A1.8 line deferred to Packet B, now
+   `SC_RESTORE_REQUEST`/`RRQ`, FLASH-resident after the post-link gate rejected an ITCM version). A device
+   gate can be blocked by missing observability, not only by missing behavior.
+
+**Now trackable:** the authorized scratch slot **5/1** holds committed, boot-restored content, so **A5.2**
+(content-verified PASS via `dump_and_capture.py` + `verify_playback_content.py`) and **A5.1** (the unblocked
+`runtime-working-set-ownership` device legs) are no longer waiting on a stable restored set.
+
+**Progress: 14/36 checked.** Remaining: A1.7 (pure-decision cases with A3.2/A3.3/A3.4), A2.1 (wiring the
+remaining wait states), A2.7 (record), Packet C (A3.1–A3.8), A4.2/A4.3, and closeout A5.1–A5.6.
+
 **2026-09-24 — A2.5 device run taken: boot restore liveness demonstrated, gate still open.**
 
 The board was available, so the Packet B device gate was run: firmware flashed
