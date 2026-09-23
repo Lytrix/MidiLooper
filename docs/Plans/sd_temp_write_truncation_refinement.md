@@ -248,11 +248,39 @@ slot-load gate hypothesis rather than against it.
 | `track=2,slot=2` — pre-existing committed content | `length=13824` (18 bars), **1,964 event rows** — faithful |
 | `track=5,slot=0` — recorded this session as a 5-bar loop | `length=0`, **0 rows** — **lost** |
 
-The 5-bar loop was `length=3840` before the reboot, and the harness reported `CurrentSet saved
-successfully (v6 deferred slices)` **twice** in that run. So: **pre-existing content restores; newly
-recorded content does not**, and the save reports success while the content does not come back.
+**Round 7 CORRECTS this, and the correction matters.** The `track=5,slot=0` loop above was recorded
+with the fixture's **`--record-only`** mode, and that mode never persisted the *loop body*: the same run's
+verification reports `loop_persist=0`, `sliced=False`, `first_missing=request`, and its `PERS` rows carry
+only the metadata bundles (`PERS,bundle,GlobalMeta`, `SlotMeta`, `TrackMeta`) with **no loop-body bundle**.
+So there was nothing on SD to restore, and `length=0` was the absence of a payload rather than a failed
+restore. Repeating the experiment with the **authoritative full shape** (`--record-bars 4 --overdub-bars 2`)
+gives `loop_persist=4252 sliced=True ok=True`, and after a reboot (`captures/sd-fix-full01-dump/`, a real
+boot: `BOOT,load,start` present, uptime 31 s) the slot dumps **`track=5,slot=0,length=3072` with 190 event
+rows** — the recorded loop, restored faithfully, with `0` reconcile warnings.
 
-**The coherent root, and it is one defect in the load/restore owner.** At boot a slot restore is queued
+**Therefore the catalog IS stable**, and round 6's "newly recorded content does not restore" is
+**withdrawn as a `--record-only` fixture artifact**. The verified statement is the strong one: a recorded
+loop's *body* persists and its slot restores byte-consistent content across a reboot, alongside the
+pre-existing slot's 13,824 ticks / 1,964 rows. Whether `--record-only` *should* queue a loop-body persist
+is a fixture question, not a catalog defect, and is left as one.
+
+### Round 7: the catalog stability clause is MET
+
+Device evidence, HEAD + the SD fix, `firmware.hex` sha256 `52d5a805…` (plus the drain-classification build):
+
+| observation | evidence |
+|---|---|
+| reconcile warning gone | **0** `could not reconcile` on every post-fix boot that reset the board |
+| a recorded loop body persists | `loop_persist=4252 sliced=True ok=True`; `record loop length 3072/3072` |
+| its slot restores across a reboot | `CAPTURE_CONTENT,begin,track=5,slot=0,length=3072`, **190 rows**, `0` reconcile warnings |
+| pre-existing content stays faithful | `CAPTURE_CONTENT,begin,track=2,slot=2,length=13824`, **1,964 rows** |
+
+The objective's device clause — *"the reconcile warning is gone and the catalog is stable"* — is therefore
+satisfied. Two things it does **not** claim, both tracked separately: the content **PASS** still needs a
+clean managed capture (the capture-loss problem above), and the **slope sweep** still needs N slots across
+boots, which is now constructible because persistence works with the full shape.
+
+**What the earlier "one coherent root" note still explains (kept, scoped).** At boot a slot restore is queued
 (`Queuing boot playback loop slot restore 6 pending; first 5/0`); content resolution keeps deferring on it
 (`lcr,skip,restore`); `SlotLoadSession::isActive()` therefore stays true; and that is exactly the gate
 `deferredSaveBlockedByActiveSlotLoadSd()` tests. So one pending boot restore explains **both** symptoms:
