@@ -60,8 +60,19 @@ device read `live=8,170KB`, `chunks_free=431`, `heap_free/heap_min=52KB` before 
 `live=4,658KB`, `chunks_free=441` at the fresh boot of Leg 1, with the S1.1 per-owner vector
 (`tag_total=1776KB`) unchanged in shape. Recorded as an observation; no per-N census exists to attribute a slope.
 
+**A later round tried the non-destructive lever for a formal content PASS and it does not work.** Muting the
+other seven tracks (double press on the track button, `Track 1..4, 6, 7, 8 mute toggled` confirmed) silences
+**everything**: the 160 s capture carries only LED feedback and clocks, and the verifier returns
+`INCONCLUSIVE_CAPTURE` again. Muted tracks still run playback (six `Playback started` rows), so this is
+suppression, not a stopped transport. Measuring played channels directly: all unmuted → 1-based channels
+1, 2, 3, 4, 6; others muted → **none**. So the slot under test contributes no notes now, although its content is
+dumped as present (`track=5,slot=0,length=18432`, 1,746 rows, all 24 bars dense) and channel 5 **did** play in
+the earlier 2-cycle capture. **The set of tracks that actually play drifts across resets, exactly as the restored
+set does**, so a formal PASS needs the persistence/catalog defect fixed first — it is not reachable by capture
+configuration. Mute state was restored and the transport stopped.
+
 **Still open:** S1.3's slope sweep and failure point (blocked by the SD catalog reconcile defect), the
-content-verified PASS, S1.4's pass→chunk conversion, S1.5's device refusal point, and phases B–F. Full evidence and the exact citations:
+content-verified PASS (same blocker), S1.4's pass→chunk conversion, S1.5's device refusal point, and phases B–F. Full evidence and the exact citations:
 [ARCHITECTURE-REVIEW.md](../../openspec/changes/runtime-working-set-ownership/ARCHITECTURE-REVIEW.md) § Device
 session — RWSO-24CAP. **Note:** the pre-change baseline revision remains `83be2e19`; no baseline firmware was
 flashed in this session (its census is already on record).
