@@ -12,16 +12,17 @@ playing track keeps playing. Implemented: `isTransportActiveForPersistence()` �
 during playback would be ten times longer). Build SUCCESS at `code 392,328 / padding 888`; full native
 **2,289 / 1 skipped / 0 failures**; harness suites OK.
 
-**Device, stated honestly:** the failure mode did not recur — across five runs there are **0**
-`Clear aborted` / `Persistence drain stuck` / `Persistence drain blocked`, and a content pass reports
-**`Result: PASS`** with `overflow_free=True`. **But none of those runs had a deferred save pending at clear
-time**, so they do **not** discriminate this change. Two attempts to build the discriminating state are
-recorded: (1) a fresh boot plus early clear failed because the transport tap *stopped* an already-running
-transport (lesson: read transport state from serial first); (2) a double clear with the transport confirmed
-running still did not discriminate, because **no other track is currently sounding** — the only MIDI after
-starting the transport is LED feedback on ch15, and `PERS,backlog` never reports `pending=1`. Reaching the
-condition needs either the owner's go-ahead to write a second track (outside the approved scratch range) or the
-restored library playing again. Full entry: `DEC-081` in
+**Device-verified on the discriminating case.** With **five tracks audibly playing** and a deferred save
+genuinely owed, the clear's drain **completed**: `Clear waiting for deferred save completion` →
+`Draining persistence work queue to SD card...` → **`State saved successfully (v4).`** →
+`Clear ignored — track is empty`, in **<833 ms**, with **0** `Clear aborted` / `drain stuck` / `drain blocked`
+where the old gate gave 33 stuck iterations then an abort. The other tracks kept playing (musical note-ons
+sampled before and after on 1-based channels 1, 2, 3, 4, 6), and the same build reports
+`overflow_free=True`. The earlier "not reachable" note is superseded: the two failed attempts had faulty
+setup (a transport tap that stopped an already-running transport; a sample with nothing sounding), fixed by
+toggling transport until serial confirms `Transport started`. **Standing observation, not a DEC-081
+regression:** `DIAG,persist_save` still reaches ~40 ms maxima (39.6 ms before the change, 43.3 ms after) —
+a single persist *grain* is not bounded by the slice budget, only the loop is. Full entry: `DEC-081` in
 [`docs/DECISION_LOG.md`](../DECISION_LOG.md).
 
 **Earlier 2026-09-23 owner asks (persist-as-you-record, content pass): the content pass PASSES and
