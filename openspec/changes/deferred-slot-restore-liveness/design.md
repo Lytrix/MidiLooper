@@ -137,6 +137,11 @@ identifies the loaded current set, so a set change invalidates outstanding reque
 keyed by the full identity, not by `(track, slot)` — the previous draft's `(track, slot)` key could not
 tell two sessions apart, which is exactly the reviewer's finding.
 
+**Lifecycle.** A request is queued, running, waiting, or terminal, with exactly one state at a time.
+Reading/parsing and other admitted job phases are running; yielding a runnable slice preserves progress
+without inventing a wait reason. A real denying gate transitions the request to a named wait. A terminal
+is recorded exactly once when the request completes or is superseded.
+
 **Waits are not terminals.** `waiting` states carry a named reason and are the only states a request may
 sit in while work is impossible: `waiting_slot_owned` (a live owner holds the slot), `waiting_capture`
 (a track on that slot is recording — the SD-session exclusion), `waiting_commit_gate` (the
@@ -298,7 +303,7 @@ path is unavailable — a drain that merely watches a restore cannot cause it to
 7. **The caller contract: `saveState` is a three-way outcome, and a caller may not treat a wait as
    success (G2 finding — caller/holdoff).** `StorageManager::saveState` returns only `bool`
    (`include/StorageManager.h:56`) and has exactly **two** callers — `MidiButtonActions::handleClearTrack`
-   (`src/MidiButtonActions.cpp:752`) and `SavedSetIo.cpp:331` (revision load's pre-flight save). Today
+   (`src/MidiButtonActions.cpp:752`) and `saveNewSetInternal()` in `SavedSetIo.cpp` (save-new-set pre-flight). Today
    every `false` is treated as failure at both, and CLEAR emits `Clear aborted: could not complete deferred
    save first` and returns. A named wait therefore cannot coexist with "0 `Clear aborted`" unless the
    return value and its callers change. The contract:
@@ -312,7 +317,7 @@ path is unavailable — a drain that merely watches a restore cannot cause it to
    - **retention (an accepted-interaction CLEAR latch) is a non-goal of this change**, recorded as O7: the
      project's accepted-interaction rule (DEC-078) is about playback interactions, and extending it to a
      destructive slot reset needs its own decision. This change refuses and reports;
-   - therefore **A3.5's zero-`Clear aborted` criterion is corrected to zero *unexplained* aborts**: a
+   - therefore **A3.7 — CLEAR device verification's zero-`Clear aborted` criterion is corrected to zero *unexplained* aborts**: a
      named refusal is an expected, non-failing outcome until runtime-maintenance 3.3 lands, and the
      criterion distinguishes the two by reason.
 8. **The finite post-load holdoff: bounded wait, or reported — never an abort that discards progress.**
@@ -328,6 +333,32 @@ path is unavailable — a drain that merely watches a restore cannot cause it to
      blocking indefinitely, and the caller follows rule 7 (refuse by name);
    - the constant SHALL be named rather than a literal, so the wait policy and the timeout are one
      declaration.
+
+
+9. **Single-owner drain and callback safety.** MIDI service during a drain is a callback boundary,
+   not a passive delay: controller NoteOn/NoteOff messages reach `MidiButtonProcessor` and can execute
+   `MidiButtonActions` immediately. Before rule 8 is implemented:
+   - `StorageManager` SHALL own one scoped drain-in-progress guard, acquired before changing shared save,
+     budget, progress, or result state and released on every exit (Completed, Blocked, Failed). A nested
+     detailed drain call returns `Blocked(drain_in_progress)` immediately; the compatibility bool wrapper
+     returns false. Neither nested call may overwrite the outer result, budget, or owed-save state.
+   - Destructive/storage callback entry points SHALL check that guard **before side effects**, including
+     before CLEAR stops a track, undo/redo replaces content, or set/revision operations mutate storage.
+     Audit the real MIDI dispatch routes and list the guarded entry points in the execution packet;
+     checking only `saveState` is insufficient because an action can mutate before calling it or bypass it.
+     Conflicting requests are explicitly refused with `drain_in_progress`, with no new deferred-action
+     queue and no silent success. A conflict means resetting/replacing the outer caller's target content,
+     changing the set, or starting another operation on the drain-owned storage state.
+   - Normal musical input and transport messages remain serviced. After every MIDI service/yield boundary,
+     re-read all-track capture/timing eligibility, restore identity and commit admission before another
+     restore/save step. Do not cache an idle verdict across a callback. If a new gate denies progress,
+     preserve the save/restore obligations and return the appropriate named Blocked result.
+   - The outer destructive caller retains its original target identity across the drain and revalidates
+     it before mutation. A focus change must not redirect CLEAR to another slot; a changed target/set
+     identity produces a named refusal, not a reset of replacement content. Existing restoration of
+     playback on refusal must also respect the revalidated target and live transport state.
+   - Guard storage has explicit initialization and measured placement under the RAM1 budget; a raw
+     uninitialized DMAMEM flag is not an acceptable guard. No new manager or persistence owner is added.
 
 *Why:* C5. The 2026-09-23 classifier named the gate but the gate was a state the caller could not leave;
 CLEAR still aborted. Naming a wait was necessary but not sufficient.
@@ -465,7 +496,7 @@ its own validation. Numeric task ids live in `tasks.md`; the packet ids here are
 - **Must preserve:** DEC-081 (audible playback is not a gate), the recording gate, the mid-pass
   one-chunk flush, and the single persist grain's existing (unbounded-by-design) latency.
 - **Evidence:** green fixtures plus a device run showing a CLEAR that completes (or is refused with the
-  named wait) with a restore in flight, and 0 `Clear aborted` / `drain stuck`.
+  named wait) with a restore in flight, and zero unexplained CLEAR aborts or stuck drains; named refusals are expected outcomes.
 - **Exit criteria:** the spec requirement "The blocking persistence drain advances the restore it waits
   on" holds where the gate admits, and the named-wait requirement holds where it does not.
 
