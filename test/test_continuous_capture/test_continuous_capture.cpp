@@ -4237,6 +4237,22 @@ void test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution() {
                            "the boundary must be recomputed in the new tick domain");
 }
 
+/// The record-arm admission is **repeatable**: three successive grants on an otherwise idle slot all succeed.
+/// This was written to test whether the S1.5 capacity sweep's early refusal (N=2, with ~480 of 512 chunk ids
+/// still free) was a non-idempotent arm rather than capacity -- it is not, so the arm is exonerated and the
+/// guard is kept. It also rules out re-granting as a source of the per-slot slope the change removes.
+void test_record_arm_admission_is_repeatable() {
+  trackManager.~TrackManager();
+  LoopEventStore::resetPoolForTests();
+  new (&trackManager) TrackManager();
+  LoopEventStore::initPool();
+  Track& track = trackManager.getSelectedTrack();
+  track.ensureLoopsAllocated();
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "first arm admission");
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "second arm admission must also succeed");
+  TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "third arm admission must also succeed");
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4337,6 +4353,7 @@ int main() {
   RUN_TEST(test_s4f2_deferred_eligibility_includes_an_accepted_interaction_on_an_idle_track);
   RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
   RUN_TEST(test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution);
+  RUN_TEST(test_record_arm_admission_is_repeatable);
   RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
