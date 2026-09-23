@@ -687,7 +687,23 @@ sizing; playback behavior tasks wait for F. This dependency order overrides nume
       transport stop retargets/invalidates the latch beside `suppressMidiOutputForTransportStop()`; the drive
       re-derives the destination from live transport state and the boundary from the loop phase — never from a
       stored absolute tick (MIDI Start/seek/load reset the tick domain, `ClockManager.cpp:273,315-336,362`).
-- [ ] S4f.5 **One in-flight predicate (B9, T3).** Add `hasAcceptedUnexecutedInteraction()`; **every** consumer of
+- [ ] S4f.5 **One in-flight predicate (B9, T3).**
+      **PARTIAL 2026-09-23 -- the stop-related consumers are done, and the audit found two real holes.**
+      `Track::hasStopInFlight()` (`hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction()`)
+      and `Track::hasLiveCaptureInterval()` exist; the three persistence predicates and
+      `resolveActiveCaptureTrackSlot` use them (redundant today because a latched interval is still
+      OVERDUBBING, made explicit because S4f.3 lets a stop outlive a state change). The holes:
+      `TrackManager::startRecordingTrack` checked `hasPendingDeferredOverdubStop()` alone, so it admitted
+      a record start on top of an unadmitted stop; and `finalizeCaptureAndSelectSlot`'s switch path fell
+      through to `setActiveLoopIndex` after a *non-admitted* `stopOverdubbing()`, moving the active slot
+      underneath the accepted stop -- both fixed. Fixture
+      `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes` is green.
+      **Outstanding:** the `getActiveLoopIndex()`-keyed persistence reads
+      (`TrackCaptureStopCommit.cpp:139,263`, `TrackStopTelemetryColdHelpers.cpp:161,166`) need `slot`
+      threaded through `commitCaptureForStop`/`finalizeCommitSideEffects`; and
+      `resolveCaptureTrackSlotForMidPass`'s selected/active fallback is not removed (a persistence
+      behavior change with no fixture in this suite).
+ Add `hasAcceptedUnexecutedInteraction()`; **every** consumer of
       `hasPendingDeferredOverdubStop()` that means "a stop is in flight" consults it (start admission, wrap,
       hot-path emission, persistence, `include/Utils/DeferredValidatePolicy.h` — the caller passes the predicate,
       since it is a pure bool function). **Named seed sites the rerun found still

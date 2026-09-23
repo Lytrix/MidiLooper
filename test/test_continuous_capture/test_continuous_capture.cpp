@@ -4104,6 +4104,65 @@ void test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve()
                                       static_cast<uint32_t>(LoopEventStore::freeChunkCount()));
 }
 
+/// S4f.5 (intermediate slice): an accepted, not-yet-executed stop is in-flight work, so neither a
+/// record start nor a slot switch may move underneath it. Before this fix the latch was invisible to
+/// the manager's start guard (which checked only `hasPendingDeferredOverdubStop()`) and to
+/// `finalizeCaptureAndSelectSlot`'s switch path.
+void test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes() {
+  Track& track = preparePlayingTrack();
+  const uint8_t trackIndex = 0;
+  clockManager.assignCurrentTickSilently(96);
+  midiButtonActions.handleToggleRecord();
+  inputNote(60, 97, 120);
+  // Deny the canonical target so the stop is accepted and retained rather than admitted.
+  TrackCaptureStopTestAccess::drainCanonicalChunks(track);
+  clockManager.assignCurrentTickSilently(144);
+  midiButtonActions.handleToggleRecord();
+
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_TRUE_MESSAGE(track.hasStopInFlight(),
+                           "an accepted stop is in-flight work before any job exists");
+  TEST_ASSERT_TRUE(track.hasLiveCaptureInterval());
+
+  // A record start on this track is refused while the accepted stop is unexecuted.
+  clockManager.assignCurrentTickSilently(168);
+  trackManager.startRecordingTrack(trackIndex, 168);
+  TEST_ASSERT_FALSE_MESSAGE(track.isRecording(),
+                            "a record start must not move under an accepted stop");
+  TEST_ASSERT_TRUE(track.isOverdubbing());
+
+  // The slot switch must not move the active slot either: the accepted stop's interval owns slot 0.
+  trackManager.setActiveLoopIndex(trackIndex, 1);
+  TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, track.getActiveLoopIndex(),
+                                  "the active slot must not move under an unadmitted stop");
+  TEST_ASSERT_TRUE(track.hasAcceptedUnexecutedInteraction());
+
+  // The park acquires the canonical target and the drive binds one job to the interval's slot.
+  for (size_t turn = 0; turn < 8 && !track.hasPendingDeferredOverdubStop(); ++turn) {
+    (void)TrackCaptureStopTestAccess::serviceAcceptedInteraction(track);
+  }
+  TEST_ASSERT_TRUE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.hasAcceptedUnexecutedInteraction());
+  TEST_ASSERT_TRUE(track.hasStopInFlight());
+  // The admitted job still owns its active slot until it retires (the pre-existing DEC-067 rule this
+  // slice does not change), so the switch stays refused.
+  trackManager.setActiveLoopIndex(trackIndex, 1);
+  TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
+
+  for (unsigned i = 0; i < 20000 && track.hasPendingDeferredOverdubStop(); ++i) {
+    TrackCaptureStopTestAccess::step(track);
+  }
+  TEST_ASSERT_FALSE(track.hasPendingDeferredOverdubStop());
+  TEST_ASSERT_FALSE(track.hasStopInFlight());
+  // The positive half -- that a switch *does* move once nothing is in flight -- cannot be asserted in
+  // this suite: the move calls `StorageManager::prioritizeLoopSlotRestoreForFocus`, which is a
+  // fail-closed off-path stub here. The guard reads `hasStopInFlight()`, which is now false, so the
+  // refusal above is what this fixture owns.
+  TEST_ASSERT_EQUAL_UINT8(0, track.getActiveLoopIndex());
+}
+
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4200,6 +4259,7 @@ int main() {
   RUN_TEST(test_s2b2_loaded_slot_stop_acquires_its_own_horizon_and_canonical_target);
   RUN_TEST(test_s4_0_release_respects_the_live_ring_window_and_is_idempotent);
   RUN_TEST(test_s2b3_boot_consumes_only_committed_content_and_keeps_the_pool_reserve);
+  RUN_TEST(test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
   // baseline exception once the implementing slice lands").

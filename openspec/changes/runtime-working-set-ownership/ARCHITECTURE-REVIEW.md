@@ -692,3 +692,69 @@ order for the **default enabled set** (slot 0 of each of the 8 tracks), i.e. ~5 
 It is constant in the committed-slot count and bounded by the enabled set, not by the library, which is
 what the law requires. The device-scale figure S2b.3 also asks for (boot `live` against a 24-bar
 overdub's peak reservation, ~191 chunks) remains **S1.5's device leg and is NOT RUN**.
+
+## P1 — S4f.5's stop-related in-flight consumers (2026-09-23)
+
+### Two real holes the audit found (not redundant after all)
+
+The contract required the existing **start/switch guards to include the Stop latch** in this
+intermediate slice. Reading them showed that most sites already hold transitively, because a latched
+stop leaves the interval in `OVERDUBBING` and those guards test `isOverdubbing()`. **Two did not:**
+
+1. **`TrackManager::startRecordingTrack`** checked `hasPendingDeferredOverdubStop()` **alone**. With a
+   stop accepted-but-unexecuted that predicate is false, so a record start was admitted on top of an
+   unadmitted stop. Now `hasStopInFlight()`.
+2. **`TrackManager::finalizeCaptureAndSelectSlot`**'s switch path called `t.stopOverdubbing()` and then
+   **fell through to `t.setActiveLoopIndex(newSlot)`** regardless of whether the stop was admitted —
+   moving the active slot underneath an unadmitted stop, which the contract forbids explicitly
+   ("Do not move the active slot underneath an unadmitted stop in this intermediate slice"). It now
+   returns while `hasAcceptedUnexecutedInteraction()`, i.e. the slot moves only once the stop was
+   admitted and bound (DEC-078 item 4). S4f.3 replaces this with the switch's own accepted-interaction
+   carrier.
+
+### Predicates added
+
+- `Track::hasLiveCaptureInterval()` — `isRecording() || isOverdubbing()`.
+- `Track::hasStopInFlight()` — `hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction()`.
+  `isRecording()` is deliberately not a term: a record interval with no stop obligation is not a stop
+  in flight.
+- Converted to them at the sites the contract names: the three persistence predicates
+  (`PersistenceAdmit.cpp`, `StorageManager/Internal.cpp`, `MidPassChunkPersist.cpp`) and the primary
+  resolver `resolveActiveCaptureTrackSlot`. At those sites the addition is currently **redundant**
+  (the latched interval is still `OVERDUBBING`), and is made explicit because S4f.3 lets a stop outlive
+  a state change.
+
+### Oracle and result
+
+`test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes` (default gate): with a stop
+accepted-but-unexecuted (canonical target denied), `hasStopInFlight()` is true even though no job
+exists; a record start on the track is refused; a slot switch leaves `activeLoopIndex` at 0 and the
+latch intact; after the park admits the job the latch is consumed and `hasStopInFlight()` is still true
+(the admitted job), so the switch stays refused under the pre-existing DEC-067 rule; after retirement
+nothing is in flight.
+
+### Verification
+
+| check | result |
+|---|---|
+| focused `test_continuous_capture` | **PASSED, 86/86** |
+| full native | **2,271 cases / 1 skipped / 2,270 succeeded / 0 failures** |
+| firmware | **SUCCESS**; RAM1 `variables 96,128 / code 392,376 / padding 840 / locals free 34,944` |
+
+### Recorded limitations — NOT coverage
+
+- **The RAM1 deviation grew from 16 B to 32 B**: `padding` is now **840** against the recorded 872 line
+  (`code + padding` still constant at 393,216; still no bank cross; `locals free` unchanged). The two new
+  ITCM call sites are the cost: `hasStopInFlight()` is FLASH-resident, so calling it from the ITCM
+  manager entries needs a long-call veneer, and `finalizeCaptureAndSelectSlot`'s added latch test is
+  ITCM. A first version that also added `hasLiveCaptureInterval()` to the start guard cost the same, so
+  it was narrowed to exactly the contract's requirement. Making the manager entries FLASH-resident
+  themselves is a deliberate placement decision for the architect, not something to slip in here.
+- **Still not converted** (recorded, not assumed): the `getActiveLoopIndex()`-keyed persistence reads in
+  `TrackCaptureStopCommit.cpp:139,263` and `TrackStopTelemetryColdHelpers.cpp:161,166`, which need `slot`
+  threaded through `commitCaptureForStop`/`finalizeCommitSideEffects` (S4.1's erasure-surface list); and
+  `resolveCaptureTrackSlotForMidPass`'s selected/active fallback, whose removal is a persistence behavior
+  change with no fixture in this suite.
+- **The positive switch case is not assertable here**: a successful move calls
+  `StorageManager::prioritizeLoopSlotRestoreForFocus`, which is a fail-closed off-path stub in
+  `test_continuous_capture`.

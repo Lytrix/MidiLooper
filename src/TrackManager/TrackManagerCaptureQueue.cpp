@@ -25,9 +25,14 @@ void TrackManager::startRecordingTrack(uint8_t trackIndex, uint32_t currentTick)
   if (trackIndex >= Config::NUM_TRACKS) return;
 
   Track& tr = tracks[trackIndex];
-  if (tr.hasPendingDeferredOverdubStop()) {
+  // S4f.5 / intermediate slice: a latched (accepted, not yet executed) stop is in-flight work just
+  // as an admitted job is, so a record start must not move underneath it. Checking only
+  // `hasPendingDeferredOverdubStop()` left the latch invisible here and admitted the start on top of
+  // an unadmitted stop. S4f.6 replaces this refusal with the accepted-start carrier and the
+  // stop > switch > start composition.
+  if (tr.hasStopInFlight()) {
     logger.log(CAT_TRACK, LOG_INFO,
-               "Track %d: record admission deferred while overdub finalization is pending",
+               "Track %d: record admission deferred while a stop obligation is live",
                trackIndex);
     return;
   }
@@ -326,7 +331,13 @@ void TrackManager::finalizeCaptureAndSelectSlot(uint8_t trackIndex, uint8_t newS
     requestLoopSlotPersistAndSaveState(t, trackIndex, captureSlot);
   } else if (t.isOverdubbing()) {
     t.stopOverdubbing();
-  } else if (t.hasPendingDeferredOverdubStop()) {
+    // S4f.5 / intermediate slice (DEC-078 item 4): the active slot may move only once the interval's
+    // stop was *admitted and bound* to it. When the stop was retained on the latch instead, the slot
+    // stays put -- otherwise the accepted stop would be driven against a slot that is no longer its
+    // own. S4f.3 replaces this with the switch's accepted-interaction carrier and commits the switch
+    // after the stop binds.
+    if (t.hasAcceptedUnexecutedInteraction()) return;
+  } else if (t.hasStopInFlight()) {
     // The pending finalizer owns its active slot until it resolves the
     // requested destination. Slot selection cannot preempt that ownership.
     return;

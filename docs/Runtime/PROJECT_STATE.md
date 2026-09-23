@@ -88,6 +88,19 @@ preserves it). Packet and full evidence: [ARCHITECTURE-REVIEW.md](../../openspec
   so the reported deviation did not grow). S4.0 and S2b.4 stay **open** with their remaining terms recorded:
   the job-owned-undo-root term (needs S5.2a's per-slot descriptor), the deferred-reconstruction term (S5.2e),
   and the mid-copy release fixture.
+- **S4f.5's stop-related consumers landed, and the audit found two real holes.** Most start/switch
+  guards already held transitively because a latched stop leaves the interval in `OVERDUBBING`, but two
+  did not: `TrackManager::startRecordingTrack` checked only `hasPendingDeferredOverdubStop()`, so it
+  admitted a record start on top of an unaccepted-invisible stop; and `finalizeCaptureAndSelectSlot`'s
+  switch path fell through to `setActiveLoopIndex` after a *non-admitted* `stopOverdubbing()`, moving the
+  active slot underneath the accepted stop — which the contract forbids in this intermediate slice. Both
+  fixed via the new `Track::hasStopInFlight()` / `hasLiveCaptureInterval()`, also adopted by the three
+  persistence predicates and `resolveActiveCaptureTrackSlot`. Fixture
+  `test_s4f5_accepted_stop_blocks_start_and_switch_until_it_executes` is green; full native
+  **2,271 / 1 skipped / 0 failures**. **The RAM1 deviation grew from 16 B to 32 B** (`padding` **840** vs
+  the recorded 872; `code + padding` still constant at 393,216, still no bank cross, `locals free`
+  unchanged) — the two new ITCM call sites to the FLASH-resident predicate. Making the manager entries
+  FLASH-resident is a placement decision for the architect.
 - **Still open:** S1.1's per-owner byte census, S1.3's device slope to the current failure point, S1.4's
   undo/canonical-pin baseline, S1.5's smallest refusal N, and the whole S1 device gate — **no hardware run
   in this session**. Next: the remaining D0.2 controls, then S2b.0/S2b.1, which is expected to turn the

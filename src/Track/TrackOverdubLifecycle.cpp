@@ -84,6 +84,14 @@ TRACK_COLD_MEM bool Track::hasAcceptedUnexecutedInteraction() const {
   return latch != nullptr && latch->isSet();
 }
 
+TRACK_COLD_MEM bool Track::hasLiveCaptureInterval() const {
+  return isRecording() || isOverdubbing();
+}
+
+TRACK_COLD_MEM bool Track::hasStopInFlight() const {
+  return hasPendingDeferredOverdubStop() || hasAcceptedUnexecutedInteraction();
+}
+
 TRACK_COLD_MEM uint32_t Track::acceptedStopWaitCount() const {
   const PendingInteractionLatch* latch = interactionLatch();
   return latch != nullptr ? latch->waitCount : 0;
