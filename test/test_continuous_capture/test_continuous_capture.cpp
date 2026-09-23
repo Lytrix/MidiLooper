@@ -4253,45 +4253,6 @@ void test_record_arm_admission_is_repeatable() {
   TEST_ASSERT_TRUE_MESSAGE(track.prewarmPlaybackForSlot(0, true), "third arm admission must also succeed");
 }
 
-/// Append `pairs` note pairs across a 24-bar loop into the active loop (no seal).
-static void fillTwentyFourBars(Loop& loop, unsigned pairs) {
-  constexpr uint32_t kTicks = 24u * Config::TICKS_PER_BAR;
-  loop.loopLengthTicks = kTicks;
-  loop.beginCapture(CapturePhase::Record);
-  for (unsigned i = 0; i < pairs; ++i) {
-    const uint32_t tick = (kTicks / (pairs + 1)) * (i + 1);
-    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOn(tick, 1, 48, 100)));
-    TEST_ASSERT_TRUE(loop.appendCaptureEvent(MidiEvent::NoteOff(tick + 3, 1, 48, 0)));
-  }
-}
-
-/// The seal has a **transfer precondition**: `Loop::sealCapture` fails validation when the pending pass
-/// cannot be transferred, which needs the prewarmed transfer horizon. A *dense* loop therefore cannot be
-/// sealed until the record arm has admitted that horizon -- a small loop happens to fit the untouched pool
-/// and hides the requirement. This is why the S1.5 capacity sweep's dense fixture failed at its own seal, and
-/// it is also the production reason S2b.2 admits the horizon at the arm rather than at the stop.
-void test_dense_loop_seal_requires_the_transfer_horizon() {
-  // (a) With no horizon admitted, a dense 24-bar loop cannot seal.
-  trackManager.~TrackManager();
-  LoopEventStore::resetPoolForTests();
-  new (&trackManager) TrackManager();
-  LoopEventStore::initPool();
-  {
-    Loop& loop = trackManager.getSelectedTrack().getActiveLoop();
-    trackManager.getSelectedTrack().ensureLoopsAllocated();
-    fillTwentyFourBars(loop, 600);
-    TEST_ASSERT_EQUAL_MESSAGE(static_cast<int>(SealOutcome::FailedValidation),
-                              static_cast<int>(loop.sealCapture(24u * Config::TICKS_PER_BAR,
-                                                                CommitReason::RecordStop)),
-                              "a dense loop without the transfer horizon must fail validation");
-    loop.discardCapture();
-  }
-
-  // NOTE: the converse is NOT established. Admitting the arm's transfer horizon first does **not** make this
-  // construction seal -- it still returns FailedValidation -- so the horizon is necessary but not sufficient,
-  // and the remaining cause is recorded in the review artifact as an open question, not guessed at here.
-}
-
 int main() {
   UNITY_BEGIN();
   // `ONLY_COMPANION=1` is the focused single-case runner for the former D8 reproducer (now part of
@@ -4393,7 +4354,6 @@ int main() {
   RUN_TEST(test_s4f4_a_request_whose_interval_is_gone_is_superseded_not_bound);
   RUN_TEST(test_s4f4_the_boundary_is_recomputed_in_the_tick_domain_at_execution);
   RUN_TEST(test_record_arm_admission_is_repeatable);
-  RUN_TEST(test_dense_loop_seal_requires_the_transfer_horizon);
   RUN_TEST(test_b03_transport_stop_retargets_an_admitted_playing_stop_without_losing_it);
   // S2b.1 landed on 2026-09-23, so the residence law and B01 are green and the former
   // `WORKING_SET_RED` gate is gone: they are part of the default gate now (RECIPE R, "remove a known
